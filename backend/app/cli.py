@@ -13,6 +13,7 @@ from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_repor
 from app.jobs import DEFAULT_LANGUAGE, JobNotFound, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import real_ports
+from app.profile import PROFILE_FILE, ProfileStore
 from app.references import ReferenceSetError
 from app.transcript import timestamp
 
@@ -28,8 +29,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="ignore YouTube's captions and transcribe the whole episode with Whisper",
     )
+    analyze.add_argument("--brief", help='what to look for in this episode, e.g. "find the funny moments"')
     reanalyze = commands.add_parser(
-        "reanalyze", help="select Candidates again from an existing Job's Transcript, replacing its Candidates"
+        "reanalyze",
+        help="select Candidates again from an existing Job's Transcript, with its Brief and Channel Profile "
+        "snapshot, replacing its Candidates",
     )
     reanalyze.add_argument("job_id")
     commands.add_parser(
@@ -49,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     store = JobStore(settings.data_dir / "jobs")
     pipeline = Pipeline(store, real_ports(settings), settings)
     if args.command == "analyze":
-        job = store.create(args.url, JobOptions(language=args.language, transcribe_locally=args.transcribe_locally))
+        options = JobOptions(language=args.language, brief=args.brief, transcribe_locally=args.transcribe_locally)
+        job = store.create(args.url, options, ProfileStore(settings.data_dir / PROFILE_FILE).load())
         print(f"Job {job.id} in {store.job_dir(job.id)}", flush=True)
         job = pipeline.run(job.id)
     else:
@@ -78,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Transcript: {len(transcript.words)} words ({transcript.source}, {transcript.language})")
     print(f"First words: {' '.join(word.text for word in transcript.words[:20])}")
 
+    if job.options.brief:
+        print(f"Brief: {job.options.brief}")
     candidates = store.load_candidates(job.id) or []
     print(f"Candidates: {len(candidates)} (prompt {job.prompt_version})")
     for rank, candidate in enumerate(candidates, 1):

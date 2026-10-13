@@ -16,13 +16,17 @@ class FakeVideoSource:
     """Copies a fixture video and json3 track into the Job directory.
 
     `hold()` makes `fetch` block until `release()`; `fail_with()` makes it raise.
+    `fetch_captions` copies `captions[url]` (`caption_track` for other URLs): a track, None for a
+    video without one, or an exception to raise. Its calls are recorded apart from `fetch`'s.
     """
 
     def __init__(self, video: Path, caption_track: Path | None, ffprobe: Path) -> None:
         self.video = video
         self.caption_track = caption_track
         self.ffprobe = ffprobe
+        self.captions: dict[str, Path | Exception | None] = {}
         self.calls: list[tuple[str, str]] = []
+        self.caption_calls: list[tuple[str, str]] = []
         self.error: Exception | None = None
         self._released = threading.Event()
         self._released.set()
@@ -49,6 +53,17 @@ class FakeVideoSource:
             track = f"source.{language}-orig.json3"
             shutil.copy(self.caption_track, dest / track)
         return Source(VIDEO_FILE, track, probe(self.ffprobe, dest / VIDEO_FILE))
+
+    def fetch_captions(self, url: str, language: str, dest: Path) -> str | None:
+        self.caption_calls.append((url, language))
+        captions = self.captions.get(url, self.caption_track)
+        if isinstance(captions, Exception):
+            raise captions
+        if captions is None:
+            return None
+        track = f"source.{language}-orig.json3"
+        shutil.copy(captions, dest / track)
+        return track
 
 
 class FakeTranscriber:

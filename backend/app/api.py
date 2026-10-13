@@ -8,6 +8,7 @@ from pydantic import BaseModel, StringConstraints
 
 from app.candidates import Candidate
 from app.jobs import Job, JobNotFound, JobOptions, JobStore
+from app.profile import ChannelProfile, ProfileStore
 from app.transcript import Transcript
 from app.worker import Worker
 
@@ -22,8 +23,13 @@ def _worker(request: Request) -> Worker:
     return request.app.state.worker
 
 
+def _profiles(request: Request) -> ProfileStore:
+    return request.app.state.profiles
+
+
 Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
+Profiles = Annotated[ProfileStore, Depends(_profiles)]
 
 
 class JobRequest(BaseModel):
@@ -44,8 +50,8 @@ def health() -> dict[str, str]:
 
 
 @router.post("/jobs", status_code=201)
-def create_job(body: JobRequest, store: Store, worker: JobWorker) -> Job:
-    job = store.create(body.url, body.options)
+def create_job(body: JobRequest, store: Store, profiles: Profiles, worker: JobWorker) -> Job:
+    job = store.create(body.url, body.options, profiles.load())
     worker.submit(job.id)
     return job
 
@@ -64,3 +70,15 @@ def get_job(job_id: str, store: Store) -> JobDetail:
     return JobDetail(
         **vars(job), transcript=store.load_transcript(job_id), candidates=store.load_candidates(job_id)
     )
+
+
+@router.get("/profile")
+def get_profile(profiles: Profiles) -> ChannelProfile:
+    return profiles.load()
+
+
+@router.put("/profile")
+def put_profile(profile: ChannelProfile, profiles: Profiles) -> ChannelProfile:
+    """Replace the Channel Profile. New Jobs steer by it; existing Jobs keep their snapshot."""
+    profiles.save(profile)
+    return profile

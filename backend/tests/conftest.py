@@ -62,10 +62,17 @@ class Speech:
 
 @pytest.fixture
 def settings(tmp_path, request) -> Settings:
-    """Settings for a test; `@pytest.mark.tuning(...)` overrides fields of TUNING."""
+    """Settings for a test; `@pytest.mark.tuning(...)` overrides fields of TUNING. The Reference Set
+    is `tmp_path / "references.yaml"`, which doesn't exist until the test writes it."""
     marker = request.node.get_closest_marker("tuning")
     tuning = replace(TUNING, **marker.kwargs) if marker else TUNING
-    return replace(load_settings(), data_dir=tmp_path / "data", transcription=tuning, selection=SELECTION)
+    return replace(
+        load_settings(),
+        data_dir=tmp_path / "data",
+        reference_set=tmp_path / "references.yaml",
+        transcription=tuning,
+        selection=SELECTION,
+    )
 
 
 @pytest.fixture(scope="session")

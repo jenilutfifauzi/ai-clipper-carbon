@@ -1,4 +1,5 @@
-"""The Video Source port: a URL in, a local video file, its metadata and captions out."""
+"""The Video Source port: a URL in, a local video file, its metadata and captions out, or the
+captions alone."""
 
 import json
 import logging
@@ -40,6 +41,11 @@ class VideoSource(Protocol):
         """Write the video and, if one exists, its json3 auto-caption track in `language` into `dest`."""
         ...
 
+    def fetch_captions(self, url: str, language: str, dest: Path) -> str | None:
+        """Write only the json3 auto-caption track in `language` into `dest`, without the video, and
+        return its file name (relative to `dest`); None when the video has no such track."""
+        ...
+
 
 class YtDlpVideoSource:
     """YouTube via yt-dlp: at most 1080p, H.264 preferred, merged to mp4 with the configured ffmpeg."""
@@ -48,28 +54,36 @@ class YtDlpVideoSource:
         self.settings = settings
 
     def fetch(self, url: str, language: str, dest: Path) -> Source:
-        caption_languages = [f"{language}-orig", language]
-        with YoutubeDL(self._options(caption_languages, dest)) as ydl:
-            ydl.download([url])
-
-        video = dest / VIDEO_FILE
-        if not video.is_file():
-            raise RuntimeError(f"yt-dlp finished without writing {VIDEO_FILE}")
-        tracks = (dest / f"source.{lang}.json3" for lang in caption_languages)
-        caption_track = next((track.name for track in tracks if track.is_file()), None)
-        return Source(VIDEO_FILE, caption_track, probe(self.settings.ffprobe_bin, video))
-
-    def _options(self, caption_languages: list[str], dest: Path) -> dict[str, Any]:
-        options: dict[str, Any] = {
+        options = self._options(language, dest) | {
             "format": "bv*[height<=1080]+ba/b[height<=1080]",
             "format_sort": ["res:1080", "vcodec:h264", "acodec:m4a"],
             "merge_output_format": "mp4",
             "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
             "ffmpeg_location": str(self.settings.ffmpeg_bin),
+        }
+        with YoutubeDL(options) as ydl:
+            ydl.download([url])
+
+        video = dest / VIDEO_FILE
+        if not video.is_file():
+            raise RuntimeError(f"yt-dlp finished without writing {VIDEO_FILE}")
+        return Source(VIDEO_FILE, _caption_track(dest, language), probe(self.settings.ffprobe_bin, video))
+
+    def fetch_captions(self, url: str, language: str, dest: Path) -> str | None:
+        # yt-dlp still selects a format when it skips the download, and a video with no
+        # downloadable format can still have captions.
+        options = self._options(language, dest) | {"skip_download": True, "ignore_no_formats_error": True}
+        with YoutubeDL(options) as ydl:
+            ydl.download([url])
+        return _caption_track(dest, language)
+
+    def _options(self, language: str, dest: Path) -> dict[str, Any]:
+        """The options both fetches share: the auto-captions, named after the video, and the cookies setting."""
+        options: dict[str, Any] = {
             "outtmpl": str(dest / "source.%(ext)s"),
             "writeautomaticsub": True,
             "subtitlesformat": "json3",
-            "subtitleslangs": [re.escape(lang) for lang in caption_languages],  # yt-dlp reads these as regexes
+            "subtitleslangs": [re.escape(lang) for lang in _caption_languages(language)],  # read as regexes
             "noplaylist": True,
             "quiet": True,
             "noprogress": True,
@@ -78,6 +92,16 @@ class YtDlpVideoSource:
         if self.settings.ytdlp_cookies_from_browser:
             options["cookiesfrombrowser"] = (self.settings.ytdlp_cookies_from_browser,)
         return options
+
+
+def _caption_languages(language: str) -> list[str]:
+    """The caption tracks to ask for, best first."""
+    return [f"{language}-orig", language]
+
+
+def _caption_track(dest: Path, language: str) -> str | None:
+    tracks = (dest / f"source.{lang}.json3" for lang in _caption_languages(language))
+    return next((track.name for track in tracks if track.is_file()), None)
 
 
 def probe(ffprobe: Path, video: Path) -> SourceMetadata:

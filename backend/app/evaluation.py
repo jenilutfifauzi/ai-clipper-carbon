@@ -1,7 +1,9 @@
 """The Evaluation Harness: Selection measured against the owner's eval references.
 
-`evaluate` analyzes every eval episode of the Reference Set with the current prompts, through the
-Pipeline that every Job runs, and writes a report to eval/reports/<prompt version>/<UTC time>/:
+`evaluate` analyzes every eval episode of the Reference Set with the current prompts and Channel
+Profile, without a Brief, through the Pipeline that every Job runs, so the Detail pass also gets
+the few-shot examples from the same Reference Set's fewshot clips. It writes a report to
+eval/reports/<prompt version>/<UTC time>/:
 - report.md: recall, the found and missed references, and each episode's top 5 Candidates with
   preview links, for the owner to judge;
 - report.json: the same, for scripts;
@@ -23,13 +25,15 @@ import yaml
 from pydantic import TypeAdapter
 
 from app.candidates import Candidate
-from app.config import REPO_ROOT, Settings
-from app.jobs import TRANSCRIPT_FILE, Job, JobOptions, JobStatus, JobStore, write_atomic
+from app.config import REFERENCE_SET, REPO_ROOT, Settings
+from app.jobs import TRANSCRIPT_FILE, Job, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import Ports
+from app.profile import PROFILE_FILE, ChannelProfile, ProfileStore
 from app.prompts import PROMPT_VERSION
-from app.references import EXAMPLE, REFERENCE_SET, Reference, load_reference_set, video_id
+from app.references import EXAMPLE, Reference, load_reference_set, video_id
 from app.selection import Selection
+from app.storage import write_atomic
 from app.transcript import TranscriptSource, timestamp
 
 logger = logging.getLogger(__name__)
@@ -97,6 +101,10 @@ class EpisodeReport:
     references: list[ReferenceResult]
     # All of them, best first.
     candidates: list[Candidate]
+    # How many few-shot examples the Detail pass was shown.
+    examples: int
+    # The Job's warnings, e.g. a few-shot episode left out for want of captions.
+    warnings: list[str]
 
 
 @dataclass(frozen=True)
@@ -104,6 +112,8 @@ class EvalReport:
     prompt_version: str
     created_at: datetime
     reference_set: str
+    # The Channel Profile every eval Job was analyzed with.
+    profile: ChannelProfile
     found: int
     total: int
     recall: float
@@ -150,10 +160,12 @@ def recall(results: Sequence[ReferenceResult]) -> float:
 def evaluate(
     settings: Settings, ports: Ports, references: Path = REFERENCE_SET, reports_dir: Path = REPORTS_DIR
 ) -> tuple[EvalReport, Path]:
-    """Analyze every eval episode with the current prompts, write the report, and return it and its folder.
+    """Analyze every eval episode with the current prompts and profile, write the report, and
+    return it and its folder.
 
     An episode with a Job that has its Source and Transcript (see `transcribed_job`) is analyzed
-    again from them; otherwise a new Job runs the whole pipeline. fewshot episodes are left alone.
+    again from them, its profile snapshot replaced by the current profile; otherwise a new Job runs
+    the whole pipeline. fewshot episodes are only read for their captions, as few-shot examples.
     Raises ReferenceSetError for an invalid Reference Set and EvalError when an episode fails.
     """
     if not references.is_file():
@@ -164,11 +176,14 @@ def evaluate(
 
     created_at = datetime.now(UTC)
     store = JobStore(settings.data_dir / "jobs")
-    pipeline = Pipeline(store, ports, settings)
-    results = [_episode(store, pipeline, url, clips, references) for url, clips in episodes.items()]
+    pipeline = Pipeline(store, ports, replace(settings, reference_set=references))
+    profile = ProfileStore(settings.data_dir / PROFILE_FILE).load()
+    results = [_episode(store, pipeline, url, clips, references, profile) for url, clips in episodes.items()]
     found = sum(episode.found for episode in results)
     total = sum(episode.total for episode in results)
-    report = EvalReport(PROMPT_VERSION, created_at, shown(references), found, total, found / total, results)
+    report = EvalReport(
+        PROMPT_VERSION, created_at, shown(references), profile, found, total, found / total, results
+    )
     return report, _write(report, reports_dir)
 
 
@@ -224,6 +239,7 @@ def summary(report: EvalReport, folder: Path) -> str:
             for result in episode.references
             if not result.found
         ]
+        lines += [f"    warning: {warning}" for warning in episode.warnings]
     lines += [
         f"Recall: {percent(report.recall)} ({report.found} of {report.total}; the gate needs {percent(GATE_RECALL)})",
         f"Report: {shown(folder / REPORT_FILE)}",
@@ -266,6 +282,8 @@ def markdown(report: EvalReport, folder: Path) -> str:
         f"Watch them below, write how many you would post in `{POSTABLE_FILE}` next to this report, "
         f"then run `make gate REPORT={shown(folder)}`.",
         "",
+        f"Channel Profile: {_profile(report.profile)}",
+        "",
         "| Episode | Job | Found | Recall |",
         "|---|---|---|---|",
         *(
@@ -292,17 +310,18 @@ def shown(path: Path) -> str:
 
 
 def _episode(
-    store: JobStore, pipeline: Pipeline, url: str, references: list[Reference], path: Path
+    store: JobStore, pipeline: Pipeline, url: str, references: list[Reference], path: Path, profile: ChannelProfile
 ) -> EpisodeReport:
     options = JobOptions()
     job = transcribed_job(store, url, options)
     reused = job is not None
     if job is None:
-        job = store.create(url, options)
+        job = store.create(url, options, profile)
         logger.info("Eval: %s in a new Job %s", url, job.id)
         job = pipeline.run(job.id)
     else:
         logger.info("Eval: %s from Job %s's Transcript", url, job.id)
+        store.update(job.id, profile=profile)
         job = pipeline.run(job.id, start=JobStatus.ANALYZING)
     if job.status is not JobStatus.REVIEW:
         raise EvalError(f"{url}: Job {job.id} stopped ({job.status}) while {job.stage}: {job.error}")
@@ -324,7 +343,7 @@ def _episode(
     found = sum(result.found for result in results)
     return EpisodeReport(
         url, job.id, reused, duration, transcript.source, found, len(results), recall(results), results,
-        selection.candidates,
+        selection.candidates, len(selection.examples), job.warnings,
     )
 
 
@@ -370,8 +389,11 @@ def _episode_markdown(episode: EpisodeReport) -> list[str]:
         f"## {episode.url}",
         "",
         f"Job `{episode.job_id}` ({reuse}) · {timestamp(episode.duration)} · {source} · "
+        f"{episode.examples} few-shot example{'' if episode.examples == 1 else 's'} · "
         f"{len(episode.candidates)} Candidates",
         "",
+        *(f"- Warning: {_flat(warning)}" for warning in episode.warnings),
+        *([""] if episode.warnings else []),
         f"### References: {episode.found} of {episode.total} found ({percent(episode.recall)})",
         "",
     ]
@@ -415,6 +437,13 @@ def _link(url: str, start: float, end: float) -> str:
 
 def _flat(text: str) -> str:
     return " ".join(text.split())
+
+
+def _profile(profile: ChannelProfile) -> str:
+    fields = {
+        "niche": profile.niche, "audience": profile.audience, "clip style": profile.clip_style, "avoid": profile.avoid,
+    }
+    return "; ".join(f"{name}: {_flat(text)}" for name, text in fields.items() if text) or "empty"
 
 
 def _postable_template(report: EvalReport, folder: Path) -> str:

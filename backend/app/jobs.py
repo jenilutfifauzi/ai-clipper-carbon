@@ -1,9 +1,7 @@
 """Jobs and the Job store: one directory per Job, holding `job.json` and the Job's stage artifacts."""
 
 import json
-import os
 import re
-import tempfile
 import threading
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -15,7 +13,9 @@ from uuid import uuid4
 from pydantic import Field, TypeAdapter
 
 from app.candidates import Candidate
+from app.profile import ChannelProfile
 from app.selection import Selection
+from app.storage import write_atomic
 from app.transcript import Transcript
 from app.video_source import Source
 
@@ -45,6 +45,7 @@ class JobOptions:
     min_secs: Annotated[float, Field(gt=0)] = 20
     max_secs: Annotated[float, Field(gt=0)] = 90
     captions: bool = True
+    # What to look for in this episode, e.g. "find the funny moments"; it steers Selection.
     brief: str | None = None
     # Ignore YouTube's captions and transcribe the whole Source with Whisper.
     transcribe_locally: bool = False
@@ -52,6 +53,7 @@ class JobOptions:
     def __post_init__(self) -> None:
         if self.min_secs >= self.max_secs:
             raise ValueError("min_secs must be less than max_secs")
+        object.__setattr__(self, "brief", (self.brief or "").strip() or None)
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,9 @@ class Job:
     options: JobOptions
     created_at: datetime
     updated_at: datetime
+    # The Channel Profile as it was when the Job was created: Selection steers by this snapshot. An
+    # eval run replaces it with the current profile before analyzing the Job again.
+    profile: ChannelProfile = ChannelProfile()
     status: JobStatus = JobStatus.QUEUED
     # The stage running now, or the one the Job stopped in (with `error` set); None when queued or done.
     stage: JobStatus | None = None
@@ -97,7 +102,7 @@ class JobStore:
         self.root = root
         self._lock = threading.Lock()
 
-    def create(self, url: str, options: JobOptions) -> Job:
+    def create(self, url: str, options: JobOptions, profile: ChannelProfile) -> Job:
         now = datetime.now(UTC)
         job = Job(
             id=uuid4().hex[:12],
@@ -105,6 +110,7 @@ class JobStore:
             options=options,
             created_at=now,
             updated_at=now,
+            profile=profile,
             history=[Transition(JobStatus.QUEUED, now)],
         )
         self.job_dir(job.id).mkdir(parents=True)
@@ -174,12 +180,3 @@ def _parse_job(data: bytes) -> Job:
         if change["status"] == "transcribed":
             change["status"] = JobStatus.ERROR
     return _JOB.validate_python(state | {"status": JobStatus.ERROR, "stage": JobStatus.ANALYZING, "error": hint})
-
-
-def write_atomic(path: Path, data: bytes) -> None:
-    """Write via a temporary file and a rename, so readers never see a partial file."""
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as tmp:
-        tmp.write(data)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-    Path(tmp.name).replace(path)

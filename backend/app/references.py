@@ -15,7 +15,6 @@ import yaml
 
 from app.config import REPO_ROOT
 
-REFERENCE_SET = REPO_ROOT / "eval" / "references.yaml"
 EXAMPLE = REPO_ROOT / "eval" / "references.example.yaml"
 
 Role = Literal["eval", "fewshot"]

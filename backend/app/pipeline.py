@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from app.audio import SileroVad, chunks
 from app.config import Settings
+from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import Job, JobStatus, JobStore
 from app.ports import Ports
 from app.selection import select
@@ -114,6 +115,17 @@ class Pipeline:
             else:
                 self.store.update(job.id, message=message, progress=round(percent, 1))
 
+        examples, warnings = few_shot_examples(
+            self.settings.reference_set,
+            self.ports.video_source,
+            self.settings.data_dir / FEWSHOT_DIR,
+            job.options.language,
+            self.settings.selection,
+            progress,
+        )
+        if warnings:
+            # Analyzing again repeats the same warnings: keep one of each.
+            job = self.store.update(job.id, warnings=list(dict.fromkeys([*job.warnings, *warnings])))
         selection = select(
             self.ports.llm,
             self.settings.selection,
@@ -121,12 +133,15 @@ class Pipeline:
             duration=job.source.metadata.duration,
             min_secs=job.options.min_secs,
             max_secs=job.options.max_secs,
+            profile=job.profile,
+            brief=job.options.brief,
+            examples=examples,
             progress=progress,
         )
         self.store.save_selection(job.id, selection)
         self.store.save_candidates(job.id, selection.candidates)
         logger.info(
-            "Job %s: %d Candidates from %d Windows (prompt %s)",
-            job.id, len(selection.candidates), len(selection.windows), selection.prompt_version,
+            "Job %s: %d Candidates from %d Windows and %d few-shot examples (prompt %s)",
+            job.id, len(selection.candidates), len(selection.windows), len(examples), selection.prompt_version,
         )
         return self.store.update(job.id, prompt_version=selection.prompt_version)

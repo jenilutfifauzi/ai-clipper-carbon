@@ -1,8 +1,10 @@
-"""Selection: a Transcript in, ranked Candidates out.
+"""Selection: a Transcript in, ranked Candidates out, steered by the Channel Profile and the Brief.
 
-1. The Transcript is cut into overlapping Windows, and the Score pass scores each of them.
+1. The Transcript is cut into overlapping Windows, and the Score pass scores each of them, with
+   the Brief and the profile in short.
 2. The best-scoring Windows form the shortlist.
-3. The Detail pass reads the whole Transcript and proposes clips from the shortlisted Windows.
+3. The Detail pass reads the whole Transcript, the profile, the Brief and the few-shot examples,
+   and proposes clips from the shortlisted Windows.
 4. Post-processing turns the proposals into Candidates (see `_candidates`).
 
 Every number used here is in SelectionTuning; the prompts are in app/prompts.py.
@@ -18,7 +20,9 @@ from uuid import uuid4
 
 from app.candidates import Candidate, Descriptions
 from app.config import SelectionTuning
+from app.fewshot import Example
 from app.llm import ClipProposal, Llm, LlmRequest, ScoreResponse, TransientLlmError, parse_time
+from app.profile import ChannelProfile
 from app.prompts import PROMPT_VERSION, detail_prompt, score_prompt
 from app.transcript import Transcript, Word, timestamp
 
@@ -55,6 +59,8 @@ class Selection:
 
     prompt_version: str
     target_count: int
+    # The few-shot examples the Detail pass was shown.
+    examples: list[Example]
     windows: list[ScoredWindow]
     shortlist: list[str]
     proposals: list[ClipProposal]
@@ -68,6 +74,9 @@ def select(
     duration: float,
     min_secs: float,
     max_secs: float,
+    profile: ChannelProfile = ChannelProfile(),
+    brief: str | None = None,
+    examples: Sequence[Example] = (),
     progress: Progress = lambda message, percent=None: None,
 ) -> Selection:
     """Ranked Candidates of `min_secs` to `max_secs` from the Transcript of a `duration`-second Source."""
@@ -78,7 +87,9 @@ def select(
     scored: list[ScoredWindow] = []
     for i, batch in enumerate(batches):
         progress(f"Scoring {len(windows)} Windows (request {i + 1} of {len(batches)})", 100 * i / steps)
-        prompt = score_prompt(batch, transcript.language, duration, min_secs, max_secs)
+        prompt = score_prompt(
+            batch, transcript.language, duration, min_secs, max_secs, profile, brief, tuning.profile_summary_chars
+        )
         response = _retrying(llm.score, LlmRequest(prompt, tuning.score_temperature), tuning, progress)
         scored += _scores(batch, response)
 
@@ -87,12 +98,12 @@ def select(
     proposals: list[ClipProposal] = []
     if shortlist:
         progress(f"Choosing {count} Candidates from {len(shortlist)} shortlisted Windows", 100 * len(batches) / steps)
-        prompt = detail_prompt(transcript, shortlist, count, duration, min_secs, max_secs)
+        prompt = detail_prompt(transcript, shortlist, count, duration, min_secs, max_secs, profile, brief, examples)
         proposals = _retrying(llm.detail, LlmRequest(prompt, tuning.detail_temperature), tuning, progress).clips
 
     cutter = _Cutter(transcript, duration, tuning)
     candidates = _candidates(proposals, cutter, scored, count, min_secs, max_secs)
-    return Selection(PROMPT_VERSION, count, scored, [w.id for w in shortlist], proposals, candidates)
+    return Selection(PROMPT_VERSION, count, list(examples), scored, [w.id for w in shortlist], proposals, candidates)
 
 
 def _target_count(duration: float, tuning: SelectionTuning) -> int:

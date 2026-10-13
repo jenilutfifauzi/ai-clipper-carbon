@@ -15,6 +15,8 @@ FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
 BLAZE_FACE_MODEL = MODELS_DIR / "blaze_face_short_range.tflite"
 SILERO_VAD_MODEL = MODELS_DIR / "silero_vad.onnx"
 MONTSERRAT_EXTRABOLD = FONTS_DIR / "Montserrat-ExtraBold.ttf"
+# The owner's past clips: eval references and few-shot examples (app/references.py).
+REFERENCE_SET = REPO_ROOT / "eval" / "references.yaml"
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
@@ -43,7 +45,8 @@ class TranscriptionTuning:
 class SelectionTuning:
     """Every number Selection uses. Not read from the environment; tests shrink the retry delay.
 
-    Changing a temperature changes what the eval measures: bump PROMPT_VERSION in app/prompts.py.
+    Changing a temperature or what the prompts hold changes what the eval measures: bump
+    PROMPT_VERSION in app/prompts.py.
     """
 
     # Windows are max(window_min_secs, window_factor x the Job's max clip length) long and
@@ -61,8 +64,17 @@ class SelectionTuning:
     # out any that overlaps an already shortlisted one by more than shortlist_max_overlap of its length.
     shortlist_factor: float = 2
     shortlist_max_overlap: float = 0.5
+    # The Score pass gets the Channel Profile in short, each field flattened to one line of at most
+    # profile_summary_chars characters, since every batch repeats it; the Detail pass gets it in full.
+    profile_summary_chars: int = 200
     # openshorts' value for its Detail pass, which writes the creative copy.
     detail_temperature: float = 0.9
+    # The Detail pass's few-shot examples, from the Reference Set's fewshot clips: at most
+    # fewshot_max_examples, lasting at most fewshot_max_secs together (about 1,500 words of speech,
+    # small next to a long episode's Transcript), taken in turn from each episode in file order.
+    # A clip that would go past fewshot_max_secs is left out and the next one tried.
+    fewshot_max_examples: int = 8
+    fewshot_max_secs: float = 600
     # Candidate edges snap to a Word within snap_search_secs of the proposed time, then take a
     # lead-in before the first Word and a tail after the last one.
     snap_search_secs: float = 1.5
@@ -85,6 +97,8 @@ class Settings:
     data_dir: Path
     ytdlp_cookies_from_browser: str | None
     selection_audio_signal: bool
+    # Not read from the environment: the eval points it at the Reference Set it measures against.
+    reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
     selection: SelectionTuning = SelectionTuning()
 

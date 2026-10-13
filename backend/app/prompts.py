@@ -6,21 +6,26 @@ stands-alone and diversity rules, the hook playbook. Changed: the episodes are p
 Indonesian, read from automatic transcripts; the Detail pass reads the whole Transcript and is
 asked for a target count; times are copied from the Transcript's labels; the assessment fields
 are in English for the reviewer; the JSON skeletons are gone, as the response schema constrains
-the answer.
+the answer. Added: the Channel Profile and the Brief, in both passes so that a Brief can change the
+shortlist (the Score pass gets the profile in short), and few-shot examples in the Detail pass.
+Each of these sections is left out when there is nothing to put in it.
 
 Bump PROMPT_VERSION whenever a template, the way it is filled, the response schemas in
-app/llm.py, or a temperature in SelectionTuning changes: eval reports are kept per version.
+app/llm.py, or a temperature or prompt limit in SelectionTuning changes: eval reports are kept
+per version.
 """
 
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from app.fewshot import Example
+from app.profile import ChannelProfile
 from app.transcript import Transcript, timestamp
 
 if TYPE_CHECKING:
     from app.selection import ScoredWindow, Window
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 _LANGUAGES = {"id": "Indonesian", "en": "English"}
 
@@ -45,13 +50,24 @@ Rules:
   score low.
 - Prefer windows with a strong hook, conflict, surprise, controversy, strong emotion, a joke that
   lands, a confession or personal story, novelty, big numbers, or a clear payoff.
-- `reason`: at most 15 words, naming the moment itself, not the topic.
+- `reason`: at most 15 words, naming the moment itself, not the topic.{steering}
 
 TRANSCRIPT_LANGUAGE: {language}
 EPISODE_DURATION: {duration}
 WINDOWS:
 {windows}
 """
+
+SCORE_PROFILE = """
+- THE CHANNEL these clips are for, in short: {summary}
+  Of two equally strong windows, the one that fits the channel scores higher.{avoid}"""
+SCORE_AVOID = "\n  A window whose moment is something the channel avoids scores low."
+
+SCORE_BRIEF = """
+- THE BRIEF for this episode, from the channel's owner: "{brief}"
+  It is a priority, not a filter. A window that fits it scores clearly higher than an equally
+  strong one that doesn't, so that it reaches the next round; but every window is still scored on
+  its own merits over the whole range, and filler does not become clippable by fitting the Brief."""
 
 DETAIL_TEMPLATE = """\
 You are a senior short-form video editor and viral copywriter. Below is the FULL transcript of one
@@ -74,7 +90,7 @@ FULL TRANSCRIPT:
 SHORTLISTED WINDOWS (time range, first-pass score and reason; the score is a hint, not a verdict):
 {windows}
 
-TIME CONTRACT — STRICT:
+{steering}TIME CONTRACT — STRICT:
 - `start` and `end` are times on the episode's timeline, written like the transcript's labels.
 - `start` is the label of the line the clip opens with.
 - `end` is the label of the first line AFTER the clip: the clip stops where that line begins.
@@ -138,20 +154,60 @@ ASSESSMENT, written in English for the editor who reviews the clips:
 Return the clips best first.
 """
 
+DETAIL_PROFILE = """\
+CHANNEL PROFILE, written by the channel's owner: the channel these clips are for. Prefer the
+moments that fit it, and write the copy for its audience.{avoid}
+{fields}"""
+DETAIL_AVOID = "\nNever choose a moment built on something it says to avoid."
+
+DETAIL_EXAMPLES = """\
+EXAMPLES: clips the channel's owner posted from other episodes, each with the owner's note on why
+it was chosen. Learn from them what this channel finds clip-worthy, then judge this episode's
+moments on their own: never copy an example's content or wording.
+{examples}"""
+EXAMPLE = """\
+<example duration="{duration:.0f} s">
+Note: {note}
+Transcript: {text}
+</example>"""
+
+DETAIL_BRIEF = """\
+BRIEF for this episode, from the channel's owner: "{brief}"
+It is a priority, not a filter: choose the moments that fit it first, then fill CLIP_COUNT with
+the strongest other moments.{over_profile}"""
+DETAIL_BRIEF_OVER_PROFILE = " Where it and the channel profile pull different ways, follow the Brief."
+
+_PROFILE_FIELDS = (("niche", "Niche"), ("audience", "Audience"), ("clip_style", "Clip style"), ("avoid", "Avoid"))
+
 
 def score_prompt(
-    windows: Sequence["Window"], language: str, duration: float, min_secs: float, max_secs: float
+    windows: Sequence["Window"],
+    language: str,
+    duration: float,
+    min_secs: float,
+    max_secs: float,
+    profile: ChannelProfile,
+    brief: str | None,
+    profile_chars: int,
 ) -> str:
+    """The Score prompt, with the profile's fields each cut to `profile_chars` characters."""
     blocks = "\n".join(
         f'<window id="{w.id}" start="{timestamp(w.start)}" end="{timestamp(w.end)}">\n{w.text}\n</window>'
         for w in windows
     )
+    steering = ""
+    if fields := _profile_fields(profile):
+        summary = " ".join(f"{label}: {_sentence(_shortened(text, profile_chars))}" for label, text in fields)
+        steering += SCORE_PROFILE.format(summary=summary, avoid=SCORE_AVOID if profile.avoid else "")
+    if brief:
+        steering += SCORE_BRIEF.format(brief=_flat(brief))
     return SCORE_TEMPLATE.format(
         language=_language(language),
         duration=timestamp(duration),
         min_secs=min_secs,
         max_secs=max_secs,
         windows=blocks,
+        steering=steering,
     )
 
 
@@ -162,8 +218,12 @@ def detail_prompt(
     duration: float,
     min_secs: float,
     max_secs: float,
+    profile: ChannelProfile,
+    brief: str | None,
+    examples: Sequence[Example],
 ) -> str:
-    """The Detail prompt: the whole Transcript one line per Segment, labelled with `timestamp()`."""
+    """The Detail prompt: the whole Transcript one line per Segment, labelled with `timestamp()`,
+    then the profile in full, the examples and the Brief."""
     lines = "\n".join(f"[{timestamp(segment.start)}] {segment.text}" for segment in transcript.segments)
     windows = "\n".join(
         f"- {w.id} [{timestamp(w.start)}–{timestamp(w.end)}] score {w.score}: {w.reason}"
@@ -171,6 +231,16 @@ def detail_prompt(
         else f"- {w.id} [{timestamp(w.start)}–{timestamp(w.end)}] not scored"
         for w in shortlist
     )
+    sections = []
+    if fields := _profile_fields(profile):
+        listed = "\n".join(f"- {label}: {_indented(text)}" for label, text in fields)
+        sections.append(DETAIL_PROFILE.format(avoid=DETAIL_AVOID if profile.avoid else "", fields=listed))
+    if examples:
+        shown = "\n".join(EXAMPLE.format(duration=e.end - e.start, note=e.note, text=e.text) for e in examples)
+        sections.append(DETAIL_EXAMPLES.format(examples=shown))
+    if brief:
+        over_profile = DETAIL_BRIEF_OVER_PROFILE if fields else ""
+        sections.append(DETAIL_BRIEF.format(brief=_flat(brief), over_profile=over_profile))
     return DETAIL_TEMPLATE.format(
         language=_language(transcript.language),
         duration=timestamp(duration),
@@ -179,7 +249,34 @@ def detail_prompt(
         count=count,
         transcript=lines,
         windows=windows,
+        steering="".join(f"{section}\n\n" for section in sections),
     )
+
+
+def _profile_fields(profile: ChannelProfile) -> list[tuple[str, str]]:
+    """The (label, text) of each field that isn't empty."""
+    return [(label, text) for name, label in _PROFILE_FIELDS if (text := getattr(profile, name))]
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _shortened(text: str, chars: int) -> str:
+    """`text` on one line, cut at a word to at most `chars` characters and an ellipsis."""
+    text = _flat(text)
+    if len(text) <= chars:
+        return text
+    return text[: chars + 1].rsplit(" ", 1)[0][:chars].rstrip(" ,;:.") + "…"
+
+
+def _sentence(text: str) -> str:
+    return text if text[-1] in ".!?…" else f"{text}."
+
+
+def _indented(text: str) -> str:
+    """Text of several lines, its blank lines dropped and the others indented under a list item's first."""
+    return "\n  ".join(line.strip() for line in text.splitlines() if line.strip())
 
 
 def _language(code: str) -> str:

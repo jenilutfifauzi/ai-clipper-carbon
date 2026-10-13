@@ -17,6 +17,7 @@ from test_selection import clip
 
 A = "https://www.youtube.com/watch?v=AAAAAAAAAAA"
 B = "https://www.youtube.com/watch?v=BBBBBBBBBBB"
+C = "https://www.youtube.com/watch?v=CCCCCCCCCCC"
 
 # The fake Detail pass proposes these clips for every episode. On the 62-minute episode they become
 # Candidate #1 at 715.65–771.45, #2 at 1979.65–2039.45 and #3 at 2999.65–3059.45.
@@ -88,22 +89,30 @@ def test_a_reference_is_found_when_one_candidate_covers_at_least_half_of_it():
     assert recall(results + empty) == 4 / 8
 
 
-def test_eval_run_reuses_transcribed_jobs_skips_fewshot_episodes_and_keeps_every_report(
+def test_eval_run_reuses_transcribed_jobs_takes_only_captions_from_fewshot_episodes_and_keeps_every_report(
     client, settings, video_source, transcriber, llm, from_episode, wait_for_status, tmp_path
 ):
     llm.clips = CLIPS
-    # Episode A was analyzed before, from another form of its URL.
+    # Episode A was analyzed before, from another form of its URL, with an empty Channel Profile.
     earlier = wait_for_status(create_job(client, url="https://youtu.be/AAAAAAAAAAA")["id"], "review")
-    references = tmp_path / "references.yaml"
+    assert client.put("/api/profile", json={"niche": "Podcast bisnis"}).status_code == 200
+    references = tmp_path / "eval-references.yaml"
     references.write_text(REFERENCES)
     ports = Ports(video_source, transcriber, llm)
 
     report, folder = evaluate(settings, ports, references, tmp_path / "reports")
 
-    # A's Source and Transcript are reused; B is fetched once; C is never touched.
+    # A's Source and Transcript are reused; B is fetched once; of C, only the captions are fetched.
     assert video_source.calls == [("https://youtu.be/AAAAAAAAAAA", "id"), (B, "id")]
+    assert video_source.caption_calls == [(C, "id")]
     assert transcriber.calls == []
     assert len(llm.detail_requests) == 3
+    # Both episodes are analyzed with the current profile and C's clip as a few-shot example; the
+    # reused Job's profile snapshot is replaced by the current profile.
+    assert all("- Niche: Podcast bisnis\n" in r.prompt and "Note: contoh few-shot\n" in r.prompt for r in llm.detail_requests[1:])
+    assert client.get(f"/api/jobs/{earlier['id']}").json()["profile"]["niche"] == "Podcast bisnis"
+    assert report.profile.niche == "Podcast bisnis"
+    assert [(e.examples, e.warnings) for e in report.episodes] == [(1, []), (1, [])]
     assert [(e.url, e.job_id == earlier["id"], e.reused, e.found, e.total) for e in report.episodes] == [
         (A, True, True, 1, 2),
         (B, False, False, 1, 1),
@@ -121,6 +130,8 @@ def test_eval_run_reuses_transcribed_jobs_skips_fewshot_episodes_and_keeps_every
 
     text = (folder / "report.md").read_text()
     assert "**Recall: 66.7%** (2 of 3 references found" in text
+    assert "\nChannel Profile: niche: Podcast bisnis\n" in text
+    assert " · 1 few-shot example · 3 Candidates\n" in text
     assert f"- **Found** [12:00–12:40]({A}&t=720s) (line 1): rugi 500 juta. Candidate #1 (11:55–12:51) covers 100.0%." in text
     assert f"- **Missed** [34:00–35:00]({A}&t=2040s) (line 11): setelah klip kedua. No Candidate overlaps it." in text
     assert f"2. **Rahasia Sukses Cuma Satu**: [32:59–33:59]({B}&t=1979s) (60 s), score 80" in text
@@ -135,9 +146,10 @@ def test_eval_run_reuses_transcribed_jobs_skips_fewshot_episodes_and_keeps_every
     assert gate(folder).postable == {A: 3, B: 3}
     assert gate(folder).status == "pass"
 
-    # A second run reuses both Jobs and leaves the first report in place.
+    # A second run reuses both Jobs and C's cached captions, and leaves the first report in place.
     _, second = evaluate(settings, ports, references, tmp_path / "reports")
     assert len(video_source.calls) == 2
+    assert len(video_source.caption_calls) == 1
     assert second != folder
     assert {path.name for path in folder.iterdir()} == {"report.md", "report.json", "postable.yaml"}
 

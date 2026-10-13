@@ -8,6 +8,7 @@ from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
+from app.profile import PROFILE_FILE, ProfileStore
 from app.worker import Worker
 
 
@@ -26,5 +27,6 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
     app.state.store = store
     app.state.worker = worker
+    app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.include_router(api.router)
     return app

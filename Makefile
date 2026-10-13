@@ -35,7 +35,8 @@ test-whisper:
 	$(UV) run pytest -m whisper
 
 # Download a YouTube episode, build its Transcript and select Candidates, without the UI: make analyze URL=...
-# Extra CLI options go in ARGS, e.g. ARGS=--transcribe-locally to ignore YouTube's captions.
+# Extra CLI options go in ARGS, e.g. ARGS=--transcribe-locally to ignore YouTube's captions,
+# or ARGS='--brief "find the funny moments"' to steer Selection for this episode.
 analyze:
 	@[ -n "$(URL)" ] || { echo "Usage: make analyze URL=<youtube-url> [ARGS=--transcribe-locally]"; exit 1; }
 	$(UV) run python -m app.cli analyze "$(URL)" $(ARGS)
