@@ -35,9 +35,10 @@ test-whisper:
 	$(UV) run pytest -m whisper
 
 # Download a YouTube episode and build its Transcript, without the UI: make analyze URL=...
+# Extra CLI options go in ARGS, e.g. ARGS=--transcribe-locally to ignore YouTube's captions.
 analyze:
-	@[ -n "$(URL)" ] || { echo "Usage: make analyze URL=<youtube-url>"; exit 1; }
-	$(UV) run python -m app.cli analyze "$(URL)"
+	@[ -n "$(URL)" ] || { echo "Usage: make analyze URL=<youtube-url> [ARGS=--transcribe-locally]"; exit 1; }
+	$(UV) run python -m app.cli analyze "$(URL)" $(ARGS)
 
 # Upgrade yt-dlp (and its pinned extras) in uv.lock and the environment.
 update-ytdlp:

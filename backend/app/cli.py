@@ -16,16 +16,23 @@ def main(argv: list[str] | None = None) -> int:
     analyze = commands.add_parser("analyze", help="download a YouTube episode and build its Transcript")
     analyze.add_argument("url")
     analyze.add_argument("--language", default=DEFAULT_LANGUAGE, help=f"Transcript language (default {DEFAULT_LANGUAGE})")
+    analyze.add_argument(
+        "--transcribe-locally",
+        action="store_true",
+        help="ignore YouTube's captions and transcribe the whole episode with Whisper",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
     store = JobStore(settings.data_dir / "jobs")
-    job = store.create(args.url, JobOptions(language=args.language))
+    job = store.create(args.url, JobOptions(language=args.language, transcribe_locally=args.transcribe_locally))
     print(f"Job {job.id} in {store.job_dir(job.id)}", flush=True)
 
-    job = Pipeline(store, real_ports(settings)).run(job.id)
+    job = Pipeline(store, real_ports(settings), settings).run(job.id)
     print(f"Status: {job.status}")
+    for warning in job.warnings:
+        print(f"Warning: {warning}")
     if job.status is JobStatus.ERROR:
         print(f"Error while {job.stage}: {job.error}")
         return 1

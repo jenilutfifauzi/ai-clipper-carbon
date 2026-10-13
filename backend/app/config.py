@@ -25,6 +25,21 @@ _FALSE = {"0", "false", "no", "off"}
 
 
 @dataclass(frozen=True)
+class TranscriptionTuning:
+    """How local transcription is chunked and guarded. Not read from the environment; tests shrink it."""
+
+    # A full-episode run is cut into chunks of about this length, each ending in a pause
+    # found within `cut_search_secs` of it.
+    chunk_secs: float = 300
+    cut_search_secs: float = 30
+    # The watchdog's budget for one Transcriber call: budget_secs + budget_factor x the range's
+    # duration. Whisper runs at about 1.9x realtime on the target M1, so a 300 s chunk normally
+    # takes about 160 s; its budget of 510 s also covers a model (re)load under memory pressure.
+    budget_secs: float = 60
+    budget_factor: float = 1.5
+
+
+@dataclass(frozen=True)
 class Settings:
     gemini_api_key: str | None
     gemini_model: str
@@ -33,6 +48,7 @@ class Settings:
     data_dir: Path
     ytdlp_cookies_from_browser: str | None
     selection_audio_signal: bool
+    transcription: TranscriptionTuning = TranscriptionTuning()
 
     @property
     def ffprobe_bin(self) -> Path:

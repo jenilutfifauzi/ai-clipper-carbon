@@ -15,7 +15,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     """The app, wired to `ports` (the real ones by default). Run with `uvicorn --factory app.main:create_app`."""
     settings = settings or load_settings()
     store = JobStore(settings.data_dir / "jobs")
-    worker = Worker(Pipeline(store, ports or real_ports(settings)).run)
+    worker = Worker(Pipeline(store, ports or real_ports(settings), settings).run)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

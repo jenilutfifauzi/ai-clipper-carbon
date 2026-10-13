@@ -1,3 +1,4 @@
+import multiprocessing
 import subprocess
 import wave
 from pathlib import Path
@@ -6,7 +7,8 @@ import mlx_whisper
 import numpy as np
 import pytest
 
-from app.config import load_settings
+from app.config import TranscriptionTuning, load_settings
+from app.transcriber import TranscriptionStalled, Watchdog, WhisperTranscriber
 
 SENTENCE = "The quick brown fox jumps over the lazy dog."
 
@@ -25,6 +27,63 @@ def read_pcm16(path: Path) -> np.ndarray:
     return np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768
 
 
+@pytest.fixture
+def two_sentences(tmp_path) -> tuple[Path, float]:
+    """2 s of silence, the sentence, 3 s of silence, the sentence again. Returns the path and the
+    distance between the two sentences' starts."""
+    speak(SENTENCE, tmp_path / "sentence.wav")
+    sentence = read_pcm16(tmp_path / "sentence.wav")
+    silence = np.zeros(16000, dtype=np.float32)
+    audio = np.concatenate([silence, silence, sentence, silence, silence, silence, sentence, silence])
+    path = tmp_path / "two-sentences.wav"
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes((audio * 32767).astype("<i2").tobytes())
+    return path, len(sentence) / 16000 + 3
+
+
+@pytest.mark.whisper
+def test_whisper_transcriber_returns_words_on_the_source_timeline(two_sentences):
+    path, sentence_distance = two_sentences
+    transcriber = WhisperTranscriber(load_settings())
+    try:
+        transcript = transcriber.transcribe(path, "en", start=1.0)
+    finally:
+        transcriber.stop()
+
+    assert (transcript.language, transcript.source) == ("en", "whisper")
+    text = " ".join(word.text for word in transcript.words).lower()
+    assert text.count("fox") == 2 and text.count("lazy") == 2
+    # On the file's timeline, not the range's: the first sentence starts 2 s into the file.
+    assert transcript.words[0].start == pytest.approx(2.0, abs=0.5)
+    # VAD cut most of the 3 s pause before Whisper heard it; the times put it back.
+    foxes = [word for word in transcript.words if "fox" in word.text.lower()]
+    assert foxes[1].start - foxes[0].start == pytest.approx(sentence_distance, abs=0.3)
+    assert all(1.0 <= word.start <= word.end for word in transcript.words)
+    assert " ".join(segment.text for segment in transcript.segments) == " ".join(w.text for w in transcript.words)
+    assert not multiprocessing.active_children()
+
+
+@pytest.mark.whisper
+def test_watchdog_kills_a_worker_past_its_budget_and_a_new_worker_succeeds(two_sentences):
+    path, _ = two_sentences
+    transcriber = WhisperTranscriber(load_settings())
+    try:
+        # Too short to even load the model: both attempts are killed.
+        with pytest.raises(TranscriptionStalled, match="stalled twice"):
+            Watchdog(transcriber, TranscriptionTuning(budget_secs=1, budget_factor=0)).transcribe(path, "en", 0, 11)
+        assert not multiprocessing.active_children()
+
+        transcript = Watchdog(transcriber, TranscriptionTuning()).transcribe(path, "en", 0, 11)
+        assert "fox" in " ".join(word.text for word in transcript.words).lower()
+    finally:
+        transcriber.stop()
+    assert not multiprocessing.active_children()
+
+
+# Last: mlx-whisper keeps this model loaded in the test process, next to any worker's copy.
 @pytest.mark.whisper
 def test_transcribes_speech_with_word_timestamps(tmp_path):
     wav_path = tmp_path / "speech.wav"

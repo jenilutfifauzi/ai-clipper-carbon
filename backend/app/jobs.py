@@ -40,6 +40,8 @@ class JobOptions:
     max_secs: Annotated[float, Field(gt=0)] = 90
     captions: bool = True
     brief: str | None = None
+    # Ignore YouTube's captions and transcribe the whole Source with Whisper.
+    transcribe_locally: bool = False
 
     def __post_init__(self) -> None:
         if self.min_secs >= self.max_secs:
@@ -63,6 +65,11 @@ class Job:
     # The stage running now, or the one the Job stopped in (with `error` set); None when queued or done.
     stage: JobStatus | None = None
     error: str | None = None
+    # Percent done and a status line for the running stage, when it reports them.
+    progress: float | None = None
+    message: str | None = None
+    # Things that went wrong without failing the Job, e.g. a stretch of audio left untranscribed.
+    warnings: list[str] = field(default_factory=list)
     source: Source | None = None
     history: list[Transition] = field(default_factory=list)
 

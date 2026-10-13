@@ -79,7 +79,14 @@ def test_language_defaults_to_indonesian_and_can_be_overridden(client, video_sou
 
 
 def test_job_stores_the_options_it_was_created_with(client):
-    options = {"language": "id", "min_secs": 30, "max_secs": 60, "captions": False, "brief": "find the funny moments"}
+    options = {
+        "language": "id",
+        "min_secs": 30,
+        "max_secs": 60,
+        "captions": False,
+        "brief": "find the funny moments",
+        "transcribe_locally": True,
+    }
     job = create_job(client, **options)
 
     assert job["options"] == options
@@ -137,15 +144,6 @@ def test_failing_source_puts_the_job_in_error_and_the_next_job_still_runs(client
 
     video_source.fail_with(None)
     assert wait_for_status(create_job(client)["id"], "transcribed", "error")["status"] == "transcribed"
-
-
-def test_source_without_captions_fails_in_transcribing(client, video_source, wait_for_status):
-    video_source.caption_track = None
-    job = wait_for_status(create_job(client)["id"], "transcribed", "error")
-
-    assert (job["status"], job["stage"]) == ("error", "transcribing")
-    assert "auto-captions" in job["error"]
-    assert job["source"]["metadata"]["width"] == 320
 
 
 def test_unknown_job_is_not_found(client):
