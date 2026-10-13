@@ -13,13 +13,14 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
+from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.candidates import Candidate
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
-from app.config import Settings
+from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job, JobStatus, JobStore
-from app.planner import RenderPlan, plan_render
+from app.planner import RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
 from app.storage import write_atomic
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 RENDERABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 
 _PLAN = TypeAdapter(RenderPlan)
+_ANALYSIS = TypeAdapter(ClipAnalysis)
 
 
 class NothingToRender(ValueError):
@@ -42,6 +44,7 @@ class Renders:
         self.store = store
         self.settings = settings
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
+        self.analyzer = Analyzer(settings.ffmpeg_bin, BLAZE_FACE_MODEL, settings.analysis)
 
     def request(self, job_id: str, candidate_ids: list[str] | None = None) -> bool:
         """Queue the Candidates' Clips: those of `candidate_ids`, or of the selected Candidates. A Clip
@@ -98,6 +101,7 @@ class Renders:
         self.store.change_clips(job_id, requeue, expect={JobStatus.RENDERING})
 
     def stop(self) -> None:
+        self.analyzer.stop()
         self.renderer.stop()
 
     def _next(self, job_id: str, count: int) -> tuple[Job, Clip, Candidate] | None:
@@ -126,9 +130,6 @@ class Renders:
         job_dir = self.store.job_dir(job.id)
         (job_dir / CLIPS_DIR).mkdir(exist_ok=True)
         video, poster, plan_file = clip_files(candidate.id)
-        plan = plan_render(candidate.start, candidate.end, job.source.metadata)
-        write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
-
         shown = 0
 
         def progress(done: float) -> None:
@@ -139,7 +140,18 @@ class Renders:
 
         began = time.monotonic()
         try:
-            encoder = self.renderer.render(job_dir / job.source.video, plan, job_dir / video, job_dir / poster, progress)
+            analysis = self._analysis(job, candidate, lambda done: progress(done / 3))
+            # A Clip analysed just now has shown that as the first third of its progress.
+            share = shown / 100
+            plan = plan_render(
+                candidate.start, candidate.end, job.source.metadata,
+                analysis.scenes if analysis else None, analysis.frames if analysis else None, self.settings.camera,
+            )
+            write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
+            encoder = self.renderer.render(
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster,
+                lambda done: progress(share + (1 - share) * done),
+            )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:
             raise
@@ -176,6 +188,33 @@ class Renders:
             return _put(clips, ended), {}, ended
 
         return self.store.change_clips(job.id, finish)
+
+    def _analysis(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> ClipAnalysis | None:
+        """The Scenes and faces of the Candidate's range, as saved by an earlier render of the same
+        range with the same tuning, or found now and saved; None for a Source that isn't reframed."""
+        assert job.source is not None
+        if not reframes(job.source.metadata):
+            return None
+        path = self.store.job_dir(job.id) / analysis_file(candidate.start, candidate.end)
+        if path.is_file():
+            try:
+                saved = _ANALYSIS.validate_json(path.read_bytes())
+            except ValidationError:
+                saved = None
+            if saved is not None and (saved.start, saved.end) == (candidate.start, candidate.end):
+                if saved.tuning == self.analyzer.tuning:
+                    return saved
+        began = time.monotonic()
+        source = self.store.job_dir(job.id) / job.source.video
+        analysis = self.analyzer.analyze(source, job.source.metadata, candidate.start, candidate.end, progress)
+        logger.info(
+            "Job %s: analysed Candidate %s in %.1f s: %d scenes, faces in %d of %d sampled frames",
+            job.id, candidate.id, time.monotonic() - began, len(analysis.scenes),
+            sum(1 for frame in analysis.frames if frame.faces), len(analysis.frames),
+        )
+        path.parent.mkdir(exist_ok=True)
+        write_atomic(path, _ANALYSIS.dump_json(analysis))
+        return analysis
 
 
 def ranked_clips(clips: list[Clip], candidates: list[Candidate]) -> list[Clip]:

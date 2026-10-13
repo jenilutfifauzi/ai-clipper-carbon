@@ -99,12 +99,22 @@ class Renderer:
         self, source: Path, plan: RenderPlan, loudness: dict[str, str] | None, encoder: str, video: Path, poster: Path
     ) -> list[str]:
         tuning = self.tuning
-        [scene] = plan.scenes
-        [panel] = scene.panels
-        [at] = panel.path
+        panel = plan.scenes[0].panels[0]
+        first, *moves = [point for scene in plan.scenes for point in scene.panels[0].path]
         area = panel.area
+        # The crop moves at its change points through commands that ffmpeg sends it as the frames go
+        # by, a quarter of a frame early so that rounding can't make one late.
+        commands, last = [], first
+        for point in moves:
+            at = f"{max(0.0, point.at - 0.25 / plan.fps):.4f}"
+            for key, old, new in (("x", last.x, point.x), ("y", last.y, point.y)):
+                if new != old:
+                    commands.append(f"{at} crop@p0 {key} {new}")
+            last = point
+        # Commands are separated by ";", escaped from the filtergraph, which splits chains at it.
+        moving = f"sendcmd=c={'\\;'.join(commands)}," if commands else ""
         frame = (
-            f"[0:v]crop@p0=w={panel.crop_width}:h={panel.crop_height}:x={at.x}:y={at.y},"
+            f"[0:v]{moving}crop@p0=w={panel.crop_width}:h={panel.crop_height}:x={first.x}:y={first.y},"
             f"scale={area.width}:{area.height}:flags=lanczos,setsar=1"
         )
         if (area.width, area.height) != (plan.width, plan.height):
@@ -163,9 +173,10 @@ class Renderer:
 
 
 def _check(plan: RenderPlan) -> None:
-    """Refuse what the Render Plan can hold but the Renderer doesn't draw yet (tickets 13–16)."""
-    if len(plan.scenes) != 1 or len(plan.scenes[0].panels) != 1 or len(plan.scenes[0].panels[0].path) != 1:
-        raise ValueError("The Renderer draws one scene with one static panel so far")
+    """Refuse what the Render Plan can hold but the Renderer doesn't draw yet (tickets 14–16)."""
+    panels = [scene.panels for scene in plan.scenes]
+    if any(len(panel) != 1 for panel in panels) or len({(p.area, p.crop_width, p.crop_height) for [p] in panels}) != 1:
+        raise ValueError("The Renderer draws one panel of one size in every scene so far")
     if plan.captions or plan.hook:
         raise ValueError("The Renderer doesn't burn captions or the hook yet")
 

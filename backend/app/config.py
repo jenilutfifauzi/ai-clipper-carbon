@@ -171,6 +171,49 @@ class RenderTuning:
 
 
 @dataclass(frozen=True)
+class AnalysisTuning:
+    """How a Clip's range is analysed before planning: scene cuts and faces. Not read from the
+    environment. A Clip's analysis is cached with these values, and done again when they change."""
+
+    # ffmpeg scdet's threshold: a frame whose scene-change score (0–100) is at least this starts a
+    # new Scene. A hard cut between camera angles of the same room scores about 15–25.
+    scene_threshold: float = 10
+    # Faces are looked for in every face_step-th frame, decoded at face_width pixels wide.
+    face_width: int = 640
+    face_step: int = 3
+    # MediaPipe's confidence for a detection to count. Faces in wide shots score about 0.5–0.6.
+    face_confidence: float = 0.5
+
+
+@dataclass(frozen=True)
+class CameraTuning:
+    """How the Render Planner follows faces: the Speaker Tracker picks whom to follow, the Smooth
+    Camera moves the crop. Not read from the environment; the planner's tests use the defaults."""
+
+    # A detection is the same face as one seen before when their centres are less than
+    # match_distance x the frame's width apart.
+    match_distance: float = 0.15
+    # Each face's score: its area (as a share of the frame) added at each sampled frame it is
+    # seen in, the sum multiplied by score_decay at every sampled frame.
+    score_decay: float = 0.85
+    # Another face becomes the target only once its score is over stickiness x the target's, and
+    # at least cooldown_frames (Source frames) after the target last changed.
+    stickiness: float = 3
+    cooldown_frames: int = 30
+    # The face can move within a zone dead_zone x the crop's width wide, centred on where the camera
+    # is heading, without the camera following.
+    dead_zone: float = 0.25
+    # A detection farther than half the dead-zone from where the face was last seen is a jump, which
+    # counts once this many detections in a row have jumped the same way; a smooth move counts at once.
+    confirmations: int = 3
+    # The camera moves as a critically damped spring of this angular frequency (per second): 95% of
+    # the way in about 4.7 / spring_rate seconds, never past the goal. It moves at most max_speed
+    # crop widths a second.
+    spring_rate: float = 10
+    max_speed: float = 1.5
+
+
+@dataclass(frozen=True)
 class LlmChoice:
     """The LLM Selection runs on, as recorded with each Selection run and eval report."""
 
@@ -205,6 +248,8 @@ class Settings:
     selection: SelectionTuning = SelectionTuning()
     quota: QuotaTuning = QuotaTuning()
     render: RenderTuning = RenderTuning()
+    analysis: AnalysisTuning = AnalysisTuning()
+    camera: CameraTuning = CameraTuning()
     # The disk endpoint warns when the data directory's volume has less free space than this.
     low_disk_bytes: int = 10 * 10**9
     frontend_dir: Path = FRONTEND_DIST

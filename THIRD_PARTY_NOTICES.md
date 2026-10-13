@@ -146,3 +146,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 - [Silero VAD](https://github.com/snakers4/silero-vad) ONNX model, MIT License.
 - [mlx-community/whisper-large-v3-turbo](https://huggingface.co/mlx-community/whisper-large-v3-turbo), an MLX
   conversion of [OpenAI Whisper large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) (MIT License).
+
+## Test portrait
+
+`backend/tests/fixtures/portrait.jpg` is `portrait_small.jpg` from MediaPipe's test data
+(`https://storage.googleapis.com/mediapipe-assets/tasks/testdata/vision/portrait_small.jpg`, listed in
+[google-ai-edge/mediapipe](https://github.com/google-ai-edge/mediapipe)'s `third_party/external_files.bzl`),
+distributed with MediaPipe under the Apache License 2.0. It is a small copy of Pete Souza's 2012 official
+White House portrait of Barack Obama, a work of the United States federal government and so in the public
+domain in the United States. The tests only use it to put a real face into a generated video.

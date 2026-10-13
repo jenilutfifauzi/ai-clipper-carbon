@@ -11,6 +11,7 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,11 +22,13 @@ from app.jobs import JobStatus, JobStore
 from app.main import create_app
 from app.ports import Ports
 from app.rendering import Renders
-from conftest import wait_for
+from conftest import FIXTURES, wait_for
 from test_jobs_api import create_job, statuses
 from test_review import patch
 
 SOURCE_SECS = 6
+# The moving face's plain background, 0x4a5560.
+BACKGROUND = np.array([0x4A, 0x55, 0x60])
 
 
 @pytest.fixture(scope="session")
@@ -37,6 +40,27 @@ def render_video(tmp_path_factory) -> Path:
         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
         "-t", str(SOURCE_SECS), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
         str(path),
+    ]
+    subprocess.run(command, check=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def moving_face(tmp_path_factory) -> Path:
+    """A 1280x720 close-up of a real face (the head from fixtures/portrait.jpg, 400x500) that holds
+    still for 0.5 s, glides 600 px to the right over 5 s, then holds again: farther than the 404 px
+    wide crop, so only a crop that follows it keeps it in frame. With a tone, 6 s long."""
+    path = tmp_path_factory.mktemp("face") / "face.mp4"
+    command = [
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=0x4a5560:size=1280x720:rate=25",
+        "-loop", "1", "-framerate", "25", "-i", str(FIXTURES / "portrait.jpg"),
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+        "-filter_complex",
+        "[1:v]crop=120:150:43:0,scale=400:500[head];"
+        "[0:v][head]overlay=x='100+600*clip((t-0.5)/5,0,1)':y=110:shortest=1,format=yuv420p[v]",
+        "-map", "[v]", "-map", "2:a", "-t", str(SOURCE_SECS),
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path),
     ]
     subprocess.run(command, check=True)
     return path
@@ -69,9 +93,9 @@ def render(client, job: dict, candidate_ids: list[str] | None = None) -> list[di
     return response.json()
 
 
-def rendered(client, job: dict) -> dict:
+def rendered(client, job: dict, timeout: float = 30) -> dict:
     """The Job, once its renders are done."""
-    return wait_for(client, job["id"], "review", timeout=30)
+    return wait_for(client, job["id"], "review", timeout=timeout)
 
 
 def probe(settings, path: Path) -> dict:
@@ -84,6 +108,16 @@ def loudness(settings, path: Path) -> float:
     command = [str(settings.ffmpeg_bin), "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128", "-f", "null", "-"]
     output = subprocess.run(command, capture_output=True, text=True, check=True).stderr
     return float(re.findall(r"I:\s+(-?[\d.]+) LUFS", output)[-1])
+
+
+def output_frame(settings, video: Path, at: float) -> np.ndarray:
+    """The Clip's frame at `at` seconds, shrunk to 54x96 RGB."""
+    command = [
+        str(settings.ffmpeg_bin), "-v", "error", "-ss", f"{at}", "-i", str(video), "-frames:v", "1",
+        "-vf", "scale=54:96", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]
+    data = subprocess.run(command, capture_output=True, check=True).stdout
+    return np.frombuffer(data, dtype=np.uint8).reshape(96, 54, 3).astype(int)
 
 
 def check_clip(settings, job_dir: Path, clip: dict, candidate: dict) -> None:
@@ -302,3 +336,51 @@ def test_a_portrait_source_is_passed_through_into_the_vertical_frame(client, set
     check_clip(settings, job_dir, clip, candidate)
     [scene] = json.loads((job_dir / clip["output"]["plan"]).read_text())["scenes"]
     assert (scene["layout"], scene["panels"][0]["area"]) == ("passthrough", {"x": 0, "y": 240, "width": 1080, "height": 1440})
+
+
+def test_a_close_up_crop_follows_the_face_and_keeps_it_in_frame(client, settings, video_source, moving_face):
+    video_source.video = moving_face
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    # One scene (the shot has no cut), tracked by a crop that moves.
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    [scene] = plan["scenes"]
+    [panel] = scene["panels"]
+    assert (scene["layout"], panel["crop_width"], panel["crop_height"]) == ("track", 404, 720)
+    path = panel["path"]
+    assert len(path) > 10 and path[0]["at"] == 0
+
+    # The Clip's analysis is kept with the Job: MediaPipe found the face in nearly every sampled frame.
+    [analysis_file] = (job_dir / "analysis").iterdir()
+    frames = json.loads(analysis_file.read_text())["frames"]
+    seen = [frame for frame in frames if frame["faces"]]
+    assert len(frames) == pytest.approx((candidate["end"] - candidate["start"]) * 25 / 3, abs=1)
+    assert len(seen) >= 0.9 * len(frames)
+    centres = [face["x"] + face["width"] / 2 for frame in seen for face in frame["faces"]]
+    assert max(centres) - min(centres) > panel["crop_width"]
+    # On every sampled frame, the face is inside the crop.
+    for frame in seen:
+        x = [point["x"] for point in path if point["at"] <= frame["at"] + 1e-6][-1]
+        for face in frame["faces"]:
+            assert x <= face["x"] and face["x"] + face["width"] <= x + panel["crop_width"], frame
+
+    # The Renderer moved the crop as planned: the face stays in the middle of the picture, over the
+    # plain background, from the first frame to the last.
+    for at in (0.2, 2.5, 5.5):
+        middle = output_frame(settings, job_dir / clip["output"]["video"], at)[30:70, 12:42]
+        assert (np.abs(middle - BACKGROUND).max(axis=2) > 24).mean() > 0.9, at
+
+    # Rendering again after a hook edit reuses the analysis.
+    analysed = analysis_file.stat().st_mtime_ns
+    patch(client, job, candidate, hook_text="Hook baru")
+    render(client, job)
+    [again] = rendered(client, job, timeout=60)["clips"]
+    assert again["output"]["hook_text"] == "Hook baru"
+    assert [analysis_file] == list((job_dir / "analysis").iterdir())
+    assert analysis_file.stat().st_mtime_ns == analysed
+    assert json.loads((job_dir / again["output"]["plan"]).read_text()) == plan
