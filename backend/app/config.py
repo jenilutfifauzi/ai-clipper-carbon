@@ -71,6 +71,9 @@ class SelectionTuning:
     # Target count: max(min_candidates, episode minutes / minutes_per_candidate, rounded).
     min_candidates: int = 3
     minutes_per_candidate: float = 9
+    # The Detail pass is asked for the target count and up to spare_clips more, to replace the
+    # ones post-processing drops; only the best target count are kept.
+    spare_clips: int = 2
     # The shortlist holds shortlist_factor x the target count of the best-scoring Windows, leaving
     # out any that overlaps an already shortlisted one by more than shortlist_max_overlap of its length.
     shortlist_factor: float = 2
@@ -91,6 +94,28 @@ class SelectionTuning:
     snap_search_secs: float = 1.5
     lead_in_secs: float = 0.35
     tail_secs: float = 0.45
+    # The Detail pass quotes each clip's opening and closing words. A quote is looked for among the
+    # Words starting (opening) or ending (closing) within quote_search_secs of the Word the proposed
+    # time means, using its first (or last) quote_max_words words; the best match counts if at least
+    # quote_min_match of it matches (difflib ratio), and then places the edge instead of the time.
+    quote_search_secs: float = 20
+    quote_max_words: int = 10
+    quote_min_match: float = 0.7
+    # A sentence ends at a Word ending in . ? ! or …, or at a silence of sentence_pause_secs before
+    # the next Word (a quoted edge only moves for punctuation). A clip that opens mid-sentence starts
+    # at the next sentence if one starts within fragment_secs (the opening is the previous
+    # sentence's tail); one that ends mid-sentence ends with its sentence if that ends within
+    # complete_secs. Too long, it is cut at its last sentence end that keeps it in range, if any.
+    sentence_pause_secs: float = 0.3
+    fragment_secs: float = 2.5
+    complete_secs: float = 4
+    # The Detail prompt shows the Transcript one sentence per line; a sentence still going after
+    # line_max_secs breaks at the next Segment's start.
+    line_max_secs: float = 12
+    # Diversity: of two clips less than adjacent_secs apart (one passage cut in two), or whose
+    # topics share at least topic_overlap of their words (Jaccard), only the better is kept.
+    adjacent_secs: float = 5
+    topic_overlap: float = 0.5
     # A Candidate outside the Job's duration range is trimmed or extended at Word boundaries if that
     # moves its edges by at most this much in all, and dropped otherwise.
     duration_fix_secs: float = 15

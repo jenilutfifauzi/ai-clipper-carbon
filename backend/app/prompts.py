@@ -4,10 +4,13 @@ Adapted from openshorts' SCORE_PROMPT_TEMPLATE and DETAIL_PROMPT_TEMPLATE (gemin
 licence, see THIRD_PARTY_NOTICES.md). Kept: the 2-second test, full-range scoring, the
 stands-alone and diversity rules, the hook playbook. Changed: the episodes are podcasts, mostly
 Indonesian, read from automatic transcripts; the Detail pass reads the whole Transcript and is
-asked for a target count; times are copied from the Transcript's labels; the assessment fields
+asked for a target count; times are copied from the Transcript's labels, and each clip's opening
+and closing words are quoted so that it can be cut inside a line; from v3 the transcript's lines are
+sentences rather than caption or Whisper segments (see selection._Cutter.lines); the assessment fields
 are in English for the reviewer; the JSON skeletons are gone, as the response schema constrains
 the answer. Added: the Channel Profile and the Brief, in both passes so that a Brief can change the
-shortlist (the Score pass gets the profile in short), and few-shot examples in the Detail pass.
+shortlist (the Score pass gets the profile in short), few-shot examples in the Detail pass, and
+in v3 the whole-sentence rule, a distinct `topic` per clip and spare clips.
 Each of these sections is left out when there is nothing to put in it.
 
 Bump PROMPT_VERSION whenever a template, the way it is filled, the response schemas in
@@ -20,12 +23,12 @@ from typing import TYPE_CHECKING
 
 from app.fewshot import Example
 from app.profile import ChannelProfile
-from app.transcript import Transcript, timestamp
+from app.transcript import timestamp
 
 if TYPE_CHECKING:
     from app.selection import ScoredWindow, Window
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 _LANGUAGES = {"id": "Indonesian", "en": "English"}
 
@@ -92,19 +95,31 @@ SHORTLISTED WINDOWS (time range, first-pass score and reason; the score is a hin
 
 {steering}TIME CONTRACT — STRICT:
 - `start` and `end` are times on the episode's timeline, written like the transcript's labels.
-- `start` is the label of the line the clip opens with.
-- `end` is the label of the first line AFTER the clip: the clip stops where that line begins.
-  For example, a clip whose last line is [12:58] and whose next line is [13:02] has end "13:02".
-- To cut inside a line, estimate the time with one decimal instead, e.g. "12:36.5".
-- Each clip lasts {min_secs:g} to {max_secs:g} seconds (end minus start).
+- `start` is the label of the line the clip's first word is in.
+- `opening_words`: the clip's first 6 to 8 words, copied exactly as they are written in the
+  transcript, misheard words included. The clip starts on the first of them, which may be in the
+  middle of a line.
+- `end` is the label of the first line AFTER the clip's last word.
+  For example, a clip whose last word is in line [12:58] and whose next line is [13:02] has end
+  "13:02".
+- `closing_words`: the clip's last 6 to 8 words, copied exactly. The clip stops after the last of
+  them, which may be in the middle of a line.
+- Each clip lasts {min_secs:g} to {max_secs:g} seconds, from its opening words to its closing words.
+  Check it: a clip more than a few seconds outside that range is thrown away. If a moment needs
+  longer, start later or end at an earlier payoff.
 
 CLIP RULES:
 - Build each clip from one shortlisted window and give its id as `window_id`. Stay within the
   window, except to take in a setup or a payoff that spills over its edge.
 - THE 2-SECOND RULE: the clip MUST open on its strongest moment. If the first 2 seconds would not
   stop a cold viewer from scrolling, move the start or skip the clip.
-- Start slightly before the hook and end slightly after the payoff. Never cut in the middle of a
-  sentence.
+- WHOLE SENTENCES: transcript lines are not sentences; a line often starts in the middle of one
+  and ends in the middle of the next. Read across the line breaks:
+  - the opening words begin a sentence, never the tail of the sentence before it (in "...udah lama
+    banget gitu ya pas umur dua puluh gue bangkrut total", a clip about going broke starts at
+    "pas umur dua puluh", not at "udah lama banget");
+  - the closing words end a sentence, after the payoff has been said in full: never stop in the
+    middle of a sentence or a thought.
 - No greetings, intros, outros, sponsor reads or housekeeping unless they are the hook.
 - STANDS ALONE: the clip must make sense to someone who has seen nothing else. If it opens on a
   pronoun, on a filler such as "jadi", "nah", "terus" or "itu", or on an answer whose question
@@ -117,8 +132,14 @@ CLIP RULES:
   as the best moments of the episode, so a window that yields nothing should be the exception.
   Two clips from one window are fine when they are genuinely different moments. Return fewer only
   when the material truly does not hold {count}, and never pad with a clip you would not publish.
-- DIVERSITY: never return two clips that make the same point, tell the same story or land the
-  same joke, even from different windows: keep the stronger one. Clips must not overlap.
+- SPARES: after those, add up to {spares} spare clips, the next-best moments, following every rule
+  above: a clip may be rejected later (for overlapping or running on from another, or its
+  length), and a spare takes its place. Give a spare only if you would publish it.
+- DIVERSITY: `topic` names what the clip is about in 2 to 5 English words, and every clip's topic
+  is different. Never return two clips that make the same point, tell the same story or land the
+  same joke, even from different windows: keep the stronger one. Clips must not overlap, and two
+  clips must not be back to back: one passage cut in two is one moment, so make it one clip, or
+  keep its stronger half.
 
 HOOK PLAYBOOK for `viral_hook_text`, the overlay shown over the clip's first 3 seconds:
 - At most about 40 characters (it is shown on at most 2 short lines), in TRANSCRIPT_LANGUAGE, in
@@ -212,9 +233,11 @@ def score_prompt(
 
 
 def detail_prompt(
-    transcript: Transcript,
+    lines: Sequence[tuple[float, str]],
+    language: str,
     shortlist: Sequence["ScoredWindow"],
     count: int,
+    spares: int,
     duration: float,
     min_secs: float,
     max_secs: float,
@@ -222,9 +245,9 @@ def detail_prompt(
     brief: str | None,
     examples: Sequence[Example],
 ) -> str:
-    """The Detail prompt: the whole Transcript one line per Segment, labelled with `timestamp()`,
-    then the profile in full, the examples and the Brief."""
-    lines = "\n".join(f"[{timestamp(segment.start)}] {segment.text}" for segment in transcript.segments)
+    """The Detail prompt: the whole Transcript as (start, text) lines, each labelled with
+    `timestamp()`, then the profile in full, the examples and the Brief."""
+    transcript = "\n".join(f"[{timestamp(start)}] {text}" for start, text in lines)
     windows = "\n".join(
         f"- {w.id} [{timestamp(w.start)}–{timestamp(w.end)}] score {w.score}: {w.reason}"
         if w.score is not None
@@ -242,12 +265,13 @@ def detail_prompt(
         over_profile = DETAIL_BRIEF_OVER_PROFILE if fields else ""
         sections.append(DETAIL_BRIEF.format(brief=_flat(brief), over_profile=over_profile))
     return DETAIL_TEMPLATE.format(
-        language=_language(transcript.language),
+        language=_language(language),
         duration=timestamp(duration),
         min_secs=min_secs,
         max_secs=max_secs,
         count=count,
-        transcript=lines,
+        spares=spares,
+        transcript=transcript,
         windows=windows,
         steering="".join(f"{section}\n\n" for section in sections),
     )

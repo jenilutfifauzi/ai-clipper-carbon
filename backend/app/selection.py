@@ -12,10 +12,12 @@ Every number used here is in SelectionTuning; the prompts are in app/prompts.py.
 
 import logging
 import math
+import re
 import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from uuid import uuid4
 
 from app.candidates import Candidate, Descriptions
@@ -97,13 +99,20 @@ def select(
 
     count = _target_count(duration, tuning)
     shortlist = _shortlist(scored, round(tuning.shortlist_factor * count), tuning.shortlist_max_overlap)
+    cutter = _Cutter(transcript, duration, tuning)
     proposals: list[ClipProposal] = []
     if shortlist:
         progress(f"Choosing {count} Candidates from {len(shortlist)} shortlisted Windows", 100 * len(batches) / steps)
-        prompt = detail_prompt(transcript, shortlist, count, duration, min_secs, max_secs, profile, brief, examples)
+        lines = [
+            (cutter.starts[first], " ".join(w.text for w in cutter.words[first : last + 1]))
+            for first, last in cutter.line_words
+        ]
+        prompt = detail_prompt(
+            lines, transcript.language, shortlist, count, tuning.spare_clips, duration, min_secs, max_secs,
+            profile, brief, examples,
+        )
         proposals = _retrying(llm.detail, LlmRequest(prompt, tuning.detail_temperature), tuning, progress).clips
 
-    cutter = _Cutter(transcript, duration, tuning)
     candidates = _candidates(proposals, cutter, scored, count, min_secs, max_secs)
     return Selection(PROMPT_VERSION, count, list(examples), scored, [w.id for w in shortlist], proposals, candidates)
 
@@ -208,21 +217,42 @@ def _candidates(
 ) -> list[Candidate]:
     """The proposals, made into Candidates in these steps:
 
-    1. Snap: each proposal becomes a run of whole Words (see `_Cutter.first_word`/`last_word`).
-       One with no Words between its edges is dropped.
+    1. Snap: each proposal becomes a run of whole Words. Its edges are the Words its times mean
+       (see `_Cutter.first_word`/`last_word`), unless its quoted opening and closing words are
+       found near those (see `_Cutter.opening`/`closing`). Then they are moved to
+       whole sentences (see `_Cutter.sentences`). One with no Words between its edges is dropped,
+       and so is one that can't be fitted to the duration range even with no neighbours (see
+       step 4), before it can push out others in steps 2 and 3.
     2. Overlaps: best first (predicted score, then hook strength, then the earlier), a proposal
        that shares a Word with a better one is dropped. Sharing only silence is fine.
-    3. Duration range: see `_Cutter.fit`. Best first again, so the better clip has first claim on
+    3. Diversity: best first again, a proposal less than `adjacent_secs` from a better one (one
+       passage cut in two), or whose topic is close to a better one's, is dropped. The Detail pass
+       is asked for spare clips beyond the target count to fill the gaps that steps 2–4 leave.
+    4. Duration range: see `_Cutter.fit`. Best first again, so the better clip has first claim on
        the room between neighbours; a fitted clip never grows into a neighbour.
-    4. Target count: only the best `count` are kept.
-    5. Rank: by predicted score, as in step 2. Each Candidate gets a new random id.
+    5. Target count: only the best `count` are kept.
+    6. Rank: by predicted score, as in step 2. Each Candidate gets a new random id.
     """
     clips = []
     for proposal in proposals:
-        first = cutter.first_word(parse_time(proposal.start))
-        last = cutter.last_word(parse_time(proposal.end))
+        # The quotes are looked for near the Words the times mean: an end label can sit after a
+        # long silence.
+        start, end = parse_time(proposal.start), parse_time(proposal.end)
+        first, last = cutter.first_word(start), cutter.last_word(end)
+        opening = cutter.opening(proposal.opening_words, start if first is None else cutter.starts[first])
+        closing = cutter.closing(proposal.closing_words, end if last is None else cutter.ends[last])
+        quoted_start, quoted_end = opening is not None, closing is not None
+        first = opening if quoted_start else first
+        last = closing if quoted_end else last
         if first is None or last is None or last < first:
             logger.info("Dropped the clip at %s–%s: no Words between its edges", proposal.start, proposal.end)
+            continue
+        first, last = cutter.sentences(first, last, quoted_start, quoted_end)
+        if cutter.fit(first, last, -1, len(cutter.words), min_secs, max_secs) is None:
+            logger.info(
+                "Dropped the clip at %s–%s: too far outside %g–%g s",
+                proposal.start, proposal.end, min_secs, max_secs,
+            )
             continue
         clips.append(_Clip(proposal, first, last))
     clips.sort(key=lambda c: (-c.proposal.predicted_score, -c.proposal.hook_strength, c.first))
@@ -233,6 +263,18 @@ def _candidates(
             logger.info("Dropped the clip at %s–%s: it overlaps a better one", clip.proposal.start, clip.proposal.end)
         else:
             apart.append(clip)
+
+    distinct: list[_Clip] = []
+    tuning = cutter.tuning
+    for clip in apart:
+        where = (clip.proposal.start, clip.proposal.end)
+        if any(cutter.gap(clip, other) < tuning.adjacent_secs for other in distinct):
+            logger.info("Dropped the clip at %s–%s: it runs on from a better one", *where)
+        elif any(_same_topic(clip.proposal.topic, other.proposal.topic, tuning.topic_overlap) for other in distinct):
+            logger.info("Dropped the clip at %s–%s: a better one has its topic", *where)
+        else:
+            distinct.append(clip)
+    apart = distinct
 
     fitted: list[tuple[_Clip, float, float]] = []
     for i, clip in enumerate(apart):
@@ -253,6 +295,23 @@ def _candidates(
         _candidate(clip.proposal, start, end, scores.get(clip.proposal.window_id))
         for clip, start, end in fitted[:count]
     ]
+
+
+_TOKEN = re.compile(r"\w+")
+_SENTENCE_END = (".", "?", "!", "…")
+_QUOTES = "\"'”’»)"
+
+
+def _tokens(text: str) -> list[str]:
+    """Lowercase words without punctuation, for comparing quotes with Words: "main -main," and
+    "main-main" both give ["main", "main"]."""
+    return _TOKEN.findall(text.lower())
+
+
+def _same_topic(topic: str, other: str, overlap: float) -> bool:
+    """Whether two topics share at least `overlap` of their words (Jaccard) of 4 letters or more."""
+    words, others = ({t for t in _tokens(text) if len(t) >= 4} for text in (topic, other))
+    return bool(words and others) and len(words & others) / len(words | others) >= overlap
 
 
 def _candidate(proposal: ClipProposal, start: float, end: float, window_score: int | None) -> Candidate:
@@ -288,10 +347,31 @@ class _Cutter:
         self.tuning = tuning
         self.starts = [w.start for w in self.words]
         self.ends = [w.end for w in self.words]
+        self.tokens = [_tokens(w.text) for w in self.words]
+        segment_starts = {bisect_right(self.ends, segment.start) for segment in transcript.segments}
+        self.line_words = self._lines(segment_starts)
         # The first Word of the first line shown with each label in the Detail prompt.
         self.lines: dict[str, int] = {}
-        for segment in transcript.segments:
-            self.lines.setdefault(timestamp(segment.start), bisect_right(self.ends, segment.start))
+        for first, _ in self.line_words:
+            self.lines.setdefault(timestamp(self.starts[first]), first)
+
+    def _lines(self, segment_starts: set[int]) -> list[tuple[int, int]]:
+        """The Detail prompt's lines, as (first, last) Word indexes: one per sentence (see
+        `starts_sentence`), since a Segment of Whisper's or a caption line often starts in
+        mid-sentence and the model tends to open a clip where a line does. A sentence still going
+        after line_max_secs, and a transcript with no sentence ends (captions without punctuation),
+        break at the next Segment's start."""
+        lines = []
+        first = 0
+        for i in range(1, len(self.words)):
+            if self.starts_sentence(i) or (
+                i in segment_starts and self.starts[i] - self.starts[first] >= self.tuning.line_max_secs
+            ):
+                lines.append((first, i - 1))
+                first = i
+        if self.words:
+            lines.append((first, len(self.words) - 1))
+        return lines
 
     def first_word(self, start: float) -> int | None:
         """The Word a proposed start means: the first Word of the line with that label (the Detail
@@ -315,6 +395,77 @@ class _Cutter:
         before = bisect_right(self.ends, end) - 1
         return before if before >= 0 else None
 
+    def opening(self, quote: str, near: float) -> int | None:
+        """The first Word of the quote's best match among the Words starting within
+        quote_search_secs of `near`: the best-matching, then the nearest. None when nothing matches
+        well enough."""
+        quoted = _tokens(quote)[: self.tuning.quote_max_words]
+        if not quoted:
+            return None
+        lo = bisect_left(self.starts, near - self.tuning.quote_search_secs)
+        hi = bisect_right(self.starts, near + self.tuning.quote_search_secs)
+        matches = [
+            (self._match(quoted, self._tokens_from(i, len(quoted))), -abs(self.starts[i] - near), i)
+            for i in range(lo, hi)
+        ]
+        return self._best(matches)
+
+    def closing(self, quote: str, near: float) -> int | None:
+        """The last Word of the quote's best match among the Words ending within quote_search_secs
+        of `near`, as `opening`."""
+        quoted = _tokens(quote)[-self.tuning.quote_max_words :]
+        if not quoted:
+            return None
+        lo = bisect_left(self.ends, near - self.tuning.quote_search_secs)
+        hi = bisect_right(self.ends, near + self.tuning.quote_search_secs)
+        matches = [
+            (self._match(quoted, self._tokens_until(i, len(quoted))), -abs(self.ends[i] - near), i)
+            for i in range(lo, hi)
+        ]
+        return self._best(matches)
+
+    def sentences(self, first: int, last: int, quoted_start: bool, quoted_end: bool) -> tuple[int, int]:
+        """The run `first`..`last` moved to whole sentences: a start in mid-sentence moves to the next
+        sentence if that starts within fragment_secs (what came before was the previous sentence's
+        tail), and an end in mid-sentence moves to its sentence's end if that is within
+        complete_secs. An edge placed by a quote is the model's choice of Word, and only
+        punctuation can show it is in mid-sentence: a pause there may be a breath, and in captions
+        without punctuation a pause is often all there is. Where no sentence edge is near, the
+        edges stay."""
+        start = first
+        while not self.starts_sentence(start, pauses=not quoted_start) and start < last:
+            start += 1
+            if self.starts[start] - self.starts[first] > self.tuning.fragment_secs:
+                start = first
+                break
+        if start == last and not self.starts_sentence(start, pauses=not quoted_start):
+            start = first
+        end = last
+        while not self.ends_sentence(end, pauses=not quoted_end):
+            end += 1
+            if self.ends[end] - self.ends[last] > self.tuning.complete_secs:
+                end = last
+                break
+        return start, end
+
+    def starts_sentence(self, i: int, pauses: bool = True) -> bool:
+        """Whether Word `i` starts a sentence: it is the first, the Word before ends in . ? ! or …,
+        or (with `pauses`) a silence of sentence_pause_secs comes before it."""
+        if i == 0:
+            return True
+        return self.words[i - 1].text.rstrip(_QUOTES).endswith(_SENTENCE_END) or (
+            pauses and self.starts[i] - self.ends[i - 1] >= self.tuning.sentence_pause_secs
+        )
+
+    def ends_sentence(self, i: int, pauses: bool = True) -> bool:
+        return i == len(self.words) - 1 or self.starts_sentence(i + 1, pauses)
+
+    def gap(self, clip: _Clip, other: _Clip) -> float:
+        """The time between two clips that don't overlap."""
+        if clip.first > other.last:
+            return self.starts[clip.first] - self.ends[other.last]
+        return self.starts[other.first] - self.ends[clip.last]
+
     def edges(self, first: int, last: int) -> tuple[float, float]:
         """Where the run of Words `first`..`last` is cut: a lead-in before the first Word and a tail
         after the last, each cut short where it would reach into the Word before or after, and
@@ -332,7 +483,8 @@ class _Cutter:
         """Fit the run of Words `first`..`last` to `min_secs`..`max_secs`, using only the Words
         between `lo` and `hi` (exclusive), and return its Words and edges.
 
-        Too long: Words come off the end, which keeps the hook at the start; the tail is shortened
+        Too long: Words come off the end, which keeps the hook at the start, back to the last
+        sentence end that leaves it at least `min_secs` long, if there is one; the tail is shortened
         if that alone fits it. Too short: Words are added after the end, then before the start.
         None when that can't reach the range, or would move the edges by more than
         `duration_fix_secs` in all: the clip is then no longer the moment that was proposed.
@@ -342,6 +494,11 @@ class _Cutter:
         if end - start > max_secs:
             while new_last > new_first and self.words[new_last].end - start > max_secs:
                 new_last -= 1
+            sentence = new_last
+            while sentence > new_first and not self.ends_sentence(sentence):
+                sentence -= 1
+            if self.ends_sentence(sentence) and self._length(new_first, sentence) >= min_secs:
+                new_last = sentence
         elif end - start < min_secs:
             while new_last + 1 < hi and self._length(new_first, new_last) < min_secs:
                 new_last += 1
@@ -353,6 +510,31 @@ class _Cutter:
         if new_end < self.words[new_last].end or new_end - new_start < min_secs or moved > self.tuning.duration_fix_secs:
             return None
         return new_first, new_last, new_start, new_end
+
+    def _tokens_from(self, first: int, count: int) -> list[str]:
+        """The first `count` tokens of the Words from `first` on."""
+        tokens: list[str] = []
+        for i in range(first, len(self.words)):
+            if len(tokens) >= count:
+                break
+            tokens += self.tokens[i]
+        return tokens[:count]
+
+    def _tokens_until(self, last: int, count: int) -> list[str]:
+        """The last `count` tokens of the Words up to `last`."""
+        tokens: list[str] = []
+        for i in range(last, -1, -1):
+            if len(tokens) >= count:
+                break
+            tokens = self.tokens[i] + tokens
+        return tokens[-count:]
+
+    def _match(self, quoted: list[str], tokens: list[str]) -> float:
+        return SequenceMatcher(None, quoted, tokens, autojunk=False).ratio()
+
+    def _best(self, matches: list[tuple[float, float, int]]) -> int | None:
+        best = max(matches, default=None)
+        return best[2] if best and best[0] >= self.tuning.quote_min_match else None
 
     def _length(self, first: int, last: int) -> float:
         start, end = self.edges(first, last)

@@ -109,6 +109,7 @@ def test_target_count_is_one_per_9_minutes_and_at_least_3(client, llm, request, 
 
     [detail] = llm.detail_requests
     assert f"\nCLIP_COUNT: {count}\n" in detail.prompt
+    assert "add up to 2 spare clips" in detail.prompt
 
 
 @pytest.mark.parametrize(("max_secs", "window_secs"), [(90, 135), (50, 90)])
@@ -162,6 +163,7 @@ def test_proposed_times_are_snapped_to_word_boundaries(client, from_episode, llm
         clip("10:00", "10:44", 80),  # line labels, as the prompt asks for
         clip("20:01.2", "20:40.7", 75),  # times inside lines
         clip("1:00:00", "1:00:40", 70),  # labels past the first hour
+        clip("30:02.6", "30:44", 65),  # a start on a line's last Word
     ]
     job = analyzed(client, wait_for_status)
 
@@ -169,10 +171,15 @@ def test_proposed_times_are_snapped_to_word_boundaries(client, from_episode, llm
         # From the first Word of the line labelled 10:00, less the lead-in, to the last Word
         # before the line labelled 10:44, plus the tail.
         (599.65, 643.45),
-        # The Word starting nearest 1201.2 s and the Word ending nearest 1240.7 s. Their
-        # neighbours touch them, so a lead-in or tail would cut into those.
-        (1201.0, 1240.5),
+        # The Word starting nearest 1201.2 s: its neighbour touches it, so a lead-in would cut into
+        # that, and the next sentence (after the line's silence) starts 3 s later, too far to
+        # take the start for a fragment. The Word ending nearest 1240.7 s is in mid-sentence: the
+        # end moves on to the end of its line, 2.5 s later, plus the tail.
+        (1201.0, 1243.45),
         (3599.65, 3639.45),
+        # The Word starting nearest 1802.6 s is its line's last: a fragment, as the next line
+        # starts 1.5 s later, after a silence. The clip starts there, less the lead-in.
+        (1803.65, 1843.45),
     ]
     words = job["transcript"]["words"]
     assert not any(word["start"] < edge < word["end"] for word in words for span in spans(job) for edge in span)
@@ -196,7 +203,7 @@ def test_overlapping_candidates_keep_the_higher_predicted_score(client, from_epi
         clip("15:00", "15:52", 70, title="A"),
         clip("15:32", "16:20", 88, title="B"),  # shares 15:32–15:52 with A
         clip("30:00", "30:40", 60, title="C"),
-        clip("30:40", "31:20", 65, title="D"),  # starts where C ends, with no Word in common
+        clip("30:48", "31:28", 65, title="D"),  # 9 s after C ends
     ]
     job = analyzed(client, wait_for_status)
 
@@ -205,12 +212,28 @@ def test_overlapping_candidates_keep_the_higher_predicted_score(client, from_epi
     assert c_end <= d_start
 
 
+def test_of_back_to_back_or_same_topic_candidates_only_the_better_is_kept(client, from_episode, llm, wait_for_status):
+    llm.clips = [
+        clip("15:00", "15:52", 70, title="A", topic="Losing money on a deal"),
+        clip("15:52", "16:40", 80, title="B", topic="Hiring friends"),  # 1 s of silence after A
+        clip("30:00", "30:40", 60, title="C", topic="Hiring your friends is a mistake"),  # B's topic
+        clip("45:00", "45:40", 65, title="D", topic="Why the podcast almost ended"),
+        # One word of 3 in common with B's topic.
+        clip("50:00", "50:40", 55, title="E", topic="Friends who become rivals"),
+    ]
+    job = analyzed(client, wait_for_status)
+
+    assert [candidate["title"] for candidate in job["candidates"]] == ["B", "D", "E"]
+
+
 def test_out_of_range_durations_are_fitted_at_word_boundaries_or_dropped(client, from_episode, llm, wait_for_status):
     llm.clips = [
         clip("5:00", "5:24", 80, title="6 s too short"),
         clip("40:00", "41:12", 75, title="12 s too long"),
         clip("50:00", "50:08", 90, title="22 s too short"),
         clip("55:00", "57:00", 85, title="60 s too long"),
+        # Overlaps "60 s too long", which is dropped before it can push this one out.
+        clip("55:40", "56:20", 50, title="inside the dropped one"),
     ]
     job = analyzed(client, wait_for_status, min_secs=30, max_secs=60)
 
@@ -219,7 +242,112 @@ def test_out_of_range_durations_are_fitted_at_word_boundaries_or_dropped(client,
         ("6 s too short", 299.65, 330.0),
         # Words taken off the end until it lasts at most 60 s: the line ending at 2459 s, plus the tail.
         ("12 s too long", 2399.65, 2459.45),
+        ("inside the dropped one", 3339.65, 3379.45),
     ]
+
+
+def touching_lines(tmp_path, lines: dict[int, str], count: int = 70):
+    """A Source whose caption lines start every 3 s and run into each other, like YouTube's: the
+    Words touch, so only punctuation can end a sentence. `lines` replaces lines by number."""
+    lines = [(3 * k, lines.get(k, FILLER[k % len(FILLER)])) for k in range(count)]
+    return caption_track(tmp_path / "touching.json3", lines)
+
+
+def test_quoted_opening_and_closing_words_place_the_edges(
+    client, video_source, episode, llm, tmp_path, wait_for_status
+):
+    video_source.video = episode.video
+    video_source.caption_track = touching_lines(
+        tmp_path, {10: "gue pernah rugi lima ratus juta", 20: "dan itu pelajaran paling mahal gue"}
+    )
+    llm.clips = [
+        # Quotes inside lines, written with other capitals and punctuation.
+        clip("0:30", "1:03", 80, opening_words="Rugi lima ratus juta,", closing_words="itu pelajaran paling mahal"),
+        # A quote of a line said every 18 s: the match nearest the proposed time.
+        clip("2:00", "2:30", 75, opening_words="dipikir pikir emang aneh ya"),
+        # A quote that isn't there: the label decides.
+        clip("3:00", "3:30", 70, opening_words="kata yang tidak pernah diucapkan"),
+    ]
+    job = analyzed(client, wait_for_status)
+
+    # The Words touch, so there is no lead-in or tail, except after the last Word.
+    assert spans(job) == [(31.0, 62.5), (120.5, 150.0), (180.0, 210.45)]
+
+
+def test_edges_are_moved_to_whole_sentences(client, video_source, episode, llm, tmp_path, wait_for_status):
+    video_source.video = episode.video
+    video_source.caption_track = touching_lines(
+        tmp_path,
+        {
+            10: "terus kita pulang. Gue pernah rugi",
+            20: "itu pelajaran paling mahal buat",
+            21: "gue. oke kita lanjut ke topik",
+            47: "dan itu yang bikin gue sadar.",
+        },
+    )
+    llm.clips = [
+        # Opens on a sentence's tail, and stops a Word short of its last sentence's end.
+        clip("0:30", "1:03", 80),
+        # 63 s, too long: cut at its last sentence end, at 144 s, not at the last Word that fits, at 150 s.
+        clip("1:30", "2:33", 75),
+        # Opens in mid-sentence with no sentence starting near: it stays.
+        clip("3:00", "3:30", 70),
+    ]
+    job = analyzed(client, wait_for_status, min_secs=20, max_secs=60)
+
+    assert spans(job) == [(31.5, 63.5), (90.0, 144.0), (180.0, 210.45)]
+
+
+def test_quoted_edges_move_for_punctuation_but_not_for_pauses(
+    client, video_source, episode, llm, tmp_path, wait_for_status
+):
+    video_source.video = episode.video
+    video_source.caption_track = touching_lines(tmp_path, {10: "terus kita pulang. Gue pernah rugi"})
+    llm.clips = [clip("0:30", "1:03", 80, opening_words="kita pulang. Gue pernah rugi")]
+    job = analyzed(client, wait_for_status)
+
+    # The quote opens on a sentence's tail: the clip starts at "Gue".
+    assert spans(job)[0][0] == 31.5
+
+
+def test_quoted_edges_are_kept_at_pauses(client, from_episode, llm, wait_for_status):
+    # The same edges as test_proposed_times_are_snapped_to_word_boundaries' last clip, which moved
+    # to the next line, but quoted: a start on a line's last Word, an end inside a line.
+    llm.clips = [
+        clip("30:02.6", "30:46", 80, opening_words="gue jadi waktu itu kita", closing_words="oke kita lanjut")
+    ]
+    job = analyzed(client, wait_for_status)
+
+    assert spans(job) == [(1802.5, 1845.5)]
+
+
+def test_a_closing_quote_is_found_before_a_long_silence(
+    client, video_source, episode, llm, tmp_path, wait_for_status
+):
+    # Nothing is said from 63 s to 120 s, so the line after the clip is labelled 2:00.
+    video_source.video = episode.video
+    lines = [(3 * k, FILLER[k % len(FILLER)]) for k in range(21)]
+    lines += [(120 + 3 * k, FILLER[k % len(FILLER)]) for k in range(20)]
+    lines[20] = (60, "dan itu pelajaran paling mahal gue")
+    video_source.caption_track = caption_track(tmp_path / "silence.json3", lines)
+    llm.clips = [clip("0:30", "2:00", 80, closing_words="itu pelajaran paling mahal")]
+    job = analyzed(client, wait_for_status)
+
+    assert spans(job) == [(30.0, 62.5)]
+
+
+def test_the_detail_transcript_has_a_line_per_sentence(client, video_source, episode, llm, tmp_path, wait_for_status):
+    video_source.video = episode.video
+    video_source.caption_track = touching_lines(tmp_path, {10: "terus kita pulang. Gue pernah rugi"})
+    analyzed(client, wait_for_status)
+
+    # A sentence starts at "Gue", inside a caption line. Without punctuation, lines run on to the
+    # first caption line starting 12 s or more after them.
+    [detail] = llm.detail_requests
+    lines = re.findall(r"^\[(\d+:\d\d)\] (.*)$", detail.prompt, re.M)
+    assert [start for start, _ in lines[:6]] == ["0:00", "0:12", "0:24", "0:31", "0:45", "0:57"]
+    assert lines[2][1] == f"{FILLER[2]} {FILLER[3]} terus kita pulang."
+    assert lines[3][1].startswith("Gue pernah rugi ")
 
 
 def test_transient_llm_errors_are_retried(client, from_episode, llm, wait_for_status):
