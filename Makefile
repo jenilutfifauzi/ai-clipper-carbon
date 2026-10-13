@@ -1,7 +1,7 @@
 UV := uv --directory backend
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 
-.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze reanalyze update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze reanalyze eval gate update-ytdlp
 
 # Install backend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
@@ -45,6 +45,17 @@ analyze:
 reanalyze:
 	@[ -n "$(JOB)" ] || { echo "Usage: make reanalyze JOB=<job-id>"; exit 1; }
 	$(UV) run python -m app.cli reanalyze "$(JOB)"
+
+# Measure Selection against the Reference Set in eval/references.yaml (format: eval/references.example.yaml).
+# Selects Candidates for every eval episode with the current prompts, reusing Jobs that already have
+# the episode's Transcript, and writes a new report to eval/reports/<prompt version>/<UTC time>/.
+eval:
+	$(UV) run python -m app.cli eval
+
+# Check an eval report against the gate once its postable.yaml is filled in (default: the newest report):
+# make gate [REPORT=eval/reports/v1/2026-10-13T14-30-00Z]
+gate:
+	$(UV) run python -m app.cli gate $(if $(REPORT),"$(abspath $(REPORT))")
 
 # Upgrade yt-dlp (and its pinned extras) in uv.lock and the environment.
 update-ytdlp:

@@ -1,0 +1,43 @@
+# Reference Set: clips you posted from past episodes, which `make eval` measures clip selection against.
+#
+# Copy this file to eval/references.yaml and replace the entries below with your own clips.
+# eval/references.yaml is committed, so every eval report can be traced to the clips it was measured on.
+#
+# One entry per clip, with all five fields:
+#   url    The episode on YouTube, in any form: youtube.com/watch?v=..., youtu.be/..., youtube.com/live/...
+#          A &t=... in it is ignored. Entries with the same video belong to the same episode.
+#   start  Where your clip starts in the episode: m:ss, h:mm:ss or seconds ("12:34", "1:02:03", 754).
+#          Decimals are fine ("12:34.5"). Quotes are optional.
+#   end    Where it ends, after the start.
+#   note   What the clip is and why it worked. Shown in the eval report.
+#   role   eval     Used to measure: `make eval` selects Candidates for these episodes and counts a clip
+#                   as found when one Candidate covers at least half of it.
+#          fewshot  Shown to the AI as an example of a clip you liked.
+#          An episode has one role only. List every clip you posted from an eval episode, and keep
+#          fewshot clips to other episodes, so the eval never scores clips the AI has seen as examples.
+#
+# Aim for 2-3 eval episodes plus a few fewshot episodes, all published on YouTube.
+
+- url: https://www.youtube.com/watch?v=EVAL-EP-001
+  start: "12:34"
+  end: "13:20"
+  note: Rugi 500 juta karena satu keputusan; angkanya disebut di detik pertama
+  role: eval
+
+- url: https://youtu.be/EVAL-EP-001
+  start: "1:02:03"
+  end: "1:03:10.5"
+  note: Cerita burnout yang ditutup dengan satu kalimat nasihat
+  role: eval
+
+- url: https://www.youtube.com/watch?v=EVAL-EP-002&t=95s
+  start: 95
+  end: 160
+  note: Debat soal kerja remote, dua pendapat yang saling bantah
+  role: eval
+
+- url: https://www.youtube.com/live/FEWSHOT-001
+  start: "41:05"
+  end: "41:58"
+  note: Punchline lucu soal mertua; tawa pecah tepat di akhir
+  role: fewshot

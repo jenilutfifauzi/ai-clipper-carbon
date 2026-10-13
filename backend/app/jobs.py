@@ -155,6 +155,10 @@ class JobStore:
     def save_selection(self, job_id: str, selection: Selection) -> None:
         write_atomic(self.job_dir(job_id) / SELECTION_FILE, _SELECTION.dump_json(selection, indent=2))
 
+    def load_selection(self, job_id: str) -> Selection | None:
+        path = self.job_dir(job_id) / SELECTION_FILE
+        return _SELECTION.validate_json(path.read_bytes()) if path.is_file() else None
+
     def _save(self, job: Job) -> None:
         write_atomic(self.job_dir(job.id) / STATE_FILE, _JOB.dump_json(job, indent=2))
 

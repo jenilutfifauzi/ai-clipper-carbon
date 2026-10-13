@@ -1,13 +1,19 @@
-"""Run the pipeline without the UI: `python -m app.cli analyze <url>`, or `reanalyze <job-id>`."""
+"""Run the pipeline without the UI: `python -m app.cli analyze <url>`, or `reanalyze <job-id>`.
+
+`eval` measures Selection against the Reference Set, and `gate` checks an eval report against the gate.
+"""
 
 import argparse
 import logging
 import sys
+from pathlib import Path
 
-from app.config import load_settings
+from app.config import Settings, load_settings
+from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_report, summary
 from app.jobs import DEFAULT_LANGUAGE, JobNotFound, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import real_ports
+from app.references import ReferenceSetError
 from app.transcript import timestamp
 
 
@@ -26,10 +32,20 @@ def main(argv: list[str] | None = None) -> int:
         "reanalyze", help="select Candidates again from an existing Job's Transcript, replacing its Candidates"
     )
     reanalyze.add_argument("job_id")
+    commands.add_parser(
+        "eval", help="select Candidates for every eval episode of eval/references.yaml and write an eval report"
+    )
+    check = commands.add_parser("gate", help="check an eval report against the gate, once its postable counts are in")
+    check.add_argument("report", nargs="?", type=Path, help="the report's folder (default: the newest report)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
+    if args.command == "eval":
+        return _evaluate(settings)
+    if args.command == "gate":
+        return _gate(args.report)
+
     store = JobStore(settings.data_dir / "jobs")
     pipeline = Pipeline(store, real_ports(settings), settings)
     if args.command == "analyze":
@@ -68,6 +84,30 @@ def main(argv: list[str] | None = None) -> int:
         span = f"{timestamp(candidate.start)}–{timestamp(candidate.end)}"
         print(f"{rank:2}. {span} ({candidate.end - candidate.start:.0f} s)  score {candidate.predicted_score}  {candidate.title}")
         print(f"    Hook: {candidate.hook_text}")
+    return 0
+
+
+def _evaluate(settings: Settings) -> int:
+    try:
+        report, folder = evaluate(settings, real_ports(settings))
+    except (EvalError, ReferenceSetError) as exc:
+        print(exc)
+        return 1
+    print(summary(report, folder))
+    return 0
+
+
+def _gate(folder: Path | None) -> int:
+    folder = folder or latest_report()
+    if folder is None:
+        print("No eval reports yet: run `make eval`")
+        return 1
+    try:
+        result = gate(folder)
+    except EvalError as exc:
+        print(exc)
+        return 1
+    print(gate_summary(result, folder))
     return 0
 
 

@@ -25,3 +25,7 @@ Every edit is saved immediately and survives a page reload.
   - a manual Candidate is added and listed;
   - a range request returns partial content.
 - [ ] Browser check: adjust bounds, add a manual clip, edit the hook, set an override, and select Candidates.
+
+## Comments
+
+**2026-10-13 (from ticket 05).** `make eval` and `make reanalyze` re-run selection on an existing Job and replace its Candidates. Once review edits exist, re-running selection must not silently throw away the owner's edits or manual Candidates. Either keep edited and manual Candidates, or make the eval analyze into a separate run that leaves the Job's review state alone.
