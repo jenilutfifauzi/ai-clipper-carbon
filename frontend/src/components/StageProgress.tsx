@@ -12,8 +12,17 @@ const MARKERS: Record<StageState, { Icon: typeof Check; tone: string; spoken: st
   done: { Icon: Check, tone: "text-on-accent border-accent bg-accent", spoken: "done" },
 };
 
-// The Job's stages in order, with the running one's message and percent.
-export function StageProgress({ progress, reached }: { progress: JobProgress; reached: number }) {
+// The Job's stages in order, with the running one's message and percent. For an uploaded Job, the
+// first stage takes the stored file (and makes its preview copy) rather than downloading.
+export function StageProgress({
+  progress,
+  reached,
+  uploaded = false,
+}: {
+  progress: JobProgress;
+  reached: number;
+  uploaded?: boolean;
+}) {
   const states = stageStates(progress, reached);
   return (
     <ol className="flex flex-col gap-1">
@@ -21,6 +30,7 @@ export function StageProgress({ progress, reached }: { progress: JobProgress; re
         const state = states[i];
         const { Icon, tone, spoken } = MARKERS[state];
         const current = state === "active" || state === "waiting" || state === "failed";
+        const label = uploaded && stage.status === "downloading" ? "Upload" : stage.label;
         return (
           <li key={stage.status} aria-current={current ? "step" : undefined} className="flex gap-3 py-2">
             <span
@@ -31,14 +41,14 @@ export function StageProgress({ progress, reached }: { progress: JobProgress; re
             </span>
             <div className="min-w-0 flex-1">
               <p className={cx("font-medium", state === "pending" && "text-muted")}>
-                {stage.label}
+                {label}
                 <span className="sr-only">: {spoken}</span>
               </p>
               {state === "active" && (
                 <div className="mt-1.5 flex flex-col gap-2">
                   {progress.message && <p className="text-sm text-muted">{progress.message}</p>}
                   <div className="flex items-center gap-3">
-                    <ProgressBar percent={progress.progress} label={`${stage.label} progress`} className="flex-1" />
+                    <ProgressBar percent={progress.progress} label={`${label} progress`} className="flex-1" />
                     {progress.progress !== null && (
                       <span className="w-12 text-right text-sm text-muted tabular-nums">
                         {Math.round(progress.progress)}%

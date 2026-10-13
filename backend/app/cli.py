@@ -21,6 +21,7 @@ from app.profile import PROFILE_FILE, ProfileStore
 from app.references import ReferenceSetError
 from app.rendering import NothingToRender, Renders
 from app.review import CandidateNotFound
+from app.transcriber import WhisperTranscriber
 from app.transcript import timestamp
 
 
@@ -123,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _render(settings: Settings, store: JobStore, job_id: str, candidate_ids: list[str] | None) -> int:
-    renders = Renders(store, settings)
+    renders = Renders(store, settings, WhisperTranscriber(settings))
     try:
         renders.request(job_id, candidate_ids)
     except JobNotFound:

@@ -18,11 +18,13 @@ from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.ports import Ports
+from app.preview import make_preview, unplayable
 from app.prompts import PROMPT_VERSION
 from app.review import keep_reviewed
 from app.selection import select
 from app.transcriber import TranscriptionStalled, Watchdog
 from app.transcript import Transcript, parse_json3
+from app.video_source import Source, UploadVideoSource
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,8 @@ class Pipeline:
         self.ports = ports
         self.settings = settings
         self.llm = PacedLlm(ports.llm, settings.quota.request_interval_secs)
+        # The Video Source of uploaded Jobs. It only reads the stored file, so tests use it as it is.
+        self.uploads = UploadVideoSource(settings)
         self.stages: list[tuple[JobStatus, Callable[[Job], Job]]] = [
             (JobStatus.DOWNLOADING, self._download),
             (JobStatus.TRANSCRIBING, self._transcribe),
@@ -86,7 +90,7 @@ class Pipeline:
             except Exception as exc:
                 logger.exception("Job %s failed while %s", job_id, stage)
                 error = str(exc) or type(exc).__name__
-                if stage is JobStatus.DOWNLOADING:
+                if stage is JobStatus.DOWNLOADING and job.upload is None:
                     error = f"{error.rstrip('. ')}. {DOWNLOAD_HINT}"
                 return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None, quota=None)
         logger.info("Job %s: %s", job_id, JobStatus.REVIEW)
@@ -97,15 +101,18 @@ class Pipeline:
     def _done(self, job: Job, stage: JobStatus) -> bool:
         """Whether a stage's output is complete, so that a run can skip it.
 
-        Downloading is complete once the Video Source has returned, which is when `job.source` is
-        recorded (a half-written or interrupted download never has it), and the files it names
-        exist. Transcribing is complete once transcript.json exists: it is written whole, as the
-        stage's last step. Analyzing, the last stage, always runs.
+        Downloading is complete once the Video Source has returned and any preview proxy is made,
+        which is when `job.source` is recorded (a half-written or interrupted download never has
+        it), and the files it names exist. (An upload cut short never becomes a Job at all.)
+        Transcribing is complete once transcript.json exists: it is written whole, as the stage's
+        last step. Analyzing, the last stage, always runs.
         """
         job_dir = self.store.job_dir(job.id)
         if stage is JobStatus.DOWNLOADING:
             return job.source is not None and all(
-                (job_dir / name).is_file() for name in (job.source.video, job.source.caption_track) if name
+                (job_dir / name).is_file()
+                for name in (job.source.video, job.source.caption_track, job.source.preview)
+                if name
             )
         if stage is JobStatus.TRANSCRIBING:
             return (job_dir / TRANSCRIPT_FILE).is_file()
@@ -142,8 +149,39 @@ class Pipeline:
         )
 
     def _download(self, job: Job) -> Job:
-        source = self.ports.video_source.fetch(job.url, job.options.language, self.store.job_dir(job.id))
+        """Fetch the Source from YouTube, or take the uploaded one and make its preview proxy if the
+        browser can't play it. (YouTube's are H.264 MP4s where it has them, else VP9 or AV1 ones,
+        which play as they are.)"""
+        dest = self.store.job_dir(job.id)
+        if job.upload is None:
+            source = self.ports.video_source.fetch(job.url, job.options.language, dest)
+        else:
+            source = self.uploads.fetch(job.upload.file, job.options.language, dest)
+            if reason := unplayable(self.settings.ffprobe_bin, dest / source.video):
+                source = replace(source, preview=self._preview(job, source, reason))
         return self.store.update(job.id, source=source)
+
+    def _preview(self, job: Job, source: Source, reason: str) -> str:
+        self.store.update(
+            job.id, progress=0.0, message=f"Making a preview copy the browser can play (the Source is {reason})."
+        )
+        began = time.monotonic()
+        reported = 0
+
+        def progress(done: float) -> None:
+            nonlocal reported
+            if (percent := round(100 * done)) != reported:
+                reported = percent
+                self.store.update(job.id, progress=float(percent))
+
+        media = self.store.job_dir(job.id) / source.video
+        preview = make_preview(self.settings.ffmpeg_bin, media, source.metadata, self.settings.preview, progress)
+        elapsed = time.monotonic() - began
+        logger.info(
+            "Job %s: made the preview proxy of %.0f s of %s in %.0f s (%.1fx realtime)",
+            job.id, source.metadata.duration, reason, elapsed, source.metadata.duration / max(elapsed, 1e-6),
+        )
+        return preview
 
     def _transcribe(self, job: Job) -> Job:
         assert job.source is not None
@@ -163,7 +201,12 @@ class Pipeline:
         duration = job.source.metadata.duration
         language = job.options.language
         tuning = self.settings.transcription
-        reason = "YouTube captions ignored" if job.source.caption_track else f"no '{language}' YouTube captions"
+        if job.upload:
+            reason = "an uploaded file has no captions"
+        elif job.source.caption_track:
+            reason = "YouTube captions ignored"
+        else:
+            reason = f"no '{language}' YouTube captions"
         job = self.store.update(
             job.id,
             progress=0.0,

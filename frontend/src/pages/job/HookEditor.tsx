@@ -1,13 +1,14 @@
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { api, type HookFit } from "../../api";
 import { cx } from "../../format";
 
-// The hook is burned at the top of the clip in at most 2 lines: about 40 characters.
-const HOOK_CHARS = 40;
 // The backend's limit (HOOK_MAX_CHARS in app/api.py).
 const HOOK_MAX = 200;
 // Typing is saved once it pauses this long, and at once when the field is left.
 const SAVE_AFTER_MS = 700;
+// Whether the text fits the hook's 2 lines is asked once typing pauses this long.
+const FIT_AFTER_MS = 250;
 
 /**
  * The Candidate's hook text, saved as it is typed. The draft is the field's own: saves coming back
@@ -32,8 +33,21 @@ export function HookEditor({ value, onSave }: { value: string; onSave: (text: st
   latest.current = draft;
   useEffect(() => () => save(latest.current), []);
 
-  const length = draft.trim().length;
-  const long = length > HOOK_CHARS;
+  // The backend lays the hook out as the render will, with the font's own widths.
+  const [fit, setFit] = useState<HookFit | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const wait = setTimeout(() => {
+      api.hookFit(draft, controller.signal).then(setFit, () => setFit(null));
+    }, FIT_AFTER_MS);
+    return () => {
+      clearTimeout(wait);
+      controller.abort();
+    };
+  }, [draft]);
+
+  const blank = draft.trim() === "";
+  const long = !blank && fit?.fits === false;
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={`${id}-hook`} className="text-sm font-medium">
@@ -60,12 +74,19 @@ export function HookEditor({ value, onSave }: { value: string; onSave: (text: st
           long ? "border-accent" : "border-border",
         )}
       />
-      <p id={`${id}-count`} className={cx("flex items-center gap-1.5 text-sm", long ? "text-accent-text" : "text-muted")}>
+      <p
+        id={`${id}-count`}
+        aria-live="polite"
+        className={cx("flex items-center gap-1.5 text-sm", long ? "text-accent-text" : "text-muted")}
+      >
         {long && <AlertTriangle aria-hidden size={15} />}
-        <span className="tabular-nums">
-          {length}/{HOOK_CHARS}
-        </span>
-        {long && <span>characters: it may not fit in 2 lines on the video.</span>}
+        {blank ? (
+          <span>No hook: the clip opens without one.</span>
+        ) : long ? (
+          <span>Too long for 2 lines: it will be set smaller on the video.</span>
+        ) : fit ? (
+          <span>Fits on {fit.lines.length === 1 ? "1 line" : "2 lines"}.</span>
+        ) : null}
       </p>
     </div>
   );

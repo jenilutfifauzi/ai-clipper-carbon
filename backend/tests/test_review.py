@@ -210,6 +210,18 @@ def test_media_is_served_with_range_requests(client, wait_for_status, fixture_vi
     assert tail.content == data[-10:]
 
 
+def test_review_asks_whether_a_hook_fits_in_its_two_lines(client):
+    # The Render Planner's own fitting: what the render will burn.
+    fit = client.get("/api/hook", params={"text": "  Setetes racun bisa   bunuh perusahaan? "}).json()
+    assert fit == {"lines": ["Setetes racun bisa", "bunuh perusahaan?"], "fits": True}
+    assert client.get("/api/hook", params={"text": "Kenapa gagal?"}).json() == {"lines": ["Kenapa gagal?"], "fits": True}
+    long = "Racun kecil yang dibiarkan lama-lama pasti mematikan perusahaan kamu sendiri tanpa terasa"
+    fit = client.get("/api/hook", params={"text": long}).json()
+    assert len(fit["lines"]) == 2 and fit["fits"] is False
+    assert client.get("/api/hook").json() == {"lines": [], "fits": True}
+    assert client.get("/api/hook", params={"text": "x" * 201}).status_code == 422
+
+
 @pytest.mark.parametrize(
     "path",
     [

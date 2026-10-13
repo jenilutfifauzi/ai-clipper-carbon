@@ -1,5 +1,6 @@
 """The Video Source port: a URL in, a local video file, its metadata and captions out, or the
-captions alone."""
+captions alone. YouTube's implementation downloads the video; the upload implementation takes a
+master file the owner uploaded."""
 
 import json
 import logging
@@ -34,6 +35,9 @@ class Source:
     video: str
     caption_track: str | None
     metadata: SourceMetadata
+    # A copy of the video that the browser can play, for Review's previews, when the video itself
+    # can't be (app/preview.py); None when it can. Clips are always rendered from `video`.
+    preview: str | None = None
 
 
 class VideoSource(Protocol):
@@ -94,6 +98,24 @@ class YtDlpVideoSource:
         return options
 
 
+class UploadVideoSource:
+    """A master file the owner uploaded, already stored in the Job directory (app/uploads.py). It
+    has no captions, so the whole episode is transcribed locally."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def fetch(self, url: str, language: str, dest: Path) -> Source:
+        """`url` is the stored file's name in `dest`."""
+        video = dest / url
+        if not video.is_file():
+            raise RuntimeError(f"The uploaded file {url} is missing: upload it again in a new Job")
+        return Source(url, None, probe(self.settings.ffprobe_bin, video))
+
+    def fetch_captions(self, url: str, language: str, dest: Path) -> str | None:
+        return None
+
+
 def _caption_languages(language: str) -> list[str]:
     """The caption tracks to ask for, best first."""
     return [f"{language}-orig", language]
@@ -108,7 +130,7 @@ def probe(ffprobe: Path, video: Path) -> SourceMetadata:
     """Metadata of the first video stream, read with the configured ffprobe."""
     command = [
         str(ffprobe), "-v", "error", "-select_streams", "v:0", "-of", "json",
-        "-show_entries", "stream=codec_name,width,height,avg_frame_rate:format=duration", str(video),
+        "-show_entries", "stream=codec_name,width,height,avg_frame_rate,r_frame_rate:format=duration", str(video),
     ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode:
@@ -116,9 +138,13 @@ def probe(ffprobe: Path, video: Path) -> SourceMetadata:
     info = json.loads(result.stdout)
     if not info["streams"]:
         raise RuntimeError(f"{video.name} has no video stream")
+    if "duration" not in info["format"]:
+        raise RuntimeError(f"ffprobe found no duration in {video.name}")
 
     stream = info["streams"][0]
-    numerator, denominator = (int(part) for part in stream["avg_frame_rate"].split("/"))
+    # Some containers (MXF, some QuickTime files) leave the average frame rate unset, as 0/0.
+    rate = stream["avg_frame_rate"] if not stream["avg_frame_rate"].startswith("0/") else stream["r_frame_rate"]
+    numerator, denominator = (int(part) for part in rate.split("/"))
     return SourceMetadata(
         duration=float(info["format"]["duration"]),
         fps=round(numerator / denominator, 3),

@@ -26,6 +26,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "fonttools", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "google-genai", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "huggingface-hub", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mediapipe", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -49,6 +50,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "fonttools", specifier = ">=4.66.1" },
     { name = "google-genai", specifier = ">=2.30.0" },
     { name = "huggingface-hub", specifier = ">=2.2.0" },
     { name = "mediapipe", specifier = ">=1.1.0" },

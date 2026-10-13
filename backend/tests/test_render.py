@@ -22,6 +22,7 @@ from app.jobs import JobStatus, JobStore
 from app.main import create_app
 from app.ports import Ports
 from app.rendering import Renders
+from app.transcript import Word
 from conftest import FIXTURES, wait_for
 from test_jobs_api import create_job, statuses
 from test_review import patch
@@ -334,7 +335,7 @@ def test_renders_left_unfinished_resume_at_the_next_start(settings, video_source
 
     # The app stopped while rendering the first Clip, with the second queued.
     store = JobStore(settings.data_dir / "jobs")
-    assert Renders(store, settings).request(job["id"])
+    assert Renders(store, settings, transcriber).request(job["id"])
 
     def interrupted(_, clips: list[Clip]) -> tuple[list[Clip], dict, None]:
         return [replace(clips[0], status=ClipStatus.RENDERING), *clips[1:]], {}, None
@@ -355,6 +356,7 @@ def test_the_cli_renders_the_named_candidates(settings, video_source, transcribe
         chosen = add(client, job, "kita", "Podcast", selected=False)
         add(client, job, "halo", "kabar")
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "WhisperTranscriber", lambda settings: transcriber)
 
     assert cli.main(["render", job["id"], chosen["id"]]) == 0
     output = capsys.readouterr().out
@@ -434,7 +436,9 @@ def test_a_close_up_crop_follows_the_face_and_keeps_it_in_frame(client, settings
     assert again["output"]["hook_text"] == "Hook baru"
     assert [analysis_file] == list((job_dir / "analysis").iterdir())
     assert analysis_file.stat().st_mtime_ns == analysed
-    assert json.loads((job_dir / again["output"]["plan"]).read_text()) == plan
+    replanned = json.loads((job_dir / again["output"]["plan"]).read_text())
+    assert replanned["hook"]["lines"] == ["Hook baru"]
+    assert {**replanned, "hook": None} == plan
 
 
 def shows_head(picture: np.ndarray, background: np.ndarray, share: float = 0.9) -> bool:
@@ -521,3 +525,215 @@ def test_the_layout_switches_at_a_cut_within_one_clip(client, settings, video_so
         assert shows_head(output_frame(settings, video, at)[20:76, 12:42], BACKGROUND), at
     for at in (cut - 0.01, length - 0.3):
         check_split(output_frame(settings, video, at), OTHER_BACKGROUND)
+
+
+# Captions (ticket 15), on a plain 10 s Source: anything far from its colour is a caption.
+CAPTIONS_SECS = 10
+# The captions' colours as they come out of the encode.
+WHITE, ORANGE = np.array([255, 255, 255]), np.array([0xFF, 0x9F, 0x0A])
+
+
+@pytest.fixture(scope="session")
+def plain_video(tmp_path_factory) -> Path:
+    """10 s of a plain 640x360 picture (no faces, so Blur) with a tone."""
+    path = tmp_path_factory.mktemp("plain") / "plain.mp4"
+    command = [
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", f"color=c=0x4a5560:size=640x360:rate=25:duration={CAPTIONS_SECS}",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+        "-t", str(CAPTIONS_SECS), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        str(path),
+    ]
+    subprocess.run(command, check=True)
+    return path
+
+
+def full_frame(settings, video: Path, at: float) -> np.ndarray:
+    """The Clip's frame at `at` seconds, 1080x1920 RGB."""
+    command = [
+        str(settings.ffmpeg_bin), "-v", "error", "-ss", f"{at}", "-i", str(video), "-frames:v", "1",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]
+    data = subprocess.run(command, capture_output=True, check=True).stdout
+    return np.frombuffer(data, dtype=np.uint8).reshape(1920, 1080, 3).astype(int)
+
+
+def pixels(frame: np.ndarray, colour: np.ndarray, tolerance: int = 40) -> tuple[np.ndarray, np.ndarray]:
+    """The rows and columns of the frame's pixels within `tolerance` of `colour` in every channel."""
+    return np.nonzero(np.abs(frame - colour).max(axis=2) <= tolerance)
+
+
+# What the Transcriber hears, on the Source's timeline. The Clip is "Podcast" to "ya" of the
+# captions (3.65–6.45 s): "Jadi," and "Oke." are in the 2 s margins either side of it.
+HEARD = [
+    Word("Jadi,", 1.7, 2.1),
+    Word("podcast", 4.0, 4.4),
+    Word("ini", 4.45, 4.6),
+    Word("seru", 4.65, 5.0),
+    Word("banget,", 5.05, 5.4),
+    Word("ya!", 5.6, 5.9),
+    Word("Oke.", 6.6, 7.0),
+]
+
+
+def test_captions_are_burned_from_the_clips_own_transcription(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    start = candidate["start"]
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    # Transcribed in the Job's language, from 2 s before the Clip to 2 s after it.
+    [(language, begin, end)] = transcriber.calls
+    assert (language, begin, end) == ("id", pytest.approx(start - 2), pytest.approx(candidate["end"] + 2))
+    # The Render Plan's caption lines, on the Clip's timeline, in the lower third (the Clip is Blur).
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    lower = {"x": 130, "y": 1296, "width": 820, "height": 200}
+    expected = [
+        ("PODCAST INI SERU", 4.0, 5.05, [("PODCAST", 4.0, 4.45), ("INI", 4.45, 4.65), ("SERU", 4.65, 5.05)]),
+        ("BANGET YA!", 5.05, 6.2, [("BANGET", 5.05, 5.6), ("YA!", 5.6, 6.2)]),
+    ]
+    assert len(plan["captions"]) == len(expected)
+    for event, (text, on, off, words) in zip(plan["captions"], expected):
+        assert (event["text"], event["area"]) == (text, lower)
+        assert (event["start"], event["end"]) == (pytest.approx(on - start, abs=1e-3), pytest.approx(off - start, abs=1e-3))
+        assert [(w["text"], w["start"], w["end"]) for w in event["words"]] == [
+            (word, pytest.approx(a - start, abs=1e-3), pytest.approx(b - start, abs=1e-3)) for word, a, b in words
+        ]
+
+    # Burned in: white with the spoken Word in orange, inside the caption area, only while a line is on.
+    video = job_dir / clip["output"]["video"]
+    for at, active in ((4.2, "first"), (4.8, "last"), (5.2, "first"), (5.8, "last")):
+        frame = full_frame(settings, video, at - start)
+        white, orange = pixels(frame, WHITE), pixels(frame, ORANGE)
+        assert len(white[0]) > 500 and len(orange[0]) > 300, at
+        for rows, columns in (white, orange):
+            assert 1296 <= rows.min() and rows.max() < 1496 and 130 <= columns.min() and columns.max() < 950, at
+        # The spoken Word is the first or the last of its line.
+        assert (orange[1].mean() < white[1].mean()) == (active == "first"), at
+    for at in (3.8, 6.3):
+        frame = full_frame(settings, video, at - start)
+        assert len(pixels(frame, WHITE)[0]) == len(pixels(frame, ORANGE)[0]) == 0, at
+
+    # Rendering again after a hook or layout edit reuses the transcription; a bounds edit transcribes again.
+    [words_file] = (job_dir / "words").iterdir()
+    transcribed = words_file.stat().st_mtime_ns
+    patch(client, job, candidate, hook_text="Hook baru", layout="track")
+    render(client, job)
+    rendered(client, job)
+    assert len(transcriber.calls) == 1 and words_file.stat().st_mtime_ns == transcribed
+    longer = patch(client, job, candidate, start=1.0)
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    assert transcriber.calls[1] == ("id", pytest.approx(max(0, longer["start"] - 2)), pytest.approx(longer["end"] + 2))
+    assert len(list((job_dir / "words").iterdir())) == 2
+
+
+def test_with_captions_off_nothing_is_transcribed_or_burned(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = wait_for(client, create_job(client, captions=False)["id"], "review")
+    candidate = add(client, job, "Podcast", "ya")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    assert transcriber.calls == []
+    assert json.loads((job_dir / clip["output"]["plan"]).read_text())["captions"] == []
+    for at in (4.2, 5.8):
+        frame = full_frame(settings, job_dir / clip["output"]["video"], at - candidate["start"])
+        assert len(pixels(frame, WHITE)[0]) == len(pixels(frame, ORANGE)[0]) == 0, at
+
+
+def test_split_captions_are_on_the_seam_and_a_wide_line_is_set_smaller_to_fit(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    # One Word as wide as 20 average letters: at the usual size it would run off both sides.
+    transcriber.words = [Word("wwwwwwwwwwwwwww", 4.0, 5.0)]
+    job = reviewed(client)
+    candidate = patch(client, job, add(client, job, "Podcast", "ya"), layout="split")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    [event] = json.loads((job_dir / clip["output"]["plan"]).read_text())["captions"]
+    assert (event["text"], event["area"]) == ("W" * 15, {"x": 130, "y": 860, "width": 820, "height": 200})
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 4.5 - candidate["start"])
+    rows, columns = pixels(frame, ORANGE)
+    assert len(rows) > 1000
+    # Centred on the seam, as wide as the area allows and no wider, outline included.
+    assert rows.mean() == pytest.approx(960, abs=6)
+    assert 130 <= columns.min() < 150 and 930 < columns.max() < 950
+    outline_rows, outline_columns = pixels(frame, np.array([0, 0, 0]), tolerance=30)
+    assert 860 <= outline_rows.min() and outline_rows.max() < 1060
+    assert 130 <= outline_columns.min() and outline_columns.max() < 950
+
+
+def test_the_hook_as_last_edited_is_burned_over_the_first_3_seconds_above_the_captions(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    start = candidate["start"]
+    # Spoken while the hook is on, so that both are on screen together.
+    transcriber.words = [Word("halo", start + 1.0, start + 1.4), Word("semua", start + 1.45, start + 2.0)]
+    patch(client, job, candidate, hook_text="Hook lama")
+    candidate = patch(client, job, candidate, hook_text="  Setetes racun bisa   bunuh perusahaan? ")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+    assert clip["output"]["hook_text"] == "Setetes racun bisa bunuh perusahaan?"
+
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    hook = plan["hook"]
+    assert (hook["lines"], hook["start"], hook["end"], hook["size"]) == (
+        ["Setetes racun bisa", "bunuh perusahaan?"], 0.0, 3.0, 88
+    )
+    area = hook["area"]
+    top, bottom, left, right = area["y"], area["y"] + area["height"], area["x"], area["x"] + area["width"]
+    assert top == 232 and bottom < 860 and 130 <= left and right <= 950
+    [caption] = plan["captions"]
+    assert caption["area"] == {"x": 130, "y": 1296, "width": 820, "height": 200}
+
+    video = job_dir / clip["output"]["video"]
+    for at in (0.0, 1.5, 2.6):
+        frame = full_frame(settings, video, at)
+        # Above Blur's shot, the picture is the plain blurred background, except for the hook's box:
+        # darker, filling its area and no more, with the white lines inside its padding.
+        upper = frame[:600]
+        background = upper[100, 540]
+        rows, columns = np.nonzero(np.abs(upper - background).max(axis=2) > 15)
+        assert (rows.min(), rows.max(), columns.min(), columns.max()) == (top, bottom - 1, left, right - 1), at
+        box = upper[top:bottom, left:right]
+        dark = (np.abs(box - 0.4 * background).max(axis=2) <= 10).mean()
+        assert 0.6 < dark < 0.95, at
+        white_rows, white_columns = pixels(upper, WHITE)
+        assert len(white_rows) > 3000, at
+        assert top + 15 <= white_rows.min() and white_rows.max() < bottom - 15, at
+        assert left + 25 <= white_columns.min() and white_columns.max() < right - 25, at
+        if at == 1.5:
+            # The caption is on at the same time, in the lower third.
+            rows, columns = pixels(frame[600:], ORANGE)
+            assert len(rows) > 300 and 1296 <= rows.min() + 600 and rows.max() + 600 < 1496
+    # Gone after 3 s.
+    frame = full_frame(settings, video, 3.3)
+    upper = frame[:600]
+    assert (np.abs(upper - upper[100, 540]).max(axis=2) > 15).sum() == 0
+
+    # A blank hook shows nothing.
+    patch(client, job, candidate, hook_text=" ")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert json.loads((job_dir / clip["output"]["plan"]).read_text())["hook"] is None
+    upper = full_frame(settings, video, 1.5)[:600]
+    assert (np.abs(upper - upper[100, 540]).max(axis=2) > 15).sum() == 0

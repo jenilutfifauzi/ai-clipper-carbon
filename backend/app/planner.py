@@ -21,17 +21,32 @@ The cameras:
 A crop's path is kept as change points: the frames at which its position changes. A Scene starts
 already framed on its faces, and the tracker starts afresh at every cut.
 
-A portrait Source is passed through whole. Ticket 15 adds the caption events and ticket 16 the hook
-event.
+A portrait Source is passed through whole.
+
+Captions come from the Clip's own Words (transcribed for it, on the Clip's timeline). They are
+short UPPERCASE lines, at most CAPTION_MAX_CHARS characters or CAPTION_MAX_SECS long, each Word
+highlighted while it is spoken. A line sits on the seam between the panels in a Split Scene and in
+the lower third otherwise, and moves when the Layout changes under it.
+
+The hook (the Candidate's hook text, as last edited) is shown for the Clip's first HOOK_SECS at the
+top of SAFE_AREA, in a dark box: on one line if it fits, else on two, set smaller when even two
+lines at HOOK_SIZE would be too wide (`fit_hook`, which Review also asks, to warn). It stays above
+the captions in every Layout: they never go above the seam's band, y 860.
+
+Like the hook, captions stay inside SAFE_AREA, clear of the platforms' buttons and text. Both are
+measured with the bundled font's own widths (`font_metrics`), the font libass sets them in.
 """
 
 import math
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import cache
 
 from app.candidates import Layout
-from app.config import CameraTuning
+from app.config import MONTSERRAT_EXTRABOLD, CameraTuning
+from app.transcript import Word
 from app.video_source import SourceMetadata
 
 OUTPUT_WIDTH = 1080
@@ -45,6 +60,27 @@ MIN_SCENE_SECS = 1.0
 # In a Split panel, the face's centre is put this far down the panel (as a share of its height),
 # where the frame allows: a little above the middle, leaving the seam between the panels clear.
 SPLIT_FACE_AT = 0.4
+# A caption line holds at most this many characters (a single longer Word stands alone) and is on
+# screen at most this long.
+CAPTION_MAX_CHARS = 16
+CAPTION_MAX_SECS = 1.4
+# A pause between two Words at least this long starts a new line, and a line stays on screen this
+# long after its last Word, unless the next line comes sooner.
+CAPTION_PAUSE_SECS = 0.5
+CAPTION_LINGER_SECS = 0.3
+# Where the Layout changes under a line, the line moves; it isn't shown for less than this in one place.
+CAPTION_MIN_SECS = 0.2
+# The hook is shown from the Clip's start for this long, in at most two lines at this font size (as
+# libass sets it, like the captions': 56 px to the em, capitals 39 px tall), unless it is too long
+# for them.
+HOOK_SECS = 3.0
+HOOK_SIZE = 88
+# Its lines' baselines are this many sizes apart.
+HOOK_LEADING = 0.82
+# The box's padding, in pixels: either side of the longest line, above the capitals of the first
+# and below the descenders of the last.
+HOOK_PAD_X = 36
+HOOK_PAD_Y = 26
 
 
 # The planner's input, found by app/analysis.py.
@@ -107,6 +143,24 @@ class Box:
     height: int
 
 
+# The platforms' buttons and text cover the top 12%, the bottom 20% and the right 12% of the frame:
+# captions and the hook stay inside the rest, y 232–1536 and x 0–950.
+SAFE_AREA = Box(0, 232, 950, 1304)
+# Where a caption line is centred: as far from the left edge as the safe area's right edge is from
+# the right, so that lines are centred in the frame. On the seam between Split's panels (y 860–1060,
+# clear of the faces, which sit at 40% of each panel), or in the lower third (y 1296–1496: below
+# Blur's shot, which ends at 1264, and above the bottom safe zone).
+_CAPTION_X = OUTPUT_WIDTH - (SAFE_AREA.x + SAFE_AREA.width)
+SEAM_CAPTIONS = Box(_CAPTION_X, SPLIT_HEIGHT - 100, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
+LOWER_CAPTIONS = Box(_CAPTION_X, 1296, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
+# The widest a hook line can be: its box, padding included, is as wide as the captions' area.
+HOOK_WIDTH = OUTPUT_WIDTH - 2 * _CAPTION_X - 2 * HOOK_PAD_X
+# Punctuation is left out of the captions at either end of a Word ("HALO" for "halo,"), except for
+# the question and exclamation marks that end one ("KENAPA?") and signs that belong to it ("50%",
+# "#1"). Inside a Word it stays ("MAIN-MAIN", "2,5").
+_SIGNS = "%#@&"
+
+
 @dataclass(frozen=True)
 class CropPoint:
     """From `at` seconds into the Clip on, the panel's crop has its top-left corner at (x, y) in the Source."""
@@ -143,7 +197,8 @@ class ScenePlan:
 
 @dataclass(frozen=True)
 class CaptionWord:
-    """A caption Word, highlighted from `start` to `end` (seconds into the Clip)."""
+    """A Word of a caption line, highlighted from `start` (when it is spoken) to `end` (when the next
+    one is, or the line goes), in seconds into the Clip."""
 
     text: str
     start: float
@@ -152,7 +207,8 @@ class CaptionWord:
 
 @dataclass(frozen=True)
 class CaptionEvent:
-    """A caption line on screen from `start` to `end` (seconds into the Clip), inside `area`. Ticket 15."""
+    """A caption line, on screen from `start` to `end` (seconds into the Clip) and centred in `area`.
+    Its `words` are highlighted one after another, from its start to its end."""
 
     text: str
     start: float
@@ -163,12 +219,15 @@ class CaptionEvent:
 
 @dataclass(frozen=True)
 class HookEvent:
-    """The hook's lines on screen from `start` to `end` (seconds into the Clip), inside `area`. Ticket 16."""
+    """The hook's lines, set at font `size` and centred in their box `area`, on screen from `start`
+    to `end` (seconds into the Clip). The first line's capitals are HOOK_PAD_Y below the box's top,
+    and the baselines HOOK_LEADING sizes apart."""
 
     lines: list[str]
     start: float
     end: float
     area: Box
+    size: float
 
 
 @dataclass(frozen=True)
@@ -204,12 +263,16 @@ def plan_render(
     scenes: list[Scene] | None = None,
     faces: list[FrameFaces] | None = None,
     layout: Layout = Layout.AUTO,
+    words: list[Word] | None = None,
+    hook: str = "",
     camera: CameraTuning = CameraTuning(),
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
-    each Scene by its faces). Without `scenes` the Clip is one Scene; without `faces` (not analysed)
-    an Auto Scene is tracked with its crop in the middle."""
+    each Scene by its faces), captioned with `words` (in seconds into the Clip; those beyond its
+    ends are left out), opening with the `hook` text. Without `scenes` the Clip is one Scene;
+    without `faces` (not analysed) an Auto Scene is tracked with its crop in the middle; without
+    `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     duration = round(end - start, 3)
@@ -237,7 +300,187 @@ def plan_render(
         source_height=source.height,
         fps=source.fps,
         scenes=plans,
+        captions=_captions(words or [], plans, duration),
+        hook=_hook(hook, duration),
     )
+
+
+def fit_hook(text: str) -> tuple[list[str], float]:
+    """How the hook `text` is set: its lines (none when it is blank) and their font size. One line
+    if it fits in HOOK_WIDTH at HOOK_SIZE; else two, broken between words where the longer is
+    shortest. Lines still too wide are set smaller, so that the longest just fits: the
+    text fits when the size is HOOK_SIZE."""
+    words = text.split()
+    if not words:
+        return [], HOOK_SIZE
+    font = font_metrics()
+
+    def widest(lines: list[str]) -> float:
+        return max(font.width(line, HOOK_SIZE) for line in lines)
+
+    lines = [" ".join(words)]
+    if widest(lines) > HOOK_WIDTH:
+        breaks = [[" ".join(words[:i]), " ".join(words[i:])] for i in range(1, len(words))]
+        lines = min([lines, *breaks], key=widest)
+    width = widest(lines)
+    if width <= HOOK_WIDTH:
+        return lines, HOOK_SIZE
+    return lines, math.floor(HOOK_SIZE * HOOK_WIDTH / width * 10) / 10
+
+
+def _hook(text: str, duration: float) -> HookEvent | None:
+    """The hook `text` over the Clip's first HOOK_SECS (all of it, if it is shorter), in a box just
+    below the top of SAFE_AREA, centred like the captions and as large as its lines and padding;
+    None when the text is blank."""
+    lines, size = fit_hook(text)
+    if not lines:
+        return None
+    font = font_metrics()
+    width = math.ceil(max(font.width(line, size) for line in lines)) + 2 * HOOK_PAD_X
+    letters = (font.cap_height + font.descent) / font.units * size + (len(lines) - 1) * HOOK_LEADING * size
+    area = Box((OUTPUT_WIDTH - width) // 2, SAFE_AREA.y, width, math.ceil(letters) + 2 * HOOK_PAD_Y)
+    return HookEvent(lines, 0.0, round(min(HOOK_SECS, duration), 3), area, size)
+
+
+@dataclass(frozen=True)
+class FontMetrics:
+    """The measures of the font captions and the hook are set in, in its units. libass sets a font
+    so that its Windows ascent plus descent, `units`, is the font size."""
+
+    # The advance width of each character the font has.
+    advances: dict[str, int]
+    units: int
+    # The Windows ascent, from the top of a line to its baseline.
+    ascent: int
+    # How tall capitals are, and how far below the baseline descenders (g, p) go.
+    cap_height: int
+    descent: int
+
+    def width(self, text: str, size: float) -> float:
+        """How wide `text` is at font `size`, in pixels; a character the font hasn't got counts a size wide."""
+        return sum(self.advances.get(char, self.units) for char in text) / self.units * size
+
+
+@cache
+def font_metrics() -> FontMetrics:
+    """The bundled Montserrat ExtraBold's measures, read with fontTools."""
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(MONTSERRAT_EXTRABOLD, lazy=True)
+    widths = font["hmtx"]
+    os2 = font["OS/2"]
+    return FontMetrics(
+        advances={chr(code): widths[glyph][0] for code, glyph in font.getBestCmap().items()},
+        units=os2.usWinAscent + os2.usWinDescent,
+        ascent=os2.usWinAscent,
+        cap_height=os2.sCapHeight,
+        descent=-os2.sTypoDescender,
+    )
+
+
+@dataclass(frozen=True)
+class _Spoken:
+    """A Word as captions show it, on the Clip's timeline."""
+
+    text: str
+    start: float
+    end: float
+    ends_sentence: bool
+
+
+def _captions(words: list[Word], scenes: list[ScenePlan], duration: float) -> list[CaptionEvent]:
+    """The caption lines of `words` over the Clip, which lasts `duration` and is laid out in `scenes`.
+
+    The Words whose middle is in the Clip are taken in order into a line, in UPPERCASE and without the
+    punctuation at their ends, until the next would make it longer than CAPTION_MAX_CHARS or
+    CAPTION_MAX_SECS, comes after a pause of CAPTION_PAUSE_SECS, follows the end of a sentence, or
+    starts in a Scene whose captions go elsewhere. A line starts with its first Word and ends
+    CAPTION_LINGER_SECS after its last, when the next line starts if that is sooner, and after
+    CAPTION_MAX_SECS at most. A Word is highlighted from when it is spoken until the next one is.
+    A line still being spoken at a Layout change that moves the captions moves there with it (unless
+    that would show it for less than CAPTION_MIN_SECS in one place); one whose Words are all spoken
+    goes at the change."""
+    spoken = []
+    for word in sorted(words, key=lambda word: word.start):
+        text, ends_sentence = _caption_text(word.text)
+        if text and 0 <= (word.start + word.end) / 2 < duration:
+            spoken.append(_Spoken(text, max(word.start, 0.0), min(max(word.end, word.start), duration), ends_sentence))
+
+    areas = [SEAM_CAPTIONS if scene.layout is SceneLayout.SPLIT else LOWER_CAPTIONS for scene in scenes]
+    # The Layout changes that move the captions.
+    moves = [scene.start for scene, area, before in zip(scenes[1:], areas[1:], areas) if area != before]
+
+    def area_at(at: float) -> Box:
+        return next(area for scene, area in zip(reversed(scenes), reversed(areas)) if scene.start <= at or scene is scenes[0])
+
+    lines: list[list[_Spoken]] = []
+    for word in spoken:
+        line = lines[-1] if lines else None
+        if (
+            line is None
+            or len(" ".join([*(w.text for w in line), word.text])) > CAPTION_MAX_CHARS
+            or word.end - line[0].start > CAPTION_MAX_SECS
+            or word.start - line[-1].end >= CAPTION_PAUSE_SECS
+            or line[-1].ends_sentence
+            or area_at(word.start) != area_at(line[0].start)
+        ):
+            lines.append([word])
+        else:
+            line.append(word)
+
+    events = []
+    for i, line in enumerate(lines):
+        start = line[0].start
+        end = min(line[-1].end + CAPTION_LINGER_SECS, start + CAPTION_MAX_SECS, duration)
+        if i + 1 < len(lines):
+            end = min(end, lines[i + 1][0].start)
+        end = min([end, *(at for at in moves if line[-1].end <= at < end)])
+        if end <= start:
+            continue
+        text = " ".join(word.text for word in line)
+        starts = [max(word.start, start) for word in line]
+        highlights = list(zip(line, starts, [*starts[1:], end]))
+        edges = [start, *(at for at in moves if start < at < end), end]
+        # Each part of the line between Layout changes, where it is shown: one too short joins the next
+        # (the last, the one before it), taking the next one's place.
+        parts = [[a, b, area_at(a)] for a, b in zip(edges, edges[1:])]
+        while len(parts) > 1:
+            short = next((i for i, (a, b, _) in enumerate(parts) if b - a < CAPTION_MIN_SECS), None)
+            if short is None:
+                break
+            if short + 1 < len(parts):
+                parts[short + 1][0] = parts[short][0]
+            else:
+                parts[short - 1][1] = parts[short][1]
+            del parts[short]
+        for a, b, area in parts:
+            events.append(CaptionEvent(
+                text=text,
+                start=round(a, 3),
+                end=round(b, 3),
+                words=[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
+                       for word, on, off in highlights],
+                area=area,
+            ))
+    return events
+
+
+def _caption_text(text: str) -> tuple[str, bool]:
+    """A Word as captions show it, in UPPERCASE without the punctuation at its ends (empty when it is
+    all punctuation), and whether it ends a sentence."""
+
+    def punctuation(char: str) -> bool:
+        return unicodedata.category(char)[0] == "P" and char not in _SIGNS
+
+    shown = text.strip()
+    first, last = 0, len(shown)
+    while first < last and punctuation(shown[first]):
+        first += 1
+    while last > first and punctuation(shown[last - 1]):
+        last -= 1
+    ends_sentence = any(char in ".?!…" for char in shown[last:])
+    marks = "".join(char for char in shown[last:] if char in "?!")
+    return (shown[first:last] + marks).upper() if first < last else "", ends_sentence
 
 
 def _merge_short(edges: list[float]) -> list[tuple[float, float]]:

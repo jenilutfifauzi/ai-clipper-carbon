@@ -179,6 +179,23 @@ class RenderTuning:
 
 
 @dataclass(frozen=True)
+class PreviewTuning:
+    """How the preview proxy of a Source the browser can't play is encoded (app/preview.py). Not
+    read from the environment."""
+
+    # Tried in order, as RenderTuning.encoders.
+    encoders: tuple[str, ...] = ("h264_videotoolbox", "libx264")
+    # The proxy's shorter side, at most (a 1920x1080 master gives 1280x720); a smaller master keeps its size.
+    short_side: int = 720
+    bitrate: str = "2M"
+    x264_crf: int = 26
+    x264_preset: str = "veryfast"
+    # Review seeks to every Candidate's edges: a keyframe this often keeps each seek quick.
+    keyframe_secs: float = 1
+    audio_bitrate: str = "128k"
+
+
+@dataclass(frozen=True)
 class AnalysisTuning:
     """How a Clip's range is analysed before planning: scene cuts and faces. Not read from the
     environment. A Clip's analysis is cached with these values, and done again when they change."""
@@ -256,10 +273,14 @@ class Settings:
     selection: SelectionTuning = SelectionTuning()
     quota: QuotaTuning = QuotaTuning()
     render: RenderTuning = RenderTuning()
+    preview: PreviewTuning = PreviewTuning()
     analysis: AnalysisTuning = AnalysisTuning()
     camera: CameraTuning = CameraTuning()
     # The disk endpoint warns when the data directory's volume has less free space than this.
     low_disk_bytes: int = 10 * 10**9
+    # An upload is refused unless its volume keeps this much free once the file is stored: room for
+    # its preview proxy (about 1 GB an hour), Clips and the Job's other files.
+    upload_reserve_bytes: int = 2 * 10**9
     frontend_dir: Path = FRONTEND_DIST
 
     @property

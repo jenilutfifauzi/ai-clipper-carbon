@@ -5,6 +5,7 @@ description = "Local podcast-to-shorts clipper for Apple Silicon"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.143.0",
+    "fonttools>=4.66.1",
     "google-genai>=2.30.0",
     "huggingface-hub>=2.2.0",
     "mediapipe>=1.1.0",

@@ -1,3 +1,4 @@
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
 from app.rendering import Renders
+from app.uploads import UPLOADS_DIR
 from app.worker import Worker
 
 
@@ -19,8 +21,11 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     """The app, wired to `ports` (the real ones by default). Run with `uvicorn --factory app.main:create_app`."""
     settings = settings or load_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    # What is there is left from uploads cut short when the app last stopped: none was complete.
+    shutil.rmtree(settings.data_dir / UPLOADS_DIR, ignore_errors=True)
     store = JobStore(settings.data_dir / "jobs")
-    worker = Worker(store, Pipeline(store, ports or real_ports(settings), settings), Renders(store, settings))
+    ports = ports or real_ports(settings)
+    worker = Worker(store, Pipeline(store, ports, settings), Renders(store, settings, ports.transcriber))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

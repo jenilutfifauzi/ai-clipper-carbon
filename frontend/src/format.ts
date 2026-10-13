@@ -1,5 +1,7 @@
 // Formatting shared by the pages.
 
+import type { Job } from "./api";
+
 export function cx(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
 }
@@ -54,6 +56,11 @@ export function formatRelative(iso: string): string {
 
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// What a Job is of: its uploaded file's name, or its shortened URL.
+export function jobTitle(job: Pick<Job, "url" | "upload">): string {
+  return job.upload ? job.upload.name : shortUrl(job.url);
 }
 
 // A YouTube URL shortened to what tells episodes apart: its video id.

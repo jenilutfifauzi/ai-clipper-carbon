@@ -5,12 +5,21 @@ worker (or the CLI) then renders the Job's queued Clips one after another, the e
 first, and puts the Job back in `review` when none is left. The owner can go on reviewing meanwhile.
 Each render uses the Candidate as it is when its render starts, and replaces the Candidate's
 previous Clip once it is done.
+
+A Clip is captioned (unless its Job's captions are off) from a fresh transcription of its own range
+and CAPTION_MARGIN_SECS either side, so that Whisper hears its first and last Words whole, in the
+Job's language and under the watchdog. The Words are saved with the Job and reused while the Clip's
+range, the language and the Whisper model stay the same (see `words_file`): a hook or layout edit
+doesn't transcribe again, a bounds edit does. Whisper keeps its model loaded (about 2 GB) from one
+Clip to the next and is stopped when the Job's queued Clips are done, which frees that memory. It
+never runs at the same time as the face detection or an encode: each Clip's steps run one after another.
 """
 
 import logging
+import threading
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from pydantic import TypeAdapter, ValidationError
@@ -24,15 +33,40 @@ from app.planner import RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
 from app.storage import write_atomic
+from app.transcriber import Transcriber, TranscriptionStalled, TranscriptionStopped, Watchdog
+from app.transcript import Word
 from app.video_source import probe
 
 logger = logging.getLogger(__name__)
 
 # The statuses in which Candidates can be asked to be rendered.
 RENDERABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
+# A Clip's captions are transcribed from this long before its start to this long after its end.
+CAPTION_MARGIN_SECS = 2.0
+WORDS_DIR = "words"
+
+
+@dataclass(frozen=True)
+class ClipWords:
+    """The Words transcribed for a Clip's captions, in seconds into the Clip (those in the margins
+    before and after it included), with the Clip's range on the Source's timeline, and the language
+    and Whisper model they were transcribed with."""
+
+    start: float
+    end: float
+    language: str
+    model: str
+    words: list[Word]
+
+
+def words_file(start: float, end: float) -> str:
+    """The cached caption Words of the Clip from `start` to `end` on the Source, relative to the Job's directory."""
+    return f"{WORDS_DIR}/{round(start * 1000)}-{round(end * 1000)}.json"
+
 
 _PLAN = TypeAdapter(RenderPlan)
 _ANALYSIS = TypeAdapter(ClipAnalysis)
+_WORDS = TypeAdapter(ClipWords)
 
 
 class NothingToRender(ValueError):
@@ -40,11 +74,15 @@ class NothingToRender(ValueError):
 
 
 class Renders:
-    def __init__(self, store: JobStore, settings: Settings) -> None:
+    def __init__(self, store: JobStore, settings: Settings, transcriber: Transcriber) -> None:
         self.store = store
         self.settings = settings
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
         self.analyzer = Analyzer(settings.ffmpeg_bin, BLAZE_FACE_MODEL, settings.analysis)
+        self.transcriber = transcriber
+        self.watchdog = Watchdog(transcriber, settings.transcription)
+        self._stopping = threading.Event()
+        self._transcribing = False
 
     def request(self, job_id: str, candidate_ids: list[str] | None = None) -> bool:
         """Queue the Candidates' Clips: those of `candidate_ids`, or of the selected Candidates. A Clip
@@ -83,11 +121,14 @@ class Renders:
         and RenderStopped when the app stops: the Clip being rendered is queued again at the next start."""
         with self.store.running(job_id):
             count = 0
-            while (started := self._next(job_id, count)) is not None:
-                job, clip, candidate = started
-                clip = self._render(job, clip, candidate)
-                count += 1
-                rendered(clip, candidate)
+            try:
+                while (started := self._next(job_id, count)) is not None:
+                    job, clip, candidate = started
+                    clip = self._render(job, clip, candidate)
+                    count += 1
+                    rendered(clip, candidate)
+            finally:
+                self.transcriber.stop()  # frees Whisper's memory, if a Clip was transcribed
             return count
 
     def recover(self, job_id: str) -> None:
@@ -101,6 +142,9 @@ class Renders:
         self.store.change_clips(job_id, requeue, expect={JobStatus.RENDERING})
 
     def stop(self) -> None:
+        self._stopping.set()
+        if self._transcribing:
+            self.transcriber.stop()
         self.analyzer.stop()
         self.renderer.stop()
 
@@ -138,20 +182,24 @@ class Renders:
                 shown = percent
                 self.store.update(job.id, progress=float(percent))
 
+        def step(share: float) -> Callable[[float], None]:
+            """Progress for a step that takes `share` of the Clip's, after what has been shown so far.
+            (A step done before, as a cached transcription or analysis, shows none.)"""
+            begin = shown / 100
+            return lambda done: progress(begin + share * done)
+
         began = time.monotonic()
         try:
-            analysis = self._analysis(job, candidate, lambda done: progress(done / 3))
-            # A Clip analysed just now has shown that as the first third of its progress.
-            share = shown / 100
+            words = self._words(job, candidate, step(1 / 3)) if job.options.captions else None
+            analysis = self._analysis(job, candidate, step(1 / 3))
             plan = plan_render(
                 candidate.start, candidate.end, job.source.metadata,
                 scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
-                layout=candidate.layout, camera=self.settings.camera,
+                layout=candidate.layout, words=words, hook=candidate.hook_text, camera=self.settings.camera,
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             encoder = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster,
-                lambda done: progress(share + (1 - share) * done),
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100)
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:
@@ -189,6 +237,52 @@ class Renders:
             return _put(clips, ended), {}, ended
 
         return self.store.change_clips(job.id, finish)
+
+    def _words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[Word]:
+        """The Words of the Candidate's range and CAPTION_MARGIN_SECS either side, in seconds into the
+        Clip: as saved by an earlier render of the same range in the same language with the same
+        Whisper model, or transcribed now and saved."""
+        assert job.source is not None
+        language, model = job.options.language, self.settings.whisper_model
+        path = self.store.job_dir(job.id) / words_file(candidate.start, candidate.end)
+        if path.is_file():
+            try:
+                saved = _WORDS.validate_json(path.read_bytes())
+            except ValidationError:
+                saved = None
+            if saved is not None and (saved.start, saved.end, saved.language, saved.model) == (
+                candidate.start, candidate.end, language, model
+            ):
+                return saved.words
+        start = max(0.0, candidate.start - CAPTION_MARGIN_SECS)
+        end = min(job.source.metadata.duration, candidate.end + CAPTION_MARGIN_SECS)
+        source = self.store.job_dir(job.id) / job.source.video
+        began = time.monotonic()
+        self._transcribing = True
+        try:
+            if self._stopping.is_set():
+                raise RenderStopped("The app is stopping")
+            transcript = self.watchdog.transcribe(source, language, start, end)
+        except TranscriptionStopped as exc:
+            if self._stopping.is_set():
+                raise RenderStopped("The app is stopping") from exc
+            raise
+        except TranscriptionStalled as exc:
+            raise RuntimeError(f"Transcribing the Clip for its captions stalled twice; try again ({exc})") from exc
+        finally:
+            self._transcribing = False
+        words = [
+            Word(word.text, round(word.start - candidate.start, 3), round(word.end - candidate.start, 3))
+            for word in transcript.words
+        ]
+        logger.info(
+            "Job %s: transcribed Candidate %s's %.1f s (with its margins) in %.1f s: %d words",
+            job.id, candidate.id, end - start, time.monotonic() - began, len(words),
+        )
+        path.parent.mkdir(exist_ok=True)
+        write_atomic(path, _WORDS.dump_json(ClipWords(candidate.start, candidate.end, language, model, words)))
+        progress(1.0)
+        return words
 
     def _analysis(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> ClipAnalysis | None:
         """The Scenes and faces of the Candidate's range, as saved by an earlier render of the same

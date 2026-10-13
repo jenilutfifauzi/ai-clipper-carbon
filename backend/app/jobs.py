@@ -42,7 +42,12 @@ CLIPS_FILE = "clips.json"
 # Held (flock) by the process running the Job's stages, or rendering its Clips.
 RUN_LOCK = "run.lock"
 
+# An uploaded master file, named so plus the extension it was uploaded with (ffprobe goes by the
+# contents, the browser's player by the extension).
+MASTER_FILE = "master"
+
 _JOB_ID = re.compile(r"[0-9a-f]{12}")
+_SUFFIX = re.compile(r"\.[a-z0-9]{1,8}")
 
 
 class JobStatus(StrEnum):
@@ -108,8 +113,20 @@ class QuotaWait:
 
 
 @dataclass(frozen=True)
+class Upload:
+    """The master file the owner uploaded for a Job, in place of a URL (app/uploads.py)."""
+
+    # Its name on the owner's machine, and its size in bytes.
+    name: str
+    size: int
+    # The stored file's name in the Job's directory.
+    file: str
+
+
+@dataclass(frozen=True)
 class Job:
     id: str
+    # The episode's YouTube URL; empty for an uploaded master file.
     url: str
     options: JobOptions
     created_at: datetime
@@ -129,6 +146,8 @@ class Job:
     # Set while the Job meets quota errors or overloads in the analyzing stage, until it gets past
     # them or fails.
     quota: QuotaWait | None = None
+    # Set when the Source is a master file the owner uploaded.
+    upload: Upload | None = None
     source: Source | None = None
     # The version of the Selection prompts that produced the Job's Candidates.
     prompt_version: str | None = None
@@ -162,7 +181,12 @@ class JobStore:
         self._listeners: tuple[JobListener, ...] = ()
         self._listeners_lock = threading.Lock()
 
-    def create(self, url: str, options: JobOptions, profile: ChannelProfile) -> Job:
+    def create(
+        self, url: str, options: JobOptions, profile: ChannelProfile, upload: tuple[Path, str] | None = None
+    ) -> Job:
+        """A new queued Job. For an uploaded master file, `upload` is the complete file and its name
+        on the owner's machine: the file is moved into the Job's directory (on the same volume) before
+        the Job is saved, so that no Job is ever without its whole upload."""
         now = datetime.now(UTC)
         job = Job(
             id=uuid4().hex[:12],
@@ -174,6 +198,13 @@ class JobStore:
             history=[Transition(JobStatus.QUEUED, now)],
         )
         self.job_dir(job.id).mkdir(parents=True)
+        if upload is not None:
+            path, name = upload
+            suffix = Path(name).suffix.lower()
+            stored = MASTER_FILE + (suffix if _SUFFIX.fullmatch(suffix) else "")
+            size = path.stat().st_size
+            path.replace(self.job_dir(job.id) / stored)
+            job = replace(job, upload=Upload(name, size, stored))
         self._save(job)
         return job
 

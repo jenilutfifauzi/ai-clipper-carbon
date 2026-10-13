@@ -1,10 +1,20 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router";
-import { api } from "../../api";
+import { api, uploadJob, type JobOptions, type UploadProgress } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
-import { cx } from "../../format";
+import { ProgressBar } from "../../components/ProgressBar";
+import { Segmented } from "../../components/Segmented";
+import { cx, formatBytes } from "../../format";
+import { FileDrop } from "./FileDrop";
+
+type Origin = "url" | "upload";
+
+const ORIGINS = [
+  { value: "url", label: "YouTube URL" },
+  { value: "upload", label: "Upload a file" },
+] as const satisfies readonly { value: Origin; label: string }[];
 
 const LANGUAGES = [
   ["id", "Indonesian"],
@@ -21,7 +31,8 @@ const INPUT = cx(
 const LABEL = "text-sm font-medium";
 const HINT = "text-sm text-muted";
 
-// Start a Job from a YouTube URL, with an optional Brief and the Job's options; then open its page.
+// Start a Job from a YouTube URL or an uploaded master file, with an optional Brief and the Job's
+// options; then open its page.
 export function NewJobForm() {
   const navigate = useNavigate();
   const id = useId();
@@ -30,7 +41,20 @@ export function NewJobForm() {
   const [captions, setCaptions] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [origin, setOrigin] = useState<Origin>("url");
+  const [file, setFile] = useState<File | null>(null);
+  const [uploaded, setUploaded] = useState<UploadProgress | null>(null);
+  const cancelUpload = useRef<(() => void) | null>(null);
   const maxInput = useRef<HTMLInputElement>(null);
+
+  // Leaving the page would cut the upload short.
+  const uploading = uploaded !== null;
+  useEffect(() => {
+    if (!uploading) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [uploading]);
 
   const rangeError = Number(minSecs) >= Number(maxSecs) ? "Make the longest clip longer than the shortest." : "";
   useEffect(() => maxInput.current?.setCustomValidity(rangeError), [rangeError]);
@@ -40,21 +64,32 @@ export function NewJobForm() {
     const form = new FormData(event.currentTarget);
     setPending(true);
     setError(null);
+    const options: Partial<JobOptions> = {
+      brief: String(form.get("brief")).trim() || null,
+      min_secs: Number(minSecs),
+      max_secs: Number(maxSecs),
+      captions,
+      language: String(form.get("language")).trim(),
+    };
     try {
-      const job = await api.createJob({
-        url: String(form.get("url")).trim(),
-        options: {
-          brief: String(form.get("brief")).trim() || null,
-          min_secs: Number(minSecs),
-          max_secs: Number(maxSecs),
-          captions,
-          language: String(form.get("language")).trim(),
-        },
-      });
+      let job;
+      if (origin === "upload" && file) {
+        // Asked first: the answer to the upload itself would only come once all of it was sent.
+        await api.checkUpload(file.size);
+        setUploaded({ loaded: 0, total: file.size });
+        const upload = uploadJob(file, options, setUploaded);
+        cancelUpload.current = upload.abort;
+        job = await upload.done;
+      } else {
+        job = await api.createJob({ url: String(form.get("url")).trim(), options });
+      }
       navigate(`/jobs/${job.id}`);
     } catch (reason) {
-      setError((reason as Error).message);
+      if ((reason as Error).name !== "AbortError") setError((reason as Error).message);
       setPending(false);
+      setUploaded(null);
+    } finally {
+      cancelUpload.current = null;
     }
   }
 
@@ -71,27 +106,46 @@ export function NewJobForm() {
       <h1 id={`${id}-heading`} className="text-2xl font-semibold tracking-tight">
         New Job
       </h1>
-      <p className="mt-1 text-muted">Paste a published episode. Candidates are ready to review when it's analyzed.</p>
+      <p className="mt-1 text-muted">
+        Paste a published episode, or upload its master file. Candidates are ready to review when it's analyzed.
+      </p>
 
       <form onSubmit={submit} className="mt-6 flex flex-col gap-5">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${id}-url`} className={LABEL}>
-            YouTube URL
-          </label>
-          <input
-            id={`${id}-url`}
-            name="url"
-            type="url"
-            required
-            placeholder="https://www.youtube.com/watch?v=…"
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            enterKeyHint="go"
-            className={INPUT}
-          />
-        </div>
+        <Segmented
+          legend="Episode"
+          options={ORIGINS}
+          value={origin}
+          onChange={(value) => {
+            setOrigin(value);
+            setError(null);
+          }}
+          className={cx("sm:max-w-sm", pending && "pointer-events-none opacity-60")}
+        />
+        {origin === "url" ? (
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={`${id}-url`} className={LABEL}>
+              YouTube URL
+            </label>
+            <input
+              id={`${id}-url`}
+              name="url"
+              type="url"
+              required
+              placeholder="https://www.youtube.com/watch?v=…"
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="go"
+              className={INPUT}
+            />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            <span className={LABEL}>Master file</span>
+            <FileDrop id={`${id}-file`} file={file} onFile={setFile} disabled={pending} />
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor={`${id}-brief`} className={LABEL}>
@@ -216,10 +270,26 @@ export function NewJobForm() {
           {error && <p className="rounded-control bg-danger-surface p-3 text-sm text-danger">{error}</p>}
         </div>
 
-        <Button type="submit" variant="primary" disabled={pending} className="self-start px-5">
-          {pending ? "Starting…" : "Start Job"}
-          <ArrowRight aria-hidden size={18} />
-        </Button>
+        {uploaded ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 text-sm">
+              <span>{uploaded.loaded < uploaded.total ? "Uploading…" : "Storing the file…"}</span>
+              <span className="text-muted tabular-nums">
+                {formatBytes(uploaded.loaded)} of {formatBytes(uploaded.total)} ·{" "}
+                {Math.floor((100 * uploaded.loaded) / Math.max(1, uploaded.total))}%
+              </span>
+            </div>
+            <ProgressBar percent={(100 * uploaded.loaded) / Math.max(1, uploaded.total)} label="Upload progress" />
+            <Button onClick={() => cancelUpload.current?.()} className="mt-1 self-start">
+              Cancel upload
+            </Button>
+          </div>
+        ) : (
+          <Button type="submit" variant="primary" disabled={pending} className="self-start px-5">
+            {pending ? "Starting…" : origin === "upload" ? "Upload and start" : "Start Job"}
+            <ArrowRight aria-hidden size={18} />
+          </Button>
+        )}
       </form>
     </Panel>
   );

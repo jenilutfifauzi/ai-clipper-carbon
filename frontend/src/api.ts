@@ -44,10 +44,22 @@ export interface Source {
   video: string;
   caption_track: string | null;
   metadata: SourceMetadata;
+  // A copy the browser can play, for previews, when it can't play `video` (an HEVC or ProRes master).
+  preview: string | null;
+}
+
+// The master file the owner uploaded for a Job, in place of a URL.
+export interface Upload {
+  // Its name on the owner's machine, and its size in bytes.
+  name: string;
+  size: number;
+  // The stored file, in the Job's directory.
+  file: string;
 }
 
 export interface Job {
   id: string;
+  // Empty for an uploaded master file.
   url: string;
   options: JobOptions;
   created_at: string;
@@ -60,6 +72,7 @@ export interface Job {
   message: string | null;
   warnings: JobWarning[];
   quota: QuotaWait | null;
+  upload: Upload | null;
   source: Source | null;
   prompt_version: string | null;
   history: { status: JobStatus; at: string }[];
@@ -175,6 +188,13 @@ export interface DiskUsage {
   warning_below_bytes: number;
 }
 
+// How a hook text is shown on the Clip: its lines, and whether they fit at the hook's size (the
+// render sets them smaller when they don't).
+export interface HookFit {
+  lines: string[];
+  fits: boolean;
+}
+
 export interface NewJob {
   url: string;
   options: Partial<JobOptions>;
@@ -219,6 +239,8 @@ export const api = {
   retryJob: (id: string) => request<Job>(`/jobs/${id}/retry`, { method: "POST" }),
   deleteJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
   disk: () => request<DiskUsage>("/system/disk"),
+  // Rejects with the backend's message (507) when an upload this size wouldn't fit on the disk.
+  checkUpload: (size: number) => request<void>(`/jobs/upload/check?size=${size}`),
   updateCandidate: (jobId: string, id: string, change: CandidateChange) =>
     request<Candidate>(`/jobs/${jobId}/candidates/${id}`, { method: "PATCH", body: JSON.stringify(change) }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>
@@ -230,6 +252,7 @@ export const api = {
       body: candidateIds ? JSON.stringify({ candidate_ids: candidateIds }) : undefined,
     }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
+  hookFit: (text: string, signal?: AbortSignal) => request<HookFit>(`/hook?text=${encodeURIComponent(text)}`, { signal }),
 };
 
 // A file from the Job's directory (such as "clips/<id>.mp4"), served with range support for the
@@ -237,5 +260,52 @@ export const api = {
 export const mediaUrl = (jobId: string, file: string, version?: string) =>
   `/media/${jobId}/${file.split("/").map(encodeURIComponent).join("/")}` +
   (version ? `?v=${encodeURIComponent(version)}` : "");
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+}
+
+/**
+ * Create a Job from a master file, streamed to the backend as multipart/form-data. XHR rather than
+ * fetch, because only XHR reports upload progress. `abort()` cancels the upload, which then rejects
+ * with an AbortError; the backend keeps nothing of it.
+ */
+export function uploadJob(
+  file: File,
+  options: Partial<JobOptions>,
+  onProgress: (progress: UploadProgress) => void,
+): { done: Promise<Job>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<Job>((resolve, reject) => {
+    xhr.upload.onprogress = (event) => onProgress({ loaded: event.loaded, total: event.total || file.size });
+    xhr.onload = () => {
+      let body: { detail?: unknown } | null = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON: fall through to the status line
+      }
+      if (xhr.status === 201 && body) return resolve(body as Job);
+      const detail = body?.detail;
+      const message =
+        typeof detail === "string"
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((error: { msg: string }) => error.msg).join("; ")
+            : `${xhr.status} ${xhr.statusText}`;
+      reject(new ApiError(xhr.status, message));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "The upload stopped: the connection to AI Clipper was lost."));
+    xhr.onabort = () => reject(new DOMException("The upload was cancelled", "AbortError"));
+  });
+  const form = new FormData();
+  // The options go first: the backend checks them before it stores any of the file.
+  form.append("options", JSON.stringify(options));
+  form.append("file", file);
+  xhr.open("POST", "/api/jobs/upload");
+  xhr.send(form);
+  return { done, abort: () => xhr.abort() };
+}
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;

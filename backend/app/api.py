@@ -4,10 +4,11 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel, ConfigDict, FiniteFloat, StringConstraints
+from pydantic import BaseModel, ConfigDict, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
 from app.candidates import Candidate, Layout
@@ -15,11 +16,13 @@ from app.clips import Clip
 from app.config import Settings
 from app.events import job_events
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.planner import HOOK_SIZE, fit_hook
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import CandidateChange, CandidateNotFound, Episode, InvalidEdit
 from app.storage import DiskUsage, disk_usage
 from app.transcript import Transcript
+from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
 from app.worker import Worker
 
 router = APIRouter(prefix="/api")
@@ -29,10 +32,14 @@ media = APIRouter(prefix="/media")
 # while it is analyzed again and its untouched Candidates are about to be replaced. Review goes on
 # while Clips render; each render takes its Candidate as it is when the render starts.
 EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
-# What /media serves from a Job's directory: its video, and its Clips and their posters.
-MEDIA_SUFFIXES = frozenset({".mp4", ".m4a", ".jpg", ".png"})
-# The longest hook text accepted; the UI warns well before this, at about 40 characters.
+# What /media serves from a Job's directory: its video (or preview proxy), and its Clips and their
+# posters. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
+MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
+# The longest hook text accepted. The UI warns well before this, once the text doesn't fit in the
+# hook's two lines (GET /api/hook).
 HOOK_MAX_CHARS = 200
+
+_OPTIONS = TypeAdapter(JobOptions)
 
 
 def _settings(request: Request) -> Settings:
@@ -92,6 +99,13 @@ class ManualCandidate(BaseModel):
     end: FiniteFloat
 
 
+class HookFit(BaseModel):
+    """How a hook text is shown on the Clip: its lines, and whether they fit at the hook's size."""
+
+    lines: list[str]
+    fits: bool
+
+
 class RenderRequest(BaseModel):
     """The Candidates to render; the selected ones when left out."""
 
@@ -119,6 +133,46 @@ def create_job(body: JobRequest, store: Store, profiles: Profiles, worker: JobWo
     job = store.create(body.url, body.options, profiles.load())
     worker.submit(job.id)
     return job
+
+
+@router.post("/jobs/upload", status_code=201)
+async def upload_job(
+    request: Request, settings: AppSettings, store: Store, profiles: Profiles, worker: JobWorker
+) -> Job:
+    """Create a Job from an uploaded master file: a multipart/form-data body with an `options` field
+    (JobOptions as JSON; optional) and then a `file`. The file is streamed to disk as it comes. 507
+    before anything is written when the Content-Length leaves less than Settings.upload_reserve_bytes
+    free (the browser asks `check_upload` first), or as soon as free space runs short while it
+    comes; 400 for an upload cut short, which leaves nothing behind."""
+
+    def accept(fields: dict[str, str]) -> JobOptions:
+        try:
+            return _OPTIONS.validate_json(fields.get(OPTIONS_FIELD) or "{}")
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors(include_url=False)) from None
+
+    try:
+        received, options = await receive(
+            request, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes, accept
+        )
+    except NotEnoughSpace as exc:
+        raise HTTPException(507, str(exc)) from None
+    except BadUpload as exc:
+        raise HTTPException(400, str(exc)) from None
+    job = store.create("", options, profiles.load(), upload=(received.path, received.name))
+    worker.submit(job.id)
+    return job
+
+
+@router.get("/jobs/upload/check", status_code=204)
+def check_upload(size: Annotated[int, Query(ge=0)], settings: AppSettings) -> None:
+    """Whether an upload of `size` bytes would be accepted for its disk space: 204, or 507 with the
+    upload's message. The browser asks before it sends the file, since it only reads the answer to
+    the upload itself once it has sent the whole file."""
+    try:
+        check_room(settings.data_dir, size, settings.upload_reserve_bytes)
+    except NotEnoughSpace as exc:
+        raise HTTPException(507, str(exc)) from None
 
 
 @router.get("/jobs")
@@ -183,6 +237,14 @@ def update_candidate(
     return _review(
         store, settings, job_id, lambda candidates, episode: review.update(candidates, candidate_id, change, episode)
     )
+
+
+@router.get("/hook")
+def hook_fit(text: Annotated[str, Query(max_length=HOOK_MAX_CHARS)] = "") -> HookFit:
+    """How the hook `text` will be set (app/planner.py's fit_hook), for Review to warn about one too
+    long for two lines, which the render sets smaller."""
+    lines, size = fit_hook(text)
+    return HookFit(lines=lines, fits=size == HOOK_SIZE)
 
 
 @router.post("/jobs/{job_id}/candidates", status_code=201)

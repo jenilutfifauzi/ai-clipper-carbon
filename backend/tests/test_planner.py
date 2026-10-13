@@ -1,7 +1,4 @@
-"""Seam B: the Render Planner on synthetic input, without video.
-
-Later tickets add their cases here: caption events (15) and the hook event (16).
-"""
+"""Seam B: the Render Planner on synthetic input, without video."""
 
 import math
 
@@ -10,7 +7,27 @@ from pydantic import TypeAdapter
 
 from app.candidates import Layout
 from app.config import CameraTuning
-from app.planner import Box, CropPoint, Face, FrameFaces, RenderPlan, Scene, SceneLayout, plan_render
+from app.planner import (
+    HOOK_PAD_X,
+    HOOK_SIZE,
+    HOOK_WIDTH,
+    LOWER_CAPTIONS,
+    SEAM_CAPTIONS,
+    Box,
+    CaptionEvent,
+    CaptionWord,
+    CropPoint,
+    Face,
+    FrameFaces,
+    HookEvent,
+    RenderPlan,
+    Scene,
+    SceneLayout,
+    fit_hook,
+    font_metrics,
+    plan_render,
+)
+from app.transcript import Word
 from app.video_source import SourceMetadata
 
 
@@ -424,5 +441,232 @@ def test_a_portrait_source_is_passed_through_whatever_its_faces_or_layout():
 
 def test_a_plan_with_every_layout_is_saved_and_read_back_as_json():
     plan = tracked(sampled((2, None), (2, people(1)), (2, people(2))), 6, [Scene(0, 2), Scene(2, 4), Scene(4, 6)])
+    adapter = TypeAdapter(RenderPlan)
+    assert adapter.validate_json(adapter.dump_json(plan)) == plan
+
+
+# Captions (ticket 15). Words are given in seconds into the Clip, as the render queue maps them.
+SEAM = 960
+LOWER_THIRD = 1920 * 2 / 3
+
+
+def said(text: str, start: float = 0.0, secs_per_char: float = 0.06, gap: float = 0.05) -> list[Word]:
+    """`text`'s words spoken one after another from `start`, each lasting secs_per_char per letter."""
+    words, at = [], start
+    for token in text.split():
+        end = at + secs_per_char * len(token)
+        words.append(Word(token, round(at, 3), round(end, 3)))
+        at = end + gap
+    return words
+
+
+def captioned(words: list[Word], secs: float, scenes: list[Scene] | None = None, faces: list[FrameFaces] | None = None,
+              layout: Layout = Layout.AUTO, width: int = 1920, height: int = 1080) -> list[CaptionEvent]:
+    return plan_render(100, 100 + secs, source(width, height, fps=FPS), scenes, faces, layout, words).captions
+
+
+def shown(events: list[CaptionEvent]) -> list[str]:
+    return [event.text for event in events]
+
+
+def test_caption_lines_hold_at_most_16_characters_or_1_4_seconds_and_as_many_words_as_fit():
+    talk = "jadi waktu itu kita lagi ngobrol soal bisnis keluarga yang ternyata ketidakberdayaannya luar biasa ya"
+    events = captioned(said(talk), 12)
+    for event in events:
+        assert len(event.text) <= 16 or " " not in event.text, event.text
+        assert event.end - event.start <= 1.4 + 1e-9
+    # Every Word is shown once, in order, and each line takes as many as fit.
+    assert " ".join(shown(events)) == talk.upper()
+    for line, after in zip(events, events[1:]):
+        first = after.words[0]
+        assert len(f"{line.text} {first.text}") > 16 or first.start + 0.06 * len(first.text) - line.start > 1.4
+    # A Word longer than a line stands alone.
+    assert "KETIDAKBERDAYAANNYA" in shown(events)
+
+    # A slow speaker's lines are cut by time: 0.6 s a Word.
+    slow = [Word(text, 0.6 * i, 0.6 * i + 0.55) for i, text in enumerate("satu dua tiga empat lima".split())]
+    assert shown(captioned(slow, 4)) == ["SATU DUA", "TIGA EMPAT", "LIMA"]
+    # A single Word that goes on for longer still leaves the screen after 1.4 s.
+    [long] = captioned([Word("halooo", 1.0, 3.5)], 4)
+    assert (long.start, long.end, long.words) == (1.0, 2.4, [CaptionWord("HALOOO", 1.0, 2.4)])
+
+
+def test_captions_are_uppercase_without_the_punctuation_at_the_ends_of_words():
+    words = said('halo, semua. "kenapa?" gila?! main-main ... 50% dari 2,5 juta (iya)')
+    assert shown(captioned(words, 10)) == ["HALO SEMUA", "KENAPA?", "GILA?!", "MAIN-MAIN 50%", "DARI 2,5 JUTA", "IYA"]
+    # (A sentence's end ends a line: after SEMUA, KENAPA? and GILA?!; "..." alone shows nothing.)
+
+
+def test_each_word_is_highlighted_from_when_it_is_spoken_until_the_next_one_is():
+    words = [
+        Word("Tadi,", -0.6, -0.2),  # in the margin before the Clip: left out
+        Word("podcast", 0.35, 0.8),
+        Word("ini", 0.8, 1.0),
+        Word("seru", 1.05, 1.35),
+        Word("banget,", 1.4, 1.75),
+        Word("ya", 1.95, 2.25),
+        Word("terus", 3.0, 3.3),  # after a pause: a new line
+        Word("oke", 3.9, 4.3),  # its middle is past the Clip's end: left out
+    ]
+    events = captioned(words, 4)
+    assert [(e.text, e.start, e.end) for e in events] == [
+        ("PODCAST INI SERU", 0.35, 1.4),  # until the next line starts
+        ("BANGET YA", 1.4, 2.55),  # 0.3 s after its last Word
+        ("TERUS", 3.0, 3.6),
+    ]
+    assert [[(w.text, w.start, w.end) for w in e.words] for e in events] == [
+        [("PODCAST", 0.35, 0.8), ("INI", 0.8, 1.05), ("SERU", 1.05, 1.4)],
+        [("BANGET", 1.4, 1.95), ("YA", 1.95, 2.55)],
+        [("TERUS", 3.0, 3.6)],
+    ]
+    # A pause of half a second starts a new line, however short the line.
+    assert shown(captioned([Word("oke", 0.0, 0.3), Word("terus", 0.8, 1.1)], 4)) == ["OKE", "TERUS"]
+    assert shown(captioned([Word("oke", 0.0, 0.3), Word("terus", 0.75, 1.1)], 4)) == ["OKE TERUS"]
+    # A Word the Clip's start cuts into starts at 0, and nothing is captioned without Words.
+    [cut] = captioned([Word("halo", -0.1, 0.3)], 4)
+    assert (cut.start, cut.words) == (0.0, [CaptionWord("HALO", 0.0, 0.6)])
+    assert captioned([], 4) == []
+
+
+def caption_scenes() -> tuple[list[FrameFaces], list[Scene]]:
+    """No face for 2 s (Blur), one face for 2 s (Track), then two faces for 2 s (Split)."""
+    return sampled((2, None), (2, people(1)), (2, people(2))), [Scene(0, 2), Scene(2, 4), Scene(4, 6)]
+
+
+def test_captions_sit_on_the_seam_in_split_and_in_the_lower_third_otherwise():
+    faces, scenes = caption_scenes()
+    words = said("satu dua", 0.5) + said("tiga empat", 2.5) + said("lima enam", 4.5)
+    events = captioned(words, 6, scenes, faces)
+    assert shown(events) == ["SATU DUA", "TIGA EMPAT", "LIMA ENAM"]
+    blur, track, split = (event.area for event in events)
+    assert blur == track
+    assert track.y >= LOWER_THIRD
+    assert track.y >= 656 + 608  # below Blur's shot
+    assert split.y + split.height / 2 == SEAM and split.height <= 200  # clear of the faces, at 40% of each panel
+    for area in (blur, split):
+        assert area.x + area.width / 2 == 540  # centred
+    # Forced layouts follow their layout; a portrait Source has its captions in the lower third.
+    assert {e.area for e in captioned(words, 6, scenes, faces, Layout.SPLIT)} == {split}
+    assert {e.area for e in captioned(words, 6, scenes, faces, Layout.TRACK)} == {track}
+    assert {e.area for e in captioned(words, 6, width=1080, height=1920)} == {track}
+
+    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words)
+    adapter = TypeAdapter(RenderPlan)
+    assert adapter.validate_json(adapter.dump_json(plan)) == plan
+
+
+def test_a_caption_line_moves_where_the_layout_changes():
+    faces, scenes = caption_scenes()
+    lower, seam = (e.area for e in captioned(said("satu", 2.5) + said("dua", 4.5), 6, scenes, faces))
+    # A line still on screen at the cut to Split moves to the seam there, its Word still highlighted.
+    words = [Word("jadi", 3.4, 3.7), Word("begitu", 3.75, 4.1)]
+    before, after = captioned(words, 6, scenes, faces)
+    assert (before.text, before.start, before.end, before.area) == ("JADI BEGITU", 3.4, 4.0, lower)
+    assert (after.text, after.start, after.end, after.area) == ("JADI BEGITU", 4.0, 4.4, seam)
+    assert [(w.start, w.end) for w in before.words] == [(3.4, 3.75), (3.75, 4.0)]
+    assert [(w.start, w.end) for w in after.words] == [(4.0, 4.0), (4.0, 4.4)]
+    # A Word spoken after the cut starts a new line there, rather than joining one on the other side;
+    # a line whose Words have all been spoken goes at the cut rather than moving.
+    words = [Word("jadi", 3.6, 3.9), Word("gitu", 4.05, 4.3)]
+    assert [(e.text, e.start, e.end, e.area) for e in captioned(words, 6, scenes, faces)] == [
+        ("JADI", 3.6, 4.0, lower), ("GITU", 4.05, 4.6, seam)
+    ]
+    # A line spoken from just before the cut is shown at the seam from its start, not for a moment below.
+    [line] = captioned([Word("nah", 3.9, 4.3)], 6, scenes, faces)
+    assert (line.start, line.end, line.area, line.words) == (3.9, 4.6, seam, [CaptionWord("NAH", 3.9, 4.6)])
+    # From Blur to Track the captions stay where they are: the line isn't cut.
+    [line] = captioned([Word("jadi", 1.6, 1.9), Word("begitu", 1.95, 2.3)], 6, scenes, faces)
+    assert (line.start, line.end, line.area) == (1.6, 2.6, lower)
+
+
+def test_captions_stay_inside_the_safe_zones():
+    faces, scenes = caption_scenes()
+    words = said("satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas", 0.2, gap=0.2)
+    plans = [captioned(words, 6, scenes, faces, layout) for layout in Layout]
+    plans.append(captioned(words, 6, width=1080, height=1920))
+    for events in plans:
+        assert events
+        for event in events:
+            area = event.area
+            assert area.y >= 0.12 * 1920, event
+            assert area.y + area.height <= 0.8 * 1920, event
+            assert area.x + area.width <= 0.88 * 1080, event
+            assert area.x >= 0
+
+
+# The hook (ticket 16).
+HOOK = "Setetes racun bisa bunuh perusahaan?"
+LONG_HOOK = "Racun kecil yang dibiarkan lama-lama pasti mematikan perusahaan kamu sendiri tanpa terasa"
+
+
+def hooked(text: str, secs: float = 10, **options) -> HookEvent | None:
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), hook=text, **options).hook
+
+
+def widest(hook: HookEvent) -> float:
+    return max(font_metrics().width(line, hook.size) for line in hook.lines)
+
+
+def test_the_hook_is_shown_for_the_first_3_seconds_in_at_most_two_lines():
+    hook = hooked(HOOK)
+    assert (hook.lines, hook.start, hook.end, hook.size) == (["Setetes racun bisa", "bunuh perusahaan?"], 0.0, 3.0, HOOK_SIZE)
+    # A Clip shorter than that shows it throughout.
+    assert (hooked(HOOK, secs=2.4).start, hooked(HOOK, secs=2.4).end) == (0.0, 2.4)
+    # Text that fits on one line stays on one; spaces are collapsed as Review saves them.
+    assert hooked("  Kenapa   gagal? ").lines == ["Kenapa gagal?"]
+    # Two lines are broken where the longer of them is shortest.
+    lines = HOOK.split()
+    breaks = [max(font_metrics().width(" ".join(part), HOOK_SIZE) for part in (lines[:i], lines[i:])) for i in range(1, 5)]
+    assert widest(hook) == min(breaks)
+    # Too long for two lines at the hook's size: still two, set smaller so that they just fit.
+    long = hooked(LONG_HOOK)
+    assert len(long.lines) == 2 and " ".join(long.lines) == LONG_HOOK
+    assert long.size < HOOK_SIZE and HOOK_WIDTH - 2 < widest(long) <= HOOK_WIDTH
+    # One Word wider than a line is set smaller on its own line.
+    word = hooked("W" * 30)
+    assert word.lines == ["W" * 30] and widest(word) <= HOOK_WIDTH
+    for hook in (hooked(HOOK), hooked("Kenapa gagal?")):
+        assert widest(hook) <= HOOK_WIDTH and hook.size == HOOK_SIZE
+    # What Review asks: the lines, and whether they fit at the hook's size.
+    assert fit_hook(HOOK) == (hooked(HOOK).lines, HOOK_SIZE)
+    assert fit_hook(LONG_HOOK)[1] < HOOK_SIZE
+
+
+def test_a_blank_hook_shows_nothing():
+    for text in ("", "   ", "\n\t"):
+        assert hooked(text) is None
+        assert fit_hook(text) == ([], HOOK_SIZE)
+
+
+def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions():
+    faces, scenes = caption_scenes()
+    words = said("satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas", 0.2, gap=0.2)
+    plans = [
+        plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, layout, words, text)
+        for layout in Layout
+        for text in ("Kenapa gagal?", HOOK, LONG_HOOK, "W" * 30)
+    ]
+    plans.append(plan_render(100, 106, source(1080, 1920, fps=FPS), words=words, hook=HOOK))
+    # Every Layout's captions are there: the seam's band (Split) and the lower third.
+    assert {e.area for plan in plans for e in plan.captions} == {SEAM_CAPTIONS, LOWER_CAPTIONS}
+    for plan in plans:
+        hook, area = plan.hook, plan.hook.area
+        # Inside the safe zones, at the top just below the top one, centred like the captions.
+        assert 0.12 * 1920 <= area.y <= 0.12 * 1920 + 2, hook
+        assert area.x >= 130 and area.x + area.width <= 0.88 * 1080, hook
+        assert abs(area.x + area.width / 2 - 540) <= 0.5, hook
+        # The box holds its lines, padded; two lines at most.
+        assert 1 <= len(hook.lines) <= 2
+        assert area.width >= widest(hook) + 2 * HOOK_PAD_X
+        # Clear of every caption, in every Layout: above the highest the captions go.
+        assert area.y + area.height <= SEAM_CAPTIONS.y, hook
+        for event in plan.captions:
+            caption = event.area
+            assert area.y + area.height <= caption.y or caption.y + caption.height <= area.y, (hook, event)
+    # As short as its lines allow: one line takes a lower box than two.
+    one, two = hooked("Kenapa gagal?").area, hooked(HOOK).area
+    assert one.height < two.height <= 200
+
+    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words, hook=HOOK)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan

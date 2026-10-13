@@ -133,7 +133,13 @@ export function CandidateEditor({
         )}
       </header>
 
-      {job.source && <PreviewPlayer src={mediaUrl(job.id, job.source.video)} start={candidate.start} end={candidate.end} />}
+      {job.source && (
+        <PreviewPlayer
+          src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
+          start={candidate.start}
+          end={candidate.end}
+        />
+      )}
 
       <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
         <h4 id="picker-heading" className="font-semibold">

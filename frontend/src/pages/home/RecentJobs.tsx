@@ -6,7 +6,7 @@ import { Button } from "../../components/Button";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Panel } from "../../components/Panel";
 import { StatusBadge } from "../../components/StatusBadge";
-import { formatRelative, shortUrl } from "../../format";
+import { formatRelative, jobTitle } from "../../format";
 import { ACTIVE } from "../../stages";
 
 // While some Job is on its way, the list is fetched again this often to follow its status.
@@ -73,7 +73,7 @@ export function RecentJobs({ onDeleted }: { onDeleted: () => void }) {
                 className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-2 hover:bg-surface-raised"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{shortUrl(job.url)}</p>
+                  <p className="truncate font-medium">{jobTitle(job)}</p>
                   <p className="truncate text-sm text-muted">
                     {formatRelative(job.created_at)}
                     {job.options.brief && <> · {job.options.brief}</>}
@@ -84,7 +84,7 @@ export function RecentJobs({ onDeleted }: { onDeleted: () => void }) {
               </Link>
               <Button
                 variant="ghost"
-                aria-label={`Delete Job ${shortUrl(job.url)}`}
+                aria-label={`Delete Job ${jobTitle(job)}`}
                 onClick={() => {
                   setDeleteError(null);
                   setDeleting(job);
@@ -110,7 +110,7 @@ export function RecentJobs({ onDeleted }: { onDeleted: () => void }) {
       >
         {deleting && (
           <p>
-            <span className="text-text">{shortUrl(deleting.url)}</span> and all its files (the downloaded video, the
+            <span className="text-text">{jobTitle(deleting)}</span> and all its files ({deleting.upload ? "the uploaded file" : "the downloaded video"}, the
             Transcript and the Candidates) will be removed. This can't be undone.
           </p>
         )}

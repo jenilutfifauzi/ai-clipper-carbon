@@ -13,6 +13,16 @@ every panel is a crop of the frame, moved at its change points by commands that 
 as the frames go by, scaled into the panel's area (and blurred for Blur's background), and the
 panels are laid over one another. The branches are then joined back to back (concat), so each
 frame is drawn once, in its own Scene's Layout. The audio isn't cut: it runs on unchanged.
+
+Captions are burned into the joined frames by libass (the `ass` filter, on the Clip's timeline), from
+an ASS file written for the render: one Dialogue event per Word of each caption line, showing the
+whole line with that Word in orange while it is spoken, so the line never moves as the highlight
+does. The font is the bundled Montserrat ExtraBold, given to libass through `fontsdir`, so no system
+font is needed. A line too wide for its area is set smaller, measured with the font's own widths.
+
+The hook is drawn by the same `ass` filter, in the same encode: a dark, semi-transparent rounded
+box drawn as an ASS vector shape, and over it each of its lines as its own event, placed where the
+Render Plan's metrics put it. It shows from the first frame and fades out briefly at its end.
 """
 
 import json
@@ -25,10 +35,38 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from app.config import RenderTuning
-from app.planner import Panel, RenderPlan, ScenePlan
+from app.config import MONTSERRAT_EXTRABOLD, RenderTuning
+from app.planner import (
+    HOOK_LEADING,
+    HOOK_PAD_Y,
+    HOOK_SIZE,
+    CaptionEvent,
+    HookEvent,
+    Panel,
+    RenderPlan,
+    ScenePlan,
+    font_metrics,
+)
 
 logger = logging.getLogger(__name__)
+
+# The captions' look, in output pixels: white UPPERCASE Montserrat ExtraBold with a black outline, the
+# Word being spoken in orange. libass sizes a font so that its ascent plus descent (Montserrat's
+# Windows metrics: 1.562 em) is the font size: at 110 the letters are 70 px to the em, with capitals
+# 49 px tall, and an average line of 16 characters is about 770 px wide.
+CAPTION_FONT = "Montserrat ExtraBold"
+CAPTION_SIZE = 110
+CAPTION_OUTLINE = 7
+CAPTION_COLOUR = "#FFFFFF"
+CAPTION_ACTIVE = "#FF9F0A"
+CAPTION_EDGE = "#000000"
+# The hook's look: white text in a black box with rounded corners (radius in pixels), 60% opaque,
+# fading out over its last moment (it is there from the first frame, which platforms show first).
+HOOK_COLOUR = "#FFFFFF"
+HOOK_BOX = "#000000"
+HOOK_BOX_OPACITY = 0.6
+HOOK_RADIUS = 24
+HOOK_FADE_OUT_MS = 200
 
 
 class RenderStopped(RuntimeError):
@@ -61,10 +99,13 @@ class Renderer:
         _check(plan)
         loudness = self._measure(source, plan)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
+        subtitles = video.with_name(f".{video.stem}.part.ass") if plan.captions or plan.hook else None
         failures = []
         try:
+            if subtitles is not None:
+                subtitles.write_text(_ass(plan), encoding="utf-8")
             for encoder in self.tuning.encoders:
-                command = self._command(source, plan, loudness, encoder, *parts)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles)
                 stderr = self._run(command, plan.duration, progress)
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
@@ -74,8 +115,9 @@ class Renderer:
                 logger.warning("Rendering with %s failed: %s", encoder, stderr)
                 failures.append(f"{encoder}: {_last_lines(stderr)}")
         finally:
-            for part in parts:
-                part.unlink(missing_ok=True)
+            for part in (*parts, subtitles):
+                if part is not None:
+                    part.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
     def stop(self) -> None:
@@ -102,12 +144,23 @@ class Renderer:
         return measured if math.isfinite(float(measured["input_i"])) else None
 
     def _command(
-        self, source: Path, plan: RenderPlan, loudness: dict[str, str] | None, encoder: str, video: Path, poster: Path
+        self,
+        source: Path,
+        plan: RenderPlan,
+        loudness: dict[str, str] | None,
+        encoder: str,
+        video: Path,
+        poster: Path,
+        subtitles: Path | None,
     ) -> list[str]:
         tuning = self.tuning
         frame = _scenes(plan, tuning)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
-        frame += f";[frame]format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
+        # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's timeline.
+        burned = "" if subtitles is None else (
+            f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(MONTSERRAT_EXTRABOLD.parent))},"
+        )
+        frame += f";[frame]{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         audio = f"[0:a:0]aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
@@ -160,11 +213,9 @@ class Renderer:
 
 
 def _check(plan: RenderPlan) -> None:
-    """Refuse what the Render Plan can hold but the Renderer doesn't draw yet (tickets 15–16)."""
+    """Refuse a Render Plan with nothing to draw."""
     if not plan.scenes or not all(scene.panels for scene in plan.scenes):
         raise ValueError("A Render Plan needs at least one scene, each with at least one panel")
-    if plan.captions or plan.hook:
-        raise ValueError("The Renderer doesn't burn captions or the hook yet")
 
 
 def _scenes(plan: RenderPlan, tuning: RenderTuning) -> str:
@@ -240,6 +291,131 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
     if (area.width, area.height) == (plan.width, plan.height):
         return ""
     return f",pad={plan.width}:{plan.height}:{area.x}:{area.y}:black"
+
+
+def _ass(plan: RenderPlan) -> str:
+    """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
+    for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events)."""
+    white, black = _style_colour(CAPTION_COLOUR), _style_colour(CAPTION_EDGE)
+    script = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        f"PlayResX: {plan.width}",
+        f"PlayResY: {plan.height}",
+        # No wrapping: a line is set smaller instead (see _caption_size). No colour conversion.
+        "WrapStyle: 2",
+        "ScaledBorderAndShadow: yes",
+        "YCbCr Matrix: None",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+        "MarginR, MarginV, Encoding",
+        # Not bold: the font is ExtraBold already, and libass would embolden it further. Centred (5) on \pos.
+        f"Style: Caption,{CAPTION_FONT},{CAPTION_SIZE},{white},{white},{black},{black},0,0,0,0,100,100,0,0,1,"
+        f"{CAPTION_OUTLINE},0,5,0,0,0,1",
+        f"Style: Hook,{CAPTION_FONT},{HOOK_SIZE},{_style_colour(HOOK_COLOUR)},{_style_colour(HOOK_COLOUR)},"
+        f"{black},{black},0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for event in plan.captions:
+        area = event.area
+        size = _caption_size(event)
+        place = f"\\pos({area.x + area.width / 2:g},{area.y + area.height / 2:g})"
+        if size != CAPTION_SIZE:
+            place += f"\\fs{size:g}"
+        for i, word in enumerate(event.words):
+            start, end = _ass_time(word.start), _ass_time(word.end)
+            if start >= end:
+                continue
+            text = " ".join(
+                f"{{\\c{_tag_colour(CAPTION_ACTIVE)}}}{_ass_text(other.text)}{{\\c{_tag_colour(CAPTION_COLOUR)}}}"
+                if j == i else _ass_text(other.text)
+                for j, other in enumerate(event.words)
+            )
+            script.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{text}")
+    if plan.hook:
+        script.extend(_hook_events(plan.hook))
+    return "\n".join(script) + "\n"
+
+
+def _hook_events(hook: HookEvent) -> list[str]:
+    """The hook's Dialogue events: its box, drawn, and over it each line centred on the box, with
+    the first line's capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart."""
+    font = font_metrics()
+    area, size = hook.area, hook.size
+    start, end = _ass_time(hook.start), _ass_time(hook.end)
+    fade = f"\\fad(0,{HOOK_FADE_OUT_MS})"
+    alpha = f"&H{round(255 * (1 - HOOK_BOX_OPACITY)):02X}&"
+    box = (
+        f"{{\\an7\\pos({area.x},{area.y})\\p1\\c{_tag_colour(HOOK_BOX)}\\alpha{alpha}{fade}}}"
+        f"{_rounded_box(area.width, area.height, HOOK_RADIUS)}{{\\p0}}"
+    )
+    events = [f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{box}"]
+    centre_x = area.x + area.width / 2
+    for i, line in enumerate(hook.lines):
+        baseline = area.y + HOOK_PAD_Y + (font.cap_height / font.units + i * HOOK_LEADING) * size
+        # A line is centred (5) on the middle of its height: its ascent above the baseline and its
+        # descent below, which together are the font size.
+        centre_y = baseline - font.ascent / font.units * size + size / 2
+        place = f"\\an5\\pos({centre_x:g},{centre_y:.1f}){fade}"
+        if size != HOOK_SIZE:
+            place += f"\\fs{size:g}"
+        events.append(f"Dialogue: 2,{start},{end},Hook,,0,0,0,,{{{place}}}{_ass_text(line)}")
+    return events
+
+
+def _rounded_box(width: int, height: int, radius: int) -> str:
+    """An ASS drawing of a `width` x `height` rectangle with rounded corners, from its top-left corner;
+    each corner a Bézier quarter circle."""
+    w, h, r = width, height, radius
+    # How far from each corner its curve's control points are.
+    c = round(r * (1 - 0.5523), 2)
+    return (
+        f"m {r} 0 l {w - r} 0 b {w - c:g} 0 {w} {c:g} {w} {r} l {w} {h - r} b {w} {h - c:g} {w - c:g} {h} {w - r} {h} "
+        f"l {r} {h} b {c:g} {h} 0 {h - c:g} 0 {h - r} l 0 {r} b 0 {c:g} {c:g} 0 {r} 0"
+    )
+
+
+def _caption_size(event: CaptionEvent) -> float:
+    """The font size for the caption line: CAPTION_SIZE, or smaller if the line (with its outline)
+    would be wider than its area at that size."""
+    width = font_metrics().width(event.text, CAPTION_SIZE) + 2 * CAPTION_OUTLINE
+    if width <= event.area.width:
+        return CAPTION_SIZE
+    return math.floor(CAPTION_SIZE * (event.area.width - 2 * CAPTION_OUTLINE) / (width - 2 * CAPTION_OUTLINE) * 10) / 10
+
+
+def _style_colour(hex_colour: str) -> str:
+    """An #RRGGBB colour as an ASS style gives it, opaque: &H00BBGGRR."""
+    return f"&H00{_tag_colour(hex_colour)[2:-1]}"
+
+
+def _tag_colour(hex_colour: str) -> str:
+    """An #RRGGBB colour as an ASS override tag gives it: &HBBGGRR&."""
+    red, green, blue = hex_colour[1:3], hex_colour[3:5], hex_colour[5:7]
+    return f"&H{blue}{green}{red}&".upper()
+
+
+def _ass_time(seconds: float) -> str:
+    """A time as ASS writes it, in centiseconds: H:MM:SS.cc."""
+    centis = round(seconds * 100)
+    return f"{centis // 360000}:{centis // 6000 % 60:02}:{centis // 100 % 60:02}.{centis % 100:02}"
+
+
+def _ass_text(text: str) -> str:
+    """Caption text with what libass would read as markup made harmless: override blocks and escapes."""
+    return text.replace("\\", "\u29f5").replace("{", "(").replace("}", ")")
+
+
+def _filter_value(value: str) -> str:
+    """`value` escaped as a filter option inside a filtergraph: once for the option, once for the graph."""
+    for special in ("\\':", "\\'[],;"):
+        for char in special:
+            value = value.replace(char, "\\" + char)
+    return value
 
 
 def _range(plan: RenderPlan) -> list[str]:

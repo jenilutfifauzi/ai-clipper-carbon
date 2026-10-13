@@ -1,11 +1,11 @@
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileVideo } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { api, ApiError, type Clip, type JobDetail, type JobProgress } from "../api";
 import { Panel } from "../components/Panel";
 import { StageProgress } from "../components/StageProgress";
 import { StatusBadge } from "../components/StatusBadge";
-import { formatRelative } from "../format";
+import { formatBytes, formatRelative } from "../format";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { stageIndex } from "../stages";
 import { ErrorNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
@@ -105,15 +105,23 @@ function JobView({ jobId }: { jobId: string }) {
           <h1 className="text-2xl font-semibold tracking-tight">Job</h1>
           <StatusBadge status={progress.status} />
         </div>
-        <a
-          href={job.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex max-w-full items-center gap-1.5 self-start text-accent-text hover:underline"
-        >
-          <span className="truncate">{job.url}</span>
-          <ExternalLink aria-hidden size={14} className="shrink-0" />
-        </a>
+        {job.upload ? (
+          <p className="inline-flex max-w-full items-center gap-1.5 self-start">
+            <FileVideo aria-hidden size={16} className="shrink-0 text-muted" />
+            <span className="truncate">{job.upload.name}</span>
+            <span className="shrink-0 text-sm text-muted tabular-nums">· uploaded, {formatBytes(job.upload.size)}</span>
+          </p>
+        ) : (
+          <a
+            href={job.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex max-w-full items-center gap-1.5 self-start text-accent-text hover:underline"
+          >
+            <span className="truncate">{job.url}</span>
+            <ExternalLink aria-hidden size={14} className="shrink-0" />
+          </a>
+        )}
         <p className="text-sm text-muted">
           Started {formatRelative(job.created_at)} · clips {job.options.min_secs}–{job.options.max_secs} s · captions{" "}
           {job.options.captions ? "on" : "off"} · language {job.options.language}
@@ -125,7 +133,7 @@ function JobView({ jobId }: { jobId: string }) {
         {progress.status === "queued" && (
           <p className="text-sm text-muted">Queued: it starts when the Job ahead of it is done.</p>
         )}
-        <StageProgress progress={progress} reached={reached} />
+        <StageProgress progress={progress} reached={reached} uploaded={job.upload !== null} />
         {events.lost && (
           <p className="text-sm text-muted">Reconnecting to live progress…</p>
         )}
