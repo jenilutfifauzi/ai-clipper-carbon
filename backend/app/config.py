@@ -18,6 +18,8 @@ SILERO_VAD_MODEL = MODELS_DIR / "silero_vad.onnx"
 MONTSERRAT_EXTRABOLD = FONTS_DIR / "Montserrat-ExtraBold.ttf"
 # The owner's past clips: eval references and few-shot examples (app/references.py).
 REFERENCE_SET = REPO_ROOT / "eval" / "references.yaml"
+# The built frontend (`make build`), served by the app when it exists.
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
@@ -152,6 +154,7 @@ class Settings:
     quota: QuotaTuning = QuotaTuning()
     # The disk endpoint warns when the data directory's volume has less free space than this.
     low_disk_bytes: int = 10 * 10**9
+    frontend_dir: Path = FRONTEND_DIST
 
     @property
     def ffprobe_bin(self) -> Path:

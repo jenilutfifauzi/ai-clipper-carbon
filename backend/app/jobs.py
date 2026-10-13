@@ -2,10 +2,11 @@
 
 import fcntl
 import json
+import logging
 import re
 import shutil
 import threading
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -23,6 +24,8 @@ from app.selection import Selection
 from app.storage import write_atomic
 from app.transcript import Transcript
 from app.video_source import Source
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LANGUAGE = "id"
 
@@ -127,6 +130,10 @@ class Job:
     history: list[Transition] = field(default_factory=list)
 
 
+# Called with a Job's id and its new state each time the store saves it, or None once it's deleted.
+JobListener = Callable[[str, Job | None], None]
+
+
 class JobNotFound(LookupError):
     pass
 
@@ -146,6 +153,8 @@ class JobStore:
     def __init__(self, root: Path) -> None:
         self.root = root
         self._lock = threading.Lock()
+        self._listeners: tuple[JobListener, ...] = ()
+        self._listeners_lock = threading.Lock()
 
     def create(self, url: str, options: JobOptions, profile: ChannelProfile) -> Job:
         now = datetime.now(UTC)
@@ -199,6 +208,30 @@ class JobStore:
                 raise JobConflict(f"Job {job_id} is {job.status}")
             with self.running(job_id):
                 shutil.rmtree(self.job_dir(job_id))
+            self._notify(job_id, None)
+
+    @contextmanager
+    def watch(self, listener: JobListener) -> Iterator[None]:
+        """Call `listener` with every change this store makes to a Job, until the block ends.
+
+        It is called on the thread making the change (the worker's, mostly), while the store's lock
+        is held, so a Job's changes arrive in order; it must return quickly. Changes made by another
+        process, such as a CLI run, aren't seen: re-read the Job now and then to catch those.
+        """
+        with self._listeners_lock:
+            self._listeners = (*self._listeners, listener)
+        try:
+            yield
+        finally:
+            with self._listeners_lock:
+                self._listeners = tuple(other for other in self._listeners if other is not listener)
+
+    def _notify(self, job_id: str, job: Job | None) -> None:
+        for listener in self._listeners:
+            try:
+                listener(job_id, job)
+            except Exception:
+                logger.exception("A Job listener failed")
 
     @contextmanager
     def running(self, job_id: str) -> Iterator[None]:
@@ -266,6 +299,7 @@ class JobStore:
 
     def _save(self, job: Job) -> None:
         write_atomic(self.job_dir(job.id) / STATE_FILE, _JOB.dump_json(job, indent=2))
+        self._notify(job.id, job)
 
 
 def _parse_job(data: bytes) -> Job:

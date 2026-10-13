@@ -1,16 +1,19 @@
 UV := uv --directory backend
+NPM := npm --prefix frontend
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 
-.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze reanalyze retry eval gate update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev build test test-whisper analyze reanalyze retry eval gate update-ytdlp
 
-# Install backend dependencies, download models and font, check ffmpeg.
+# Install backend and frontend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
 	$(UV) sync
+	$(NPM) ci
 	$(UV) run python scripts/download_assets.py
 	$(UV) run python scripts/check_ffmpeg.py
 
 prerequisites:
 	@command -v uv >/dev/null || { echo "uv is missing: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
+	@command -v npm >/dev/null || { echo "Node.js (20.19+ or 22.12+, with npm) is missing: https://nodejs.org/"; exit 1; }
 	@missing=""; \
 	[ -x "$(FFMPEG_FULL)" ] || missing="$$missing ffmpeg-full"; \
 	command -v deno >/dev/null || missing="$$missing deno"; \
@@ -24,8 +27,17 @@ prerequisites:
 check-ffmpeg:
 	@$(UV) run python scripts/check_ffmpeg.py
 
+# Run the backend (http://127.0.0.1:8000, reloading on change) and the Vite dev server
+# (http://localhost:5173, which proxies /api and /media to the backend) together. Ctrl-C stops both.
 dev:
-	$(UV) run uvicorn --factory app.main:create_app --reload
+	@trap 'kill 0' INT TERM; \
+	$(UV) run uvicorn --factory app.main:create_app --reload & \
+	$(NPM) run dev & \
+	wait
+
+# Build the frontend into frontend/dist. The backend serves it at http://127.0.0.1:8000 when it exists.
+build:
+	$(NPM) run build
 
 test:
 	$(UV) run pytest

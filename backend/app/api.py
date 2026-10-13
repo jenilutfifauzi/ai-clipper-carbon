@@ -1,13 +1,16 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, StringConstraints
 
 from app.candidates import Candidate
 from app.config import Settings
+from app.events import job_events
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStore
 from app.profile import ChannelProfile, ProfileStore
 from app.storage import DiskUsage, disk_usage
@@ -33,10 +36,19 @@ def _profiles(request: Request) -> ProfileStore:
     return request.app.state.profiles
 
 
+def _job(job_id: str, request: Request) -> Job:
+    """The Job, or a 404. For streaming routes, which can't answer 404 once they have started."""
+    try:
+        return _store(request).get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+
+
 AppSettings = Annotated[Settings, Depends(_settings)]
 Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
+ExistingJob = Annotated[Job, Depends(_job)]
 
 
 class JobRequest(BaseModel):
@@ -77,6 +89,15 @@ def get_job(job_id: str, store: Store) -> JobDetail:
     return JobDetail(
         **vars(job), transcript=store.load_transcript(job_id), candidates=store.load_candidates(job_id)
     )
+
+
+@router.get("/jobs/{job_id}/events", response_class=EventSourceResponse)
+async def stream_job_events(job: ExistingJob, store: Store) -> AsyncIterator[ServerSentEvent]:
+    """The Job's progress (status, stage, percent, message, error, warnings, retry_at) as `job`
+    events: one now, then one per change. The stream ends with an `end` event once the Job is in
+    review or error, or is deleted; after a retry, open it again."""
+    async for event in job_events(store, job.id):
+        yield event
 
 
 @router.post("/jobs/{job_id}/retry")

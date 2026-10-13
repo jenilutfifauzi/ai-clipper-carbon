@@ -1,0 +1,59 @@
+/*
+ * Design tokens: black, white and Apple's systemOrange. Dark is the default; light follows the
+ * system's light appearance. Components use these through the Tailwind theme in index.css
+ * (bg-bg, text-muted, bg-accent, ...), never raw colours, so the glass polish (ticket 18) and a
+ * theme toggle (a [data-theme] override of this block) only need to change this file.
+ */
+:root {
+  color-scheme: dark;
+
+  --bg: #000;
+  /* Surfaces sit on the background; glass blur and highlights arrive with the polish. */
+  --surface: rgb(255 255 255 / 0.06);
+  --surface-raised: rgb(255 255 255 / 0.1);
+  --border: rgb(255 255 255 / 0.12);
+  --text: #fff;
+  --text-muted: rgb(255 255 255 / 0.6);
+
+  --accent: #ff9f0a;
+  --accent-end: #ff6a00;
+  /* Text and icons on --accent, and orange text on --bg. */
+  --on-accent: #000;
+  --accent-text: #ff9f0a;
+
+  --danger: #ff453a;
+  --danger-surface: rgb(255 69 58 / 0.12);
+  --success: #30d158;
+  --waiting: #64d2ff;
+  --waiting-surface: rgb(100 210 255 / 0.12);
+
+  --radius-panel: 24px;
+  --radius-control: 14px;
+  --shadow-panel: 0 8px 32px rgb(0 0 0 / 0.35);
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: #f5f5f7;
+    --surface: rgb(255 255 255 / 0.7);
+    --surface-raised: #fff;
+    --border: rgb(0 0 0 / 0.1);
+    --text: #000;
+    --text-muted: rgb(0 0 0 / 0.6);
+
+    /* systemOrange is too light for text on white; this darker orange keeps 4.5:1. */
+    --accent-text: #b25000;
+
+    --danger: #d70015;
+    --danger-surface: rgb(215 0 21 / 0.08);
+    --success: #248a3d;
+    --waiting: #0071a4;
+    --waiting-surface: rgb(0 113 164 / 0.08);
+
+    --shadow-panel: 0 8px 32px rgb(0 0 0 / 0.06);
+  }
+}

@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+/* The tokens as Tailwind utilities; `inline` keeps the var() so they follow the theme. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-end: var(--accent-end);
+  --color-on-accent: var(--on-accent);
+  --color-accent-text: var(--accent-text);
+  --color-danger: var(--danger);
+  --color-danger-surface: var(--danger-surface);
+  --color-success: var(--success);
+  --color-waiting: var(--waiting);
+  --color-waiting-surface: var(--waiting-surface);
+  --radius-panel: var(--radius-panel);
+  --radius-control: var(--radius-control);
+  --shadow-panel: var(--shadow-panel);
+  --font-sans: var(--font-ui);
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--text);
+    accent-color: var(--accent);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+}
+
+/* An indeterminate progress bar: a stripe sweeping across while the percent is unknown. */
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,7 +1,9 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from app import api
 from app.config import Settings, load_settings
@@ -31,4 +33,21 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.worker = worker
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.include_router(api.router)
+    if (settings.frontend_dir / "index.html").is_file():
+        _serve_frontend(app, settings.frontend_dir)
     return app
+
+
+def _serve_frontend(app: FastAPI, dist: Path) -> None:
+    """Serve the built frontend: its files as they are, and index.html for every other path, so that
+    the client-side routes (such as /jobs/<id>) survive a reload. Unknown /api and /media paths stay 404."""
+    dist = dist.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def frontend(path: str) -> FileResponse:
+        if path.split("/", 1)[0] in {"api", "media"}:
+            raise HTTPException(404)
+        file = (dist / path).resolve()
+        if path and file.is_file() and file.is_relative_to(dist):
+            return FileResponse(file)
+        return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
