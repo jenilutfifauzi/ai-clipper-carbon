@@ -4,8 +4,8 @@
 Profile, without a Brief, through the Pipeline that every Job runs, so the Detail pass also gets
 the few-shot examples from the same Reference Set's fewshot clips. It writes a report to
 eval/reports/<prompt version>/<UTC time>/:
-- report.md: recall, the found and missed references, and each episode's top 5 Candidates with
-  preview links, for the owner to judge;
+- report.md: the LLM, recall, the found and missed references, and each episode's top 5 Candidates
+  with preview links, for the owner to judge;
 - report.json: the same, for scripts;
 - postable.yaml: where the owner writes how many of each episode's top 5 they would post.
 
@@ -25,7 +25,7 @@ import yaml
 from pydantic import TypeAdapter
 
 from app.candidates import Candidate
-from app.config import REFERENCE_SET, REPO_ROOT, Settings
+from app.config import REFERENCE_SET, REPO_ROOT, LlmChoice, Settings
 from app.jobs import TRANSCRIPT_FILE, Job, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import Ports
@@ -118,6 +118,8 @@ class EvalReport:
     total: int
     recall: float
     episodes: list[EpisodeReport]
+    # The LLM every eval Job was analyzed with; None in reports made before that was recorded.
+    llm: LlmChoice | None = None
 
 
 @dataclass(frozen=True)
@@ -166,8 +168,8 @@ def evaluate(
     An episode with a Job that has its Source and Transcript (see `transcribed_job`) is analyzed
     again from them, its profile snapshot replaced by the current profile; otherwise a new Job runs
     the whole pipeline. fewshot episodes are only read for their captions, as few-shot examples.
-    Gemini quota waits are slept through. Raises ReferenceSetError for an invalid Reference Set and
-    EvalError when an episode fails.
+    The LLM's quota waits are slept through. Raises ReferenceSetError for an invalid Reference Set
+    and EvalError when an episode fails.
     """
     if not references.is_file():
         raise EvalError(f"No Reference Set at {shown(references)}: copy {shown(EXAMPLE)} to it and list your past clips")
@@ -183,7 +185,7 @@ def evaluate(
     found = sum(episode.found for episode in results)
     total = sum(episode.total for episode in results)
     report = EvalReport(
-        PROMPT_VERSION, created_at, shown(references), profile, found, total, found / total, results
+        PROMPT_VERSION, created_at, shown(references), profile, found, total, found / total, results, settings.llm
     )
     return report, _write(report, reports_dir)
 
@@ -228,7 +230,10 @@ def latest_report(reports_dir: Path = REPORTS_DIR) -> Path | None:
 
 def summary(report: EvalReport, folder: Path) -> str:
     """The run in a few lines, for the terminal."""
-    lines = [f"Eval of prompt {report.prompt_version}: {len(report.episodes)} eval episodes, {report.total} references"]
+    lines = [
+        f"Eval of prompt {report.prompt_version} with {report.llm}: "
+        f"{len(report.episodes)} eval episodes, {report.total} references"
+    ]
     for episode in report.episodes:
         how = "reused" if episode.reused else "new"
         lines.append(
@@ -275,6 +280,8 @@ def markdown(report: EvalReport, folder: Path) -> str:
         "",
         f"{report.created_at:%Y-%m-%d %H:%M} UTC · Reference Set `{report.reference_set}` · "
         f"{len(report.episodes)} eval episodes, {report.total} references",
+        "",
+        f"LLM: {report.llm}",
         "",
         f"**Recall: {percent(report.recall)}** ({report.found} of {report.total} references found; "
         f"the gate needs {percent(GATE_RECALL)}).",

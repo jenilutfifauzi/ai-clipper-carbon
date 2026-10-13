@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from app.candidates import Candidate, Descriptions
-from app.config import SelectionTuning
+from app.config import LlmChoice, SelectionTuning
 from app.fewshot import Example
 from app.llm import ClipProposal, Llm, LlmRequest, Overloaded, ScoreResponse, TransientLlmError, parse_time
 from app.profile import ChannelProfile
@@ -65,6 +65,8 @@ class Selection:
     shortlist: list[str]
     proposals: list[ClipProposal]
     candidates: list[Candidate]
+    # The LLM it ran on; None in runs saved before that was recorded.
+    llm: LlmChoice | None = None
 
 
 def select(

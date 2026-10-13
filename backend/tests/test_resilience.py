@@ -142,6 +142,32 @@ def test_kept_score_answers_are_not_used_once_the_profile_snapshot_changes(
     assert window_ids(resent)[0] == "w001"
 
 
+@pytest.mark.parametrize(
+    ("first", "then"),
+    [
+        # The same model, at a host that isn't sent DeepSeek's thinking parameter: only the provider differs.
+        ({"llm_provider": "gemini"}, {"llm_provider": "openai", "llm_base_url": "https://api.openai.com/v1"}),
+        ({"llm_thinking": False}, {"llm_thinking": True}),
+    ],
+    ids=["provider", "thinking"],
+)
+def test_kept_score_answers_are_not_used_by_another_llm(
+    settings, video_source, transcriber, from_episode, llm, first, then
+):
+    store = JobStore(settings.data_dir / "jobs")
+    ports = Ports(video_source, transcriber, llm)
+    deepseek = replace(
+        settings, llm_provider="openai", llm_base_url="https://api.deepseek.com", llm_model=settings.gemini_model
+    )
+    job = store.create(URL, JobOptions(), ChannelProfile())
+    llm.fail_with(REJECTED, after=2)
+    assert Pipeline(store, ports, replace(deepseek, **first)).run(job.id).status is JobStatus.ERROR
+    before = len(llm.score_requests)
+
+    assert Pipeline(store, ports, replace(deepseek, **then)).run(job.id).status is JobStatus.REVIEW
+    assert window_ids([request.prompt for request in llm.score_requests[before:]])[0] == "w001"
+
+
 def test_a_job_out_of_quota_waits_ever_longer_then_reaches_review(client, llm, wait_for_status):
     llm.fail_with(QUOTA, times=3)
     job_id = create_job(client)["id"]

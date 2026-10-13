@@ -1,8 +1,9 @@
 """Settings from the environment, falling back to the repo-root `.env` file."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 
@@ -19,11 +20,19 @@ MONTSERRAT_EXTRABOLD = FONTS_DIR / "Montserrat-ExtraBold.ttf"
 REFERENCE_SET = REPO_ROOT / "eval" / "references.yaml"
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
+DEFAULT_LLM_MODEL = "deepseek-flash"
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 DEFAULT_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
+DEEPSEEK_HOST = "api.deepseek.com"
+# QuotaTuning.request_interval_secs by LLM_PROVIDER, unless LLM_REQUEST_INTERVAL_SECS is set: under 5
+# requests a minute for Gemini's free tier, its per-minute limit for each model; DeepSeek limits only
+# concurrent requests.
+REQUEST_INTERVAL_SECS = {"gemini": 13.0, "openai": 1.0}
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
+_THINKING = {"enabled": True, "disabled": False}
 
 
 @dataclass(frozen=True)
@@ -90,17 +99,17 @@ class SelectionTuning:
 
 @dataclass(frozen=True)
 class QuotaTuning:
-    """How LLM requests are paced, and how a Job waits when Gemini's quota is used up or Gemini stays
-    busy. Not read from the environment; tests shrink it."""
+    """How LLM requests are paced, and how a Job waits when the LLM's quota is used up or the LLM stays
+    busy. Only request_interval_secs is read from the environment; tests shrink them all."""
 
-    # Requests start at least this far apart: under 5 a minute, the free tier's per-minute limit
-    # for each model, so a 3-hour episode's ~14 requests don't go out back to back.
-    request_interval_secs: float = 13
+    # Requests start at least this far apart, so that a 3-hour episode's ~14 requests don't go out
+    # back to back (see REQUEST_INTERVAL_SECS).
+    request_interval_secs: float = REQUEST_INTERVAL_SECS["gemini"]
     # After a quota error, or an overload (503, 504) that outlasts Selection's retries, the Job
     # waits wait_secs, then twice as long after each further one in a row, up to max_wait_secs. A
-    # quota error that suggests a wait (Gemini's RetryInfo) waits that long plus retry_margin_secs
-    # instead. Once they have gone on for give_up_secs, the Job fails instead: a day takes in a
-    # reset of the daily quota.
+    # quota error that suggests a wait (Gemini's RetryInfo, a Retry-After header) waits that long
+    # plus retry_margin_secs instead. Once they have gone on for give_up_secs, the Job fails
+    # instead: a day takes in a reset of the daily quota.
     wait_secs: float = 60
     max_wait_secs: float = 15 * 60
     retry_margin_secs: float = 2
@@ -108,9 +117,29 @@ class QuotaTuning:
 
 
 @dataclass(frozen=True)
+class LlmChoice:
+    """The LLM Selection runs on, as recorded with each Selection run and eval report."""
+
+    provider: str
+    model: str
+    # Whether DeepSeek thinks before answering; None when the request doesn't say (Gemini, other hosts).
+    thinking: bool | None = None
+
+    def __str__(self) -> str:
+        thinking = "" if self.thinking is None else f", thinking {'enabled' if self.thinking else 'disabled'}"
+        return f"{self.provider} {self.model}{thinking}"
+
+
+@dataclass(frozen=True)
 class Settings:
-    gemini_api_key: str | None
+    # "gemini", or "openai" for an OpenAI-compatible Chat Completions API at llm_base_url.
+    llm_provider: str
+    gemini_api_key: str | None = field(repr=False)
     gemini_model: str
+    llm_base_url: str
+    llm_api_key: str | None = field(repr=False)
+    llm_model: str
+    llm_thinking: bool
     whisper_model: str
     ffmpeg_bin: Path
     data_dir: Path
@@ -128,6 +157,20 @@ class Settings:
     def ffprobe_bin(self) -> Path:
         return self.ffmpeg_bin.with_name("ffprobe")
 
+    @property
+    def llm(self) -> LlmChoice:
+        if self.llm_provider == "gemini":
+            return LlmChoice("gemini", self.gemini_model)
+        return LlmChoice("openai", self.llm_model, self.llm_thinking if self.llm_name == "DeepSeek" else None)
+
+    @property
+    def llm_name(self) -> str:
+        """The LLM's service as messages name it: Gemini, DeepSeek, or the host of LLM_BASE_URL."""
+        if self.llm_provider == "gemini":
+            return "Gemini"
+        host = urlsplit(self.llm_base_url).hostname or self.llm_base_url
+        return "DeepSeek" if host == DEEPSEEK_HOST else host
+
 
 def load_settings(env_file: Path = ENV_FILE) -> Settings:
     """Read settings; environment variables win over `env_file`, empty values mean unset."""
@@ -139,15 +182,32 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
     data_dir = Path(get("DATA_DIR", "data")).expanduser()
     if not data_dir.is_absolute():
         data_dir = REPO_ROOT / data_dir
+    provider = get("LLM_PROVIDER", "gemini").lower()
+    if provider not in REQUEST_INTERVAL_SECS:
+        raise ValueError(f"LLM_PROVIDER must be gemini or openai, got {provider!r}")
+    thinking = get("LLM_THINKING", "disabled").lower()
+    if thinking not in _THINKING:
+        raise ValueError(f"LLM_THINKING must be enabled or disabled, got {thinking!r}")
+    interval = get("LLM_REQUEST_INTERVAL_SECS")
 
     return Settings(
+        llm_provider=provider,
         gemini_api_key=get("GEMINI_API_KEY") or None,
         gemini_model=get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+        llm_base_url=get("LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
+        llm_api_key=get("LLM_API_KEY") or None,
+        llm_model=get("LLM_MODEL", DEFAULT_LLM_MODEL),
+        llm_thinking=_THINKING[thinking],
         whisper_model=get("WHISPER_MODEL", DEFAULT_WHISPER_MODEL),
         ffmpeg_bin=Path(get("FFMPEG_BIN", DEFAULT_FFMPEG_BIN)).expanduser(),
         data_dir=data_dir,
         ytdlp_cookies_from_browser=get("YTDLP_COOKIES_FROM_BROWSER") or None,
         selection_audio_signal=_parse_bool("SELECTION_AUDIO_SIGNAL", get("SELECTION_AUDIO_SIGNAL", "false")),
+        quota=QuotaTuning(
+            request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
+            if interval
+            else REQUEST_INTERVAL_SECS[provider]
+        ),
     )
 
 
@@ -157,3 +217,12 @@ def _parse_bool(key: str, value: str) -> bool:
     if value.lower() in _FALSE:
         return False
     raise ValueError(f"{key} must be true or false, got {value!r}")
+
+
+def _parse_secs(key: str, value: str) -> float:
+    try:
+        if (secs := float(value)) >= 0:
+            return secs
+    except ValueError:
+        pass
+    raise ValueError(f"{key} must be a number of seconds, got {value!r}")

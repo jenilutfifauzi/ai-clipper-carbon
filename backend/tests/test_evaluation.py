@@ -3,11 +3,13 @@ fakes at the ports on the 62-minute episode from conftest."""
 
 import json
 import re
+from dataclasses import replace
 
 import pytest
 import yaml
 
 from app.candidates import Candidate, Descriptions
+from app.config import LlmChoice
 from app.evaluation import EvalError, evaluate, gate, judge, recall
 from app.ports import Ports
 from app.prompts import PROMPT_VERSION
@@ -99,8 +101,15 @@ def test_eval_run_reuses_transcribed_jobs_takes_only_captions_from_fewshot_episo
     references = tmp_path / "eval-references.yaml"
     references.write_text(REFERENCES)
     ports = Ports(video_source, transcriber, llm)
+    deepseek = replace(
+        settings,
+        llm_provider="openai",
+        llm_base_url="https://api.deepseek.com",
+        llm_model="deepseek-flash",
+        llm_thinking=True,
+    )
 
-    report, folder = evaluate(settings, ports, references, tmp_path / "reports")
+    report, folder = evaluate(deepseek, ports, references, tmp_path / "reports")
 
     # A's Source and Transcript are reused; B is fetched once; of C, only the captions are fetched.
     assert video_source.calls == [("https://youtu.be/AAAAAAAAAAA", "id"), (B, "id")]
@@ -118,6 +127,7 @@ def test_eval_run_reuses_transcribed_jobs_takes_only_captions_from_fewshot_episo
         (B, False, False, 1, 1),
     ]
     assert (report.prompt_version, report.found, report.total, report.recall) == (PROMPT_VERSION, 2, 3, 2 / 3)
+    assert report.llm == LlmChoice("openai", "deepseek-flash", thinking=True)
     [found, missed] = report.episodes[0].references
     assert (found.found, found.match.rank, found.match.coverage) == (True, 1, 1.0)
     assert (missed.found, missed.match, missed.line) == (False, None, 11)
@@ -126,10 +136,12 @@ def test_eval_run_reuses_transcribed_jobs_takes_only_captions_from_fewshot_episo
     assert folder.parent == tmp_path / "reports" / PROMPT_VERSION
     saved = json.loads((folder / "report.json").read_text())
     assert (saved["prompt_version"], saved["recall"], len(saved["episodes"])) == (PROMPT_VERSION, 2 / 3, 2)
+    assert saved["llm"] == {"provider": "openai", "model": "deepseek-flash", "thinking": True}
     assert [len(episode["candidates"]) for episode in saved["episodes"]] == [3, 3]
 
     text = (folder / "report.md").read_text()
     assert "**Recall: 66.7%** (2 of 3 references found" in text
+    assert "\nLLM: openai deepseek-flash, thinking enabled\n" in text
     assert "\nChannel Profile: niche: Podcast bisnis\n" in text
     assert " · 1 few-shot example · 3 Candidates\n" in text
     assert f"- **Found** [12:00–12:40]({A}&t=720s) (line 1): rugi 500 juta. Candidate #1 (11:55–12:51) covers 100.0%." in text
@@ -146,8 +158,9 @@ def test_eval_run_reuses_transcribed_jobs_takes_only_captions_from_fewshot_episo
     assert gate(folder).postable == {A: 3, B: 3}
     assert gate(folder).status == "pass"
 
-    # A second run reuses both Jobs and C's cached captions, and leaves the first report in place.
-    _, second = evaluate(settings, ports, references, tmp_path / "reports")
+    # A second run, with Gemini, reuses both Jobs and C's cached captions, and leaves the first report in place.
+    again, second = evaluate(settings, ports, references, tmp_path / "reports")
+    assert again.llm == LlmChoice("gemini", settings.gemini_model)
     assert len(video_source.calls) == 2
     assert len(video_source.caption_calls) == 1
     assert second != folder

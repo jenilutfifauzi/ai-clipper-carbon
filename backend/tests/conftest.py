@@ -64,15 +64,16 @@ class Speech:
 
 @pytest.fixture
 def settings(tmp_path, request) -> Settings:
-    """Settings for a test; `@pytest.mark.tuning(...)` overrides fields of TUNING, and
-    `@pytest.mark.quota(...)` fields of QUOTA. The Reference Set is `tmp_path / "references.yaml"`,
-    which doesn't exist until the test writes it."""
+    """Settings for a test, with the Gemini provider whatever .env says; `@pytest.mark.tuning(...)`
+    overrides fields of TUNING, and `@pytest.mark.quota(...)` fields of QUOTA. The Reference Set is
+    `tmp_path / "references.yaml"`, which doesn't exist until the test writes it."""
     marker = request.node.get_closest_marker("tuning")
     tuning = replace(TUNING, **marker.kwargs) if marker else TUNING
     marker = request.node.get_closest_marker("quota")
     quota = replace(QUOTA, **marker.kwargs) if marker else QUOTA
     return replace(
         load_settings(),
+        llm_provider="gemini",
         data_dir=tmp_path / "data",
         reference_set=tmp_path / "references.yaml",
         transcription=tuning,

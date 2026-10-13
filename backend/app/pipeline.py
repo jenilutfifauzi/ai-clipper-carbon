@@ -8,10 +8,11 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
 from app.audio import SileroVad, chunks
-from app.config import Settings
+from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import TRANSCRIPT_FILE, Job, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
@@ -119,8 +120,9 @@ class Pipeline:
         else:
             since, errors = job.quota.since, job.quota.errors
         if (now - since).total_seconds() >= tuning.give_up_secs:
-            logger.warning("Job %s: gave up waiting for Gemini after %d errors", job_id, errors + 1)
-            what = "Gemini's quota" if isinstance(exc, QuotaExceeded) else "Gemini"
+            name = self.settings.llm_name
+            logger.warning("Job %s: gave up waiting for %s after %d errors", job_id, name, errors + 1)
+            what = f"{name}'s quota" if isinstance(exc, QuotaExceeded) else name
             error = f"Gave up after waiting {_duration(tuning.give_up_secs)} for {what}. {exc}"
             return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None, quota=None)
         if isinstance(exc, QuotaExceeded) and exc.retry_after is not None:
@@ -222,7 +224,7 @@ class Pipeline:
                 job.id, warnings=[*job.warnings, *(JobWarning(JobStatus.ANALYZING, w) for w in warnings)]
             )
         selection = select(
-            _KeptScores(self.llm, self.store, job.id, self.settings.gemini_model),
+            _KeptScores(self.llm, self.store, job.id, self.settings.llm),
             self.settings.selection,
             transcript,
             duration=job.source.metadata.duration,
@@ -233,12 +235,14 @@ class Pipeline:
             examples=examples,
             progress=progress,
         )
+        selection = replace(selection, llm=self.settings.llm)
         self.store.save_selection(job.id, selection)
         self.store.save_candidates(job.id, selection.candidates)
         self.store.discard_scores(job.id)
         logger.info(
-            "Job %s: %d Candidates from %d Windows and %d few-shot examples (prompt %s)",
+            "Job %s: %d Candidates from %d Windows and %d few-shot examples (prompt %s, %s)",
             job.id, len(selection.candidates), len(selection.windows), len(examples), selection.prompt_version,
+            selection.llm,
         )
         return self.store.update(job.id, prompt_version=selection.prompt_version)
 
@@ -246,22 +250,22 @@ class Pipeline:
 class _KeptScores:
     """The LLM port, with each Score answer kept in the Job's scores.json as it comes in.
 
-    An answer is kept under a hash of all that shaped it: the prompt version, the model, the
-    temperature and the prompt itself, which holds the Windows' text and times (so the Transcript
-    and the Window tuning), the language, the duration range, the profile summary and the Brief.
-    A change to any of them asks again.
+    An answer is kept under a hash of all that shaped it: the prompt version, the LLM (provider,
+    model and thinking), the temperature and the prompt itself, which holds the Windows' text and
+    times (so the Transcript and the Window tuning), the language, the duration range, the profile
+    summary and the Brief. A change to any of them asks again.
     """
 
-    def __init__(self, llm: Llm, store: JobStore, job_id: str, model: str) -> None:
+    def __init__(self, llm: Llm, store: JobStore, job_id: str, choice: LlmChoice) -> None:
         self.llm = llm
         self.store = store
         self.job_id = job_id
-        self.model = model
+        self.choice = choice
         self.answers = store.load_scores(job_id)
 
     def score(self, request: LlmRequest) -> ScoreResponse:
         key = hashlib.sha256(
-            json.dumps([PROMPT_VERSION, self.model, request.temperature, request.prompt]).encode()
+            json.dumps([PROMPT_VERSION, asdict(self.choice), request.temperature, request.prompt]).encode()
         ).hexdigest()
         if (answer := self.answers.get(key)) is None:
             answer = self.answers[key] = self.llm.score(request)

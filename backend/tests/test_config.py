@@ -3,11 +3,17 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 
-from app.config import REPO_ROOT, load_settings
+from app.config import REPO_ROOT, LlmChoice, load_settings
 
 KEYS = (
+    "LLM_PROVIDER",
     "GEMINI_API_KEY",
     "GEMINI_MODEL",
+    "LLM_BASE_URL",
+    "LLM_API_KEY",
+    "LLM_MODEL",
+    "LLM_THINKING",
+    "LLM_REQUEST_INTERVAL_SECS",
     "WHISPER_MODEL",
     "FFMPEG_BIN",
     "DATA_DIR",
@@ -25,8 +31,15 @@ def clean_environment(monkeypatch):
 def test_defaults_without_env_file(tmp_path):
     settings = load_settings(env_file=tmp_path / ".env")
 
+    assert settings.llm_provider == "gemini"
     assert settings.gemini_api_key is None
     assert settings.gemini_model == "gemini-3.8-flash"
+    assert settings.llm_base_url == "https://api.deepseek.com"
+    assert settings.llm_api_key is None
+    assert settings.llm_model == "deepseek-flash"
+    assert settings.llm_thinking is False
+    assert settings.quota.request_interval_secs == 13
+    assert settings.llm == LlmChoice("gemini", "gemini-3.8-flash")
     assert settings.whisper_model == "mlx-community/whisper-large-v3-turbo"
     assert settings.ffmpeg_bin == Path("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
     assert settings.ffprobe_bin == Path("/opt/homebrew/opt/ffmpeg-full/bin/ffprobe")
@@ -57,16 +70,51 @@ def test_env_file_is_read_and_environment_wins(tmp_path, monkeypatch):
     assert settings.selection_audio_signal is True
 
 
+def test_the_openai_provider_is_read_with_its_own_key_and_a_short_request_interval(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_PROVIDER=openai\nLLM_API_KEY=sk-secret\nGEMINI_API_KEY=gemini-secret\nLLM_THINKING=enabled\n")
+
+    settings = load_settings(env_file=env_file)
+
+    assert (settings.llm_provider, settings.llm_api_key, settings.llm_thinking) == ("openai", "sk-secret", True)
+    assert settings.quota.request_interval_secs == 1
+    assert settings.llm == LlmChoice("openai", "deepseek-flash", thinking=True)
+    assert settings.llm_name == "DeepSeek"
+    assert "secret" not in repr(settings)
+
+    # Another OpenAI-compatible host isn't sent DeepSeek's thinking parameter, so none is recorded.
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "gpt-6-mini")
+    settings = load_settings(env_file=env_file)
+    assert (settings.llm, settings.llm_name) == (LlmChoice("openai", "gpt-6-mini"), "api.openai.com")
+
+
+def test_the_request_interval_can_be_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_REQUEST_INTERVAL_SECS", "0")
+
+    assert load_settings(env_file=tmp_path / ".env").quota.request_interval_secs == 0
+
+
 def test_relative_data_dir_resolves_against_repo_root(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", "scratch/jobs")
 
     assert load_settings(env_file=tmp_path / ".env").data_dir == REPO_ROOT / "scratch" / "jobs"
 
 
-def test_invalid_audio_signal_flag_is_rejected(tmp_path, monkeypatch):
-    monkeypatch.setenv("SELECTION_AUDIO_SIGNAL", "sometimes")
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("SELECTION_AUDIO_SIGNAL", "sometimes"),
+        ("LLM_PROVIDER", "deepseek"),
+        ("LLM_THINKING", "true"),
+        ("LLM_REQUEST_INTERVAL_SECS", "soon"),
+        ("LLM_REQUEST_INTERVAL_SECS", "-1"),
+    ],
+)
+def test_invalid_values_are_rejected(tmp_path, monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
 
-    with pytest.raises(ValueError, match="SELECTION_AUDIO_SIGNAL"):
+    with pytest.raises(ValueError, match=key):
         load_settings(env_file=tmp_path / ".env")
 
 
