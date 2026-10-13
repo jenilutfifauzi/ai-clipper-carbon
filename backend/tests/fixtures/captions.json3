@@ -1,0 +1,27 @@
+{
+  "wireMagic": "pb3",
+  "pens": [{}],
+  "wsWinStyles": [{}, {"mhModeHint": 2, "juJustifCode": 0, "sdScrollDir": 3}],
+  "wpWinPositions": [{}, {"apPoint": 6, "ahHorPos": 20, "avVerPos": 100, "rcRows": 2, "ccCols": 40}],
+  "events": [
+    {"tStartMs": 0, "dDurationMs": 6000, "id": 1, "wpWinPosId": 1, "wsWinStyleId": 1},
+    {"tStartMs": 100, "dDurationMs": 2900, "wWinId": 1, "segs": [
+      {"utf8": "halo", "acAsrConf": 0},
+      {"utf8": " semua", "tOffsetMs": 400, "acAsrConf": 0},
+      {"utf8": " apa", "tOffsetMs": 900, "acAsrConf": 0},
+      {"utf8": " kabar", "tOffsetMs": 1200, "acAsrConf": 0}
+    ]},
+    {"tStartMs": 1590, "dDurationMs": 1410, "wWinId": 1, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 1600, "dDurationMs": 1000, "wWinId": 1, "segs": [
+      {"utf8": "kita", "acAsrConf": 0},
+      {"utf8": " ngobrol", "tOffsetMs": 300, "acAsrConf": 0},
+      {"utf8": " ", "tOffsetMs": 500, "acAsrConf": 0},
+      {"utf8": " soal", "tOffsetMs": 700, "acAsrConf": 0}
+    ]},
+    {"tStartMs": 2590, "dDurationMs": 1410, "wWinId": 1, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 4000, "dDurationMs": 2000, "wWinId": 1, "segs": [
+      {"utf8": "Podcast", "acAsrConf": 0},
+      {"utf8": " ya", "tOffsetMs": 500, "acAsrConf": 0}
+    ]}
+  ]
+}

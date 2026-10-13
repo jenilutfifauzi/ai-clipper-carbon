@@ -1,7 +1,7 @@
 UV := uv --directory backend
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 
-.PHONY: setup prerequisites check-ffmpeg dev test test-whisper update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze update-ytdlp
 
 # Install backend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
@@ -25,7 +25,7 @@ check-ffmpeg:
 	@$(UV) run python scripts/check_ffmpeg.py
 
 dev:
-	$(UV) run uvicorn app.main:app --reload
+	$(UV) run uvicorn --factory app.main:create_app --reload
 
 test:
 	$(UV) run pytest
@@ -33,6 +33,11 @@ test:
 # Transcribe generated speech with the real Whisper model (slow, ~2 GB RAM).
 test-whisper:
 	$(UV) run pytest -m whisper
+
+# Download a YouTube episode and build its Transcript, without the UI: make analyze URL=...
+analyze:
+	@[ -n "$(URL)" ] || { echo "Usage: make analyze URL=<youtube-url>"; exit 1; }
+	$(UV) run python -m app.cli analyze "$(URL)"
 
 # Upgrade yt-dlp (and its pinned extras) in uv.lock and the environment.
 update-ytdlp:
