@@ -171,3 +171,24 @@ def test_job_saved_before_selection_existed_reads_as_stopped_before_analyzing(cl
 def test_unknown_job_is_not_found(client):
     assert client.get("/api/jobs/0123456789ab").status_code == 404
     assert client.get("/api/jobs/not-a-job").status_code == 404
+
+
+def test_caption_events_without_a_duration_end_at_the_next_event(client, video_source, tmp_path, wait_for_status):
+    track = tmp_path / "no-duration.json3"
+    track.write_text(
+        '{"events": ['
+        '{"tStartMs": 0, "segs": [{"utf8": "halo"}, {"utf8": " semua", "tOffsetMs": 400}]},'
+        '{"tStartMs": 1000, "dDurationMs": 500, "segs": [{"utf8": "apa"}]},'
+        '{"tStartMs": 1600, "segs": [{"utf8": "kabar"}]}'
+        "]}"
+    )
+    video_source.caption_track = track
+
+    job = wait_for_status(create_job(client)["id"], "review", "error")
+
+    assert [(w["text"], w["start"], w["end"]) for w in job["transcript"]["words"]] == [
+        ("halo", 0, 0.4),
+        ("semua", 0.4, 1.0),
+        ("apa", 1.0, 1.5),
+        ("kabar", 1.6, 1.6),
+    ]

@@ -42,12 +42,18 @@ def parse_json3(data: str | bytes, language: str) -> Transcript:
     """Words from a json3 track, with one Segment per caption event that has words.
 
     A word starts at its event's start plus its offset, and ends at the next word's
-    start, capped at its own event's end. Whitespace-only segs (line breaks) are skipped.
+    start, capped at its own event's end (or, without a duration, the next event's start).
+    Whitespace-only segs (line breaks) are skipped.
     """
     lines: list[list[tuple[int, int, str]]] = []  # per event: (start ms, event end ms, text)
-    for event in json.loads(data).get("events", []):
+    events = json.loads(data).get("events", [])
+    for i, event in enumerate(events):
         event_start = event["tStartMs"]
-        event_end = event_start + event["dDurationMs"]
+        if "dDurationMs" in event:
+            event_end = event_start + event["dDurationMs"]
+        else:  # Some tracks leave it out; the event then lasts until the next one starts.
+            following = (e["tStartMs"] for e in events[i + 1 :] if "tStartMs" in e)
+            event_end = next(following, event_start)
         line = [
             (event_start + seg.get("tOffsetMs", 0), event_end, text)
             for seg in event.get("segs", [])
