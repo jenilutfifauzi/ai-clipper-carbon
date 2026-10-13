@@ -113,7 +113,7 @@ export function CandidateEditor({
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          <h3 className="text-lg font-semibold text-balance">
+          <h3 className="text-lg font-semibold tracking-tight text-balance">
             <span className="text-muted tabular-nums">#{index + 1}</span> {name}
           </h3>
           <Switch checked={candidate.selected} onChange={(selected) => void onSave({ selected })}>
@@ -182,7 +182,7 @@ export function CandidateEditor({
                 )}
               </p>
               <div className="ml-auto flex gap-2">
-                <Button variant="ghost" onClick={() => setPending(null)} className="min-h-10 px-3 text-sm">
+                <Button variant="ghost" onClick={() => setPending(null)} size="sm">
                   <X aria-hidden size={16} />
                   Cancel
                 </Button>
@@ -190,7 +190,7 @@ export function CandidateEditor({
                   variant="primary"
                   onClick={addClip}
                   disabled={!pendingRange || adding}
-                  className="min-h-10 px-3 text-sm"
+                  size="sm"
                 >
                   <Plus aria-hidden size={16} />
                   {adding ? "Adding…" : "Add manual clip"}
@@ -241,9 +241,9 @@ function Analysis({ candidate }: { candidate: Candidate }) {
         </h4>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
           <dt className="text-muted">Reason</dt>
-          <dd>{candidate.reason}</dd>
+          <dd className="text-pretty break-words">{candidate.reason}</dd>
           <dt className="text-muted">Retention</dt>
-          <dd>{candidate.retention_notes}</dd>
+          <dd className="text-pretty break-words">{candidate.retention_notes}</dd>
           <dt className="text-muted">Emotion</dt>
           <dd className="capitalize">{candidate.emotion}</dd>
           <dt className="text-muted">Hook strength</dt>
@@ -266,7 +266,7 @@ function Analysis({ candidate }: { candidate: Candidate }) {
             <span className="text-sm text-muted">Title</span>
             <CopyButton text={candidate.title} label="Copy title" />
           </div>
-          <p className="select-text">{candidate.title}</p>
+          <p className="break-words select-text">{candidate.title}</p>
         </div>
         {copy.map(({ label, text }) => (
           <div key={label} className="flex flex-col gap-1">
@@ -274,7 +274,7 @@ function Analysis({ candidate }: { candidate: Candidate }) {
               <span className="text-sm text-muted">{label}</span>
               <CopyButton text={text} label={`Copy ${label}`} />
             </div>
-            <p className="text-sm whitespace-pre-line select-text">{text}</p>
+            <p className="text-sm break-words whitespace-pre-line text-pretty select-text">{text}</p>
           </div>
         ))}
       </section>

@@ -46,10 +46,10 @@ export function FileDrop({
       onDrop={drop}
       className={cx(
         "flex min-h-36 flex-col items-center justify-center gap-1.5 rounded-control border-2 border-dashed p-6 text-center",
-        "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
+        "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus",
         "motion-safe:transition-colors",
-        over ? "border-accent bg-surface" : "border-border bg-surface-raised",
-        disabled ? "opacity-60" : "cursor-pointer hover:bg-surface",
+        over ? "border-accent bg-accent/10" : "border-border bg-fill",
+        disabled ? "opacity-60" : "cursor-pointer hover:border-accent/60",
       )}
     >
       <input

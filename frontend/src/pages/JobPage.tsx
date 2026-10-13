@@ -103,7 +103,7 @@ function JobView({ jobId }: { jobId: string }) {
       <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Job</h1>
-          <StatusBadge status={progress.status} />
+          <StatusBadge status={progress.status} uploaded={job.upload !== null} />
         </div>
         {job.upload ? (
           <p className="inline-flex max-w-full items-center gap-1.5 self-start">
@@ -122,11 +122,11 @@ function JobView({ jobId }: { jobId: string }) {
             <ExternalLink aria-hidden size={14} className="shrink-0" />
           </a>
         )}
-        <p className="text-sm text-muted">
+        <p className="text-sm text-pretty text-muted">
           Started {formatRelative(job.created_at)} · clips {job.options.min_secs}–{job.options.max_secs} s · captions{" "}
           {job.options.captions ? "on" : "off"} · language {job.options.language}
         </p>
-        {job.options.brief && <p className="text-sm">Brief: {job.options.brief}</p>}
+        {job.options.brief && <p className="text-sm break-words">Brief: {job.options.brief}</p>}
       </header>
 
       <Panel aria-label="Progress" className="flex flex-col gap-3">
@@ -141,9 +141,15 @@ function JobView({ jobId }: { jobId: string }) {
 
       {progress.status === "waiting_quota" && <WaitingNote progress={progress} />}
       {progress.status === "error" && (
-        <ErrorNote progress={progress} retrying={retrying} retryError={retryError} onRetry={retry} />
+        <ErrorNote
+          progress={progress}
+          uploaded={job.upload !== null}
+          retrying={retrying}
+          retryError={retryError}
+          onRetry={retry}
+        />
       )}
-      {progress.warnings.length > 0 && <Warnings warnings={progress.warnings} />}
+      {progress.warnings.length > 0 && <Warnings warnings={progress.warnings} uploaded={job.upload !== null} />}
 
       {(progress.status === "review" || progress.status === "rendering") && job.candidates && (
         <Review key={job.updated_at} job={job} clips={clips} progress={progress} onRender={render} />
@@ -154,7 +160,7 @@ function JobView({ jobId }: { jobId: string }) {
 
 function BackLink() {
   return (
-    <Link to="/" className="inline-flex items-center gap-1.5 self-start py-2 text-sm text-muted hover:text-text">
+    <Link to="/" className="-ml-1 inline-flex min-h-11 items-center gap-1.5 self-start rounded-control px-1 text-sm text-muted hover:text-text">
       <ArrowLeft aria-hidden size={16} />
       All Jobs
     </Link>

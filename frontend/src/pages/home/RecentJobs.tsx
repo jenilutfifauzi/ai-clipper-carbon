@@ -70,16 +70,19 @@ export function RecentJobs({ onDeleted }: { onDeleted: () => void }) {
             <li key={job.id} className="flex items-center gap-1 border-t border-border first:border-t-0">
               <Link
                 to={`/jobs/${job.id}`}
-                className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-2 hover:bg-surface-raised"
+                className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-2 hover:bg-fill motion-safe:transition-colors"
               >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{jobTitle(job)}</p>
-                  <p className="truncate text-sm text-muted">
-                    {formatRelative(job.created_at)}
-                    {job.options.brief && <> · {job.options.brief}</>}
-                  </p>
+                {/* On a phone the status goes under the title, which keeps the width. */}
+                <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{jobTitle(job)}</p>
+                    <p className="truncate text-sm text-muted">
+                      {formatRelative(job.created_at)}
+                      {job.options.brief && <> · {job.options.brief}</>}
+                    </p>
+                  </div>
+                  <StatusBadge status={job.status} uploaded={job.upload !== null} />
                 </div>
-                <StatusBadge status={job.status} />
                 <ChevronRight aria-hidden size={18} className="shrink-0 text-muted" />
               </Link>
               <Button
@@ -89,7 +92,7 @@ export function RecentJobs({ onDeleted }: { onDeleted: () => void }) {
                   setDeleteError(null);
                   setDeleting(job);
                 }}
-                className="size-11 shrink-0 px-0"
+                size="icon"
               >
                 <Trash2 aria-hidden size={18} />
               </Button>

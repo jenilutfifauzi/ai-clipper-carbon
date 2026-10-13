@@ -1,5 +1,6 @@
 import { Hand, PenLine } from "lucide-react";
 import type { Candidate } from "../../api";
+import { ScoreRing } from "../../components/ScoreRing";
 import { cx, formatClock } from "../../format";
 
 // The ranked Candidates, the AI's first and the manual ones after. Choosing a row opens it in the
@@ -27,18 +28,18 @@ export function CandidateList({
           <li
             key={candidate.id}
             className={cx(
-              "relative grid grid-cols-[minmax(0,1fr)_auto] items-start rounded-control",
-              active ? "bg-surface-raised ring-1 ring-accent/60" : "hover:bg-surface",
+              "relative grid grid-cols-[minmax(0,1fr)_auto] items-start rounded-control motion-safe:transition-colors",
+              active ? "raised ring-1 ring-accent/70" : "hover:bg-fill",
             )}
           >
             <button
               type="button"
               onClick={() => onActivate(candidate.id)}
               aria-current={active ? "true" : undefined}
-              className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-2 gap-y-0.5 rounded-control px-2 py-2.5 text-left"
+              className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded-control px-2 py-2.5 text-left"
             >
               <Score candidate={candidate} />
-              <span className="font-medium">
+              <span className="font-medium text-pretty">
                 <span className="sr-only">#{i + 1} </span>
                 {name}
               </span>
@@ -81,16 +82,11 @@ export function candidateName(candidate: Candidate, index: number): string {
 function Score({ candidate }: { candidate: Candidate }) {
   if (candidate.predicted_score === null) {
     return (
-      <span className="row-span-3 pt-1 text-muted" title="Added by hand: no AI score">
-        <Hand aria-hidden size={18} />
+      <span className="row-span-3 grid size-10 place-items-center rounded-full bg-fill text-muted" title="Added by hand: no AI score">
+        <Hand aria-hidden size={17} />
         <span className="sr-only">Manual,</span>
       </span>
     );
   }
-  return (
-    <span className="row-span-3 text-lg leading-6 font-semibold text-accent-text tabular-nums" title="Predicted score">
-      {candidate.predicted_score}
-      <span className="sr-only"> out of 100,</span>
-    </span>
-  );
+  return <ScoreRing score={candidate.predicted_score} className="row-span-3" />;
 }

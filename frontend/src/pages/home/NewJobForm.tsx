@@ -6,6 +6,7 @@ import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
 import { ProgressBar } from "../../components/ProgressBar";
 import { Segmented } from "../../components/Segmented";
+import { Switch } from "../../components/Switch";
 import { cx, formatBytes } from "../../format";
 import { FileDrop } from "./FileDrop";
 
@@ -25,7 +26,7 @@ const LANGUAGES = [
 ];
 
 const INPUT = cx(
-  "w-full rounded-control border border-border bg-surface-raised px-3.5 py-2.5 text-base text-text",
+  "w-full min-w-0 rounded-control border border-border bg-fill px-3.5 py-2.5 text-base text-text",
   "placeholder:text-muted user-invalid:border-danger",
 );
 const LABEL = "text-sm font-medium";
@@ -103,10 +104,10 @@ export function NewJobForm() {
 
   return (
     <Panel aria-labelledby={`${id}-heading`}>
-      <h1 id={`${id}-heading`} className="text-2xl font-semibold tracking-tight">
+      <h1 id={`${id}-heading`} className="text-2xl font-semibold tracking-tight text-balance">
         New Job
       </h1>
-      <p className="mt-1 text-muted">
+      <p className="mt-1 text-pretty text-muted">
         Paste a published episode, or upload its master file. Candidates are ready to review when it's analyzed.
       </p>
 
@@ -238,26 +239,9 @@ export function NewJobForm() {
             <span id={`${id}-captions-label`} className={LABEL}>
               Captions
             </span>
-            <label className="flex min-h-11 cursor-pointer items-center gap-3">
-              <input
-                type="checkbox"
-                role="switch"
-                checked={captions}
-                onChange={(event) => setCaptions(event.target.checked)}
-                aria-labelledby={`${id}-captions-label`}
-                className="peer sr-only"
-              />
-              <span
-                aria-hidden
-                className={cx(
-                  "relative h-7 w-12 shrink-0 rounded-full border border-border bg-surface-raised",
-                  "peer-checked:border-accent peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent",
-                  "after:absolute after:top-0.5 after:left-0.5 after:size-5.5 after:rounded-full after:bg-white after:shadow",
-                  "motion-safe:after:transition-transform peer-checked:after:translate-x-5",
-                )}
-              />
+            <Switch checked={captions} onChange={setCaptions} labelledBy={`${id}-captions-label`}>
               <span className="text-sm text-muted">{captions ? "On" : "Off"}</span>
-            </label>
+            </Switch>
           </div>
           {rangeError && (
             <p id={`${id}-range-error`} className="col-span-full -mt-2 text-sm text-danger">
@@ -285,7 +269,7 @@ export function NewJobForm() {
             </Button>
           </div>
         ) : (
-          <Button type="submit" variant="primary" disabled={pending} className="self-start px-5">
+          <Button type="submit" variant="primary" disabled={pending} className="self-start">
             {pending ? "Starting…" : origin === "upload" ? "Upload and start" : "Start Job"}
             <ArrowRight aria-hidden size={18} />
           </Button>

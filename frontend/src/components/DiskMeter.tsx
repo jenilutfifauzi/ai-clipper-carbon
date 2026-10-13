@@ -40,7 +40,7 @@ function Usage({ disk }: { disk: DiskUsage }) {
   return (
     <>
       <div>
-        <p className={cx("text-2xl font-semibold tabular-nums", disk.warning && "text-danger")}>
+        <p className={cx("text-2xl font-semibold tracking-tight tabular-nums", disk.warning && "text-danger")}>
           {formatBytes(disk.free_bytes)} free
         </p>
         <p className="text-sm text-muted">of {formatBytes(disk.total_bytes)}</p>
@@ -52,15 +52,21 @@ function Usage({ disk }: { disk: DiskUsage }) {
         aria-valuemax={100}
         aria-valuenow={usedPercent}
         aria-valuetext={`${usedPercent}% used, ${formatBytes(disk.free_bytes)} free`}
-        className="flex h-2 overflow-hidden rounded-full bg-surface-raised"
+        className="flex h-2 gap-0.5 overflow-hidden rounded-full bg-fill"
       >
-        <div className="bg-muted" style={{ width: share(otherBytes) }} />
-        <div className="bg-accent" style={{ width: share(disk.used_bytes) }} />
+        <div className="rounded-full bg-muted/50" style={{ width: share(otherBytes) }} />
+        <div className="min-w-1 rounded-full bg-linear-to-r from-accent to-accent-end" style={{ width: share(disk.used_bytes) }} />
       </div>
-      <p className="flex items-center gap-2 text-sm text-muted">
-        <span aria-hidden className="size-2.5 rounded-full bg-accent" />
-        AI Clipper uses {formatBytes(disk.used_bytes)}
-      </p>
+      <div className="flex flex-col gap-1 text-sm text-muted">
+        <p className="flex items-center gap-2">
+          <span aria-hidden className="size-2.5 rounded-full bg-accent" />
+          AI Clipper uses {formatBytes(disk.used_bytes)}
+        </p>
+        <p className="flex items-center gap-2">
+          <span aria-hidden className="size-2.5 rounded-full bg-muted/50" />
+          Other files {formatBytes(otherBytes)}
+        </p>
+      </div>
       {disk.warning && (
         <p role="alert" className="flex gap-2 rounded-control bg-danger-surface p-3 text-sm text-danger">
           <AlertTriangle aria-hidden size={18} className="shrink-0" />

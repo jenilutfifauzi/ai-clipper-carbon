@@ -6,6 +6,7 @@ import "./index.css";
 import { Home } from "./pages/Home";
 import { JobPage } from "./pages/JobPage";
 import { NotFound } from "./pages/NotFound";
+import { applyTheme, storedTheme } from "./theme";
 
 const router = createBrowserRouter([
   {
@@ -17,6 +18,9 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+// The page itself was themed before paint; this brings the browser chrome (theme-color) along.
+applyTheme(storedTheme());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

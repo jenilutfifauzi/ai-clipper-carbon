@@ -142,7 +142,7 @@ export function TranscriptPicker({
       {lo > 0 && (
         <Button
           variant="ghost"
-          className="min-h-9 self-start px-2 text-sm"
+          size="xs" className="self-start"
           onClick={() => setView((old) => ({ ...old, from: old.from - MORE_SECS }))}
         >
           <ChevronUp aria-hidden size={16} />
@@ -156,11 +156,11 @@ export function TranscriptPicker({
         onClick={onClick}
         onMouseUp={onMouseUp}
         onKeyDown={onKeyDown}
-        className="relative max-h-80 overflow-y-auto overscroll-contain rounded-control border border-border bg-surface p-3 leading-7"
+        className="relative max-h-80 overflow-y-auto overscroll-contain rounded-control border border-border bg-fill p-3 leading-7 pointer-coarse:leading-8"
       >
         {lines.map((line) => (
           <p key={line[0]} className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2">
-            <span className="text-sm leading-7 text-muted tabular-nums select-none">{formatClock(words[line[0]].start)}</span>
+            <span className="text-sm leading-[inherit] text-muted tabular-nums select-none">{formatClock(words[line[0]].start)}</span>
             <span>
               {line.map((i) => {
                 const inPending = i >= pendingFirst && i <= pendingLast;
@@ -179,7 +179,7 @@ export function TranscriptPicker({
                         i === first ? `${words[i].text}, clip start` : i === last ? `${words[i].text}, clip end` : undefined
                       }
                       className={cx(
-                        "cursor-pointer py-0.5",
+                        "cursor-pointer py-0.5 [overflow-wrap:anywhere]",
                         inPending ? PENDING : inClip ? cx(CLIP, "hover:bg-accent/40") : "rounded-[4px] hover:bg-surface-raised",
                         i === first && "rounded-l-[4px] border-l-[3px] border-accent pl-1",
                         i === last && "rounded-r-[4px] border-r-[3px] border-accent pr-1",
@@ -198,7 +198,7 @@ export function TranscriptPicker({
       {hi < words.length && (
         <Button
           variant="ghost"
-          className="min-h-9 self-start px-2 text-sm"
+          size="xs" className="self-start"
           onClick={() => setView((old) => ({ ...old, to: old.to + MORE_SECS }))}
         >
           <ChevronDown aria-hidden size={16} />

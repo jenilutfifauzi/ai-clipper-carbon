@@ -26,12 +26,14 @@ export function stageIndex(status: JobStatus | null): number {
   return STAGES.findIndex((stage) => stage.status === status);
 }
 
-export function stageLabel(status: JobStatus | null): string {
+export function stageLabel(status: JobStatus | null, uploaded = false): string {
+  if (uploaded && status === "downloading") return "Upload";
   return STAGES.find((stage) => stage.status === status)?.label ?? "Queue";
 }
 
-// For sentences: "Failed during transcription".
-export function stageNoun(status: JobStatus | null): string {
+// For sentences: "Failed during transcription". An uploaded Job's first stage prepares its file.
+export function stageNoun(status: JobStatus | null, uploaded = false): string {
+  if (uploaded && status === "downloading") return "file preparation";
   return STAGES.find((stage) => stage.status === status)?.noun ?? "the queue";
 }
 

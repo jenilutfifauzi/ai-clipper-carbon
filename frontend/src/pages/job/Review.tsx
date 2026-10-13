@@ -44,6 +44,16 @@ export function Review({
     setParams({ candidate: id }, { replace: true });
   }
 
+  // Below the two-column width the editor sits under the list: bring it into view.
+  function openFromList(id: string) {
+    activate(id);
+    if (!window.matchMedia("(max-width: 63.999rem)").matches) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    requestAnimationFrame(() =>
+      document.getElementById("candidate-editor")?.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" }),
+    );
+  }
+
   function replaceCandidate(id: string, change: (candidate: Candidate) => Candidate) {
     setCandidates((old) => old.map((candidate) => (candidate.id === id ? change(candidate) : candidate)));
   }
@@ -99,10 +109,10 @@ export function Review({
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
         <Panel
           aria-labelledby="candidates-heading"
-          className="lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto"
+          className="lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:overscroll-contain"
         >
           <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <h2 id="candidates-heading" className="font-semibold">
@@ -114,7 +124,7 @@ export function Review({
                 variant="primary"
                 onClick={() => void render()}
                 disabled={selected === 0 || queueing}
-                className="min-h-10 px-3 text-sm"
+                size="sm"
               >
                 <Clapperboard aria-hidden size={16} />
                 Render selected
@@ -124,12 +134,12 @@ export function Review({
           <CandidateList
             candidates={candidates}
             activeId={active?.id ?? null}
-            onActivate={activate}
+            onActivate={openFromList}
             onSelect={(id, value) => void save(id, { selected: value })}
           />
         </Panel>
 
-        <Panel aria-label="Candidate" className="flex flex-col gap-4">
+        <Panel id="candidate-editor" aria-label="Candidate" className="flex scroll-mt-4 flex-col gap-4">
           <div aria-live="polite" className="flex min-h-5 items-center gap-1.5 text-sm text-muted">
             {saving > 0 ? (
               <>

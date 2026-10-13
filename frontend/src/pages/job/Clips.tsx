@@ -3,6 +3,7 @@ import { mediaUrl, type Candidate, type Clip, type JobProgress } from "../../api
 import { Button, buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
+import { ScoreRing } from "../../components/ScoreRing";
 import { formatBytes } from "../../format";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
@@ -38,7 +39,7 @@ export function Clips({
           {done} rendered{waiting > 0 && ` · ${waiting} in the render queue`}
         </p>
       </div>
-      <ul className="grid gap-x-5 gap-y-8 sm:grid-cols-2 xl:grid-cols-3">
+      <ul className="grid gap-x-5 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
         {clips.map((clip) => {
           const index = candidates.findIndex((candidate) => candidate.id === clip.candidate_id);
           return (
@@ -86,32 +87,37 @@ function ClipCard({
   const busy = clip.status === "queued" || clip.status === "rendering";
 
   return (
-    <li className="flex flex-col gap-3">
-      {output ? (
-        <video
-          controls
-          playsInline
-          preload="none"
-          poster={mediaUrl(jobId, output.poster, output.at)}
-          src={mediaUrl(jobId, output.video, output.at)}
-          aria-label={`Clip: ${name}`}
-          className="aspect-[9/16] w-full rounded-control bg-black object-contain"
-        />
-      ) : (
-        <div className="grid aspect-[9/16] w-full place-items-center rounded-control border border-dashed border-border bg-surface p-4 text-center text-sm text-muted">
-          {clip.status === "error" ? "Not rendered" : "Not rendered yet"}
-        </div>
-      )}
+    <li className="flex min-w-0 flex-col gap-3">
+      {/* On a phone held sideways the 9:16 frame would outgrow the screen: cap it to the height. */}
+      <div className="mx-auto w-full max-w-[calc(85svh*9/16)]">
+        {output ? (
+          <video
+            controls
+            playsInline
+            preload="none"
+            poster={mediaUrl(jobId, output.poster, output.at)}
+            src={mediaUrl(jobId, output.video, output.at)}
+            aria-label={`Clip: ${name}`}
+            className="aspect-[9/16] w-full rounded-[20px] bg-black object-contain shadow-raised outline-1 -outline-offset-1 outline-white/10"
+          />
+        ) : (
+          <div className="grid aspect-[9/16] w-full place-items-center rounded-[20px] border border-dashed border-border bg-fill p-4 text-center text-sm text-muted">
+            {clip.status === "error" ? "Not rendered" : "Not rendered yet"}
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-col gap-1">
-        <h3 className="font-semibold text-balance">
-          {index >= 0 && <span className="text-muted tabular-nums">#{index + 1} </span>}
-          {name}
-        </h3>
+        <div className="flex items-start gap-3">
+          <h3 className="min-w-0 flex-1 font-semibold tracking-tight text-balance break-words">
+            {index >= 0 && <span className="text-muted tabular-nums">#{index + 1} </span>}
+            {name}
+          </h3>
+          {candidate?.predicted_score != null && <ScoreRing score={candidate.predicted_score} size={36} />}
+        </div>
         {output && (
           <p className="text-sm text-muted tabular-nums">
             {output.duration.toFixed(1)} s · {formatBytes(output.size_bytes)}
-            {candidate?.predicted_score != null && ` · score ${candidate.predicted_score}`}
           </p>
         )}
         <RenderState clip={clip} percent={percent} />
@@ -120,21 +126,21 @@ function ClipCard({
         )}
       </div>
 
-      {candidate?.reason && <p className="text-sm">{candidate.reason}</p>}
+      {candidate?.reason && <p className="text-sm text-pretty break-words text-muted">{candidate.reason}</p>}
 
       <div className="flex flex-wrap gap-2">
         {output && (
           <a
             href={mediaUrl(jobId, output.video, output.at)}
             download={`${fileName(candidate?.title) || `clip-${clip.candidate_id}`}.mp4`}
-            className={buttonClass("primary", "min-h-10 px-3 text-sm")}
+            className={buttonClass("primary", "sm")}
           >
             <Download aria-hidden size={16} />
             Download
           </a>
         )}
         {candidate && !busy && (output === null || changed || clip.status === "error") && (
-          <Button onClick={onRender} className="min-h-10 px-3 text-sm">
+          <Button onClick={onRender} size="sm">
             <Clapperboard aria-hidden size={16} />
             {output ? "Render again" : "Try again"}
           </Button>
@@ -142,7 +148,7 @@ function ClipCard({
       </div>
 
       {candidate && candidate.origin === "ai" && (
-        <div className="flex flex-wrap gap-2">
+        <div role="group" aria-label="Copy posting text" className="flex flex-wrap gap-2">
           <CopyButton text={candidate.title} label="Title" />
           {postingCopy(candidate).map(({ label, text }) => (
             <CopyButton key={label} text={text} label={label} />

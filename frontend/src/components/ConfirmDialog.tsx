@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { cx } from "../format";
 import { Button } from "./Button";
 
 interface Props {
@@ -33,7 +34,11 @@ export function ConfirmDialog({ open, title, children, confirmLabel, busyLabel, 
         event.preventDefault();
         if (!busy) onCancel();
       }}
-      className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-panel border border-border bg-bg p-0 text-text shadow-panel backdrop:bg-black/60"
+      className={cx(
+        "glass m-auto w-[min(28rem,calc(100%-2rem))] rounded-panel bg-bg/85! p-0 text-text backdrop:bg-black/50",
+        "scale-100 opacity-100 starting:open:scale-95 starting:open:opacity-0",
+        "motion-safe:transition-[opacity,scale] motion-safe:duration-200 motion-safe:ease-out",
+      )}
     >
       <div className="flex flex-col gap-4 p-6">
         <h2 id="confirm-title" className="text-lg font-semibold">

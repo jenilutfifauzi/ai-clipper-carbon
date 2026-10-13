@@ -70,7 +70,7 @@ export function HookEditor({ value, onSave }: { value: string; onSave: (text: st
         onBlur={() => save(draft)}
         aria-describedby={`${id}-hint ${id}-count`}
         className={cx(
-          "w-full resize-y rounded-control border bg-surface-raised px-3.5 py-2.5 text-base text-text",
+          "w-full resize-y rounded-control border bg-fill px-3.5 py-2.5 text-base text-text",
           long ? "border-accent" : "border-border",
         )}
       />

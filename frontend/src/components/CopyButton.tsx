@@ -22,7 +22,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
   }
 
   return (
-    <Button onClick={copy} disabled={!text} className="min-h-10 px-3 text-sm">
+    <Button onClick={copy} disabled={!text} size="sm">
       {copied ? <Check aria-hidden size={16} className="text-success" /> : <Copy aria-hidden size={16} />}
       <span aria-live="polite">{copied === null ? label : copied ? "Copied" : "Copy failed"}</span>
     </Button>

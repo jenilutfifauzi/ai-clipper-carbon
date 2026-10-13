@@ -13,12 +13,15 @@ const BADGES: Record<JobStatus, { label: string; tone: string; Icon: typeof Cloc
   error: { label: "Failed", tone: "text-danger", Icon: AlertCircle },
 };
 
-export function StatusBadge({ status }: { status: JobStatus }) {
+// An uploaded Job's first stage stores the file and makes its preview copy: it downloads nothing.
+const UPLOAD_FIRST_STAGE = "Preparing file";
+
+export function StatusBadge({ status, uploaded = false }: { status: JobStatus; uploaded?: boolean }) {
   const { label, tone, Icon } = BADGES[status];
   return (
     <span className={cx("inline-flex items-center gap-1.5 text-sm font-medium whitespace-nowrap", tone)}>
       <Icon aria-hidden size={16} className={cx(Icon === Loader2 && "motion-safe:animate-spin")} />
-      {label}
+      {uploaded && status === "downloading" ? UPLOAD_FIRST_STAGE : label}
     </span>
   );
 }

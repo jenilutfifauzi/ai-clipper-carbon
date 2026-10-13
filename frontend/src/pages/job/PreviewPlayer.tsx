@@ -74,7 +74,7 @@ export function PreviewPlayer({ src, start, end }: { src: string; start: number;
         controls
         playsInline
         preload="metadata"
-        className="aspect-video w-full rounded-control bg-black"
+        className="aspect-video w-full rounded-control bg-black outline-1 -outline-offset-1 outline-white/10"
       />
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" onClick={() => play(start)}>

@@ -1,17 +1,23 @@
 /*
- * Design tokens: black, white and Apple's systemOrange. Dark is the default; light follows the
- * system's light appearance. Components use these through the Tailwind theme in index.css
- * (bg-bg, text-muted, bg-accent, ...), never raw colours, so the glass polish (ticket 18) and a
- * theme toggle (a [data-theme] override of this block) only need to change this file.
+ * Design tokens: black, white and Apple's systemOrange, on glass. Components use them through the
+ * Tailwind theme in index.css (bg-bg, text-muted, bg-accent, ...), never raw colours.
+ *
+ * Themes: dark is the default and light follows the system's light appearance, unless the viewer
+ * picked one with the header's toggle, which sets <html data-theme="light|dark"> (see theme.ts and
+ * the inline script in index.html). The light values are written twice for that reason: once for
+ * the system preference, once for the explicit choice. Keep the two blocks identical.
  */
 :root {
   color-scheme: dark;
 
   --bg: #000;
-  /* Surfaces sit on the background; glass blur and highlights arrive with the polish. */
+  /* Glass: the panels' fill, edge and 1px inner-top highlight. The blur is --glass-filter. */
   --surface: rgb(255 255 255 / 0.06);
-  --surface-raised: rgb(255 255 255 / 0.1);
   --border: rgb(255 255 255 / 0.12);
+  --highlight: rgb(255 255 255 / 0.1);
+  /* Controls inside glass: raised (a selected segment, a secondary button) and inset (inputs, tracks). */
+  --surface-raised: rgb(255 255 255 / 0.1);
+  --fill: rgb(118 118 128 / 0.24);
   --text: #fff;
   --text-muted: rgb(255 255 255 / 0.6);
 
@@ -20,6 +26,9 @@
   /* Text and icons on --accent, and orange text on --bg. */
   --on-accent: #000;
   --accent-text: #ff9f0a;
+  /* Keyboard focus: 3:1 against the background in both themes. */
+  --focus: #ff9f0a;
+  --blob: rgb(255 128 10 / 0.34);
 
   --danger: #ff453a;
   --danger-surface: rgb(255 69 58 / 0.12);
@@ -29,24 +38,38 @@
 
   --radius-panel: 24px;
   --radius-control: 14px;
-  --shadow-panel: 0 8px 32px rgb(0 0 0 / 0.35);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 40px rgb(0 0 0 / 0.45);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.25);
+  --shadow-accent: 0 1px 2px rgb(255 106 0 / 0.3), 0 6px 18px -6px rgb(255 106 0 / 0.55);
+  --theme-color: #000;
+
+  --glass-filter: blur(28px) saturate(180%);
+  /* A gentle spring (damping 0.72, under 4% overshoot) for things that slide: thumbs, indicators. */
+  --ease-spring: linear(0, 0.042 4.2%, 0.143 8.3%, 0.274 12.5%, 0.414 16.7%, 0.549 20.8%, 0.67 25%, 0.773 29.2%,
+      0.856 33.3%, 0.921 37.5%, 0.968 41.7%, 1.001 45.8%, 1.021 50%, 1.033 54.2%, 1.038 58.3%, 1.038 62.5%, 1.035 66.7%,
+      1.031 70.8%, 1.025 75%, 1.02 79.2%, 1.015 83.3%, 1.011 87.5%, 1.007 91.7%, 1.004 95.8%, 1);
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
 
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     color-scheme: light;
 
     --bg: #f5f5f7;
     --surface: rgb(255 255 255 / 0.7);
+    --border: rgb(0 0 0 / 0.08);
+    --highlight: rgb(255 255 255 / 0.9);
     --surface-raised: #fff;
-    --border: rgb(0 0 0 / 0.1);
+    --fill: rgb(118 118 128 / 0.12);
     --text: #000;
     --text-muted: rgb(0 0 0 / 0.6);
 
-    /* systemOrange is too light for text on white; this darker orange keeps 4.5:1. */
+    /* systemOrange is too light for text or a focus ring on white; this darker orange keeps 4.5:1. */
     --accent-text: #b25000;
+    --focus: #b25000;
+    --blob: rgb(255 159 10 / 0.3);
 
     --danger: #d70015;
     --danger-surface: rgb(215 0 21 / 0.08);
@@ -54,6 +77,37 @@
     --waiting: #0071a4;
     --waiting-surface: rgb(0 113 164 / 0.08);
 
-    --shadow-panel: 0 8px 32px rgb(0 0 0 / 0.06);
+    --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 40px rgb(0 0 0 / 0.07);
+    --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.08), 0 2px 8px rgb(0 0 0 / 0.05);
+    --shadow-accent: 0 1px 2px rgb(255 106 0 / 0.25), 0 6px 18px -6px rgb(255 106 0 / 0.45);
+    --theme-color: #f5f5f7;
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f5f5f7;
+  --surface: rgb(255 255 255 / 0.7);
+  --border: rgb(0 0 0 / 0.08);
+  --highlight: rgb(255 255 255 / 0.9);
+  --surface-raised: #fff;
+  --fill: rgb(118 118 128 / 0.12);
+  --text: #000;
+  --text-muted: rgb(0 0 0 / 0.6);
+
+  --accent-text: #b25000;
+  --focus: #b25000;
+  --blob: rgb(255 159 10 / 0.3);
+
+  --danger: #d70015;
+  --danger-surface: rgb(215 0 21 / 0.08);
+  --success: #248a3d;
+  --waiting: #0071a4;
+  --waiting-surface: rgb(0 113 164 / 0.08);
+
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 40px rgb(0 0 0 / 0.07);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.08), 0 2px 8px rgb(0 0 0 / 0.05);
+  --shadow-accent: 0 1px 2px rgb(255 106 0 / 0.25), 0 6px 18px -6px rgb(255 106 0 / 0.45);
+  --theme-color: #f5f5f7;
 }
