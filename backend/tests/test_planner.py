@@ -1,6 +1,6 @@
 """Seam B: the Render Planner on synthetic input, without video.
 
-Later tickets add their cases here: layouts per scene (14), caption events (15) and the hook event (16).
+Later tickets add their cases here: caption events (15) and the hook event (16).
 """
 
 import math
@@ -8,6 +8,7 @@ import math
 import pytest
 from pydantic import TypeAdapter
 
+from app.candidates import Layout
 from app.config import CameraTuning
 from app.planner import Box, CropPoint, Face, FrameFaces, RenderPlan, Scene, SceneLayout, plan_render
 from app.video_source import SourceMetadata
@@ -108,8 +109,10 @@ def sampled(*runs: tuple[float, list[list[Face]] | list[Face] | None], start: fl
     return frames
 
 
-def tracked(faces: list[FrameFaces], secs: float, scenes: list[Scene] | None = None) -> RenderPlan:
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces)
+def tracked(
+    faces: list[FrameFaces], secs: float, scenes: list[Scene] | None = None, layout: Layout = Layout.AUTO
+) -> RenderPlan:
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces, layout)
 
 
 def crop_at(path: list[CropPoint], at: float) -> int:
@@ -214,33 +217,36 @@ def test_each_scene_starts_framed_on_its_face():
 
 
 def test_the_crop_holds_still_while_the_face_is_lost():
-    # The face is seen at 1200 px, lost for 2 s, then seen there again.
-    plan = tracked(sampled((1, [face(1200)]), (2, None), (1, [face(1220)])), 4)
+    # The face is seen at 1200 px, lost for 2 s, then seen there again. (The face is missing from
+    # most of the Scene, which would make it Blur, so Track is forced.)
+    plan = tracked(sampled((1, [face(1200)]), (2, None), (1, [face(1220)])), 4, layout=Layout.TRACK)
     assert only_panel(plan)[1].path == [CropPoint(0.0, centred_on(1200), 0)]
 
     # Lost mid-move, the crop finishes the move it had confirmed, then holds.
-    plan = tracked(sampled((1, [face(700)]), (3 * SAMPLE, [face(950)]), (3, None)), 4.5)
+    plan = tracked(sampled((1, [face(700)]), (3 * SAMPLE, [face(950)]), (3, None)), 4.5, layout=Layout.TRACK)
     xs = per_frame(only_panel(plan)[1].path, 0, 4.5)
     assert xs[-1] == centred_on(950)
     assert len(set(xs[-50:])) == 1
 
 
-def test_a_scene_without_faces_keeps_the_centre_crop():
-    plan = tracked(sampled((3, None)), 3)
+def test_a_tracked_scene_without_faces_keeps_the_centre_crop():
+    plan = tracked(sampled((3, None)), 3, layout=Layout.TRACK)
     assert only_panel(plan)[1].path == [CropPoint(0.0, 656, 0)]
 
 
+# The Speaker Tracker picks one of several faces in a tracked Scene. Two faces would make it Split,
+# so these force Track.
 def test_the_tracker_sticks_with_its_speaker_unless_another_clearly_takes_over():
     # A (at 500 px) is seen first. B (at 1400 px) then appears beside it with 2.5x A's area, which
     # stays under the x3 stickiness: the crop stays on A.
     a, b = face(500, 200), face(1400, 200 * 2.5**0.5)
-    plan = tracked(sampled((SAMPLE, [a]), (5, [a, b])), 5)
+    plan = tracked(sampled((SAMPLE, [a]), (5, [a, b])), 5, layout=Layout.TRACK)
     assert only_panel(plan)[1].path == [CropPoint(0.0, centred_on(500), 0)]
 
     # With 4x A's area, B takes over, but only once the 30-frame cooldown (1.2 s) since A became the
     # target has passed. The move is then a jump, which three detections confirm.
     b = face(1400, 400)
-    plan = tracked(sampled((SAMPLE, [a]), (5, [a, b])), 5)
+    plan = tracked(sampled((SAMPLE, [a]), (5, [a, b])), 5, layout=Layout.TRACK)
     path = only_panel(plan)[1].path
     moved = next(point.at for point in path if point.x != centred_on(500))
     assert moved == pytest.approx(30 / FPS + 2 * SAMPLE, abs=SAMPLE)
@@ -255,7 +261,7 @@ def test_the_cooldown_also_holds_back_a_switch_back():
     # back until 1.2 s after the switch.
     a, b, big_a = face(500, 200), face(1400, 400), face(500, 1000)
     faces = sampled((SAMPLE, [a]), (1.32, [a, b]), (4, [big_a, b]))
-    path = only_panel(tracked(faces, 5.5))[1].path
+    path = only_panel(tracked(faces, 5.5, layout=Layout.TRACK))[1].path
     xs = per_frame(path, 0, 5.5)
     back = next(i for i, x in enumerate(xs) if i > 0 and x < xs[i - 1]) / FPS
     assert back == pytest.approx(30 / FPS + 30 / FPS + 2 * SAMPLE, abs=SAMPLE)
@@ -284,11 +290,139 @@ def test_the_tracker_starts_afresh_in_every_scene():
     # stickiness that would have kept A, is followed from the start.
     a, b = face(500, 200), face(1400, 300)
     faces = sampled((2, [a])) + sampled((2, [a, b]), start=2)
-    plan = tracked(faces, 4, [Scene(0, 2), Scene(2, 4)])
+    plan = tracked(faces, 4, [Scene(0, 2), Scene(2, 4)], Layout.TRACK)
     assert plan.scenes[1].panels[0].path == [CropPoint(2.0, centred_on(1400), 0)]
 
 
 def test_a_tracked_plan_is_saved_and_read_back_as_json():
     plan = tracked(sampled((1, [face(700)]), (2, [face(1300)])), 3, [Scene(0, 1.5), Scene(1.5, 3)])
+    adapter = TypeAdapter(RenderPlan)
+    assert adapter.validate_json(adapter.dump_json(plan)) == plan
+
+
+# Layouts per scene (ticket 14). The same 1920x1080 Source at 25 fps: a Split panel's crop is half the
+# frame's width at 9:8 (960x854), and Blur shows the whole frame 1080x608 over its blurred centre crop.
+SPLIT_CROP = (960, 854)
+TOP, BOTTOM = Box(0, 0, 1080, 960), Box(0, 960, 1080, 960)
+
+
+def people(count: int) -> list[Face]:
+    """`count` faces side by side, 300 px apart."""
+    return [face(300 + 300 * i, 200) for i in range(count)]
+
+
+def layouts(plan: RenderPlan) -> list[tuple[float, float, SceneLayout]]:
+    return [(scene.start, scene.end, scene.layout) for scene in plan.scenes]
+
+
+@pytest.mark.parametrize(
+    ("count", "layout"),
+    [(0, SceneLayout.BLUR), (1, SceneLayout.TRACK), (2, SceneLayout.SPLIT), (3, SceneLayout.BLUR), (5, SceneLayout.BLUR)],
+)
+def test_each_scene_is_laid_out_by_its_number_of_faces(count, layout):
+    [scene] = tracked(sampled((3, people(count))), 3).scenes
+    assert scene.layout is layout
+    if layout is SceneLayout.TRACK:
+        [panel] = scene.panels
+        assert (panel.area, panel.crop_width, panel.crop_height) == (Box(0, 0, 1080, 1920), 608, 1080)
+    elif layout is SceneLayout.SPLIT:
+        assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(TOP, *SPLIT_CROP), (BOTTOM, *SPLIT_CROP)]
+    else:
+        # The blurred centre crop fills the frame; the whole shot, as wide as the frame, is centred on it.
+        background, shot = scene.panels
+        assert (background.area, background.crop_width, background.crop_height, background.blur) == (
+            Box(0, 0, 1080, 1920), 608, 1080, True
+        )
+        assert background.path == [CropPoint(0.0, 656, 0)]
+        assert (shot.area, shot.crop_width, shot.crop_height, shot.blur) == (Box(0, 656, 1080, 608), 1920, 1080, False)
+        assert shot.path == [CropPoint(0.0, 0, 0)]
+
+
+def test_the_face_count_comes_from_five_frames_spread_through_the_scene():
+    # Two faces, but the detector misses one of them now and then: still Split.
+    flaky = sampled(*[(0.6, people(2)), (2 * SAMPLE, people(1)), (SAMPLE, [])] * 4)
+    assert layouts(tracked(flaky, 4.3)) == [(0.0, 4.3, SceneLayout.SPLIT)]
+    # One face, joined by a second for half a second of the four: still Track.
+    visit = sampled((1.5, people(1)), (0.5, people(2)), (2, people(1)))
+    assert layouts(tracked(visit, 4)) == [(0.0, 4.0, SceneLayout.TRACK)]
+
+
+def test_the_layout_override_applies_to_every_scene():
+    # Scenes with no face, one face (joined by a second for a moment) and two faces.
+    faces = sampled((2, None), (1.5, people(1)), (0.5, people(2)), (2, people(2)))
+    scenes = [Scene(0, 2), Scene(2, 4), Scene(4, 6)]
+    assert [s.layout for s in tracked(faces, 6, scenes).scenes] == ["blur", "track", "split"]
+    for layout in (Layout.TRACK, Layout.SPLIT, Layout.BLUR):
+        plan = tracked(faces, 6, scenes, layout)
+        assert layouts(plan) == [(0, 2, layout.value), (2, 4, layout.value), (4, 6, layout.value)]
+
+    # A forced Split of a scene with fewer than two faces shows the frame's left half on top and its
+    # right half below, centred in height; with two faces, each panel is on its face.
+    plan = tracked(faces, 6, scenes, Layout.SPLIT)
+    for scene in plan.scenes[:2]:
+        top, bottom = scene.panels
+        assert (top.area, top.crop_width, top.crop_height, top.path) == (TOP, *SPLIT_CROP, [CropPoint(scene.start, 0, 112)])
+        assert (bottom.area, bottom.path) == (BOTTOM, [CropPoint(scene.start, 960, 112)])
+    # (The faces at 300 and 600 px: the left one's crop goes no further left than the frame's edge.)
+    top, bottom = plan.scenes[2].panels
+    assert (top.path[0].x, bottom.path[0].x) == (0, 600 - 480)
+
+
+def test_scenes_under_a_second_are_merged_into_a_neighbour_before_layouts_are_chosen():
+    # A 0.4 s opening shot, a 0.6 s two-face flash inside a close-up, and a 0.5 s tail.
+    scenes = [Scene(0, 0.4), Scene(0.4, 3), Scene(3, 3.6), Scene(3.6, 6), Scene(6, 6.5)]
+    faces = sampled((3, people(1)), (0.6, people(2)), (2.9, people(1)))
+    plan = tracked(faces, 6.5, scenes)
+    # The opening shot joins the one after it, the others the one before them.
+    assert layouts(plan) == [(0.0, 3.6, SceneLayout.TRACK), (3.6, 6.5, SceneLayout.TRACK)]
+    assert plan.scenes[1].panels[0].path[0].at == 3.6
+
+    # Several short shots in a row add up into one scene; a Clip under a second stays one scene.
+    plan = tracked(sampled((4, people(2))), 4, [Scene(0, 0.4), Scene(0.4, 0.8), Scene(0.8, 1.2), Scene(1.2, 4)])
+    assert layouts(plan) == [(0.0, 1.2, SceneLayout.SPLIT), (1.2, 4.0, SceneLayout.SPLIT)]
+    assert layouts(tracked(sampled((0.8, people(1))), 0.8, [Scene(0, 0.3), Scene(0.3, 0.8)])) == [
+        (0.0, 0.8, SceneLayout.TRACK)
+    ]
+
+
+def test_split_puts_the_left_face_on_top_and_follows_each_face_with_its_own_camera():
+    # The right face is seen first and larger; the left one walks 350 px further left over the scene.
+    right = face(1350, 320)
+    faces = [
+        FrameFaces(round(k * SAMPLE, 3), [right, face(900 - min(350, 175 * k * SAMPLE), 260)])
+        for k in range(int(4 / SAMPLE))
+    ]
+    [scene] = tracked(faces, 4).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    top, bottom = scene.panels
+    assert (top.area, bottom.area) == (TOP, BOTTOM)
+
+    # Each crop starts and ends with its face inside it, the top one's on the left face.
+    def centre_at(panel, at: float) -> float:
+        return crop_at(panel.path, at) + panel.crop_width / 2
+
+    assert centre_at(top, 0) == pytest.approx(900, abs=2)
+    assert abs(centre_at(top, 3.9) - 550) <= CAMERA.dead_zone * SPLIT_CROP[0] / 2
+    assert len(bottom.path) == 1 and centre_at(bottom, 0) == pytest.approx(1350, abs=2)
+    xs = per_frame(top.path, 0, 4)
+    assert all(b <= a for a, b in zip(xs, xs[1:])) and max(a - b for a, b in zip(xs, xs[1:])) <= MAX_STEP
+    # The faces sit a little above the middle of their panels, leaving the seam clear.
+    for panel, seen in ((top, faces[0].faces[1]), (bottom, right)):
+        y = panel.path[0].y
+        assert (seen.centre_y - y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
+        assert all(point.y == y for point in panel.path)
+
+
+def test_a_portrait_source_is_passed_through_whatever_its_faces_or_layout():
+    faces = sampled((2, people(2)), (2, people(1)))
+    for layout in Layout:
+        plan = plan_render(0, 4, source(1080, 1920), [Scene(0, 2), Scene(2, 4)], faces, layout)
+        scene, panel = only_panel(plan)
+        assert (scene.start, scene.end, scene.layout) == (0.0, 4.0, SceneLayout.PASSTHROUGH)
+        assert (panel.area, panel.path) == (Box(0, 0, 1080, 1920), [CropPoint(0.0, 0, 0)])
+
+
+def test_a_plan_with_every_layout_is_saved_and_read_back_as_json():
+    plan = tracked(sampled((2, None), (2, people(1)), (2, people(2))), 6, [Scene(0, 2), Scene(2, 4), Scene(4, 6)])
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan

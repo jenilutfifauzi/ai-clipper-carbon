@@ -1,12 +1,18 @@
 """The Renderer: executes a Render Plan with the configured ffmpeg, making a Clip's MP4 and poster.
 
 Each Clip is one encode, a single ffmpeg process that cuts the range (an accurate seek: ffmpeg
-decodes from the keyframe before the start and drops what comes before it), crops and scales the
-video, normalizes the audio, and writes the poster from the same frames. Before it, an audio-only
+decodes from the keyframe before the start and drops what comes before it), draws each Scene in its
+Layout, normalizes the audio, and writes the poster from the same frames. Before it, an audio-only
 pass measures the range's loudness, so that the encode can apply the gain that takes it to −14 LUFS
 (loudnorm's two-pass linear mode). One pass would have to adjust the gain as it goes (loudnorm's
 dynamic mode), which can pump and lands less exactly on the target; the measurement only decodes
 the range's audio, which takes about a second for a 90 s Clip.
+
+The decoded video is split into one branch per Scene, each trimmed to its Scene and drawn there:
+every panel is a crop of the frame, moved at its change points by commands that ffmpeg sends it
+as the frames go by, scaled into the panel's area (and blurred for Blur's background), and the
+panels are laid over one another. The branches are then joined back to back (concat), so each
+frame is drawn once, in its own Scene's Layout. The audio isn't cut: it runs on unchanged.
 """
 
 import json
@@ -20,7 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.config import RenderTuning
-from app.planner import RenderPlan
+from app.planner import Panel, RenderPlan, ScenePlan
 
 logger = logging.getLogger(__name__)
 
@@ -99,28 +105,9 @@ class Renderer:
         self, source: Path, plan: RenderPlan, loudness: dict[str, str] | None, encoder: str, video: Path, poster: Path
     ) -> list[str]:
         tuning = self.tuning
-        panel = plan.scenes[0].panels[0]
-        first, *moves = [point for scene in plan.scenes for point in scene.panels[0].path]
-        area = panel.area
-        # The crop moves at its change points through commands that ffmpeg sends it as the frames go
-        # by, a quarter of a frame early so that rounding can't make one late.
-        commands, last = [], first
-        for point in moves:
-            at = f"{max(0.0, point.at - 0.25 / plan.fps):.4f}"
-            for key, old, new in (("x", last.x, point.x), ("y", last.y, point.y)):
-                if new != old:
-                    commands.append(f"{at} crop@p0 {key} {new}")
-            last = point
-        # Commands are separated by ";", escaped from the filtergraph, which splits chains at it.
-        moving = f"sendcmd=c={'\\;'.join(commands)}," if commands else ""
-        frame = (
-            f"[0:v]{moving}crop@p0=w={panel.crop_width}:h={panel.crop_height}:x={first.x}:y={first.y},"
-            f"scale={area.width}:{area.height}:flags=lanczos,setsar=1"
-        )
-        if (area.width, area.height) != (plan.width, plan.height):
-            frame += f",pad={plan.width}:{plan.height}:{area.x}:{area.y}:black"
+        frame = _scenes(plan, tuning)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
-        frame += f",format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
+        frame += f";[frame]format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         audio = f"[0:a:0]aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
@@ -173,12 +160,86 @@ class Renderer:
 
 
 def _check(plan: RenderPlan) -> None:
-    """Refuse what the Render Plan can hold but the Renderer doesn't draw yet (tickets 14–16)."""
-    panels = [scene.panels for scene in plan.scenes]
-    if any(len(panel) != 1 for panel in panels) or len({(p.area, p.crop_width, p.crop_height) for [p] in panels}) != 1:
-        raise ValueError("The Renderer draws one panel of one size in every scene so far")
+    """Refuse what the Render Plan can hold but the Renderer doesn't draw yet (tickets 15–16)."""
+    if not plan.scenes or not all(scene.panels for scene in plan.scenes):
+        raise ValueError("A Render Plan needs at least one scene, each with at least one panel")
     if plan.captions or plan.hook:
         raise ValueError("The Renderer doesn't burn captions or the hook yet")
+
+
+def _scenes(plan: RenderPlan, tuning: RenderTuning) -> str:
+    """The filtergraph that draws the plan's Scenes from [0:v] into [frame]. With several, the video
+    is split into a branch per Scene, trimmed to it from half a frame before its first frame (so that
+    rounding can't move a frame across a cut) and restarted at 0 s, and the branches are concatenated."""
+    if len(plan.scenes) == 1:
+        return _scene(plan, plan.scenes[0], "s0", "[0:v]", "[frame]", tuning)
+    count = len(plan.scenes)
+    chains = [f"[0:v]split={count}" + "".join(f"[s{i}]" for i in range(count))]
+    for i, scene in enumerate(plan.scenes):
+        bounds = []
+        if i > 0:
+            bounds.append(f"start={scene.start - 0.5 / plan.fps:.4f}")
+        if i < count - 1:
+            bounds.append(f"end={scene.end - 0.5 / plan.fps:.4f}")
+        chains.append(_scene(plan, scene, f"s{i}", f"[s{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[v{i}]", tuning))
+    chains.append("".join(f"[v{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
+    return ";".join(chains)
+
+
+def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning) -> str:
+    """Filters that draw `scene` from the frames `given` (a link label, then any filters to start
+    with) into the link `out`: its first panel, padded to the frame unless it fills it, then each
+    other panel laid over it in its area."""
+    panels = scene.panels
+    if len(panels) == 1:
+        chains = [f"{given}{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{out}"]
+    else:
+        copies = "".join(f"[{name}c{j}]" for j in range(len(panels)))
+        chains = [f"{given}split={len(panels)}{copies}"]
+        below = f"[{name}l0]"
+        chains.append(f"[{name}c0]{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{below}")
+        for j, panel in enumerate(panels[1:], 1):
+            chains.append(f"[{name}c{j}]{_panel(plan, scene, f'{name}p{j}', panel, tuning)}[{name}d{j}]")
+            above = out if j == len(panels) - 1 else f"[{name}l{j}]"
+            chains.append(f"{below}[{name}d{j}]overlay={panel.area.x}:{panel.area.y}{above}")
+            below = above
+    return ";".join(chains)
+
+
+def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: RenderTuning) -> str:
+    """Filters that crop the panel from the frame, as `crop@<name>`, and scale it into its area."""
+    first, *moves = panel.path
+    # The crop moves at its change points through commands that ffmpeg sends it as the frames go by,
+    # a quarter of a frame early so that rounding can't make one late. The times are into the Scene,
+    # whose branch starts at 0 s.
+    commands, last = [], first
+    for point in moves:
+        at = f"{max(0.0, point.at - scene.start - 0.25 / plan.fps):.4f}"
+        for key, old, new in (("x", last.x, point.x), ("y", last.y, point.y)):
+            if new != old:
+                commands.append(f"{at} crop@{name} {key} {new}")
+        last = point
+    # Commands are separated by ";", escaped from the filtergraph, which splits chains at it.
+    moving = f"sendcmd=c={'\\;'.join(commands)}," if commands else ""
+    area = panel.area
+    drawn = f"{moving}crop@{name}=w={panel.crop_width}:h={panel.crop_height}:x={first.x}:y={first.y},"
+    if panel.blur:
+        # Blurred small and scaled up: cheaper than blurring the full size, and as smooth.
+        small_width, small_height = (max(2, round(side / tuning.blur_shrink / 2) * 2) for side in (area.width, area.height))
+        drawn += (
+            f"scale={small_width}:{small_height},gblur=sigma={tuning.blur_sigma},"
+            f"eq=brightness={tuning.blur_brightness},scale={area.width}:{area.height}"
+        )
+    else:
+        drawn += f"scale={area.width}:{area.height}:flags=lanczos"
+    return drawn + ",setsar=1"
+
+
+def _pad(plan: RenderPlan, panel: Panel) -> str:
+    area = panel.area
+    if (area.width, area.height) == (plan.width, plan.height):
+        return ""
+    return f",pad={plan.width}:{plan.height}:{area.x}:{area.y}:black"
 
 
 def _range(plan: RenderPlan) -> list[str]:

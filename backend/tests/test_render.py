@@ -27,8 +27,11 @@ from test_jobs_api import create_job, statuses
 from test_review import patch
 
 SOURCE_SECS = 6
-# The moving face's plain background, 0x4a5560.
+# The plain background of the face fixtures, 0x4a5560, and the second one of `face_then_two`, 0x605a4a.
 BACKGROUND = np.array([0x4A, 0x55, 0x60])
+OTHER_BACKGROUND = np.array([0x60, 0x5A, 0x4A])
+# The head from fixtures/portrait.jpg, 400x500 (the face's box is about 176 px).
+HEAD = "crop=120:150:43:0,scale=400:500"
 
 
 @pytest.fixture(scope="session")
@@ -57,9 +60,52 @@ def moving_face(tmp_path_factory) -> Path:
         "-loop", "1", "-framerate", "25", "-i", str(FIXTURES / "portrait.jpg"),
         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
         "-filter_complex",
-        "[1:v]crop=120:150:43:0,scale=400:500[head];"
+        f"[1:v]{HEAD}[head];"
         "[0:v][head]overlay=x='100+600*clip((t-0.5)/5,0,1)':y=110:shortest=1,format=yuv420p[v]",
         "-map", "[v]", "-map", "2:a", "-t", str(SOURCE_SECS),
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path),
+    ]
+    subprocess.run(command, check=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def two_faces(tmp_path_factory) -> Path:
+    """A 1280x720 wide shot of two people side by side (the portrait's head twice, still): in colour
+    on the left, in grey on the right, so that the output shows which is where. With a tone, 6 s long."""
+    path = tmp_path_factory.mktemp("two") / "two.mp4"
+    command = [
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=0x4a5560:size=1280x720:rate=25",
+        "-loop", "1", "-framerate", "25", "-i", str(FIXTURES / "portrait.jpg"),
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+        "-filter_complex",
+        f"[1:v]{HEAD},split=2[left][right];[right]hue=s=0[grey];"
+        "[0:v][left]overlay=x=140:y=110:shortest=1[one];[one][grey]overlay=x=740:y=110,format=yuv420p[v]",
+        "-map", "[v]", "-map", "2:a", "-t", str(SOURCE_SECS),
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path),
+    ]
+    subprocess.run(command, check=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def face_then_two(tmp_path_factory) -> Path:
+    """3 s of a close-up (the portrait's head in the middle), then a cut to 3 s of the two people of
+    `two_faces` over another background. With a tone throughout, 6 s long."""
+    path = tmp_path_factory.mktemp("mixed") / "mixed.mp4"
+    command = [
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=0x4a5560:size=1280x720:rate=25:duration=3",
+        "-f", "lavfi", "-i", "color=c=0x605a4a:size=1280x720:rate=25:duration=3",
+        "-loop", "1", "-framerate", "25", "-i", str(FIXTURES / "portrait.jpg"),
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+        "-filter_complex",
+        f"[0:v][1:v]concat=n=2:v=1:a=0[back];[2:v]{HEAD},split=3[solo][left][right];[right]hue=s=0[grey];"
+        "[back][solo]overlay=x=440:y=110:enable='lt(t,3)':shortest=1[a];"
+        "[a][left]overlay=x=140:y=110:enable='gte(t,3)'[b];"
+        "[b][grey]overlay=x=740:y=110:enable='gte(t,3)',format=yuv420p[v]",
+        "-map", "[v]", "-map", "3:a", "-t", str(SOURCE_SECS),
         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path),
     ]
     subprocess.run(command, check=True)
@@ -160,12 +206,17 @@ def test_selected_candidates_render_into_clips_ranked_like_their_candidates(clie
     for clip, candidate in zip(done["clips"], [first, second]):
         check_clip(settings, job_dir, clip, candidate)
         assert clip["output"]["encoder"] == "h264_videotoolbox"
-        # The Render Plan is kept with the Job: one scene, a full-height 9:16 crop from the middle.
+        # The Render Plan is kept with the Job: one scene without faces, so Blur: the whole frame over
+        # its blurred full-height 9:16 crop from the middle.
         plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
         [scene] = plan["scenes"]
-        [panel] = scene["panels"]
-        assert (scene["layout"], panel["crop_width"], panel["crop_height"], panel["path"]) == (
-            "track", 202, 360, [{"at": 0.0, "x": 220, "y": 0}]
+        background, shot = scene["panels"]
+        assert scene["layout"] == "blur"
+        assert (background["crop_width"], background["crop_height"], background["path"], background["blur"]) == (
+            202, 360, [{"at": 0.0, "x": 220, "y": 0}], True
+        )
+        assert (shot["area"], shot["crop_width"], shot["crop_height"], shot["blur"]) == (
+            {"x": 0, "y": 656, "width": 1080, "height": 608}, 640, 360, False
         )
     assert client.get(f"/api/jobs/{job['id']}/clips").json() == done["clips"]
 
@@ -384,3 +435,89 @@ def test_a_close_up_crop_follows_the_face_and_keeps_it_in_frame(client, settings
     assert [analysis_file] == list((job_dir / "analysis").iterdir())
     assert analysis_file.stat().st_mtime_ns == analysed
     assert json.loads((job_dir / again["output"]["plan"]).read_text()) == plan
+
+
+def shows_head(picture: np.ndarray, background: np.ndarray, share: float = 0.9) -> bool:
+    """Whether at least `share` of a region of an output frame is head, not background."""
+    return (np.abs(picture - background).max(axis=2) > 24).mean() > share
+
+
+def colourful(picture: np.ndarray) -> float:
+    """The region's mean saturation: its pixels' spread between colour channels."""
+    return float((picture.max(axis=2) - picture.min(axis=2)).mean())
+
+
+def check_split(frame: np.ndarray, background: np.ndarray) -> None:
+    """The 54x96 frame shows the colour head (the left one) in the middle of the top panel and the
+    grey head (the right one) in the middle of the bottom panel. (Some of the grey head's pixels are
+    as bright as the background, which is about 20 in colourfulness.)"""
+    top, bottom = frame[10:40, 12:42], frame[58:88, 12:42]
+    assert shows_head(top, background) and shows_head(bottom, background, share=0.75)
+    assert colourful(top) > 40 and colourful(bottom) < 8
+
+
+def test_two_faces_side_by_side_are_split_with_the_left_face_on_top(client, settings, video_source, two_faces):
+    video_source.video = two_faces
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    [scene] = plan["scenes"]
+    top, bottom = scene["panels"]
+    assert scene["layout"] == "split"
+    assert (top["area"], bottom["area"]) == (
+        {"x": 0, "y": 0, "width": 1080, "height": 960}, {"x": 0, "y": 960, "width": 1080, "height": 960}
+    )
+    assert (top["crop_width"], top["crop_height"]) == (640, 568)
+    # MediaPipe found both faces in nearly every sampled frame; each is inside its panel's crop, the
+    # left one in the top panel's.
+    [analysis_file] = (job_dir / "analysis").iterdir()
+    frames = json.loads(analysis_file.read_text())["frames"]
+    both = [frame for frame in frames if len(frame["faces"]) == 2]
+    assert len(both) >= 0.9 * len(frames)
+    for frame in both:
+        left, right = sorted(frame["faces"], key=lambda face: face["x"])
+        for panel, face in ((top, left), (bottom, right)):
+            at = [point for point in panel["path"] if point["at"] <= frame["at"] + 1e-6][-1]
+            assert at["x"] <= face["x"] and face["x"] + face["width"] <= at["x"] + panel["crop_width"]
+            assert at["y"] <= face["y"] and face["y"] + face["height"] <= at["y"] + panel["crop_height"]
+
+    for at in (0.5, 5.5):
+        check_split(output_frame(settings, job_dir / clip["output"]["video"], at), BACKGROUND)
+
+
+def test_the_layout_switches_at_a_cut_within_one_clip(client, settings, video_source, face_then_two):
+    video_source.video = face_then_two
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    # A close-up tracked, then the two people split, cut where the shot changes (3 s into the Source).
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    cut = 3 - candidate["start"]
+    assert [scene["layout"] for scene in plan["scenes"]] == ["track", "split"]
+    assert plan["scenes"][1]["start"] == pytest.approx(cut, abs=0.02)
+
+    # Every frame is there once, and the sound runs on unbroken for the whole Clip.
+    video = job_dir / clip["output"]["video"]
+    info = probe(settings, video)
+    [picture] = [s for s in info["streams"] if s["codec_type"] == "video"]
+    [sound] = [s for s in info["streams"] if s["codec_type"] == "audio"]
+    length = candidate["end"] - candidate["start"]
+    assert int(picture["nb_frames"]) == pytest.approx(length * 25, abs=1)
+    assert float(picture["duration"]) == pytest.approx(length, abs=0.05)
+    assert float(sound["duration"]) == pytest.approx(length, abs=0.05)
+
+    # The close-up fills the frame up to its last frame before the cut; from the cut's first frame
+    # on, the two panels show the two heads. (A frame is shown from `at` seconds: 0.04 s at 25 fps.)
+    for at in (0.3, cut - 0.05):
+        assert shows_head(output_frame(settings, video, at)[20:76, 12:42], BACKGROUND), at
+    for at in (cut - 0.01, length - 0.3):
+        check_split(output_frame(settings, video, at), OTHER_BACKGROUND)

@@ -13,7 +13,7 @@ MONTSERRAT_REPO = "https://raw.githubusercontent.com/JulietaUla/Montserrat/v9.00
 
 ASSETS = {
     BLAZE_FACE_MODEL: "https://storage.googleapis.com/mediapipe-models/face_detector/"
-    "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
+    "blaze_face_full_range/float16/1/blaze_face_full_range.tflite",
     SILERO_VAD_MODEL: "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx",
     MONTSERRAT_EXTRABOLD: f"{MONTSERRAT_REPO}/fonts/ttf/Montserrat-ExtraBold.ttf",
     FONTS_DIR / "OFL.txt": f"{MONTSERRAT_REPO}/OFL.txt",

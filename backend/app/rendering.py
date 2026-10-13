@@ -145,7 +145,8 @@ class Renders:
             share = shown / 100
             plan = plan_render(
                 candidate.start, candidate.end, job.source.metadata,
-                analysis.scenes if analysis else None, analysis.frames if analysis else None, self.settings.camera,
+                scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
+                layout=candidate.layout, camera=self.settings.camera,
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             encoder = self.renderer.render(
@@ -191,7 +192,9 @@ class Renders:
 
     def _analysis(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> ClipAnalysis | None:
         """The Scenes and faces of the Candidate's range, as saved by an earlier render of the same
-        range with the same tuning, or found now and saved; None for a Source that isn't reframed."""
+        range with the same tuning and face model, or found now and saved; None for a Source that
+        isn't reframed. (An analysis saved before the model was recorded doesn't validate, so it is
+        done again.)"""
         assert job.source is not None
         if not reframes(job.source.metadata):
             return None
@@ -202,7 +205,7 @@ class Renders:
             except ValidationError:
                 saved = None
             if saved is not None and (saved.start, saved.end) == (candidate.start, candidate.end):
-                if saved.tuning == self.analyzer.tuning:
+                if (saved.tuning, saved.model) == (self.analyzer.tuning, self.analyzer.model.name):
                     return saved
         began = time.monotonic()
         source = self.store.job_dir(job.id) / job.source.video

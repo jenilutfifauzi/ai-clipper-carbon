@@ -13,7 +13,9 @@ ENV_FILE = REPO_ROOT / ".env"
 
 MODELS_DIR = BACKEND_DIR / "models"
 FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
-BLAZE_FACE_MODEL = MODELS_DIR / "blaze_face_short_range.tflite"
+# MediaPipe's full-range BlazeFace, which also finds the smaller and turned faces of wide shots (the
+# short-range model, made for faces near a phone's camera, missed one in four there).
+BLAZE_FACE_MODEL = MODELS_DIR / "blaze_face_full_range.tflite"
 SILERO_VAD_MODEL = MODELS_DIR / "silero_vad.onnx"
 MONTSERRAT_EXTRABOLD = FONTS_DIR / "Montserrat-ExtraBold.ttf"
 # The owner's past clips: eval references and few-shot examples (app/references.py).
@@ -168,6 +170,12 @@ class RenderTuning:
     audio_rate: int = 48_000
     # The poster is the Clip's frame at this time (or its middle, for a shorter Clip).
     poster_secs: float = 1
+    # Blur's background: shrunk blur_shrink times, blurred with this Gaussian sigma (in shrunk
+    # pixels), darkened by blur_brightness (eq's -1 to 1) so that the shot over it stands out,
+    # and scaled back up.
+    blur_shrink: int = 4
+    blur_sigma: float = 10
+    blur_brightness: float = -0.1
 
 
 @dataclass(frozen=True)
@@ -181,7 +189,7 @@ class AnalysisTuning:
     # Faces are looked for in every face_step-th frame, decoded at face_width pixels wide.
     face_width: int = 640
     face_step: int = 3
-    # MediaPipe's confidence for a detection to count. Faces in wide shots score about 0.5–0.6.
+    # MediaPipe's confidence for a detection to count.
     face_confidence: float = 0.5
 
 

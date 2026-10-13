@@ -141,7 +141,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 `make setup` also downloads these models; they are not stored in this repository.
 
-- BlazeFace short-range face detector from
+- BlazeFace full-range face detector (`blaze_face_full_range.tflite`) from
   [Google MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/face_detector), Apache License 2.0.
 - [Silero VAD](https://github.com/snakers4/silero-vad) ONNX model, MIT License.
 - [mlx-community/whisper-large-v3-turbo](https://huggingface.co/mlx-community/whisper-large-v3-turbo), an MLX

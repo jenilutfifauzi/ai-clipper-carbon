@@ -2,14 +2,14 @@
 with the configured ffmpeg and MediaPipe before planning.
 
 - The Scene Detector runs ffmpeg's scene-change filter (scdet) over the range and returns its Scenes.
-- The Face Detector runs MediaPipe's Face Detector (BlazeFace short-range, on the CPU) on every
+- The Face Detector runs MediaPipe's Face Detector (BlazeFace full-range, on the CPU) on every
   third frame of the range, decoded by ffmpeg at 640 px wide and read from a pipe one frame at a
   time, so that a long Clip never sits in memory.
 
 The two are separate passes: decoding is fast (about 1.3 s for 27 s of 1080p), and keeping them apart
-keeps each simple. A Clip's analysis is saved with its Job and reused while the Clip's range and the
-AnalysisTuning stay the same (see `analysis_file`), so rendering again after a hook or layout edit
-doesn't analyse again.
+keeps each simple. A Clip's analysis is saved with its Job and reused while the Clip's range, the
+AnalysisTuning and the face model stay the same (see `analysis_file`), so rendering again after a
+hook or layout edit doesn't analyse again.
 """
 
 import re
@@ -34,10 +34,12 @@ _SCENE_CUT = re.compile(r"lavfi\.scd\.time:\s*([\d.]+)")
 
 @dataclass(frozen=True)
 class ClipAnalysis:
-    # The Clip's range on the Source's timeline, and the tuning it was analysed with.
+    # The Clip's range on the Source's timeline, and the tuning and face model (its file's name) it
+    # was analysed with.
     start: float
     end: float
     tuning: AnalysisTuning
+    model: str
     # Back to back, covering the Clip from 0 to its duration.
     scenes: list[Scene]
     # Every sampled frame in time order, with or without faces.
@@ -71,7 +73,7 @@ class Analyzer:
         duration = round(end - start, 3)
         scenes = self.detect_scenes(source, start, duration)
         frames = self.detect_faces(source, metadata, start, duration, progress)
-        return ClipAnalysis(start, end, self.tuning, scenes, frames)
+        return ClipAnalysis(start, end, self.tuning, self.model.name, scenes, frames)
 
     def stop(self) -> None:
         """Kill the running ffmpeg, if any; analyses from now on raise RenderStopped."""

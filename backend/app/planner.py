@@ -2,30 +2,49 @@
 Render Plan that the Renderer executes. Pure, so it is tested on synthetic input (Seam B): the Clip's
 Scenes and face detections are found before planning (app/analysis.py) and passed in.
 
-A landscape Source is reframed with a full-height 9:16 crop per Scene (Track), which follows the
-speaker's face:
-- the Speaker Tracker gives each face an identity across the Scene's sampled frames and picks the one
-  to follow, the largest and most often seen, sticking with it unless another clearly takes over;
-- the Smooth Camera moves the crop towards the target face like a critically damped spring, once a
-  face leaves its dead-zone, ignoring a detection that jumps away until others confirm it, and holds
-  still while the face is lost.
-The crop's path is kept as change points: the frames at which its position changes. A Scene starts
-already framed on its target, and the tracker starts afresh at every cut.
+Each Scene of a landscape Source gets its own Layout, from its number of faces in LAYOUT_SAMPLES of
+its sampled frames (scenes shorter than MIN_SCENE_SECS are first merged into a neighbour, so that the
+layout doesn't flicker). The Candidate's layout override, unless Auto, replaces the choice in every Scene.
+- One face: Track, a full-height 9:16 crop that follows the speaker's face.
+- Two faces: Split, two 1080×960 panels stacked, the left face's on top, each with its own camera
+  following its face. Forced with fewer than two faces, Split shows the frame's left and right halves.
+- None, or three or more: Blur, the whole shot as wide as the output, centred over a blurred copy
+  of itself that fills it.
 
-A portrait Source is passed through whole. Ticket 14 adds a layout per Scene (Split's two panels,
-each with its own camera; Blur's wide shot over a blurred background) and the layout override,
-ticket 15 the caption events and ticket 16 the hook event.
+The cameras:
+- the Speaker Tracker gives each face an identity across the Scene's sampled frames; Track follows
+  the largest and most often seen, sticking with it unless another clearly takes over, and Split
+  the two seen most;
+- the Smooth Camera moves a crop towards its face like a critically damped spring, once the face
+  leaves its dead-zone, ignoring a detection that jumps away until others confirm it, and holds
+  still while the face is lost.
+A crop's path is kept as change points: the frames at which its position changes. A Scene starts
+already framed on its faces, and the tracker starts afresh at every cut.
+
+A portrait Source is passed through whole. Ticket 15 adds the caption events and ticket 16 the hook
+event.
 """
 
 import math
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
+from app.candidates import Layout
 from app.config import CameraTuning
 from app.video_source import SourceMetadata
 
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
+# Split's panels are as wide as the output and half as tall.
+SPLIT_HEIGHT = OUTPUT_HEIGHT // 2
+# A Scene's Layout follows its number of faces in this many of its sampled frames, spread through it.
+LAYOUT_SAMPLES = 5
+# A Scene shorter than this is merged into a neighbour before Layouts are chosen.
+MIN_SCENE_SECS = 1.0
+# In a Split panel, the face's centre is put this far down the panel (as a share of its height),
+# where the frame allows: a little above the middle, leaving the seam between the panels clear.
+SPLIT_FACE_AT = 0.4
 
 
 # The planner's input, found by app/analysis.py.
@@ -109,6 +128,8 @@ class Panel:
     # Where the crop is: its change points in time order, the first at the scene's start. The crop
     # stays put between them.
     path: list[CropPoint]
+    # Shown blurred: Blur's background.
+    blur: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,23 +203,33 @@ def plan_render(
     source: SourceMetadata,
     scenes: list[Scene] | None = None,
     faces: list[FrameFaces] | None = None,
+    layout: Layout = Layout.AUTO,
     camera: CameraTuning = CameraTuning(),
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
-    and whose sampled frames have `faces` (both in seconds into the Clip). Without `scenes` the Clip is
-    one Scene; without `faces` its crop stays in the middle."""
+    and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
+    each Scene by its faces). Without `scenes` the Clip is one Scene; without `faces` (not analysed)
+    an Auto Scene is tracked with its crop in the middle."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     duration = round(end - start, 3)
     if not reframes(source):
-        plans = [ScenePlan(0.0, duration, SceneLayout.PASSTHROUGH, [_passthrough(source.width, source.height)])]
+        plans = [ScenePlan(0.0, duration, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, 0.0)])]
     else:
         cuts = sorted({round(scene.start, 3) for scene in scenes or []} - {0.0})
         edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
         plans = []
-        for a, b in zip(edges, edges[1:]):
+        for a, b in _merge_short(edges):
             seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
-            plans.append(ScenePlan(a, b, SceneLayout.TRACK, [_track(a, b, seen, source, camera)]))
+            count = None if seen is None else _face_count(seen)
+            chosen = _choose(layout, count)
+            if chosen is SceneLayout.TRACK:
+                panels = [_track(a, b, seen, source, camera)]
+            elif chosen is SceneLayout.SPLIT:
+                panels = _split(a, b, seen if count and count >= 2 else None, source, camera)
+            else:
+                panels = _blur(a, source)
+            plans.append(ScenePlan(a, b, chosen, panels))
     return RenderPlan(
         start=start,
         end=end,
@@ -209,24 +240,128 @@ def plan_render(
     )
 
 
+def _merge_short(edges: list[float]) -> list[tuple[float, float]]:
+    """The Scenes between `edges`, with each one shorter than MIN_SCENE_SECS joined to the Scene
+    before it (the first to the one after it)."""
+    shots: list[tuple[float, float]] = []
+    for a, b in zip(edges, edges[1:]):
+        if shots and b - a < MIN_SCENE_SECS - 1e-9:
+            shots[-1] = (shots[-1][0], b)
+        else:
+            shots.append((a, b))
+    if len(shots) > 1 and shots[0][1] - shots[0][0] < MIN_SCENE_SECS - 1e-9:
+        shots[:2] = [(shots[0][0], shots[1][1])]
+    return shots
+
+
+def _face_count(frames: list[FrameFaces]) -> int:
+    """How many faces a Scene shows: the median count of LAYOUT_SAMPLES of its sampled frames, spread
+    evenly through it (all of them in a Scene with fewer), so that a missed or false detection or two
+    doesn't change it."""
+    if not frames:
+        return 0
+    if len(frames) > LAYOUT_SAMPLES:
+        frames = [frames[(2 * i + 1) * len(frames) // (2 * LAYOUT_SAMPLES)] for i in range(LAYOUT_SAMPLES)]
+    counts = sorted(len(frame.faces) for frame in frames)
+    return counts[len(counts) // 2]
+
+
+def _choose(layout: Layout, count: int | None) -> SceneLayout:
+    """The Scene's Layout: the override, or by its face count (Track when it wasn't analysed)."""
+    if layout is not Layout.AUTO:
+        return SceneLayout(layout.value)
+    if count is None or count == 1:
+        return SceneLayout.TRACK
+    return SceneLayout.SPLIT if count == 2 else SceneLayout.BLUR
+
+
 def _track(start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning) -> Panel:
     """A full-height 9:16 crop that follows the speaker's face through the Scene from `start` to `end`;
     in the middle of the frame while no face is known."""
     panel = _centre_crop(source.width, source.height)
-    [middle] = panel.path
     if not faces:
-        return replace(panel, path=[replace(middle, at=start)])
+        return replace(panel, path=[replace(panel.path[0], at=start)])
     tracked = _track_faces(faces, source.width, source.height, camera)
-    targets = [(at, face.centre_x if face else None) for at, face in _follow_speaker(tracked, source.fps, camera)]
-    highest = _even_floor(source.width - panel.crop_width)
-    half = panel.crop_width / 2
+    return _follow(panel, _follow_speaker(tracked, source.fps, camera), start, end, source, camera)
+
+
+def _split(start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning) -> list[Panel]:
+    """Two 9:8 crops, each half as wide as the frame, for the panels stacked top and bottom: the
+    two faces seen most in the Scene's sampled frames `faces`, each followed by its own camera, the
+    left one's on top. Without `faces`, the frame's left half on top and its right half below."""
+    width, height = source.width, source.height
+    crop_width = _even_floor(width / 2)
+    crop_height = _even(crop_width * SPLIT_HEIGHT / OUTPUT_WIDTH)
+    if crop_height > _even_floor(height):
+        crop_height = _even_floor(height)
+        crop_width = _even(crop_height * OUTPUT_WIDTH / SPLIT_HEIGHT)
+    y = _centred(height, crop_height)
+    halves = [
+        Panel(Box(0, i * SPLIT_HEIGHT, OUTPUT_WIDTH, SPLIT_HEIGHT), crop_width, crop_height,
+              [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
+        for i, centre in enumerate((width / 4, width * 3 / 4))
+    ]
+    if not faces:
+        return halves
+    tracked = _track_faces(faces, width, height, camera)
+    seen = Counter(id for frame in tracked for id in frame.faces)
+    area = Counter()
+    for frame in tracked:
+        for id, face in frame.faces.items():
+            area[id] += face.width * face.height
+    pair = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:2]
+    if len(pair) < 2:
+        return halves
+    centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in pair}
+    pair.sort(key=centre.__getitem__)
+    rise = (0.5 - SPLIT_FACE_AT) * crop_height
+    return [
+        _follow(panel, [(frame.at, frame.faces.get(id)) for frame in tracked], start, end, source, camera, rise)
+        for panel, id in zip(halves, pair)
+    ]
+
+
+def _blur(start: float, source: SourceMetadata) -> list[Panel]:
+    """The whole frame as large as fits in the output, centred over the full-height 9:16 crop from its
+    middle, blurred, which fills the output."""
+    background = _centre_crop(source.width, source.height)
+    background = replace(background, path=[replace(background.path[0], at=start)], blur=True)
+    return [background, _fitted(source.width, source.height, start)]
+
+
+def _follow(
+    panel: Panel,
+    targets: list[tuple[float, Face | None]],
+    start: float,
+    end: float,
+    source: SourceMetadata,
+    camera: CameraTuning,
+    rise: float = 0.0,
+) -> Panel:
+    """`panel` with its crop following the face of `targets` (its box at each sampled frame, or None
+    where it isn't seen) through the Scene from `start` to `end`, a Smooth Camera on each axis. The
+    crop's centre is aimed `rise` pixels below the face's centre, so that the face sits above the
+    middle."""
+    width, height = panel.crop_width, panel.crop_height
+    axes = [
+        _camera_path(
+            [(at, None if face is None else centre(face)) for at, face in targets],
+            start, end, source.fps, size / 2, frame - size / 2, size, camera,
+        )
+        for centre, size, frame in (
+            (lambda face: face.centre_x, width, source.width),
+            (lambda face: face.centre_y + rise, height, source.height),
+        )
+    ]
+    highest_x, highest_y = _even_floor(source.width - width), _even_floor(source.height - height)
     path: list[CropPoint] = []
-    for at, centre in _camera_path(targets, start, end, source.fps, half, source.width - half, panel.crop_width, camera):
-        x = min(max(_even(centre - half), 0), highest)
+    for (at, centre_x), (_, centre_y) in zip(*axes):
+        x = min(max(_even(centre_x - width / 2), 0), highest_x)
+        y = min(max(_even(centre_y - height / 2), 0), highest_y)
         if not path:
-            path.append(CropPoint(start, x, middle.y))
-        elif x != path[-1].x:
-            path.append(CropPoint(round(at, 3), x, middle.y))
+            path.append(CropPoint(start, x, y))
+        elif (x, y) != (path[-1].x, path[-1].y):
+            path.append(CropPoint(round(at, 3), x, y))
     return replace(panel, path=path)
 
 
@@ -375,14 +510,14 @@ def _centre_crop(width: int, height: int) -> Panel:
     return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(0.0, x, y)])
 
 
-def _passthrough(width: int, height: int) -> Panel:
-    """A portrait frame whole, as large as fits in the output and centred in it: a 9:16 one fills it."""
+def _fitted(width: int, height: int, start: float) -> Panel:
+    """The whole frame, as large as fits in the output and centred in it: a 9:16 one fills it."""
     crop_width, crop_height = _even_floor(width), _even_floor(height)
     scale = min(OUTPUT_WIDTH / crop_width, OUTPUT_HEIGHT / crop_height)
     area_width = min(_even(crop_width * scale), OUTPUT_WIDTH)
     area_height = min(_even(crop_height * scale), OUTPUT_HEIGHT)
     area = Box(_centred(OUTPUT_WIDTH, area_width), _centred(OUTPUT_HEIGHT, area_height), area_width, area_height)
-    return Panel(area, crop_width, crop_height, [CropPoint(0.0, 0, 0)])
+    return Panel(area, crop_width, crop_height, [CropPoint(start, 0, 0)])
 
 
 # Sizes and offsets are kept even: 4:2:0 video can't be cut at odd pixels.
