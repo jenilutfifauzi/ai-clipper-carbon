@@ -16,3 +16,7 @@ The outcome is recorded either way. An agent may run the iterations and prepare 
 - [ ] Changes between iterations are summarised in a short log: what changed, recall, and postable counts.
 - [ ] If the gate passes: record the final prompt version and results in the project notes, and set ticket 09 to `wontfix`.
 - [ ] If the gate has not passed after about 5 iterations: record the best version and results, and leave ticket 09 open to run.
+
+## Comments
+
+**2026-10-13 (from ticket 04).** Start with the real-Gemini smoke check that ticket 04 deferred: put the key in `.env`, then run `make reanalyze JOB=8ef59ab26333` (the 8-minute episode from ticket 03). Google recommends temperature 1.0 for Gemini 3 models; compare it against the Score pass's 0.2 during iteration. `selection.json` in each Job keeps the Window scores, the shortlist and the raw Detail answers for inspection.

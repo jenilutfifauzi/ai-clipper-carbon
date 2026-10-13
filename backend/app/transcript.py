@@ -31,6 +31,13 @@ class Transcript:
     segments: list[Segment]
 
 
+def timestamp(seconds: float) -> str:
+    """A time as shown next to Transcript lines: m:ss, or h:mm:ss from the first hour on (rounded down)."""
+    whole = int(seconds)
+    hours, minutes, secs = whole // 3600, whole // 60 % 60, whole % 60
+    return f"{hours}:{minutes:02}:{secs:02}" if hours else f"{minutes}:{secs:02}"
+
+
 def parse_json3(data: str | bytes, language: str) -> Transcript:
     """Words from a json3 track, with one Segment per caption event that has words.
 

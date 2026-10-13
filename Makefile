@@ -1,7 +1,7 @@
 UV := uv --directory backend
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 
-.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze reanalyze update-ytdlp
 
 # Install backend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
@@ -34,11 +34,17 @@ test:
 test-whisper:
 	$(UV) run pytest -m whisper
 
-# Download a YouTube episode and build its Transcript, without the UI: make analyze URL=...
+# Download a YouTube episode, build its Transcript and select Candidates, without the UI: make analyze URL=...
 # Extra CLI options go in ARGS, e.g. ARGS=--transcribe-locally to ignore YouTube's captions.
 analyze:
 	@[ -n "$(URL)" ] || { echo "Usage: make analyze URL=<youtube-url> [ARGS=--transcribe-locally]"; exit 1; }
 	$(UV) run python -m app.cli analyze "$(URL)" $(ARGS)
+
+# Select Candidates again from an existing Job's Transcript (no download), e.g. after a prompt change.
+# Replaces the Job's Candidates: make reanalyze JOB=<job-id>
+reanalyze:
+	@[ -n "$(JOB)" ] || { echo "Usage: make reanalyze JOB=<job-id>"; exit 1; }
+	$(UV) run python -m app.cli reanalyze "$(JOB)"
 
 # Upgrade yt-dlp (and its pinned extras) in uv.lock and the environment.
 update-ytdlp:

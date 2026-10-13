@@ -8,6 +8,7 @@ from app.audio import SileroVad, chunks
 from app.config import Settings
 from app.jobs import Job, JobStatus, JobStore
 from app.ports import Ports
+from app.selection import select
 from app.transcriber import TranscriptionStalled, Watchdog
 from app.transcript import Transcript, parse_json3
 
@@ -22,21 +23,25 @@ class Pipeline:
         self.stages: list[tuple[JobStatus, Callable[[Job], Job]]] = [
             (JobStatus.DOWNLOADING, self._download),
             (JobStatus.TRANSCRIBING, self._transcribe),
+            (JobStatus.ANALYZING, self._analyze),
         ]
 
-    def run(self, job_id: str) -> Job:
-        job = self.store.get(job_id)
-        for stage, run_stage in self.stages:
+    def run(self, job_id: str, start: JobStatus | None = None) -> Job:
+        """Run the Job's stages, or only those from `start` on (the earlier ones' artifacts must exist)."""
+        stages = self.stages
+        if start is not None:
+            stages = stages[[stage for stage, _ in stages].index(start) :]
+        for stage, run_stage in stages:
             logger.info("Job %s: %s", job_id, stage)
-            job = self.store.update(job_id, status=stage, stage=stage, progress=None, message=None)
+            job = self.store.update(job_id, status=stage, stage=stage, error=None, progress=None, message=None)
             try:
                 job = run_stage(job)
             except Exception as exc:
                 logger.exception("Job %s failed while %s", job_id, stage)
                 error = str(exc) or type(exc).__name__
                 return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None)
-        logger.info("Job %s: %s", job_id, JobStatus.TRANSCRIBED)
-        return self.store.update(job_id, status=JobStatus.TRANSCRIBED, stage=None, progress=None, message=None)
+        logger.info("Job %s: %s", job_id, JobStatus.REVIEW)
+        return self.store.update(job_id, status=JobStatus.REVIEW, stage=None, progress=None, message=None)
 
     def _download(self, job: Job) -> Job:
         source = self.ports.video_source.fetch(job.url, job.options.language, self.store.job_dir(job.id))
@@ -97,3 +102,31 @@ class Pipeline:
             job.id, duration, elapsed, duration / max(elapsed, 1e-6), len(transcript.words),
         )
         return job
+
+    def _analyze(self, job: Job) -> Job:
+        assert job.source is not None
+        transcript = self.store.load_transcript(job.id)
+        assert transcript is not None
+
+        def progress(message: str, percent: float | None = None) -> None:
+            if percent is None:
+                self.store.update(job.id, message=message)
+            else:
+                self.store.update(job.id, message=message, progress=round(percent, 1))
+
+        selection = select(
+            self.ports.llm,
+            self.settings.selection,
+            transcript,
+            duration=job.source.metadata.duration,
+            min_secs=job.options.min_secs,
+            max_secs=job.options.max_secs,
+            progress=progress,
+        )
+        self.store.save_selection(job.id, selection)
+        self.store.save_candidates(job.id, selection.candidates)
+        logger.info(
+            "Job %s: %d Candidates from %d Windows (prompt %s)",
+            job.id, len(selection.candidates), len(selection.windows), selection.prompt_version,
+        )
+        return self.store.update(job.id, prompt_version=selection.prompt_version)

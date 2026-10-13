@@ -40,6 +40,43 @@ class TranscriptionTuning:
 
 
 @dataclass(frozen=True)
+class SelectionTuning:
+    """Every number Selection uses. Not read from the environment; tests shrink the retry delay.
+
+    Changing a temperature changes what the eval measures: bump PROMPT_VERSION in app/prompts.py.
+    """
+
+    # Windows are max(window_min_secs, window_factor x the Job's max clip length) long and
+    # overlap their neighbours by window_overlap_secs.
+    window_min_secs: float = 90
+    window_factor: float = 1.5
+    window_overlap_secs: float = 30
+    # The Score pass sends at most this many Windows per request.
+    score_batch_size: int = 8
+    score_temperature: float = 0.2
+    # Target count: max(min_candidates, episode minutes / minutes_per_candidate, rounded).
+    min_candidates: int = 3
+    minutes_per_candidate: float = 9
+    # The shortlist holds shortlist_factor x the target count of the best-scoring Windows, leaving
+    # out any that overlaps an already shortlisted one by more than shortlist_max_overlap of its length.
+    shortlist_factor: float = 2
+    shortlist_max_overlap: float = 0.5
+    # openshorts' value for its Detail pass, which writes the creative copy.
+    detail_temperature: float = 0.9
+    # Candidate edges snap to a Word within snap_search_secs of the proposed time, then take a
+    # lead-in before the first Word and a tail after the last one.
+    snap_search_secs: float = 1.5
+    lead_in_secs: float = 0.35
+    tail_secs: float = 0.45
+    # A Candidate outside the Job's duration range is trimmed or extended at Word boundaries if that
+    # moves its edges by at most this much in all, and dropped otherwise.
+    duration_fix_secs: float = 15
+    # Transient LLM errors: llm_attempts tries in all, waiting llm_retry_secs, then twice as long each time.
+    llm_attempts: int = 5
+    llm_retry_secs: float = 2
+
+
+@dataclass(frozen=True)
 class Settings:
     gemini_api_key: str | None
     gemini_model: str
@@ -49,6 +86,7 @@ class Settings:
     ytdlp_cookies_from_browser: str | None
     selection_audio_signal: bool
     transcription: TranscriptionTuning = TranscriptionTuning()
+    selection: SelectionTuning = SelectionTuning()
 
     @property
     def ffprobe_bin(self) -> Path:

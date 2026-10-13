@@ -1,5 +1,7 @@
 """Seam A: the Job lifecycle through the HTTP API, with a fake Video Source."""
 
+import json
+
 import pytest
 
 URL = "https://www.youtube.com/watch?v=fixture"
@@ -38,22 +40,24 @@ def at(job: dict, status: str) -> str:
     return next(change["at"] for change in job["history"] if change["status"] == status)
 
 
-def test_job_moves_from_queued_through_downloading_and_transcribing(client, video_source, wait_for_status):
+def test_job_moves_from_queued_through_downloading_transcribing_and_analyzing_to_review(
+    client, video_source, wait_for_status
+):
     video_source.hold()
     job = create_job(client)
     assert job["status"] == "queued"
 
     assert wait_for_status(job["id"], "downloading")["stage"] == "downloading"
     video_source.release()
-    job = wait_for_status(job["id"], "transcribed", "error")
+    job = wait_for_status(job["id"], "review", "error")
 
-    assert statuses(job) == ["queued", "downloading", "transcribing", "transcribed"]
+    assert statuses(job) == ["queued", "downloading", "transcribing", "analyzing", "review"]
     assert job["stage"] is None
     assert job["error"] is None
 
 
 def test_job_returns_source_metadata_and_transcript_words(client, wait_for_status):
-    job = wait_for_status(create_job(client)["id"], "transcribed", "error")
+    job = wait_for_status(create_job(client)["id"], "review", "error")
 
     assert job["source"]["metadata"] == {
         "duration": pytest.approx(2, abs=0.1),
@@ -74,7 +78,7 @@ def test_language_defaults_to_indonesian_and_can_be_overridden(client, video_sou
 
     assert default["options"]["language"] == "id"
     assert english["options"]["language"] == "en"
-    assert wait_for_status(english["id"], "transcribed", "error")["transcript"]["language"] == "en"
+    assert wait_for_status(english["id"], "review", "error")["transcript"]["language"] == "en"
     assert [language for _, language in video_source.calls] == ["id", "en"]
 
 
@@ -117,33 +121,50 @@ def test_second_job_stays_queued_until_the_first_finishes(client, video_source, 
     assert [(job["id"], job["status"]) for job in jobs] == [(second["id"], "queued"), (first["id"], "downloading")]
 
     video_source.release()
-    first = wait_for_status(first["id"], "transcribed", "error")
-    second = wait_for_status(second["id"], "transcribed", "error")
-    assert statuses(second) == ["queued", "downloading", "transcribing", "transcribed"]
-    assert at(second, "downloading") >= at(first, "transcribed")
+    first = wait_for_status(first["id"], "review", "error")
+    second = wait_for_status(second["id"], "review", "error")
+    assert statuses(second) == ["queued", "downloading", "transcribing", "analyzing", "review"]
+    assert at(second, "downloading") >= at(first, "review")
     assert [url for url, _ in video_source.calls] == ["https://youtu.be/first", "https://youtu.be/second"]
 
 
-def test_listing_jobs_leaves_out_transcripts(client, wait_for_status):
-    job = wait_for_status(create_job(client)["id"], "transcribed", "error")
+def test_listing_jobs_leaves_out_transcripts_and_candidates(client, wait_for_status):
+    job = wait_for_status(create_job(client)["id"], "review", "error")
 
     [listed] = client.get("/api/jobs").json()
     assert listed["id"] == job["id"]
-    assert listed["status"] == "transcribed"
+    assert listed["status"] == "review"
     assert "transcript" not in listed
+    assert "candidates" not in listed
 
 
 def test_failing_source_puts_the_job_in_error_and_the_next_job_still_runs(client, video_source, wait_for_status):
     video_source.fail_with(RuntimeError("Video unavailable"))
-    failed = wait_for_status(create_job(client)["id"], "transcribed", "error")
+    failed = wait_for_status(create_job(client)["id"], "review", "error")
 
     assert failed["status"] == "error"
     assert (failed["stage"], failed["error"]) == ("downloading", "Video unavailable")
     assert statuses(failed) == ["queued", "downloading", "error"]
     assert failed["transcript"] is None
+    assert failed["candidates"] is None
 
     video_source.fail_with(None)
-    assert wait_for_status(create_job(client)["id"], "transcribed", "error")["status"] == "transcribed"
+    assert wait_for_status(create_job(client)["id"], "review", "error")["status"] == "review"
+
+
+def test_job_saved_before_selection_existed_reads_as_stopped_before_analyzing(client, settings):
+    stamp = "2026-10-13T12:00:00Z"
+    history = [{"status": status, "at": stamp} for status in ("queued", "downloading", "transcribing", "transcribed")]
+    job_dir = settings.data_dir / "jobs" / "0123456789ab"
+    job_dir.mkdir(parents=True)
+    state = {"id": "0123456789ab", "url": URL, "options": {}, "created_at": stamp, "updated_at": stamp}
+    (job_dir / "job.json").write_text(json.dumps(state | {"status": "transcribed", "history": history}))
+
+    job = client.get("/api/jobs/0123456789ab").json()
+    assert (job["status"], job["stage"]) == ("error", "analyzing")
+    assert job["error"] == "Not analyzed yet: run `make reanalyze JOB=0123456789ab`"
+    assert statuses(job) == ["queued", "downloading", "transcribing", "error"]
+    assert [listed["status"] for listed in client.get("/api/jobs").json()] == ["error"]
 
 
 def test_unknown_job_is_not_found(client):

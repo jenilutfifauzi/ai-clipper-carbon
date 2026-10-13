@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, StringConstraints
 
+from app.candidates import Candidate
 from app.jobs import Job, JobNotFound, JobOptions, JobStore
 from app.transcript import Transcript
 from app.worker import Worker
@@ -33,6 +34,8 @@ class JobRequest(BaseModel):
 @dataclass(frozen=True)
 class JobDetail(Job):
     transcript: Transcript | None = None
+    # Best first; None until the Job has been analyzed.
+    candidates: list[Candidate] | None = None
 
 
 @router.get("/health")
@@ -58,4 +61,6 @@ def get_job(job_id: str, store: Store) -> JobDetail:
         job = store.get(job_id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
-    return JobDetail(**vars(job), transcript=store.load_transcript(job_id))
+    return JobDetail(
+        **vars(job), transcript=store.load_transcript(job_id), candidates=store.load_candidates(job_id)
+    )

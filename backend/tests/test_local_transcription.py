@@ -28,9 +28,9 @@ def uncaptioned(video_source, speech) -> None:
 def test_source_without_captions_is_transcribed_locally_in_chunks(
     client, uncaptioned, speech, transcriber, wait_for_status
 ):
-    job = wait_for_status(create_job(client)["id"], "transcribed", "error")
+    job = wait_for_status(create_job(client)["id"], "review", "error")
 
-    assert statuses(job) == ["queued", "downloading", "transcribing", "transcribed"]
+    assert statuses(job) == ["queued", "downloading", "transcribing", "analyzing", "review"]
     transcript = job["transcript"]
     assert (transcript["language"], transcript["source"]) == ("id", "whisper")
     assert transcript["words"] == as_json(speech.words)
@@ -49,7 +49,7 @@ def test_source_without_captions_is_transcribed_locally_in_chunks(
 
 def test_transcribe_locally_ignores_youtube_captions(client, video_source, speech, wait_for_status):
     video_source.video = speech.video
-    job = wait_for_status(create_job(client, transcribe_locally=True, language="en")["id"], "transcribed", "error")
+    job = wait_for_status(create_job(client, transcribe_locally=True, language="en")["id"], "review", "error")
 
     assert job["source"]["caption_track"] is not None
     assert (job["transcript"]["language"], job["transcript"]["source"]) == ("en", "whisper")
@@ -69,16 +69,16 @@ def test_progress_and_a_hint_to_close_heavy_apps_are_reported(client, uncaptione
     assert "close heavy apps" in job["message"].lower()
 
     transcriber.release()
-    job = wait_for_status(job_id, "transcribed", "error")
-    assert (job["status"], job["progress"], job["message"]) == ("transcribed", None, None)
+    job = wait_for_status(job_id, "review", "error")
+    assert (job["status"], job["progress"], job["message"]) == ("review", None, None)
 
 
 @pytest.mark.tuning(budget_secs=0.3)
 def test_chunk_that_stalls_once_is_retried(client, uncaptioned, speech, transcriber, wait_for_status):
     transcriber.stall(1)
-    job = wait_for_status(create_job(client)["id"], "transcribed", "error")
+    job = wait_for_status(create_job(client)["id"], "review", "error")
 
-    assert job["status"] == "transcribed"
+    assert job["status"] == "review"
     assert transcriber.calls[0] == transcriber.calls[1]
     assert job["transcript"]["words"] == as_json(speech.words)
     assert job["warnings"] == []
@@ -87,9 +87,9 @@ def test_chunk_that_stalls_once_is_retried(client, uncaptioned, speech, transcri
 @pytest.mark.tuning(budget_secs=0.3)
 def test_chunk_that_stalls_twice_is_skipped_with_a_warning(client, uncaptioned, speech, transcriber, wait_for_status):
     transcriber.stall(2)
-    job = wait_for_status(create_job(client)["id"], "transcribed", "error")
+    job = wait_for_status(create_job(client)["id"], "review", "error")
 
-    assert job["status"] == "transcribed"
+    assert job["status"] == "review"
     assert transcriber.calls[0] == transcriber.calls[1]
     [warning] = job["warnings"]
     assert warning.startswith("Skipped 0:00:00–") and "stalled" in warning

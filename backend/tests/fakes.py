@@ -1,9 +1,12 @@
 """Fakes for the ports, for Seam A tests."""
 
+import re
 import shutil
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
+from app.llm import DetailResponse, LlmRequest, ScoreResponse
 from app.transcriber import TranscriptionStopped
 from app.transcript import Segment, Transcript, Word
 from app.video_source import VIDEO_FILE, Source, probe
@@ -98,3 +101,49 @@ class FakeTranscriber:
         ]
         segments = [Segment(" ".join(word.text for word in words), words[0].start, words[-1].end)] if words else []
         return Transcript(language, "whisper", words, segments)
+
+
+# A Window as the Score prompt shows it.
+WINDOW = re.compile(r'<window id="([^"]+)" start="([^"]+)" end="([^"]+)">\n(.*?)\n</window>', re.S)
+
+
+def windows_in(prompt: str) -> list[tuple[str, str, str, str]]:
+    """The (id, start, end, text) of each Window in a Score prompt."""
+    return WINDOW.findall(prompt)
+
+
+class FakeLlm:
+    """Answers like Gemini, from scripted judgements, and records every request.
+
+    Score: each Window in the prompt gets `score_window(text)`, 50 unless scripted.
+    Detail: `clips`, written by the test in the response schema's shape; none unless scripted.
+    `fail_with(error, times)` makes the next `times` calls raise `error`.
+    """
+
+    def __init__(self) -> None:
+        self.score_window: Callable[[str], int] = lambda text: 50
+        self.clips: list[dict] = []
+        self.score_requests: list[LlmRequest] = []
+        self.detail_requests: list[LlmRequest] = []
+        self._failures: list[Exception] = []
+
+    def fail_with(self, error: Exception, times: int = 1) -> None:
+        self._failures += [error] * times
+
+    def score(self, request: LlmRequest) -> ScoreResponse:
+        self.score_requests.append(request)
+        self._fail()
+        answers = [
+            {"id": id, "reason": "obrolan biasa", "score": self.score_window(text)}
+            for id, _, _, text in windows_in(request.prompt)
+        ]
+        return ScoreResponse.model_validate({"windows": answers})
+
+    def detail(self, request: LlmRequest) -> DetailResponse:
+        self.detail_requests.append(request)
+        self._fail()
+        return DetailResponse.model_validate({"clips": self.clips})
+
+    def _fail(self) -> None:
+        if self._failures:
+            raise self._failures.pop(0)

@@ -5,7 +5,9 @@ AI Clipper adapts or downloads material from the projects below.
 ## openshorts
 
 The clip-selection prompts (the Score and Detail templates in `gemini_worker.py`) are
-adapted from [openshorts](https://github.com/mutonby/openshorts). Only the MIT-licensed
+adapted from [openshorts](https://github.com/mutonby/openshorts) in
+`backend/app/prompts.py`, and the batching and word-snapping rules in
+`backend/app/selection.py` follow its `clip_selection.py`. Only the MIT-licensed
 core is used; nothing is taken from its `cloud/` directory, which openshorts licenses
 separately under its commercial licence.
 
