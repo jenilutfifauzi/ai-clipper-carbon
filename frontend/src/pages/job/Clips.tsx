@@ -1,0 +1,189 @@
+import { AlertCircle, Clapperboard, Download, Hourglass, Loader2 } from "lucide-react";
+import { mediaUrl, type Candidate, type Clip, type JobProgress } from "../../api";
+import { Button, buttonClass } from "../../components/Button";
+import { CopyButton } from "../../components/CopyButton";
+import { Panel } from "../../components/Panel";
+import { formatBytes } from "../../format";
+import { candidateName } from "./CandidateList";
+import { postingCopy } from "./CandidateEditor";
+
+/**
+ * The rendered Clips, in their Candidates' order (by score): each with its player, the AI's
+ * reasoning, its posting copy and a download. A Clip still rendering, or whose Candidate has changed
+ * since it was rendered, says so.
+ */
+export function Clips({
+  jobId,
+  clips,
+  candidates,
+  progress,
+  onRender,
+}: {
+  jobId: string;
+  clips: Clip[];
+  candidates: Candidate[];
+  progress: JobProgress;
+  onRender: (candidateIds: string[]) => Promise<void>;
+}) {
+  if (clips.length === 0) return null;
+  const done = clips.filter((clip) => clip.output).length;
+  const waiting = clips.filter((clip) => clip.status === "queued" || clip.status === "rendering").length;
+  return (
+    <Panel aria-labelledby="clips-heading" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 id="clips-heading" className="font-semibold">
+          Clips
+        </h2>
+        <p className="text-sm text-muted tabular-nums">
+          {done} rendered{waiting > 0 && ` · ${waiting} in the render queue`}
+        </p>
+      </div>
+      <ul className="grid gap-x-5 gap-y-8 sm:grid-cols-2 xl:grid-cols-3">
+        {clips.map((clip) => {
+          const index = candidates.findIndex((candidate) => candidate.id === clip.candidate_id);
+          return (
+            <ClipCard
+              key={clip.candidate_id}
+              jobId={jobId}
+              clip={clip}
+              candidate={candidates[index] ?? null}
+              index={index}
+              percent={clip.status === "rendering" ? progress.progress : null}
+              onRender={() => onRender([clip.candidate_id])}
+            />
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+function ClipCard({
+  jobId,
+  clip,
+  candidate,
+  index,
+  percent,
+  onRender,
+}: {
+  jobId: string;
+  clip: Clip;
+  // Null once Selection has replaced it.
+  candidate: Candidate | null;
+  index: number;
+  percent: number | null;
+  onRender: () => void;
+}) {
+  const output = clip.output;
+  const name = candidate ? candidateName(candidate, index) : "Clip of a Candidate no longer listed";
+  const changed =
+    output &&
+    candidate &&
+    (candidate.start !== output.start ||
+      candidate.end !== output.end ||
+      candidate.hook_text !== output.hook_text ||
+      candidate.layout !== output.layout);
+  const busy = clip.status === "queued" || clip.status === "rendering";
+
+  return (
+    <li className="flex flex-col gap-3">
+      {output ? (
+        <video
+          controls
+          playsInline
+          preload="none"
+          poster={mediaUrl(jobId, output.poster, output.at)}
+          src={mediaUrl(jobId, output.video, output.at)}
+          aria-label={`Clip: ${name}`}
+          className="aspect-[9/16] w-full rounded-control bg-black object-contain"
+        />
+      ) : (
+        <div className="grid aspect-[9/16] w-full place-items-center rounded-control border border-dashed border-border bg-surface p-4 text-center text-sm text-muted">
+          {clip.status === "error" ? "Not rendered" : "Not rendered yet"}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1">
+        <h3 className="font-semibold text-balance">
+          {index >= 0 && <span className="text-muted tabular-nums">#{index + 1} </span>}
+          {name}
+        </h3>
+        {output && (
+          <p className="text-sm text-muted tabular-nums">
+            {output.duration.toFixed(1)} s · {formatBytes(output.size_bytes)}
+            {candidate?.predicted_score != null && ` · score ${candidate.predicted_score}`}
+          </p>
+        )}
+        <RenderState clip={clip} percent={percent} />
+        {changed && !busy && (
+          <p className="text-sm text-accent-text">Changed since this render: render it again to update it.</p>
+        )}
+      </div>
+
+      {candidate?.reason && <p className="text-sm">{candidate.reason}</p>}
+
+      <div className="flex flex-wrap gap-2">
+        {output && (
+          <a
+            href={mediaUrl(jobId, output.video, output.at)}
+            download={`${fileName(candidate?.title) || `clip-${clip.candidate_id}`}.mp4`}
+            className={buttonClass("primary", "min-h-10 px-3 text-sm")}
+          >
+            <Download aria-hidden size={16} />
+            Download
+          </a>
+        )}
+        {candidate && !busy && (output === null || changed || clip.status === "error") && (
+          <Button onClick={onRender} className="min-h-10 px-3 text-sm">
+            <Clapperboard aria-hidden size={16} />
+            {output ? "Render again" : "Try again"}
+          </Button>
+        )}
+      </div>
+
+      {candidate && candidate.origin === "ai" && (
+        <div className="flex flex-wrap gap-2">
+          <CopyButton text={candidate.title} label="Title" />
+          {postingCopy(candidate).map(({ label, text }) => (
+            <CopyButton key={label} text={text} label={label} />
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) {
+  if (clip.status === "queued") {
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-muted">
+        <Hourglass aria-hidden size={14} />
+        {clip.output ? "Queued to render again" : "Queued to render"}
+      </p>
+    );
+  }
+  if (clip.status === "rendering") {
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-accent-text">
+        <Loader2 aria-hidden size={14} className="motion-safe:animate-spin" />
+        Rendering{percent !== null && <span className="tabular-nums">{Math.round(percent)}%</span>}
+      </p>
+    );
+  }
+  if (clip.status === "error") {
+    return (
+      <p className="flex items-start gap-1.5 text-sm text-danger">
+        <AlertCircle aria-hidden size={14} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">
+          {clip.output ? "Rendering again failed" : "Rendering failed"}: {clip.error}
+        </span>
+      </p>
+    );
+  }
+  return null;
+}
+
+// A title as a file name: without the characters file systems refuse.
+function fileName(title: string | undefined): string {
+  return (title ?? "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+}

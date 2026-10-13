@@ -1,7 +1,7 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,10 +11,12 @@ from pydantic import BaseModel, ConfigDict, FiniteFloat, StringConstraints
 
 from app import review
 from app.candidates import Candidate, Layout
+from app.clips import Clip
 from app.config import Settings
 from app.events import job_events
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.profile import ChannelProfile, ProfileStore
+from app.rendering import NothingToRender, ranked_clips
 from app.review import CandidateChange, CandidateNotFound, Episode, InvalidEdit
 from app.storage import DiskUsage, disk_usage
 from app.transcript import Transcript
@@ -24,9 +26,10 @@ router = APIRouter(prefix="/api")
 media = APIRouter(prefix="/media")
 
 # The statuses in which the owner can change a Job's Candidates: not before the Job has them, nor
-# while it is analyzed again and its untouched Candidates are about to be replaced.
-EDITABLE = frozenset({JobStatus.REVIEW})
-# What /media serves from a Job's directory: its video, and (from ticket 12) Clips and posters.
+# while it is analyzed again and its untouched Candidates are about to be replaced. Review goes on
+# while Clips render; each render takes its Candidate as it is when the render starts.
+EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
+# What /media serves from a Job's directory: its video, and its Clips and their posters.
 MEDIA_SUFFIXES = frozenset({".mp4", ".m4a", ".jpg", ".png"})
 # The longest hook text accepted; the UI warns well before this, at about 40 characters.
 HOOK_MAX_CHARS = 200
@@ -89,11 +92,21 @@ class ManualCandidate(BaseModel):
     end: FiniteFloat
 
 
+class RenderRequest(BaseModel):
+    """The Candidates to render; the selected ones when left out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[str] | None = None
+
+
 @dataclass(frozen=True)
 class JobDetail(Job):
     transcript: Transcript | None = None
     # Best first; None until the Job has been analyzed.
     candidates: list[Candidate] | None = None
+    # In their Candidates' order.
+    clips: list[Clip] = field(default_factory=list)
 
 
 @router.get("/health")
@@ -119,8 +132,12 @@ def get_job(job_id: str, store: Store) -> JobDetail:
         job = store.get(job_id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
+    candidates = store.load_candidates(job_id)
     return JobDetail(
-        **vars(job), transcript=store.load_transcript(job_id), candidates=store.load_candidates(job_id)
+        **vars(job),
+        transcript=store.load_transcript(job_id),
+        candidates=candidates,
+        clips=ranked_clips(store.load_clips(job_id), candidates or []),
     )
 
 
@@ -198,6 +215,34 @@ def _review(
         raise HTTPException(409, f"{exc}: Candidates can be changed while it is in review") from None
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+@router.post("/jobs/{job_id}/render")
+def render(job_id: str, store: Store, worker: JobWorker, body: RenderRequest | None = None) -> list[Clip]:
+    """Queue Clips of the selected Candidates (or of `candidate_ids`); the Job is `rendering` until
+    they are done. A Candidate rendered before is rendered again, replacing its Clip. Returns the
+    Job's Clips. 422 when no Candidate is selected; 409 unless the Job is in review or rendering."""
+    try:
+        worker.render(job_id, body.candidate_ids if body else None)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except CandidateNotFound as exc:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: Candidates can be rendered once it is in review") from None
+    except NothingToRender as exc:
+        raise HTTPException(422, str(exc)) from None
+    return list_clips(job_id, store)
+
+
+@router.get("/jobs/{job_id}/clips")
+def list_clips(job_id: str, store: Store) -> list[Clip]:
+    """The Job's Clips in their Candidates' order: the AI's by score, then the manual ones."""
+    try:
+        store.get(job_id)
+        return ranked_clips(store.load_clips(job_id), store.load_candidates(job_id) or [])
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
 
 
 @router.get("/system/disk")

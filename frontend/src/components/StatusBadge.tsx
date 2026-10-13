@@ -8,6 +8,7 @@ const BADGES: Record<JobStatus, { label: string; tone: string; Icon: typeof Cloc
   transcribing: { label: "Transcribing", tone: "text-accent-text", Icon: Loader2 },
   analyzing: { label: "Analyzing", tone: "text-accent-text", Icon: Loader2 },
   review: { label: "Ready for review", tone: "text-success", Icon: CheckCircle2 },
+  rendering: { label: "Rendering", tone: "text-accent-text", Icon: Loader2 },
   waiting_quota: { label: "Waiting for quota", tone: "text-waiting", Icon: Clock },
   error: { label: "Failed", tone: "text-danger", Icon: AlertCircle },
 };

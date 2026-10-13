@@ -144,6 +144,33 @@ class QuotaTuning:
 
 
 @dataclass(frozen=True)
+class RenderTuning:
+    """How Clips are encoded. Not read from the environment; tests change the encoders."""
+
+    # Tried in order: an encode that fails (VideoToolbox can be unavailable, say over SSH or in a VM)
+    # is run again with the next.
+    encoders: tuple[str, ...] = ("h264_videotoolbox", "libx264")
+    # VideoToolbox's average bitrate: the platforms' recommendation for 1080p up to 30 fps (YouTube
+    # asks for 8 Mb/s), with more for higher frame rates.
+    bitrate: str = "8M"
+    high_fps_bitrate: str = "12M"
+    # libx264's constant quality, with a cap so that a busy scene can't balloon the file.
+    x264_crf: int = 20
+    x264_preset: str = "fast"
+    x264_maxrate: str = "12M"
+    # A keyframe at least this often, so that players seek quickly.
+    keyframe_secs: float = 2
+    # EBU R128 loudness, as the platforms normalize to: integrated, true peak, loudness range.
+    loudness_lufs: float = -14
+    true_peak_db: float = -1.5
+    loudness_range: float = 11
+    audio_bitrate: str = "192k"
+    audio_rate: int = 48_000
+    # The poster is the Clip's frame at this time (or its middle, for a shorter Clip).
+    poster_secs: float = 1
+
+
+@dataclass(frozen=True)
 class LlmChoice:
     """The LLM Selection runs on, as recorded with each Selection run and eval report."""
 
@@ -177,6 +204,7 @@ class Settings:
     transcription: TranscriptionTuning = TranscriptionTuning()
     selection: SelectionTuning = SelectionTuning()
     quota: QuotaTuning = QuotaTuning()
+    render: RenderTuning = RenderTuning()
     # The disk endpoint warns when the data directory's volume has less free space than this.
     low_disk_bytes: int = 10 * 10**9
     frontend_dir: Path = FRONTEND_DIST

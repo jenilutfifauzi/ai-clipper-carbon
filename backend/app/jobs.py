@@ -18,6 +18,7 @@ from uuid import uuid4
 from pydantic import Field, TypeAdapter, ValidationError
 
 from app.candidates import Candidate
+from app.clips import Clip
 from app.llm import ScoreResponse
 from app.profile import ChannelProfile
 from app.selection import Selection
@@ -36,7 +37,9 @@ CANDIDATES_FILE = "candidates.json"
 SELECTION_FILE = "selection.json"
 # The Score pass's answers so far, while the analyzing stage runs (see Pipeline._analyze).
 SCORES_FILE = "scores.json"
-# Held (flock) by the process running the Job's stages.
+# The Job's Clips: their render requests and finished renders (app/rendering.py).
+CLIPS_FILE = "clips.json"
+# Held (flock) by the process running the Job's stages, or rendering its Clips.
 RUN_LOCK = "run.lock"
 
 _JOB_ID = re.compile(r"[0-9a-f]{12}")
@@ -48,6 +51,8 @@ class JobStatus(StrEnum):
     TRANSCRIBING = "transcribing"
     ANALYZING = "analyzing"
     REVIEW = "review"
+    # In review, with Clips queued or being rendered; back to review once they are done.
+    RENDERING = "rendering"
     WAITING_QUOTA = "waiting_quota"
     ERROR = "error"
 
@@ -147,6 +152,7 @@ _TRANSCRIPT = TypeAdapter(Transcript)
 _CANDIDATES = TypeAdapter(list[Candidate])
 _SELECTION = TypeAdapter(Selection)
 _SCORES = TypeAdapter(dict[str, ScoreResponse])
+_CLIPS = TypeAdapter(list[Clip])
 
 
 class JobStore:
@@ -192,10 +198,7 @@ class JobStore:
             job = self.get(job_id)
             if expect is not None and job.status not in expect:
                 raise JobConflict(f"Job {job_id} is {job.status}")
-            now = datetime.now(UTC)
-            if changes.get("status", job.status) != job.status:
-                changes["history"] = [*job.history, Transition(changes["status"], now)]
-            job = replace(job, **changes, updated_at=now)
+            job = _changed(job, changes)
             self._save(job)
             return job
 
@@ -296,6 +299,29 @@ class JobStore:
             self._save(replace(job, updated_at=datetime.now(UTC)))
             return result
 
+    def load_clips(self, job_id: str) -> list[Clip]:
+        path = self.job_dir(job_id) / CLIPS_FILE
+        return _CLIPS.validate_json(path.read_bytes()) if path.is_file() else []
+
+    def change_clips[R](
+        self,
+        job_id: str,
+        change: Callable[[Job, list[Clip]], tuple[list[Clip], dict[str, Any], R]],
+        *,
+        expect: Collection[JobStatus] | None = None,
+    ) -> R:
+        """Save the Clips `change` makes of the Job's, apply the changes to the Job it also returns (as
+        `update`), and return what else it returns, all under the store's lock: so a render request and
+        the end of a render queue never miss each other. With `expect`, as `update`."""
+        with self._lock:
+            job = self.get(job_id)
+            if expect is not None and job.status not in expect:
+                raise JobConflict(f"Job {job_id} is {job.status}")
+            clips, changes, result = change(job, self.load_clips(job_id))
+            write_atomic(self.job_dir(job_id) / CLIPS_FILE, _CLIPS.dump_json(clips, indent=2))
+            self._save(_changed(job, changes))
+            return result
+
     def save_selection(self, job_id: str, selection: Selection) -> None:
         write_atomic(self.job_dir(job_id) / SELECTION_FILE, _SELECTION.dump_json(selection, indent=2))
 
@@ -320,6 +346,14 @@ class JobStore:
     def _save(self, job: Job) -> None:
         write_atomic(self.job_dir(job.id) / STATE_FILE, _JOB.dump_json(job, indent=2))
         self._notify(job.id, job)
+
+
+def _changed(job: Job, changes: dict[str, Any]) -> Job:
+    """The Job with `changes` applied, now; a status change is appended to its history."""
+    now = datetime.now(UTC)
+    if changes.get("status", job.status) != job.status:
+        changes = changes | {"history": [*job.history, Transition(changes["status"], now)]}
+    return replace(job, **changes, updated_at=now)
 
 
 def _parse_job(data: bytes) -> Job:

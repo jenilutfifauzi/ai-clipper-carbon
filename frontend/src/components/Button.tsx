@@ -10,23 +10,22 @@ const VARIANTS: Record<Variant, string> = {
   ghost: "text-muted hover:bg-surface-raised hover:text-text",
 };
 
+// The button look, also for links that act as buttons (such as a download).
+export function buttonClass(variant: Variant = "secondary", className?: string): string {
+  return cx(
+    "inline-flex min-h-11 items-center justify-center gap-2 rounded-control px-4 font-medium select-none",
+    "motion-safe:transition-[background-color,color,transform] motion-safe:duration-150 active:scale-[0.97]",
+    "disabled:pointer-events-none disabled:opacity-60",
+    VARIANTS[variant],
+    className,
+  );
+}
+
 export function Button({
   variant = "secondary",
   className,
   type = "button",
   ...props
 }: ComponentProps<"button"> & { variant?: Variant }) {
-  return (
-    <button
-      type={type}
-      className={cx(
-        "inline-flex min-h-11 items-center justify-center gap-2 rounded-control px-4 font-medium select-none",
-        "motion-safe:transition-[background-color,color,transform] motion-safe:duration-150 active:scale-[0.97]",
-        "disabled:pointer-events-none disabled:opacity-60",
-        VARIANTS[variant],
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <button type={type} className={buttonClass(variant, className)} {...props} />;
 }

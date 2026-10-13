@@ -1,7 +1,7 @@
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { api, ApiError, type JobDetail, type JobProgress } from "../api";
+import { api, ApiError, type Clip, type JobDetail, type JobProgress } from "../api";
 import { Panel } from "../components/Panel";
 import { StageProgress } from "../components/StageProgress";
 import { StatusBadge } from "../components/StatusBadge";
@@ -21,23 +21,42 @@ function progressOf(job: JobDetail): JobProgress {
   return { status, stage, progress, message, error, warnings, retry_at: quota?.retry_at ?? null };
 }
 
-// A Job's live progress, then (in review) the review of its Candidates.
+// A Job's live progress, then (in review) the review of its Candidates and its Clips.
 function JobView({ jobId }: { jobId: string }) {
   const [job, setJob] = useState<JobDetail | null>(null);
+  const [clips, setClips] = useState<Clip[]>([]);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const events = useJobEvents(jobId);
+  // Whether the Job was in review when last loaded: then only its Clips change by themselves.
+  const reviewing = useRef(false);
 
   const load = useCallback(
-    () => api.getJob(jobId).then(setJob, (reason: ApiError) => setLoadError(reason)),
+    () =>
+      api.getJob(jobId).then(
+        (loaded) => {
+          reviewing.current = loaded.status === "review" || loaded.status === "rendering";
+          setJob(loaded);
+          setClips(loaded.clips);
+        },
+        (reason: ApiError) => setLoadError(reason),
+      ),
     [jobId],
   );
+  const loadClips = useCallback(() => api.listClips(jobId).then(setClips, () => {}), [jobId]);
   useEffect(() => void load(), [load]);
-  // The Candidates come with the Job, not with its events: fetch it again once it settles.
+  // The Candidates come with the Job, not with its events: fetch it again once it settles. After
+  // renders, fetch just the Clips, so that the review in progress isn't reset.
   useEffect(() => {
-    if (events.ended === "review" || events.ended === "error") void load();
-  }, [events.ended, load]);
+    if (events.ended !== "review" && events.ended !== "error") return;
+    void (reviewing.current ? loadClips() : load());
+  }, [events.ended, load, loadClips]);
+  // Each new render message means the Clip before it is done.
+  const renderMessage = events.progress?.status === "rendering" ? events.progress.message : null;
+  useEffect(() => {
+    if (renderMessage) void loadClips();
+  }, [renderMessage, loadClips]);
 
   if (loadError) {
     return (
@@ -51,7 +70,18 @@ function JobView({ jobId }: { jobId: string }) {
   if (!job) return <p className="text-muted">Loading the Job…</p>;
 
   const progress = events.progress ?? progressOf(job);
-  const reached = Math.max(-1, ...job.history.map((change) => stageIndex(change.status)), stageIndex(progress.status));
+  const reached = Math.max(
+    -1,
+    ...job.history.map((change) => stageIndex(change.status)),
+    stageIndex(progress.status),
+    clips.length > 0 ? stageIndex("rendering") : -1,
+  );
+
+  // Queue Clips of the given Candidates (the selected ones by default), and follow the renders.
+  async function render(candidateIds?: string[]) {
+    setClips(await api.render(jobId, candidateIds));
+    events.reconnect();
+  }
 
   async function retry() {
     setRetrying(true);
@@ -107,7 +137,9 @@ function JobView({ jobId }: { jobId: string }) {
       )}
       {progress.warnings.length > 0 && <Warnings warnings={progress.warnings} />}
 
-      {progress.status === "review" && job.candidates && <Review key={job.updated_at} job={job} />}
+      {(progress.status === "review" || progress.status === "rendering") && job.candidates && (
+        <Review key={job.updated_at} job={job} clips={clips} progress={progress} onRender={render} />
+      )}
     </div>
   );
 }

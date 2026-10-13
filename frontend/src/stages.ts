@@ -1,11 +1,13 @@
 import type { JobProgress, JobStatus } from "./api";
 
-// The stages the Job page lists, in order. Review is where the pipeline ends.
+// The stages the Job page lists, in order. Review is where the pipeline ends; Clips are rendered
+// from there, as often as the owner asks.
 export const STAGES = [
   { status: "downloading", label: "Download", noun: "download" },
   { status: "transcribing", label: "Transcript", noun: "transcription" },
   { status: "analyzing", label: "Analyze", noun: "analysis" },
   { status: "review", label: "Review", noun: "review" },
+  { status: "rendering", label: "Render", noun: "rendering" },
 ] as const satisfies readonly { status: JobStatus; label: string; noun: string }[];
 
 export type StageState = "pending" | "active" | "waiting" | "failed" | "done";
@@ -16,6 +18,7 @@ export const ACTIVE: ReadonlySet<JobStatus> = new Set([
   "downloading",
   "transcribing",
   "analyzing",
+  "rendering",
   "waiting_quota",
 ]);
 
@@ -35,10 +38,11 @@ export function stageNoun(status: JobStatus | null): string {
 /**
  * Each stage's state. `reached` is the furthest stage the Job has been in, so that a Job queued
  * again (after a retry or a quota wait) keeps the stages it has finished; it resumes after them.
+ * In review, Render is done once the Job has rendered.
  */
 export function stageStates(progress: JobProgress, reached: number): StageState[] {
   const { status, stage } = progress;
-  if (status === "review") return STAGES.map(() => "done");
+  if (status === "review") return STAGES.map((_, i) => (i <= Math.max(reached, stageIndex("review")) ? "done" : "pending"));
   const current =
     status === "error" || status === "waiting_quota" ? stageIndex(stage) : stageIndex(status);
   return STAGES.map((_, i) => {

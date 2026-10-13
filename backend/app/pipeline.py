@@ -15,7 +15,7 @@ from app.audio import SileroVad, chunks
 from app.candidates import Candidate
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
-from app.jobs import TRANSCRIPT_FILE, Job, JobStatus, JobStore, JobWarning, QuotaWait
+from app.jobs import TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.ports import Ports
 from app.prompts import PROMPT_VERSION
@@ -46,7 +46,7 @@ class Pipeline:
         in, was interrupted in or waited for Gemini in, or from analyzing for a Job in review.
 
         Ends in `review`, `error` or `waiting_quota`. Raises JobConflict when another process is
-        running the Job.
+        running the Job, or while it is rendering.
         """
         with self.store.running(job_id):
             return self._run(job_id)
@@ -64,6 +64,9 @@ class Pipeline:
 
     def _run(self, job_id: str) -> Job:
         job = self.store.get(job_id)
+        if job.status is JobStatus.RENDERING:
+            # Analyzing again now would replace Candidates that are queued to be rendered.
+            raise JobConflict(f"Job {job_id} is rendering: wait until its Clips are done")
         start = next(i for i, (stage, _) in enumerate(self.stages) if not self._done(job, stage))
         for stage, run_stage in self.stages[start:]:
             logger.info("Job %s: %s", job_id, stage)

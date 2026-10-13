@@ -1,6 +1,6 @@
 """Run the pipeline without the UI: `python -m app.cli analyze <url>`, `reanalyze <job-id>` or
 `retry <job-id>`. These wait in the foreground while the Job waits for Gemini's quota or for
-Gemini to be less busy.
+Gemini to be less busy. `render <job-id> [<candidate-id> ...]` renders Clips.
 
 `eval` measures Selection against the Reference Set, and `gate` checks an eval report against the gate.
 """
@@ -10,6 +10,8 @@ import logging
 import sys
 from pathlib import Path
 
+from app.candidates import Candidate
+from app.clips import Clip
 from app.config import Settings, load_settings
 from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_report, summary
 from app.jobs import DEFAULT_LANGUAGE, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
@@ -17,6 +19,8 @@ from app.pipeline import Pipeline
 from app.ports import real_ports
 from app.profile import PROFILE_FILE, ProfileStore
 from app.references import ReferenceSetError
+from app.rendering import NothingToRender, Renders
+from app.review import CandidateNotFound
 from app.transcript import timestamp
 
 
@@ -43,6 +47,12 @@ def main(argv: list[str] | None = None) -> int:
         help="resume a Job that failed, was interrupted or is waiting for quota, from the stage it stopped in",
     )
     retry.add_argument("job_id")
+    render = commands.add_parser(
+        "render",
+        help="render Clips of a Job's Candidates, one at a time, replacing their earlier Clips",
+    )
+    render.add_argument("job_id")
+    render.add_argument("candidate_ids", nargs="*", help="the Candidates to render (default: those selected in review)")
     commands.add_parser(
         "eval", help="select Candidates for every eval episode of eval/references.yaml and write an eval report"
     )
@@ -58,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         return _gate(args.report)
 
     store = JobStore(settings.data_dir / "jobs")
+    if args.command == "render":
+        return _render(settings, store, args.job_id, args.candidate_ids or None)
     pipeline = Pipeline(store, real_ports(settings), settings)
     if args.command == "analyze":
         options = JobOptions(language=args.language, brief=args.brief, transcribe_locally=args.transcribe_locally)
@@ -108,6 +120,47 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{rank:2}. {span} ({candidate.end - candidate.start:.0f} s)  {score}  {candidate.title}")
         print(f"    Hook: {candidate.hook_text}")
     return 0
+
+
+def _render(settings: Settings, store: JobStore, job_id: str, candidate_ids: list[str] | None) -> int:
+    renders = Renders(store, settings)
+    try:
+        renders.request(job_id, candidate_ids)
+    except JobNotFound:
+        print(f"No Job {job_id} in {store.root}")
+        return 1
+    except CandidateNotFound as exc:
+        print(f"Job {job_id} has no Candidate {exc}")
+        return 1
+    except NothingToRender as exc:
+        print(f"{exc}, or name Candidates: python -m app.cli render {job_id} <candidate-id> ...")
+        return 1
+    except JobConflict as exc:
+        print(f"{exc}: Candidates can be rendered once it is in review")
+        return 1
+
+    failed = 0
+
+    def rendered(clip: Clip, candidate: Candidate) -> None:
+        nonlocal failed
+        name = candidate.title or f"Candidate {candidate.id}"
+        if clip.error or clip.output is None:
+            failed += 1
+            print(f"{candidate.id} failed: {clip.error}  ({name})", flush=True)
+            return
+        out = clip.output
+        print(
+            f"{candidate.id} {out.duration:.1f} s Clip in {out.render_secs:.1f} s with {out.encoder}, "
+            f"{out.size_bytes / 1e6:.1f} MB: {store.job_dir(job_id) / out.video}  ({name})",
+            flush=True,
+        )
+
+    try:
+        renders.run(job_id, rendered)
+    except JobConflict:
+        print(f"The app is rendering Job {job_id}: it renders these Clips too")
+        return 0
+    return 1 if failed else 0
 
 
 def _evaluate(settings: Settings) -> int:

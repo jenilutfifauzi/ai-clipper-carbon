@@ -2,7 +2,7 @@ UV := uv --directory backend
 NPM := npm --prefix frontend
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 
-.PHONY: setup prerequisites check-ffmpeg dev build test test-whisper analyze reanalyze retry eval gate update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev build test test-whisper analyze reanalyze retry render eval gate update-ytdlp
 
 # Install backend and frontend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
@@ -64,6 +64,12 @@ reanalyze:
 retry:
 	@[ -n "$(JOB)" ] || { echo "Usage: make retry JOB=<job-id>"; exit 1; }
 	$(UV) run python -m app.cli retry "$(JOB)"
+
+# Render Clips of a Job's Candidates without the UI, one at a time, replacing their earlier Clips:
+# make render JOB=<job-id> [CANDIDATES="<candidate-id> ..."] (default: the Candidates selected in review).
+render:
+	@[ -n "$(JOB)" ] || { echo "Usage: make render JOB=<job-id> [CANDIDATES=\"<candidate-id> ...\"]"; exit 1; }
+	$(UV) run python -m app.cli render "$(JOB)" $(CANDIDATES)
 
 # Measure Selection against the Reference Set in eval/references.yaml (format: eval/references.example.yaml).
 # Selects Candidates for every eval episode with the current prompts, reusing Jobs that already have

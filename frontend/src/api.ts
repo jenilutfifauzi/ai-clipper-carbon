@@ -6,6 +6,8 @@ export type JobStatus =
   | "transcribing"
   | "analyzing"
   | "review"
+  // In review, with Clips queued or being rendered.
+  | "rendering"
   | "waiting_quota"
   | "error";
 
@@ -118,10 +120,40 @@ export interface CandidateChange {
   selected?: boolean;
 }
 
+// A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
+export interface RenderedClip {
+  start: number;
+  end: number;
+  hook_text: string;
+  layout: Layout;
+  video: string;
+  poster: string;
+  plan: string;
+  duration: number;
+  size_bytes: number;
+  encoder: string;
+  render_secs: number;
+  at: string;
+}
+
+export type ClipStatus = "queued" | "rendering" | "done" | "error";
+
+export interface Clip {
+  candidate_id: string;
+  // Where its latest render request is.
+  status: ClipStatus;
+  requested_at: string;
+  // The latest finished render; kept while it is rendered again, and when that fails.
+  output: RenderedClip | null;
+  error: string | null;
+}
+
 export interface JobDetail extends Job {
   transcript: Transcript | null;
   // Best first; null until the Job has been analyzed.
   candidates: Candidate[] | null;
+  // In their Candidates' order.
+  clips: Clip[];
 }
 
 // A `job` event from GET /api/jobs/{id}/events.
@@ -191,9 +223,19 @@ export const api = {
     request<Candidate>(`/jobs/${jobId}/candidates/${id}`, { method: "PATCH", body: JSON.stringify(change) }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>
     request<Candidate>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(range) }),
+  // Queues Clips of the given Candidates, or of the selected ones; answers with the Job's Clips.
+  render: (jobId: string, candidateIds?: string[]) =>
+    request<Clip[]>(`/jobs/${jobId}/render`, {
+      method: "POST",
+      body: candidateIds ? JSON.stringify({ candidate_ids: candidateIds }) : undefined,
+    }),
+  listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
 };
 
-// A file from the Job's directory, served with range support for the player.
-export const mediaUrl = (jobId: string, file: string) => `/media/${jobId}/${encodeURIComponent(file)}`;
+// A file from the Job's directory (such as "clips/<id>.mp4"), served with range support for the
+// player. `version` tells a file rendered again from the one the browser has cached.
+export const mediaUrl = (jobId: string, file: string, version?: string) =>
+  `/media/${jobId}/${file.split("/").map(encodeURIComponent).join("/")}` +
+  (version ? `?v=${encodeURIComponent(version)}` : "");
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;

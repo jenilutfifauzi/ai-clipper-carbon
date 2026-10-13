@@ -213,15 +213,20 @@ export function CandidateEditor({
   );
 }
 
-// Why the AI chose it, and its posting copy.
-function Analysis({ candidate }: { candidate: Candidate }) {
+// The description to post on each platform: its text, a blank line, then the hashtags.
+export function postingCopy(candidate: Candidate): { label: string; text: string }[] {
   const tags = candidate.hashtags.join(" ");
   const withTags = (text: string) => [text, tags].filter(Boolean).join("\n\n");
-  const copy = [
+  return [
     { label: "TikTok", text: withTags(candidate.descriptions.tiktok) },
     { label: "Instagram", text: withTags(candidate.descriptions.instagram) },
     { label: "Shorts", text: withTags(candidate.descriptions.shorts) },
   ];
+}
+
+// Why the AI chose it, and its posting copy.
+function Analysis({ candidate }: { candidate: Candidate }) {
+  const copy = postingCopy(candidate);
   return (
     <>
       <section aria-labelledby="why-heading" className="flex flex-col gap-2">
