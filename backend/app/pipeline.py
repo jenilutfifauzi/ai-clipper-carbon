@@ -14,7 +14,7 @@ from app.audio import SileroVad, chunks
 from app.config import Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import TRANSCRIPT_FILE, Job, JobStatus, JobStore, JobWarning, QuotaWait
-from app.llm import DetailResponse, Llm, LlmRequest, PacedLlm, QuotaExceeded, ScoreResponse
+from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.ports import Ports
 from app.prompts import PROMPT_VERSION
 from app.selection import select
@@ -40,7 +40,7 @@ class Pipeline:
 
     def run(self, job_id: str) -> Job:
         """Run the Job's stages from the first whose output isn't complete: from the stage it failed
-        in, was interrupted in or ran out of quota in, or from analyzing for a Job in review.
+        in, was interrupted in or waited for Gemini in, or from analyzing for a Job in review.
 
         Ends in `review`, `error` or `waiting_quota`. Raises JobConflict when another process is
         running the Job.
@@ -48,12 +48,14 @@ class Pipeline:
         with self.store.running(job_id):
             return self._run(job_id)
 
-    def run_until_done(self, job_id: str) -> Job:
-        """`run`, sleeping through quota waits: for the CLI and the eval, which have no worker to
-        come back to the Job. Ends in `review` or `error`."""
+    def run_until_done(self, job_id: str, waiting: Callable[[Job], None] = lambda job: None) -> Job:
+        """`run`, sleeping through the waits for Gemini: for the CLI and the eval, which have no worker
+        to come back to the Job. `waiting` is called with the Job as each wait starts. Ends in
+        `review` or `error`."""
         with self.store.running(job_id):
             while (job := self._run(job_id)).status is JobStatus.WAITING_QUOTA:
                 assert job.quota is not None
+                waiting(job)
                 time.sleep(max(0.0, (job.quota.retry_at - datetime.now(UTC)).total_seconds()))
             return job
 
@@ -73,8 +75,8 @@ class Pipeline:
             )
             try:
                 job = run_stage(job)
-            except QuotaExceeded as exc:
-                return self._wait_for_quota(job_id, exc)
+            except (QuotaExceeded, Overloaded) as exc:
+                return self._wait_for_gemini(job_id, exc)
             except Exception as exc:
                 logger.exception("Job %s failed while %s", job_id, stage)
                 error = str(exc) or type(exc).__name__
@@ -103,9 +105,10 @@ class Pipeline:
             return (job_dir / TRANSCRIPT_FILE).is_file()
         return False
 
-    def _wait_for_quota(self, job_id: str, exc: QuotaExceeded) -> Job:
-        """Put the Job in `waiting_quota` for a wait that doubles with each quota error in a row (see
-        QuotaTuning), or in `error` once they have gone on for too long. A run of errors starts over
+    def _wait_for_gemini(self, job_id: str, exc: QuotaExceeded | Overloaded) -> Job:
+        """Put the Job in `waiting_quota`, as Gemini's quota is used up or Gemini stays busy: for the
+        wait the quota error suggests, else for one that doubles with each such error in a row (see
+        QuotaTuning). Or in `error` once they have gone on for too long. A run of errors starts over
         when a Score batch was answered since the last one."""
         tuning = self.settings.quota
         job = self.store.get(job_id)
@@ -116,10 +119,14 @@ class Pipeline:
         else:
             since, errors = job.quota.since, job.quota.errors
         if (now - since).total_seconds() >= tuning.give_up_secs:
-            logger.warning("Job %s: gave up waiting for Gemini's quota after %d errors", job_id, errors + 1)
-            error = f"Gave up after waiting {_duration(tuning.give_up_secs)} for Gemini's quota. {exc}"
+            logger.warning("Job %s: gave up waiting for Gemini after %d errors", job_id, errors + 1)
+            what = "Gemini's quota" if isinstance(exc, QuotaExceeded) else "Gemini"
+            error = f"Gave up after waiting {_duration(tuning.give_up_secs)} for {what}. {exc}"
             return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None, quota=None)
-        delay = min(tuning.max_wait_secs, tuning.wait_secs * 2**errors)
+        if isinstance(exc, QuotaExceeded) and exc.retry_after is not None:
+            delay = exc.retry_after + tuning.retry_margin_secs
+        else:
+            delay = min(tuning.max_wait_secs, tuning.wait_secs * 2**errors)
         retry_at = now + timedelta(seconds=delay)
         message = f"Trying again at {retry_at.astimezone():%H:%M:%S} (in {_duration(delay)}). {exc}"
         logger.warning("Job %s: %s", job_id, message)

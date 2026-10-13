@@ -21,7 +21,7 @@ from uuid import uuid4
 from app.candidates import Candidate, Descriptions
 from app.config import SelectionTuning
 from app.fewshot import Example
-from app.llm import ClipProposal, Llm, LlmRequest, ScoreResponse, TransientLlmError, parse_time
+from app.llm import ClipProposal, Llm, LlmRequest, Overloaded, ScoreResponse, TransientLlmError, parse_time
 from app.profile import ChannelProfile
 from app.prompts import PROMPT_VERSION, detail_prompt, score_prompt
 from app.transcript import Transcript, Word, timestamp
@@ -171,13 +171,16 @@ def _shortlist(windows: list[ScoredWindow], size: int, max_overlap: float) -> li
 def _retrying[R](
     call: Callable[[LlmRequest], R], request: LlmRequest, tuning: SelectionTuning, progress: Progress
 ) -> R:
-    """`call(request)`, retrying transient errors with exponential backoff."""
+    """`call(request)`, retrying transient errors with exponential backoff. An overload that outlasts
+    the retries is raised as it came, for the Job to wait out (see Pipeline._wait_for_gemini)."""
     attempt, delay = 1, tuning.llm_retry_secs
     while True:
         try:
             return call(request)
         except TransientLlmError as exc:
             if attempt == tuning.llm_attempts:
+                if isinstance(exc, Overloaded):
+                    raise
                 raise TransientLlmError(f"Gave up after {attempt} attempts: {exc}") from exc
             logger.warning("Retrying in %g s: %s", delay, exc)
             progress(f"Retrying in {delay:g} s: {exc}")

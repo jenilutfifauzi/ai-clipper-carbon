@@ -1,7 +1,7 @@
 """The single-worker queue: submitted Jobs run one at a time on a background thread.
 
-A Job that runs out of Gemini quota leaves the queue while it waits, so that other Jobs' stages can
-run meanwhile, and is queued again when its wait is over.
+A Job that runs out of Gemini quota, or finds Gemini busy, leaves the queue while it waits, so that
+other Jobs' stages can run meanwhile, and is queued again when its wait is over.
 """
 
 import logging

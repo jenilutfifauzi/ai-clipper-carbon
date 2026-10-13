@@ -90,17 +90,20 @@ class SelectionTuning:
 
 @dataclass(frozen=True)
 class QuotaTuning:
-    """How LLM requests are paced, and how a Job waits when Gemini's quota is used up. Not read from
-    the environment; tests shrink it."""
+    """How LLM requests are paced, and how a Job waits when Gemini's quota is used up or Gemini stays
+    busy. Not read from the environment; tests shrink it."""
 
-    # Requests start at least this far apart: at most 10 a minute, the free tier's usual per-minute
-    # limit, so a 3-hour episode's ~14 requests don't go out back to back.
-    request_interval_secs: float = 6
-    # After a quota error the Job waits wait_secs, then twice as long after each further one in a
-    # row, up to max_wait_secs. Once they have gone on for give_up_secs, the Job fails instead: a
-    # day takes in a reset of the daily quota.
+    # Requests start at least this far apart: under 5 a minute, the free tier's per-minute limit
+    # for each model, so a 3-hour episode's ~14 requests don't go out back to back.
+    request_interval_secs: float = 13
+    # After a quota error, or an overload (503, 504) that outlasts Selection's retries, the Job
+    # waits wait_secs, then twice as long after each further one in a row, up to max_wait_secs. A
+    # quota error that suggests a wait (Gemini's RetryInfo) waits that long plus retry_margin_secs
+    # instead. Once they have gone on for give_up_secs, the Job fails instead: a day takes in a
+    # reset of the daily quota.
     wait_secs: float = 60
     max_wait_secs: float = 15 * 60
+    retry_margin_secs: float = 2
     give_up_secs: float = 24 * 3600
 
 

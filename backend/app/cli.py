@@ -1,5 +1,6 @@
 """Run the pipeline without the UI: `python -m app.cli analyze <url>`, `reanalyze <job-id>` or
-`retry <job-id>`. These wait out Gemini quota waits in the foreground.
+`retry <job-id>`. These wait in the foreground while the Job waits for Gemini's quota or for
+Gemini to be less busy.
 
 `eval` measures Selection against the Reference Set, and `gate` checks an eval report against the gate.
 """
@@ -75,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Job {job.id} is in review: nothing to retry. `make reanalyze JOB={job.id}` selects Candidates again")
             return 1
     try:
-        job = pipeline.run_until_done(job.id)
+        job = pipeline.run_until_done(job.id, waiting=lambda job: print(f"Waiting for Gemini: {job.message}", flush=True))
     except JobConflict as exc:
         print(exc)
         return 1

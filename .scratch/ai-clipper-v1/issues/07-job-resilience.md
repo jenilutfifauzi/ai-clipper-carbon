@@ -160,3 +160,9 @@ Open issues:
 - **App INFO logs are hidden** under uvicorn's default logging, for example "Job … was left analyzing: queued again". This was already the case before this ticket.
 
 **2026-10-13: verified by the owner's session.** `make test` passes 89 tests on three consecutive runs. Committed.
+
+**2026-10-13: follow-up after the real-Gemini smoke run, not committed.** The free tier allows 5 requests a minute per model (429 QuotaFailure `GenerateRequestsPerMinutePerProjectPerModel-FreeTier`), and under load Gemini answers 503 UNAVAILABLE (sometimes 504) for minutes, so the smoke Job failed after Selection's 5 retries. `make test`: 102 passed (13 new).
+- **Pacing:** `request_interval_secs` is now 13 s (under 5 a minute).
+- **Overload:** 503 and 504 raise `Overloaded`, a `TransientLlmError`. Selection still retries them; when they outlast the retries, the Job goes to `waiting_quota` with the same backoff, give-up, worker release and kept Score answers as a quota error. The message reads "Trying again at … (in …). Gemini is busy. 503 UNAVAILABLE: …"; the give-up error reads "Gave up after waiting 24 h for Gemini. …".
+- **RetryInfo:** a 429's `retryDelay` (e.g. "32s") is read into `QuotaExceeded.retry_after`. The wait is then that long plus `retry_margin_secs` (2 s), instead of the schedule's next step; an absent or malformed delay falls back to the schedule. This closes the RetryInfo open issue above.
+- **CLI:** `analyze`, `reanalyze` and `retry` already blocked through waits (`run_until_done`); they now also print "Waiting for Gemini: <Job message>" as each wait starts.

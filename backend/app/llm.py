@@ -24,6 +24,8 @@ _BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
 
 _CLOCK = re.compile(r"(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)")
 _SECONDS = re.compile(r"\d+(?:\.\d+)?")
+# A protobuf Duration in JSON, as RetryInfo's retryDelay is written: "32s", "0.5s".
+_DELAY = re.compile(r"(\d+(?:\.\d+)?)s")
 
 
 def parse_time(text: str) -> float:
@@ -86,8 +88,8 @@ class LlmRequest:
 
 
 class Llm(Protocol):
-    """Both calls raise `TransientLlmError` when a retry may succeed, `QuotaExceeded` when the quota
-    is used up, and `LlmError` otherwise."""
+    """Both calls raise `TransientLlmError` when a retry may succeed (`Overloaded` when the model is
+    too busy to answer), `QuotaExceeded` when the quota is used up, and `LlmError` otherwise."""
 
     def score(self, request: LlmRequest) -> ScoreResponse:
         """A score for each Window in a Score prompt."""
@@ -106,8 +108,18 @@ class TransientLlmError(LlmError):
     """A network failure, a timeout, a 5xx, or an answer that didn't fit the schema: worth retrying."""
 
 
+class Overloaded(TransientLlmError):
+    """The model is too busy to answer (HTTP 503 UNAVAILABLE, 504 DEADLINE_EXCEEDED). When it stays
+    so past Selection's retries, the Job waits as for the quota."""
+
+
 class QuotaExceeded(LlmError):
     """The API's rate limit or quota is used up (HTTP 429, RESOURCE_EXHAUSTED)."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        # The wait in seconds that the API suggests, when it suggests one.
+        self.retry_after = retry_after
 
 
 class PacedLlm:
@@ -194,7 +206,19 @@ class GeminiLlm:
 def _classify(exc: errors.APIError) -> LlmError:
     detail = f"{exc.code} {exc.status}: {exc.message}"
     if exc.code == 429 or exc.status == "RESOURCE_EXHAUSTED":
-        return QuotaExceeded(f"Gemini's quota is used up; try again later. {detail}")
+        return QuotaExceeded(f"Gemini's quota is used up; try again later. {detail}", _retry_delay(exc))
+    if exc.code in (503, 504):
+        return Overloaded(f"Gemini is busy. {detail}")
     if exc.code == 408 or exc.code >= 500:
         return TransientLlmError(f"Gemini is unavailable. {detail}")
     return LlmError(f"Gemini rejected the request. {detail}")
+
+
+def _retry_delay(exc: errors.APIError) -> float | None:
+    """The wait suggested by the error's RetryInfo detail, if it has a usable one."""
+    try:
+        body = exc.details.get("error", exc.details)
+        delay = next(d["retryDelay"] for d in body["details"] if d.get("@type", "").endswith("google.rpc.RetryInfo"))
+        return float(_DELAY.fullmatch(delay)[1])
+    except (AttributeError, KeyError, StopIteration, TypeError):
+        return None

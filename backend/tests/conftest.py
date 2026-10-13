@@ -25,8 +25,8 @@ PHRASES = [(0.5, "halo semua"), (3.0, "apa kabar hari ini"), (5.5, "terima kasih
 SPEECH_SECS = 8.0
 TUNING = TranscriptionTuning(chunk_secs=3.5, cut_search_secs=1.5, budget_secs=5, budget_factor=0)
 SELECTION = SelectionTuning(llm_retry_secs=0.001)
-# No pacing; quota waits of 0.05 s doubling to at most 0.2 s.
-QUOTA = QuotaTuning(request_interval_secs=0, wait_secs=0.05, max_wait_secs=0.2, give_up_secs=30)
+# No pacing; quota waits of 0.05 s doubling to at most 0.2 s, and 0.01 s on top of a suggested wait.
+QUOTA = QuotaTuning(request_interval_secs=0, wait_secs=0.05, max_wait_secs=0.2, retry_margin_secs=0.01, give_up_secs=30)
 
 # The episode for Selection tests: 62 minutes, so the Detail prompt also shows h:mm:ss labels, with a
 # 6-Word caption line every 4 s. Each Word lasts 0.5 s and each line ends in 1 s of silence, so line

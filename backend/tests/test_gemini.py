@@ -3,6 +3,7 @@ mock transport, so the port's requests and its handling of failures are real but
 """
 
 import json
+import re
 from dataclasses import replace
 
 import httpx
@@ -20,6 +21,41 @@ def answer(text: str) -> httpx.Response:
 
 def error(code: int, status: str, message: str) -> httpx.Response:
     return httpx.Response(code, json={"error": {"code": code, "message": message, "status": status}})
+
+
+# The details of a 429 from the free tier, as Gemini sends them.
+QUOTA_FAILURE = {
+    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+    "violations": [
+        {
+            "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            "quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+            "quotaDimensions": {"location": "global", "model": "gemini-3.6-flash"},
+            "quotaValue": "5",
+        }
+    ],
+}
+HELP = {
+    "@type": "type.googleapis.com/google.rpc.Help",
+    "links": [{"description": "Learn more about Gemini API quotas", "url": "https://ai.google.dev/gemini-api/docs/rate-limits"}],
+}
+
+
+def retry_info(delay: object) -> dict:
+    return {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay}
+
+
+def quota_error(details: object) -> httpx.Response:
+    """A free-tier 429 with these `details`, or none when None."""
+    message = (
+        "You exceeded your current quota, please check your plan and billing details. For more information on this "
+        "error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: "
+        "https://ai.dev/rate-limit. \n* Quota exceeded for metric: "
+        "generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5, model: gemini-3.6-flash\n"
+        "Please retry in 32.418734917s."
+    )
+    body = {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED"}
+    return httpx.Response(429, json={"error": body if details is None else body | {"details": details}})
 
 
 class FakeGeminiApi:
@@ -94,6 +130,55 @@ def test_transient_gemini_failures_are_retried(client, gemini, wait_for_status, 
 
     assert job["status"] == "review", job["error"]
     assert len(gemini.requests) == 4  # the one Score request three times, then the Detail request
+
+
+@pytest.mark.quota(wait_secs=0.2)
+@pytest.mark.parametrize(
+    ("code", "status", "message"),
+    [
+        (503, "UNAVAILABLE", "This model is currently experiencing high demand. Spikes in demand are usually temporary."),
+        (504, "DEADLINE_EXCEEDED", "Deadline expired before operation could complete."),
+    ],
+    ids=["503", "504"],
+)
+def test_gemini_busy_past_the_retries_makes_the_job_wait_then_go_on(
+    client, gemini, settings, wait_for_status, code, status, message
+):
+    gemini.fail_with(*[error(code, status, message)] * settings.selection.llm_attempts)
+    job_id = create_job(client)["id"]
+
+    waiting = wait_for_status(job_id, "waiting_quota", "review", "error")
+    assert waiting["message"].endswith(f"(in 0.2 s). Gemini is busy. {code} {status}: {message}")
+    job = wait_for_status(job_id, "review", "error")
+    assert job["status"] == "review", job["error"]
+    # The Score request until the retries ran out, then again after the wait, then the Detail request.
+    assert len(gemini.requests) == settings.selection.llm_attempts + 2
+
+
+@pytest.mark.quota(wait_secs=60, max_wait_secs=60)
+@pytest.mark.parametrize(
+    ("details", "wait"),
+    [
+        ([QUOTA_FAILURE, HELP, retry_info("32s")], "32 s"),
+        ([retry_info("2.5s")], "2.51 s"),  # with the margin of 0.01 s
+        # Without a usable suggestion, the first wait of the schedule.
+        ([QUOTA_FAILURE, HELP], "1 min"),
+        (None, "1 min"),
+        ([retry_info("soon")], "1 min"),
+        ([retry_info(32)], "1 min"),
+        ([{"@type": "type.googleapis.com/google.rpc.RetryInfo"}], "1 min"),
+        ("RetryInfo: 32s", "1 min"),
+    ],
+    ids=["free-tier", "fractional", "no-retry-info", "no-details", "text-delay", "number-delay", "no-delay", "text-details"],
+)
+def test_a_quota_error_waits_as_long_as_gemini_suggests(client, gemini, wait_for_status, details, wait):
+    gemini.fail_with(quota_error(details))
+    job = wait_for_status(create_job(client)["id"], "waiting_quota", "review", "error")
+
+    assert job["status"] == "waiting_quota"
+    expected = rf"Trying again at \d\d:\d\d:\d\d \(in {re.escape(wait)}\)\. Gemini's quota is used up; try again later\. 429 "
+    assert re.match(expected, job["message"])
+    assert len(gemini.requests) == 1
 
 
 @pytest.mark.parametrize(

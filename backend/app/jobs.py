@@ -87,7 +87,8 @@ class JobWarning:
 
 @dataclass(frozen=True)
 class QuotaWait:
-    """Gemini's quota errors in a row, and the wait they have put the Job in."""
+    """Gemini's quota errors in a row (or overloads that outlasted Selection's retries), and the wait
+    they have put the Job in."""
 
     # When the first of them came, and how many there have been.
     since: datetime
@@ -117,7 +118,8 @@ class Job:
     progress: float | None = None
     message: str | None = None
     warnings: list[JobWarning] = field(default_factory=list)
-    # Set while the Job meets quota errors in the analyzing stage, until it gets past them or fails.
+    # Set while the Job meets quota errors or overloads in the analyzing stage, until it gets past
+    # them or fails.
     quota: QuotaWait | None = None
     source: Source | None = None
     # The version of the Selection prompts that produced the Job's Candidates.

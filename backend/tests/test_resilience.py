@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import cli
 from app.jobs import JobOptions, JobStatus, JobStore
-from app.llm import LlmError, QuotaExceeded
+from app.llm import LlmError, Overloaded, QuotaExceeded
 from app.main import create_app
 from app.pipeline import Pipeline
 from app.ports import Ports
@@ -23,6 +23,7 @@ from test_jobs_api import URL, create_job, statuses
 
 REJECTED = LlmError("Gemini rejected the request. 400 INVALID_ARGUMENT: Request contains an invalid argument.")
 QUOTA = QuotaExceeded("Gemini's quota is used up; try again later. 429 RESOURCE_EXHAUSTED: Quota exceeded.")
+BUSY = Overloaded("Gemini is busy. 503 UNAVAILABLE: This model is currently experiencing high demand.")
 G = "https://www.youtube.com/watch?v=GGGGGGGGGGG"
 
 
@@ -204,6 +205,49 @@ def test_quota_errors_that_go_on_too_long_put_the_job_in_error(client, llm, wait
     assert len(llm.score_requests) == 4
 
 
+def test_a_quota_error_that_suggests_a_wait_waits_that_long_instead(client, llm, wait_for_status):
+    llm.fail_with(QuotaExceeded(str(QUOTA), retry_after=0.25))
+    llm.fail_with(QUOTA)
+    job_id = create_job(client)["id"]
+
+    waiting = wait_for_status(job_id, "waiting_quota", "review", "error")
+    # The suggested 0.25 s and the margin of 0.01 s, not the first wait of 0.05 s.
+    expected = rf"Trying again at \d\d:\d\d:\d\d \(in 0\.26 s\)\. {re.escape(str(QUOTA))}"
+    assert re.fullmatch(expected, waiting["message"])
+
+    job = wait_for_status(job_id, "review", "error")
+    assert job["status"] == "review"
+    first, second = waits(job)
+    assert round(first, 2) >= 0.26
+    # The second error suggests nothing: the second wait of the schedule, 0.1 s.
+    assert 0.1 <= round(second, 2) < 0.25
+
+
+@pytest.mark.quota(wait_secs=0.2)
+def test_gemini_busy_past_the_retries_puts_the_job_in_a_wait_that_keeps_its_answered_batches(
+    client, settings, from_episode, llm, wait_for_status
+):
+    llm.fail_with(BUSY, times=settings.selection.llm_attempts, after=2)
+    job_id = create_job(client)["id"]
+
+    waiting = wait_for_status(job_id, "waiting_quota", "review", "error")
+    assert (waiting["status"], waiting["stage"], waiting["quota"]["errors"]) == ("waiting_quota", "analyzing", 1)
+    expected = rf"Trying again at \d\d:\d\d:\d\d \(in 0\.2 s\)\. {re.escape(str(BUSY))}"
+    assert re.fullmatch(expected, waiting["message"])
+
+    job = wait_for_status(job_id, "review", "error")
+    assert statuses(job) == [
+        "queued", "downloading", "transcribing", "analyzing", "waiting_quota", "queued", "analyzing", "review",
+    ]
+    prompts = [request.prompt for request in llm.score_requests]
+    answered, busy, resent = prompts[:2], prompts[2:7], prompts[7:]
+    assert busy == [busy[0]] * settings.selection.llm_attempts
+    assert resent[0] == busy[0]
+    assert not set(answered) & set(resent)
+    batches = answered + resent
+    assert window_ids(batches) == [f"w{i:03}" for i in range(1, len(window_ids(batches)) + 1)]
+
+
 @pytest.mark.quota(request_interval_secs=0.05)
 def test_llm_requests_are_paced(client, from_episode, llm, wait_for_status):
     assert wait_for_status(create_job(client)["id"], "review", "error")["status"] == "review"
@@ -380,3 +424,15 @@ def test_the_cli_retries_a_failed_job_from_the_stage_it_failed_in_and_waits_out_
 
     assert cli.main(["retry", job_id]) == 1
     assert "nothing to retry" in capsys.readouterr().out
+
+
+def test_the_cli_waits_while_gemini_is_busy_and_says_so(settings, video_source, transcriber, llm, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "real_ports", lambda _: Ports(video_source, transcriber, llm))
+    llm.fail_with(BUSY, times=settings.selection.llm_attempts)
+
+    assert cli.main(["analyze", URL]) == 0
+    output = capsys.readouterr().out
+    expected = rf"^Waiting for Gemini: Trying again at \d\d:\d\d:\d\d \(in 0\.05 s\)\. {re.escape(str(BUSY))}$"
+    assert re.search(expected, output, re.M)
+    assert "Status: review" in output
