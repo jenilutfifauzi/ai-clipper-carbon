@@ -15,8 +15,9 @@ from app.worker import Worker
 def create_app(settings: Settings | None = None, ports: Ports | None = None) -> FastAPI:
     """The app, wired to `ports` (the real ones by default). Run with `uvicorn --factory app.main:create_app`."""
     settings = settings or load_settings()
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
     store = JobStore(settings.data_dir / "jobs")
-    worker = Worker(Pipeline(store, ports or real_ports(settings), settings).run)
+    worker = Worker(store, Pipeline(store, ports or real_ports(settings), settings))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -25,6 +26,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
         worker.stop()
 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
+    app.state.settings = settings
     app.state.store = store
     app.state.worker = worker
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)

@@ -1,4 +1,5 @@
-"""Run the pipeline without the UI: `python -m app.cli analyze <url>`, or `reanalyze <job-id>`.
+"""Run the pipeline without the UI: `python -m app.cli analyze <url>`, `reanalyze <job-id>` or
+`retry <job-id>`. These wait out Gemini quota waits in the foreground.
 
 `eval` measures Selection against the Reference Set, and `gate` checks an eval report against the gate.
 """
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from app.config import Settings, load_settings
 from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_report, summary
-from app.jobs import DEFAULT_LANGUAGE, JobNotFound, JobOptions, JobStatus, JobStore
+from app.jobs import DEFAULT_LANGUAGE, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import real_ports
 from app.profile import PROFILE_FILE, ProfileStore
@@ -36,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
         "snapshot, replacing its Candidates",
     )
     reanalyze.add_argument("job_id")
+    retry = commands.add_parser(
+        "retry",
+        help="resume a Job that failed, was interrupted or is waiting for quota, from the stage it stopped in",
+    )
+    retry.add_argument("job_id")
     commands.add_parser(
         "eval", help="select Candidates for every eval episode of eval/references.yaml and write an eval report"
     )
@@ -56,21 +62,27 @@ def main(argv: list[str] | None = None) -> int:
         options = JobOptions(language=args.language, brief=args.brief, transcribe_locally=args.transcribe_locally)
         job = store.create(args.url, options, ProfileStore(settings.data_dir / PROFILE_FILE).load())
         print(f"Job {job.id} in {store.job_dir(job.id)}", flush=True)
-        job = pipeline.run(job.id)
     else:
         try:
-            store.get(args.job_id)
+            job = store.get(args.job_id)
         except JobNotFound:
             print(f"No Job {args.job_id} in {store.root}")
             return 1
-        if store.load_transcript(args.job_id) is None:
-            print(f"Job {args.job_id} has no Transcript yet")
+        if args.command == "reanalyze" and store.load_transcript(job.id) is None:
+            print(f"Job {job.id} has no Transcript yet")
             return 1
-        job = pipeline.run(args.job_id, start=JobStatus.ANALYZING)
+        if args.command == "retry" and job.status is JobStatus.REVIEW:
+            print(f"Job {job.id} is in review: nothing to retry. `make reanalyze JOB={job.id}` selects Candidates again")
+            return 1
+    try:
+        job = pipeline.run_until_done(job.id)
+    except JobConflict as exc:
+        print(exc)
+        return 1
 
     print(f"Status: {job.status}")
     for warning in job.warnings:
-        print(f"Warning: {warning}")
+        print(f"Warning ({warning.stage}): {warning.message}")
     if job.status is JobStatus.ERROR:
         print(f"Error while {job.stage}: {job.error}")
         return 1
@@ -97,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 def _evaluate(settings: Settings) -> int:
     try:
         report, folder = evaluate(settings, real_ports(settings))
-    except (EvalError, ReferenceSetError) as exc:
+    except (EvalError, ReferenceSetError, JobConflict) as exc:
         print(exc)
         return 1
     print(summary(report, folder))

@@ -99,9 +99,12 @@ def test_transient_gemini_failures_are_retried(client, gemini, wait_for_status, 
 @pytest.mark.parametrize(
     ("failure", "message"),
     [
-        (
+        # With no time left to wait for the quota, the first quota error fails the Job.
+        pytest.param(
             error(429, "RESOURCE_EXHAUSTED", "You exceeded your current quota."),
+            "Gave up after waiting 0 s for Gemini's quota. "
             "Gemini's quota is used up; try again later. 429 RESOURCE_EXHAUSTED: You exceeded your current quota.",
+            marks=pytest.mark.quota(give_up_secs=0),
         ),
         (
             error(400, "INVALID_ARGUMENT", "API key not valid. Please pass a valid API key."),

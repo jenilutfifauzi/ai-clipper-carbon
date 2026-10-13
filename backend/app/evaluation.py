@@ -166,7 +166,8 @@ def evaluate(
     An episode with a Job that has its Source and Transcript (see `transcribed_job`) is analyzed
     again from them, its profile snapshot replaced by the current profile; otherwise a new Job runs
     the whole pipeline. fewshot episodes are only read for their captions, as few-shot examples.
-    Raises ReferenceSetError for an invalid Reference Set and EvalError when an episode fails.
+    Gemini quota waits are slept through. Raises ReferenceSetError for an invalid Reference Set and
+    EvalError when an episode fails.
     """
     if not references.is_file():
         raise EvalError(f"No Reference Set at {shown(references)}: copy {shown(EXAMPLE)} to it and list your past clips")
@@ -318,11 +319,10 @@ def _episode(
     if job is None:
         job = store.create(url, options, profile)
         logger.info("Eval: %s in a new Job %s", url, job.id)
-        job = pipeline.run(job.id)
     else:
         logger.info("Eval: %s from Job %s's Transcript", url, job.id)
         store.update(job.id, profile=profile)
-        job = pipeline.run(job.id, start=JobStatus.ANALYZING)
+    job = pipeline.run_until_done(job.id)
     if job.status is not JobStatus.REVIEW:
         raise EvalError(f"{url}: Job {job.id} stopped ({job.status}) while {job.stage}: {job.error}")
 
@@ -343,7 +343,7 @@ def _episode(
     found = sum(result.found for result in results)
     return EpisodeReport(
         url, job.id, reused, duration, transcript.source, found, len(results), recall(results), results,
-        selection.candidates, len(selection.examples), job.warnings,
+        selection.candidates, len(selection.examples), [warning.message for warning in job.warnings],
     )
 
 

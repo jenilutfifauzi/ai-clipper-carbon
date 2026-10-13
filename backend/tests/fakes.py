@@ -3,6 +3,7 @@
 import re
 import shutil
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -132,7 +133,8 @@ class FakeLlm:
 
     Score: each Window in the prompt gets `score_window(text)`, 50 unless scripted.
     Detail: `clips`, written by the test in the response schema's shape; none unless scripted.
-    `fail_with(error, times)` makes the next `times` calls raise `error`.
+    `fail_with(error, times, after)` makes `times` calls raise `error`, after `after` that don't.
+    `sent` records when each request came (time.monotonic()).
     """
 
     def __init__(self) -> None:
@@ -140,10 +142,11 @@ class FakeLlm:
         self.clips: list[dict] = []
         self.score_requests: list[LlmRequest] = []
         self.detail_requests: list[LlmRequest] = []
-        self._failures: list[Exception] = []
+        self.sent: list[float] = []
+        self._failures: list[Exception | None] = []
 
-    def fail_with(self, error: Exception, times: int = 1) -> None:
-        self._failures += [error] * times
+    def fail_with(self, error: Exception, times: int = 1, after: int = 0) -> None:
+        self._failures += [None] * after + [error] * times
 
     def score(self, request: LlmRequest) -> ScoreResponse:
         self.score_requests.append(request)
@@ -160,5 +163,6 @@ class FakeLlm:
         return DetailResponse.model_validate({"clips": self.clips})
 
     def _fail(self) -> None:
-        if self._failures:
-            raise self._failures.pop(0)
+        self.sent.append(time.monotonic())
+        if self._failures and (error := self._failures.pop(0)):
+            raise error

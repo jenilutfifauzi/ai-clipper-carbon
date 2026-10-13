@@ -1,19 +1,29 @@
-"""Runs a Job's stages in order, recording each status change in the Job store."""
+"""Runs a Job's stages in order, recording each status change in the Job store.
 
+A Job resumes where it stopped: a run skips the stages whose output is complete (see `_done`).
+"""
+
+import hashlib
+import json
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from app.audio import SileroVad, chunks
 from app.config import Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
-from app.jobs import Job, JobStatus, JobStore
+from app.jobs import TRANSCRIPT_FILE, Job, JobStatus, JobStore, JobWarning, QuotaWait
+from app.llm import DetailResponse, Llm, LlmRequest, PacedLlm, QuotaExceeded, ScoreResponse
 from app.ports import Ports
+from app.prompts import PROMPT_VERSION
 from app.selection import select
 from app.transcriber import TranscriptionStalled, Watchdog
 from app.transcript import Transcript, parse_json3
 
 logger = logging.getLogger(__name__)
+
+DOWNLOAD_HINT = "If YouTube changed something, updating the downloader may fix it: run `make update-ytdlp`, then retry."
 
 
 class Pipeline:
@@ -21,28 +31,101 @@ class Pipeline:
         self.store = store
         self.ports = ports
         self.settings = settings
+        self.llm = PacedLlm(ports.llm, settings.quota.request_interval_secs)
         self.stages: list[tuple[JobStatus, Callable[[Job], Job]]] = [
             (JobStatus.DOWNLOADING, self._download),
             (JobStatus.TRANSCRIBING, self._transcribe),
             (JobStatus.ANALYZING, self._analyze),
         ]
 
-    def run(self, job_id: str, start: JobStatus | None = None) -> Job:
-        """Run the Job's stages, or only those from `start` on (the earlier ones' artifacts must exist)."""
-        stages = self.stages
-        if start is not None:
-            stages = stages[[stage for stage, _ in stages].index(start) :]
-        for stage, run_stage in stages:
+    def run(self, job_id: str) -> Job:
+        """Run the Job's stages from the first whose output isn't complete: from the stage it failed
+        in, was interrupted in or ran out of quota in, or from analyzing for a Job in review.
+
+        Ends in `review`, `error` or `waiting_quota`. Raises JobConflict when another process is
+        running the Job.
+        """
+        with self.store.running(job_id):
+            return self._run(job_id)
+
+    def run_until_done(self, job_id: str) -> Job:
+        """`run`, sleeping through quota waits: for the CLI and the eval, which have no worker to
+        come back to the Job. Ends in `review` or `error`."""
+        with self.store.running(job_id):
+            while (job := self._run(job_id)).status is JobStatus.WAITING_QUOTA:
+                assert job.quota is not None
+                time.sleep(max(0.0, (job.quota.retry_at - datetime.now(UTC)).total_seconds()))
+            return job
+
+    def _run(self, job_id: str) -> Job:
+        job = self.store.get(job_id)
+        start = next(i for i, (stage, _) in enumerate(self.stages) if not self._done(job, stage))
+        for stage, run_stage in self.stages[start:]:
             logger.info("Job %s: %s", job_id, stage)
-            job = self.store.update(job_id, status=stage, stage=stage, error=None, progress=None, message=None)
+            job = self.store.update(
+                job_id,
+                status=stage,
+                stage=stage,
+                error=None,
+                progress=None,
+                message=None,
+                warnings=[warning for warning in job.warnings if warning.stage is not stage],
+            )
             try:
                 job = run_stage(job)
+            except QuotaExceeded as exc:
+                return self._wait_for_quota(job_id, exc)
             except Exception as exc:
                 logger.exception("Job %s failed while %s", job_id, stage)
                 error = str(exc) or type(exc).__name__
-                return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None)
+                if stage is JobStatus.DOWNLOADING:
+                    error = f"{error.rstrip('. ')}. {DOWNLOAD_HINT}"
+                return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None, quota=None)
         logger.info("Job %s: %s", job_id, JobStatus.REVIEW)
-        return self.store.update(job_id, status=JobStatus.REVIEW, stage=None, progress=None, message=None)
+        return self.store.update(
+            job_id, status=JobStatus.REVIEW, stage=None, progress=None, message=None, quota=None
+        )
+
+    def _done(self, job: Job, stage: JobStatus) -> bool:
+        """Whether a stage's output is complete, so that a run can skip it.
+
+        Downloading is complete once the Video Source has returned, which is when `job.source` is
+        recorded (a half-written or interrupted download never has it), and the files it names
+        exist. Transcribing is complete once transcript.json exists: it is written whole, as the
+        stage's last step. Analyzing, the last stage, always runs.
+        """
+        job_dir = self.store.job_dir(job.id)
+        if stage is JobStatus.DOWNLOADING:
+            return job.source is not None and all(
+                (job_dir / name).is_file() for name in (job.source.video, job.source.caption_track) if name
+            )
+        if stage is JobStatus.TRANSCRIBING:
+            return (job_dir / TRANSCRIPT_FILE).is_file()
+        return False
+
+    def _wait_for_quota(self, job_id: str, exc: QuotaExceeded) -> Job:
+        """Put the Job in `waiting_quota` for a wait that doubles with each quota error in a row (see
+        QuotaTuning), or in `error` once they have gone on for too long. A run of errors starts over
+        when a Score batch was answered since the last one."""
+        tuning = self.settings.quota
+        job = self.store.get(job_id)
+        now = datetime.now(UTC)
+        scored = len(self.store.load_scores(job_id))
+        if job.quota is None or scored > job.quota.scored:
+            since, errors = now, 0
+        else:
+            since, errors = job.quota.since, job.quota.errors
+        if (now - since).total_seconds() >= tuning.give_up_secs:
+            logger.warning("Job %s: gave up waiting for Gemini's quota after %d errors", job_id, errors + 1)
+            error = f"Gave up after waiting {_duration(tuning.give_up_secs)} for Gemini's quota. {exc}"
+            return self.store.update(job_id, status=JobStatus.ERROR, error=error, message=None, quota=None)
+        delay = min(tuning.max_wait_secs, tuning.wait_secs * 2**errors)
+        retry_at = now + timedelta(seconds=delay)
+        message = f"Trying again at {retry_at.astimezone():%H:%M:%S} (in {_duration(delay)}). {exc}"
+        logger.warning("Job %s: %s", job_id, message)
+        return self.store.update(
+            job_id, status=JobStatus.WAITING_QUOTA, quota=QuotaWait(since, errors + 1, retry_at, scored), message=message
+        )
 
     def _download(self, job: Job) -> Job:
         source = self.ports.video_source.fetch(job.url, job.options.language, self.store.job_dir(job.id))
@@ -85,7 +168,8 @@ class Pipeline:
                 try:
                     parts.append(watchdog.transcribe(media, language, start, end))
                 except TranscriptionStalled as stalled:
-                    job = self.store.update(job.id, warnings=[*job.warnings, str(stalled)])
+                    warning = JobWarning(JobStatus.TRANSCRIBING, str(stalled))
+                    job = self.store.update(job.id, warnings=[*job.warnings, warning])
                 job = self.store.update(job.id, progress=round(100 * end / duration, 1))
         finally:
             self.ports.transcriber.stop()  # frees the model's memory for the stages after this one
@@ -105,6 +189,9 @@ class Pipeline:
         return job
 
     def _analyze(self, job: Job) -> Job:
+        """Selection on the Job's Transcript. The Score pass's answers are kept as they come in
+        (see `_KeptScores`) until the stage completes, so that a run resumed after a quota wait or an
+        error doesn't send the batches it already has again."""
         assert job.source is not None
         transcript = self.store.load_transcript(job.id)
         assert transcript is not None
@@ -124,10 +211,11 @@ class Pipeline:
             progress,
         )
         if warnings:
-            # Analyzing again repeats the same warnings: keep one of each.
-            job = self.store.update(job.id, warnings=list(dict.fromkeys([*job.warnings, *warnings])))
+            job = self.store.update(
+                job.id, warnings=[*job.warnings, *(JobWarning(JobStatus.ANALYZING, w) for w in warnings)]
+            )
         selection = select(
-            self.ports.llm,
+            _KeptScores(self.llm, self.store, job.id, self.settings.gemini_model),
             self.settings.selection,
             transcript,
             duration=job.source.metadata.duration,
@@ -140,8 +228,47 @@ class Pipeline:
         )
         self.store.save_selection(job.id, selection)
         self.store.save_candidates(job.id, selection.candidates)
+        self.store.discard_scores(job.id)
         logger.info(
             "Job %s: %d Candidates from %d Windows and %d few-shot examples (prompt %s)",
             job.id, len(selection.candidates), len(selection.windows), len(examples), selection.prompt_version,
         )
         return self.store.update(job.id, prompt_version=selection.prompt_version)
+
+
+class _KeptScores:
+    """The LLM port, with each Score answer kept in the Job's scores.json as it comes in.
+
+    An answer is kept under a hash of all that shaped it: the prompt version, the model, the
+    temperature and the prompt itself, which holds the Windows' text and times (so the Transcript
+    and the Window tuning), the language, the duration range, the profile summary and the Brief.
+    A change to any of them asks again.
+    """
+
+    def __init__(self, llm: Llm, store: JobStore, job_id: str, model: str) -> None:
+        self.llm = llm
+        self.store = store
+        self.job_id = job_id
+        self.model = model
+        self.answers = store.load_scores(job_id)
+
+    def score(self, request: LlmRequest) -> ScoreResponse:
+        key = hashlib.sha256(
+            json.dumps([PROMPT_VERSION, self.model, request.temperature, request.prompt]).encode()
+        ).hexdigest()
+        if (answer := self.answers.get(key)) is None:
+            answer = self.answers[key] = self.llm.score(request)
+            self.store.save_scores(self.job_id, self.answers)
+        return answer
+
+    def detail(self, request: LlmRequest) -> DetailResponse:
+        return self.llm.detail(request)
+
+
+def _duration(seconds: float) -> str:
+    """A duration such as "45 s", "15 min" or "24 h"."""
+    if seconds < 60:
+        return f"{seconds:.3g} s"
+    if seconds < 3600:
+        return f"{seconds / 60:.3g} min"
+    return f"{seconds / 3600:.3g} h"

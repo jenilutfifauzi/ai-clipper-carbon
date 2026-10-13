@@ -46,4 +46,5 @@ addopts = "-m 'not whisper'"
 markers = [
     "whisper: loads the real Whisper model (slow, ~2 GB RAM); run with `make test-whisper`",
     "tuning(**fields): override TranscriptionTuning fields in the test's settings",
+    "quota(**fields): override QuotaTuning fields in the test's settings",
 ]

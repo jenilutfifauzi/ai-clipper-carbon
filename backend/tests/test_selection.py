@@ -241,10 +241,13 @@ def test_transient_llm_errors_are_retried(client, from_episode, llm, wait_for_st
             5,
             "Gave up after 5 attempts: Gemini is unavailable. 503 UNAVAILABLE: The model is overloaded.",
         ),
-        (
+        # With no time left to wait for the quota, the first quota error fails the Job.
+        pytest.param(
             QuotaExceeded("Gemini's quota is used up; try again later. 429 RESOURCE_EXHAUSTED: Quota exceeded."),
             1,
+            "Gave up after waiting 0 s for Gemini's quota. "
             "Gemini's quota is used up; try again later. 429 RESOURCE_EXHAUSTED: Quota exceeded.",
+            marks=pytest.mark.quota(give_up_secs=0),
         ),
     ],
 )

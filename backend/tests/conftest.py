@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import SelectionTuning, Settings, TranscriptionTuning, load_settings
+from app.config import QuotaTuning, SelectionTuning, Settings, TranscriptionTuning, load_settings
 from app.main import create_app
 from app.ports import Ports
 from app.transcript import Word
@@ -25,6 +25,8 @@ PHRASES = [(0.5, "halo semua"), (3.0, "apa kabar hari ini"), (5.5, "terima kasih
 SPEECH_SECS = 8.0
 TUNING = TranscriptionTuning(chunk_secs=3.5, cut_search_secs=1.5, budget_secs=5, budget_factor=0)
 SELECTION = SelectionTuning(llm_retry_secs=0.001)
+# No pacing; quota waits of 0.05 s doubling to at most 0.2 s.
+QUOTA = QuotaTuning(request_interval_secs=0, wait_secs=0.05, max_wait_secs=0.2, give_up_secs=30)
 
 # The episode for Selection tests: 62 minutes, so the Detail prompt also shows h:mm:ss labels, with a
 # 6-Word caption line every 4 s. Each Word lasts 0.5 s and each line ends in 1 s of silence, so line
@@ -62,16 +64,20 @@ class Speech:
 
 @pytest.fixture
 def settings(tmp_path, request) -> Settings:
-    """Settings for a test; `@pytest.mark.tuning(...)` overrides fields of TUNING. The Reference Set
-    is `tmp_path / "references.yaml"`, which doesn't exist until the test writes it."""
+    """Settings for a test; `@pytest.mark.tuning(...)` overrides fields of TUNING, and
+    `@pytest.mark.quota(...)` fields of QUOTA. The Reference Set is `tmp_path / "references.yaml"`,
+    which doesn't exist until the test writes it."""
     marker = request.node.get_closest_marker("tuning")
     tuning = replace(TUNING, **marker.kwargs) if marker else TUNING
+    marker = request.node.get_closest_marker("quota")
+    quota = replace(QUOTA, **marker.kwargs) if marker else QUOTA
     return replace(
         load_settings(),
         data_dir=tmp_path / "data",
         reference_set=tmp_path / "references.yaml",
         transcription=tuning,
         selection=SELECTION,
+        quota=quota,
     )
 
 
@@ -193,15 +199,16 @@ def client(settings, video_source, transcriber, llm):
             transcriber.stop()
 
 
+def wait_for(client: TestClient, job_id: str, *statuses: str, timeout: float = 5) -> dict:
+    """Poll the API until the Job reaches one of `statuses`, and return it."""
+    deadline = time.monotonic() + timeout
+    while (job := client.get(f"/api/jobs/{job_id}").json())["status"] not in statuses:
+        assert time.monotonic() < deadline, f"Job stayed {job['status']}, expected one of {statuses}"
+        time.sleep(0.01)
+    return job
+
+
 @pytest.fixture
 def wait_for_status(client) -> Callable[..., dict]:
-    """Poll the API until the Job reaches one of `statuses`, and return it."""
-
-    def wait(job_id: str, *statuses: str, timeout: float = 5) -> dict:
-        deadline = time.monotonic() + timeout
-        while (job := client.get(f"/api/jobs/{job_id}").json())["status"] not in statuses:
-            assert time.monotonic() < deadline, f"Job stayed {job['status']}, expected one of {statuses}"
-            time.sleep(0.01)
-        return job
-
-    return wait
+    """`wait_for` on the `client` app."""
+    return lambda job_id, *statuses, timeout=5: wait_for(client, job_id, *statuses, timeout=timeout)

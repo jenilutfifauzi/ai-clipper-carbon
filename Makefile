@@ -1,7 +1,7 @@
 UV := uv --directory backend
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 
-.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze reanalyze eval gate update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev test test-whisper analyze reanalyze retry eval gate update-ytdlp
 
 # Install backend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
@@ -46,6 +46,12 @@ analyze:
 reanalyze:
 	@[ -n "$(JOB)" ] || { echo "Usage: make reanalyze JOB=<job-id>"; exit 1; }
 	$(UV) run python -m app.cli reanalyze "$(JOB)"
+
+# Resume a Job that failed, was interrupted or is waiting for Gemini's quota, from the stage it
+# stopped in, without the UI: make retry JOB=<job-id>
+retry:
+	@[ -n "$(JOB)" ] || { echo "Usage: make retry JOB=<job-id>"; exit 1; }
+	$(UV) run python -m app.cli retry "$(JOB)"
 
 # Measure Selection against the Reference Set in eval/references.yaml (format: eval/references.example.yaml).
 # Selects Candidates for every eval episode with the current prompts, reusing Jobs that already have

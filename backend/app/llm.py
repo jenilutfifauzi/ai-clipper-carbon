@@ -4,7 +4,10 @@ Prompts are built by Selection (app/prompts.py); the port only sends them and va
 answer against the response schema below, which is also sent to constrain the model's output.
 """
 
+import math
 import re
+import threading
+import time
 from dataclasses import dataclass
 from typing import Annotated, Protocol
 
@@ -105,6 +108,29 @@ class TransientLlmError(LlmError):
 
 class QuotaExceeded(LlmError):
     """The API's rate limit or quota is used up (HTTP 429, RESOURCE_EXHAUSTED)."""
+
+
+class PacedLlm:
+    """Any Llm, with its requests started at least `interval` seconds apart."""
+
+    def __init__(self, llm: Llm, interval: float) -> None:
+        self.llm = llm
+        self.interval = interval
+        self._lock = threading.Lock()
+        self._last = -math.inf
+
+    def score(self, request: LlmRequest) -> ScoreResponse:
+        self._wait()
+        return self.llm.score(request)
+
+    def detail(self, request: LlmRequest) -> DetailResponse:
+        self._wait()
+        return self.llm.detail(request)
+
+    def _wait(self) -> None:
+        with self._lock:
+            time.sleep(max(0.0, self._last + self.interval - time.monotonic()))
+            self._last = time.monotonic()
 
 
 class GeminiLlm:

@@ -160,10 +160,13 @@ def test_few_shot_clips_without_captions_are_left_out_with_a_warning(
     job = analyzed(client, wait_for_status)
 
     assert job["warnings"] == [
-        f"{G} has no 'id' YouTube captions: its clip is left out of the few-shot examples",
-        f"Couldn't fetch the captions of {H} (Video unavailable): its clip is left out of the few-shot examples",
-        f"{settings.reference_set}:16: the captions of {F} have no words between 5:00 and 5:10: "
-        "that clip is left out of the few-shot examples",
+        {"stage": "analyzing", "message": message}
+        for message in [
+            f"{G} has no 'id' YouTube captions: its clip is left out of the few-shot examples",
+            f"Couldn't fetch the captions of {H} (Video unavailable): its clip is left out of the few-shot examples",
+            f"{settings.reference_set}:16: the captions of {F} have no words between 5:00 and 5:10: "
+            "that clip is left out of the few-shot examples",
+        ]
     ]
     [detail] = llm.detail_requests
     assert detail.prompt.count("<example ") == 1

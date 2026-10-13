@@ -143,7 +143,8 @@ def test_failing_source_puts_the_job_in_error_and_the_next_job_still_runs(client
     failed = wait_for_status(create_job(client)["id"], "review", "error")
 
     assert failed["status"] == "error"
-    assert (failed["stage"], failed["error"]) == ("downloading", "Video unavailable")
+    assert failed["stage"] == "downloading"
+    assert failed["error"].startswith("Video unavailable. ")
     assert statuses(failed) == ["queued", "downloading", "error"]
     assert failed["transcript"] is None
     assert failed["candidates"] is None

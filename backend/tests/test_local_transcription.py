@@ -92,7 +92,8 @@ def test_chunk_that_stalls_twice_is_skipped_with_a_warning(client, uncaptioned, 
     assert job["status"] == "review"
     assert transcriber.calls[0] == transcriber.calls[1]
     [warning] = job["warnings"]
-    assert warning.startswith("Skipped 0:00:00–") and "stalled" in warning
+    assert warning["stage"] == "transcribing"
+    assert warning["message"].startswith("Skipped 0:00:00–") and "stalled" in warning["message"]
     _, _, skipped_until = transcriber.calls[0]
     assert job["transcript"]["words"] == as_json([word for word in speech.words if word.start >= skipped_until])
     assert job["transcript"]["words"]
