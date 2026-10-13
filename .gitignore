@@ -1,0 +1,21 @@
+# Local config and Job data
+.env
+/data/
+
+# Assets downloaded by `make setup`
+backend/models/
+backend/assets/fonts/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# macOS
+.DS_Store

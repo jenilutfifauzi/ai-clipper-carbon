@@ -1,0 +1,48 @@
+[project]
+name = "ai-clipper"
+version = "0.1.0"
+description = "Local podcast-to-shorts clipper for Apple Silicon"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.143.0",
+    "google-genai>=2.30.0",
+    "huggingface-hub>=2.2.0",
+    "mediapipe>=1.1.0",
+    "mlx-whisper>=0.4.3",
+    "numpy>=2.5.4",
+    "onnxruntime>=1.31.0",
+    "pydantic>=2.14.1",
+    "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
+    "uvicorn[standard]>=0.54.0",
+    "yt-dlp[default]>=2026.8.19",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.6,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
+
+[tool.uv]
+# Apple Silicon Macs only. Resolving for that platform alone also keeps torch out of uv.lock.
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+# mlx-whisper declares torch but only imports it for model conversion
+# (mlx_whisper/torch_whisper.py). A marker that never matches drops it.
+override-dependencies = ["torch; sys_platform == 'never'"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not whisper'"
+markers = [
+    "whisper: loads the real Whisper model (slow, ~2 GB RAM); run with `make test-whisper`",
+]
