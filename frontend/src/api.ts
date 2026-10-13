@@ -83,12 +83,15 @@ export interface Transcript {
   segments: Segment[];
 }
 
+export type Layout = "auto" | "track" | "split" | "blur";
+
 export interface Candidate {
   id: string;
   start: number;
   end: number;
-  predicted_score: number;
-  hook_strength: number;
+  // The AI's assessment; null for a manual Candidate.
+  predicted_score: number | null;
+  hook_strength: number | null;
   emotion: string;
   reason: string;
   retention_notes: string;
@@ -96,8 +99,23 @@ export interface Candidate {
   title: string;
   descriptions: { tiktok: string; instagram: string; shorts: string };
   hashtags: string[];
-  window_id: string;
+  window_id: string | null;
   window_score: number | null;
+  origin: "ai" | "manual";
+  layout: Layout;
+  // Chosen for rendering.
+  selected: boolean;
+  // The owner has changed its bounds, hook text or layout.
+  edited: boolean;
+}
+
+// A review edit: fields left out stay as they are. The backend snaps start and end to Words.
+export interface CandidateChange {
+  start?: number;
+  end?: number;
+  hook_text?: string;
+  layout?: Layout;
+  selected?: boolean;
 }
 
 export interface JobDetail extends Job {
@@ -169,6 +187,13 @@ export const api = {
   retryJob: (id: string) => request<Job>(`/jobs/${id}/retry`, { method: "POST" }),
   deleteJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
   disk: () => request<DiskUsage>("/system/disk"),
+  updateCandidate: (jobId: string, id: string, change: CandidateChange) =>
+    request<Candidate>(`/jobs/${jobId}/candidates/${id}`, { method: "PATCH", body: JSON.stringify(change) }),
+  addCandidate: (jobId: string, range: { start: number; end: number }) =>
+    request<Candidate>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(range) }),
 };
+
+// A file from the Job's directory, served with range support for the player.
+export const mediaUrl = (jobId: string, file: string) => `/media/${jobId}/${encodeURIComponent(file)}`;
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;

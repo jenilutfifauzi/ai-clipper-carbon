@@ -33,6 +33,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.worker = worker
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.include_router(api.router)
+    app.include_router(api.media)
     if (settings.frontend_dir / "index.html").is_file():
         _serve_frontend(app, settings.frontend_dir)
     return app

@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     reanalyze = commands.add_parser(
         "reanalyze",
         help="select Candidates again from an existing Job's Transcript, with its Brief and Channel Profile "
-        "snapshot, replacing its Candidates",
+        "snapshot, replacing its Candidates except those edited, selected or added in review",
     )
     reanalyze.add_argument("job_id")
     retry = commands.add_parser(
@@ -104,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Candidates: {len(candidates)} (prompt {job.prompt_version})")
     for rank, candidate in enumerate(candidates, 1):
         span = f"{timestamp(candidate.start)}–{timestamp(candidate.end)}"
-        print(f"{rank:2}. {span} ({candidate.end - candidate.start:.0f} s)  score {candidate.predicted_score}  {candidate.title}")
+        score = "manual" if candidate.predicted_score is None else f"score {candidate.predicted_score}"
+        print(f"{rank:2}. {span} ({candidate.end - candidate.start:.0f} s)  {score}  {candidate.title}")
         print(f"    Hook: {candidate.hook_text}")
     return 0
 

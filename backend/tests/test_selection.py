@@ -97,6 +97,10 @@ def test_job_reaches_review_with_candidates_ranked_by_predicted_score(client, fr
         "hashtags": ["#podcastindonesia", "#bisnis", "#keuangan", "#pelajaranhidup"],
         "window_id": "w007",
         "window_score": 50,
+        "origin": "ai",
+        "layout": "auto",
+        "selected": False,
+        "edited": False,
     }
     assert client.get(f"/api/jobs/{job['id']}").json()["candidates"] == job["candidates"]
 

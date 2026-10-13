@@ -1,23 +1,35 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, FiniteFloat, StringConstraints
 
-from app.candidates import Candidate
+from app import review
+from app.candidates import Candidate, Layout
 from app.config import Settings
 from app.events import job_events
-from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStore
+from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.profile import ChannelProfile, ProfileStore
+from app.review import CandidateChange, CandidateNotFound, Episode, InvalidEdit
 from app.storage import DiskUsage, disk_usage
 from app.transcript import Transcript
 from app.worker import Worker
 
 router = APIRouter(prefix="/api")
+media = APIRouter(prefix="/media")
+
+# The statuses in which the owner can change a Job's Candidates: not before the Job has them, nor
+# while it is analyzed again and its untouched Candidates are about to be replaced.
+EDITABLE = frozenset({JobStatus.REVIEW})
+# What /media serves from a Job's directory: its video, and (from ticket 12) Clips and posters.
+MEDIA_SUFFIXES = frozenset({".mp4", ".m4a", ".jpg", ".png"})
+# The longest hook text accepted; the UI warns well before this, at about 40 characters.
+HOOK_MAX_CHARS = 200
 
 
 def _settings(request: Request) -> Settings:
@@ -54,6 +66,27 @@ ExistingJob = Annotated[Job, Depends(_job)]
 class JobRequest(BaseModel):
     url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     options: JobOptions = JobOptions()
+
+
+class CandidateUpdate(BaseModel):
+    """A review edit; a field left out stays as it is. `start` and `end` are snapped to Words."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: FiniteFloat | None = None
+    end: FiniteFloat | None = None
+    hook_text: Annotated[str, StringConstraints(max_length=HOOK_MAX_CHARS)] | None = None
+    layout: Layout | None = None
+    selected: bool | None = None
+
+
+class ManualCandidate(BaseModel):
+    """A transcript range to make a manual Candidate of, snapped to Words."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: FiniteFloat
+    end: FiniteFloat
 
 
 @dataclass(frozen=True)
@@ -123,6 +156,50 @@ def delete_job(job_id: str, store: Store) -> None:
         raise HTTPException(409, f"{exc}: wait until its stage ends or fails, then delete it") from None
 
 
+@router.patch("/jobs/{job_id}/candidates/{candidate_id}")
+def update_candidate(
+    job_id: str, candidate_id: str, body: CandidateUpdate, store: Store, settings: AppSettings
+) -> Candidate:
+    """Change a Candidate's bounds (snapped to Words), hook text, layout or selected flag, and save it
+    at once. 422 for a range that isn't a usable clip; 409 unless the Job is in review."""
+    change = CandidateChange(**body.model_dump())
+    return _review(
+        store, settings, job_id, lambda candidates, episode: review.update(candidates, candidate_id, change, episode)
+    )
+
+
+@router.post("/jobs/{job_id}/candidates", status_code=201)
+def add_candidate(job_id: str, body: ManualCandidate, store: Store, settings: AppSettings) -> Candidate:
+    """Add a manual Candidate for a transcript range, snapped to Words, after the AI's Candidates."""
+    return _review(
+        store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode)
+    )
+
+
+def _review(
+    store: JobStore,
+    settings: Settings,
+    job_id: str,
+    change: Callable[[list[Candidate], Episode], tuple[list[Candidate], Candidate]],
+) -> Candidate:
+    def edit(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
+        transcript = store.load_transcript(job.id)
+        assert job.source is not None and transcript is not None  # a Job in review has both
+        episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
+        return change(candidates, episode)
+
+    try:
+        return store.change_candidates(job_id, edit, expect=EDITABLE)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except CandidateNotFound as exc:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: Candidates can be changed while it is in review") from None
+    except InvalidEdit as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
 @router.get("/system/disk")
 def disk(settings: AppSettings) -> DiskUsage:
     """The data directory's size, and the free space on its volume."""
@@ -139,3 +216,17 @@ def put_profile(profile: ChannelProfile, profiles: Profiles) -> ChannelProfile:
     """Replace the Channel Profile. New Jobs steer by it; existing Jobs keep their snapshot."""
     profiles.save(profile)
     return profile
+
+
+@media.get("/{job_id}/{path:path}")
+def media_file(job_id: str, path: str, store: Store) -> FileResponse:
+    """A video or image from a Job's directory, with HTTP range support (206 Partial Content), so
+    the browser's player can seek in a long Source. Only files inside that directory are served."""
+    try:
+        job_dir = store.job_dir(job_id).resolve()
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    file = (job_dir / path).resolve()
+    if not (file.is_relative_to(job_dir) and file.suffix.lower() in MEDIA_SUFFIXES and file.is_file()):
+        raise HTTPException(404, f"No media {path!r} in Job {job_id}")
+    return FileResponse(file)

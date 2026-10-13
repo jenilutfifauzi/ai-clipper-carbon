@@ -8,8 +8,8 @@ import { StatusBadge } from "../components/StatusBadge";
 import { formatRelative } from "../format";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { stageIndex } from "../stages";
-import { CandidateList } from "./job/CandidateList";
 import { ErrorNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
+import { Review } from "./job/Review";
 
 export function JobPage() {
   const { jobId = "" } = useParams();
@@ -21,7 +21,7 @@ function progressOf(job: JobDetail): JobProgress {
   return { status, stage, progress, message, error, warnings, retry_at: quota?.retry_at ?? null };
 }
 
-// A Job's live progress, then (in review) its Candidates. Ticket 11 puts the Review UI here.
+// A Job's live progress, then (in review) the review of its Candidates.
 function JobView({ jobId }: { jobId: string }) {
   const [job, setJob] = useState<JobDetail | null>(null);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
@@ -107,14 +107,7 @@ function JobView({ jobId }: { jobId: string }) {
       )}
       {progress.warnings.length > 0 && <Warnings warnings={progress.warnings} />}
 
-      {progress.status === "review" && job.candidates && (
-        <Panel aria-labelledby="candidates-heading">
-          <h2 id="candidates-heading" className="mb-3 font-semibold">
-            Candidates
-          </h2>
-          <CandidateList candidates={job.candidates} />
-        </Panel>
-      )}
+      {progress.status === "review" && job.candidates && <Review key={job.updated_at} job={job} />}
     </div>
   );
 }

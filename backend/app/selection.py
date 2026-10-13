@@ -117,6 +117,28 @@ def select(
     return Selection(PROMPT_VERSION, count, list(examples), scored, [w.id for w in shortlist], proposals, candidates)
 
 
+def snap(
+    transcript: Transcript, duration: float, tuning: SelectionTuning, start: float, end: float
+) -> tuple[float, float] | None:
+    """The owner's range `start`..`end` (a review edit, or a manual Candidate) cut on Word boundaries
+    the way Selection cuts its Candidates: the Words it covers, with the lead-in and tail (see
+    `_Cutter.edges`). None when it covers no Word.
+
+    It covers each Word that ends after `start` and starts before `end`: a range from one Word's
+    start to another's end means those Words, and a Candidate's own edges mean its own Words again,
+    so an edge sent back unchanged stays where it was. A proposal's times are read differently (see
+    `_Cutter.first_word`), and are then moved to whole sentences and fitted to the duration range;
+    the owner's Words are their own choice, so neither is done here.
+    """
+    cutter = _Cutter(transcript, duration, tuning)
+    first = bisect_right(cutter.ends, start)
+    last = bisect_left(cutter.starts, end) - 1
+    if first > last:
+        return None
+    start, end = cutter.edges(first, last)
+    return round(start, 3), round(end, 3)
+
+
 def _target_count(duration: float, tuning: SelectionTuning) -> int:
     return max(tuning.min_candidates, math.floor(duration / 60 / tuning.minutes_per_candidate + 0.5))
 

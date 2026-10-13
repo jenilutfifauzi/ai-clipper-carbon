@@ -1,6 +1,7 @@
 """Candidates: proposed clips awaiting review."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 
 @dataclass(frozen=True)
@@ -12,15 +13,34 @@ class Descriptions:
     shorts: str
 
 
+class Origin(StrEnum):
+    # Proposed by Selection.
+    AI = "ai"
+    # Added by the owner from a transcript range: no AI score, reasoning or copy.
+    MANUAL = "manual"
+
+
+class Layout(StrEnum):
+    """How the clip is framed. Auto lets the Render Planner choose per scene; the others replace its
+    choice for every scene."""
+
+    AUTO = "auto"
+    TRACK = "track"
+    SPLIT = "split"
+    BLUR = "blur"
+
+
 @dataclass(frozen=True)
 class Candidate:
-    # Set once, when Selection creates the Candidate; review edits address it by this.
+    # Set once, when Selection (or the owner, for a manual one) creates the Candidate; review edits
+    # address it by this.
     id: str
     # On the Source's timeline, from just before a Word's start to just after a Word's end.
     start: float
     end: float
-    predicted_score: int
-    hook_strength: int
+    # The AI's assessment; None for a manual Candidate.
+    predicted_score: int | None
+    hook_strength: int | None
     emotion: str
     reason: str
     retention_notes: str
@@ -29,6 +49,37 @@ class Candidate:
     title: str
     descriptions: Descriptions
     hashtags: list[str]
-    # The shortlisted Window it came from, and that Window's Score-pass score.
-    window_id: str
+    # The shortlisted Window it came from, and that Window's Score-pass score; None for a manual one.
+    window_id: str | None
     window_score: int | None
+    origin: Origin = Origin.AI
+    layout: Layout = Layout.AUTO
+    # Chosen for rendering.
+    selected: bool = False
+    # The owner has changed its bounds, hook text or layout.
+    edited: bool = False
+
+    @property
+    def reviewed(self) -> bool:
+        """Whether it holds the owner's review work, which a new run of Selection must keep."""
+        return self.origin is Origin.MANUAL or self.edited or self.selected
+
+
+def manual_candidate(id: str, start: float, end: float) -> Candidate:
+    return Candidate(
+        id=id,
+        start=start,
+        end=end,
+        predicted_score=None,
+        hook_strength=None,
+        emotion="",
+        reason="",
+        retention_notes="",
+        hook_text="",
+        title="",
+        descriptions=Descriptions("", "", ""),
+        hashtags=[],
+        window_id=None,
+        window_score=None,
+        origin=Origin.MANUAL,
+    )

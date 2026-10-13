@@ -276,6 +276,26 @@ class JobStore:
         path = self.job_dir(job_id) / CANDIDATES_FILE
         return _CANDIDATES.validate_json(path.read_bytes()) if path.is_file() else None
 
+    def change_candidates[R](
+        self,
+        job_id: str,
+        change: Callable[[Job, list[Candidate]], tuple[list[Candidate], R]],
+        *,
+        expect: Collection[JobStatus] | None = None,
+    ) -> R:
+        """Save the Candidates `change` makes of the Job's, and return what else it returns. This
+        happens under the store's lock, so review edits and a run of Selection never overwrite each
+        other's Candidates. Like any change to the Job, it moves `updated_at` and listeners are told.
+        With `expect`, as `update`."""
+        with self._lock:
+            job = self.get(job_id)
+            if expect is not None and job.status not in expect:
+                raise JobConflict(f"Job {job_id} is {job.status}")
+            candidates, result = change(job, self.load_candidates(job_id) or [])
+            self.save_candidates(job_id, candidates)
+            self._save(replace(job, updated_at=datetime.now(UTC)))
+            return result
+
     def save_selection(self, job_id: str, selection: Selection) -> None:
         write_atomic(self.job_dir(job_id) / SELECTION_FILE, _SELECTION.dump_json(selection, indent=2))
 

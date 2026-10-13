@@ -12,12 +12,14 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
 from app.audio import SileroVad, chunks
+from app.candidates import Candidate
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import TRANSCRIPT_FILE, Job, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.ports import Ports
 from app.prompts import PROMPT_VERSION
+from app.review import keep_reviewed
 from app.selection import select
 from app.transcriber import TranscriptionStalled, Watchdog
 from app.transcript import Transcript, parse_json3
@@ -237,12 +239,17 @@ class Pipeline:
         )
         selection = replace(selection, llm=self.settings.llm)
         self.store.save_selection(job.id, selection)
-        self.store.save_candidates(job.id, selection.candidates)
+
+        def keep(_: Job, previous: list[Candidate]) -> tuple[list[Candidate], int]:
+            # A Job analyzed again (`make reanalyze`, the eval) keeps the owner's review work.
+            return keep_reviewed(previous, selection.candidates, transcript), sum(c.reviewed for c in previous)
+
+        kept = self.store.change_candidates(job.id, keep)
         self.store.discard_scores(job.id)
         logger.info(
-            "Job %s: %d Candidates from %d Windows and %d few-shot examples (prompt %s, %s)",
+            "Job %s: %d Candidates from %d Windows and %d few-shot examples (prompt %s, %s); kept %d reviewed ones",
             job.id, len(selection.candidates), len(selection.windows), len(examples), selection.prompt_version,
-            selection.llm,
+            selection.llm, kept,
         )
         return self.store.update(job.id, prompt_version=selection.prompt_version)
 

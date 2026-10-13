@@ -25,6 +25,12 @@ export function formatClock(seconds: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
+// A Candidate's edge, to the tenth of a second: "4:05.3".
+export function formatPrecise(seconds: number): string {
+  const tenths = Math.round(seconds * 10);
+  return `${formatClock(Math.floor(tenths / 10))}.${tenths % 10}`;
+}
+
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["second", 60],

@@ -54,7 +54,7 @@ analyze:
 	$(UV) run python -m app.cli analyze "$(URL)" $(ARGS)
 
 # Select Candidates again from an existing Job's Transcript (no download), e.g. after a prompt change.
-# Replaces the Job's Candidates: make reanalyze JOB=<job-id>
+# Replaces the Job's Candidates, except those edited, selected or added in review: make reanalyze JOB=<job-id>
 reanalyze:
 	@[ -n "$(JOB)" ] || { echo "Usage: make reanalyze JOB=<job-id>"; exit 1; }
 	$(UV) run python -m app.cli reanalyze "$(JOB)"
