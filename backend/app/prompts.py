@@ -11,7 +11,8 @@ are in English for the reviewer; the JSON skeletons are gone, as the response sc
 the answer. Added: the Channel Profile and the Brief, in both passes so that a Brief can change the
 shortlist (the Score pass gets the profile in short), few-shot examples in the Detail pass, and
 in v3 the whole-sentence rule, a distinct `topic` per clip and spare clips; in v4 Emphasis in the
-hook, a `hook_kicker`, and no emoji in either.
+hook, a `hook_kicker`, and no emoji in either; in v5 which words take the Emphasis, and an empty
+Kicker over a generic one.
 Each of these sections is left out when there is nothing to put in it.
 
 Audio-signal mode (SELECTION_AUDIO_SIGNAL) sends the shortlisted Windows' audio with the Detail
@@ -34,7 +35,7 @@ from app.transcript import timestamp
 if TYPE_CHECKING:
     from app.selection import ScoredWindow, Window
 
-PROMPT_VERSION = "v4"
+PROMPT_VERSION = "v5"
 # Added to PROMPT_VERSION for a run whose Detail request carried audio.
 AUDIO_SUFFIX = "-audio"
 
@@ -152,9 +153,12 @@ CLIP RULES:
 HOOK PLAYBOOK for `viral_hook_text`, the overlay shown over the clip's first 3 seconds:
 - At most about 40 characters (it is shown on a few short lines), in TRANSCRIPT_LANGUAGE, in
   the speakers' own register (casual "gue/lo" if that is how they talk).
-- EMPHASIS: wrap the 1 to 3 words that carry the hook (the claim, the number, the name) in
-  asterisks, which show them in a highlight colour: "Gue pernah *rugi 500 juta*". Never more
-  than one run of words in a short hook, never the whole hook.
+- EMPHASIS: wrap the 1 to 3 words that carry the hook in asterisks, which show them in a
+  highlight colour. They are the concrete words a viewer must not miss: the number, the name, the
+  thing, the shocking claim ("Gue pernah *rugi 500 juta*", "Gajinya cuma *3 juta* sebulan",
+  "Terima kasih, *orang baik*"). Never a connective or filler ("*Untungnya* ada orang baik",
+  "*Karena kita* bersama" are wrong: karena, untungnya, tapi, jadi, yang, ini, itu, ternyata
+  carry nothing). One run of words in a short hook, never the whole hook.
 - No emoji, in the hook or the kicker: they can't be drawn on the video.
 - Pick the strongest fitting pattern:
   - Open question: "Kenapa semua orang salah soal ini?"
@@ -167,8 +171,10 @@ HOOK PLAYBOOK for `viral_hook_text`, the overlay shown over the clip's first 3 s
   claim, the number, the name, the confession. A line that could sit on any clip of this episode
   is wrong. If nothing concrete can be named, quote the clip's strongest phrase.
 - `hook_kicker`: a label of 1 or 2 words shown in a pill above the hook, at most 24 characters,
-  in TRANSCRIPT_LANGUAGE: the clip's kind or its tease ("TERBONGKAR!", "FAKTA", "POV",
-  "PLOT TWIST"). Leave it "" when no label adds anything; never repeat the hook's words.
+  in TRANSCRIPT_LANGUAGE, that tells what kind of moment this is and the hook doesn't
+  ("TERBONGKAR!", "FAKTA", "PLOT TWIST", "KISAH NYATA"). A mood or a cheer ("SEMANGAT",
+  "MOTIVASI", "KEREN") is not a label: leave it "". Most clips need none; never repeat the hook's
+  words (a Kicker made only of them is dropped).
 
 COPY RULES, all written in {language}:
 - `title`: at most 100 characters, curiosity-driven, no claim the clip doesn't deliver. It is also

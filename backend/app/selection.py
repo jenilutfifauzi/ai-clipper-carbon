@@ -417,7 +417,20 @@ def _cut(text: str, limit: int) -> str:
     return kept
 
 
+def _words(text: str) -> set[str]:
+    """The words of `text`, in lower case, without punctuation or Emphasis marks."""
+    return set(re.findall(r"\w+", text.lower()))
+
+
+def _kicker(text: str, hook: str) -> str:
+    """The AI's Kicker as kept: cut to KICKER_MAX_CHARS, and "" when every word of it is in the
+    `hook` (it would only say the hook twice)."""
+    kicker = _cut(without_emoji(text), KICKER_MAX_CHARS)
+    return "" if _words(kicker) <= _words(hook) else kicker
+
+
 def _candidate(proposal: ClipProposal, start: float, end: float, window_score: int | None) -> Candidate:
+    hook = _cut(without_emoji(proposal.viral_hook_text), HOOK_MAX_CHARS)
     hashtags = ("#" + tag.strip().lstrip("#").replace(" ", "") for tag in proposal.hashtags if tag.strip("# "))
     return Candidate(
         id=uuid4().hex[:8],
@@ -428,8 +441,8 @@ def _candidate(proposal: ClipProposal, start: float, end: float, window_score: i
         emotion=proposal.emotion.strip(),
         reason=proposal.reason.strip(),
         retention_notes=proposal.retention_notes.strip(),
-        hook_text=_cut(without_emoji(proposal.viral_hook_text), HOOK_MAX_CHARS),
-        hook_kicker=_cut(without_emoji(proposal.hook_kicker), KICKER_MAX_CHARS),
+        hook_text=hook,
+        hook_kicker=_kicker(proposal.hook_kicker, hook),
         title=proposal.title.strip(),
         descriptions=Descriptions(
             tiktok=proposal.tiktok_description.strip(),

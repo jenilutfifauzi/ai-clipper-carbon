@@ -442,3 +442,12 @@ def test_the_ais_text_is_cut_to_whole_words_and_never_leaves_an_unpaired_asteris
     assert _cut("supercalifragilistic", 5) == "super"
     # Cut inside a run: its opening asterisk goes too, so no stray one is shown.
     assert _cut("Ini *kata kata kata*", 14) == "Ini kata kata"
+
+
+def test_a_kicker_that_only_repeats_the_hook_is_left_out(client, from_episode, llm, wait_for_status):
+    llm.clips = [
+        clip("10:00", "10:44", 80, viral_hook_text="Terima kasih, *orang baik*", hook_kicker="TERIMA KASIH"),
+        clip("20:00", "20:40", 70, viral_hook_text="Gue *rugi 500 juta*", hook_kicker="Kisah nyata"),
+    ]
+    repeated, kept = analyzed(client, wait_for_status)["candidates"]
+    assert (repeated["hook_kicker"], kept["hook_kicker"]) == ("", "Kisah nyata")

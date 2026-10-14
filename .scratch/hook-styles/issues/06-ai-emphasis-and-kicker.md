@@ -14,7 +14,7 @@
 
 **Blocked by:** 02, 03.
 
-**Status:** done
+**Status:** ready-for-human
 
 - [x] Selection test with a fake LLM: markup kept, Kicker normalised, emoji stripped, and a missing `hook_kicker` read as `""`.
 - [x] Existing Candidates load with an empty Kicker.
@@ -49,3 +49,10 @@ Built:
 - One Kicker repeats the hook's words ("TERIMA KASIH"), which the prompt forbids, and "SEMANGAT" is generic.
 
 The sample is one short episode, and its hooks are vague too, which may be the material. A v5 should name the words to emphasise (nouns, numbers, names; never connectives) and prefer "" to a generic Kicker.
+
+**2026-10-14: prompt v5.** Changed after the v4 run:
+- **Emphasis** names its words: the number, the name, the thing, the claim. It is never a connective or filler (karena, untungnya, tapi, jadi, yang, ini, itu, ternyata), and v4's two misses are quoted as wrong.
+- **Kicker** is a kind of moment the hook doesn't say. A mood or cheer ("SEMANGAT", "MOTIVASI", "KEREN") is not one; most clips need none.
+- **`selection._kicker`** drops a Kicker whose words are all in the hook ("TERIMA KASIH" over "Terima kasih, *orang baik*"). A Kicker sharing only common words like "ini" or "yang" stays.
+
+Back to `ready-for-human` until the owner reruns `make reanalyze JOB=934fb0fe1f9a` (or another episode) on v5 and the results are noted here.
