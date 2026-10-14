@@ -63,6 +63,35 @@ export function jobTitle(job: Pick<Job, "url" | "upload">): string {
   return job.upload ? job.upload.name : shortUrl(job.url);
 }
 
+// A still of what a Job is of: YouTube's own thumbnail, known from the URL before anything is
+// downloaded, or a frame of the uploaded file once it's stored; null when there's none yet.
+export function jobThumbnail(job: Pick<Job, "id" | "url" | "upload" | "source">): string | null {
+  if (job.upload) return job.source ? `/api/jobs/${job.id}/thumbnail` : null;
+  const id = youtubeId(job.url);
+  return id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : null;
+}
+
+// The video in a YouTube URL (watch, youtu.be, live, shorts or embed form), or null; the rules of
+// video_id in backend/app/references.py.
+export function youtubeId(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.includes("://") ? url.trim() : `https://${url.trim()}`);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.replace(/^www\./, "").replace(/^m\./, "");
+  const path = parsed.pathname.split("/").filter(Boolean);
+  let found = "";
+  if (host === "youtu.be" && path.length === 1) found = path[0];
+  else if (["youtube.com", "music.youtube.com", "youtube-nocookie.com"].includes(host) && path.join("/") === "watch") {
+    found = parsed.searchParams.get("v") ?? "";
+  } else if (["youtube.com", "youtube-nocookie.com"].includes(host) && path.length === 2 && ["live", "shorts", "embed"].includes(path[0])) {
+    found = path[1];
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(found) ? found : null;
+}
+
 // A YouTube URL shortened to what tells episodes apart: its video id.
 export function shortUrl(url: string): string {
   try {

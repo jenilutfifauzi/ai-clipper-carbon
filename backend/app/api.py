@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
 from app.candidates import Candidate, Layout, LayoutOverride, WordEdit
@@ -19,6 +19,7 @@ from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.planner import HOOK_SIZE, fit_hook, font_metrics
+from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit
@@ -222,8 +223,18 @@ def check_upload(size: Annotated[int, Query(ge=0)], settings: AppSettings) -> No
 
 
 @router.get("/jobs")
-def list_jobs(store: Store) -> list[Job]:
-    return store.all()
+def list_jobs(
+    store: Store,
+    limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+    before: AwareDatetime | None = None,
+) -> list[Job]:
+    """The Jobs, newest first: every one, or a page of `limit`. The next page is the one `before`
+    the last Job's `created_at`, a cursor that neither skips nor repeats a Job when others are
+    started or deleted meanwhile."""
+    jobs = store.all()
+    if before is not None:
+        jobs = [job for job in jobs if job.created_at < before]
+    return jobs[:limit]
 
 
 @router.get("/jobs/{job_id}")
@@ -239,6 +250,43 @@ def get_job(job_id: str, store: Store) -> JobDetail:
         candidates=candidates,
         clips=ranked_clips(store.load_clips(job_id), candidates or []),
     )
+
+
+@router.get("/jobs/{job_id}/thumbnail")
+def job_thumbnail(job: ExistingJob, store: Store, settings: AppSettings) -> FileResponse:
+    """A still of the Job's Source, for the Jobs list: taken the first time it's asked for, then
+    kept in the Job's directory. 404 until the Source is there."""
+    if job.source is None:
+        raise HTTPException(404, f"Job {job.id} has no Source yet")
+    job_dir = store.job_dir(job.id)
+    still = job_dir / THUMBNAIL_FILE
+    if not still.is_file():
+        try:
+            make_thumbnail(settings.ffmpeg_bin, job_dir / job.source.video, job.source.metadata.duration)
+        except RuntimeError as exc:
+            raise HTTPException(404, str(exc)) from None
+    return FileResponse(still, headers={"Cache-Control": "max-age=86400"})
+
+
+@router.get("/jobs/{job_id}/candidates/{candidate_id}/thumbnail")
+def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, settings: AppSettings) -> FileResponse:
+    """A still of the Source where a Candidate starts, for the Candidates list: from as far into it
+    as its Clip's poster, taken the first time it's asked for, then kept in the Job's directory
+    under its time. After a trim it's another still, so the browser asks with the Candidate's range."""
+    candidate = next((c for c in store.load_candidates(job.id) or [] if c.id == candidate_id), None)
+    if candidate is None:
+        raise HTTPException(404, f"No Candidate {candidate_id} in Job {job.id}")
+    if job.source is None:
+        raise HTTPException(404, f"Job {job.id} has no Source")
+    job_dir = store.job_dir(job.id)
+    at = candidate.start + min(settings.render.poster_secs, (candidate.end - candidate.start) / 2)
+    still = job_dir / STILLS_DIR / f"{round(at * 1000)}.jpg"
+    if not still.is_file():
+        try:
+            take_still(settings.ffmpeg_bin, job_dir / job.source.video, at, still, 320)
+        except RuntimeError as exc:
+            raise HTTPException(404, str(exc)) from None
+    return FileResponse(still, headers={"Cache-Control": "max-age=86400"})
 
 
 @router.get("/jobs/{job_id}/events", response_class=EventSourceResponse)

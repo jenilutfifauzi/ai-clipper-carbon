@@ -150,6 +150,25 @@ def test_listing_jobs_leaves_out_transcripts_and_candidates(client, wait_for_sta
     assert "candidates" not in listed
 
 
+def test_jobs_are_listed_a_page_at_a_time_before_the_last_one_listed(client, video_source):
+    video_source.hold()
+    ids = [create_job(client, f"https://youtu.be/job{n}")["id"] for n in range(5)]
+    newest_first = ids[::-1]
+
+    first = client.get("/api/jobs", params={"limit": 2}).json()
+    assert [job["id"] for job in first] == newest_first[:2]
+    second = client.get("/api/jobs", params={"limit": 2, "before": first[-1]["created_at"]}).json()
+    assert [job["id"] for job in second] == newest_first[2:4]
+    last = client.get("/api/jobs", params={"limit": 2, "before": second[-1]["created_at"]}).json()
+    assert [job["id"] for job in last] == newest_first[4:]
+    assert [job["id"] for job in client.get("/api/jobs").json()] == newest_first
+
+
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 101}, {"before": "2026-01-01T00:00:00"}])
+def test_a_page_of_jobs_needs_a_sensible_limit_and_a_cursor_with_a_timezone(client, params):
+    assert client.get("/api/jobs", params=params).status_code == 422
+
+
 def test_failing_source_puts_the_job_in_error_and_the_next_job_still_runs(client, video_source, wait_for_status):
     video_source.fail_with(RuntimeError("Video unavailable"))
     failed = wait_for_status(create_job(client)["id"], "review", "error")

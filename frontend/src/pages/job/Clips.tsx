@@ -5,9 +5,14 @@ import { Button, buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
 import { ScoreRing } from "../../components/ScoreRing";
+import { Skeleton } from "../../components/Skeleton";
 import { formatBytes } from "../../format";
+import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
+
+// How many more Clips are drawn each time the end of the grid comes into reach.
+const BATCH = 6;
 
 /**
  * The rendered Clips, in their Candidates' order (by score): each with its player, the AI's
@@ -31,6 +36,7 @@ export function Clips({
   useEffect(() => {
     if (clips.length > 0) api.listPresets().then(setPresets, () => {});
   }, [clips.length > 0]);
+  const { shown, more, sentinelRef } = useReveal(clips.length, BATCH);
   if (clips.length === 0) return null;
   const done = clips.filter((clip) => clip.output).length;
   const waiting = clips.filter((clip) => clip.status === "queued" || clip.status === "rendering").length;
@@ -45,7 +51,7 @@ export function Clips({
         </p>
       </div>
       <ul className="grid gap-x-5 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
-        {clips.map((clip) => {
+        {clips.slice(0, shown).map((clip) => {
           const index = candidates.findIndex((candidate) => candidate.id === clip.candidate_id);
           return (
             <ClipCard
@@ -60,6 +66,13 @@ export function Clips({
             />
           );
         })}
+        {more && (
+          <li ref={sentinelRef} aria-hidden className="flex min-w-0 flex-col gap-3">
+            <Skeleton className="mx-auto aspect-[9/16] w-full max-w-[calc(85svh*9/16)] rounded-[20px]" />
+            <Skeleton className="h-4 w-3/4 rounded-full" />
+            <Skeleton className="h-3.5 w-1/2 rounded-full" />
+          </li>
+        )}
       </ul>
     </Panel>
   );

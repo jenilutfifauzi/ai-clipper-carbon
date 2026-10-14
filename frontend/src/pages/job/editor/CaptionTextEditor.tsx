@@ -1,5 +1,5 @@
-import { CornerDownLeft, RotateCcw, Trash2, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { ChevronDown, CornerDownLeft, RotateCcw, Trash2, X } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { PreviewPlan, PreviewWord, WordEdit } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx, formatPrecise } from "../../../format";
@@ -28,6 +28,8 @@ export function CaptionTextEditor({
   onChange: (edits: WordEdit[]) => void;
 }) {
   const [open, setOpen] = useState<number | null>(null);
+  // A long clip's lines start folded to their first few; the timeline focusing a Word unfolds them.
+  const [expanded, setExpanded] = useState(false);
   const words = preview.words;
   const spoken = usePlayback(playback, (time) => words.findIndex((word) => word.start <= time && time < word.end));
   // Where the plan starts its lines: the first Word of each caption event.
@@ -36,7 +38,10 @@ export function CaptionTextEditor({
   useEffect(() => {
     if (!focus) return;
     const index = words.findIndex((word) => word.end > focus.at);
-    if (index !== -1) setOpen(index);
+    if (index !== -1) {
+      setOpen(index);
+      setExpanded(true);
+    }
   }, [focus, words]);
 
   // The time a Word's edit is keyed by: its edit's own, or its middle on the Source's timeline.
@@ -52,6 +57,7 @@ export function CaptionTextEditor({
 
   if (words.length === 0) return <p className="text-sm text-muted">No words are heard in this clip.</p>;
   const editedCount = words.filter((word) => word.edit).length;
+  const grouped = lines(words, lineStarts);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -66,9 +72,9 @@ export function CaptionTextEditor({
           </Button>
         )}
       </div>
-      <div className="flex flex-wrap gap-x-2 gap-y-2 rounded-control bg-fill p-2">
-        {lines(words, lineStarts).map((line) => (
-          <span key={line[0]} className="inline-flex flex-wrap items-center rounded-[10px] px-0.5 ring-1 ring-border">
+      <Fold expanded={expanded} onExpanded={setExpanded} count={grouped.length}>
+        {grouped.map((line) => (
+          <span key={line[0]} className="inline-flex flex-wrap items-center rounded-lg p-px ring-1 ring-border">
             {line.map((i) => {
               const word = words[i];
               const edit = word.edit;
@@ -85,7 +91,7 @@ export function CaptionTextEditor({
                   aria-label={edit?.break_before ? `${edit?.text || word.text}, starts a line` : undefined}
                   title={edit?.text != null && !removed ? `Heard as “${word.text}”` : undefined}
                   className={cx(
-                    "inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-base",
+                    "inline-flex items-center gap-0.5 rounded-md px-[3px] text-sm leading-6 pointer-coarse:leading-8",
                     "focus-visible:outline-2 focus-visible:outline-focus",
                     open === i ? "bg-accent text-on-accent" : spoken === i ? "bg-surface-raised" : "hover:bg-surface-raised",
                     removed && open !== i && "text-muted line-through",
@@ -99,7 +105,7 @@ export function CaptionTextEditor({
             })}
           </span>
         ))}
-      </div>
+      </Fold>
       {open !== null && words[open] && (
         <WordForm
           key={keyOf(words[open])}
@@ -108,6 +114,94 @@ export function CaptionTextEditor({
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// The folded height: six rows of lines and the top of the next, so it reads as cut off.
+const FOLDED = 196;
+
+// The lines' box, folded to FOLDED when they run taller, with a button to unfold or fold them. Its
+// height eases between the two; tabbing to a Word below the fold unfolds it.
+function Fold({
+  expanded,
+  onExpanded,
+  count,
+  children,
+}: {
+  expanded: boolean;
+  onExpanded: (expanded: boolean) => void;
+  count: number;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const box = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const element = content.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setHeight(element.offsetHeight));
+    observer.observe(element);
+    setHeight(element.offsetHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  const folds = height > FOLDED;
+  const folded = folds && !expanded;
+
+  return (
+    <div ref={box} className="flex flex-col rounded-control bg-fill">
+      <div
+        id={id}
+        style={folds ? { height: folded ? FOLDED : height } : undefined}
+        className="overflow-hidden motion-safe:transition-[height] motion-safe:duration-300 motion-safe:ease-out"
+        onFocus={(event) => {
+          // Measured from the lines' top: focusing has already scrolled the box to the Word.
+          if (!folded || !content.current) return;
+          if (event.target.getBoundingClientRect().bottom - content.current.getBoundingClientRect().top <= FOLDED) return;
+          event.currentTarget.scrollTop = 0;
+          onExpanded(true);
+        }}
+      >
+        <div
+          ref={content}
+          className={cx(
+            "flex flex-wrap gap-1 p-1.5",
+            folded && "[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent_calc(100%-0.25rem))]",
+          )}
+        >
+          {children}
+        </div>
+      </div>
+      {folds && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => {
+            onExpanded(!expanded);
+            // Folding from far down would leave the page scrolled past the lines.
+            if (expanded && box.current && box.current.getBoundingClientRect().top < 0) {
+              const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+              box.current.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+            }
+          }}
+          className={cx(
+            "flex min-h-9 items-center justify-center gap-1.5 rounded-b-control border-t border-border text-sm font-medium text-muted",
+            "hover:text-current focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
+            "motion-safe:transition-colors motion-safe:duration-150 motion-safe:ease-out",
+          )}
+        >
+          {expanded ? "Show less" : `Show all ${count} lines`}
+          <ChevronDown
+            aria-hidden
+            size={15}
+            className={cx("motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out", expanded && "rotate-180")}
+          />
+        </button>
       )}
     </div>
   );

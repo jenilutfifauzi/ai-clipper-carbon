@@ -1,6 +1,6 @@
-import { ArrowLeft, ExternalLink, FileVideo } from "lucide-react";
+import { ExternalLink, FileVideo } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useParams } from "react-router";
 import { api, ApiError, type Clip, type JobDetail, type JobProgress } from "../api";
 import { Panel } from "../components/Panel";
 import { StageProgress } from "../components/StageProgress";
@@ -8,6 +8,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { formatBytes, formatRelative } from "../format";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { stageIndex } from "../stages";
+import { BackLink, JobSkeleton } from "./job/JobSkeleton";
 import { ErrorNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
 import { Review } from "./job/Review";
 
@@ -67,7 +68,7 @@ function JobView({ jobId }: { jobId: string }) {
       </Panel>
     );
   }
-  if (!job) return <p className="text-muted">Loading the Job…</p>;
+  if (!job) return <JobSkeleton />;
 
   const progress = events.progress ?? progressOf(job);
   const reached = Math.max(
@@ -161,14 +162,5 @@ function JobView({ jobId }: { jobId: string }) {
         <Review key={job.updated_at} job={job} clips={clips} progress={progress} onRender={render} onPrepare={prepare} />
       )}
     </div>
-  );
-}
-
-function BackLink() {
-  return (
-    <Link to="/" className="-ml-1 inline-flex min-h-11 items-center gap-1.5 self-start rounded-control px-1 text-sm text-muted hover:text-text">
-      <ArrowLeft aria-hidden size={16} />
-      All Jobs
-    </Link>
   );
 }

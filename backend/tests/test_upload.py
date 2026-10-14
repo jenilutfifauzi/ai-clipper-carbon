@@ -119,6 +119,52 @@ def test_a_master_the_browser_cant_play_gets_a_720p_h264_preview_proxy(client, s
     assert response.status_code == 206 and response.headers["content-type"] == "video/mp4"
 
 
+def test_an_uploads_thumbnail_is_a_still_of_its_master_taken_once_and_kept(
+    client, settings, hevc_master, video_source, wait_for_status
+):
+    video_source.hold()
+    waiting = client.post("/api/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).json()
+    wait_for_status(waiting["id"], "downloading")
+    # No Source yet, so nothing to take a still of.
+    assert client.get(f"/api/jobs/{waiting['id']}/thumbnail").status_code == 404
+    video_source.release()
+
+    job = wait_for_status(upload(client, hevc_master, "Master.MOV").json()["id"], "review", "error")
+    response = client.get(f"/api/jobs/{job['id']}/thumbnail")
+    assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+    still = settings.data_dir / "jobs" / job["id"] / "thumb.jpg"
+    assert still.read_bytes() == response.content
+    picture = streams(still)["streams"][0]
+    assert (picture["codec_name"], picture["width"], picture["height"]) == ("mjpeg", 480, 270)
+
+    # Asked again, it's the same file, not taken again.
+    taken = still.stat().st_mtime_ns
+    assert client.get(f"/api/jobs/{job['id']}/thumbnail").content == response.content
+    assert still.stat().st_mtime_ns == taken
+    assert client.get("/api/jobs/0123456789ab/thumbnail").status_code == 404
+
+
+def test_a_candidates_thumbnail_is_a_still_of_where_it_starts_kept_under_its_time(
+    client, settings, speech, wait_for_status
+):
+    job = wait_for_status(upload(client, speech.video, "episode.mp4").json()["id"], "review", "error")
+    candidate = client.post(f"/api/jobs/{job['id']}/candidates", json={"start": 1.0, "end": 6.0}).json()
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/thumbnail"
+    response = client.get(url)
+    assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+    stills = settings.data_dir / "jobs" / job["id"] / "stills"
+    [still] = stills.iterdir()
+    at = candidate["start"] + min(settings.render.poster_secs, (candidate["end"] - candidate["start"]) / 2)
+    assert still.name == f"{round(at * 1000)}.jpg" and still.read_bytes() == response.content
+    assert streams(still)["streams"][0]["width"] == 320
+
+    # Asked again, it's the same file, not taken again.
+    taken = still.stat().st_mtime_ns
+    assert client.get(url).content == response.content
+    assert still.stat().st_mtime_ns == taken
+    assert client.get(f"/api/jobs/{job['id']}/candidates/nope/thumbnail").status_code == 404
+
+
 def test_browser_playable_means_iso_bmff_with_h264_vp9_or_av1_video_and_web_audio(speech, tmp_path):
     def made(name: str, *args: str) -> Path:
         return encode(speech.video, tmp_path / name, "-t", "0.5", *args)

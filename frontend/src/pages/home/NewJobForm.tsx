@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ChevronRight } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router";
 import { api, uploadJob, type JobOptions, type UploadProgress } from "../../api";
@@ -32,14 +32,18 @@ const INPUT = cx(
 const LABEL = "text-sm font-medium";
 const HINT = "text-sm text-muted";
 
-// Start a Job from a YouTube URL or an uploaded master file, with an optional Brief and the Job's
-// options; then open its page.
+// Start a Job from a YouTube URL or an uploaded master file; then open its page. The optional Brief
+// and the Job's options sit in a closed "Advanced options" section whose summary shows their values.
 export function NewJobForm() {
   const navigate = useNavigate();
   const id = useId();
   const [minSecs, setMinSecs] = useState("20");
   const [maxSecs, setMaxSecs] = useState("90");
   const [captions, setCaptions] = useState(true);
+  const [language, setLanguage] = useState("id");
+  const [brief, setBrief] = useState("");
+  const [advanced, setAdvanced] = useState(false);
+  const advancedSection = useRef<HTMLDetailsElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<Origin>("url");
@@ -66,11 +70,11 @@ export function NewJobForm() {
     setPending(true);
     setError(null);
     const options: Partial<JobOptions> = {
-      brief: String(form.get("brief")).trim() || null,
+      brief: brief.trim() || null,
       min_secs: Number(minSecs),
       max_secs: Number(maxSecs),
       captions,
-      language: String(form.get("language")).trim(),
+      language: language.trim(),
     };
     try {
       let job;
@@ -102,16 +106,28 @@ export function NewJobForm() {
     }
   }
 
+  // The browser can't point at an invalid field inside the closed section, so open it first.
+  function openOnInvalid(event: FormEvent<HTMLFormElement>) {
+    if (advancedSection.current?.contains(event.target as Node)) setAdvanced(true);
+  }
+
+  const summary = [
+    `${minSecs || "?"}–${maxSecs || "?"} s`,
+    language.trim() || "?",
+    captions ? "Captions on" : "Captions off",
+    ...(brief.trim() ? ["Brief"] : []),
+  ].join(" · ");
+
   return (
     <Panel aria-labelledby={`${id}-heading`}>
       <h1 id={`${id}-heading`} className="text-2xl font-semibold tracking-tight text-balance">
-        New Job
+        New Clips
       </h1>
-      <p className="mt-1 text-pretty text-muted">
+      <p className="mt-1 max-w-prose text-pretty text-muted">
         Paste a published episode, or upload its master file. Candidates are ready to review when it's analyzed.
       </p>
 
-      <form onSubmit={submit} className="mt-6 flex flex-col gap-5">
+      <form onSubmit={submit} onInvalidCapture={openOnInvalid} className="mt-6 flex flex-col gap-5">
         <Segmented
           legend="Episode"
           options={ORIGINS}
@@ -148,109 +164,127 @@ export function NewJobForm() {
           </div>
         )}
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${id}-brief`} className={LABEL}>
-            Brief <span className="font-normal text-muted">(optional)</span>
-          </label>
-          <span id={`${id}-brief-hint`} className={HINT}>
-            What to look for in this episode, e.g. "find the funny moments".
-          </span>
-          <textarea
-            id={`${id}-brief`}
-            name="brief"
-            rows={2}
-            aria-describedby={`${id}-brief-hint`}
-            onKeyDown={submitFromBrief}
-            className={cx(INPUT, "resize-y")}
-          />
-        </div>
-
-        <fieldset className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4">
-          <legend className="sr-only">Options</legend>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={`${id}-min`} className={LABEL}>
-              Shortest clip
-            </label>
-            <div className="relative">
-              <input
-                id={`${id}-min`}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                required
-                value={minSecs}
-                onChange={(event) => setMinSecs(event.target.value)}
-                className={cx(INPUT, "pr-8 tabular-nums")}
-              />
-              <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3.5 grid place-items-center text-muted">
-                s
+        <details
+          ref={advancedSection}
+          open={advanced}
+          onToggle={(event) => setAdvanced(event.currentTarget.open)}
+          className="group -mx-2"
+        >
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-control px-2 select-none hover:bg-fill motion-safe:transition-colors [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden size={18} className="shrink-0 text-muted group-open:rotate-90 motion-safe:transition-transform motion-safe:duration-150 motion-safe:ease-out" />
+            <span className={cx(LABEL, "shrink-0")}>Advanced options</span>
+            <span className="min-w-0 truncate text-sm text-muted tabular-nums">{summary}</span>
+          </summary>
+          <div className="flex flex-col gap-5 px-2 pt-3">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor={`${id}-brief`} className={LABEL}>
+                Brief <span className="font-normal text-muted">(optional)</span>
+              </label>
+              <span id={`${id}-brief-hint`} className={HINT}>
+                What to look for in this episode, e.g. "find the funny moments".
               </span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={`${id}-max`} className={LABEL}>
-              Longest clip
-            </label>
-            <div className="relative">
-              <input
-                id={`${id}-max`}
-                ref={maxInput}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                required
-                value={maxSecs}
-                onChange={(event) => setMaxSecs(event.target.value)}
-                aria-describedby={`${id}-range-error`}
-                className={cx(INPUT, "pr-8 tabular-nums")}
+              <textarea
+                id={`${id}-brief`}
+                name="brief"
+                rows={2}
+                value={brief}
+                onChange={(event) => setBrief(event.target.value)}
+                aria-describedby={`${id}-brief-hint`}
+                onKeyDown={submitFromBrief}
+                className={cx(INPUT, "resize-y")}
               />
-              <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3.5 grid place-items-center text-muted">
-                s
-              </span>
             </div>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={`${id}-language`} className={LABEL}>
-              Language
-            </label>
-            <input
-              id={`${id}-language`}
-              name="language"
-              list={`${id}-languages`}
-              required
-              defaultValue="id"
-              pattern="[A-Za-z]{2,3}(-[A-Za-z0-9]+)*"
-              title="A language code such as id or en"
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className={INPUT}
-            />
-            <datalist id={`${id}-languages`}>
-              {LANGUAGES.map(([code, name]) => (
-                <option key={code} value={code}>
-                  {name}
-                </option>
-              ))}
-            </datalist>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <span id={`${id}-captions-label`} className={LABEL}>
-              Captions
-            </span>
-            <Switch checked={captions} onChange={setCaptions} labelledBy={`${id}-captions-label`}>
-              <span className="text-sm text-muted">{captions ? "On" : "Off"}</span>
-            </Switch>
-          </div>
-          {rangeError && (
-            <p id={`${id}-range-error`} className="col-span-full -mt-2 text-sm text-danger">
-              {rangeError}
-            </p>
-          )}
-        </fieldset>
 
-        <div aria-live="polite">
+            <fieldset className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4">
+              <legend className="sr-only">Options</legend>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${id}-min`} className={LABEL}>
+                  Shortest clip
+                </label>
+                <div className="relative">
+                  <input
+                    id={`${id}-min`}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    required
+                    value={minSecs}
+                    onChange={(event) => setMinSecs(event.target.value)}
+                    className={cx(INPUT, "pr-8 tabular-nums")}
+                  />
+                  <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3.5 grid place-items-center text-muted">
+                    s
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${id}-max`} className={LABEL}>
+                  Longest clip
+                </label>
+                <div className="relative">
+                  <input
+                    id={`${id}-max`}
+                    ref={maxInput}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    required
+                    value={maxSecs}
+                    onChange={(event) => setMaxSecs(event.target.value)}
+                    aria-describedby={`${id}-range-error`}
+                    className={cx(INPUT, "pr-8 tabular-nums")}
+                  />
+                  <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3.5 grid place-items-center text-muted">
+                    s
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${id}-language`} className={LABEL}>
+                  Language
+                </label>
+                <input
+                  id={`${id}-language`}
+                  name="language"
+                  list={`${id}-languages`}
+                  required
+                  value={language}
+                  onChange={(event) => setLanguage(event.target.value)}
+                  pattern="[A-Za-z]{2,3}(-[A-Za-z0-9]+)*"
+                  title="A language code such as id or en"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className={INPUT}
+                />
+                <datalist id={`${id}-languages`}>
+                  {LANGUAGES.map(([code, name]) => (
+                    <option key={code} value={code}>
+                      {name}
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <span id={`${id}-captions-label`} className={LABEL}>
+                  Captions
+                </span>
+                <Switch checked={captions} onChange={setCaptions} labelledBy={`${id}-captions-label`}>
+                  <span className="text-sm text-muted">{captions ? "On" : "Off"}</span>
+                </Switch>
+              </div>
+              {rangeError && (
+                <p id={`${id}-range-error`} className="col-span-full -mt-2 text-sm text-danger">
+                  {rangeError}
+                </p>
+              )}
+            </fieldset>
+          </div>
+        </details>
+
+        {/* Empty, it takes no room: the gap above the submit button stays one gap. */}
+        <div aria-live="polite" className="empty:-mt-5">
           {error && <p className="rounded-control bg-danger-surface p-3 text-sm text-danger">{error}</p>}
         </div>
 
@@ -270,7 +304,7 @@ export function NewJobForm() {
           </div>
         ) : (
           <Button type="submit" variant="primary" disabled={pending} className="self-start">
-            {pending ? "Starting…" : origin === "upload" ? "Upload and start" : "Start Job"}
+            {pending ? "Starting…" : origin === "upload" ? "Upload and start" : "Start clipping"}
             <ArrowRight aria-hidden size={18} />
           </Button>
         )}

@@ -31,7 +31,7 @@ Built:
 - **Backend:** the new `RenderedClip` fields (all optional, so old `clips.json` files load), filled by `_render`.
 - **`Clips.tsx`:** `changedSince(candidate, output, presets)` with key-order-independent deep equality.
 - **Editor layout:**
-  - **Wide (xl):** the preview column (20 rem, sticky) beside tabs. The tabs are Text (caption words), Style (Style panel), Hook (text and timing) and Clip (the clip's layout and the Transcript Picker). They follow the tab pattern: `role=tablist`, ←/→ between tabs.
+  - **Wide (xl):** the preview column (20 rem, sticky) beside tabs. The tabs are Text (caption words), Style (Style panel), Hook (text and timing) and Trim (the clip's layout and the Transcript Picker; named Trim so it does not read as the preview's Clip view). They follow the tab pattern: `role=tablist`, ←/→ between tabs.
   - **Below them, full width:** the timeline and the picked Scene's layout.
   - Clicking a caption block switches to Text. Narrower screens stack everything.
 - **README:** the daily workflow describes the editor, and `presets.json` is listed under data.

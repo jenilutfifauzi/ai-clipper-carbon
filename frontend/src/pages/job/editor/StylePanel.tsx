@@ -16,6 +16,7 @@ import { ColorField } from "../../../components/ColorField";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
+import { Skeleton } from "../../../components/Skeleton";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { fontFamily } from "../../../fonts";
@@ -112,7 +113,8 @@ export function StylePanel({
     else timer.current = setTimeout(() => flush(next), SAVE_AFTER_MS);
   }
 
-  if (!presets) return <p className="text-sm text-muted">{error ? `Couldn't load the presets: ${error}` : "Loading the presets…"}</p>;
+  if (error && !presets) return <p className="text-sm text-muted">Couldn't load the presets: {error}</p>;
+  if (!presets) return <StyleSkeleton />;
   const preset = presets.find((p) => p.id === draft.preset_id) ?? presets[0];
   const caption = { ...preset.caption, ...draft.style_overrides.caption } as CaptionStyle;
   const hook = { ...preset.hook, ...draft.style_overrides.hook } as HookStyle;
@@ -437,6 +439,28 @@ function PresetBar({
       >
         Clips using it will use Default from their next render.
       </ConfirmDialog>
+    </div>
+  );
+}
+
+// The preset bar and a section of fields, while the presets load.
+function StyleSkeleton() {
+  return (
+    <div className="flex flex-col gap-5">
+      <p role="status" className="sr-only">
+        Loading the presets
+      </p>
+      <div aria-hidden className="flex flex-col gap-5">
+        <Skeleton className="h-11 w-full" />
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-4 w-20 rounded-full" />
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            {[0, 1, 2, 3].map((field) => (
+              <Skeleton key={field} className="h-11" />
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -135,6 +135,7 @@ export function Review({
             </div>
           </div>
           <CandidateList
+            jobId={job.id}
             candidates={candidates}
             activeId={active?.id ?? null}
             onActivate={openFromList}

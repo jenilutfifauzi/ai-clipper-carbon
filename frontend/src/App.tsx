@@ -1,7 +1,9 @@
 import { Scissors } from "lucide-react";
+import { Suspense } from "react";
 import { Link, Outlet, useMatch } from "react-router";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { cx } from "./format";
+import { JobSkeleton } from "./pages/job/JobSkeleton";
 
 // The shell every page sits in: the orange blobs the glass blurs, the header, and the page. The
 // Job page is wider, for the review's list beside its editor.
@@ -26,7 +28,10 @@ export function App() {
         <ThemeToggle />
       </header>
       <main className={cx("mx-auto px-4 py-5 sm:px-6 sm:py-8", width)}>
-        <Outlet />
+        {/* Only the Job page loads lazily. */}
+        <Suspense fallback={<JobSkeleton />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

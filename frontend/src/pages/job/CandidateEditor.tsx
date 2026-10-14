@@ -1,5 +1,5 @@
 import { AlertTriangle, Plus, ScanSearch, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   mediaUrl,
   type Candidate,
@@ -43,13 +43,13 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
-type Tab = "text" | "style" | "hook" | "clip";
+type Tab = "text" | "style" | "hook" | "trim";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "style", label: "Style" },
   { value: "hook", label: "Hook" },
-  { value: "clip", label: "Clip" },
+  { value: "trim", label: "Trim" },
 ];
 
 const VIEWS = [
@@ -225,7 +225,8 @@ export function CandidateEditor({
         <div className="flex flex-col gap-3 xl:sticky xl:top-4">
           {job.source && (
             <section aria-label="Preview" className="flex flex-col gap-3">
-              <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs" />
+              {/* The legend is for screen readers only, so this bar lines up with the editor's tabs. */}
+              <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs [&>legend]:sr-only" />
               {view === "clip" ? (
                 <ClipPreview
                   src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
@@ -253,7 +254,7 @@ export function CandidateEditor({
           )}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-3">
           <Tabs value={tab} onChange={setTab} />
           <div id={`editor-panel-${tab}`} role="tabpanel" aria-labelledby={`editor-tab-${tab}`} className="flex flex-col gap-6">
             {tab === "text" && preview && job.options.captions && (
@@ -302,7 +303,7 @@ export function CandidateEditor({
                 />
               </>
             )}
-            {tab === "clip" && (
+            {tab === "trim" && (
               <>
                 <div className="flex flex-col gap-1.5">
                   <Segmented
@@ -429,19 +430,31 @@ export function CandidateEditor({
 
 // The editor's sections, as tabs: arrow keys move between them.
 function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void }) {
+  // The thumb slides like Segmented's when a tab is clicked, and jumps when the arrow keys move it.
+  const [keyed, setKeyed] = useState(false);
+  const index = TABS.findIndex((tab) => tab.value === value);
   return (
     <div
       role="tablist"
       aria-label="Edit"
-      className="flex gap-1 rounded-control bg-fill p-1"
+      className="relative isolate flex gap-1 rounded-control bg-fill p-1"
+      style={{ "--count": TABS.length, "--index": index } as CSSProperties}
       onKeyDown={(event) => {
         if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-        const i = TABS.findIndex((tab) => tab.value === value);
-        const next = TABS[(i + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length].value;
+        const next = TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length].value;
+        setKeyed(true);
         onChange(next);
         document.getElementById(`editor-tab-${next}`)?.focus();
       }}
     >
+      <span
+        aria-hidden
+        className={cx(
+          "raised absolute inset-y-1 left-1 -z-10 w-[calc((100%-0.5rem-(var(--count)-1)*0.25rem)/var(--count))] rounded-[10px]",
+          "translate-x-[calc(var(--index)*(100%+0.25rem))]",
+          !keyed && "motion-safe:transition-transform motion-safe:duration-[380ms] motion-safe:ease-spring",
+        )}
+      />
       {TABS.map((tab) => (
         <button
           key={tab.value}
@@ -451,11 +464,14 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void })
           aria-selected={value === tab.value}
           aria-controls={`editor-panel-${tab.value}`}
           tabIndex={value === tab.value ? 0 : -1}
-          onClick={() => onChange(tab.value)}
+          onClick={() => {
+            setKeyed(false);
+            onChange(tab.value);
+          }}
           className={cx(
-            "min-h-9 flex-1 rounded-[10px] px-3 text-sm font-medium",
+            "min-h-9 flex-1 rounded-[10px] px-3 text-sm font-medium motion-safe:transition-colors",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
-            value === tab.value ? "raised text-text" : "text-muted hover:text-text",
+            value === tab.value ? "text-text" : "text-muted hover:text-text",
           )}
         >
           {tab.label}

@@ -381,14 +381,6 @@ export interface JobProgress {
   retry_at: string | null;
 }
 
-export interface DiskUsage {
-  used_bytes: number;
-  free_bytes: number;
-  total_bytes: number;
-  warning: boolean;
-  warning_below_bytes: number;
-}
-
 // How a hook text is shown on the Clip: its lines, and whether they fit at the hook's size (the
 // render sets them smaller when they don't).
 export interface HookFit {
@@ -434,12 +426,16 @@ async function errorMessage(response: Response): Promise<string> {
 }
 
 export const api = {
-  listJobs: () => request<Job[]>("/jobs"),
+  // Newest first: a page of `limit`, the one before the Job created at `before` (the last listed).
+  listJobs: (page: { limit: number; before?: string }) => {
+    const query = new URLSearchParams({ limit: String(page.limit) });
+    if (page.before) query.set("before", page.before);
+    return request<Job[]>(`/jobs?${query}`);
+  },
   getJob: (id: string) => request<JobDetail>(`/jobs/${id}`),
   createJob: (job: NewJob) => request<Job>("/jobs", { method: "POST", body: JSON.stringify(job) }),
   retryJob: (id: string) => request<Job>(`/jobs/${id}/retry`, { method: "POST" }),
   deleteJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
-  disk: () => request<DiskUsage>("/system/disk"),
   // Rejects with the backend's message (507) when an upload this size wouldn't fit on the disk.
   checkUpload: (size: number) => request<void>(`/jobs/upload/check?size=${size}`),
   updateCandidate: (jobId: string, id: string, change: CandidateChange) =>
@@ -478,6 +474,11 @@ export const fontUrl = (id: string) => `/api/fonts/${encodeURIComponent(id)}`;
 export const mediaUrl = (jobId: string, file: string, version?: string) =>
   `/media/${jobId}/${file.split("/").map(encodeURIComponent).join("/")}` +
   (version ? `?v=${encodeURIComponent(version)}` : "");
+
+// A still of the Source where a Candidate starts. Its range is in the URL, so a trim fetches the new
+// still rather than the cached one.
+export const candidateThumbnailUrl = (jobId: string, candidate: Pick<Candidate, "id" | "start" | "end">) =>
+  `/api/jobs/${jobId}/candidates/${candidate.id}/thumbnail?v=${candidate.start}-${candidate.end}`;
 
 export interface UploadProgress {
   loaded: number;

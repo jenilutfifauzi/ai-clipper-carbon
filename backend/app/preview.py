@@ -15,6 +15,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,6 +25,9 @@ from app.video_source import SourceMetadata
 logger = logging.getLogger(__name__)
 
 PREVIEW_FILE = "preview.mp4"
+THUMBNAIL_FILE = "thumb.jpg"
+# Stills of Candidates, named by their time in the Source in milliseconds.
+STILLS_DIR = "stills"
 
 PLAYABLE_SUFFIXES = frozenset({".mp4", ".m4v", ".mov"})
 PLAYABLE_VIDEO = frozenset({"h264", "vp9", "av1"})
@@ -79,6 +83,33 @@ def make_preview(
     finally:
         part.unlink(missing_ok=True)
     raise RuntimeError(f"ffmpeg couldn't make a preview copy the browser can play ({'; '.join(failures)})")
+
+
+def make_thumbnail(ffmpeg: Path, video: Path, duration: float) -> Path:
+    """Write a still of `video` next to it, as THUMBNAIL_FILE, and return its path. The still is
+    taken a tenth of the way in (at most a minute), the most typical of the next 50 frames, so a
+    fade from black at the start isn't it."""
+    return take_still(ffmpeg, video, min(duration * 0.1, 60), video.with_name(THUMBNAIL_FILE), 480, frames=50)
+
+
+def take_still(ffmpeg: Path, video: Path, at: float, target: Path, width: int, frames: int = 25) -> Path:
+    """Write a JPEG still of `video` from `at` seconds in, `width` pixels wide, to `target` and
+    return its path. The still is the most typical of the `frames` frames from `at`, so a blink or a cut
+    isn't it. Written under a temporary name and renamed when complete."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.part{target.suffix}")
+    command = [
+        str(ffmpeg), "-v", "error", "-nostdin", "-y", "-ss", f"{at:.3f}", "-i", str(video),
+        "-map", "0:v:0", "-vf", f"thumbnail={frames},scale={width}:-2", "-frames:v", "1", "-q:v", "4", "-f", "image2", str(part),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode or not part.is_file():
+            raise RuntimeError(f"ffmpeg couldn't take a still of {video.name}: {result.stderr.strip()}")
+        os.replace(part, target)
+    finally:
+        part.unlink(missing_ok=True)
+    return target
 
 
 def _command(
