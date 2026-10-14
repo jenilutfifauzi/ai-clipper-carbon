@@ -1,4 +1,5 @@
 import { mainTrackOf, type Candidate } from "../../../api";
+import type { StageId } from "../editor/ClipPreview";
 
 /**
  * What the Advanced Edit changes of a Candidate, saved and undone together. Its Main Track is always
@@ -80,13 +81,13 @@ export function trackLanes<T extends { start: number; secs: number }>(items: T[]
 }
 
 /** The id on the preview's stage (StageControls) of the picked item, if it is on the stage. */
-export function stageIdOf(picked: Picked): string | null {
+export function stageIdOf(picked: Picked): StageId | null {
   if (picked?.kind === "hook" || picked?.kind === "captions") return picked.kind;
   return picked?.kind === "text" ? `text:${picked.id}` : null;
 }
 
 /** The item a stage id names. */
-export function pickedOf(stageId: string): Picked {
+export function pickedOf(stageId: StageId): Picked {
   if (stageId === "hook" || stageId === "captions") return { kind: stageId };
   return { kind: "text", id: stageId.slice("text:".length) };
 }

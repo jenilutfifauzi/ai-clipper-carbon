@@ -29,3 +29,14 @@ Built:
 - Advanced Edit: the hook was retyped to `Istri harus *izin* suami dulu?`, undone and redone. The line "seorang istri keluar" was retyped to "seorang ibu keluar rumah", saved as `istri→ibu`, `keluar→keluar rumah`.
 - Clip editor: Enter on the hook, then retyped with Cmd+B, saved as `Bolehkah *istri* keluar tanpa izin?`. The Hook tab's field shows it.
 - A real double-click works. The automation's two clicks were 1.2 s apart, past the 350 ms double-tap, so it opened with Enter there.
+
+**2026-10-15: after review.**
+- A retyped Word keeps the punctuation around it, so a sentence's end still ends its caption line. Typed in the capitals that uppercase captions show, it is saved in lower case (with a capital it was written with kept).
+- When no run of Words reads as the line, they are found by time.
+- A double-tap on the Kicker is tested against where the plan draws it, after a move that isn't planned yet.
+
+**Changes from the plan:**
+- Shift+Enter makes a new line only in a Text Layer. The planner joins the hook's text into balanced lines, so a new line there would do nothing.
+- Enter on the hook opens the hook. The Kicker opens with a double-click on its pill.
+
+Checked: "rumah dalam Islam" retyped as "rumah dalam AGAMA" saved `Islam,` → `AGAMA,`.

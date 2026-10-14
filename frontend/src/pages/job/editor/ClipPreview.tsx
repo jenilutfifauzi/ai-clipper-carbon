@@ -23,7 +23,7 @@ import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
-import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
+import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -63,8 +63,9 @@ const percent = (value: number) => `${value * 100}%`;
  * background and shot); the first is the master, which `playback` drives and which is heard.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
  * centre, in output pixels. With `stage`, the hook, the captions and (in the Advanced Edit) the Text
- * Layers on screen are selected by a click, moved, resized and edited on the frame (StageEdit.tsx). With `fit`, the frame is as large as fits the space its parent
- * gives it (the Advanced Edit's player), and the transport is a single row.
+ * Layers on screen are selected by a click, moved, resized and retyped on the frame (StageEdit.tsx,
+ * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
+ * Advanced Edit's player), and the transport is a single row.
  */
 export function ClipPreview({
   src,
@@ -135,7 +136,7 @@ export function ClipPreview({
       }
     : undefined;
   const items = plan && fonts && controls ? stageItems(plan, fontById, controls, startEditing, () => playback.time) : [];
-  const edit = useStageEdit(plan, stage, items, controls?.selected ?? null, (id) => controls?.onSelect(id));
+  const edit = useStageEdit(plan, stage, items, controls?.selected ?? null, (id) => controls?.onSelect(id as StageId));
 
   const frame = (
     <div
@@ -341,12 +342,14 @@ function useWatermarkDrag(
  * ("captions") and, with `texts`, each Text Layer ("text:<id>"). Which is selected, what a click
  * selects, where a move or resize puts one, and what retyping one saves.
  */
+export type StageId = "hook" | "captions" | `text:${string}`;
+
 export interface StageControls {
-  selected: string | null;
-  onSelect: (id: string) => void;
+  selected: StageId | null;
+  onSelect: (id: StageId) => void;
   // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
   // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
-  onPlace: (id: string, place: Place, group: string) => void;
+  onPlace: (id: StageId, place: Place, group: string) => void;
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
   texts?: boolean;
@@ -358,10 +361,8 @@ const CAPTION_SIZES = { min: 40, max: 200 };
 const TEXT_SIZES = { min: 16, max: 320 };
 // Around a caption line's letters, what can be grabbed of it, in output pixels.
 const CAPTION_GRAB_PAD = 12;
-// The safe area's top and bottom (planner.py's SAFE_AREA): the hook stays between them, and a
-// caption line's middle stays half its area's height (100) inside them (_caption_area).
-const SAFE_TOP = 232;
-const SAFE_BOTTOM = 1536;
+// The hook stays between the safe area's top and bottom, and a caption line's middle stays half its
+// area's height (100, planner.py's LOWER_CAPTIONS) inside them (_caption_area).
 const CAPTION_CENTRES: [number, number] = [SAFE_TOP + 100, SAFE_BOTTOM - 100];
 
 /**
@@ -397,7 +398,7 @@ function stageItems(
   }
   if (controls.texts) {
     for (const event of plan.texts) {
-      const id = `text:${event.layer.id}`;
+      const id: StageId = `text:${event.layer.id}`;
       items.push({
         id,
         label: `Text: ${event.lines.join(" ")}`,

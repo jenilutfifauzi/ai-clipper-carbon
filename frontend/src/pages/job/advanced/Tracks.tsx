@@ -30,14 +30,14 @@ export interface TrackHandlers {
   onDelete?: () => void;
 }
 
+// How far into a caption line a click on it seeks, so that the line shows.
+const CAPTION_SEEK_IN = 0.05;
+
 /**
  * The tracks, top to bottom: the Text Layers' lanes, the Overlays' lanes, the Main Track (its
  * Segments as played over their Scenes, and the joins between them), the caption lines, the hook,
  * and the Music Clips' lanes. Each track takes what is dropped on it from the asset panel.
  */
-// How far into a caption line a click on it seeks, so that the line shows.
-const CAPTION_SEEK_IN = 0.05;
-
 export function Tracks({
   geometry,
   duration,

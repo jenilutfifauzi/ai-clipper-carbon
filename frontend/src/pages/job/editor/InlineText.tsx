@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { Box, FontInfo, PreviewPlan, WordEdit } from "../../../api";
 import { cssFontSize, fontFamily } from "../../../fonts";
+import { HOOK_MAX, KICKER_MAX } from "../HookEditor";
+import type { StageId } from "./ClipPreview";
 import { toggledEmphasis } from "./emphasis";
 import { lineWords, retypedLine } from "./wordEdits";
 
-// The longest a hook, a Kicker and a Text Layer can be (candidates.py's HOOK_MAX_CHARS,
-// KICKER_MAX_CHARS, TEXT_LAYER_MAX_CHARS).
-const HOOK_MAX_CHARS = 200;
-const KICKER_MAX_CHARS = 24;
+// The longest a Text Layer can be (candidates.py's TEXT_LAYER_MAX_CHARS), and a caption line as typed.
 const TEXT_MAX_CHARS = 300;
+const LINE_MAX_CHARS = 200;
 
 const percent = (value: number) => `${value * 100}%`;
 
@@ -22,7 +22,7 @@ export type Editing = { kind: "hook" } | { kind: "kicker" } | { kind: "captions"
  */
 export interface Retype {
   textOf: (id: "hook" | "kicker") => string;
-  onText: (id: string, text: string) => void;
+  onText: (id: StageId | "kicker", text: string) => void;
   onWords: (update: (edits: WordEdit[]) => WordEdit[]) => void;
 }
 
@@ -75,7 +75,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
         font: fontById.get(plan.hook_style.font),
         size: hook.size,
         uppercase: plan.hook_style.uppercase,
-        maxLength: HOOK_MAX_CHARS,
+        maxLength: HOOK_MAX,
         label: "Hook text",
         emphasis: true,
         save: (text) => text.trim() !== initial.trim() && retype.onText("hook", text),
@@ -90,7 +90,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
         font: fontById.get(plan.hook_style.font),
         size: hook.kicker.size,
         uppercase: plan.hook_style.uppercase,
-        maxLength: KICKER_MAX_CHARS,
+        maxLength: KICKER_MAX,
         label: "Kicker",
         save: (text) => text.trim() !== initial.trim() && retype.onText("kicker", text.trim()),
       };
@@ -106,12 +106,12 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
         font: fontById.get(plan.caption_style.font),
         size: line.size,
         uppercase: plan.caption_style.uppercase,
-        maxLength: HOOK_MAX_CHARS,
+        maxLength: LINE_MAX_CHARS,
         label: "Caption line",
         save: (typed) => {
           if (typed.trim().split(/\s+/).join(" ") === initial) return;
           const words = lineWords(line, preview.words);
-          retype.onWords((edits) => retypedLine(edits, words, shown, typed));
+          retype.onWords((edits) => retypedLine(edits, words, shown, typed, plan.caption_style.uppercase));
         },
       };
     }

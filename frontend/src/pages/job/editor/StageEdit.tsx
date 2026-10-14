@@ -7,12 +7,16 @@ import { usePlayback, type Playback } from "./playback";
 export const NUDGE_PX = 8;
 // How near, in CSS pixels on screen, an edge or middle comes to a guide before it snaps to it.
 const SNAP_CSS_PX = 6;
+// How far, in CSS pixels on screen, a pointer goes before a press is a drag, not a tap.
+const DRAG_CSS_PX = 4;
 // Two taps on one item this close together edit it.
 const DOUBLE_TAP_MS = 350;
-// The guides: the frame's middle, and the platforms' safe area's top, bottom and right edges
-// (planner.py's SAFE_AREA, y 232–1536 and x 0–950).
+// The platforms' safe area's top and bottom (planner.py's SAFE_AREA, y 232–1536 and x 0–950).
+export const SAFE_TOP = 232;
+export const SAFE_BOTTOM = 1536;
+// The guides: the frame's middle, and the safe area's top, bottom and right edges.
 const GUIDES_X = { middle: 540, end: 950 };
-const GUIDES_Y = { start: 232, middle: 960, end: 1536 };
+const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
 
 const percent = (value: number) => `${value * 100}%`;
 
@@ -29,9 +33,11 @@ export interface StageItem {
   shows: { start: number; end: number; area: Box }[];
   // Its size now and the sizes it can be set to.
   size?: { now: number; min: number; max: number };
-  // The highest and lowest its middle can be moved to (the planner keeps it there), if not the frame's.
+  // The highest and lowest its middle can be moved to (the planner keeps it there), if not the
+  // frame's.
   centreY?: [number, number];
-  // Moved to `area` (as drawn), and resized to `size` (null: the size kept). Each gesture is one `group`.
+  // Moved to `area` (as drawn), and resized to `size` (null: the size kept). Each gesture is one
+  // `group`.
   onPlace: (area: Box, size: number | null, group: string) => void;
   // Edited where it was double-tapped (output pixels), or from the keyboard (no point).
   onEdit?: (point?: { x: number; y: number }) => void;
@@ -168,8 +174,10 @@ export function useStageEdit(
       const current = gesture.current;
       const point = at(pointer);
       if (!current || current.id !== item.id || pointer.pointerId !== current.pointer || !point) return;
-      current.moved = true;
       const { from, grab } = current;
+      // A tap's jitter (a finger's, a shaky mouse's) leaves it where it is.
+      if (!current.moved && Math.hypot(point.x - grab.x, point.y - grab.y) < DRAG_CSS_PX * point.unit) return;
+      current.moved = true;
       if (current.kind === "move") {
         const next = moved(from, point.x - grab.x, point.y - grab.y, pointer.altKey ? null : SNAP_CSS_PX * point.unit, item.centreY);
         setGuides(next.snapped);
@@ -200,8 +208,10 @@ export function useStageEdit(
       const now = performance.now();
       if (lastTap.current?.id === item.id && now - lastTap.current.at < DOUBLE_TAP_MS) {
         lastTap.current = null;
+        // Where that is on what the plan draws, if it is drawn elsewhere until the next plan.
         const point = at(pointer);
-        item.onEdit(point ? { x: point.x, y: point.y } : undefined);
+        const off = holding?.id === item.id ? holding : { dx: 0, dy: 0 };
+        item.onEdit(point ? { x: point.x - off.dx, y: point.y - off.dy } : undefined);
       } else {
         lastTap.current = { id: item.id, at: now };
       }

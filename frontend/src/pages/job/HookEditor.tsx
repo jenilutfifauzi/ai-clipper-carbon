@@ -6,8 +6,8 @@ import { cx } from "../../format";
 import { inEmphasis, toggledEmphasis, wholeWords } from "./editor/emphasis";
 
 // The backend's limits (HOOK_MAX_CHARS and KICKER_MAX_CHARS in app/candidates.py).
-const HOOK_MAX = 200;
-const KICKER_MAX = 24;
+export const HOOK_MAX = 200;
+export const KICKER_MAX = 24;
 // Typing is saved once it pauses this long, and at once when the field is left.
 const SAVE_AFTER_MS = 700;
 const SHORTCUT = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘B" : "Ctrl+B";

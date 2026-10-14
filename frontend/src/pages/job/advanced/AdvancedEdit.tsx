@@ -246,8 +246,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onText: (id, text) => {
             if (id === "hook") change({ hook_text: text });
             else if (id === "kicker") change({ hook_kicker: text });
-            const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
-            if (layer) updateText({ ...layer, text });
+            else {
+              const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
+              if (layer) updateText({ ...layer, text });
+            }
           },
           onWords: (update) => change({ word_edits: update(edits.word_edits) }),
         },

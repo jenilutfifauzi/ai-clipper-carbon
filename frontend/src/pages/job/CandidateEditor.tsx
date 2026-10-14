@@ -19,7 +19,7 @@ import { loadFonts } from "../../fonts";
 import { cx, formatPrecise } from "../../format";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
-import { ClipPreview } from "./editor/ClipPreview";
+import { ClipPreview, type StageId } from "./editor/ClipPreview";
 import { candidateDraft } from "./editor/draft";
 import { Playback, playedFrom, playable } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
@@ -119,7 +119,7 @@ export function CandidateEditor({
   const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
   const [scene, setScene] = useState<number | null>(null);
   // The hook or the captions, selected on the preview.
-  const [onStage, setOnStage] = useState<string | null>(null);
+  const [onStage, setOnStage] = useState<StageId | null>(null);
   // How many times the hook or the Kicker was retyped on the preview: its fields start again from it.
   const [retyped, setRetyped] = useState(0);
   const [timing, setTiming] = useDraftSave<HookTiming>(
@@ -270,7 +270,8 @@ export function CandidateEditor({
                       ? (x, y) => style.controls?.setMany("watermark", { position: "custom", x, y })
                       : undefined
                   }
-                  // The hook and the captions, moved and resized on the preview but not while the Watermark is.
+                  // The hook and the captions, moved, resized and retyped on the preview; not while the
+                  // Watermark is moved there.
                   stage={
                     tab !== "watermark" && style.controls
                       ? {

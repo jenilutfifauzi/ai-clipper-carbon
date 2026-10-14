@@ -928,8 +928,9 @@ def _hook(
 ) -> HookEvent | None:
     """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
     end, if that comes sooner), as large as its lines and padding, its lines centred in the frame
-    or its middle at the style's x (kept in the frame), placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
-    bottom of SAFE_AREA, or with its top at the style's height (kept inside SAFE_AREA).
+    or its middle at the style's x (kept in the frame), placed by `style`: just below the top of
+    SAFE_AREA, in the middle of the frame, just above the bottom of SAFE_AREA, or with its top at
+    the style's height (kept inside SAFE_AREA).
     None when the text is blank or it would start at or after the Clip's end.
 
     A block (or no box) is HOOK_PAD_X wider than the longest line either side, its first line's
