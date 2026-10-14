@@ -2,8 +2,10 @@ import { Check, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "./Button";
 
-// Copies `text` to the clipboard, and says so for a moment.
-export function CopyButton({ text, label }: { text: string; label: string }) {
+// Copies `text` to the clipboard, and says so for a moment. `look` "icon" is a round icon button
+// for dense lists (`label` is then its accessible name and tooltip); its 44 px hit area overhangs
+// the row instead of heightening it.
+export function CopyButton({ text, label, look = "label" }: { text: string; label: string; look?: "label" | "icon" }) {
   const [copied, setCopied] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -21,10 +23,22 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
     }
   }
 
+  const icon = copied ? <Check aria-hidden size={16} className="text-success" /> : <Copy aria-hidden size={16} />;
+  const said = copied === null ? label : copied ? "Copied" : "Copy failed";
+  if (look === "icon") {
+    return (
+      <Button onClick={copy} disabled={!text} size="icon" variant="ghost" className="-my-3 -mr-3" aria-label={label} title={label}>
+        {icon}
+        <span aria-live="polite" className="sr-only">
+          {copied === null ? "" : said}
+        </span>
+      </Button>
+    );
+  }
   return (
     <Button onClick={copy} disabled={!text} size="sm">
-      {copied ? <Check aria-hidden size={16} className="text-success" /> : <Copy aria-hidden size={16} />}
-      <span aria-live="polite">{copied === null ? label : copied ? "Copied" : "Copy failed"}</span>
+      {icon}
+      <span aria-live="polite">{said}</span>
     </Button>
   );
 }

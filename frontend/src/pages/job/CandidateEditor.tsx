@@ -562,26 +562,27 @@ function PreviewNotes({
 }
 
 // The description to post on each platform: its text, a blank line, then the hashtags.
-export function postingCopy(candidate: Candidate): { label: string; text: string }[] {
+export function postingCopy(candidate: Candidate): { label: string; body: string; text: string }[] {
   const tags = candidate.hashtags.join(" ");
-  const withTags = (text: string) => [text, tags].filter(Boolean).join("\n\n");
+  const withTags = (body: string) => ({ body, text: [body, tags].filter(Boolean).join("\n\n") });
   return [
-    { label: "TikTok", text: withTags(candidate.descriptions.tiktok) },
-    { label: "Instagram", text: withTags(candidate.descriptions.instagram) },
-    { label: "Shorts", text: withTags(candidate.descriptions.shorts) },
+    { label: "TikTok", ...withTags(candidate.descriptions.tiktok) },
+    { label: "Instagram", ...withTags(candidate.descriptions.instagram) },
+    { label: "Shorts", ...withTags(candidate.descriptions.shorts) },
   ];
 }
 
 // Why the AI chose it, and its posting copy.
 function Analysis({ candidate }: { candidate: Candidate }) {
-  const copy = postingCopy(candidate);
+  const tags = candidate.hashtags.join(" ");
+  const copy = postingCopy(candidate).map((item) => ({ ...item, tags: true }));
   return (
     <>
       <section aria-labelledby="why-heading" className="flex flex-col gap-2">
         <h4 id="why-heading" className="font-semibold">
           Why this clip
         </h4>
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+        <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-y-1.5 [&>dt]:not-first:max-sm:mt-2">
           <dt className="text-muted">Reason</dt>
           <dd className="text-pretty break-words">{candidate.reason}</dd>
           <dt className="text-muted">Retention</dt>
@@ -599,26 +600,29 @@ function Analysis({ candidate }: { candidate: Candidate }) {
         </dl>
       </section>
 
-      <section aria-labelledby="copy-heading" className="flex flex-col gap-3">
+      <section aria-labelledby="copy-heading" className="flex flex-col gap-2">
         <h4 id="copy-heading" className="font-semibold">
           Posting copy
         </h4>
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-muted">Title</span>
-            <CopyButton text={candidate.title} label="Copy title" />
-          </div>
-          <p className="break-words select-text">{candidate.title}</p>
-        </div>
-        {copy.map(({ label, text }) => (
-          <div key={label} className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-muted">{label}</span>
-              <CopyButton text={text} label={`Copy ${label}`} />
+        {/* Like "Why this clip": the label, the copy (with its hashtags under it, as it is pasted),
+            and a button copying it all. On a phone the label sits above the copy. */}
+        <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 text-sm sm:grid-cols-[7rem_minmax(0,1fr)_auto]">
+          {[{ label: "Title", text: candidate.title, body: candidate.title, tags: false }, ...copy].map((item) => (
+            <div
+              key={item.label}
+              className="col-span-2 grid grid-cols-subgrid items-start gap-y-0.5 border-t border-border py-2.5 first:border-t-0 first:pt-0 sm:col-span-3"
+            >
+              <dt className="text-muted">{item.label}</dt>
+              <dd className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 select-text sm:col-start-2 sm:row-start-1">
+                <span className={cx("text-pretty break-words", item.label === "Title" && "font-medium")}>{item.body || "—"}</span>
+                {item.tags && tags && <span className="break-words text-muted">{tags}</span>}
+              </dd>
+              <dd className="col-start-2 row-span-2 row-start-1 sm:col-start-3 sm:row-span-1">
+                <CopyButton text={item.text} label={`Copy ${item.label === "Title" ? "title" : item.label}`} look="icon" />
+              </dd>
             </div>
-            <p className="text-sm break-words whitespace-pre-line text-pretty select-text">{text}</p>
-          </div>
-        ))}
+          ))}
+        </dl>
       </section>
     </>
   );
