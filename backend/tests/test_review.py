@@ -270,3 +270,15 @@ def test_a_candidates_preset_and_overrides_are_saved_and_mark_it_edited(client, 
         response = client.patch(candidate_url(job, candidate), json={"style_overrides": overrides})
         assert response.status_code == 422, overrides
     assert candidates(client, job) == [styled]
+
+
+def test_the_reference_looks_are_builtin_presets_that_cant_change(client):
+    """hook-styles ticket 07."""
+    listed = {preset["id"]: preset for preset in client.get("/api/presets").json()}
+    for preset_id in ("quote-strip", "headline-red", "quote-card", "kicker-bare"):
+        assert listed[preset_id]["builtin"] is True
+        assert client.put(f"/api/presets/{preset_id}", json={"name": "x"}).status_code == 409
+        assert client.delete(f"/api/presets/{preset_id}").status_code == 409
+    assert {k: listed["quote-strip"]["hook"][k] for k in ("shape", "align", "quote")} == {"shape": "strips", "align": "left", "quote": True}
+    assert listed["headline-red"]["hook"]["emphasis_colour"] == "#E11D2E"
+    assert listed["kicker-bare"]["hook"]["shape"] == "none"

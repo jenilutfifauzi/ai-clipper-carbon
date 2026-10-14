@@ -91,7 +91,7 @@ STRIP_PAD_Y = 0.14
 STRIP_GAP = 0.06
 # The Kicker is set at this share of the hook's size, in a pill padded by these many of its own
 # sizes either side and above its capitals and below its descenders, this many hook sizes above it.
-KICKER_SCALE = 0.55
+KICKER_SCALE = 0.8
 KICKER_PAD_X = 0.5
 KICKER_PAD_Y = 0.28
 KICKER_GAP = 0.25
@@ -527,7 +527,7 @@ def _hook(
     lines_height = height
     pill = _kicker(kicker, size, style)
     if pill is not None:
-        pill_text, pill_size, pill_width, pill_height, pad_y = pill
+        pill_text, pill_size, pill_width, pill_height, pill_pad_y = pill
         lines_y = pill_height + round(KICKER_GAP * size)
         if left:
             pill_x = HOOK_PAD_X if style.shape == HookShape.NONE else 0
@@ -537,13 +537,13 @@ def _hook(
             pill_x, lines_x = (full_width - pill_width) // 2, (full_width - width) // 2
         width = full_width
     badge = round(QUOTE_SCALE * size) if style.quote else 0
-    # How far it reaches into the first line's box.
-    pad_x, pad_y = {
+    # How far it reaches into the first line's box: into its padding.
+    box_pad_x, box_pad_y = {
         HookShape.BLOCK: (HOOK_PAD_X, HOOK_PAD_Y),
         HookShape.STRIPS: (STRIP_PAD_X * size, STRIP_PAD_Y * size),
         HookShape.NONE: (0, 0),
     }[style.shape]
-    inset_x, inset_y = math.floor(QUOTE_INSET * pad_x), math.floor(QUOTE_INSET * pad_y)
+    inset_x, inset_y = math.floor(QUOTE_INSET * box_pad_x), math.floor(QUOTE_INSET * box_pad_y)
     if badge:
         lines_y += badge - inset_y
     height = lines_y + lines_height
@@ -558,7 +558,7 @@ def _hook(
     placed = None
     if pill is not None:
         box = Box(area.x + pill_x, area.y, pill_width, pill_height)
-        baseline = box.y + pad_y + metrics.cap_height / metrics.units * pill_size
+        baseline = box.y + pill_pad_y + metrics.cap_height / metrics.units * pill_size
         placed = HookKicker(pill_text, pill_size, box, (box.x + box.width / 2, baseline))
     placed_anchors = anchors(area.x + lines_x, area.y + lines_y)
     placed_boxes = [Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes]

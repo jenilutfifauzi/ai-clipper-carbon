@@ -94,7 +94,7 @@ Notes:
 - `lines`: a list of lines, each a list of runs `(text, emphasised)`.
 - `line_boxes`: one Box per line: the line's own width plus padding for `strips`, or the shared block for `block`.
 - `area`: the whole hook, Kicker and Quote Mark included, so position and the Timeline keep using one Box.
-- `kicker`: `None`, or `(text, box, size)`. The size is 0.55 × the hook's set size. It sits one line, above the first line, aligned like the hook, with a gap of 0.25 × the hook's size.
+- `kicker`: `None`, or `(text, box, size)`. The size is 0.8 × the hook's set size (0.55 at first; raised in ticket 07 to match reference 5). It sits one line, above the first line, aligned like the hook, with a gap of 0.25 × the hook's size.
 - `quote`: `None`, or the badge's Box, placed half outside the top-left corner of the first box. With Shape `none` it uses the first line's text box.
 - **Alignment.** `left` aligns lines and strips to the left edge of the widest line's box. The whole hook stays centred in the frame.
 

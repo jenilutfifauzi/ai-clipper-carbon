@@ -202,6 +202,50 @@ BUILTIN_PRESETS = [
         HookStyle(font="poppins-black", size=72, box_opacity=0.4, radius=16),
         builtin=True,
     ),
+    # The reference looks of hook-styles (.scratch/hook-styles/spec.md). Captions go where the hook
+    # isn't.
+    StylePreset(
+        "quote-strip",
+        "Quote strips",
+        CaptionStyle(),
+        HookStyle(
+            shape=HookShape.STRIPS, align=HookAlign.LEFT, size=92, max_lines=4, uppercase=True, colour="#000000",
+            box_colour="#FFFFFF", box_opacity=1.0, radius=10, quote=True,
+        ),
+        builtin=True,
+    ),
+    StylePreset(
+        "headline-red",
+        "Red headline",
+        CaptionStyle(font="anton", size=120, active_colour="#FF3B30", position=CaptionPosition.TOP),
+        HookStyle(
+            font="anton", size=100, max_lines=4, uppercase=True, align=HookAlign.LEFT, colour="#000000",
+            emphasis_colour="#E11D2E", box_colour="#FFFFFF", box_opacity=1.0, radius=0,
+            position=HookPosition.CUSTOM, y=1050,
+        ),
+        builtin=True,
+    ),
+    StylePreset(
+        "quote-card",
+        "Quote card",
+        CaptionStyle(font="poppins-black", size=90, uppercase=False, outline=0, shadow=4, max_chars=24, max_secs=2.0,
+                     position=CaptionPosition.TOP),
+        HookStyle(
+            font="poppins-black", size=84, max_lines=3, colour="#000000", emphasis_colour="#16A34A",
+            box_colour="#FFFFFF", box_opacity=1.0, radius=0, quote=True, position=HookPosition.BOTTOM,
+        ),
+        builtin=True,
+    ),
+    StylePreset(
+        "kicker-bare",
+        "Kicker over bare text",
+        CaptionStyle(position=CaptionPosition.BOTTOM),
+        HookStyle(
+            shape=HookShape.NONE, size=80, max_lines=4, uppercase=True, align=HookAlign.LEFT, shadow=4,
+            emphasis_colour="#FFE600", kicker_colour="#000000", kicker_box_colour="#FFE600", position=HookPosition.MIDDLE,
+        ),
+        builtin=True,
+    ),
 ]
 DEFAULT = BUILTIN_PRESETS[0]
 

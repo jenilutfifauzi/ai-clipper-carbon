@@ -997,7 +997,7 @@ def kicked(kicker: str, text: str = HOOK, **style) -> HookEvent:
 def test_a_kicker_sits_in_its_pill_above_the_hook_which_moves_down_to_make_room():
     plain, hook = hooked(HOOK), kicked("Terbongkar!")
     kicker = hook.kicker
-    assert (kicker.text, kicker.size) == ("Terbongkar!", pytest.approx(0.55 * HOOK_SIZE))
+    assert (kicker.text, kicker.size) == ("Terbongkar!", pytest.approx(0.8 * HOOK_SIZE))
     # At the top of the hook, which still starts just below the top safe zone.
     assert hook.area.y == kicker.box.y == SAFE_AREA.y
     # The lines and their box are as before, lower by the pill and a gap of a quarter of the hook's size.
@@ -1010,9 +1010,21 @@ def test_a_kicker_sits_in_its_pill_above_the_hook_which_moves_down_to_make_room(
     width = font_metrics().width("Terbongkar!", kicker.size)
     assert abs(kicker.box.x + kicker.box.width / 2 - (box.x + box.width / 2)) <= 1 and x == kicker.box.x + kicker.box.width / 2
     assert width < kicker.box.width < width + 1.2 * kicker.size
-    assert kicker.box.y < baseline < kicker.box.y + kicker.box.height
+    # Its letters, from the capitals' top to the descenders' bottom, are in the middle of the pill.
+    metrics = font_metrics()
+    above = baseline - metrics.cap_height / metrics.units * kicker.size - kicker.box.y
+    below = kicker.box.y + kicker.box.height - (baseline + metrics.descent / metrics.units * kicker.size)
+    assert above > 0 and abs(above - below) <= 1
     # No Kicker: v1's hook.
     assert hooked(HOOK, hook_kicker="  ").kicker is None and hooked(HOOK, hook_kicker="  ") == plain
+
+
+def test_a_kicker_is_set_the_same_with_any_shape_and_a_quote_mark():
+    for shape in ("block", "strips", "none"):
+        for quote in (False, True):
+            hook = kicked("Fakta", shape=shape, quote=quote)
+            x, baseline = hook.kicker.anchor
+            assert baseline - hook.kicker.box.y == pytest.approx(kicked("Fakta").kicker.anchor[1] - kicked("Fakta").kicker.box.y)
 
 
 def test_a_kicker_follows_the_hooks_alignment_case_and_position_and_has_no_emoji():
@@ -1028,7 +1040,7 @@ def test_a_kicker_follows_the_hooks_alignment_case_and_position_and_has_no_emoji
     assert abs(middle.y + middle.height / 2 - 960) <= 1
     # Too wide for the captions' width: set smaller to fit.
     wide = kicked("W" * 24).kicker
-    assert wide.size < 0.55 * HOOK_SIZE and wide.box.width <= 820
+    assert wide.size < 0.8 * HOOK_SIZE and wide.box.width <= 820
 
 
 # The Quote Mark (hook-styles ticket 04).
