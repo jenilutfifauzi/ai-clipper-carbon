@@ -33,7 +33,8 @@ export interface StageItem {
   centreY?: [number, number];
   // Moved to `area` (as drawn), and resized to `size` (null: the size kept). Each gesture is one `group`.
   onPlace: (area: Box, size: number | null, group: string) => void;
-  onEdit?: () => void;
+  // Edited where it was double-tapped (output pixels), or from the keyboard (no point).
+  onEdit?: (point?: { x: number; y: number }) => void;
 }
 
 type Held = { id: string; dx: number; dy: number; scale: number; plan: RenderPlan | null };
@@ -199,7 +200,8 @@ export function useStageEdit(
       const now = performance.now();
       if (lastTap.current?.id === item.id && now - lastTap.current.at < DOUBLE_TAP_MS) {
         lastTap.current = null;
-        item.onEdit();
+        const point = at(pointer);
+        item.onEdit(point ? { x: point.x, y: point.y } : undefined);
       } else {
         lastTap.current = { id: item.id, at: now };
       }

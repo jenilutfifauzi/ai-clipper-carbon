@@ -20,6 +20,7 @@ import { usePlayback, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays, type OverlayControls } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
+import { InlineText, type Editing, type Retype } from "./InlineText";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
@@ -124,7 +125,16 @@ export function ClipPreview({
   const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
-  const items = plan && fonts && controls ? stageItems(plan, fontById, controls) : [];
+  // What is being retyped, the playback paused while it is.
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const retype = controls?.retype;
+  const startEditing = retype
+    ? (next: Editing) => {
+        playback.pause();
+        setEditing(next);
+      }
+    : undefined;
+  const items = plan && fonts && controls ? stageItems(plan, fontById, controls, startEditing, () => playback.time) : [];
   const edit = useStageEdit(plan, stage, items, controls?.selected ?? null, (id) => controls?.onSelect(id));
 
   const frame = (
@@ -153,18 +163,23 @@ export function ClipPreview({
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
-          <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} edit={edit} />
-          {plan.texts.map((event) => (
-            <TextLayerView
-              key={event.layer.id}
-              event={event}
-              font={fontById.get(event.layer.font)}
-              playback={playback}
-              moving={edit.transform(`text:${event.layer.id}`, event.area)}
-              still={`text:${event.layer.id}` === controls?.selected}
-            />
-          ))}
-          {plan.hook && (
+          {editing?.kind !== "captions" && (
+            <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} edit={edit} />
+          )}
+          {plan.texts.map(
+            (event) =>
+              !(editing?.kind === "text" && editing.id === event.layer.id) && (
+                <TextLayerView
+                  key={event.layer.id}
+                  event={event}
+                  font={fontById.get(event.layer.font)}
+                  playback={playback}
+                  moving={edit.transform(`text:${event.layer.id}`, event.area)}
+                  still={`text:${event.layer.id}` === controls?.selected}
+                />
+              ),
+          )}
+          {plan.hook && editing?.kind !== "hook" && editing?.kind !== "kicker" && (
             <Hook
               plan={plan}
               hook={plan.hook}
@@ -197,6 +212,9 @@ export function ClipPreview({
         />
       )}
       {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} />}
+      {preview && editing && retype && (
+        <InlineText preview={preview} fontById={fontById} editing={editing} retype={retype} onClose={() => setEditing(null)} />
+      )}
       <PreviewMusic plan={plan} playback={playback} master={master} />
     </div>
   );
@@ -321,7 +339,7 @@ function useWatermarkDrag(
 /**
  * The hold of an editor on what can be moved on the preview: the hook ("hook"), the captions
  * ("captions") and, with `texts`, each Text Layer ("text:<id>"). Which is selected, what a click
- * selects, where a move or resize puts one, and what editing one does.
+ * selects, where a move or resize puts one, and what retyping one saves.
  */
 export interface StageControls {
   selected: string | null;
@@ -329,7 +347,8 @@ export interface StageControls {
   // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
   // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
   onPlace: (id: string, place: Place, group: string) => void;
-  onEdit?: (id: string) => void;
+  // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
+  retype?: Retype;
   texts?: boolean;
 }
 
@@ -345,8 +364,17 @@ const SAFE_TOP = 232;
 const SAFE_BOTTOM = 1536;
 const CAPTION_CENTRES: [number, number] = [SAFE_TOP + 100, SAFE_BOTTOM - 100];
 
-/** What of the plan `controls` can move on the stage, in the order they are drawn. */
-function stageItems(plan: RenderPlan, fontById: Map<string, FontInfo>, controls: StageControls): StageItem[] {
+/**
+ * What of the plan `controls` can move on the stage, in the order they are drawn. With `edit`, each
+ * can be retyped: the caption line on screen at `now()`, and the Kicker where it is double-clicked.
+ */
+function stageItems(
+  plan: RenderPlan,
+  fontById: Map<string, FontInfo>,
+  controls: StageControls,
+  edit: ((editing: Editing) => void) | undefined,
+  now: () => number,
+): StageItem[] {
   const items: StageItem[] = [];
   const middle = (area: Box) => ({ x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) });
   const captionFont = fontById.get(plan.caption_style.font);
@@ -359,7 +387,12 @@ function stageItems(plan: RenderPlan, fontById: Map<string, FontInfo>, controls:
       size: { now: style.size, ...CAPTION_SIZES },
       centreY: CAPTION_CENTRES,
       onPlace: (area, size, group) => controls.onPlace("captions", { ...middle(area), size }, group),
-      onEdit: controls.onEdit && (() => controls.onEdit?.("captions")),
+      onEdit:
+        edit &&
+        (() => {
+          const line = plan.captions.findIndex((event) => event.start <= now() && now() < event.end);
+          if (line !== -1) edit({ kind: "captions", line });
+        }),
     });
   }
   if (controls.texts) {
@@ -371,6 +404,7 @@ function stageItems(plan: RenderPlan, fontById: Map<string, FontInfo>, controls:
         shows: [{ start: event.start, end: event.end, area: event.area }],
         size: { now: event.layer.size, ...TEXT_SIZES },
         onPlace: (area, size, group) => controls.onPlace(id, { ...middle(area), size }, group),
+        onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
       });
     }
   }
@@ -383,7 +417,13 @@ function stageItems(plan: RenderPlan, fontById: Map<string, FontInfo>, controls:
       size: { now: plan.hook_style.size, ...HOOK_SIZES },
       centreY: [SAFE_TOP + hook.area.height / 2, SAFE_BOTTOM - hook.area.height / 2],
       onPlace: (area, size, group) => controls.onPlace("hook", { x: middle(area).x, y: Math.round(area.y), size }, group),
-      onEdit: controls.onEdit && (() => controls.onEdit?.("hook")),
+      onEdit:
+        edit &&
+        ((point) => {
+          const pill = hook.kicker?.box;
+          const onPill = point && pill && point.x >= pill.x && point.x < pill.x + pill.width && point.y >= pill.y && point.y < pill.y + pill.height;
+          edit(onPill ? { kind: "kicker" } : { kind: "hook" });
+        }),
     });
   }
   return items;

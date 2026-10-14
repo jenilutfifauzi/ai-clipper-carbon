@@ -4,6 +4,7 @@ import type { PreviewPlan, PreviewWord, WordEdit } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
+import { editKey, withWordEdit, WORD_EDIT_MAX_CHARS } from "./wordEdits";
 
 /**
  * The captions' Words, as the plan breaks them into lines, for correcting: click a Word to hear it
@@ -41,16 +42,8 @@ export function CaptionTextEditor({
     }
   }, [focus, words]);
 
-  // The time a Word's edit is keyed by: its edit's own, or its middle on the Source's timeline.
-  // Edits are keyed by the Word's time on the Source's timeline, which a cut Clip may show twice.
-  const keyOf = (word: PreviewWord) => word.edit?.at ?? word.at;
-
   function apply(word: PreviewWord, change: Partial<Pick<WordEdit, "text" | "break_before">>) {
-    const at = keyOf(word);
-    const next: WordEdit = { at, text: word.edit?.text ?? null, break_before: word.edit?.break_before ?? false, ...change };
-    if (next.text === word.text) next.text = null;
-    const others = edits.filter((edit) => edit.at !== at);
-    onChange(next.text === null && !next.break_before ? others : [...others, next].sort((a, b) => a.at - b.at));
+    onChange(withWordEdit(edits, word, change));
   }
 
   if (words.length === 0) return <p className="text-sm text-muted">No words are heard in this clip.</p>;
@@ -106,7 +99,7 @@ export function CaptionTextEditor({
       </Fold>
       {open !== null && words[open] && (
         <WordForm
-          key={keyOf(words[open])}
+          key={editKey(words[open])}
           word={words[open]}
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}
@@ -251,7 +244,7 @@ function WordForm({
           ref={input}
           id={`${id}-text`}
           value={text}
-          maxLength={40}
+          maxLength={WORD_EDIT_MAX_CHARS}
           autoComplete="off"
           spellCheck={false}
           onChange={(event) => setText(event.target.value)}

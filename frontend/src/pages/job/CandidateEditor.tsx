@@ -120,6 +120,8 @@ export function CandidateEditor({
   const [scene, setScene] = useState<number | null>(null);
   // The hook or the captions, selected on the preview.
   const [onStage, setOnStage] = useState<string | null>(null);
+  // How many times the hook or the Kicker was retyped on the preview: its fields start again from it.
+  const [retyped, setRetyped] = useState(0);
   const [timing, setTiming] = useDraftSave<HookTiming>(
     { hook_start: candidate.hook_start, hook_secs: candidate.hook_secs },
     (value) => void onSave(value),
@@ -278,6 +280,16 @@ export function CandidateEditor({
                             if (id === "hook" || id === "captions") setTab(id);
                           },
                           onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place)),
+                          retype: {
+                            textOf: (id) => (id === "hook" ? (hookDraft ?? candidate.hook_text) : (kickerDraft ?? candidate.hook_kicker)),
+                            onText: (id, text) => {
+                              if (id === "hook") setHookDraft(text);
+                              else if (id === "kicker") setKickerDraft(text);
+                              else return;
+                              void onSave(id === "hook" ? { hook_text: text } : { hook_kicker: text }).then(() => setRetyped((n) => n + 1));
+                            },
+                            onWords: (update) => void onSave({ word_edits: update(candidate.word_edits) }),
+                          },
                         }
                       : undefined
                   }
@@ -348,7 +360,7 @@ export function CandidateEditor({
                     Words
                   </h4>
                   <HookEditor
-                    key={candidate.id}
+                    key={`${candidate.id}:${retyped}`}
                     value={candidate.hook_text}
                     onSave={(hook_text) => void onSave({ hook_text })}
                     onDraft={setHookDraft}

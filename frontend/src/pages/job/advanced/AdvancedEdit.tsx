@@ -241,6 +241,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
           if (layer) updateText({ ...layer, x: place.x, y: place.y, size: place.size ?? layer.size }, group);
         },
+        retype: {
+          textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
+          onText: (id, text) => {
+            if (id === "hook") change({ hook_text: text });
+            else if (id === "kicker") change({ hook_kicker: text });
+            const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
+            if (layer) updateText({ ...layer, text });
+          },
+          onWords: (update) => change({ word_edits: update(edits.word_edits) }),
+        },
         texts: true,
       }}
       overlays={{

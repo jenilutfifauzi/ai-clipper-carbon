@@ -9,8 +9,23 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Browser: retype each in both editors; undo in the Advanced Edit.
+- [x] Browser: retype each in both editors; undo in the Advanced Edit.
 
 ## Comments
+
+**2026-10-15: done.** `npm run typecheck` and `npm run build` pass.
+
+Built:
+- `editor/InlineText.tsx`: `InlineText` opens a text field over the hook, its Kicker (a double-click on its pill), the caption line on screen, or a Text Layer, in its font and case, at least 16px. Enter or leaving it saves, Escape doesn't; Shift+Enter is a new line in a Text Layer; Cmd/Ctrl+B marks Emphasis in the hook. Playback pauses, the item isn't drawn while it is retyped, and focus goes back to its handle.
+- `StageControls.retype`: `textOf` (the hook's and the Kicker's text with their Emphasis marks), `onText`, and `onWords` (a change of the Word Edits, applied by each editor to its own list).
+- `editor/emphasis.ts`: `toggledEmphasis`, shared with `HookEditor`. `editor/wordEdits.ts`: `withWordEdit` (shared with `CaptionTextEditor`), `lineWords` and `retypedLine`.
+- **Clip editor:** a retyped hook or Kicker remounts `HookEditor`, so that its fields show it.
+
+**Change from the plan:** a caption line's Words are found by their text (as edited), nearest the line's time, not by time alone. In a Clip cut into Segments, the Preview Plan's Words were 0.5 s from the line's, and matching by time edited the Word before. A Word whose edit is several words takes as many typed words.
+
+**Checks:** Browser (scratch clone):
+- Advanced Edit: the hook was retyped to `Istri harus *izin* suami dulu?`, undone and redone. The line "seorang istri keluar" was retyped to "seorang ibu keluar rumah", saved as `istri→ibu`, `keluar→keluar rumah`.
+- Clip editor: Enter on the hook, then retyped with Cmd+B, saved as `Bolehkah *istri* keluar tanpa izin?`. The Hook tab's field shows it.
+- A real double-click works. The automation's two clicks were 1.2 s apart, past the 350 ms double-tap, so it opened with Enter there.
