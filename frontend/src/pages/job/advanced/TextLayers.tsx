@@ -9,10 +9,12 @@ import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { fontFamily } from "../../../fonts";
 import { fontChoices, Group } from "../editor/StyleFields";
+import { DRAG_TEXT } from "./drag";
+import { newId, round } from "./edits";
+import { TimingFields } from "./TimingFields";
 
-// A new Text Layer stays this long, or to the Clip's end; the shortest one lasts TEXT_MIN_SECS.
+// A new Text Layer stays this long, or to the Clip's end.
 const TEXT_SECS = 3;
-export const TEXT_MIN_SECS = 0.1;
 // The backend's limit (TEXT_LAYER_MAX_CHARS in app/candidates.py).
 const TEXT_MAX_CHARS = 300;
 
@@ -51,40 +53,27 @@ export const TEXT_PRESETS: { name: string; layer: Omit<TextLayer, "id" | "start"
   },
 ];
 
-export const newId = () => crypto.randomUUID().slice(0, 8);
-
-/** A Text Layer in `look` at the playhead (`at`), for TEXT_SECS or to the Clip's end. */
+/** A Text Layer in `look` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
 export function newTextLayer(look: Omit<TextLayer, "id" | "start" | "secs">, at: number, duration: number): TextLayer {
   const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
   return { ...look, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)) };
 }
 
-const round = (seconds: number) => Math.round(seconds * 100) / 100;
-
-/**
- * Items of a track in lanes: each in the first lane where it overlaps none, so that each row of the
- * track holds items that follow one another.
- */
-export function trackLanes<T extends { start: number; secs: number }>(layers: T[]): T[][] {
-  const lanes: T[][] = [];
-  for (const layer of [...layers].sort((a, b) => a.start - b.start)) {
-    const lane = lanes.find((items) => items.every((item) => item.start + item.secs <= layer.start + 1e-6 || layer.start + layer.secs <= item.start + 1e-6));
-    if (lane) lane.push(layer);
-    else lanes.push([layer]);
-  }
-  return lanes;
-}
-
-/** The Text tab: a button per look, each adding a Text Layer at the playhead. */
+/** The Text tab: a button per look, each adding a Text Layer at the playhead, or where it is dropped on the timeline. */
 export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (look: Omit<TextLayer, "id" | "start" | "secs">) => void }) {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-pretty text-muted">Adds a text at the playhead. Drag it on the video to place it.</p>
+      <p className="text-sm text-pretty text-muted">Adds a text at the playhead, or drag one onto the timeline. Drag it on the video to place it.</p>
       <div className="grid grid-cols-2 gap-2">
         {TEXT_PRESETS.map(({ name, layer }) => (
           <button
             key={name}
             type="button"
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.setData(DRAG_TEXT, name);
+              event.dataTransfer.effectAllowed = "copy";
+            }}
             onClick={() => onAdd(layer)}
             className="raised flex min-h-20 items-center justify-center rounded-[10px] p-2 hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
           >
@@ -207,26 +196,7 @@ export function TextLayerFields({
           />
         )}
       </Group>
-      <Group title="Time">
-        <Slider
-          label="Comes on at"
-          value={Math.min(layer.start, duration - TEXT_MIN_SECS)}
-          min={0}
-          max={Math.max(TEXT_MIN_SECS, duration - TEXT_MIN_SECS)}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)} s`}
-          onChange={(start) => onChange({ ...layer, start, secs: Math.min(layer.secs, duration - start) }, `text:${layer.id}:start`)}
-        />
-        <Slider
-          label="Stays for"
-          value={Math.min(layer.secs, duration - layer.start)}
-          min={TEXT_MIN_SECS}
-          max={Math.max(TEXT_MIN_SECS, duration - layer.start)}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)} s`}
-          onChange={(secs) => set("secs", secs)}
-        />
-      </Group>
+      <TimingFields item={layer} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>
   );
 }

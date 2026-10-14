@@ -53,3 +53,5 @@
 - Splitting a Music Clip drops the fades at the cut.
 
 **Note:** after backend edits, `make dev`'s `--reload` once hung waiting for the old worker to shut down while the browser held a streaming connection. Stopping that worker let the reloader start a new one.
+
+**2026-10-14: review fixes.** Songs are dragged from the Audio tab onto the Audio track, landing where they are dropped.

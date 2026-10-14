@@ -14,7 +14,6 @@ A Candidate refers to an item by its id; an item in use can't be deleted (the AP
 
 import json
 import subprocess
-import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -24,7 +23,8 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from app.storage import write_atomic
+from app.library import Index, shrink
+from app.renderer import last_lines
 
 # In DATA_DIR, with its index.
 MEDIA_DIR = "media"
@@ -37,18 +37,24 @@ class MediaKind(StrEnum):
     IMAGE = "image"
 
 
-# The largest upload of each kind, and the longest video (Shorts and Reels are 3 minutes at most)
-# and music.
-MAX_BYTES = {MediaKind.VIDEO: 500 * 10**6, MediaKind.AUDIO: 50 * 10**6, MediaKind.IMAGE: 10 * 10**6}
+# The largest upload of each kind (an image as large as a Logo may be), and the longest video:
+# Shorts and Reels are 3 minutes at most.
+MAX_BYTES = {MediaKind.VIDEO: 500 * 10**6, MediaKind.AUDIO: 50 * 10**6, MediaKind.IMAGE: 5 * 2**20}
 MAX_UPLOAD_BYTES = max(MAX_BYTES.values())
-MAX_SECS = {MediaKind.VIDEO: 180.0, MediaKind.AUDIO: 600.0}
+MAX_SECS = {MediaKind.VIDEO: 180.0}
 # The longest side of a video or image kept, of a video's proxy, and of its thumbnail.
 MAX_SIDE = 1920
 PROXY_SIDE = 640
 THUMBNAIL_SIDE = 320
 FPS = 30
-# Formats ffprobe gives a single picture.
-_IMAGE_FORMATS = ("image2", "png_pipe", "jpeg_pipe", "webp_pipe", "gif", "bmp_pipe")
+# What is taken, as ffprobe names it: MP4, MOV or WebM video; MP3, M4A, WAV or AAC songs; PNG, JPEG
+# or WebP images. (Matroska is WebM's container; only WebM's codecs make it one.)
+_MP4 = "mov,mp4,m4a,3gp,3g2,mj2"
+_VIDEO_FORMATS = (_MP4, "matroska,webm")
+_WEBM_CODECS = ("vp8", "vp9", "av1")
+_AUDIO_FORMATS = ("mp3", "wav", "aac", _MP4)
+_IMAGE_FORMATS = ("png_pipe", "jpeg_pipe", "webp_pipe")
+_ALLOWED = "Upload an MP4, MOV or WebM video, an MP3, M4A, WAV or AAC song, or a PNG, JPEG or WebP image"
 
 
 class BadMedia(ValueError):
@@ -88,24 +94,20 @@ class MediaStore:
         self.folder = folder
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
-        self._lock = threading.Lock()
+        self._index = Index(folder / INDEX_FILE, _ITEMS)
 
     def all(self) -> list[MediaItem]:
         """In the order they were uploaded."""
-        index = self.folder / INDEX_FILE
-        return _ITEMS.validate_json(index.read_bytes()) if index.is_file() else []
+        return self._index.all()
 
     def get(self, media_id: str) -> MediaItem:
-        for item in self.all():
-            if item.id == media_id:
-                return item
-        raise MediaNotFound(media_id)
+        item = self._index.find(media_id)
+        if item is None:
+            raise MediaNotFound(media_id)
+        return item
 
     def find(self, media_id: str) -> MediaItem | None:
-        try:
-            return self.get(media_id)
-        except MediaNotFound:
-            return None
+        return self._index.find(media_id)
 
     def file(self, media_id: str) -> Path:
         """The item's normalized file."""
@@ -152,16 +154,12 @@ class MediaStore:
             raise
         finally:
             raw.unlink(missing_ok=True)
-        with self._lock:
-            self._save([*self.all(), item])
+        self._index.add(item)
         return item
 
     def delete(self, media_id: str) -> None:
-        with self._lock:
-            items = self.all()
-            if not any(item.id == media_id for item in items):
-                raise MediaNotFound(media_id)
-            self._save([item for item in items if item.id != media_id])
+        if not self._index.remove(media_id):
+            raise MediaNotFound(media_id)
         for path in self.folder.glob(f"{media_id}.*"):
             path.unlink(missing_ok=True)
 
@@ -173,11 +171,10 @@ class MediaStore:
         return json.loads(result.stdout or "{}") if not result.returncode else {}
 
     def _kind(self, path: Path) -> tuple[MediaKind, float]:
-        """What the upload is, and how long (0 for an image)."""
+        """What the upload is, and how long (0 for an image). BadMedia for anything but the formats
+        taken (`_ALLOWED`), whatever its name says."""
         probe = self._probe(path)
         streams = probe.get("streams") or []
-        if not streams:
-            raise BadMedia("That file couldn't be read: upload a video, a song or an image")
         format_name = probe.get("format", {}).get("format_name", "")
         # A song's cover picture is a video stream, attached.
         pictures = [s for s in streams if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")]
@@ -185,11 +182,13 @@ class MediaStore:
         duration = float(probe.get("format", {}).get("duration") or 0)
         if pictures and format_name in _IMAGE_FORMATS:
             return MediaKind.IMAGE, 0.0
-        if pictures:
+        if pictures and format_name in _VIDEO_FORMATS:
+            if format_name != _MP4 and pictures[0].get("codec_name") not in _WEBM_CODECS:
+                raise BadMedia(_ALLOWED)
             return MediaKind.VIDEO, duration
-        if sounds:
+        if sounds and not pictures and format_name in _AUDIO_FORMATS:
             return MediaKind.AUDIO, duration
-        raise BadMedia("That file couldn't be read: upload a video, a song or an image")
+        raise BadMedia(_ALLOWED if streams else f"That file couldn't be read. {_ALLOWED}")
 
     def _normalize(self, raw: Path, media_id: str, kind: MediaKind) -> None:
         base = [str(self.ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y", "-i", str(raw)]
@@ -197,8 +196,8 @@ class MediaStore:
         if kind is MediaKind.VIDEO:
             # One decode: the kept copy, the proxy and the thumbnail.
             graph = (
-                f"[0:v:0]fps={FPS},{_fit(MAX_SIDE)},setsar=1,format=yuv420p,split=3[v][p][t];"
-                f"[p]{_fit(PROXY_SIDE)}[proxy];[t]trim=end_frame=1,{_fit(THUMBNAIL_SIDE)}[thumb]"
+                f"[0:v:0]fps={FPS},{shrink(MAX_SIDE, even=True)},setsar=1,format=yuv420p,split=3[v][p][t];"
+                f"[p]{shrink(PROXY_SIDE, even=True)}[proxy];[t]trim=end_frame=1,{shrink(THUMBNAIL_SIDE, even=True)}[thumb]"
             )
             command = [
                 *base, "-filter_complex", graph,
@@ -211,10 +210,10 @@ class MediaStore:
         elif kind is MediaKind.AUDIO:
             command = [*base, "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", f"{out}.m4a"]
         else:
-            command = [*base, "-frames:v", "1", "-vf", f"{_fit(MAX_SIDE)},format=rgba", "-c:v", "png", f"{out}.png"]
+            command = [*base, "-frames:v", "1", "-vf", f"{shrink(MAX_SIDE, even=True)},format=rgba", "-c:v", "png", f"{out}.png"]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode or not Path(command[-1]).is_file():
-            raise BadMedia(f"That file couldn't be converted: {_last_line(result.stderr)}")
+            raise BadMedia(f"That file couldn't be converted: {last_lines(result.stderr, 1)}")
 
     def _describe(self, media_id: str, kind: MediaKind, name: str) -> MediaItem:
         path = self.folder / f"{media_id}{_SUFFIXES[kind]}"
@@ -234,14 +233,6 @@ class MediaStore:
             created=datetime.now(UTC),
         )
 
-    def _save(self, items: list[MediaItem]) -> None:
-        write_atomic(self.folder / INDEX_FILE, _ITEMS.dump_json(items, indent=2))
-
-
-def _fit(side: int) -> str:
-    """A scale filter that shrinks (never enlarges) a picture to fit `side`, keeping its aspect, to even sizes."""
-    return f"scale='min({side},iw)':'min({side},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
-
 
 def _copy(source: BinaryIO, target: BinaryIO, limit: int) -> int:
     """Copy up to `limit` bytes; returns how many were copied."""
@@ -255,9 +246,3 @@ def _copy(source: BinaryIO, target: BinaryIO, limit: int) -> int:
 def _minutes(secs: float) -> str:
     minutes = round(secs / 60)
     return f"{minutes} minute{'s' if minutes != 1 else ''}"
-
-
-def _last_line(text: str) -> str:
-    lines = text.strip().splitlines()
-    return lines[-1] if lines else "ffmpeg failed"
-

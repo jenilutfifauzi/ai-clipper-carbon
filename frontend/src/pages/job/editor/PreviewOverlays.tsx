@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type RenderPlan } from "../../../api";
 import { cx } from "../../../format";
+import { follow } from "./follow";
 import { usePlayback, type Playback } from "./playback";
-
-// A video further than this from where the Clip's time puts it is moved back in step.
-const MAX_DRIFT_SECS = 0.15;
 
 const percent = (value: number) => `${value * 100}%`;
 
@@ -143,17 +141,7 @@ function OverlayView({
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    const sync = () => {
-      const time = playback.time;
-      if (time < event.start || time >= event.end) {
-        if (!element.paused) element.pause();
-        return;
-      }
-      const want = event.offset + (time - event.start);
-      if (Math.abs(element.currentTime - want) > MAX_DRIFT_SECS) element.currentTime = want;
-      if (playback.playing && element.paused) void element.play().catch(() => {});
-      if (!playback.playing && !element.paused) element.pause();
-    };
+    const sync = () => void follow(element, playback, { start: event.start, end: event.end, from: event.offset });
     sync();
     return playback.subscribe(sync);
   }, [playback, event]);

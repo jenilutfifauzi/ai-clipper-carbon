@@ -33,8 +33,9 @@ area at its opacity and laid over the joined frames before the captions are burn
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) reads each Segment
 as its own input, cut from the Source like a one-range Clip (or from its Media Library video); each
 is drawn as above, in its own Scenes, and the Segments' frames and sounds are joined back to back
-(concat). With videos among them, each Segment's sound is set to its volume (the Source's at the
-Clip's own) before the join, and a video without sound adds silence. A join with a Transition is an
+(concat). With videos among them (or a Segment's own volume), each Segment's sound is set to its
+volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
+silence. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
@@ -141,7 +142,7 @@ class Renderer:
                     return encoder
                 stderr = stderr or "no poster frame was written"
                 logger.warning("Rendering with %s failed: %s", encoder, stderr)
-                failures.append(f"{encoder}: {_last_lines(stderr)}")
+                failures.append(f"{encoder}: {last_lines(stderr)}")
         finally:
             for part in (*parts, subtitles):
                 if part is not None:
@@ -175,7 +176,7 @@ class Renderer:
         result = subprocess.run(command, capture_output=True, text=True, errors="replace")
         output = result.stderr
         if result.returncode or "{" not in output:
-            raise RuntimeError(f"ffmpeg couldn't measure the loudness of {source.name}: {_last_lines(output)}")
+            raise RuntimeError(f"ffmpeg couldn't measure the loudness of {source.name}: {last_lines(output)}")
         measured = json.loads(output[output.rindex("{") : output.rindex("}") + 1])
         return measured if math.isfinite(float(measured["input_i"])) else None
 
@@ -277,8 +278,9 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, each Segment's sound is first set to its volume (the Source's to the Clip's own,
-    which the mix then leaves) in one format, and a video without sound gives silence."""
+    the Segments, a Segment's own volume, or Transitions, each Segment's sound is first set to its
+    volume (a Source Segment's also to the Clip's own, which the mix then leaves) in one format, and
+    a video without sound gives silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -287,7 +289,8 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         read = files[segment.media] if segment.media else source
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", length, "-i", str(read)]
     count = len(plan.segments)
-    if not any(segment.media for segment in plan.segments) and not plan.transitions:
+    plain = all(segment.media is None and segment.volume == 1 for segment in plan.segments)
+    if plain and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = []
@@ -295,7 +298,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         if segment.silent:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.source_end - segment.source_start:.3f}[a{i}]")
         else:
-            volume = segment.volume if segment.media else plan.source_volume
+            volume = segment.volume * (1 if segment.media else plan.source_volume)
             chains.append(f"[{i}:a:0]volume={volume:g},{form}[a{i}]")
     if plan.transitions:
         chains.append(_joins(plan, [f"[a{i}]" for i in range(count)], "a", "[srcv]"))
@@ -924,5 +927,6 @@ def _range(plan: RenderPlan) -> list[str]:
     return ["-ss", f"{plan.start:.3f}", "-t", f"{plan.duration:.3f}"]
 
 
-def _last_lines(text: str, count: int = 3) -> str:
+def last_lines(text: str, count: int = 3) -> str:
+    """The last `count` lines of what ffmpeg said, on one line, for an error message."""
     return " ".join(text.strip().splitlines()[-count:])

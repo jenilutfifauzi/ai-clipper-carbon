@@ -21,6 +21,15 @@ KICKER_MAX_CHARS = 24
 # The longest text a Text Layer holds, its newlines included.
 TEXT_LAYER_MAX_CHARS = 300
 
+# How the Advanced Edit names an item (a Text Layer, a Music Clip, an Overlay, a Segment), for the
+# editor to address it.
+ItemId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+# Where an item of the Advanced Edit starts in Timeline time (seconds into the output), how long it
+# lasts, and how far into its file a song's or a video's starts.
+TimelineStart = Annotated[FiniteFloat, Field(ge=0, le=3600)]
+TimelineSecs = Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
+FileOffset = Annotated[FiniteFloat, Field(ge=0, le=3600)]
+
 
 @dataclass(frozen=True)
 class Descriptions:
@@ -87,10 +96,10 @@ class TextLayer:
     (libass's), its colour and outline, an optional box behind it, and the hook's animations. `id`
     names it in the editor."""
 
-    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    id: ItemId
     text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
-    start: Annotated[FiniteFloat, Field(ge=0, le=3600)]
-    secs: Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
+    start: TimelineStart
+    secs: TimelineSecs
     x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
     y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
     font: FontId = DEFAULT_FONT
@@ -121,11 +130,11 @@ class MusicClip:
     seconds into the file, heard from `start`, in Timeline time, at `volume`, faded in and out over
     `fade_in` and `fade_out` seconds."""
 
-    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    id: ItemId
     media: MediaId
-    start: Annotated[FiniteFloat, Field(ge=0, le=3600)]
-    secs: Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
-    offset: Annotated[FiniteFloat, Field(ge=0, le=3600)] = 0.0
+    start: TimelineStart
+    secs: TimelineSecs
+    offset: FileOffset = 0.0
     volume: Volume = 1.0
     fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
     fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
@@ -138,11 +147,11 @@ class Overlay:
     pixels, `size` pixels wide (as tall as its shape makes it), at `opacity`, a video's sound at
     `volume` (none by default)."""
 
-    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    id: ItemId
     media: MediaId
-    start: Annotated[FiniteFloat, Field(ge=0, le=3600)]
-    secs: Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
-    offset: Annotated[FiniteFloat, Field(ge=0, le=3600)] = 0.0
+    start: TimelineStart
+    secs: TimelineSecs
+    offset: FileOffset = 0.0
     x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
     y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
     size: Annotated[int, Field(ge=16, le=2160)] = 540
@@ -165,7 +174,7 @@ class Segment:
     the Media Library from `start` to `end` seconds into it, filling the frame as `fit` says, its own
     sound at `volume`. A Clip's Segments play in order, back to back. `id` names it in the editor."""
 
-    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
     end: Annotated[FiniteFloat, Field(ge=0)]
     media: MediaId | None = None
@@ -193,9 +202,25 @@ class Transition:
     """A Transition from the Segment `after` into the one after it, lasting `secs`: the two overlap
     by that long, so the Clip is that much shorter. Kept to half the shorter of the two by the planner."""
 
-    after: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    after: ItemId
     kind: TransitionKind = TransitionKind.FADE
     secs: Annotated[FiniteFloat, Field(ge=0.2, le=1.5)] = 0.5
+
+
+def transition_overlap(secs: float, before: float, after: float) -> float:
+    """How long a Transition of `secs` overlaps the Segments either side of its join, `before` and
+    `after` seconds long: half the shorter of them at most."""
+    return round(min(secs, before / 2, after / 2), 3)
+
+
+def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:
+    """How long a Main Track of `segments` plays: their lengths, less their Transitions' overlaps."""
+    by_join = {transition.after: transition for transition in transitions}
+    total = sum(segment.end - segment.start for segment in segments)
+    for before, after in zip(segments, segments[1:]):
+        if (transition := by_join.get(before.id)) is not None:
+            total -= transition_overlap(transition.secs, before.end - before.start, after.end - after.start)
+    return round(total, 3)
 
 
 # The id of a Clip's one Segment when it isn't cut.
@@ -255,18 +280,18 @@ class Candidate:
     # Between its Segments, each by the Segment it follows.
     transitions: list[Transition] = field(default_factory=list)
 
-    def pieces(self) -> list[Segment]:
+    def main_track(self) -> list[Segment]:
         """Its Main Track: its Segments, or the one from `start` to `end`."""
         return self.segments or [Segment(WHOLE, self.start, self.end)]
 
-    def episode_pieces(self) -> list[Segment]:
+    def source_segments(self) -> list[Segment]:
         """The Segments of its Main Track that show the Source, not the Media Library."""
-        return [piece for piece in self.pieces() if piece.media is None]
+        return [segment for segment in self.main_track() if segment.media is None]
 
     @property
     def duration(self) -> float:
         """How long its Clip is."""
-        return round(sum(piece.end - piece.start for piece in self.pieces()), 3)
+        return timeline_length(self.main_track(), self.transitions)
 
     def media_ids(self) -> set[str]:
         """The Media Library items it uses."""

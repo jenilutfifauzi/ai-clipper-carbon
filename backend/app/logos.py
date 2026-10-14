@@ -7,7 +7,6 @@ back with ffprobe. A Preset or Candidate whose Logo has been deleted shows no Wa
 
 import json
 import subprocess
-import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from app.storage import write_atomic
+from app.library import Index, shrink
 
 # In DATA_DIR, with its index.
 LOGOS_DIR = "logos"
@@ -55,25 +54,21 @@ class LogoStore:
     def __init__(self, folder: Path, ffmpeg: Path) -> None:
         self.folder = folder
         self.ffmpeg = ffmpeg
-        self._lock = threading.Lock()
+        self._index = Index(folder / INDEX_FILE, _LOGOS)
 
     def all(self) -> list[Logo]:
         """In the order they were uploaded."""
-        index = self.folder / INDEX_FILE
-        return _LOGOS.validate_json(index.read_bytes()) if index.is_file() else []
+        return self._index.all()
 
     def get(self, logo_id: str) -> Logo:
-        for logo in self.all():
-            if logo.id == logo_id:
-                return logo
-        raise LogoNotFound(logo_id)
+        logo = self._index.find(logo_id)
+        if logo is None:
+            raise LogoNotFound(logo_id)
+        return logo
 
     def find(self, logo_id: str | None) -> Logo | None:
         """The Logo, or None when there is no such Logo (it has been deleted)."""
-        try:
-            return None if logo_id is None else self.get(logo_id)
-        except LogoNotFound:
-            return None
+        return None if logo_id is None else self._index.find(logo_id)
 
     def file(self, logo_id: str) -> Path:
         """The Logo's PNG."""
@@ -92,7 +87,7 @@ class LogoStore:
         try:
             upload.write_bytes(data)
             # Shrunk (never enlarged) to fit MAX_SIDE, keeping its aspect.
-            fit = f"scale='min({MAX_SIDE},iw)':'min({MAX_SIDE},ih)':force_original_aspect_ratio=decrease,format=rgba"
+            fit = f"{shrink(MAX_SIDE)},format=rgba"
             result = subprocess.run(
                 [str(self.ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y", "-i", str(upload),
                  "-frames:v", "1", "-vf", fit, "-f", "image2", "-c:v", "png", str(png)],
@@ -107,16 +102,12 @@ class LogoStore:
         finally:
             upload.unlink(missing_ok=True)
         logo = Logo(logo_id, Path(filename).stem[:60] or "Logo", width, height, datetime.now(UTC))
-        with self._lock:
-            self._save([*self.all(), logo])
+        self._index.add(logo)
         return logo
 
     def delete(self, logo_id: str) -> None:
-        with self._lock:
-            logos = self.all()
-            if not any(logo.id == logo_id for logo in logos):
-                raise LogoNotFound(logo_id)
-            self._save([logo for logo in logos if logo.id != logo_id])
+        if not self._index.remove(logo_id):
+            raise LogoNotFound(logo_id)
         (self.folder / f"{logo_id}.png").unlink(missing_ok=True)
 
     def _size(self, png: Path) -> tuple[int, int]:
@@ -129,6 +120,3 @@ class LogoStore:
         if not streams:
             raise BadLogo("That image couldn't be read: upload a PNG, JPEG or WebP image")
         return streams[0]["width"], streams[0]["height"]
-
-    def _save(self, logos: list[Logo]) -> None:
-        write_atomic(self.folder / INDEX_FILE, _LOGOS.dump_json(logos, indent=2))

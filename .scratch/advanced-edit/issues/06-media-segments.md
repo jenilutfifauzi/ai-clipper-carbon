@@ -44,3 +44,5 @@
 - Through a video's Segment, the preview's Playback runs on a clock of its own.
 
 **Note:** in the automated browser's hidden tab, `requestAnimationFrame` is throttled, so hand-overs there land late. They are on time in a visible tab.
+
+**2026-10-14: review fixes.** Videos are dragged from the Media tab onto the Video track, landing between the Segments nearest the drop (so an intro can go first).

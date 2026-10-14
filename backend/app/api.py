@@ -325,7 +325,7 @@ def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, setti
     if job.source is None:
         raise HTTPException(404, f"Job {job.id} has no Source")
     job_dir = store.job_dir(job.id)
-    first = candidate.episode_pieces()[0]
+    first = candidate.source_segments()[0]
     at = first.start + min(settings.render.poster_secs, (first.end - first.start) / 2)
     still = job_dir / STILLS_DIR / f"{round(at * 1000)}.jpg"
     if not still.is_file():

@@ -3,6 +3,7 @@ import type { Transition, TransitionKind } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
+import { DRAG_TRANSITION } from "./drag";
 
 export const TRANSITIONS: { kind: TransitionKind; label: string }[] = [
   { kind: "fade", label: "Fade" },
@@ -17,8 +18,9 @@ export const TRANSITIONS: { kind: TransitionKind; label: string }[] = [
   { kind: "circleopen", label: "Circle open" },
 ];
 
-// What a dragged kind carries, to be dropped on a join.
-export const TRANSITION_DRAG = "application/x-transition";
+// How long a Transition can be (Transition.secs in backend/app/candidates.py), and a new one's length.
+const SECS = { min: 0.2, max: 1.5 };
+export const TRANSITION_SECS = 0.5;
 
 /**
  * The Transitions: a card per kind, put on the selected join by a click (or dragged onto any join on
@@ -49,8 +51,8 @@ export function TransitionPanel({
         <>
           <p className="text-sm text-pretty text-muted">
             {joined
-              ? "Pick how one piece gives way to the next. The two overlap for its length, so the clip gets that much shorter."
-              : "Select a join between two pieces on the Video track (the diamond), or drag a transition onto one."}
+              ? "Pick how one Segment gives way to the next. The two overlap for its length, so the clip gets that much shorter."
+              : "Select a join between two Segments on the Video track (the diamond), or drag a transition onto one."}
           </p>
           <div className="grid grid-cols-2 gap-2">
             {TRANSITIONS.map(({ kind, label }) => (
@@ -59,7 +61,7 @@ export function TransitionPanel({
                 type="button"
                 draggable
                 onDragStart={(event) => {
-                  event.dataTransfer.setData(TRANSITION_DRAG, kind);
+                  event.dataTransfer.setData(DRAG_TRANSITION, kind);
                   event.dataTransfer.effectAllowed = "copy";
                 }}
                 onClick={() => joined && onPick(kind)}
@@ -85,8 +87,8 @@ export function TransitionPanel({
           <Slider
             label="Length"
             value={transition.secs}
-            min={0.2}
-            max={1.5}
+            min={SECS.min}
+            max={SECS.max}
             step={0.05}
             format={(v) => `${v.toFixed(2)} s`}
             onChange={(secs) => onChange({ ...transition, secs }, `transition:${transition.after}`)}

@@ -1,9 +1,7 @@
 import { useEffect, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
+import { follow } from "./follow";
 import type { Playback } from "./playback";
-
-// A song further than this from where the Clip's time puts it is moved back in step.
-const MAX_DRIFT_SECS = 0.15;
 
 let context: AudioContext | null = null;
 
@@ -52,8 +50,8 @@ function loudness(event: AudioEvent, time: number): number {
 /**
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip, playing its
  * part of its song while the Clip's time is in it, at its volume through its fades. The Clip's own
- * sound (the master video) is set to the plan's `source_volume`. Nothing is routed through Web Audio
- * until the plan has music or another volume.
+ * sound (the master video) is set to the plan's `source_volume`, times the Segment's own volume.
+ * Nothing is routed through Web Audio until the plan has music or another volume.
  */
 export function PreviewMusic({
   plan,
@@ -69,29 +67,20 @@ export function PreviewMusic({
   const sourceVolume = plan?.source_volume ?? 1;
 
   useEffect(() => {
-    const video = master.current;
-    if (video && (sourceVolume !== 1 || gains.has(video))) setVolume(video, sourceVolume);
-  }, [master, sourceVolume, events.length]);
-
-  useEffect(() => {
     const sync = () => {
-      const time = playback.time;
+      const video = master.current;
+      const volume = sourceVolume * (playback.current.media ? 1 : (playback.current.volume ?? 1));
+      if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
-        if (!element) return;
-        const inside = time >= event.start && time < event.end;
-        const want = event.offset + (time - event.start);
-        if (inside) {
-          setVolume(element, loudness(event, time));
-          if (Math.abs(element.currentTime - want) > MAX_DRIFT_SECS) element.currentTime = want;
-          if (playback.playing && element.paused) void element.play().catch(() => {});
-          if (!playback.playing && !element.paused) element.pause();
-        } else if (!element.paused) element.pause();
+        if (element && follow(element, playback, { start: event.start, end: event.end, from: event.offset })) {
+          setVolume(element, loudness(event, playback.time));
+        }
       });
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, events]);
+  }, [playback, events, master, sourceVolume]);
 
   return (
     <>

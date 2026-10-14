@@ -1,109 +1,116 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, TransitionEvent, TransitionKind } from "../../../api";
-import type { Playback } from "./playback";
+import { PanelView, sceneAt } from "./ClipPreview";
+import { MAX_DRIFT_SECS } from "./follow";
+import { Playback, usePlayback } from "./playback";
+import { setVolume } from "./PreviewMusic";
+import { MediaSegment, sceneLayout } from "./PreviewSegments";
+
+// The Segment a Transition takes away is made ready this long before the Transition starts.
+const READY_SECS = 2;
 
 /**
- * The plan's Transitions, imitated: the preview plays one piece at a time (playback.ts's `playable`),
- * so as playing goes on into a piece a Transition starts, the last picture of the Segment before it
- * (copied from the stage's videos into a canvas) is laid over the next one and taken away as the
- * Transition's kind does it, over exactly its time. The look is near xfade's, not the same: the
- * Segment before is held still.
+ * The plan's Transitions, imitated: the preview's main playback goes on into the next Segment where
+ * a Transition starts (playback.ts's `playable`), and over it the Segment before keeps playing on
+ * a playback of its own (its "ghost": its panels, or its video), taken away as the Transition's kind
+ * does it, its sound fading out, over exactly the Transition's time. Near xfade's look and
+ * acrossfade's sound, not the same.
  */
-export function PreviewTransitions({
-  plan,
-  playback,
-  stage,
-}: {
-  plan: RenderPlan | null;
-  playback: Playback;
-  stage: React.RefObject<HTMLDivElement | null>;
-}) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const veil = useRef<HTMLDivElement>(null);
+export function PreviewTransitions({ plan, playback, src }: { plan: RenderPlan | null; playback: Playback; src: string }) {
   const transitions = plan?.transitions ?? [];
+  const near = usePlayback(playback, (time) => transitions.findIndex((t) => time >= t.start - READY_SECS && time < t.end));
+  if (!plan || near === -1) return null;
+  const transition = transitions[near];
+  // The Segment it takes away: the one it ends, which started before it.
+  const index = plan.segments.findIndex((segment) => segment.start < transition.start && Math.abs(segment.end - transition.end) < 0.01);
+  if (index === -1) return null;
+  return <Ghost key={`${near}:${transition.start}`} plan={plan} transition={transition} index={index} playback={playback} src={src} />;
+}
+
+function Ghost({
+  plan,
+  transition,
+  index,
+  playback,
+  src,
+}: {
+  plan: RenderPlan;
+  transition: TransitionEvent;
+  index: number;
+  playback: Playback;
+  src: string;
+}) {
+  const layer = useRef<HTMLDivElement>(null);
+  const veil = useRef<HTMLDivElement>(null);
+  const master = useRef<HTMLVideoElement>(null);
+  const follower = useRef<HTMLVideoElement>(null);
+  const segment = plan.segments[index];
+  const ghost = useMemo(() => new Playback(), []);
+  ghost.setSegments([{ ...segment, media: segment.media ?? null }]);
+  const sceneIndex = usePlayback(ghost, (time) => sceneAt(plan, time, index));
+  const scene = plan.scenes[sceneIndex];
 
   useEffect(() => {
-    if (!transitions.length) return;
-    // The Transition the picture held in the canvas is for.
-    let held: TransitionEvent | null = null;
-    const handover = playback.onHandover((_, to) => {
-      const coming = transitions.find((t) => Math.abs(t.start - to.start) < 0.01);
-      if (!coming || !canvas.current) return;
-      copy(stage.current, canvas.current);
-      held = coming;
-    });
+    if (segment.media) return;
+    ghost.attach(master.current);
+    return () => ghost.attach(null);
+  }, [ghost, segment.media]);
+
+  useEffect(() => {
     const sync = () => {
       const time = playback.time;
-      const element = canvas.current;
-      const cover = veil.current;
-      if (!element || !cover) return;
-      const now = transitions.find((t) => time >= t.start && time < t.end);
-      if (!now || held !== now) {
-        element.style.visibility = "hidden";
-        cover.style.opacity = "0";
+      const inside = time >= transition.start && time < transition.end;
+      const share = (time - transition.start) / (transition.end - transition.start);
+      if (layer.current && veil.current) {
+        layer.current.style.visibility = inside ? "visible" : "hidden";
+        if (inside) look(transition.kind, share, layer.current, veil.current);
+        else veil.current.style.opacity = "0";
+      }
+      if (segment.media) return;
+      const video = master.current;
+      if (video) setVolume(video, inside ? (1 - share) * (plan.source_volume * segment.volume) : 0);
+      if (!inside) {
+        if (ghost.playing) ghost.pause();
+        // Ready on the Transition's first frame.
+        if (time < transition.start && Math.abs(ghost.time - transition.start) > MAX_DRIFT_SECS) ghost.seek(transition.start);
         return;
       }
-      element.style.visibility = "visible";
-      look(now.kind, (time - now.start) / (now.end - now.start), element, cover);
+      if (Math.abs(ghost.time - time) > MAX_DRIFT_SECS) ghost.seek(time);
+      if (playback.playing && !ghost.playing) ghost.play();
+      if (!playback.playing && ghost.playing) ghost.pause();
+      const other = follower.current;
+      if (video && other) {
+        if (Math.abs(other.currentTime - video.currentTime) > MAX_DRIFT_SECS) other.currentTime = video.currentTime;
+        if (video.paused !== other.paused) {
+          if (video.paused) other.pause();
+          else void other.play().catch(() => {});
+        }
+      }
     };
     sync();
-    const unsubscribe = playback.subscribe(sync);
-    return () => {
-      unsubscribe();
-      handover();
-    };
-  }, [playback, stage, transitions]);
+    return playback.subscribe(sync);
+  }, [playback, ghost, transition, segment, plan.source_volume]);
 
-  if (!transitions.length) return null;
   return (
     <>
-      <canvas ref={canvas} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+      <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
+        {segment.media ? (
+          <MediaSegment segment={segment} end={segment.end} fill={sceneLayout(plan, index) === "fill"} playback={playback} fade={transition} />
+        ) : (
+          [master, follower].map((ref, slot) => (
+            <PanelView key={slot} videoRef={ref} src={src} plan={plan} panel={scene?.panels[slot] ?? null} playback={ghost} muted={slot > 0} />
+          ))
+        )}
+      </div>
       <div ref={veil} aria-hidden className="pointer-events-none absolute inset-0" style={{ opacity: 0 }} />
     </>
   );
 }
 
-// The stage's pictures (the Source's panels, or a video's Segment), drawn into `canvas` as they are on screen.
-function copy(stage: HTMLDivElement | null, canvas: HTMLCanvasElement) {
-  if (!stage) return;
-  const frame = stage.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.round(frame.width * ratio);
-  canvas.height = Math.round(frame.height * ratio);
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.scale(ratio, ratio);
-  context.fillStyle = "#000";
-  context.fillRect(0, 0, frame.width, frame.height);
-  for (const video of stage.querySelectorAll<HTMLVideoElement>("[data-picture] video")) {
-    const holder = video.closest<HTMLElement>("[data-picture]");
-    if (!holder || getComputedStyle(holder).visibility === "hidden" || !video.videoWidth) continue;
-    const box = (video.parentElement ?? holder).getBoundingClientRect();
-    const rect = video.getBoundingClientRect();
-    const style = getComputedStyle(video);
-    // Where the picture is drawn in its element, as its object-fit puts it.
-    let [x, y, width, height] = [rect.left, rect.top, rect.width, rect.height];
-    if (style.objectFit === "cover" || style.objectFit === "contain") {
-      const scale = (style.objectFit === "cover" ? Math.max : Math.min)(rect.width / video.videoWidth, rect.height / video.videoHeight);
-      width = video.videoWidth * scale;
-      height = video.videoHeight * scale;
-      x = rect.left + (rect.width - width) / 2;
-      y = rect.top + (rect.height - height) / 2;
-    }
-    context.save();
-    context.beginPath();
-    context.rect(box.left - frame.left, box.top - frame.top, box.width, box.height);
-    context.clip();
-    context.filter = style.filter && style.filter !== "none" ? style.filter : "none";
-    context.drawImage(video, x - frame.left, y - frame.top, width, height);
-    context.restore();
-  }
-}
-
-// The held picture (and, for a dip, a veil of black or white) `share` of the way through `kind`.
-function look(kind: TransitionKind, share: number, canvas: HTMLCanvasElement, veil: HTMLDivElement) {
+// The Segment taken away (and, for a dip, a veil of black or white) `share` of the way through `kind`.
+function look(kind: TransitionKind, share: number, layer: HTMLDivElement, veil: HTMLDivElement) {
   const p = Math.min(1, Math.max(0, share));
-  const style = canvas.style;
+  const style = layer.style;
   style.opacity = "1";
   style.transform = "";
   style.clipPath = "";

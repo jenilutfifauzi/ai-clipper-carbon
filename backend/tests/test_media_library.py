@@ -17,7 +17,8 @@ def make(path: Path, *args: str) -> bytes:
 
 @pytest.fixture(scope="session")
 def files(tmp_path_factory) -> dict[str, bytes]:
-    """A 2 s 320x240 video at 25 fps with a tone, a 1 s WAV tone, a PNG, and a 181 s video (too long)."""
+    """A 2 s 320x240 video at 25 fps with a tone, a 1 s WAV tone, a PNG, a 181 s video (too long), and
+    a GIF and a FLAC (formats that aren't taken)."""
     folder = tmp_path_factory.mktemp("media")
     lavfi = ("-f", "lavfi", "-i")
     return {
@@ -27,6 +28,8 @@ def files(tmp_path_factory) -> dict[str, bytes]:
         "image": make(folder / "still.png", *lavfi, "color=c=blue:size=64x48", "-frames:v", "1"),
         "long": make(folder / "long.mp4", *lavfi, "color=c=black:size=32x32:rate=1:duration=181", "-c:v", "libx264",
                      "-preset", "ultrafast"),
+        "gif": make(folder / "moving.gif", *lavfi, "testsrc=size=32x32:rate=5:duration=1"),
+        "flac": make(folder / "song.flac", *lavfi, "sine=frequency=330:duration=1"),
     }
 
 
@@ -70,6 +73,10 @@ def test_videos_audio_and_images_are_uploaded_normalized_listed_and_served(clien
 
 def test_files_that_cant_be_media_are_refused(client, files, monkeypatch):
     assert upload(client, b"plain text, not media", "notes.mp4").status_code == 422
+    # Only the formats the Media Library takes, whatever the file's name says.
+    for name, renamed in (("gif", "moving.mp4"), ("flac", "song.mp3")):
+        refused = upload(client, files[name], renamed)
+        assert refused.status_code == 422 and "MP4, MOV or WebM" in refused.json()["detail"], name
     assert "3 minutes" in upload(client, files["long"], "long.mp4").json()["detail"]
     monkeypatch.setitem(media.MAX_BYTES, media.MediaKind.AUDIO, 1000)
     assert "MB" in upload(client, files["audio"], "song.wav").json()["detail"]

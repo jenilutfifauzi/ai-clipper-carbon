@@ -13,7 +13,7 @@ import pytest
 
 from app.candidates import Candidate, Layout, LayoutOverride, Segment, WordEdit, manual_candidate
 from app.config import CameraTuning, load_settings
-from app.planner import Piece, SceneLayout, SegmentPlan, plan_render
+from app.planner import SegmentInput, SceneLayout, SegmentPlan, plan_render
 from app.rendering import candidate_plan
 from app.styles import PresetStore
 from app.transcript import Word
@@ -29,9 +29,9 @@ SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="
 def test_each_segment_is_framed_on_its_own_and_joined_back_to_back():
     planned = plan_render(
         10, 23, SOURCE,
-        pieces=[
-            Piece(10, 12, layout_overrides=[LayoutOverride(0.5, Layout.SPLIT)], words=[Word("satu", 1.5, 1.9)]),
-            Piece(20, 23, words=[Word("dua", 0.05, 0.4)]),
+        main_track=[
+            SegmentInput(10, 12, layout_overrides=[LayoutOverride(0.5, Layout.SPLIT)], words=[Word("satu", 1.5, 1.9)]),
+            SegmentInput(20, 23, words=[Word("dua", 0.05, 0.4)]),
         ],
     )
     assert planned.duration == 5

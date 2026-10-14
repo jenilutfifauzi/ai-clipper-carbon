@@ -50,3 +50,7 @@
 - Each Segment's picture is brought to the Clip's frame rate and time base before an `xfade`, which needs them alike.
 - The preview plays one piece at a time. At the handover it copies the outgoing picture and animates it away as the kind does. The timing is exact and the look approximate (the outgoing piece is held still).
 - Kinds are put on a join by a click on its diamond and then on a kind, or by dragging a kind onto the diamond.
+
+**2026-10-14: review fixes.** **Preview:** the outgoing Segment keeps playing through the overlap on a playback of its own (its panels, or its video), its sound fading out, taken away as the kind does it. This replaces the held picture.
+
+**Planning:** a Transition next to a Media Library video that is gone is left out (`tests/test_advanced_rules.py`).

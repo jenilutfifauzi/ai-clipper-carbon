@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from app.candidates import TransitionKind
-from app.planner import Join, Piece, SegmentPlan, TransitionEvent, plan_render
+from app.planner import Join, SegmentInput, SegmentPlan, TransitionEvent, plan_render
 from app.transcript import Word
 from app.video_source import SourceMetadata
 from test_render import add, full_frame, preview, render, rendered, reviewed
@@ -22,10 +22,10 @@ SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="
 def test_a_transition_overlaps_the_segments_either_side_and_shortens_the_clip():
     planned = plan_render(
         10, 32, SOURCE,
-        pieces=[
-            Piece(10, 12, words=[Word("satu", 1.5, 1.9)]),
-            Piece(20, 23, join=Join(TransitionKind.FADE, 0.5), words=[Word("dua", 0.1, 0.4)]),
-            Piece(30, 32),
+        main_track=[
+            SegmentInput(10, 12, words=[Word("satu", 1.5, 1.9)]),
+            SegmentInput(20, 23, join=Join(TransitionKind.FADE, 0.5), words=[Word("dua", 0.1, 0.4)]),
+            SegmentInput(30, 32),
         ],
     )
     assert planned.segments == [
@@ -39,7 +39,7 @@ def test_a_transition_overlaps_the_segments_either_side_and_shortens_the_clip():
 
 
 def test_a_transition_is_at_most_half_the_shorter_segment():
-    planned = plan_render(10, 23, SOURCE, pieces=[Piece(10, 11), Piece(20, 23, join=Join(TransitionKind.SLIDELEFT, 1.5))])
+    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 11), SegmentInput(20, 23, join=Join(TransitionKind.SLIDELEFT, 1.5))])
     assert planned.transitions == [TransitionEvent(TransitionKind.SLIDELEFT, 0.5, 1.0)]
     assert planned.duration == 3.5
 

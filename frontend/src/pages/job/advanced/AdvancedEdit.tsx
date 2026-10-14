@@ -1,26 +1,8 @@
-import {
-  AlertCircle,
-  ArrowLeft,
-  AudioLines,
-  Check,
-  Copy,
-  Film,
-  Loader2,
-  Music,
-  Redo2,
-  Scissors,
-  Shuffle,
-  SlidersHorizontal,
-  Trash2,
-  Type,
-  Undo2,
-  X,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   api,
-  mediaThumbnailUrl,
   mediaUrl,
   type Candidate,
   type CandidateChange,
@@ -30,46 +12,37 @@ import {
   type MediaItem,
   type MusicClip,
   type Overlay,
-  type PreviewPlan,
   type TextLayer,
-  type Transcript,
   type Transition,
   type TransitionKind,
 } from "../../../api";
-import { Button } from "../../../components/Button";
 import { Panel } from "../../../components/Panel";
 import { loadFonts } from "../../../fonts";
-import { cx, formatPrecise } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ClipPreview } from "../editor/ClipPreview";
 import { candidateDraft } from "../editor/draft";
-import { piecesFrom, playable, Playback, usePlayback } from "../editor/playback";
+import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { HookTimingFields } from "../HookEditor";
-import { AdvancedTimeline, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
-import { editsOf, sameSelection, type AdvancedEdits, type Selection } from "./edits";
-import { MediaAssets, useMediaLibrary, type MediaLibrary } from "./MediaLibrary";
-import { draggedSegments, newMediaSegment, SEGMENT_MIN_SECS, SegmentFields, SourcePicker } from "./MainTrack";
-import { MUSIC_MIN_SECS, MusicFields, newMusicClip } from "./Music";
-import { newOverlay, OVERLAY_MIN_SECS, OverlayFields } from "./Overlays";
-import { TRANSITION_DRAG, TransitionPanel } from "./Transitions";
-import { newId, newTextLayer, TEXT_MIN_SECS, trackLanes, TextAssets, TextLayerFields } from "./TextLayers";
+import { itemActions, type ItemActions } from "./actions";
+import { AdvancedTimeline } from "./AdvancedTimeline";
+import { AssetPanel } from "./AssetPanel";
+import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
+import { editsOf, newId, samePicked, type AdvancedEdits, type Picked } from "./edits";
+import { Inspector } from "./Inspector";
+import { draggedSegments, newMediaSegment } from "./MainTrack";
+import { useMediaLibrary } from "./MediaLibrary";
+import { newMusicClip } from "./Music";
+import { newOverlay } from "./Overlays";
+import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
+import { Tracks, type DropTrack } from "./Tracks";
+import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
 const EDITABLE = new Set(["review", "rendering"]);
 // From this width on, the desktop layout: assets, player and inspector side by side over the timeline.
 const WIDE = "(min-width: 64rem)";
-
-type AssetTab = "text" | "audio" | "media" | "transitions";
-
-const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
-  { value: "text", label: "Text", icon: Type },
-  { value: "audio", label: "Audio", icon: AudioLines },
-  { value: "media", label: "Media", icon: Film },
-  { value: "transitions", label: "Transitions", icon: Shuffle },
-];
 
 /**
  * The Advanced Edit of a Candidate (/jobs/:jobId/candidates/:candidateId/advanced): a CapCut-like
@@ -92,12 +65,7 @@ export function AdvancedEditPage() {
       <div className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-4 p-4">
         <Panel className="flex flex-col gap-3">
           <h1 className="text-xl font-semibold">Can't edit this clip here</h1>
-          <p className="text-muted">
-            {error ??
-              (index < 0
-                ? "This Job has no such clip."
-                : "Clips can be edited once the Job is in review.")}
-          </p>
+          <p className="text-muted">{error ?? (index < 0 ? "This Job has no such clip." : "Clips can be edited once the Job is in review.")}</p>
           <Link to={back} className="inline-flex min-h-11 items-center gap-1.5 self-start text-accent-text hover:underline">
             <ArrowLeft aria-hidden size={16} />
             Back to the Job
@@ -126,12 +94,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
-  const [selection, setSelection] = useState<Selection>(null);
+  const [picked, setPicked] = useState<Picked>(null);
   // On a phone: the sheet open over the timeline, of an asset tab or of the inspector.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   const wide = useMediaQuery(WIDE);
   const library = useMediaLibrary();
+  const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
 
   const save = useCallback(
     async (change: CandidateChange) => {
@@ -153,13 +122,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, job.status);
   const playback = useMemo(() => new Playback(), []);
-  // The Segments as planned (snapped to Words) once the plan has the draft's, else as drafted.
+  // The Main Track as planned (snapped to Words, overlapping at Transitions) once the plan has the
+  // draft's Segments, else as drafted; and as played, one Segment at a time. Everything placed on
+  // the Main Track goes by these, as the playhead does (docs/adr/0002-segments-and-timeline-time.md).
   const planned = preview?.plan.segments ?? [];
-  playback.setPieces(planned.length > 1 && planned.length === edits.segments.length ? playable(planned) : piecesFrom(edits.segments));
+  const track: PlayedSegment[] = planned.length > 1 && planned.length === edits.segments.length ? planned : playedFrom(edits.segments);
+  const played = playable(track);
+  playback.setSegments(played);
   const duration = playback.duration;
   const sourceLength = job.source?.metadata.duration ?? Infinity;
-  // The Segments when the drag under way began, by its gesture.
-  const dragOrigin = useRef<{ group: string; segments: ClipSegment[] } | null>(null);
+  // The Main Track when the drag under way began, by its gesture.
+  const dragOrigin = useRef<{ group: string; segments: ClipSegment[]; shown: PlayedSegment[]; planned: PlayedSegment[] } | null>(null);
 
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
@@ -168,91 +141,85 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function change(next: Partial<AdvancedEdits>, group?: string) {
     history.set({ ...edits, ...next }, group);
   }
-  const textOf = (id: string) => edits.text_layers.find((layer) => layer.id === id);
-  const selectedText = selection?.kind === "text" ? textOf(selection.id) ?? null : null;
-  const songs = new Map((library.items ?? []).map((item) => [item.id, item]));
+  function select(next: Picked) {
+    setPicked((old) => (samePicked(old, next) ? old : next));
+  }
+  // An item added: picked, and on a phone the sheet closed (or, for a text, its fields opened to type in).
+  function added(next: Picked, fields = false) {
+    select(next);
+    if (!wide) setSheet(fields ? "inspector" : null);
+  }
+  const replaced = <T extends { id: string }>(items: T[], item: T) => items.map((old) => (old.id === item.id ? item : old));
 
-  function addText(look: Omit<TextLayer, "id" | "start" | "secs">) {
-    const layer = newTextLayer(look, playback.time, duration);
+  function addText(look: Omit<TextLayer, "id" | "start" | "secs">, at = playback.time) {
+    const layer = newTextLayer(look, at, duration);
     change({ text_layers: [...edits.text_layers, layer] });
-    select({ kind: "text", id: layer.id });
-    // On a phone, straight to its fields, to type its words.
-    setSheet(wide ? null : "inspector");
+    added({ kind: "text", id: layer.id }, true);
+  }
+  function addMusic(item: MediaItem, at = playback.time) {
+    const clip = newMusicClip(item, at, duration);
+    change({ music: [...edits.music, clip] });
+    added({ kind: "music", id: clip.id });
+  }
+  function addOverlay(item: MediaItem, at = playback.time) {
+    const overlay = newOverlay(item, at, duration);
+    change({ overlays: [...edits.overlays, overlay] });
+    added({ kind: "overlay", id: overlay.id });
+  }
+  // A Segment at `place`: by default after the one at the playhead.
+  function insertSegment(segment: ClipSegment, place?: number) {
+    const at = played.findIndex((shown) => playback.time < shown.end);
+    const where = place ?? (at === -1 ? edits.segments.length : at + 1);
+    change({ segments: [...edits.segments.slice(0, where), segment, ...edits.segments.slice(where)] });
+    added({ kind: "segment", id: segment.id });
   }
   function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
-    if (dragOrigin.current?.group !== group) dragOrigin.current = { group, segments: edits.segments };
-    const lengthOf = (segment: ClipSegment) => (segment.media ? songs.get(segment.media)?.duration ?? segment.end : sourceLength);
-    change({ segments: draggedSegments(dragOrigin.current.segments, id, moved, lengthOf) }, group);
+    if (dragOrigin.current?.group !== group) dragOrigin.current = { group, segments: edits.segments, shown: played, planned: track };
+    const { segments, shown, planned: whole } = dragOrigin.current;
+    const lengthOf = (segment: ClipSegment) => (segment.media ? (mediaById.get(segment.media)?.duration ?? segment.end) : sourceLength);
+    change({ segments: draggedSegments(segments, id, moved, lengthOf, shown, whole) }, group);
   }
-  function updateSegment(segment: ClipSegment, group?: string) {
-    change({ segments: edits.segments.map((old) => (old.id === segment.id ? segment : old)) }, group);
+  // What is dropped from the asset panel onto a track, at `time`.
+  function dropMedia(onto: DropTrack, media: string, time: number) {
+    const item = mediaById.get(media);
+    if (!item) return;
+    if (onto === "music" && item.has_audio) addMusic(item, time);
+    else if (onto === "overlay" && item.kind !== "audio") addOverlay(item, time);
+    else if (onto === "segment" && item.kind === "video") {
+      insertSegment(newMediaSegment(item, newId()), played.filter((shown) => (shown.start + shown.end) / 2 < time).length);
+    }
   }
-  // A moment of the episode, or a video, after the Segment the playhead is in.
-  function addFromSource(range: { start: number; end: number }) {
-    insertSegment({ id: newId(), ...range });
-  }
-  function insertSegment(segment: ClipSegment) {
-    const at = piecesFrom(edits.segments).findIndex((piece) => playback.time < piece.end);
-    const place = at === -1 ? edits.segments.length : at + 1;
-    change({ segments: [...edits.segments.slice(0, place), segment, ...edits.segments.slice(place)] });
-    select({ kind: "segment", id: segment.id });
-    if (!wide) setSheet(null);
-  }
-  // The Transition at the join after Segment `after`: set to `kind` (its length kept), or changed.
+  // The Transition at the join after Segment `after`: set to `kind` (its length kept), changed, or removed.
   function setTransition(after: string, kind: TransitionKind) {
     const old = edits.transitions.find((transition) => transition.after === after);
-    const next = { after, kind, secs: old?.secs ?? 0.5 };
+    const next = { after, kind, secs: old?.secs ?? TRANSITION_SECS };
     change({ transitions: [...edits.transitions.filter((transition) => transition.after !== after), next] });
     select({ kind: "join", after });
   }
   function updateTransition(transition: Transition, group?: string) {
     change({ transitions: edits.transitions.map((old) => (old.after === transition.after ? transition : old)) }, group);
   }
-  function removeTransition(after: string) {
-    change({ transitions: edits.transitions.filter((transition) => transition.after !== after) });
-  }
-  const joinedAfter = selection?.kind === "join" ? selection.after : null;
-  const transitionPanel = (kinds = true) => (
+  const joinedAfter = picked?.kind === "join" ? picked.after : null;
+  const transitionPanel = (kinds: boolean) => (
     <TransitionPanel
       kinds={kinds}
       joined={joinedAfter !== null}
       transition={edits.transitions.find((transition) => transition.after === joinedAfter) ?? null}
       onPick={(kind) => joinedAfter && setTransition(joinedAfter, kind)}
       onChange={updateTransition}
-      onRemove={() => joinedAfter && removeTransition(joinedAfter)}
+      onRemove={() => change({ transitions: edits.transitions.filter((transition) => transition.after !== joinedAfter) })}
     />
   );
-  function addOverlay(item: MediaItem) {
-    const overlay = newOverlay(item, playback.time, duration);
-    change({ overlays: [...edits.overlays, overlay] });
-    select({ kind: "overlay", id: overlay.id });
-    if (!wide) setSheet(null);
-  }
-  function updateOverlay(overlay: Overlay, group?: string) {
-    change({ overlays: edits.overlays.map((old) => (old.id === overlay.id ? overlay : old)) }, group);
-  }
-  function addMusic(item: MediaItem) {
-    const clip = newMusicClip(item, playback.time, duration);
-    change({ music: [...edits.music, clip] });
-    select({ kind: "music", id: clip.id });
-    if (!wide) setSheet(null);
-  }
-  function updateText(layer: TextLayer, group?: string) {
-    change({ text_layers: edits.text_layers.map((old) => (old.id === layer.id ? layer : old)) }, group);
-  }
-  function updateMusic(clip: MusicClip, group?: string) {
-    change({ music: edits.music.map((old) => (old.id === clip.id ? clip : old)) }, group);
-  }
-  const actions = itemActions(edits, selection, playback, duration, change, select);
+  const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
+  const updateMusic = (clip: MusicClip, group?: string) => change({ music: replaced(edits.music, clip) }, group);
+  const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
+  const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
+  const actions = itemActions(edits, picked, playback, played, duration, (time) => wordGap(job.transcript?.words ?? [], time), change, select);
   useShortcuts(history, playback, actions);
 
   async function close() {
     await history.flush();
     navigate(`/jobs/${job.id}?candidate=${candidate.id}`);
-  }
-
-  function select(next: Selection) {
-    setSelection((old) => (sameSelection(old, next) ? old : next));
   }
 
   const source = job.source!;
@@ -263,17 +230,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       fonts={fonts}
       playback={playback}
       texts={{
-        selected: selectedText?.id ?? null,
+        selected: picked?.kind === "text" ? picked.id : null,
         onSelect: (id) => select({ kind: "text", id }),
         onMove: (id, x, y, group) => {
-          const layer = textOf(id);
+          const layer = edits.text_layers.find((other) => other.id === id);
           if (layer) updateText({ ...layer, x, y }, group);
         },
       }}
       overlays={{
-        selected: selection?.kind === "overlay" ? selection.id : null,
-        // As the plan draws them: those whose items are there.
-        ids: edits.overlays.filter((overlay) => songs.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
+        selected: picked?.kind === "overlay" ? picked.id : null,
+        // As the plan draws them: those whose items are there, starting in the Clip.
+        ids: edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
         onSelect: (id) => select({ kind: "overlay", id }),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
@@ -284,61 +251,78 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     />
   );
   const timeline = (
-    <AdvancedTimeline
-      duration={duration}
-      playback={playback}
-      snapPoints={snapPoints(edits, preview)}
-      tools={<ItemTools actions={actions} playback={playback} />}
-    >
+    <AdvancedTimeline duration={duration} playback={playback} snapPoints={snapPoints(edits, played)} tools={<ItemTools actions={actions} playback={playback} />}>
       {(geometry) => (
         <Tracks
           geometry={geometry}
           duration={duration}
-          preview={preview}
+          plan={preview?.plan ?? null}
           edits={edits}
-          selection={selection}
+          picked={picked}
+          played={played}
           playback={playback}
-          onSelect={select}
-          onEdits={history.set}
-          onText={updateText}
-          onMusic={updateMusic}
-          onOverlay={updateOverlay}
-          onSegment={moveSegment}
-          onJoin={(after) => {
-            select({ kind: "join", after });
-            if (wide) setAssetTab("transitions");
+          mediaById={mediaById}
+          handlers={{
+            onSelect: select,
+            onEdits: history.set,
+            onText: updateText,
+            onMusic: updateMusic,
+            onOverlay: updateOverlay,
+            onSegment: moveSegment,
+            onJoin: (after) => {
+              select({ kind: "join", after });
+              if (wide) setAssetTab("transitions");
+            },
+            onDropTransition: setTransition,
+            onDropMedia: dropMedia,
+            onDropText: (name, time) => {
+              const look = TEXT_PRESETS.find((preset) => preset.name === name);
+              if (look) addText(look.layer, time);
+            },
+            onDelete: actions?.remove,
           }}
-          onDropTransition={setTransition}
-          songs={songs}
-          onDelete={actions ? actions.remove : undefined}
         />
       )}
     </AdvancedTimeline>
   );
   const inspector = (
     <Inspector
-      selection={selection}
+      picked={picked}
       edits={edits}
       duration={duration}
       candidate={candidate}
       preview={preview}
       fonts={fonts}
       actions={actions}
-      songs={songs}
+      mediaById={mediaById}
       playback={playback}
+      transition={transitionPanel(!wide)}
       onEdits={history.set}
       onText={updateText}
       onMusic={updateMusic}
       onOverlay={updateOverlay}
       onSegment={updateSegment}
-      transitions={transitionPanel(!wide)}
     />
   );
-  const status = <SaveStatus saving={saving > 0} saved={saved} error={saveError} />;
+  const assets = (tab: AssetTab) => (
+    <AssetPanel
+      tab={tab}
+      fonts={fonts}
+      library={library}
+      transcript={job.transcript}
+      near={edits.segments[0]}
+      transitions={transitionPanel(true)}
+      onAddText={(look) => addText(look)}
+      onAddMusic={(item) => addMusic(item)}
+      onAddSource={(range) => insertSegment({ id: newId(), ...range })}
+      onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
+      onAddOverlay={(item) => addOverlay(item)}
+    />
+  );
   const bar = (
     <TopBar
       title={`#${index + 1} ${candidateName(candidate, index)}`}
-      status={status}
+      status={<SaveStatus saving={saving > 0} saved={saved} error={saveError} />}
       history={history}
       onClose={() => void close()}
     />
@@ -352,21 +336,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         <div className="grid min-h-0 flex-1 grid-cols-[17rem_minmax(0,1fr)_20rem] gap-3 px-3">
           <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
             <AssetTabs value={assetTab} onChange={setAssetTab} />
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <AssetPanel
-                tab={assetTab}
-                fonts={fonts}
-                library={library}
-                transcript={job.transcript}
-                near={edits.segments[0]}
-                onAddText={addText}
-                onAddMusic={addMusic}
-                onAddSource={addFromSource}
-                onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
-                onAddOverlay={addOverlay}
-                transitions={transitionPanel()}
-              />
-            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
           </aside>
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
             {player}
@@ -394,7 +364,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         {timeline}
       </section>
       <Toolbar
-        selection={selection}
+        picked={picked}
         actions={actions}
         playback={playback}
         onAsset={(tab) => {
@@ -408,143 +378,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         }}
       />
       {sheet && (
-        <Sheet
-          title={sheet === "inspector" ? "Edit" : ASSET_TABS.find((tab) => tab.value === sheet)!.label}
-          onClose={() => setSheet(null)}
-        >
-          {sheet === "inspector" ? (
-            inspector
-          ) : (
-            <AssetPanel
-              tab={sheet}
-              fonts={fonts}
-              library={library}
-              transcript={job.transcript}
-              near={edits.segments[0]}
-              onAddText={addText}
-              onAddMusic={addMusic}
-              onAddSource={addFromSource}
-              onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
-              onAddOverlay={addOverlay}
-              transitions={transitionPanel()}
-            />
-          )}
+        <Sheet title={sheet === "inspector" ? "Edit" : ASSET_TABS.find((tab) => tab.value === sheet)!.label} onClose={() => setSheet(null)}>
+          {sheet === "inspector" ? inspector : assets(sheet)}
         </Sheet>
       )}
     </div>
   );
 }
 
-// The Advanced Edit's lists of items on the timeline, by the kind of item they hold.
-const LISTS = { text: "text_layers", music: "music", overlay: "overlays" } as const;
-type Listed = TextLayer | MusicClip | Overlay;
-
-/**
- * What can be done to the selected item, when it is a Text Layer or a Music Clip (the hook can only
- * be moved): delete it, duplicate it (right after it when there is room, else at the same time), and
- * split it at the playhead (a song's second part goes on from where the first stops, without fades
- * at the cut).
- */
-function itemActions(
-  edits: AdvancedEdits,
-  selection: Selection,
-  playback: Playback,
-  duration: number,
-  change: (next: Partial<AdvancedEdits>, group?: string) => void,
-  select: (selection: Selection) => void,
-): ItemActions | null {
-  if (selection?.kind === "segment") return segmentActions(edits, selection.id, playback, change, select);
-  if (selection?.kind !== "text" && selection?.kind !== "music" && selection?.kind !== "overlay") return null;
-  const kind = selection.kind;
-  const key = LISTS[kind];
-  const list = edits[key] as Listed[];
-  const item = list.find((other) => other.id === selection.id);
-  if (!item) return null;
-  const least = { text: TEXT_MIN_SECS, music: MUSIC_MIN_SECS, overlay: OVERLAY_MIN_SECS }[kind];
-  const put = (items: Listed[]) => change({ [key]: items } as Partial<AdvancedEdits>);
-  const canSplit = (time: number) => time > item.start + least && time < item.start + item.secs - least;
-  return {
-    remove() {
-      put(list.filter((other) => other.id !== item.id));
-      select(null);
-    },
-    duplicate() {
-      const after = item.start + item.secs;
-      const room = after + item.secs <= duration + 1e-6;
-      // A text that can't go after it goes a little lower, so that both show.
-      const copy = room ? { ...item, id: newId(), start: after } : "y" in item ? { ...item, id: newId(), y: Math.min(item.y + 80, 1920) } : { ...item, id: newId() };
-      put([...list, copy]);
-      select({ kind, id: copy.id });
-    },
-    canSplit,
-    split() {
-      const at = round(playback.time);
-      if (!canSplit(at)) return;
-      const first = { ...item, secs: round(at - item.start), ...("fade_out" in item ? { fade_out: 0 } : {}) };
-      const second = {
-        ...item,
-        id: newId(),
-        start: at,
-        secs: round(item.start + item.secs - at),
-        ...("offset" in item ? { offset: round(item.offset + at - item.start) } : {}),
-        ...("fade_in" in item ? { fade_in: 0 } : {}),
-      };
-      put(list.flatMap((other) => (other.id === item.id ? [first, second] : [other])));
-      select({ kind, id: second.id });
-    },
-  };
-}
-
-/**
- * What can be done to a Segment of the Main Track: delete it (not the last one; the ones after it
- * close up), duplicate it right after itself, and split it at the playhead.
- */
-function segmentActions(
-  edits: AdvancedEdits,
-  id: string,
-  playback: Playback,
-  change: (next: Partial<AdvancedEdits>, group?: string) => void,
-  select: (selection: Selection) => void,
-): ItemActions | null {
-  const index = edits.segments.findIndex((segment) => segment.id === id);
-  if (index === -1) return null;
-  const segment = edits.segments[index];
-  const piece = piecesFrom(edits.segments)[index];
-  const canSplit = (time: number) => time > piece.start + SEGMENT_MIN_SECS && time < piece.end - SEGMENT_MIN_SECS;
-  const put = (segments: ClipSegment[]) => change({ segments });
-  return {
-    remove() {
-      if (edits.segments.length < 2) return;
-      put(edits.segments.filter((other) => other.id !== id));
-      select(null);
-    },
-    duplicate() {
-      const copy = { ...segment, id: newId() };
-      put([...edits.segments.slice(0, index + 1), copy, ...edits.segments.slice(index + 1)]);
-      select({ kind: "segment", id: copy.id });
-    },
-    canSplit,
-    split() {
-      const at = playback.time;
-      if (!canSplit(at)) return;
-      const cut = Math.round((segment.start + at - piece.start) * 1000) / 1000;
-      const second = { id: newId(), start: cut, end: segment.end };
-      put(edits.segments.flatMap((other) => (other.id === id ? [{ ...segment, end: cut }, second] : [other])));
-      select({ kind: "segment", id: second.id });
-    },
-  };
-}
-
-interface ItemActions {
-  remove: () => void;
-  duplicate: () => void;
-  // Whether the item can be split at `time`: when it is inside it.
-  canSplit: (time: number) => boolean;
-  // At the playhead; nothing when it can't be.
-  split: () => void;
-}
-
-// Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, and for the selected item
+// Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, and for the picked item
 // Delete, Cmd/Ctrl+D to duplicate it and Cmd/Ctrl+B to split it; except while typing.
 function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, actions: ItemActions | null) {
   useEffect(() => {
@@ -579,673 +421,26 @@ function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, a
   }, [history, playback, actions]);
 }
 
-// The edges items snap to, besides the playhead and the Clip's ends.
-function snapPoints(edits: AdvancedEdits, preview: PreviewPlan | null): number[] {
+/**
+ * `time` (on the Source's timeline) where it is between Words; inside a Word, the middle of the
+ * silence on the nearer side of it.
+ */
+function wordGap(words: { start: number; end: number }[], time: number): number {
+  const index = words.findIndex((word) => word.end > time);
+  const word = words[index];
+  if (!word || time <= word.start) return time;
+  const before = words[index - 1];
+  const after = words[index + 1];
+  return time - word.start < word.end - time
+    ? ((before?.end ?? word.start) + word.start) / 2
+    : (word.end + (after?.start ?? word.end)) / 2;
+}
+
+// The edges items snap to, besides the playhead and the Clip's ends: the hook's, the items', and
+// where each Segment gives way to the next, as played.
+function snapPoints(edits: AdvancedEdits, played: PlayedSegment[]): number[] {
   const points = [edits.hook_start, edits.hook_start + edits.hook_secs];
   for (const item of [...edits.text_layers, ...edits.music, ...edits.overlays]) points.push(item.start, item.start + item.secs);
-  for (const piece of piecesFrom(edits.segments)) points.push(piece.end);
-  for (const scene of preview?.plan.scenes ?? []) points.push(scene.start);
+  for (const shown of played) points.push(shown.end);
   return points;
-}
-
-/**
- * The tracks, top to bottom: the Text Layers' lanes, the Clip and its Scenes, its caption lines, the
- * hook, and the Music Clips' lanes.
- */
-function Tracks({
-  geometry,
-  duration,
-  preview,
-  edits,
-  selection,
-  playback,
-  onSelect,
-  onEdits,
-  onText,
-  onMusic,
-  onOverlay,
-  onSegment,
-  onJoin,
-  onDropTransition,
-  songs,
-  onDelete,
-}: {
-  geometry: TimeGeometry;
-  duration: number;
-  preview: PreviewPlan | null;
-  edits: AdvancedEdits;
-  selection: Selection;
-  playback: Playback;
-  onSelect: (selection: Selection) => void;
-  onEdits: (edits: AdvancedEdits, group?: string) => void;
-  onText: (layer: TextLayer, group?: string) => void;
-  onMusic: (clip: MusicClip, group?: string) => void;
-  onOverlay: (overlay: Overlay, group?: string) => void;
-  onJoin: (after: string) => void;
-  onDropTransition: (after: string, kind: TransitionKind) => void;
-  onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
-  // The Media Library, by id: the songs' names and lengths.
-  songs: Map<string, MediaItem>;
-  // Deletes the selected item.
-  onDelete?: () => void;
-}) {
-  const { pps } = geometry;
-  const plan = preview?.plan ?? null;
-  const hookEnd = Math.min(edits.hook_start + edits.hook_secs, duration);
-  // The first lane next to the video, later ones above it.
-  const lanes = trackLanes(edits.text_layers).reverse();
-  const musicLanes = trackLanes(edits.music);
-  const overlayLanes = trackLanes(edits.overlays).reverse();
-  return (
-    <>
-      {(lanes.length ? lanes : [[]]).map((lane, i) => (
-        <TrackRow key={lanes.length - i} label={i === lanes.length - 1 || !lanes.length ? "Text" : ""}>
-          {lane.map((layer) => {
-            const selected = selection?.kind === "text" && selection.id === layer.id;
-            return (
-              <TimelineItem
-                key={layer.id}
-                geometry={geometry}
-                start={layer.start}
-                end={Math.min(layer.start + layer.secs, duration)}
-                max={duration}
-                minSecs={TEXT_MIN_SECS}
-                tone="text"
-                selected={selected}
-                label={`Text "${layer.text}", from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s`}
-                onSelect={() => onSelect({ kind: "text", id: layer.id })}
-                onChange={({ start, end }, group) => onText({ ...layer, start: round(start), secs: round(end - start) }, group)}
-                onDelete={selected ? onDelete : undefined}
-              >
-                <Type aria-hidden size={12} className="shrink-0" />
-                <span className="truncate font-medium">{layer.text.split("\n").join(" ") || "Empty text"}</span>
-              </TimelineItem>
-            );
-          })}
-        </TrackRow>
-      ))}
-      {overlayLanes.map((lane, i) => (
-        <TrackRow key={`overlay${overlayLanes.length - i}`} label={i === overlayLanes.length - 1 ? "Overlay" : ""}>
-          {lane.map((overlay) => {
-            const selected = selection?.kind === "overlay" && selection.id === overlay.id;
-            const item = songs.get(overlay.media);
-            const length = item?.duration ?? Infinity;
-            return (
-              <TimelineItem
-                key={overlay.id}
-                geometry={geometry}
-                start={overlay.start}
-                end={Math.min(overlay.start + overlay.secs, duration)}
-                max={duration}
-                minSecs={OVERLAY_MIN_SECS}
-                maxSecs={length - overlay.offset}
-                trimMin={item?.duration != null ? overlay.start - overlay.offset : undefined}
-                tone="overlay"
-                selected={selected}
-                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
-                onSelect={() => onSelect({ kind: "overlay", id: overlay.id })}
-                onChange={({ start, end, edge }, group) =>
-                  onOverlay(
-                    {
-                      ...overlay,
-                      start: round(start),
-                      secs: round(end - start),
-                      offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
-                    },
-                    group,
-                  )
-                }
-                onDelete={selected ? onDelete : undefined}
-              >
-                <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
-                <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
-              </TimelineItem>
-            );
-          })}
-        </TrackRow>
-      ))}
-      <TrackRow label="Video" height="h-14">
-        {/* The Scenes as planned, under the Segments. */}
-        <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised" style={{ width: duration * pps }}>
-          {plan?.scenes.map((scene, i) => (
-            <span
-              key={i}
-              className="absolute inset-y-0 border-l border-border px-1.5 pt-5 text-[10px] font-medium text-muted capitalize first:border-l-0"
-              style={{ left: scene.start * pps, width: (scene.end - scene.start) * pps }}
-            >
-              {(scene.end - scene.start) * pps > 48 ? (scene.layout === "passthrough" ? "As shot" : scene.layout) : ""}
-            </span>
-          ))}
-        </div>
-        {/* As played: snapped to Words once the plan has them. */}
-        {playback.pieces.map((piece, i) => {
-          const segment = edits.segments[i];
-          if (!segment) return null;
-          const selected = selection?.kind === "segment" && selection.id === segment.id;
-          return (
-            <TimelineItem
-              key={segment.id}
-              geometry={geometry}
-              start={piece.start}
-              end={piece.end}
-              min={-1e6}
-              max={1e6}
-              minSecs={SEGMENT_MIN_SECS}
-              tone="video"
-              selected={selected}
-              label={`Piece ${i + 1}, ${formatPrecise(segment.start)} to ${formatPrecise(segment.end)} of the episode`}
-              onSelect={() => onSelect({ kind: "segment", id: segment.id })}
-              onChange={(moved, group) => onSegment(segment.id, moved, group)}
-              onDelete={selected && edits.segments.length > 1 ? onDelete : undefined}
-            >
-              {segment.media ? (
-                <span
-                  aria-hidden
-                  className="absolute inset-0 bg-black bg-size-[auto_100%] bg-repeat-x opacity-80"
-                  style={{ backgroundImage: `url(${mediaThumbnailUrl(segment.media)})` }}
-                />
-              ) : null}
-              <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
-                {segment.media ? (songs.get(segment.media)?.name ?? "Video") : formatPrecise(segment.start)}
-                {edits.source_volume !== 1 && i === 0 && !segment.media ? ` · ${Math.round(edits.source_volume * 100)}%` : ""}
-              </span>
-            </TimelineItem>
-          );
-        })}
-        {/* The joins, for Transitions: a diamond between each two pieces, filled when it has one. */}
-        {playback.pieces.slice(0, -1).map((piece, i) => {
-          const after = edits.segments[i]?.id;
-          if (!after) return null;
-          const transition = edits.transitions.find((t) => t.after === after);
-          const selected = selection?.kind === "join" && selection.after === after;
-          return (
-            <button
-              key={`join-${after}`}
-              type="button"
-              onClick={() => onJoin(after)}
-              onDragOver={(event) => {
-                if (event.dataTransfer.types.includes(TRANSITION_DRAG)) event.preventDefault();
-              }}
-              onDrop={(event) => {
-                const kind = event.dataTransfer.getData(TRANSITION_DRAG) as TransitionKind;
-                if (kind) onDropTransition(after, kind);
-              }}
-              aria-pressed={selected}
-              aria-label={transition ? `Transition after piece ${i + 1}: ${transition.kind}` : `Join after piece ${i + 1}: add a transition`}
-              title={transition ? `${transition.kind}, ${transition.secs.toFixed(2)} s` : "Add a transition"}
-              className={cx(
-                "absolute top-1/2 z-10 size-5 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[4px] ring-2 ring-bg",
-                "focus-visible:outline-2 focus-visible:outline-focus",
-                transition ? "bg-accent" : "bg-surface-raised hover:bg-fill",
-                selected && "ring-text",
-              )}
-              style={{ left: piece.end * pps }}
-            />
-          );
-        })}
-      </TrackRow>
-      <TrackRow label="Captions" height="h-8">
-        {plan?.captions.map((event, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => playback.seek(event.start)}
-            title={event.text}
-            className="absolute inset-y-1 overflow-hidden rounded bg-fill px-1 text-left text-[11px] leading-5 text-ellipsis whitespace-nowrap text-muted ring-1 ring-border hover:text-text"
-            style={{ left: event.start * pps, width: Math.max(2, (event.end - event.start) * pps - 1) }}
-          >
-            {event.text}
-          </button>
-        ))}
-      </TrackRow>
-      <TrackRow label="Hook">
-        {plan?.hook && (
-          <TimelineItem
-            geometry={geometry}
-            start={edits.hook_start}
-            end={hookEnd}
-            max={duration}
-            minSecs={0.5}
-            maxSecs={30}
-            tone="waiting"
-            selected={selection?.kind === "hook"}
-            label={`Hook, from ${edits.hook_start.toFixed(1)} s for ${(hookEnd - edits.hook_start).toFixed(1)} s`}
-            onSelect={() => onSelect({ kind: "hook" })}
-            onChange={({ start, end }, group) =>
-              onEdits({ ...edits, hook_start: round(start), hook_secs: round(end - start) }, group)
-            }
-          >
-            <span className="truncate font-medium">{plan.hook.lines.join(" ")}</span>
-          </TimelineItem>
-        )}
-      </TrackRow>
-      {(musicLanes.length ? musicLanes : [[]]).map((lane, i) => (
-        <TrackRow key={i} label={i === 0 ? "Audio" : ""}>
-          {lane.map((clip) => {
-            const selected = selection?.kind === "music" && selection.id === clip.id;
-            const song = songs.get(clip.media);
-            const length = song?.duration ?? clip.offset + clip.secs;
-            return (
-              <TimelineItem
-                key={clip.id}
-                geometry={geometry}
-                start={clip.start}
-                end={Math.min(clip.start + clip.secs, duration)}
-                max={duration}
-                minSecs={MUSIC_MIN_SECS}
-                maxSecs={length - clip.offset}
-                trimMin={clip.start - clip.offset}
-                tone="audio"
-                selected={selected}
-                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
-                onSelect={() => onSelect({ kind: "music", id: clip.id })}
-                onChange={({ start, end, edge }, group) =>
-                  onMusic(
-                    {
-                      ...clip,
-                      start: round(start),
-                      secs: round(end - start),
-                      // Trimming its start starts it later in the song.
-                      offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
-                    },
-                    group,
-                  )
-                }
-                onDelete={selected ? onDelete : undefined}
-              >
-                <Music aria-hidden size={12} className="shrink-0" />
-                <span className="truncate font-medium">{song?.name ?? "Music"}</span>
-                {clip.volume !== 1 && <span className="shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>}
-              </TimelineItem>
-            );
-          })}
-        </TrackRow>
-      ))}
-    </>
-  );
-}
-
-const round = (seconds: number) => Math.round(seconds * 100) / 100;
-
-/** The selected item's properties. */
-function Inspector({
-  selection,
-  edits,
-  duration,
-  candidate,
-  preview,
-  fonts,
-  actions,
-  songs,
-  playback,
-  onEdits,
-  onText,
-  onMusic,
-  onOverlay,
-  onSegment,
-  transitions,
-}: {
-  selection: Selection;
-  edits: AdvancedEdits;
-  duration: number;
-  candidate: Candidate;
-  preview: PreviewPlan | null;
-  fonts: FontInfo[] | null;
-  actions: ItemActions | null;
-  songs: Map<string, MediaItem>;
-  playback: Playback;
-  onEdits: (edits: AdvancedEdits, group?: string) => void;
-  onText: (layer: TextLayer, group?: string) => void;
-  onMusic: (clip: MusicClip, group?: string) => void;
-  onSegment: (segment: ClipSegment, group?: string) => void;
-  onOverlay: (overlay: Overlay, group?: string) => void;
-  // The Transitions' panel, for a selected join.
-  transitions: ReactNode;
-}) {
-  const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
-  const music = selection?.kind === "music" ? edits.music.find((clip) => clip.id === selection.id) : undefined;
-  if (selection?.kind === "join") {
-    return (
-      <div className="flex flex-col gap-3">
-        <h2 className="font-semibold">Transition</h2>
-        {transitions}
-      </div>
-    );
-  }
-  const overlay = selection?.kind === "overlay" ? edits.overlays.find((other) => other.id === selection.id) : undefined;
-  if (overlay && actions) {
-    return (
-      <OverlayFields
-        key={overlay.id}
-        overlay={overlay}
-        item={songs.get(overlay.media)}
-        duration={duration}
-        onChange={onOverlay}
-        onDuplicate={actions.duplicate}
-        onDelete={actions.remove}
-      />
-    );
-  }
-  if (music && actions) {
-    return (
-      <MusicFields
-        key={music.id}
-        clip={music}
-        item={songs.get(music.media)}
-        duration={duration}
-        onChange={onMusic}
-        onDuplicate={actions.duplicate}
-        onDelete={actions.remove}
-      />
-    );
-  }
-  const index = selection?.kind === "segment" ? edits.segments.findIndex((segment) => segment.id === selection.id) : -1;
-  if (index !== -1 && actions) {
-    return (
-      <SegmentFields
-        key={edits.segments[index].id}
-        segment={edits.segments[index]}
-        item={songs.get(edits.segments[index].media ?? "")}
-        onChange={onSegment}
-        index={index}
-        count={edits.segments.length}
-        sourceVolume={edits.source_volume}
-        canSplit={splittable}
-        onSplit={actions.split}
-        onDuplicate={actions.duplicate}
-        onDelete={actions.remove}
-        onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
-      />
-    );
-  }
-  const text = selection?.kind === "text" ? edits.text_layers.find((layer) => layer.id === selection.id) : undefined;
-  if (text && actions) {
-    return (
-      <TextLayerFields
-        key={text.id}
-        layer={text}
-        duration={duration}
-        fonts={fonts}
-        onChange={onText}
-        onDuplicate={actions.duplicate}
-        onDelete={actions.remove}
-      />
-    );
-  }
-  if (selection?.kind === "hook") {
-    return (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="font-semibold">Hook</h2>
-          <p className="text-sm text-pretty break-words">“{preview?.plan.hook?.lines.join(" ") ?? candidate.hook_text}”</p>
-          <p className="text-sm text-pretty text-muted">Its words and look are changed in the clip editor.</p>
-        </div>
-        <HookTimingFields
-          timing={edits}
-          duration={duration}
-          onTiming={(timing) => onEdits({ ...edits, ...timing }, "hook-timing")}
-          blank={candidate.hook_text.trim() === ""}
-        />
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col gap-1">
-      <h2 className="font-semibold">Nothing selected</h2>
-      <p className="text-sm text-pretty text-muted">Select an item on the timeline to change it.</p>
-    </div>
-  );
-}
-
-function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
-  return (
-    <div role="tablist" aria-label="Assets" className="flex gap-1 border-b border-border p-2">
-      {ASSET_TABS.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          role="tab"
-          aria-selected={value === tab.value}
-          onClick={() => onChange(tab.value)}
-          className={cx(
-            "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium",
-            "focus-visible:outline-2 focus-visible:outline-focus",
-            value === tab.value ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
-          )}
-        >
-          <tab.icon aria-hidden size={18} />
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function AssetPanel({
-  tab,
-  fonts,
-  library,
-  onAddText,
-  onAddMusic,
-  transcript,
-  near,
-  onAddSource,
-  onAddVideo,
-  onAddOverlay,
-  transitions,
-}: {
-  tab: AssetTab;
-  fonts: FontInfo[] | null;
-  library: MediaLibrary;
-  onAddText: (look: Omit<TextLayer, "id" | "start" | "secs">) => void;
-  onAddMusic: (item: MediaItem) => void;
-  transcript: Transcript | null;
-  // Where the episode's transcript opens: the Clip's first Segment.
-  near: ClipSegment;
-  onAddSource: (range: { start: number; end: number }) => void;
-  onAddVideo: (item: MediaItem) => void;
-  onAddOverlay: (item: MediaItem) => void;
-  transitions: ReactNode;
-}) {
-  if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
-  if (tab === "media") {
-    return (
-      <div className="flex flex-col gap-4">
-        {transcript && <SourcePicker transcript={transcript} near={near} onAdd={onAddSource} />}
-        <MediaAssets
-          library={library}
-          kinds={["video", "image"]}
-          onAdd={onAddVideo}
-          addable={(item) => item.kind === "video"}
-          onOverlay={onAddOverlay}
-          hint="Videos up to 3 minutes (500 MB) and images, kept for every Job. A video goes after the piece at the playhead; an image, or a video with the layers button, goes over the clip."
-        />
-      </div>
-    );
-  }
-  if (tab === "audio") {
-    return (
-      <MediaAssets
-        library={library}
-        kinds={["audio"]}
-        onAdd={onAddMusic}
-        hint="Songs up to 50 MB, kept for every Job. Use music you have the rights to: the platforms mute or take down clips that don't."
-      />
-    );
-  }
-  return transitions;
-}
-
-function TopBar({
-  title,
-  status,
-  history,
-  onClose,
-}: {
-  title: string;
-  status: ReactNode;
-  history: EditHistory<AdvancedEdits>;
-  onClose: () => void;
-}) {
-  return (
-    <header className="flex min-h-14 items-center gap-2 px-2 pt-[env(safe-area-inset-top)] sm:px-3">
-      <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor">
-        <ArrowLeft aria-hidden size={18} />
-      </Button>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <h1 className="truncate text-sm font-semibold sm:text-base">{title}</h1>
-        <div className="truncate text-xs text-muted">{status}</div>
-      </div>
-      <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo">
-        <Undo2 aria-hidden size={18} />
-      </Button>
-      <Button variant="ghost" size="icon" onClick={history.redo} disabled={!history.canRedo} aria-label="Redo">
-        <Redo2 aria-hidden size={18} />
-      </Button>
-    </header>
-  );
-}
-
-function SaveStatus({ saving, saved, error }: { saving: boolean; saved: boolean; error: string | null }) {
-  return (
-    <span aria-live="polite" className="inline-flex items-center gap-1">
-      {error ? (
-        <span className="inline-flex items-center gap-1 text-danger">
-          <AlertCircle aria-hidden size={13} />
-          {error}
-        </span>
-      ) : saving ? (
-        <>
-          <Loader2 aria-hidden size={13} className="motion-safe:animate-spin" />
-          Saving…
-        </>
-      ) : saved ? (
-        <>
-          <Check aria-hidden size={13} className="text-success" />
-          All changes saved
-        </>
-      ) : (
-        "Advanced Edit"
-      )}
-    </span>
-  );
-}
-
-/** The phone's bottom bar: the asset tabs, or what can be done to the selected item. */
-function Toolbar({
-  selection,
-  actions,
-  playback,
-  onAsset,
-  onInspect,
-  onDeselect,
-}: {
-  selection: Selection;
-  actions: ItemActions | null;
-  playback: Playback;
-  onAsset: (tab: AssetTab) => void;
-  onInspect: () => void;
-  onDeselect: () => void;
-}) {
-  return (
-    <nav
-      aria-label="Tools"
-      className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-t border-border px-2 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]"
-    >
-      {selection ? (
-        <>
-          <ToolButton icon={X} label="Done" onClick={onDeselect} />
-          <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
-          {actions && (
-            <>
-              <SplitButton actions={actions} playback={playback} />
-              <ToolButton icon={Copy} label="Duplicate" onClick={actions.duplicate} />
-              <ToolButton icon={Trash2} label="Delete" onClick={actions.remove} />
-            </>
-          )}
-        </>
-      ) : (
-        ASSET_TABS.map((tab) => <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />)
-      )}
-    </nav>
-  );
-}
-
-function ToolButton({
-  icon: Icon,
-  label,
-  onClick,
-  disabled = false,
-}: {
-  icon: typeof Type;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="flex min-h-14 min-w-16 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium text-muted hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-40"
-    >
-      <Icon aria-hidden size={20} />
-      {label}
-    </button>
-  );
-}
-
-/** A bottom sheet over the timeline, on a phone. */
-function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-  return (
-    <section
-      aria-label={title}
-      className="glass fixed inset-x-0 bottom-0 z-40 flex max-h-[min(60dvh,32rem)] flex-col rounded-t-panel border-b-0 pb-[env(safe-area-inset-bottom)] motion-safe:animate-[sheet-in_220ms_var(--ease-out)]"
-    >
-      <div className="flex min-h-12 items-center justify-between gap-2 px-4 pt-1">
-        <h2 className="font-semibold">{title}</h2>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
-          <X aria-hidden size={18} />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">{children}</div>
-    </section>
-  );
-}
-
-/** The timeline bar's buttons for the selected item: split at the playhead, duplicate, delete. */
-function ItemTools({ actions, playback }: { actions: ItemActions | null; playback: Playback }) {
-  const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
-  const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
-  return (
-    <>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={() => actions?.split()}
-        disabled={!splittable}
-        aria-label="Split at the playhead"
-        title={`Split at the playhead (${shortcut}B)`}
-      >
-        <Scissors aria-hidden size={17} />
-      </Button>
-      <Button variant="ghost" size="icon" onClick={actions?.duplicate} disabled={!actions} aria-label="Duplicate" title={`Duplicate (${shortcut}D)`}>
-        <Copy aria-hidden size={17} />
-      </Button>
-      <Button variant="ghost" size="icon" onClick={actions?.remove} disabled={!actions} aria-label="Delete" title="Delete">
-        <Trash2 aria-hidden size={17} />
-      </Button>
-    </>
-  );
-}
-
-// The phone toolbar's Split, enabled while the playhead is inside the selected item.
-function SplitButton({ actions, playback }: { actions: ItemActions; playback: Playback }) {
-  const splittable = usePlayback(playback, (time) => actions.canSplit(time));
-  return <ToolButton icon={Scissors} label="Split" onClick={actions.split} disabled={!splittable} />;
 }

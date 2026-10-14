@@ -13,7 +13,7 @@ import pytest
 from app.candidates import Fit, Segment, manual_candidate
 from app.config import CameraTuning
 from app.media import MediaItem, MediaKind
-from app.planner import OUTPUT_HEIGHT, OUTPUT_WIDTH, Piece, SceneLayout, plan_render
+from app.planner import OUTPUT_HEIGHT, OUTPUT_WIDTH, SegmentInput, SceneLayout, plan_render
 from app.rendering import candidate_plan
 from app.styles import PresetStore
 from app.transcript import Word
@@ -33,7 +33,7 @@ INTRO = "ab" * 16
 def test_a_media_segment_is_filled_or_fitted_over_a_blur_and_has_no_captions(tmp_path):
     planned = plan_render(
         10, 12, SOURCE,
-        pieces=[Piece(0, 2, media=INTRO, width=720, height=1280, fit=Fit.FILL), Piece(10, 12), Piece(0, 1, media=INTRO, width=1280, height=720)],
+        main_track=[SegmentInput(0, 2, media=INTRO, width=720, height=1280, fit=Fit.FILL), SegmentInput(10, 12), SegmentInput(0, 1, media=INTRO, width=1280, height=720)],
     )
     [intro, episode, outro] = planned.scenes
     assert [segment.media for segment in planned.segments] == [INTRO, None, INTRO]

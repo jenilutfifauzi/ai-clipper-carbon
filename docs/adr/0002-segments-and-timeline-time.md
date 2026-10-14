@@ -29,7 +29,7 @@ Two questions follow. What does the Candidate store? And what are its other edit
   - For one Segment they are its range.
   - For several, they are the hull of the Source they show (the earliest start, the latest end). Selection's overlap checks, the Candidate list, thumbnails and evaluation read them.
   - Trimming them directly is refused while the Clip has several Segments.
-- Each Segment's ends are snapped to Words as a Clip's are. The longest-clip limit applies to the Clip's total length.
+- Each Segment's ends are snapped to Words as a Clip's are. The longest-clip limit applies to the length the Clip plays on the Timeline: its Segments' lengths, less its Transitions' overlaps.
 - **Timeline time** (seconds into the output) anchors:
   - the hook;
   - Text Layers;

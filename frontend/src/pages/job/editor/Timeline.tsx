@@ -1,10 +1,11 @@
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import type { RenderPlan, Word } from "../../../api";
-import { Button } from "../../../components/Button";
+import { Button, buttonClass } from "../../../components/Button";
 import { cx, formatClock, formatPrecise } from "../../../format";
 import type { HookTiming } from "../HookEditor";
-import { usePlayback, type Playback } from "./playback";
+import { Link } from "react-router";
+import { usePlayback, type PlayedSegment, type Playback } from "./playback";
 
 // How much of the Source either side of the clip the timeline shows, and the longest clip (as
 // app/review.py's MAX_CLIP_SECS).
@@ -30,6 +31,9 @@ export interface Range {
  * - Hook: dragged to move it, its right edge to change how long it stays;
  * - `scenes`: a track of the clip's Scenes, given by the editor.
  * Clicking the ruler moves the playhead there.
+ *
+ * A Clip cut into Segments in the Advanced Edit (`cut`) is shown on its own timeline instead (its
+ * `range` from 0 to its length): its Segments, which are trimmed there, read-only.
  */
 export function Timeline({
   words,
@@ -44,6 +48,7 @@ export function Timeline({
   onTrim,
   onTiming,
   onCaption,
+  cut,
 }: {
   // The Transcript's, on the Source's timeline.
   words: Word[];
@@ -61,6 +66,8 @@ export function Timeline({
   onTiming: (timing: HookTiming) => void;
   // A caption line clicked: its start, in seconds into the Clip.
   onCaption: (at: number) => void;
+  // A cut Clip's Segments as played, and the Advanced Edit's address.
+  cut?: { segments: PlayedSegment[]; to: string };
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
@@ -91,6 +98,12 @@ export function Timeline({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
         <h4 className="font-semibold">Timeline</h4>
+        {cut && (
+          <Link to={cut.to} className={buttonClass("secondary", "xs", "mr-auto")}>
+            <SlidersHorizontal aria-hidden size={14} />
+            Edit in Advanced
+          </Link>
+        )}
         <div className="flex items-center gap-1" role="group" aria-label="Zoom">
           <Button size="icon" variant="ghost" onClick={() => setZoom((z) => Math.max(0, z - 1))} disabled={zoom === 0} aria-label="Zoom out">
             <Minus aria-hidden size={16} />
@@ -107,15 +120,19 @@ export function Timeline({
             <Ruler viewStart={viewStart} viewEnd={viewEnd} pps={pps} onSeek={(time) => playback.seek(time - range.start)} timeAt={timeAt} />
           </Track>
           <Track label="Clip">
-            <ClipTrack
-              words={words}
-              range={range}
-              x={x}
-              timeAt={timeAt}
-              sourceDuration={sourceDuration}
-              onTrimDraft={onTrimDraft}
-              onTrim={onTrim}
-            />
+            {cut ? (
+              <CutTrack segments={cut.segments} x={x} />
+            ) : (
+              <ClipTrack
+                words={words}
+                range={range}
+                x={x}
+                timeAt={timeAt}
+                sourceDuration={sourceDuration}
+                onTrimDraft={onTrimDraft}
+                onTrim={onTrim}
+              />
+            )}
           </Track>
           {scenes && <Track label="Scenes">{scenes(geometry)}</Track>}
           <Track label="Captions">
@@ -152,8 +169,10 @@ export function Timeline({
         </div>
       </div>
       <p className="text-sm text-muted">
-        Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys. Drag the hook to move it, its right
-        edge to change how long it stays.
+        {cut
+          ? "This clip is cut into Segments: trim, reorder and join them in the Advanced Edit."
+          : "Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys."}{" "}
+        Drag the hook to move it, its right edge to change how long it stays.
       </p>
     </div>
   );
@@ -319,6 +338,24 @@ function ClipTrack({
           )}
           style={{ left: edge === "start" ? left : left + width }}
         />
+      ))}
+    </>
+  );
+}
+
+/** A cut Clip's Segments, read-only, each labelled with where it starts in the episode. */
+function CutTrack({ segments, x }: { segments: PlayedSegment[]; x: (time: number) => number }) {
+  return (
+    <>
+      {segments.map((segment, i) => (
+        <div
+          key={i}
+          title={segment.media ? "A video from the Media Library" : `${formatPrecise(segment.source_start)} – ${formatPrecise(segment.source_end)}`}
+          className="absolute inset-y-1 overflow-hidden rounded-md bg-accent/20 px-1 text-xs leading-7 whitespace-nowrap ring-1 ring-accent/60"
+          style={{ left: x(segment.start), width: Math.max(2, x(segment.end) - x(segment.start) - 1) }}
+        >
+          {segment.media ? "Video" : formatPrecise(segment.source_start)}
+        </div>
       ))}
     </>
   );

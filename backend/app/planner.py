@@ -54,8 +54,8 @@ Overlays (videos and images laid over the Clip) are centred where the owner put 
 kept inside the frame, cut where the Clip or their video ends, drawn over the Segments and under the
 Watermark; a video's sound, when turned up, is heard as a Music Clip is.
 
-A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned piece by
-piece: each Segment framed on its own, from its own Scenes and faces, its Scenes moved to where it
+A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned Segment
+by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
 plays in the Clip. A Segment of a Media Library video is one Scene: the video cropped to fill the
 frame (Fill), or whole over a blurred copy of itself (Blur), with no captions. A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
@@ -70,7 +70,18 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Fit, Layout, LayoutOverride, MusicClip, Overlay, TextAlign, TextLayer, TransitionKind, WordEdit
+from app.candidates import (
+    Fit,
+    Layout,
+    LayoutOverride,
+    MusicClip,
+    Overlay,
+    TextAlign,
+    TextLayer,
+    TransitionKind,
+    WordEdit,
+    transition_overlap,
+)
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import (
@@ -182,10 +193,10 @@ class Join:
 
 
 @dataclass(frozen=True)
-class Piece:
+class SegmentInput:
     """A Segment of a Clip cut into several, as the planner frames it: the Source from `start` to
     `end`, its shots `scenes` and sampled `faces` (None: unanalysed), and the Layout Overrides that
-    fall in it, all in seconds into the piece. With `media`, a Media Library video `width` x `height`
+    fall in it, all in seconds into the given. With `media`, a Media Library video `width` x `height`
     instead, from `start` to `end` seconds into it, filled as `fit` says, its own sound at `volume`
     (none when `silent`)."""
 
@@ -512,9 +523,8 @@ def plan_render(
     logo_size: tuple[int, int] | None = None,
     text_layers: list[TextLayer] | None = None,
     music: list[MusicClip] | None = None,
-    media_lengths: dict[str, float] | None = None,
     source_volume: float = 1.0,
-    pieces: list[Piece] | None = None,
+    main_track: list[SegmentInput] | None = None,
     overlays: list[Overlay] | None = None,
     media_info: dict[str, MediaInfo] | None = None,
 ) -> RenderPlan:
@@ -529,12 +539,12 @@ def plan_render(
     the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. The
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
     `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
-    `music` is heard as `audio_events` places it, given the lengths of the songs it plays.
+    `music` is heard as `audio_events` places it, given what `media_info` says of its songs.
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
     their items (whose videos' sound, when turned up, joins the music).
 
-    With `pieces`, the Clip is cut into those Segments, back to back (`start` and `end` being the hull
+    With `main_track` (each Segment's SegmentInput), the Clip is cut into those Segments, back to back (`start` and `end` being the hull
     of what they show) but for their Transitions, each framed and captioned from its own (ignoring
     `scenes`, `faces`, `layout_overrides`, `words` and `word_edits`); the other times are all in
     seconds into the Clip."""
@@ -543,30 +553,30 @@ def plan_render(
     segments: list[SegmentPlan] = []
     transitions: list[TransitionEvent] = []
     cuts: list[float] = []
-    if pieces:
+    if main_track:
         plans, at = [], 0.0
-        for i, piece in enumerate(pieces):
-            length = round(piece.end - piece.start, 3)
-            if i and piece.join is not None:
+        for i, given in enumerate(main_track):
+            length = round(given.end - given.start, 3)
+            if i and given.join is not None:
                 # Overlapping the one before by the Transition's length, half the shorter at most.
                 before = segments[-1].end - segments[-1].start
-                overlap = round(min(piece.join.secs, before / 2, length / 2), 3)
+                overlap = transition_overlap(given.join.secs, before, length)
                 at = round(at - overlap, 3)
-                transitions.append(TransitionEvent(piece.join.kind, at, round(at + overlap, 3)))
+                transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3)))
                 cuts.append(round(at + overlap / 2, 3))
             elif i:
                 cuts.append(at)
-            if piece.media is not None:
-                framed = [_media_scene(length, piece)]
+            if given.media is not None:
+                framed = [_media_scene(length, given)]
             else:
-                framed = _framed(length, source, piece.scenes, piece.faces, layout, camera, piece.layout_overrides)
+                framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides)
             plans.extend(_moved(scene, at) for scene in framed)
             segments.append(
-                SegmentPlan(at, round(at + length, 3), piece.start, piece.end, piece.media, piece.volume, piece.silent, len(framed))
+                SegmentPlan(at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed))
             )
             at = round(at + length, 3)
         duration = at
-        words, word_edits = _pieces_words(pieces, segments, cuts, duration)
+        words, word_edits = _segment_words(main_track, segments, cuts, duration)
     else:
         duration = round(end - start, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides)
@@ -584,7 +594,7 @@ def plan_render(
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
-        audio=audio_events(music or [], duration, media_lengths or {}) + overlay_sound(overlays or [], duration, media_info or {}),
+        audio=audio_events(music or [], duration, media_info or {}) + overlay_sound(overlays or [], duration, media_info or {}),
         source_volume=source_volume,
         segments=segments,
         overlays=overlay_events(overlays or [], duration, media_info or {}),
@@ -592,23 +602,23 @@ def plan_render(
     )
 
 
-def _pieces_words(
-    pieces: list[Piece], segments: list[SegmentPlan], cuts: list[float], duration: float
+def _segment_words(
+    main_track: list[SegmentInput], segments: list[SegmentPlan], cuts: list[float], duration: float
 ) -> tuple[list[Word] | None, list[WordEdit]]:
     """The Segments' Words and Word Edits in seconds into the Clip: each Segment's Words whose middle
     is between the cuts either side of it (where the Segment before ends, or a Transition's middle),
     kept between them. None when no Segment is captioned."""
-    if all(piece.words is None for piece in pieces):
+    if all(given.words is None for given in main_track):
         return None, []
     edges = [0.0, *cuts, duration]
     words, edits = [], []
-    for i, (piece, segment) in enumerate(zip(pieces, segments)):
+    for i, (given, segment) in enumerate(zip(main_track, segments)):
         low, high = edges[i], edges[i + 1]
-        for word in piece.words or []:
+        for word in given.words or []:
             on, off = word.start + segment.start, word.end + segment.start
             if low <= (on + off) / 2 < high:
                 words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
-        edits += [replace(edit, at=round(edit.at + segment.start, 3)) for edit in piece.word_edits]
+        edits += [replace(edit, at=round(edit.at + segment.start, 3)) for edit in given.word_edits]
     return words, sorted(edits, key=lambda edit: edit.at)
 
 
@@ -644,13 +654,13 @@ def _framed(
     return plans
 
 
-def _media_scene(duration: float, piece: Piece) -> ScenePlan:
+def _media_scene(duration: float, given: SegmentInput) -> ScenePlan:
     """A Media Library video's Segment as one Scene: cropped 9:16 to fill the frame, or whole over a
     blurred copy of that crop."""
-    filled = _filled(piece.width, piece.height, 0.0)
-    if piece.fit is Fit.FILL:
+    filled = _filled(given.width, given.height, 0.0)
+    if given.fit is Fit.FILL:
         return ScenePlan(0.0, duration, SceneLayout.FILL, [filled])
-    return ScenePlan(0.0, duration, SceneLayout.BLUR, [replace(filled, blur=True), _fitted(piece.width, piece.height, 0.0)])
+    return ScenePlan(0.0, duration, SceneLayout.BLUR, [replace(filled, blur=True), _fitted(given.width, given.height, 0.0)])
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:
@@ -700,13 +710,14 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
     return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
 
 
-def audio_events(music: list[MusicClip], duration: float, lengths: dict[str, float]) -> list[AudioEvent]:
+def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
     """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
-    (whose length is in `lengths`) ends, its fades shortened to half of what is left each at most.
+    (whose length is in `items`) ends, its fades shortened to half of what is left each at most.
     One whose song is gone, or that would start at or after either end, isn't heard."""
     events = []
     for clip in music:
-        length = lengths.get(clip.media)
+        item = items.get(clip.media)
+        length = item.duration if item is not None else None
         start = round(clip.start, 3)
         if length is None or start >= duration or clip.offset >= length:
             continue

@@ -604,7 +604,7 @@ export interface Candidate {
 }
 
 // A Candidate's Main Track: its Segments, or its one range.
-export const piecesOf = (candidate: Pick<Candidate, "start" | "end" | "segments">): ClipSegment[] =>
+export const mainTrackOf = (candidate: Pick<Candidate, "start" | "end" | "segments">): ClipSegment[] =>
   candidate.segments.length ? candidate.segments : [{ id: "main", start: candidate.start, end: candidate.end }];
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.

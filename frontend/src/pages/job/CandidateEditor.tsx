@@ -21,7 +21,7 @@ import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { candidateDraft } from "./editor/draft";
-import { Playback, piecesFrom, playable } from "./editor/playback";
+import { Playback, playedFrom, playable } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
 import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
@@ -126,6 +126,8 @@ export function CandidateEditor({
   const playback = useMemo(() => new Playback(), []);
   // Cut into Segments in the Advanced Edit: the trim and the Source-time timeline give way to it.
   const cut = candidate.segments.length > 0;
+  // What clicking a word sets: for a cut Clip, only a new clip's range.
+  const clickMode: Mode = cut ? "new" : mode;
   const advanced = `/jobs/${job.id}/candidates/${candidate.id}/advanced`;
 
   useEffect(() => {
@@ -160,7 +162,7 @@ export function CandidateEditor({
     hook_secs: timing.hook_secs,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
-  if (cut) playback.setPieces(preview?.plan.segments.length ? playable(preview.plan.segments) : piecesFrom(candidate.segments));
+  if (cut) playback.setSegments(preview?.plan.segments.length ? playable(preview.plan.segments) : playedFrom(candidate.segments));
   else playback.setRange(candidate.start, candidate.end);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -174,12 +176,12 @@ export function CandidateEditor({
   // The backend snaps an edge to the Word it falls in: send the Word's own start or end.
   function pick(i: number) {
     setNotice(null);
-    if (mode === "new") {
+    if (clickMode === "new") {
       setPending((old) => (old && old.last === null ? { first: old.first, last: i } : { first: i, last: null }));
       return;
     }
     const word = words[i];
-    if (mode === "start") {
+    if (clickMode === "start") {
       if (word.start >= candidate.end) return setNotice("The start must come before the clip's end. Move the end first.");
       void onSave({ start: word.start });
     } else {
@@ -229,7 +231,7 @@ export function CandidateEditor({
           </div>
         </div>
         <p className="text-sm text-muted tabular-nums">
-          {cut ? `${candidate.segments.length} pieces of the episode` : `${formatPrecise(candidate.start)} – ${formatPrecise(candidate.end)}`} ·{" "}
+          {cut ? `${candidate.segments.length} Segments` : `${formatPrecise(candidate.start)} – ${formatPrecise(candidate.end)}`} ·{" "}
           {length.toFixed(1)} s
           {candidate.predicted_score !== null && ` · score ${candidate.predicted_score}`}
           {candidate.origin === "manual" && " · added by hand"}
@@ -390,17 +392,16 @@ export function CandidateEditor({
                   />
                   <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
                 </div>
-                {cut ? (
-                  <CutNote count={candidate.segments.length} to={advanced} />
-                ) : (
-                  <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
+                {cut && <CutNote count={candidate.segments.length} to={advanced} />}
+                <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
                     <h4 id="picker-heading" className="font-semibold">
                       Transcript
                     </h4>
                     <Segmented
                       legend="Clicking a word sets"
-                      options={MODES}
-                      value={mode}
+                      // A cut Clip's edges are its Segments', trimmed in the Advanced Edit.
+                      options={cut ? MODES.filter((option) => option.value === "new") : MODES}
+                      value={clickMode}
                       onChange={(value) => {
                         setMode(value);
                         setNotice(null);
@@ -408,7 +409,7 @@ export function CandidateEditor({
                       }}
                       className="max-w-sm"
                     />
-                    <p className="text-sm text-muted">{MODE_HINTS[mode]}</p>
+                    <p className="text-sm text-muted">{MODE_HINTS[clickMode]}</p>
                     <TranscriptPicker
                       key={candidate.id}
                       words={words}
@@ -452,20 +453,19 @@ export function CandidateEditor({
                       )}
                     </div>
                   </section>
-                )}
               </>
             )}
           </div>
         </div>
       </div>
 
-      {job.source && cut && <CutNote count={candidate.segments.length} to={advanced} />}
-      {job.source && !cut && (
+      {job.source && (
         <Timeline
-          words={words}
-          range={range}
-          saved={{ start: candidate.start, end: candidate.end }}
-          sourceDuration={job.source.metadata.duration}
+          words={cut ? [] : words}
+          range={cut ? { start: 0, end: length } : range}
+          saved={cut ? { start: 0, end: length } : { start: candidate.start, end: candidate.end }}
+          sourceDuration={cut ? length : job.source.metadata.duration}
+          cut={cut ? { segments: playback.segments, to: advanced } : undefined}
           plan={preview?.plan ?? null}
           playback={playback}
           timing={timing}
@@ -492,11 +492,10 @@ export function CandidateEditor({
         />
       )}
 
-      {preview && scene !== null && !cut && (
+      {preview && scene !== null && (
         <SceneLayoutPicker
           plan={preview.plan}
           index={scene}
-          clipStart={candidate.start}
           clipLayout={candidate.layout}
           overrides={candidate.layout_overrides}
           onChange={(layout_overrides) => void onSave({ layout_overrides })}
@@ -584,7 +583,7 @@ function CutNote({ count, to }: { count: number; to: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-fill p-3 text-sm">
       <p className="min-w-0 flex-1 text-pretty">
-        This clip is cut into {count} pieces of the episode. Trim, reorder and time them in the Advanced Edit.
+        This clip is cut into {count} Segments. Trim, reorder and join them in the Advanced Edit.
       </p>
       <Link to={to} className={buttonClass("secondary", "sm")}>
         <SlidersHorizontal aria-hidden size={16} />

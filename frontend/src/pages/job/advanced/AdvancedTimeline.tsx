@@ -32,6 +32,8 @@ export interface TimeGeometry {
   // `time`, moved onto the nearest snap point (the playhead, the Clip's ends, items' edges but
   // `own`) within SNAP_PX, or as it is.
   snap: (time: number, own?: number[]) => number;
+  // The time under a pointer (or a drop) at `clientX`.
+  timeAt: (clientX: number) => number;
 }
 
 /**
@@ -141,6 +143,7 @@ export function AdvancedTimeline({
   const geometry: TimeGeometry = {
     pps,
     duration,
+    timeAt,
     snap: (time, own = []) => {
       const points = [0, duration, playback.time, ...snapPoints].filter((point) => !own.some((o) => Math.abs(o - point) < 1e-6));
       let best = time;
@@ -181,19 +184,44 @@ export function AdvancedTimeline({
   );
 }
 
-/** A track: its label, sticky at the left, and its items, placed by time. */
+/**
+ * A track: its label, sticky at the left, and its items, placed by time. With `drop`, it takes what
+ * is dragged onto it from the asset panel (of the DataTransfer `types` it names), highlighted while
+ * over it.
+ */
 export function TrackRow({
   label,
   height = "h-11",
+  drop,
   children,
 }: {
   label: ReactNode;
   // A Tailwind height class.
   height?: string;
+  drop?: { types: string[]; onDrop: (data: DataTransfer, clientX: number) => void };
   children: ReactNode;
 }) {
+  const [over, setOver] = useState(false);
+  const takes = (data: DataTransfer) => !!drop && drop.types.some((type) => data.types.includes(type));
   return (
-    <div className={cx("flex shrink-0 border-b border-border last:border-b-0", height)}>
+    <div
+      className={cx("flex shrink-0 border-b border-border last:border-b-0", height, over && "bg-accent/10")}
+      onDragOver={(event) => {
+        if (!takes(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false);
+      }}
+      onDrop={(event) => {
+        setOver(false);
+        if (!takes(event.dataTransfer)) return;
+        event.preventDefault();
+        drop?.onDrop(event.dataTransfer, event.clientX);
+      }}
+    >
       <div
         className="sticky left-0 z-20 flex shrink-0 items-center bg-bg/90 px-2 text-xs font-medium text-muted backdrop-blur"
         style={{ width: LABEL_WIDTH }}

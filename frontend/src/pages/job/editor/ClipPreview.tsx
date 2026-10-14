@@ -118,7 +118,7 @@ export function ClipPreview({
     return () => observer.disconnect();
   }, []);
 
-  const sceneIndex = usePlayback(playback, (time) => (plan ? sceneAt(plan, time) : 0));
+  const sceneIndex = usePlayback(playback, (time, p) => (plan ? sceneAt(plan, time, p.segmentIndex) : 0));
   const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
@@ -145,7 +145,7 @@ export function ClipPreview({
         />
       ))}
       <PreviewSegments plan={plan} playback={playback} />
-      <PreviewTransitions plan={plan} playback={playback} stage={stage} />
+      <PreviewTransitions plan={plan} playback={playback} src={src} />
       <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} />
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
@@ -546,7 +546,17 @@ function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEv
   );
 }
 
-function sceneAt(plan: RenderPlan, time: number): number {
+/**
+ * The plan's Scene at `time`: of the Segment `segment` (the one playing), when the Clip is cut, so
+ * that where a Transition overlaps two Segments the one playing shows.
+ */
+export function sceneAt(plan: RenderPlan, time: number, segment = 0): number {
+  if (plan.segments.length) {
+    const first = plan.segments.slice(0, segment).reduce((count, other) => count + other.scenes, 0);
+    const count = plan.segments[segment]?.scenes ?? 1;
+    for (let i = first; i < first + count - 1; i++) if (time < plan.scenes[i].end) return i;
+    return Math.min(first + count - 1, plan.scenes.length - 1);
+  }
   const index = plan.scenes.findIndex((scene) => time < scene.end);
   return index === -1 ? plan.scenes.length - 1 : index;
 }
@@ -555,7 +565,7 @@ function sceneAt(plan: RenderPlan, time: number): number {
  * One panel slot: its <video>, always mounted (so that it keeps playing across Scenes), shown in the
  * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point.
  */
-function PanelView({
+export function PanelView({
   videoRef,
   src,
   plan,
@@ -597,7 +607,7 @@ function PanelView({
         }
       : { inset: 0, width: "100%", height: "100%" };
   return (
-    <div data-picture className="absolute overflow-hidden" style={box}>
+    <div className="absolute overflow-hidden" style={box}>
       <video
         ref={videoRef}
         src={src}

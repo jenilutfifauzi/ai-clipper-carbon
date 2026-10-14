@@ -41,3 +41,5 @@
 - One decode writes the kept video, its 640 px proxy and its thumbnail.
 - Songs are at most 10 minutes long.
 - The upload endpoint isn't async, so the copy and the conversion run in a worker thread.
+
+**2026-10-14: review fixes.** Only the spec's formats are taken (told by ffprobe, whatever the name says): MP4, MOV or WebM video, MP3, M4A, WAV or AAC songs, PNG, JPEG or WebP images. Images are at most 5 MB, as Logos are, and songs have no length limit. The Logos and the Media Library share their index and shrink filter (`app/library.py`). Tested in `tests/test_media_library.py`.

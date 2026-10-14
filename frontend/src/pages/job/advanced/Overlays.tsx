@@ -3,13 +3,16 @@ import type { MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { Group } from "../editor/StyleFields";
-import { newId } from "./TextLayers";
+import { newId, round } from "./edits";
+import { TimingFields } from "./TimingFields";
 
-export const OVERLAY_MIN_SECS = 0.1;
 // A new still shows this long, or to the Clip's end.
 const STILL_SECS = 3;
 
-/** An Overlay of `item` at the playhead (`at`): half the frame wide, in its upper middle; a video as long as it is (and fits). */
+/**
+ * An Overlay of `item` at `at` (the playhead, or where it was dropped): half the frame wide, in its
+ * upper middle; a video as long as it is (and fits).
+ */
 export function newOverlay(item: MediaItem, at: number, duration: number): Overlay {
   const length = item.duration ?? STILL_SECS;
   const start = Math.max(0, Math.min(at, duration - Math.min(length, duration)));
@@ -27,7 +30,6 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
   };
 }
 
-const round = (seconds: number) => Math.round(seconds * 100) / 100;
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 /** The selected Overlay's size, opacity, sound and time. */
@@ -76,37 +78,13 @@ export function OverlayFields({
             <p className="text-sm text-muted">This video has no sound.</p>
           ))}
       </Group>
-      <Group title="Time">
-        {video && (
-          <Slider
-            label="Starts in the video at"
-            value={overlay.offset}
-            min={0}
-            max={Math.max(0, length - overlay.secs)}
-            step={0.1}
-            format={(v) => `${v.toFixed(1)} s`}
-            onChange={(offset) => set("offset", offset)}
-          />
-        )}
-        <Slider
-          label="Comes on at"
-          value={Math.min(overlay.start, duration - OVERLAY_MIN_SECS)}
-          min={0}
-          max={Math.max(OVERLAY_MIN_SECS, duration - OVERLAY_MIN_SECS)}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)} s`}
-          onChange={(start) => onChange({ ...overlay, start, secs: Math.min(overlay.secs, duration - start) }, `overlay:${overlay.id}:start`)}
-        />
-        <Slider
-          label="Stays for"
-          value={Math.min(overlay.secs, duration - overlay.start, length - overlay.offset)}
-          min={OVERLAY_MIN_SECS}
-          max={Math.max(OVERLAY_MIN_SECS, Math.min(duration - overlay.start, length - overlay.offset))}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)} s`}
-          onChange={(secs) => set("secs", secs)}
-        />
-      </Group>
+      <TimingFields
+        item={overlay}
+        duration={duration}
+        length={video ? length : undefined}
+        labels={{ start: "Comes on at", secs: "Stays for", offset: "Starts in the video at" }}
+        onChange={onChange}
+      />
     </div>
   );
 }

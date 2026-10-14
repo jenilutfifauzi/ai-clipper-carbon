@@ -14,6 +14,16 @@ import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { ProgressBar } from "../../../components/ProgressBar";
 import { Skeleton } from "../../../components/Skeleton";
 import { cx, formatBytes, formatPrecise } from "../../../format";
+import { DRAG_MEDIA } from "./drag";
+
+// An item's card or row carries its id when dragged onto the timeline.
+const draggable = (item: MediaItem) => ({
+  draggable: true,
+  onDragStart: (event: React.DragEvent) => {
+    event.dataTransfer.setData(DRAG_MEDIA, item.id);
+    event.dataTransfer.effectAllowed = "copy";
+  },
+});
 
 interface Uploading {
   key: number;
@@ -263,6 +273,7 @@ function VisualCard({
     <li className="group relative flex min-w-0 flex-col gap-1">
       <button
         type="button"
+        {...draggable(item)}
         onClick={() => onAdd?.(item)}
         disabled={!onAdd}
         aria-label={onAdd ? `Add ${item.name}` : item.name}
@@ -316,7 +327,7 @@ function AudioRow({ item, onAdd, onDelete }: { item: MediaItem; onAdd?: (item: M
     } else element.pause();
   }
   return (
-    <li className="group relative flex min-h-12 items-center gap-2 rounded-[10px] bg-fill px-2">
+    <li {...draggable(item)} className="group relative flex min-h-12 cursor-grab items-center gap-2 rounded-[10px] bg-fill px-2">
       <audio ref={audio} src={mediaItemUrl(item.id)} preload="none" onPlay={() => setOn(true)} onPause={() => setOn(false)} onEnded={() => setOn(false)} />
       <button
         type="button"

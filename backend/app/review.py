@@ -17,6 +17,7 @@ from app.candidates import (
     Transition,
     WordEdit,
     manual_candidate,
+    timeline_length,
 )
 from app.config import SelectionTuning
 from app.selection import snap
@@ -90,11 +91,11 @@ class Episode:
 
     def segments(self, segments: list[Segment]) -> list[Segment]:
         """The Segments with the ends of those that show the Source snapped to Words (as `bounds`
-        snaps a Clip's); InvalidEdit for none, for none of the Source, for one that isn't a usable
-        piece, or for more than the longest clip in all. (A Media Library video's are checked
-        against it by the API.)"""
+        snaps a Clip's); InvalidEdit for none, for none of the Source, or for one that isn't a usable
+        Segment. (A Media Library video's are checked against it by the API; their Timeline's length
+        against the longest clip by `update`, once their Transitions are known.)"""
         if not any(segment.media is None for segment in segments):
-            raise InvalidEdit("A clip needs at least one piece of the episode")
+            raise InvalidEdit("A clip needs at least one Segment of the episode")
         snapped = []
         for segment in segments:
             if segment.media is None:
@@ -104,11 +105,13 @@ class Episode:
                 raise InvalidEdit(f"A video's Segment lasts {MIN_MEDIA_SECS:g} s at least")
             else:
                 snapped.append(segment)
-        longest = max(MAX_CLIP_SECS, self.max_secs)
-        total = sum(segment.end - segment.start for segment in snapped)
-        if total > longest:
-            raise InvalidEdit(f"A clip can last at most {longest:g} s; its Segments would last {total:.0f} s")
         return snapped
+
+    def check_length(self, segments: list[Segment], transitions: list[Transition]) -> None:
+        """InvalidEdit when the Main Track of `segments` plays longer than the longest clip."""
+        longest = max(MAX_CLIP_SECS, self.max_secs)
+        if (length := timeline_length(segments, transitions)) > longest:
+            raise InvalidEdit(f"A clip can last at most {longest:g} s; its Segments would last {length:.0f} s")
 
 
 def update(
@@ -119,6 +122,7 @@ def update(
     i = _index(candidates, candidate_id)
     old = candidates[i]
     start, end, segments = old.start, old.end, old.segments
+    transitions = _pick(change.transitions, old.transitions)
     if change.start is not None or change.end is not None:
         if old.segments and change.segments is None:
             raise InvalidEdit("This clip is cut into Segments: change them in the Advanced Edit")
@@ -126,11 +130,15 @@ def update(
     if change.segments is not None:
         _check_ids("Segment", [segment.id for segment in change.segments])
         segments = episode.segments(change.segments)
+        transitions = _joined(transitions, segments)
+        episode.check_length(segments, transitions)
         # The hull of the Source they show; one Segment of it is a plain range.
         shown = [segment for segment in segments if segment.media is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         if len(segments) == 1:
             segments = []
+    elif change.transitions is not None:
+        episode.check_length(old.main_track(), _joined(transitions, old.segments))
     if change.text_layers is not None:
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
     if change.music is not None:
@@ -156,8 +164,10 @@ def update(
         source_volume=_pick(change.source_volume, old.source_volume),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
-        transitions=_joined(_pick(change.transitions, old.transitions), segments),
+        transitions=_joined(transitions, segments),
     )
+    if change.text_layers is not None:
+        _check_inside(new, old)
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
     return [*candidates[:i], new, *candidates[i + 1 :]], new
@@ -219,6 +229,15 @@ def _joined(transitions: list[Transition], segments: list[Segment]) -> list[Tran
     joins = {segment.id for segment in segments[:-1]}
     by_join = {transition.after: transition for transition in transitions if transition.after in joins}
     return [by_join[segment.id] for segment in segments[:-1] if segment.id in by_join]
+
+
+def _check_inside(new: Candidate, old: Candidate) -> None:
+    """InvalidEdit for a Text Layer, new or changed, that starts at or after the end of the Clip.
+    (One left past it by a trim is kept: the planner doesn't show it.)"""
+    before = {layer.id: layer for layer in old.text_layers}
+    for layer in new.text_layers:
+        if layer != before.get(layer.id) and layer.start >= new.duration:
+            raise InvalidEdit(f"Text Layer {layer.id} starts after the clip ends ({new.duration:g} s)")
 
 
 def _check_ids(kind: str, ids: list[str]) -> None:

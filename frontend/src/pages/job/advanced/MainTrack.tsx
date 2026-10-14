@@ -6,40 +6,49 @@ import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
-import { piecesFrom } from "../editor/playback";
+import type { PlayedSegment } from "../editor/playback";
 
 // The shortest Segment the editor makes; the backend snaps each to Words.
 export const SEGMENT_MIN_SECS = 0.3;
 
 /**
  * The Main Track's Segments after a drag of Segment `id` from `origin` (the Segments when the drag
- * began): moved, it takes the place its middle is dragged to; its start or end trimmed, it shows
- * that much more or less of the Source or its video (within its `length`), and the Segments after
- * it close up behind it.
+ * began), given how the track was drawn then (`shown`: each Segment's span on the Timeline, cut short
+ * where a Transition into the next starts) and planned (`planned`: each Segment's whole span and its
+ * range of the Source or its video, snapped to Words). Moved, it takes the place its middle is
+ * dragged to. Its start or end trimmed, its planned edge moves as far as the drawn one did (within
+ * its file's `lengthOf`), and the Segments after it close up behind it.
  */
 export function draggedSegments(
   origin: ClipSegment[],
   id: string,
   change: { start: number; end: number; edge: "move" | "start" | "end" },
   lengthOf: (segment: ClipSegment) => number,
+  shown: PlayedSegment[],
+  planned: PlayedSegment[],
 ): ClipSegment[] {
   const index = origin.findIndex((segment) => segment.id === id);
   const segment = origin[index];
-  const from = piecesFrom(origin)[index];
+  const drawn = shown[index];
+  const whole = planned[index];
+  if (!drawn || !whole) return origin;
   if (change.edge === "move") {
-    const middle = change.start + (from.end - from.start) / 2;
+    const middle = change.start + (drawn.end - drawn.start) / 2;
+    const place = shown.filter((other, i) => i !== index && other.start + (other.end - other.start) / 2 < middle).length;
     const others = origin.filter((other) => other.id !== id);
-    const place = piecesFrom(others).filter((piece) => piece.start + (piece.end - piece.start) / 2 < middle).length;
     return [...others.slice(0, place), segment, ...others.slice(place)];
   }
   const next =
     change.edge === "start"
-      ? { ...segment, start: round(Math.min(Math.max(segment.start + change.start - from.start, 0), segment.end - SEGMENT_MIN_SECS)) }
-      : { ...segment, end: round(Math.max(Math.min(segment.end + change.end - from.end, lengthOf(segment)), segment.start + SEGMENT_MIN_SECS)) };
+      ? { ...segment, start: round(Math.min(Math.max(whole.source_start + change.start - drawn.start, 0), whole.source_end - SEGMENT_MIN_SECS)), end: whole.source_end }
+      : { ...segment, start: whole.source_start, end: round(Math.max(Math.min(whole.source_end + change.end - drawn.end, lengthOf(segment)), whole.source_start + SEGMENT_MIN_SECS)) };
   return origin.map((other) => (other.id === id ? next : other));
 }
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+// The longest video Segment: the longest video the Media Library takes (MAX_SECS in backend/app/media.py).
+const VIDEO_MAX_SECS = 180;
 
 const FITS = [
   { value: "blur", label: "Fit over blur" },
@@ -48,7 +57,7 @@ const FITS = [
 
 /** A video from the Media Library as a Segment, from its start, as long as it is (and as fits). */
 export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
-  return { id, start: 0, end: round(Math.min(item.duration ?? 1, 180)), media: item.id, fit: "blur", volume: 1 };
+  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, fit: "blur", volume: 1 };
 }
 
 /**
@@ -87,16 +96,16 @@ export function SegmentFields({
       <div className="flex items-center justify-between gap-2">
         <h2 className="flex min-w-0 items-center gap-2 font-semibold">
           <Icon aria-hidden size={17} className="shrink-0 text-muted" />
-          <span className="truncate">{segment.media ? (item?.name ?? "Video") : `Piece ${index + 1} of ${count}`}</span>
+          <span className="truncate">{segment.media ? (item?.name ?? "Video") : `Segment ${index + 1} of ${count}`}</span>
         </h2>
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={onSplit} disabled={!canSplit} aria-label="Split at the playhead">
             <Scissors aria-hidden size={17} />
           </Button>
-          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate piece">
+          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate Segment">
             <Copy aria-hidden size={17} />
           </Button>
-          <Button variant="ghost" size="icon" onClick={onDelete} disabled={count < 2} aria-label="Delete piece">
+          <Button variant="ghost" size="icon" onClick={onDelete} disabled={count < 2} aria-label="Delete Segment">
             <Trash2 aria-hidden size={17} />
           </Button>
         </div>
@@ -134,7 +143,16 @@ export function SegmentFields({
             its edges to trim it, or drag it to another place. Its ends snap to words.
           </p>
           <Slider
-            label="Original sound"
+            label="This Segment's sound"
+            value={segment.volume ?? 1}
+            min={0}
+            max={2}
+            step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
+          />
+          <Slider
+            label="The episode's sound, in every Segment"
             value={sourceVolume}
             min={0}
             max={2}

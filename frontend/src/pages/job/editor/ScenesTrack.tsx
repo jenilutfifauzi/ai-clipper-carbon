@@ -14,10 +14,30 @@ const LOOKS: Record<SceneLayout, string> = {
 
 const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blur: "Blur", passthrough: "As shot", fill: "Fill" };
 
-// The override of the Scene from `start` to `end` (seconds into the Clip), as the planner finds it:
-// the last one whose time is in it.
-export function sceneOverride(overrides: LayoutOverride[], clipStart: number, start: number, end: number) {
-  return overrides.filter((o) => o.at - clipStart >= start && o.at - clipStart < end).at(-1) ?? null;
+/**
+ * Where `time` (seconds into the Clip) of the plan's Scene `scene` is on the Source's timeline: in
+ * a Clip of one range, from its start; in a cut one, from the start of the Segment the Scene is in
+ * (docs/adr/0002-segments-and-timeline-time.md). Null in a Media Library video's Segment, which has
+ * no Source time (and no Layout Overrides).
+ */
+export function sourceTime(plan: RenderPlan, scene: number, time: number): number | null {
+  if (!plan.segments.length) return plan.start + time;
+  let first = 0;
+  for (const segment of plan.segments) {
+    if (scene < first + segment.scenes) return segment.media ? null : segment.source_start + (time - segment.start);
+    first += segment.scenes;
+  }
+  return null;
+}
+
+// The override of the plan's Scene `index`, as the planner finds it: the last one whose time (on
+// the Source's timeline) is in it.
+export function sceneOverride(overrides: LayoutOverride[], plan: RenderPlan, index: number) {
+  const scene = plan.scenes[index];
+  const start = sourceTime(plan, index, scene.start);
+  const end = sourceTime(plan, index, scene.end);
+  if (start === null || end === null) return null;
+  return overrides.filter((o) => o.at >= start && o.at < end).at(-1) ?? null;
 }
 
 /** The plan's Scenes on the timeline, coloured by Layout; a click picks one to change its Layout. */
@@ -45,7 +65,7 @@ export function ScenesTrack({
   return (
     <>
       {plan.scenes.map((scene, i) => {
-        const changed = sceneOverride(overrides, clipStart, scene.start, scene.end) !== null;
+        const changed = sceneOverride(overrides, plan, i) !== null;
         return (
           <button
             key={i}
@@ -93,22 +113,24 @@ const CHOICES = [
 export function SceneLayoutPicker({
   plan,
   index,
-  clipStart,
   clipLayout,
   overrides,
   onChange,
 }: {
   plan: RenderPlan;
   index: number;
-  clipStart: number;
   clipLayout: Layout;
   overrides: LayoutOverride[];
   onChange: (overrides: LayoutOverride[]) => void;
 }) {
   const scene = plan.scenes[index];
   if (!scene) return null;
-  const current = sceneOverride(overrides, clipStart, scene.start, scene.end);
-  const others = overrides.filter((o) => sceneOverride([o], clipStart, scene.start, scene.end) === null);
+  const middle = sourceTime(plan, index, (scene.start + scene.end) / 2);
+  if (middle === null) {
+    return <p className="rounded-control bg-fill p-3 text-sm text-muted">A video's Segment: how it fills the frame is set in the Advanced Edit.</p>;
+  }
+  const current = sceneOverride(overrides, plan, index);
+  const others = overrides.filter((o) => sceneOverride([o], plan, index) === null);
   return (
     <div className="flex flex-col gap-1.5 rounded-control bg-fill p-3">
       <Segmented
@@ -119,7 +141,7 @@ export function SceneLayoutPicker({
           onChange(
             value === "default"
               ? others
-              : [...others, { at: Math.round((clipStart + (scene.start + scene.end) / 2) * 1000) / 1000, layout: value }].sort((a, b) => a.at - b.at),
+              : [...others, { at: Math.round(middle * 1000) / 1000, layout: value }].sort((a, b) => a.at - b.at),
           )
         }
       />

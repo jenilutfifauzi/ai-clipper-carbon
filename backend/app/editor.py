@@ -66,42 +66,42 @@ def preview_plan(
     are, and it is analysed only when every Segment is."""
     assert job.source is not None
     source = job.source.metadata
-    pieces = candidate.pieces()
+    segments = candidate.main_track()
     # A video's Segment has neither Words nor analysis.
     saved = [
-        [] if piece.media else saved_words(job_dir, piece.start, piece.end, job.options.language, settings.whisper_model)
-        for piece in pieces
+        [] if segment.media else saved_words(job_dir, segment.start, segment.end, job.options.language, settings.whisper_model)
+        for segment in segments
     ]
     words = [
-        found if found is not None else transcript_words(transcript, piece.start, piece.end, source.duration)
-        for piece, found in zip(pieces, saved)
+        found if found is not None else transcript_words(transcript, segment.start, segment.end, source.duration)
+        for segment, found in zip(segments, saved)
     ]
     words_source = WordsSource.CLIP if all(found is not None for found in saved) else WordsSource.TRANSCRIPT
     analyses = [
-        saved_analysis(job_dir, piece.start, piece.end, settings.analysis, BLAZE_FACE_MODEL.name)
-        if reframes(source) and piece.media is None else None
-        for piece in pieces
+        saved_analysis(job_dir, segment.start, segment.end, settings.analysis, BLAZE_FACE_MODEL.name)
+        if reframes(source) and segment.media is None else None
+        for segment in segments
     ]
     plan = candidate_plan(
         candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
     )
     shown, at = [], 0.0
-    for piece, heard in zip(pieces, words):
-        length = piece.end - piece.start
+    for segment, heard in zip(segments, words):
+        length = segment.end - segment.start
         ordered = sorted(heard, key=lambda word: word.start)
         # Matched in the Segment; given back as the Candidate holds them.
-        shifted = [replace(edit, at=edit.at - piece.start) for edit in candidate.word_edits]
+        shifted = [replace(edit, at=edit.at - segment.start) for edit in candidate.word_edits]
         original = {id(edit): kept for edit, kept in zip(shifted, candidate.word_edits)}
         shown += [
             PreviewWord(
                 word.text, round(word.start + at, 3), round(word.end + at, 3),
-                None if edit is None else original[id(edit)], round(piece.start + (word.start + word.end) / 2, 3),
+                None if edit is None else original[id(edit)], round(segment.start + (word.start + word.end) / 2, 3),
             )
             for word, edit in zip(ordered, match_edits(ordered, shifted))
             if 0 <= (word.start + word.end) / 2 < length
         ]
         at += length
     analysed = not reframes(source) or all(
-        analysis is not None for analysis, piece in zip(analyses, pieces) if piece.media is None
+        analysis is not None for analysis, segment in zip(analyses, segments) if segment.media is None
     )
     return PreviewPlan(plan, shown, words_source, analysed=analysed)

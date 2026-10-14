@@ -65,3 +65,11 @@ The largest change: a Clip stops being one range of the Source.
 - The preview jumps at a join with a seek on the same video, not a preloaded second one. On a local file the pause is short. A second video for the next Segment would hide it, and is left for later.
 - Clicking the Video track selects a Segment. "Original sound" moved to the Segment's inspector.
 - The clip editor shows a cut Clip's preview and caption text. Its trim and Source-time Timeline give way to a note with a link to the Advanced Edit.
+
+**2026-10-14: review fixes.** **Splitting, inserting, trimming and snapping** on the Main Track go by the plan's Segments (snapped, with Transition overlaps). A Source Segment is split in the silence between Words, which stops the snapping from repeating a Word on both sides.
+
+**The clip editor keeps a cut Clip's Timeline,** on its own time: the Segments (read-only), the Scenes with their Layout picker (mapped to Source time per Segment), the captions and the hook.
+
+**Validation:**
+- The longest-clip check counts Transition overlaps (`tests/test_advanced_rules.py`).
+- A Source Segment has its own volume.

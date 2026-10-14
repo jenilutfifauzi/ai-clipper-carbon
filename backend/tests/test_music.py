@@ -12,7 +12,7 @@ import pytest
 
 from app.candidates import MusicClip
 from app.config import RenderTuning
-from app.planner import audio_events, plan_render
+from app.planner import MediaInfo, audio_events, plan_render
 from app.renderer import Renderer
 from app.video_source import SourceMetadata
 from test_media_library import make, upload
@@ -23,6 +23,7 @@ from test_review import candidate_url, patch
 
 SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="h264")
 SONG = "ab" * 16
+SONGS = {SONG: MediaInfo(0, 0, 30.0, True)}
 
 
 def music(**fields) -> MusicClip:
@@ -30,17 +31,17 @@ def music(**fields) -> MusicClip:
 
 
 def test_a_music_clip_is_kept_inside_the_clip_and_its_song():
-    [event] = audio_events([music()], 10, {SONG: 30})
+    [event] = audio_events([music()], 10, SONGS)
     assert (event.start, event.end, event.offset, event.volume) == (1.0, 5.0, 0.0, 1.0)
     # Cut at the Clip's end, and at the song's.
-    assert audio_events([music(start=8.0)], 10, {SONG: 30})[0].end == 10
-    assert audio_events([music(offset=28.0)], 10, {SONG: 30})[0].end == 3.0
+    assert audio_events([music(start=8.0)], 10, SONGS)[0].end == 10
+    assert audio_events([music(offset=28.0)], 10, SONGS)[0].end == 3.0
     # Nothing past either end, nor of a song that is gone.
-    assert audio_events([music(start=10.0)], 10, {SONG: 30}) == []
-    assert audio_events([music(offset=30.0)], 10, {SONG: 30}) == []
+    assert audio_events([music(start=10.0)], 10, SONGS) == []
+    assert audio_events([music(offset=30.0)], 10, SONGS) == []
     assert audio_events([music()], 10, {}) == []
     # Fades fit in it, half each at most.
-    [faded] = audio_events([music(secs=2.0, fade_in=3.0, fade_out=3.0)], 10, {SONG: 30})
+    [faded] = audio_events([music(secs=2.0, fade_in=3.0, fade_out=3.0)], 10, SONGS)
     assert (faded.fade_in, faded.fade_out) == (1.0, 1.0)
 
 
@@ -50,7 +51,7 @@ def test_the_encode_mixes_music_only_when_there_is_some(tmp_path):
     command = " ".join(renderer._command(Path("s.mp4"), plain, None, "libx264", tmp_path / "v.mp4", tmp_path / "p.jpg", None))
     assert "amix" not in command and "[0:a:0]aresample" in command
 
-    mixed = plan_render(0, 5, SOURCE, music=[music(volume=0.5, fade_out=1.0)], media_lengths={SONG: 30}, source_volume=0.2)
+    mixed = plan_render(0, 5, SOURCE, music=[music(volume=0.5, fade_out=1.0)], media_info=SONGS, source_volume=0.2)
     command = renderer._command(
         Path("s.mp4"), mixed, None, "libx264", tmp_path / "v.mp4", tmp_path / "p.jpg", None, files={SONG: Path("song.m4a")}
     )

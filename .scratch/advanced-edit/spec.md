@@ -172,3 +172,42 @@ Add these terms to `GLOSSARY.md`: **Advanced Edit**, **Media Library**, **Text L
 - Transcribing uploaded videos for captions.
 - Face tracking or Layouts on uploaded videos.
 - Speed changes, voiceover recording.
+
+## Accepted additions
+
+The code review of 2026-10-14 found behaviour that this spec didn't ask for. These additions are kept, as part of what the Advanced Edit is:
+
+- **Look presets in the Text tab:** Text, Title, Label and Subtitle, each a starting look for a new Text Layer.
+- **Extra Text Layer fields:** `outline_colour`, `box_opacity` and `animation_ms`, taken from the Hook Style's fields of the same names, so that both animate alike.
+- **Duplicate:** for Segments too, with Cmd/Ctrl+D.
+- **More keys:** Ctrl+Y redoes; Space plays and pauses.
+- **`GET /api/media/{id}/thumbnail`:** the still the Media tab and the tracks show.
+- **Volume through Web Audio:** the preview plays volumes this way, so that volumes above 100% sound as the render will.
+- **Each Segment of the Source has its own volume**, under the Clip's own, so that one loud or quiet piece can be evened out.
+
+**Formats and limits, as this spec gives them:**
+- Videos: MP4, MOV or WebM, up to 500 MB and 3 minutes.
+- Songs: MP3, M4A, WAV or AAC, up to 50 MB, of any length.
+- Images: PNG, JPEG or WebP, up to 5 MB, as Logos are.
+
+## Review fixes (2026-10-14)
+
+**Main Track editing:**
+- Splitting, inserting, trimming and snapping on the Main Track go by the plan's Segments, as the playhead does. Transitions' overlaps and Word snapping are counted, so a split lands on the frame shown.
+- A split of a Source Segment is made in the silence between Words. Before, the backend snapped both parts' edges to the same Word and repeated it.
+
+**Adding items:**
+- Assets are dragged from the asset panel onto the Video, Overlay, Text and Audio tracks, at the time where they are dropped.
+
+**Preview:**
+- In a Transition, the Segment taken away keeps playing on a playback of its own, its sound fading out, under the incoming one.
+
+**Clip editor, for a cut Clip:**
+- It keeps its Timeline, on the Clip's own time: the Segments (read-only, with a link to the Advanced Edit), the Scenes with their Layout picker, the captions and the hook.
+- The Transcript still adds a new clip.
+
+**Limits and validation:**
+- The longest clip is measured on the Timeline, less the Transitions' overlaps.
+- A Text Layer, new or changed, must start inside the Clip.
+- A Transition next to a video that is gone is left out.
+

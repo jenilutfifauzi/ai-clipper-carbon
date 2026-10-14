@@ -42,3 +42,5 @@
 - A video's sound, when turned up, is planned as an `AudioEvent`, so the music mixer and the preview's music player handle it.
 - In the Media tab, a video's card adds it to the Main Track, and its layers button adds it as an Overlay. An image's card adds an Overlay.
 - No rounded corners or borders yet (the plan's "+ corners" option wasn't chosen).
+
+**2026-10-14: review fixes.** Videos and images are dragged from the Media tab onto the Overlay track, which always shows a row to drop on.

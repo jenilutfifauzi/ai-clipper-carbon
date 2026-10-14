@@ -3,20 +3,21 @@ import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { Group } from "../editor/StyleFields";
-import { newId } from "./TextLayers";
+import { ITEM_MIN_SECS, newId, round } from "./edits";
+import { TimingFields } from "./TimingFields";
 
-export const MUSIC_MIN_SECS = 0.1;
+// The longest fade (fade_in and fade_out in backend/app/candidates.py); half the clip's at most.
+const FADE_MAX_SECS = 10;
 
-/** A Music Clip of `item` at the playhead (`at`), as long as the song or what is left of the Clip. */
+/** A Music Clip of `item` at `at` (the playhead, or where it was dropped), as long as the song or what is left of the Clip. */
 export function newMusicClip(item: MediaItem, at: number, duration: number): MusicClip {
   const length = item.duration ?? 0;
-  let start = Math.max(0, Math.min(at, duration - MUSIC_MIN_SECS));
+  let start = Math.max(0, Math.min(at, duration - ITEM_MIN_SECS));
   // From the start, when the playhead is too near the end for much of it.
   if (duration - start < Math.min(length, 1)) start = 0;
   return { id: newId(), media: item.id, start: round(start), secs: round(Math.min(length, duration - start)), offset: 0, volume: 1, fade_in: 0, fade_out: 0 };
 }
 
-const round = (seconds: number) => Math.round(seconds * 100) / 100;
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 /** The selected Music Clip's volume, fades, part of its song and time. */
@@ -38,7 +39,7 @@ export function MusicFields({
 }) {
   const set = <K extends keyof MusicClip>(field: K, value: MusicClip[K]) => onChange({ ...clip, [field]: value }, `music:${clip.id}:${field}`);
   const length = item?.duration ?? clip.offset + clip.secs;
-  const fades = Math.max(0, Math.min(10, clip.secs / 2));
+  const fades = Math.max(0, Math.min(FADE_MAX_SECS, clip.secs / 2));
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -60,35 +61,13 @@ export function MusicFields({
         <Slider label="Fade in" value={Math.min(clip.fade_in, fades)} min={0} max={fades} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(v) => set("fade_in", v)} />
         <Slider label="Fade out" value={Math.min(clip.fade_out, fades)} min={0} max={fades} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(v) => set("fade_out", v)} />
       </Group>
-      <Group title="Time">
-        <Slider
-          label="Starts in the song at"
-          value={clip.offset}
-          min={0}
-          max={Math.max(0, length - clip.secs)}
-          step={0.1}
-          format={(v) => `${v.toFixed(1)} s`}
-          onChange={(offset) => set("offset", offset)}
-        />
-        <Slider
-          label="Comes in at"
-          value={Math.min(clip.start, duration - MUSIC_MIN_SECS)}
-          min={0}
-          max={Math.max(MUSIC_MIN_SECS, duration - MUSIC_MIN_SECS)}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)} s`}
-          onChange={(start) => onChange({ ...clip, start, secs: Math.min(clip.secs, duration - start) }, `music:${clip.id}:start`)}
-        />
-        <Slider
-          label="Plays for"
-          value={Math.min(clip.secs, duration - clip.start, length - clip.offset)}
-          min={MUSIC_MIN_SECS}
-          max={Math.max(MUSIC_MIN_SECS, Math.min(duration - clip.start, length - clip.offset))}
-          step={0.05}
-          format={(v) => `${v.toFixed(2)} s`}
-          onChange={(secs) => set("secs", secs)}
-        />
-      </Group>
+      <TimingFields
+        item={clip}
+        duration={duration}
+        length={length}
+        labels={{ start: "Comes in at", secs: "Plays for", offset: "Starts in the song at" }}
+        onChange={onChange}
+      />
     </div>
   );
 }
