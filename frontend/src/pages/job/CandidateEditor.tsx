@@ -1,12 +1,25 @@
-import { AlertTriangle, Plus, X } from "lucide-react";
-import { useState } from "react";
-import { mediaUrl, type Candidate, type CandidateChange, type JobDetail, type Layout, type Transcript } from "../../api";
+import { AlertTriangle, Plus, ScanSearch, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  mediaUrl,
+  type Candidate,
+  type CandidateChange,
+  type FontInfo,
+  type JobDetail,
+  type JobProgress,
+  type Layout,
+  type Transcript,
+} from "../../api";
 import { Button } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
+import { loadFonts } from "../../fonts";
 import { formatPrecise } from "../../format";
 import { candidateName } from "./CandidateList";
+import { ClipPreview } from "./editor/ClipPreview";
+import { Playback } from "./editor/playback";
+import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { HookEditor } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
@@ -25,6 +38,11 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
+const VIEWS = [
+  { value: "clip", label: "Clip" },
+  { value: "source", label: "Source" },
+] as const;
+
 const LAYOUTS = [
   { value: "auto", label: "Auto" },
   { value: "track", label: "Track" },
@@ -40,26 +58,55 @@ const LAYOUT_HINTS: Record<Layout, string> = {
 };
 
 /**
- * One Candidate under review: its preview, the Transcript Picker for its edges and for new clips,
- * its hook, layout and selection, and the AI's reasoning and copy. Every change is saved at once.
- * The click mode and a new clip being chosen carry over to the next Candidate opened.
+ * One Candidate under review: its preview (the Clip as it will look, or the Source), the Transcript
+ * Picker for its edges and for new clips, its hook, layout and selection, and the AI's reasoning
+ * and copy. Every change is saved at once. The click mode and a new clip being chosen carry over to
+ * the next Candidate opened.
  */
 export function CandidateEditor({
   job,
   transcript,
   candidate,
   index,
+  progress,
   onSave,
   onAdd,
+  onPrepare,
 }: {
   job: JobDetail;
   transcript: Transcript;
   candidate: Candidate;
   index: number;
+  progress: JobProgress;
   onSave: (change: CandidateChange) => Promise<boolean>;
   onAdd: (range: { start: number; end: number }) => Promise<boolean>;
+  // Queues the Candidate's transcription and analysis, for the preview.
+  onPrepare: (candidateId: string) => Promise<void>;
 }) {
   const [mode, setMode] = useState<Mode>("start");
+  const [view, setView] = useState<"clip" | "source">("clip");
+  const [fonts, setFonts] = useState<FontInfo[] | null>(null);
+  const [hookDraft, setHookDraft] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState<string | null>(null);
+  const playback = useMemo(() => new Playback(), []);
+  playback.setRange(candidate.start, candidate.end);
+
+  useEffect(() => {
+    loadFonts().then(setFonts, () => setFonts([]));
+  }, []);
+  useEffect(() => setHookDraft(null), [candidate.id]);
+  // A preparation asked for here is over once the Job is back in review.
+  useEffect(() => {
+    if (progress.status !== "rendering") setPreparing(null);
+  }, [progress.status]);
+
+  const draft: CandidateChange = {
+    hook_text: hookDraft ?? candidate.hook_text,
+    layout: candidate.layout,
+    preset_id: candidate.preset_id,
+    style_overrides: candidate.style_overrides,
+  };
+  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -134,11 +181,35 @@ export function CandidateEditor({
       </header>
 
       {job.source && (
-        <PreviewPlayer
-          src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
-          start={candidate.start}
-          end={candidate.end}
-        />
+        <section aria-label="Preview" className="flex flex-col gap-3">
+          <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs" />
+          {view === "clip" ? (
+            <ClipPreview
+              src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
+              preview={preview}
+              fonts={fonts}
+              playback={playback}
+            />
+          ) : (
+            <PreviewPlayer
+              src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
+              start={candidate.start}
+              end={candidate.end}
+            />
+          )}
+          {view === "clip" && (
+            <PreviewNotes
+              wordsFromTranscript={preview?.words_source === "transcript" && job.options.captions}
+              unanalysed={preview?.analysed === false}
+              error={previewError}
+              preparing={preparing === candidate.id}
+              onPrepare={() => {
+                setPreparing(candidate.id);
+                onPrepare(candidate.id).catch(() => setPreparing(null));
+              }}
+            />
+          )}
+        </section>
       )}
 
       <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
@@ -201,7 +272,12 @@ export function CandidateEditor({
         </div>
       </section>
 
-      <HookEditor key={candidate.id} value={candidate.hook_text} onSave={(hook_text) => void onSave({ hook_text })} />
+      <HookEditor
+        key={candidate.id}
+        value={candidate.hook_text}
+        onSave={(hook_text) => void onSave({ hook_text })}
+        onDraft={setHookDraft}
+      />
 
       <div className="flex flex-col gap-1.5">
         <Segmented
@@ -215,6 +291,39 @@ export function CandidateEditor({
       </div>
 
       {candidate.origin === "ai" && <Analysis candidate={candidate} />}
+    </div>
+  );
+}
+
+// How close the preview is to the Clip, and the way to make it closer.
+function PreviewNotes({
+  wordsFromTranscript,
+  unanalysed,
+  error,
+  preparing,
+  onPrepare,
+}: {
+  wordsFromTranscript: boolean;
+  unanalysed: boolean;
+  error: string | null;
+  preparing: boolean;
+  onPrepare: () => void;
+}) {
+  if (error) return <p className="text-sm text-danger">Couldn't preview: {error}</p>;
+  if (!wordsFromTranscript && !unanalysed) return null;
+  const notes = [
+    wordsFromTranscript && "captions use the episode transcript, which the clip's own transcription may differ from",
+    unanalysed && "the clip is framed as one scene until its cuts and faces are found",
+  ].filter(Boolean);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-waiting-surface p-3 text-sm">
+      <p className="min-w-0 flex-1 text-pretty">
+        Until it is prepared, {notes.join(", and ")}.
+      </p>
+      <Button size="sm" onClick={onPrepare} disabled={preparing}>
+        <ScanSearch aria-hidden size={16} />
+        {preparing ? "Preparing…" : "Prepare clip"}
+      </Button>
     </div>
   );
 }

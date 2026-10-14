@@ -14,7 +14,16 @@ const FIT_AFTER_MS = 250;
  * The Candidate's hook text, saved as it is typed. The draft is the field's own: saves coming back
  * never overwrite what is being typed. Key it by the Candidate's id.
  */
-export function HookEditor({ value, onSave }: { value: string; onSave: (text: string) => void }) {
+export function HookEditor({
+  value,
+  onSave,
+  onDraft,
+}: {
+  value: string;
+  onSave: (text: string) => void;
+  // Each change as it is typed, before it is saved: for the preview.
+  onDraft?: (text: string) => void;
+}) {
   const id = useId();
   const [draft, setDraft] = useState(value);
   const saved = useRef(value);
@@ -64,6 +73,7 @@ export function HookEditor({ value, onSave }: { value: string; onSave: (text: st
         onChange={(event) => {
           const text = event.target.value;
           setDraft(text);
+          onDraft?.(text);
           clearTimeout(timer.current);
           timer.current = setTimeout(() => save(text), SAVE_AFTER_MS);
         }}

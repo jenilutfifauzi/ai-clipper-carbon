@@ -83,6 +83,12 @@ function JobView({ jobId }: { jobId: string }) {
     events.reconnect();
   }
 
+  // Queue a Candidate's transcription and analysis for its preview, and follow it like a render.
+  async function prepare(candidateId: string) {
+    await api.prepareCandidate(jobId, candidateId);
+    events.reconnect();
+  }
+
   async function retry() {
     setRetrying(true);
     setRetryError(null);
@@ -152,7 +158,7 @@ function JobView({ jobId }: { jobId: string }) {
       {progress.warnings.length > 0 && <Warnings warnings={progress.warnings} uploaded={job.upload !== null} />}
 
       {(progress.status === "review" || progress.status === "rendering") && job.candidates && (
-        <Review key={job.updated_at} job={job} clips={clips} progress={progress} onRender={render} />
+        <Review key={job.updated_at} job={job} clips={clips} progress={progress} onRender={render} onPrepare={prepare} />
       )}
     </div>
   );

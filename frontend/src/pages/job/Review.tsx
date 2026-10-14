@@ -18,12 +18,15 @@ export function Review({
   clips,
   progress,
   onRender,
+  onPrepare,
 }: {
   job: JobDetail;
   clips: Clip[];
   progress: JobProgress;
   // Queues Clips of these Candidates, or of the selected ones.
   onRender: (candidateIds?: string[]) => Promise<void>;
+  // Queues a Candidate's transcription and analysis, for its preview.
+  onPrepare: (candidateId: string) => Promise<void>;
 }) {
   const [candidates, setCandidates] = useState<Candidate[]>(job.candidates ?? []);
   const [params, setParams] = useSearchParams();
@@ -168,8 +171,10 @@ export function Review({
               transcript={job.transcript}
               candidate={active}
               index={index}
+              progress={progress}
               onSave={(change) => save(active.id, change)}
               onAdd={add}
+              onPrepare={onPrepare}
             />
           ) : (
             <p className="text-muted">Nothing to review yet.</p>
