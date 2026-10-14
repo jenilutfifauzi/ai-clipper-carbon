@@ -15,8 +15,9 @@ from app.candidates import Candidate, Layout
 from app.clips import Clip
 from app.config import Settings
 from app.events import job_events
+from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
-from app.planner import HOOK_SIZE, fit_hook
+from app.planner import HOOK_SIZE, fit_hook, font_metrics
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import CandidateChange, CandidateNotFound, Episode, InvalidEdit
@@ -123,6 +124,20 @@ class HookFit(BaseModel):
 
     lines: list[str]
     fits: bool
+
+
+class FontInfo(BaseModel):
+    """A bundled font, and its measures in its units: what the preview needs to set text as libass
+    does, which sizes a font by its Windows ascent plus descent (`units`) rather than its em."""
+
+    id: str
+    label: str
+    family: str
+    units: int
+    em: int
+    ascent: int
+    cap_height: int
+    descent: int
 
 
 class RenderRequest(BaseModel):
@@ -334,6 +349,27 @@ def list_clips(job_id: str, store: Store) -> list[Clip]:
         return ranked_clips(store.load_clips(job_id), store.load_candidates(job_id) or [])
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
+
+
+@router.get("/fonts")
+def list_fonts() -> list[FontInfo]:
+    """The fonts captions and the hook can be set in."""
+    fonts = []
+    for font in FONTS.values():
+        metrics = font_metrics(font.id)
+        fonts.append(FontInfo(
+            id=font.id, label=font.label, family=font.family, units=metrics.units, em=metrics.em,
+            ascent=metrics.ascent, cap_height=metrics.cap_height, descent=metrics.descent,
+        ))
+    return fonts
+
+
+@router.get("/fonts/{font_id}")
+def font_file(font_id: str) -> FileResponse:
+    """A bundled font's file, for the preview to set text in."""
+    if font_id not in FONTS:
+        raise HTTPException(404, f"No font {font_id}")
+    return FileResponse(FONTS[font_id].file, media_type="font/ttf", headers={"Cache-Control": "public, max-age=604800"})
 
 
 @router.get("/presets")

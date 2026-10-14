@@ -137,6 +137,19 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
+## Caption fonts
+
+The clip editor's other caption and hook fonts are downloaded by `make setup` from
+[google/fonts](https://github.com/google/fonts) (at a fixed commit) to `backend/assets/fonts/`, each
+with its licence (`OFL-<family>.txt`). All are licensed under the SIL Open Font License 1.1, whose
+text is given in full under Montserrat above.
+
+- Anton: Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)
+- Archivo Black: Copyright 2017 The Archivo Black Project Authors (https://github.com/Omnibus-Type/ArchivoBlack)
+- Bangers: Copyright 2010 The Bangers Project Authors (https://github.com/googlefonts/bangers)
+- Bebas Neue: Copyright © 2010 by Dharma Type.
+- Poppins Black: Copyright 2020 The Poppins Project Authors (https://github.com/itfoundry/Poppins)
+
 ## Downloaded models
 
 `make setup` also downloads these models; they are not stored in this repository.

@@ -134,8 +134,8 @@ BUILTIN_PRESETS = [
     StylePreset(
         "yellow-pop",
         "Yellow pop",
-        CaptionStyle(size=120, active_colour="#FFE600", outline=8),
-        HookStyle(colour="#000000", box_colour="#FFE600", box_opacity=1.0),
+        CaptionStyle(font="anton", size=130, active_colour="#FFE600", outline=8, max_chars=18),
+        HookStyle(font="anton", colour="#000000", box_colour="#FFE600", box_opacity=1.0),
         builtin=True,
     ),
     StylePreset(
@@ -148,8 +148,11 @@ BUILTIN_PRESETS = [
     StylePreset(
         "minimal",
         "Minimal",
-        CaptionStyle(size=90, uppercase=False, outline=0, shadow=4, highlight=Highlight.NONE, max_chars=24, max_secs=2.0),
-        HookStyle(size=72, box_opacity=0.4, radius=16),
+        CaptionStyle(
+            font="poppins-black", size=90, uppercase=False, outline=0, shadow=4, highlight=Highlight.NONE,
+            max_chars=24, max_secs=2.0,
+        ),
+        HookStyle(font="poppins-black", size=72, box_opacity=0.4, radius=16),
         builtin=True,
     ),
 ]

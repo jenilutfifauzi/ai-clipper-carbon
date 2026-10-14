@@ -760,8 +760,8 @@ def test_captions_and_the_hook_are_burned_in_the_candidates_preset_with_its_over
     # The plan holds the resolved styles: the Preset's, with the overrides.
     plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
     caption, hook = plan["caption_style"], plan["hook_style"]
-    assert (caption["size"], caption["active_colour"], caption["position"]) == (120, green, "top")
-    assert (hook["box_colour"], hook["position"]) == ("#FFE600", "bottom")
+    assert (caption["font"], caption["size"], caption["active_colour"], caption["position"]) == ("anton", 130, green, "top")
+    assert (hook["font"], hook["box_colour"], hook["position"]) == ("anton", "#FFE600", "bottom")
     assert all(event["area"]["y"] == 430 for event in plan["captions"])
     assert plan["hook"]["area"]["y"] + plan["hook"]["area"]["height"] == 1536
 

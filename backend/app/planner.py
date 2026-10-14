@@ -370,6 +370,8 @@ class FontMetrics:
     # The advance width of each character the font has.
     advances: dict[str, int]
     units: int
+    # Units per em: a browser sets a font so that this is its font size.
+    em: int
     # The Windows ascent, from the top of a line to its baseline.
     ascent: int
     # How tall capitals are, and how far below the baseline descenders (g, p) go.
@@ -392,6 +394,7 @@ def font_metrics(font_id: str = DEFAULT_FONT) -> FontMetrics:
     return FontMetrics(
         advances={chr(code): widths[glyph][0] for code, glyph in file.getBestCmap().items()},
         units=os2.usWinAscent + os2.usWinDescent,
+        em=file["head"].unitsPerEm,
         ascent=os2.usWinAscent,
         cap_height=os2.sCapHeight,
         descent=-os2.sTypoDescender,

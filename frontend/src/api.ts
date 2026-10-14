@@ -100,6 +100,80 @@ export interface Transcript {
 
 export type Layout = "auto" | "track" | "split" | "blur";
 
+export type Highlight = "colour" | "box" | "none";
+export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";
+export type HookPosition = "top" | "middle" | "bottom" | "custom";
+
+// How captions look and are broken into lines (backend/app/styles.py). Sizes are libass's, which
+// sets a font so that its Windows ascent plus descent is the size (see FontInfo).
+export interface CaptionStyle {
+  font: string;
+  size: number;
+  colour: string;
+  active_colour: string;
+  outline: number;
+  outline_colour: string;
+  shadow: number;
+  shadow_colour: string;
+  uppercase: boolean;
+  highlight: Highlight;
+  position: CaptionPosition;
+  // The line's centre, for the custom position.
+  y: number;
+  max_chars: number;
+  max_words: number | null;
+  max_secs: number;
+  pause_secs: number;
+}
+
+export interface HookStyle {
+  font: string;
+  size: number;
+  colour: string;
+  box_colour: string;
+  box_opacity: number;
+  radius: number;
+  position: HookPosition;
+  // The box's top, for the custom position.
+  y: number;
+}
+
+export interface StylePreset {
+  id: string;
+  name: string;
+  caption: CaptionStyle;
+  hook: HookStyle;
+  // Built-in Presets can't be changed or deleted.
+  builtin: boolean;
+}
+
+export type StyleValue = string | number | boolean | null;
+
+// The fields of the Preset's styles a Candidate replaces.
+export interface StyleOverrides {
+  caption: Partial<Record<keyof CaptionStyle, StyleValue>>;
+  hook: Partial<Record<keyof HookStyle, StyleValue>>;
+}
+
+export interface NewPreset {
+  name: string;
+  caption?: Partial<CaptionStyle>;
+  hook?: Partial<HookStyle>;
+}
+
+// A bundled font and its measures in its units.
+export interface FontInfo {
+  id: string;
+  label: string;
+  family: string;
+  // Windows ascent plus descent: libass's font size. A browser's is the em.
+  units: number;
+  em: number;
+  ascent: number;
+  cap_height: number;
+  descent: number;
+}
+
 export interface Candidate {
   id: string;
   start: number;
@@ -120,8 +194,10 @@ export interface Candidate {
   layout: Layout;
   // Chosen for rendering.
   selected: boolean;
-  // The owner has changed its bounds, hook text or layout.
+  // The owner has changed its bounds, hook text, layout or style.
   edited: boolean;
+  preset_id: string;
+  style_overrides: StyleOverrides;
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -131,6 +207,9 @@ export interface CandidateChange {
   hook_text?: string;
   layout?: Layout;
   selected?: boolean;
+  preset_id?: string;
+  // Replaces the Candidate's overrides as a whole.
+  style_overrides?: StyleOverrides;
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -253,7 +332,15 @@ export const api = {
     }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   hookFit: (text: string, signal?: AbortSignal) => request<HookFit>(`/hook?text=${encodeURIComponent(text)}`, { signal }),
+  listFonts: () => request<FontInfo[]>("/fonts"),
+  listPresets: () => request<StylePreset[]>("/presets"),
+  createPreset: (preset: NewPreset) => request<StylePreset>("/presets", { method: "POST", body: JSON.stringify(preset) }),
+  updatePreset: (id: string, preset: NewPreset) =>
+    request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
+  deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
 };
+
+export const fontUrl = (id: string) => `/api/fonts/${encodeURIComponent(id)}`;
 
 // A file from the Job's directory (such as "clips/<id>.mp4"), served with range support for the
 // player. `version` tells a file rendered again from the one the browser has cached.

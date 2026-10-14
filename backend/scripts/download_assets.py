@@ -1,4 +1,4 @@
-"""Download the models and font the pipeline needs. Files already present are skipped."""
+"""Download the models and fonts the pipeline needs. Files already present are skipped."""
 
 import shutil
 import sys
@@ -10,6 +10,16 @@ from huggingface_hub import snapshot_download
 from app.config import BLAZE_FACE_MODEL, FONTS_DIR, MONTSERRAT_EXTRABOLD, SILERO_VAD_MODEL, load_settings
 
 MONTSERRAT_REPO = "https://raw.githubusercontent.com/JulietaUla/Montserrat/v9.000"
+# The other caption fonts (app/fonts.py), from Google Fonts' repository at a fixed commit.
+GOOGLE_FONTS = "https://raw.githubusercontent.com/google/fonts/66928797f271fed5ee428544e7229685e2d90127/ofl"
+# (directory, file stem) of each.
+GOOGLE_FONT_FILES = [
+    ("anton", "Anton-Regular"),
+    ("bebasneue", "BebasNeue-Regular"),
+    ("poppins", "Poppins-Black"),
+    ("archivoblack", "ArchivoBlack-Regular"),
+    ("bangers", "Bangers-Regular"),
+]
 
 ASSETS = {
     BLAZE_FACE_MODEL: "https://storage.googleapis.com/mediapipe-models/face_detector/"
@@ -17,6 +27,10 @@ ASSETS = {
     SILERO_VAD_MODEL: "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx",
     MONTSERRAT_EXTRABOLD: f"{MONTSERRAT_REPO}/fonts/ttf/Montserrat-ExtraBold.ttf",
     FONTS_DIR / "OFL.txt": f"{MONTSERRAT_REPO}/OFL.txt",
+    **{
+        FONTS_DIR / f"{font}.ttf": f"{GOOGLE_FONTS}/{family}/{font}.ttf" for family, font in GOOGLE_FONT_FILES
+    },
+    **{FONTS_DIR / f"OFL-{family}.txt": f"{GOOGLE_FONTS}/{family}/OFL.txt" for family, _ in GOOGLE_FONT_FILES},
 }
 
 

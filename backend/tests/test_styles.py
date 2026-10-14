@@ -1,5 +1,6 @@
 """Style Presets, Style Overrides, and how the Renderer writes a Render Plan's styles as ASS."""
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,59 @@ def test_every_builtin_presets_styles_are_valid():
     for preset in BUILTIN_PRESETS:
         assert resolve(preset, StyleOverrides()) == (preset.caption, preset.hook)
     assert isinstance(plan(caption_style=BUILTIN_PRESETS[2].caption).captions[0].area, Box)
+
+
+def test_each_registered_font_is_the_file_libass_picks_for_its_family(settings, tmp_path):
+    from app.config import FONTS_DIR
+    from app.fonts import FONTS
+
+    styles = [
+        f"Style: {font.id},{font.family},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1"
+        for font in FONTS.values()
+    ]
+    events = [f"Dialogue: 0,0:00:00.00,0:00:01.00,{font.id},,0,0,0,,HALO" for font in FONTS.values()]
+    script = tmp_path / "fonts.ass"
+    script.write_text("\n".join([
+        "[Script Info]", "ScriptType: v4.00+", "PlayResX: 320", "PlayResY: 240", "", "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+        "MarginR, MarginV, Encoding",
+        *styles, "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text", *events,
+    ]) + "\n")
+    result = subprocess.run(
+        [str(settings.ffmpeg_bin), "-hide_banner", "-nostdin", "-v", "debug", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.1",
+         "-vf", f"ass={script}:fontsdir={FONTS_DIR}", "-f", "null", "-"],
+        capture_output=True, text=True, check=True,
+    )
+    # libass says which file it set each family in; a family it hasn't got falls back to a system font.
+    for font in FONTS.values():
+        assert f"fontselect: ({font.family}, 400, 0) -> {font.file.stem}, 0," in result.stderr, font
+
+
+def test_fonts_are_listed_with_their_measures_and_served(client):
+    from app.fonts import FONTS
+
+    fonts = client.get("/api/fonts").json()
+    assert [font["id"] for font in fonts] == list(FONTS)
+    montserrat = fonts[0]
+    assert (montserrat["family"], montserrat["em"], montserrat["units"], montserrat["cap_height"]) == ("Montserrat ExtraBold", 1000, 1562, 700)
+    response = client.get("/api/fonts/anton")
+    assert response.status_code == 200 and response.headers["content-type"] == "font/ttf"
+    assert response.content == FONTS["anton"].file.read_bytes()
+    assert "max-age" in response.headers["cache-control"]
+    assert client.get("/api/fonts/nope").status_code == 404
+    assert client.get("/api/fonts/..%2Fconfig.py").status_code == 404
+
+
+def test_another_fonts_metrics_set_the_caption_size_and_the_hook():
+    from app.planner import font_metrics
+
+    anton, montserrat = font_metrics("anton"), font_metrics()
+    assert anton.width("HALO", 110) != montserrat.width("HALO", 110)
+    caption = CaptionStyle(font="anton", size=130)
+    [event] = plan_render(0, 2, SOURCE, words=[Word("W" * 18, 0.0, 0.5)], caption_style=caption).captions
+    assert event.size < 130 and anton.width(event.text, event.size) + 2 * caption.outline <= event.area.width
+    hook = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(font="bebas-neue")).hook
+    bebas = font_metrics("bebas-neue")
+    assert 740 < max(bebas.width(line, hook.size) for line in hook.lines) <= 748
+    assert hook.size != plan_render(0, 5, SOURCE, hook=HOOK).hook.size
