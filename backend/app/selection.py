@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from uuid import uuid4
 
-from app.candidates import Candidate, Descriptions
+from app.candidates import KICKER_MAX_CHARS, Candidate, Descriptions
 from app.config import LlmChoice, SelectionTuning
 from app.fewshot import Example
 from app.llm import (
@@ -37,6 +37,7 @@ from app.llm import (
     TransientLlmError,
     parse_time,
 )
+from app.planner import without_emoji
 from app.profile import ChannelProfile
 from app.prompts import audio_label, detail_prompt, prompt_version, score_prompt
 from app.transcript import Transcript, Word, timestamp
@@ -399,6 +400,18 @@ def _same_topic(topic: str, other: str, overlap: float) -> bool:
     return bool(words and others) and len(words & others) / len(words | others) >= overlap
 
 
+def _kicker(text: str) -> str:
+    """The AI's Kicker without emoji, cut to its whole words that fit in KICKER_MAX_CHARS (or to
+    that many characters, if even its first word is longer)."""
+    kept = ""
+    for word in without_emoji(text).split():
+        longer = f"{kept} {word}" if kept else word
+        if len(longer) > KICKER_MAX_CHARS:
+            return kept or word[:KICKER_MAX_CHARS]
+        kept = longer
+    return kept
+
+
 def _candidate(proposal: ClipProposal, start: float, end: float, window_score: int | None) -> Candidate:
     hashtags = ("#" + tag.strip().lstrip("#").replace(" ", "") for tag in proposal.hashtags if tag.strip("# "))
     return Candidate(
@@ -410,7 +423,8 @@ def _candidate(proposal: ClipProposal, start: float, end: float, window_score: i
         emotion=proposal.emotion.strip(),
         reason=proposal.reason.strip(),
         retention_notes=proposal.retention_notes.strip(),
-        hook_text=" ".join(proposal.viral_hook_text.split()),
+        hook_text=without_emoji(proposal.viral_hook_text),
+        hook_kicker=_kicker(proposal.hook_kicker),
         title=proposal.title.strip(),
         descriptions=Descriptions(
             tiktok=proposal.tiktok_description.strip(),

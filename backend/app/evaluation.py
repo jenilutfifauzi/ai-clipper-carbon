@@ -518,7 +518,8 @@ def _episode_markdown(episode: EpisodeReport) -> list[str]:
             f"{rank}. **{_flat(candidate.title)}**: {_link(episode.url, candidate.start, candidate.end)} "
             f"({candidate.end - candidate.start:.0f} s), score {candidate.predicted_score}"
             + (f", finds the reference at {', '.join(finds)}" if finds else ""),
-            f"   - Hook: {_flat(candidate.hook_text)}",
+            f"   - Hook: {_flat(candidate.hook_text)}"
+            + (f" (kicker: {_flat(candidate.hook_kicker)})" if candidate.hook_kicker else ""),
             f"   - Reason: {_flat(candidate.reason)}",
         ]
     if not episode.candidates:

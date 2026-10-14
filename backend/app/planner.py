@@ -394,6 +394,11 @@ def _is_emoji(char: str) -> bool:
     return any(low <= ord(char) <= high for low, high in _EMOJI)
 
 
+def without_emoji(text: str) -> str:
+    """`text` with its emoji left out and its whitespace collapsed."""
+    return " ".join("".join(char for char in text if not _is_emoji(char)).split())
+
+
 def _hook_words(text: str, uppercase: bool) -> list[tuple[str, tuple[bool, ...]]]:
     """The hook `text`'s words as shown, each with which of its characters are emphasised: those
     between a pair of asterisks, which aren't shown (an unpaired last one is). Without emoji, and in
@@ -585,7 +590,7 @@ def _kicker(text: str, size: float, style: HookStyle) -> tuple[str, float, int, 
     """The Kicker `text` over a hook set at `size`: as shown (without emoji, in capitals if the style
     is), its font size, its pill's width and height, and the padding above its capitals. Set
     smaller when its pill would be wider than the captions. None when it is blank."""
-    text = " ".join("".join(char for char in text if not _is_emoji(char)).split())
+    text = without_emoji(text)
     if style.uppercase:
         text = text.upper()
     if not text:

@@ -68,8 +68,8 @@ class ScoreResponse(BaseModel):
 # A clip as the Detail pass proposes it, before Selection snaps and checks it. (No docstring:
 # pydantic would put it in the JSON schema, which the model reads.)
 class ClipProposal(BaseModel):
-    # topic and the quotes default to "" so that proposals saved before prompt v3 still load; the
-    # schema sent to the model still requires every field.
+    # topic and the quotes default to "" so that proposals saved before prompt v3 still load, and
+    # hook_kicker before v4; the schema sent to the model still requires every field.
     model_config = ConfigDict(json_schema_extra=lambda schema: schema.update(required=list(schema["properties"])))
 
     window_id: str
@@ -83,7 +83,9 @@ class ClipProposal(BaseModel):
     hook_strength: Score
     retention_notes: str
     predicted_score: Score
+    # May mark its key words *like this*.
     viral_hook_text: str
+    hook_kicker: str = ""
     title: str
     tiktok_description: str
     instagram_description: str

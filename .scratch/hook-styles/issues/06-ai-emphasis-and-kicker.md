@@ -14,8 +14,20 @@
 
 **Blocked by:** 02, 03.
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Selection test with a fake LLM: markup kept, Kicker normalised, emoji stripped, and a missing `hook_kicker` read as `""`.
-- [ ] Existing Candidates load with an empty Kicker.
+- [x] Selection test with a fake LLM: markup kept, Kicker normalised, emoji stripped, and a missing `hook_kicker` read as `""`.
+- [x] Existing Candidates load with an empty Kicker.
 - [ ] One real run on a cached episode: Candidates have Emphasis and sensible Kickers; note the results in Comments.
+
+## Comments
+
+**2026-10-14: built; the real run is left.** `uv run pytest tests/test_selection.py tests/test_evaluation.py tests/test_audio_signal.py tests/test_steering.py tests/test_gemini.py tests/test_openai.py`: 87 passed (2 new selection tests).
+
+**Left for the owner:** one real run on a cached episode, which calls the LLM. It wasn't run here (the owner chose no paid AI run during implementation). The status is `ready-for-human` until it is done and noted below.
+
+Built:
+- **`ClipProposal`:** gains `hook_kicker` (required in the schema sent; `""` when loading proposals saved before v4).
+- **Prompt (PROMPT_VERSION v3 → v4):** the HOOK PLAYBOOK asks for Emphasis on the 1–3 words that carry the hook, forbids emoji in the hook and the Kicker, and describes `hook_kicker` (1–2 words, at most 24 characters, or ""). The "at most 2 short lines" wording became "a few short lines".
+- **`selection._candidate`:** `hook_text` is the hook without emoji (markup kept, whitespace collapsed). `hook_kicker` is cut to the whole words that fit in `KICKER_MAX_CHARS`, which moved to `app/candidates.py` and is shared with the API.
+- **Evaluation:** a report's hook line adds "(kicker: …)" when there is one.

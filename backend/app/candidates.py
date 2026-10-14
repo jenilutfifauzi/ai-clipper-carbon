@@ -12,6 +12,10 @@ from app.styles import DEFAULT_PRESET, StyleOverrides
 WORD_EDIT_MAX_CHARS = 40
 
 
+# The longest Kicker: a word or two over the hook.
+KICKER_MAX_CHARS = 24
+
+
 @dataclass(frozen=True)
 class Descriptions:
     """Posting copy per platform, without the hashtags."""
