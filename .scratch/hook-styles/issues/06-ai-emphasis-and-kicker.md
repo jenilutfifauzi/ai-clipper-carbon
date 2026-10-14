@@ -14,11 +14,11 @@
 
 **Blocked by:** 02, 03.
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] Selection test with a fake LLM: markup kept, Kicker normalised, emoji stripped, and a missing `hook_kicker` read as `""`.
 - [x] Existing Candidates load with an empty Kicker.
-- [ ] One real run on a cached episode: Candidates have Emphasis and sensible Kickers; note the results in Comments.
+- [x] One real run on a cached episode: Candidates have Emphasis and sensible Kickers; note the results in Comments.
 
 ## Comments
 
@@ -33,3 +33,19 @@ Built:
 - **Evaluation:** a report's hook line adds "(kicker: …)" when there is one.
 
 **2026-10-14: review fix.** `selection._cut` cuts the AI's hook to `HOOK_MAX_CHARS` (moved to `app/candidates.py` with `KICKER_MAX_CHARS`) as well as its Kicker, both to whole words. A run of Emphasis cut in two loses its opening asterisk. The eval report writes "Kicker" with a capital, as the glossary does.
+
+**2026-10-14: real run.** The owner ran `make reanalyze JOB=934fb0fe1f9a` (prompt v4). It gave 3 proposals, and 2 became new Candidates; the edited Candidate was kept.
+
+| Hook | Kicker |
+|---|---|
+| `*Untungnya* ada orang baik` | KISAH NYATA |
+| `*Karena kita* bersama` | SEMANGAT |
+| `Terima kasih, *orang baik*` | TERIMA KASIH |
+
+**What works:** every hook has 1 run of Emphasis, there are no emoji, and every Kicker fits in 24 characters.
+
+**What is weak:**
+- Emphasis lands on connectives ("Untungnya", "Karena kita") rather than the concrete words ("orang baik").
+- One Kicker repeats the hook's words ("TERIMA KASIH"), which the prompt forbids, and "SEMANGAT" is generic.
+
+The sample is one short episode, and its hooks are vague too, which may be the material. A v5 should name the words to emphasise (nouns, numbers, names; never connectives) and prefer "" to a generic Kicker.
