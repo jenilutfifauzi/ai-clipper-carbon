@@ -145,10 +145,24 @@ export interface CaptionStyle {
   pause_secs: number;
 }
 
+// One box behind all the lines, a strip behind each, or none.
+export type HookShape = "block" | "strips" | "none";
+export type HookAlign = "center" | "left";
+
 export interface HookStyle {
+  shape: HookShape;
   font: string;
   size: number;
+  // 1 to 4: the hook is set smaller only when even this many lines are too wide.
+  max_lines: number;
+  uppercase: boolean;
+  align: HookAlign;
   colour: string;
+  // Around and behind the text, in output pixels; the box has neither.
+  outline: number;
+  outline_colour: string;
+  shadow: number;
+  shadow_colour: string;
   box_colour: string;
   box_opacity: number;
   radius: number;
@@ -223,8 +237,13 @@ export interface HookEvent {
   lines: string[];
   start: number;
   end: number;
+  // Holds all of the hook.
   area: Box;
   size: number;
+  // Each line's anchor: the middle of its text and its baseline.
+  anchors: [number, number][];
+  // Drawn behind the lines in the box colour: one block, a strip per line, or none.
+  boxes: Box[];
 }
 
 export interface RenderPlan {

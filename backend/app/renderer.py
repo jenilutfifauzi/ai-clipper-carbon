@@ -305,7 +305,8 @@ def _ass(plan: RenderPlan) -> str:
         # Centred (5) on \pos.
         _caption_style(caption),
         f"Style: Hook,{font(hook.font).family},{hook.size},{_style_colour(hook.colour)},{_style_colour(hook.colour)},"
-        f"{_style_colour('#000000')},{_style_colour('#000000')},0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1",
+        f"{_style_colour(hook.outline_colour)},{_style_colour(hook.shadow_colour)},0,0,0,0,100,100,0,0,1,"
+        f"{hook.outline},{hook.shadow},5,0,0,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -382,31 +383,31 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
 
 
 def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
-    """The hook's Dialogue events: its box, drawn, and over it each line centred on the box, with
-    the first line's capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart;
+    """The hook's Dialogue events: its boxes, drawn, and over them each line centred on its anchor;
     animated on and off as the style says (_hook_phases)."""
     metrics = font_metrics(style.font)
-    area, size = hook.area, hook.size
+    size = hook.size
     # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
-    # follows its tags), for the box
-    # and each line. A box that pops is placed by its centre, so that it grows from there.
+    # follows its tags), for each box and each line. A box that pops is placed by its centre, so
+    # that it grows from there.
     elements: list[tuple[int, int, float, float, str, str | None, str, str]] = []
     if style.box_opacity > 0:
         alpha = f"&H{round(255 * (1 - style.box_opacity)):02X}&"
-        drawing = f"{_rounded_box(area.width, area.height, min(style.radius, area.height // 2))}{{\\p0}}"
-        tags = f"\\p1\\c{_tag_colour(style.box_colour)}\\alpha{alpha}"
-        if Animation.POP in (style.animation_in, style.animation_out):
-            elements.append((1, 5, area.x + area.width / 2, area.y + area.height / 2, "g", alpha, tags, drawing))
-        else:
-            elements.append((1, 7, area.x, area.y, "g", alpha, tags, drawing))
-    centre_x = area.x + area.width / 2
-    for i, line in enumerate(hook.lines):
-        baseline = area.y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * HOOK_LEADING) * size
+        # The text's outline and shadow are the style's; a box has neither.
+        bare = "\\bord0\\shad0" if style.outline or style.shadow else ""
+        tags = f"\\p1{bare}\\c{_tag_colour(style.box_colour)}\\alpha{alpha}"
+        for box in hook.boxes:
+            drawing = f"{_rounded_box(box.width, box.height, min(style.radius, box.height // 2))}{{\\p0}}"
+            if Animation.POP in (style.animation_in, style.animation_out):
+                elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
+            else:
+                elements.append((1, 7, box.x, box.y, "g", alpha, tags, drawing))
+    for line, (x, baseline) in zip(hook.lines, hook.anchors):
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
         tags = f"\\fs{size:g}" if size != style.size else ""
-        elements.append((2, 5, centre_x, centre_y, ".1f", None, tags, _ass_text(line)))
+        elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(line)))
 
     events = []
     for begin, finish, phase in _hook_phases(hook, style):

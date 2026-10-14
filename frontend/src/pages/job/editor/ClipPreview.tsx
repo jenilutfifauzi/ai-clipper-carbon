@@ -7,11 +7,8 @@ import { formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
-// the hook box's padding above its first line's capitals and its lines' spacing, in sizes; how far
-// a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font; and Blur's
-// background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
-const HOOK_PAD_Y = 26;
-const HOOK_LEADING = 0.82;
+// how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
+// and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 const SLIDE_PX = 60;
 const HIGHLIGHT_PAD_X = 0.12;
 const HIGHLIGHT_PAD_Y = 0.08;
@@ -302,7 +299,7 @@ function hookLook(time: number, hook: HookEvent, style: RenderPlan["hook_style"]
   return [1, 1, 0];
 }
 
-/** The hook's box and lines while it is on screen, animated on and off as its style says. */
+/** The hook's boxes and lines while it is on screen, animated on and off as its style says. */
 function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEvent; font: FontInfo | undefined; playback: Playback }) {
   const style = plan.hook_style;
   const key = usePlayback(playback, (time) => {
@@ -311,37 +308,52 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
   });
   if (!key || !font) return null;
   const [opacity, scale, below] = key.split(" ").map(Number);
-  const { area, size } = hook;
-  const centreX = area.x + area.width / 2;
   // Each element grows from its own centre, as libass scales it.
   const grown = scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box" as const, transformOrigin: "center" };
+  const text = (line: string, [x, baseline]: [number, number], props: React.SVGProps<SVGTextElement>) => (
+    <text
+      x={x}
+      y={baseline}
+      textAnchor="middle"
+      fontFamily={fontFamily(font.id)}
+      fontSize={cssFontSize(font, hook.size)}
+      strokeLinejoin="round"
+      paintOrder="stroke"
+      style={{ whiteSpace: "pre", ...grown }}
+      {...props}
+    >
+      {line}
+    </text>
+  );
+  const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
   return (
     <g opacity={opacity} transform={below ? `translate(0 ${below})` : undefined}>
-      {style.box_opacity > 0 && (
-        <rect
-          x={area.x}
-          y={area.y}
-          width={area.width}
-          height={area.height}
-          rx={Math.min(style.radius, area.height / 2)}
-          fill={style.box_colour}
-          fillOpacity={style.box_opacity}
-          style={grown}
-        />
-      )}
+      {style.box_opacity > 0 &&
+        hook.boxes.map((box, i) => (
+          <rect
+            key={i}
+            x={box.x}
+            y={box.y}
+            width={box.width}
+            height={box.height}
+            rx={Math.min(style.radius, Math.floor(box.height / 2))}
+            fill={style.box_colour}
+            fillOpacity={style.box_opacity}
+            style={grown}
+          />
+        ))}
+      {style.shadow > 0 &&
+        hook.lines.map((line, i) => (
+          <g key={i} transform={`translate(${style.shadow} ${style.shadow})`}>
+            {text(line, hook.anchors[i], {
+              fill: style.shadow_colour,
+              stroke: style.outline > 0 ? style.shadow_colour : undefined,
+              strokeWidth: 2 * style.outline,
+            })}
+          </g>
+        ))}
       {hook.lines.map((line, i) => (
-        <text
-          key={i}
-          x={centreX}
-          y={area.y + HOOK_PAD_Y + (font.cap_height / font.units + i * HOOK_LEADING) * size}
-          textAnchor="middle"
-          fontFamily={fontFamily(font.id)}
-          fontSize={cssFontSize(font, size)}
-          fill={style.colour}
-          style={{ whiteSpace: "pre", ...grown }}
-        >
-          {line}
-        </text>
+        <g key={i}>{text(line, hook.anchors[i], { fill: style.colour, ...outline })}</g>
       ))}
     </g>
   );

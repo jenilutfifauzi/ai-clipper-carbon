@@ -20,6 +20,7 @@ import { Skeleton } from "../../../components/Skeleton";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { fontFamily } from "../../../fonts";
+import { HookShapePicker } from "./HookShapePicker";
 
 // Changes are saved once they pause this long, and at once when the Candidate is left.
 const SAVE_AFTER_MS = 700;
@@ -50,6 +51,18 @@ const HOOK_POSITIONS = [
   { value: "middle", label: "Middle" },
   { value: "bottom", label: "Bottom" },
   { value: "custom", label: "Custom" },
+] as const;
+
+const HOOK_LINES = [
+  { value: "1", label: "1" },
+  { value: "2", label: "2" },
+  { value: "3", label: "3" },
+  { value: "4", label: "4" },
+] as const;
+
+const HOOK_ALIGNS = [
+  { value: "center", label: "Centre" },
+  { value: "left", label: "Left" },
 ] as const;
 
 const ANIMATIONS = [
@@ -253,50 +266,106 @@ export function StylePanel({
         </div>
       </fieldset>
 
-      <fieldset className="flex flex-col gap-3">
+      <fieldset className="flex flex-col gap-5">
         <legend className="mb-2 font-semibold">Hook style</legend>
-        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-          <Select
-            label="Font"
-            value={hook.font}
-            options={fontOptions}
-            onChange={(value) => set("hook", "font", value)}
-            marker={marker("hook", "font", "hook font")}
-            optionStyle={fontStyle}
+        <HookShapePicker style={hook} onChange={(v) => set("hook", "shape", v)} marker={marker("hook", "shape", "shape")} />
+
+        <Group title="Text">
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            <Select
+              label="Font"
+              value={hook.font}
+              options={fontOptions}
+              onChange={(value) => set("hook", "font", value)}
+              marker={marker("hook", "font", "hook font")}
+              optionStyle={fontStyle}
+            />
+            <Slider label="Size" value={hook.size} min={40} max={160} onChange={(v) => set("hook", "size", v)} marker={marker("hook", "size", "hook size")} />
+            <ColorField label="Text colour" value={hook.colour} onChange={(v) => set("hook", "colour", v)} marker={marker("hook", "colour", "hook text colour")} />
+          </div>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            <Segmented
+              legend="Most lines"
+              options={HOOK_LINES}
+              value={String(hook.max_lines) as (typeof HOOK_LINES)[number]["value"]}
+              onChange={(v) => set("hook", "max_lines", Number(v))}
+              marker={marker("hook", "max_lines", "most lines")}
+            />
+            <Segmented legend="Align" options={HOOK_ALIGNS} value={hook.align} onChange={(v) => set("hook", "align", v)} marker={marker("hook", "align", "alignment")} />
+          </div>
+          <Switch checked={hook.uppercase} onChange={(v) => set("hook", "uppercase", v)}>
+            <span className="flex items-center gap-1.5 text-sm">
+              UPPERCASE {marker("hook", "uppercase", "hook uppercase")}
+            </span>
+          </Switch>
+        </Group>
+
+        <Group title={hook.shape === "none" ? "Outline and shadow" : "Box, outline and shadow"}>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            {hook.shape !== "none" && (
+              <>
+                <ColorField label="Box colour" value={hook.box_colour} onChange={(v) => set("hook", "box_colour", v)} marker={marker("hook", "box_colour", "box colour")} />
+                <Slider
+                  label="Box opacity"
+                  value={hook.box_opacity}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => set("hook", "box_opacity", v)}
+                  marker={marker("hook", "box_opacity", "box opacity")}
+                />
+                <Slider label="Corner radius" value={hook.radius} min={0} max={80} format={(v) => `${v} px`} onChange={(v) => set("hook", "radius", v)} marker={marker("hook", "radius", "corner radius")} />
+                <span aria-hidden className="max-sm:hidden" />
+              </>
+            )}
+            <Slider label="Outline" value={hook.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("hook", "outline", v)} marker={marker("hook", "outline", "hook outline")} />
+            <ColorField
+              label="Outline colour"
+              value={hook.outline_colour}
+              onChange={(v) => set("hook", "outline_colour", v)}
+              marker={marker("hook", "outline_colour", "hook outline colour")}
+            />
+            <Slider label="Shadow" value={hook.shadow} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("hook", "shadow", v)} marker={marker("hook", "shadow", "hook shadow")} />
+            <ColorField
+              label="Shadow colour"
+              value={hook.shadow_colour}
+              onChange={(v) => set("hook", "shadow_colour", v)}
+              marker={marker("hook", "shadow_colour", "hook shadow colour")}
+            />
+          </div>
+        </Group>
+
+        <Group title="Position">
+          <Segmented
+            legend="Where"
+            options={HOOK_POSITIONS}
+            value={hook.position}
+            onChange={(v) => set("hook", "position", v)}
+            marker={marker("hook", "position", "hook position")}
+            className="max-w-md"
           />
-          <Slider label="Size" value={hook.size} min={40} max={160} onChange={(v) => set("hook", "size", v)} marker={marker("hook", "size", "hook size")} />
-          <ColorField label="Text colour" value={hook.colour} onChange={(v) => set("hook", "colour", v)} marker={marker("hook", "colour", "hook text colour")} />
-          <ColorField label="Box colour" value={hook.box_colour} onChange={(v) => set("hook", "box_colour", v)} marker={marker("hook", "box_colour", "box colour")} />
-          <Slider
-            label="Box opacity"
-            value={hook.box_opacity}
-            min={0}
-            max={1}
-            step={0.05}
-            format={(v) => `${Math.round(v * 100)}%`}
-            onChange={(v) => set("hook", "box_opacity", v)}
-            marker={marker("hook", "box_opacity", "box opacity")}
-          />
-          <Slider label="Corner radius" value={hook.radius} min={0} max={80} format={(v) => `${v} px`} onChange={(v) => set("hook", "radius", v)} marker={marker("hook", "radius", "corner radius")} />
-        </div>
-        <Segmented legend="Position" options={HOOK_POSITIONS} value={hook.position} onChange={(v) => set("hook", "position", v)} className="max-w-md" />
-        {hook.position === "custom" && (
-          <Slider label="Height of the box's top" value={hook.y} min={232} max={1400} format={(v) => `${v} px`} onChange={(v) => set("hook", "y", v)} marker={marker("hook", "y", "hook height")} />
-        )}
-        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
-          <Select label="Comes on" value={hook.animation_in} options={ANIMATIONS} onChange={(v) => set("hook", "animation_in", v)} marker={marker("hook", "animation_in", "how it comes on")} />
-          <Select label="Goes off" value={hook.animation_out} options={ANIMATIONS} onChange={(v) => set("hook", "animation_out", v)} marker={marker("hook", "animation_out", "how it goes off")} />
-          <Slider
-            label="Animation"
-            value={hook.animation_ms}
-            min={50}
-            max={1000}
-            step={50}
-            format={(v) => `${(v / 1000).toFixed(2)} s`}
-            onChange={(v) => set("hook", "animation_ms", v)}
-            marker={marker("hook", "animation_ms", "animation length")}
-          />
-        </div>
+          {hook.position === "custom" && (
+            <Slider label="Height of the hook's top" value={hook.y} min={232} max={1400} format={(v) => `${v} px`} onChange={(v) => set("hook", "y", v)} marker={marker("hook", "y", "hook height")} />
+          )}
+        </Group>
+
+        <Group title="Animation">
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
+            <Select label="Comes on" value={hook.animation_in} options={ANIMATIONS} onChange={(v) => set("hook", "animation_in", v)} marker={marker("hook", "animation_in", "how it comes on")} />
+            <Select label="Goes off" value={hook.animation_out} options={ANIMATIONS} onChange={(v) => set("hook", "animation_out", v)} marker={marker("hook", "animation_out", "how it goes off")} />
+            <Slider
+              label="Length"
+              value={hook.animation_ms}
+              min={50}
+              max={1000}
+              step={50}
+              format={(v) => `${(v / 1000).toFixed(2)} s`}
+              onChange={(v) => set("hook", "animation_ms", v)}
+              marker={marker("hook", "animation_ms", "animation length")}
+            />
+          </div>
+        </Group>
       </fieldset>
     </div>
   );
@@ -440,6 +509,16 @@ function PresetBar({
         Clips using it will use Default from their next render.
       </ConfirmDialog>
     </div>
+  );
+}
+
+// A titled group of the hook's fields.
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <fieldset className="flex min-w-0 flex-col gap-3 border-t border-border pt-4">
+      <legend className="float-left mb-1 text-sm font-semibold text-muted">{title}</legend>
+      {children}
+    </fieldset>
   );
 }
 

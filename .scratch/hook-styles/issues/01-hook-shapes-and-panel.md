@@ -21,10 +21,25 @@
 
 **Blocked by:** none.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Default styles give v1 plans and the v1 ASS fixture byte for byte. Existing tests pass unchanged.
-- [ ] Seam B tests: 3- and 4-line fits are balanced; `strips` boxes fit each line; `left` alignment; `area` encloses all boxes.
-- [ ] Renderer tests: strip boxes; `none` with outline and shadow.
-- [ ] Shape cards are native radios, keyboard-operable, with a visible focus ring. Override markers work on every new field.
-- [ ] Browser check: each Shape × alignment, previewed and rendered, agree.
+- [x] Default styles give v1 plans and the v1 ASS fixture byte for byte. Existing tests pass unchanged.
+- [x] Seam B tests: 3- and 4-line fits are balanced; `strips` boxes fit each line; `left` alignment; `area` encloses all boxes.
+- [x] Renderer tests: strip boxes; `none` with outline and shadow.
+- [x] Shape cards are native radios, keyboard-operable, with a visible focus ring. Override markers work on every new field.
+- [x] Browser check: each Shape × alignment, previewed and rendered, agree.
+
+## Comments
+
+**2026-10-14: done.** `uv run pytest tests/test_planner.py tests/test_styles.py`: 87 passed (6 new Seam B and 3 renderer tests); the v1 ASS fixture is unchanged. `npm run typecheck` and `npm run build` pass.
+
+**Change from the plan:** `HookEvent.lines` stays a list of strings, so the Timeline and v1's tests are untouched. The plan instead gains `anchors` (each line's middle and baseline) and `boxes` (what is drawn behind). Emphasis (ticket 02) will add its own field rather than turn lines into runs.
+
+Built:
+- **HookStyle:** `shape`, `max_lines`, `uppercase`, `align`, `outline` and `shadow` with their colours.
+- **Planner:** `fit_hook` takes the fewest lines up to `max_lines` that fit, balanced by a minimax split over the words (`_balanced`). `_hook` lays out blocks (v1's padding and leading) and strips (`STRIP_PAD_X` 0.25, `STRIP_PAD_Y` 0.14, `STRIP_GAP` 0.06 sizes), left or centred.
+- **Renderer:** a box per entry of `boxes` (`\bord0\shad0` on boxes only when the text has an outline or shadow, so v1's bytes stay); lines at their anchors; the Hook Style line carries the outline and shadow.
+- **Preview:** the same boxes and anchors, with outline and shadow drawn like the captions'.
+- **Style panel:** `HookShapePicker` (radio cards with thumbnails in the style's colours and alignment), then the Text, Box/outline/shadow, Position and Animation groups. Box controls are hidden for No box. `Segmented` gained a `marker` slot, so lines, alignment and position show their reset button.
+
+**Checks:** Browser (1d5d363bec2e, scratch clone on :8010): Strips + Left previewed as left-aligned strips. libass frames of strips (white, black text, 4 lines) and No box with a shadow match references 2 and 5.

@@ -233,3 +233,36 @@ def test_the_hooks_animations_take_at_most_half_its_time():
                         hook_style=HookStyle(animation_in="pop", animation_out="slide", animation_ms=1000))
     lines = [line for line in _ass(plan_).splitlines() if ",Hook," in line and line.startswith("Dialogue")]
     assert sorted({line.split(",")[1] for line in lines}) == ["0:00:00.00", "0:00:00.30"]
+
+
+# Hook Shapes (hook-styles ticket 01).
+
+
+def hook_boxes(lines: list[str]) -> list[str]:
+    return [line for line in lines if line.startswith("Dialogue: 1,")]
+
+
+def test_strips_draw_a_box_behind_each_line_and_each_line_on_its_anchor():
+    hook = plan(hook_style=HookStyle(shape="strips", align="left", box_opacity=1.0)).hook
+    lines = hook_lines(shape="strips", align="left", box_opacity=1.0)
+    boxes = hook_boxes(lines)
+    assert len(boxes) == len(hook.boxes) == 2
+    for box, drawn in zip(hook.boxes, boxes):
+        assert f"\\an7\\pos({box.x},{box.y})" in drawn
+        assert drawn.split("}")[1].startswith(f"m {min(24, box.height // 2)} 0 l {box.width - min(24, box.height // 2)} 0 ")
+    texts = [line for line in lines if line.startswith("Dialogue: 2,")]
+    assert [text.split("}")[1] for text in texts] == hook.lines
+    for (x, _), text in zip(hook.anchors, texts):
+        assert f"\\an5\\pos({x:g}," in text
+
+
+def test_a_hook_without_a_box_draws_only_its_text_with_its_outline_and_shadow():
+    lines = hook_lines(shape="none", outline=4, outline_colour="#112233", shadow=3, shadow_colour="#445566")
+    assert not hook_boxes(lines) and len(lines) == 2
+    ass = _ass(plan(hook_style=HookStyle(shape="none", outline=4, outline_colour="#112233", shadow=3, shadow_colour="#445566")))
+    assert "Style: Hook,Montserrat ExtraBold,88,&H00FFFFFF,&H00FFFFFF,&H00332211,&H00665544,0,0,0,0,100,100,0,0,1,4,3,5,0,0,0,1" in ass
+
+
+def test_an_outlined_hooks_box_has_no_outline_or_shadow_of_its_own():
+    [box] = hook_boxes(hook_lines(outline=4, shadow=3))
+    assert "\\p1\\bord0\\shad0\\c&H000000&" in box

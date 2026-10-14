@@ -50,7 +50,7 @@ from functools import cache
 from app.candidates import Layout, LayoutOverride, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
-from app.styles import CaptionPosition, CaptionStyle, HookPosition, HookStyle
+from app.styles import CaptionPosition, CaptionStyle, HookAlign, HookPosition, HookShape, HookStyle
 from app.transcript import Word
 from app.video_source import SourceMetadata
 
@@ -84,6 +84,11 @@ HOOK_LEADING = 0.82
 # and below the descenders of the last.
 HOOK_PAD_X = 36
 HOOK_PAD_Y = 26
+# A strip's padding, in sizes: either side of its line, and above the capitals and below the
+# descenders; and the gap between one strip and the next.
+STRIP_PAD_X = 0.25
+STRIP_PAD_Y = 0.14
+STRIP_GAP = 0.06
 
 
 # The planner's input, found by app/analysis.py.
@@ -226,15 +231,17 @@ class CaptionEvent:
 
 @dataclass(frozen=True)
 class HookEvent:
-    """The hook's lines, set at font `size` and centred in their box `area`, on screen from `start`
-    to `end` (seconds into the Clip). The first line's capitals are HOOK_PAD_Y below the box's top,
-    and the baselines HOOK_LEADING sizes apart."""
+    """The hook's lines, set at font `size`, on screen from `start` to `end` (seconds into the Clip).
+    `area` holds all of it. Each line is placed by its anchor, the middle of its text and its
+    baseline, over `boxes`: one behind every line (a block), one behind each (strips), or none."""
 
     lines: list[str]
     start: float
     end: float
     area: Box
     size: float
+    anchors: list[tuple[float, float]]
+    boxes: list[Box]
 
 
 @dataclass(frozen=True)
@@ -329,10 +336,10 @@ def plan_render(
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
     """How the hook `text` is set in `style`: its lines (none when it is blank) and their font size.
-    One line if it fits in HOOK_WIDTH at the style's size; else two, broken between words where the
-    longer is shortest. Lines still too wide are set smaller, so that the longest just fits: the
-    text fits when the size is the style's."""
-    words = text.split()
+    The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size, broken between
+    words where the longest is shortest. Lines still too wide are set smaller, so that the longest
+    just fits: the text fits when the size is the style's."""
+    words = (text.upper() if style.uppercase else text).split()
     if not words:
         return [], style.size
     metrics = font_metrics(style.font)
@@ -340,30 +347,83 @@ def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], floa
     def widest(lines: list[str]) -> float:
         return max(metrics.width(line, style.size) for line in lines)
 
-    lines = [" ".join(words)]
-    if widest(lines) > HOOK_WIDTH:
-        breaks = [[" ".join(words[:i]), " ".join(words[i:])] for i in range(1, len(words))]
-        lines = min([lines, *breaks], key=widest)
-    width = widest(lines)
-    if width <= HOOK_WIDTH:
-        return lines, style.size
-    return lines, math.floor(style.size * HOOK_WIDTH / width * 10) / 10
+    for count in range(1, min(style.max_lines, len(words)) + 1):
+        lines = _balanced(words, count, metrics)
+        if widest(lines) <= HOOK_WIDTH:
+            return lines, style.size
+    return lines, math.floor(style.size * HOOK_WIDTH / widest(lines) * 10) / 10
+
+
+def _balanced(words: list[str], count: int, metrics: "FontMetrics") -> list[str]:
+    """`words` on `count` lines, broken where the widest line is narrowest (of equals, with the
+    earliest breaks)."""
+    space = metrics.advances.get(" ", metrics.units)
+    ends = [0]
+    for word in words:
+        ends.append(ends[-1] + sum(metrics.advances.get(char, metrics.units) for char in word))
+
+    def units(i: int, j: int) -> int:
+        return ends[j] - ends[i] + (j - i - 1) * space
+
+    # best[k][j]: the narrowest widest line of words[:j] on k lines, and where its last line starts.
+    best = [{j: (units(0, j), 0) for j in range(1, len(words) + 1)}]
+    for k in range(2, count + 1):
+        best.append({
+            j: min(((max(best[-1][i][0], units(i, j)), i) for i in range(k - 1, j)), key=lambda option: option[0])
+            for j in range(k, len(words) + 1)
+        })
+    lines, j = [], len(words)
+    for k in range(count, 0, -1):
+        i = best[k - 1][j][1]
+        lines.insert(0, " ".join(words[i:j]))
+        j = i
+    return lines
 
 
 def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS) -> HookEvent | None:
     """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
-    end, if that comes sooner), in a box centred like the captions and as large as its lines and
-    padding, placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just
-    above the bottom of SAFE_AREA, or with its top at the style's height (kept inside SAFE_AREA).
-    None when the text is blank or it would start at or after the Clip's end."""
+    end, if that comes sooner), centred like the captions and as large as its lines and padding,
+    placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
+    bottom of SAFE_AREA, or with its top at the style's height (kept inside SAFE_AREA).
+    None when the text is blank or it would start at or after the Clip's end.
+
+    A block (or no box) is HOOK_PAD_X wider than the longest line either side, its first line's
+    capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart. Strips are each
+    their line's width, padded by STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart. Left-aligned lines
+    (and strips) start at the left of the longest."""
     lines, size = fit_hook(text, style)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
         return None
     metrics = font_metrics(style.font)
-    width = math.ceil(max(metrics.width(line, size) for line in lines)) + 2 * HOOK_PAD_X
-    letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * HOOK_LEADING * size
-    height = math.ceil(letters) + 2 * HOOK_PAD_Y
+    widths = [metrics.width(line, size) for line in lines]
+    left = style.align == HookAlign.LEFT
+    # Boxes from the hook's top-left corner, and anchors from where it is.
+    if style.shape == HookShape.STRIPS:
+        pad_x, pad_y = STRIP_PAD_X * size, STRIP_PAD_Y * size
+        strip_height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
+        pitch = strip_height + round(STRIP_GAP * size)
+        strips = [math.ceil(line + 2 * pad_x) for line in widths]
+        width, height = max(strips), (len(lines) - 1) * pitch + strip_height
+        offsets = [0 if left else (width - strip) // 2 for strip in strips]
+        boxes = [Box(x, i * pitch, strip, strip_height) for i, (x, strip) in enumerate(zip(offsets, strips))]
+
+        def anchors(x: int, y: int) -> list[tuple[float, float]]:
+            return [
+                (x + box.x + box.width / 2, y + box.y + pad_y + metrics.cap_height / metrics.units * size) for box in boxes
+            ]
+    else:
+        width = math.ceil(max(widths)) + 2 * HOOK_PAD_X
+        letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * HOOK_LEADING * size
+        height = math.ceil(letters) + 2 * HOOK_PAD_Y
+        boxes = [Box(0, 0, width, height)] if style.shape == HookShape.BLOCK else []
+
+        def anchors(x: int, y: int) -> list[tuple[float, float]]:
+            return [
+                (x + HOOK_PAD_X + line / 2 if left else x + width / 2,
+                 y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * HOOK_LEADING) * size)
+                for i, line in enumerate(widths)
+            ]
     bottom = SAFE_AREA.y + SAFE_AREA.height - height
     top = {
         HookPosition.TOP: SAFE_AREA.y,
@@ -372,7 +432,15 @@ def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs
         HookPosition.CUSTOM: min(max(style.y, SAFE_AREA.y), bottom),
     }[style.position]
     area = Box((OUTPUT_WIDTH - width) // 2, top, width, height)
-    return HookEvent(lines, start, round(min(start + secs, duration), 3), area, size)
+    return HookEvent(
+        lines,
+        start,
+        round(min(start + secs, duration), 3),
+        area,
+        size,
+        anchors=anchors(area.x, area.y),
+        boxes=[Box(area.x + box.x, area.y + box.y, box.width, box.height) for box in boxes],
+    )
 
 
 @dataclass(frozen=True)

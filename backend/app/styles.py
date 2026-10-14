@@ -69,6 +69,21 @@ class Animation(StrEnum):
     SLIDE = "slide"
 
 
+class HookShape(StrEnum):
+    """How the hook's box is drawn: one block behind all its lines, a strip behind each line, or none."""
+
+    BLOCK = "block"
+    STRIPS = "strips"
+    NONE = "none"
+
+
+class HookAlign(StrEnum):
+    """How the hook's lines line up with each other. The hook itself is centred in the frame."""
+
+    CENTER = "center"
+    LEFT = "left"
+
+
 class HookPosition(StrEnum):
     TOP = "top"
     MIDDLE = "middle"
@@ -105,12 +120,22 @@ class CaptionStyle:
 
 @dataclass(frozen=True)
 class HookStyle:
+    shape: HookShape = HookShape.BLOCK
     font: FontId = DEFAULT_FONT
-    # The size its lines are set at when they fit; smaller when even two lines are too wide.
+    # The size its lines are set at when they fit; smaller when even max_lines lines are too wide.
     size: Annotated[int, Field(ge=40, le=160)] = 88
+    max_lines: Annotated[int, Field(ge=1, le=4)] = 2
+    # In capitals, or as written.
+    uppercase: bool = False
+    align: HookAlign = HookAlign.CENTER
     colour: Colour = "#FFFFFF"
+    # In output pixels, around and behind the text (not the box).
+    outline: Annotated[int, Field(ge=0, le=20)] = 0
+    outline_colour: Colour = "#000000"
+    shadow: Annotated[int, Field(ge=0, le=20)] = 0
+    shadow_colour: Colour = "#000000"
     box_colour: Colour = "#000000"
-    # 0 draws no box.
+    # 0 draws no box, whatever the shape.
     box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.6
     radius: Annotated[int, Field(ge=0, le=80)] = 24
     position: HookPosition = HookPosition.TOP

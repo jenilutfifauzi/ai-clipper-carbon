@@ -7,7 +7,7 @@ from pydantic import TypeAdapter
 
 from app.candidates import Layout, LayoutOverride, WordEdit
 from app.config import CameraTuning
-from app.styles import CaptionPosition, CaptionStyle, Highlight, HookPosition, HookStyle
+from app.styles import CaptionPosition, CaptionStyle, Highlight, HookAlign, HookPosition, HookShape, HookStyle
 from app.planner import (
     HOOK_PAD_X,
     HOOK_SIZE,
@@ -871,3 +871,79 @@ def test_captions_move_with_a_scenes_overridden_layout():
     plan = overridden([LayoutOverride(3.0, Layout.SPLIT)], words=words)
     areas = {(event.start >= 2 and event.end <= 4, event.area) for event in plan.captions}
     assert (True, SEAM_CAPTIONS) in areas and (True, LOWER_CAPTIONS) not in areas
+
+
+# Hook Shapes, alignment and lines (hook-styles ticket 01).
+HEADLINE = "Orang kantoran pasti iri anak SMP ini cuan enam juta dari bikin satu video klip di ternakklip"
+
+
+def test_the_hook_takes_up_to_its_styles_max_lines_balanced_before_it_is_set_smaller():
+    two = hooked(HEADLINE)
+    assert len(two.lines) == 2 and two.size < HOOK_SIZE
+    four = hooked(HEADLINE, hook_style=HookStyle(max_lines=4))
+    assert " ".join(four.lines) == HEADLINE and four.size == HOOK_SIZE
+    # The fewest lines that fit: three are too wide at 88, so four, as even as they can be.
+    assert len(four.lines) == 4
+    assert widest(four) <= HOOK_WIDTH
+    assert widest(four) - min(font_metrics().width(line, HOOK_SIZE) for line in four.lines) < 260
+    # Short text stays on one line, and one line never breaks.
+    assert hooked("Kenapa gagal?", hook_style=HookStyle(max_lines=4)).lines == ["Kenapa gagal?"]
+    one = hooked(HOOK, hook_style=HookStyle(max_lines=1))
+    assert one.lines == [HOOK] and one.size < HOOK_SIZE
+    assert fit_hook(HEADLINE, HookStyle(max_lines=4)) == (four.lines, HOOK_SIZE)
+
+
+def test_a_hook_in_capitals_is_fitted_in_capitals():
+    hook = hooked(HOOK, hook_style=HookStyle(uppercase=True))
+    assert hook.lines == ["SETETES RACUN BISA", "BUNUH PERUSAHAAN?"]
+    assert widest(hook) <= HOOK_WIDTH
+
+
+def text_edges(hook: HookEvent) -> list[tuple[float, float]]:
+    """Each line's text, from its left edge to its right, as placed by its anchor."""
+    return [
+        (x - font_metrics().width(line, hook.size) / 2, x + font_metrics().width(line, hook.size) / 2)
+        for line, (x, _) in zip(hook.lines, hook.anchors)
+    ]
+
+
+def test_a_block_hook_draws_one_box_holding_its_centred_lines():
+    hook = hooked(HOOK)
+    assert hook.boxes == [hook.area]
+    assert [x for x, _ in hook.anchors] == [hook.area.x + hook.area.width / 2] * 2
+    first, second = (baseline for _, baseline in hook.anchors)
+    assert hook.area.y < first < second < hook.area.y + hook.area.height
+    assert second - first == pytest.approx(0.82 * hook.size)
+
+
+def test_strips_put_a_box_behind_each_line_as_wide_as_it_one_under_the_other():
+    block = hooked(HOOK)
+    hook = hooked(HOOK, hook_style=HookStyle(shape=HookShape.STRIPS))
+    assert hook.lines == block.lines and len(hook.boxes) == 2
+    for (left, right), box, (_, baseline) in zip(text_edges(hook), hook.boxes, hook.anchors):
+        assert box.x < left and right < box.x + box.width < right + 0.6 * hook.size
+        assert box.y < baseline < box.y + box.height
+        assert abs(box.x + box.width / 2 - 540) <= 1
+    upper, lower = hook.boxes
+    assert upper.y + upper.height < lower.y < upper.y + upper.height + 0.1 * hook.size
+    assert upper.width != lower.width
+    # The area holds the strips and nothing more, at the top of the safe area.
+    assert hook.area == Box(min(b.x for b in hook.boxes), SAFE_AREA.y, max(b.width for b in hook.boxes), lower.y + lower.height - upper.y)
+
+
+def test_a_hook_without_a_box_is_set_like_a_block_with_nothing_behind_it():
+    block = hooked(HOOK)
+    bare = hooked(HOOK, hook_style=HookStyle(shape=HookShape.NONE))
+    assert bare.boxes == []
+    assert (bare.lines, bare.anchors, bare.area) == (block.lines, block.anchors, block.area)
+
+
+def test_left_aligned_lines_start_together_and_the_hook_stays_centred():
+    for shape in HookShape:
+        hook = hooked(HOOK, hook_style=HookStyle(shape=shape, align=HookAlign.LEFT))
+        lefts = [left for left, _ in text_edges(hook)]
+        assert max(lefts) - min(lefts) < 1, shape
+        assert abs(hook.area.x + hook.area.width / 2 - 540) <= 1, shape
+        if shape is HookShape.STRIPS:
+            assert len({box.x for box in hook.boxes}) == 1
+        assert all(hook.area.x <= box.x and box.x + box.width <= hook.area.x + hook.area.width for box in hook.boxes)

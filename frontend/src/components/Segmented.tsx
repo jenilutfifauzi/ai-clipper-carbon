@@ -8,19 +8,24 @@ export function Segmented<T extends string>({
   options,
   value,
   onChange,
+  marker,
   className,
 }: {
   legend: string;
   options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
+  // After the legend: for a style field, the button that resets it to its Preset.
+  marker?: React.ReactNode;
   className?: string;
 }) {
   const name = useId();
   const index = Math.max(0, options.findIndex((option) => option.value === value));
   return (
     <fieldset className={cx("flex min-w-0 flex-col gap-1.5", className)}>
-      <legend className="mb-1.5 text-sm font-medium">{legend}</legend>
+      <legend className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+        {legend} {marker}
+      </legend>
       <div
         className="relative isolate flex rounded-control bg-fill p-1"
         style={{ "--count": options.length, "--index": index } as CSSProperties}
