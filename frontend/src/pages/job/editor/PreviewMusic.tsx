@@ -35,7 +35,7 @@ function gainOf(element: HTMLMediaElement): GainNode | null {
 
 // Sets how loud `element` plays: through Web Audio, which goes past 1 as the render does, or (without
 // it) as loud as the element can.
-function setVolume(element: HTMLMediaElement, volume: number) {
+export function setVolume(element: HTMLMediaElement, volume: number) {
   const gain = gainOf(element);
   if (gain) gain.gain.value = volume;
   else element.volume = Math.min(1, Math.max(0, volume));

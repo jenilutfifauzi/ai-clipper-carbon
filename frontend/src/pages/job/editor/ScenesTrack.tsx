@@ -9,9 +9,10 @@ const LOOKS: Record<SceneLayout, string> = {
   split: "bg-waiting-surface ring-waiting/60",
   blur: "bg-surface-raised ring-border",
   passthrough: "bg-surface-raised ring-border",
+  fill: "bg-surface-raised ring-border",
 };
 
-const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blur: "Blur", passthrough: "As shot" };
+const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blur: "Blur", passthrough: "As shot", fill: "Fill" };
 
 // The override of the Scene from `start` to `end` (seconds into the Clip), as the planner finds it:
 // the last one whose time is in it.

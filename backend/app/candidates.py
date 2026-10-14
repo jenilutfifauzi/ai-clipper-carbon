@@ -132,14 +132,45 @@ class MusicClip:
 
 
 @dataclass(frozen=True)
+class Overlay:
+    """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
+    for `secs`, in Timeline time, a video from `offset` seconds into it; centred on (x, y) in output
+    pixels, `size` pixels wide (as tall as its shape makes it), at `opacity`, a video's sound at
+    `volume` (none by default)."""
+
+    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    media: MediaId
+    start: Annotated[FiniteFloat, Field(ge=0, le=3600)]
+    secs: Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
+    offset: Annotated[FiniteFloat, Field(ge=0, le=3600)] = 0.0
+    x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
+    y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
+    size: Annotated[int, Field(ge=16, le=2160)] = 540
+    opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 1.0
+    volume: Volume = 0.0
+
+
+class Fit(StrEnum):
+    """How a video from the Media Library fills the vertical frame: cropped to fill it, or whole over
+    a blurred copy of itself (as the Blur Layout shows a wide shot)."""
+
+    FILL = "fill"
+    BLUR = "blur"
+
+
+@dataclass(frozen=True)
 class Segment:
     """A piece of the Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source from `start`
-    to `end` on its timeline, snapped to Words as a Clip's edges are. A Clip's Segments play in order,
-    back to back. `id` names it in the editor."""
+    to `end` on its timeline, snapped to Words as a Clip's edges are; or, with `media`, a video from
+    the Media Library from `start` to `end` seconds into it, filling the frame as `fit` says, its own
+    sound at `volume`. A Clip's Segments play in order, back to back. `id` names it in the editor."""
 
     id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
     start: Annotated[FiniteFloat, Field(ge=0)]
     end: Annotated[FiniteFloat, Field(ge=0)]
+    media: MediaId | None = None
+    fit: Fit = Fit.BLUR
+    volume: Volume = 1.0
 
 
 # The id of a Clip's one Segment when it isn't cut.
@@ -194,10 +225,16 @@ class Candidate:
     source_volume: Volume = 1.0
     # Its Main Track, in order; none (the default) for one Segment from `start` to `end`.
     segments: list[Segment] = field(default_factory=list)
+    # Laid over its Segments, in this order (the last on top).
+    overlays: list[Overlay] = field(default_factory=list)
 
     def pieces(self) -> list[Segment]:
         """Its Main Track: its Segments, or the one from `start` to `end`."""
         return self.segments or [Segment(WHOLE, self.start, self.end)]
+
+    def episode_pieces(self) -> list[Segment]:
+        """The Segments of its Main Track that show the Source, not the Media Library."""
+        return [piece for piece in self.pieces() if piece.media is None]
 
     @property
     def duration(self) -> float:
@@ -206,7 +243,11 @@ class Candidate:
 
     def media_ids(self) -> set[str]:
         """The Media Library items it uses."""
-        return {clip.media for clip in self.music}
+        return (
+            {clip.media for clip in self.music}
+            | {segment.media for segment in self.segments if segment.media}
+            | {overlay.media for overlay in self.overlays}
+        )
 
     @property
     def reviewed(self) -> bool:

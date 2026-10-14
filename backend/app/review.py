@@ -5,7 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, LayoutOverride, MusicClip, Origin, Segment, TextLayer, WordEdit, manual_candidate
+from app.candidates import Candidate, Layout, LayoutOverride, MusicClip, Origin, Overlay, Segment, TextLayer, WordEdit, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -15,6 +15,8 @@ from app.transcript import Transcript
 # Shorts and Reels take at most 3 minutes. The Job's own range is not enforced on the owner's
 # edits (the UI warns instead), since the owner may want a clip outside it.
 MAX_CLIP_SECS = 180
+# The shortest Segment of a Media Library video.
+MIN_MEDIA_SECS = 0.1
 
 
 class InvalidEdit(ValueError):
@@ -46,6 +48,7 @@ class CandidateChange:
     source_volume: float | None = None
     # Snapped to Words; one Segment is stored as `start` and `end`.
     segments: list[Segment] | None = None
+    overlays: list[Overlay] | None = None
 
 
 @dataclass(frozen=True)
@@ -72,11 +75,21 @@ class Episode:
         return snapped
 
     def segments(self, segments: list[Segment]) -> list[Segment]:
-        """The Segments with their ends snapped to Words (as `bounds` snaps a Clip's); InvalidEdit
-        for none, for one that isn't a usable piece, or for more than the longest clip in all."""
-        if not segments:
-            raise InvalidEdit("A clip needs at least one Segment")
-        snapped = [Segment(segment.id, *self.bounds(segment.start, segment.end)) for segment in segments]
+        """The Segments with the ends of those that show the Source snapped to Words (as `bounds`
+        snaps a Clip's); InvalidEdit for none, for none of the Source, for one that isn't a usable
+        piece, or for more than the longest clip in all. (A Media Library video's are checked
+        against it by the API.)"""
+        if not any(segment.media is None for segment in segments):
+            raise InvalidEdit("A clip needs at least one piece of the episode")
+        snapped = []
+        for segment in segments:
+            if segment.media is None:
+                start, end = self.bounds(segment.start, segment.end)
+                snapped.append(replace(segment, start=start, end=end))
+            elif segment.end - segment.start < MIN_MEDIA_SECS:
+                raise InvalidEdit(f"A video's Segment lasts {MIN_MEDIA_SECS:g} s at least")
+            else:
+                snapped.append(segment)
         longest = max(MAX_CLIP_SECS, self.max_secs)
         total = sum(segment.end - segment.start for segment in snapped)
         if total > longest:
@@ -99,14 +112,17 @@ def update(
     if change.segments is not None:
         _check_ids("Segment", [segment.id for segment in change.segments])
         segments = episode.segments(change.segments)
-        # The hull of what they show; one Segment is a plain range.
-        start, end = min(s.start for s in segments), max(s.end for s in segments)
+        # The hull of the Source they show; one Segment of it is a plain range.
+        shown = [segment for segment in segments if segment.media is None]
+        start, end = min(s.start for s in shown), max(s.end for s in shown)
         if len(segments) == 1:
             segments = []
     if change.text_layers is not None:
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
     if change.music is not None:
         _check_ids("Music Clip", [clip.id for clip in change.music])
+    if change.overlays is not None:
+        _check_ids("Overlay", [overlay.id for overlay in change.overlays])
     new = replace(
         old,
         start=start,
@@ -125,6 +141,7 @@ def update(
         music=_pick(change.music, old.music),
         source_volume=_pick(change.source_volume, old.source_volume),
         segments=segments,
+        overlays=_pick(change.overlays, old.overlays),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -171,7 +188,7 @@ def _look(candidate: Candidate) -> tuple:
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.music,
-        candidate.source_volume, candidate.segments,
+        candidate.source_volume, candidate.segments, candidate.overlays,
     )
 
 

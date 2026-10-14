@@ -17,10 +17,30 @@
 
 **Blocked by:** 03, 05.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam B: no captions over a media Segment; durations add up.
-- [ ] Seam A: an intro Segment renders with the right duration, fill and blur both 1080x1920, and with sound or silence.
-- [ ] Typecheck and build; browser walkthrough with a portrait and a landscape upload.
+- [x] Seam B: no captions over a media Segment; durations add up.
+- [x] Seam A: an intro Segment renders with the right duration, fill and blur both 1080x1920, and with sound or silence.
+- [x] Typecheck and build; browser walkthrough with a portrait and a landscape upload.
 
 ## Comments
+
+**2026-10-14: done.**
+
+**Checks:**
+- `tests/test_media_segments.py`:
+  - Seam B: Fill and Fit-over-blur Scenes from the video's size; no captions over a video's Segment.
+  - Seam A: validation (an image, an unknown item, past the video's end, no piece of the episode); delete refused in use.
+  - Seam A: a render with a filled red intro, an episode piece and a silent fitted outro. Checked by frame colour, by sharpness in the middle against the blur, and by sound in the intro and silence in the outro.
+- `npm run build`.
+- Browser:
+  - A 4 s video added after the first piece (filmstrip on the track, captions skipping it).
+  - Played from the episode through the video and back. The Source video waits while the video's own player follows the clock, and the next piece resumes at its Source time.
+
+**Changes from the plan:**
+- A Clip needs at least one Segment of the episode, and its `start`/`end` are their hull.
+- With videos among the Segments, each Segment's sound gets its volume before the join, and the Clip's own volume isn't applied again in the mix.
+- Images aren't Segments; they go on the Overlay track (07).
+- Through a video's Segment, the preview's Playback runs on a clock of its own.
+
+**Note:** in the automated browser's hidden tab, `requestAnimationFrame` is throttled, so hand-overs there land late. They are on time in a visible tab.

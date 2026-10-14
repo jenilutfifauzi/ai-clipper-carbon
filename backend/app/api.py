@@ -18,6 +18,7 @@ from app.candidates import (
     Layout,
     LayoutOverride,
     MusicClip,
+    Overlay,
     Segment,
     TextLayer,
     Volume,
@@ -30,7 +31,7 @@ from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
-from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaNotFound, MediaStore
+from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
@@ -71,6 +72,7 @@ LAYOUT_OVERRIDES_MAX = 200
 TEXT_LAYERS_MAX = 50
 MUSIC_MAX = 50
 SEGMENTS_MAX = 100
+OVERLAYS_MAX = 50
 
 _OPTIONS = TypeAdapter(JobOptions)
 
@@ -155,6 +157,8 @@ class CandidateUpdate(BaseModel):
     source_volume: Volume | None = None
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
     segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX)] | None = None
+    # Replaces the Candidate's Overlays as a whole; each names a video or an image.
+    overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX)] | None = None
 
 
 class PresetBody(BaseModel):
@@ -318,7 +322,7 @@ def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, setti
     if job.source is None:
         raise HTTPException(404, f"Job {job.id} has no Source")
     job_dir = store.job_dir(job.id)
-    first = candidate.pieces()[0]
+    first = candidate.episode_pieces()[0]
     at = first.start + min(settings.render.poster_secs, (first.end - first.start) / 2)
     still = job_dir / STILLS_DIR / f"{round(at * 1000)}.jpg"
     if not still.is_file():
@@ -686,11 +690,25 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
 
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
-    be a song or a video with sound."""
+    be a song or a video with sound, and a Segment a video, within its length."""
     for clip in body.music or []:
         item = library.find(clip.media)
         if item is None or not item.has_audio:
             raise HTTPException(422, f"Music Clip {clip.id}: no song or video with sound {clip.media} in the Media Library")
+    for segment in body.segments or []:
+        if segment.media is None:
+            continue
+        item = library.find(segment.media)
+        if item is None or item.kind is not MediaKind.VIDEO:
+            raise HTTPException(422, f"Segment {segment.id}: no video {segment.media} in the Media Library")
+        if item.duration is not None and segment.end > item.duration + 0.05:
+            raise HTTPException(422, f"Segment {segment.id} runs past the end of its video ({item.duration:g} s)")
+    for overlay in body.overlays or []:
+        item = library.find(overlay.media)
+        if item is None or item.kind is MediaKind.AUDIO:
+            raise HTTPException(422, f"Overlay {overlay.id}: no video or image {overlay.media} in the Media Library")
+        if item.duration is not None and overlay.offset + overlay.secs > item.duration + 0.05:
+            raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s)")
 
 
 # Media Library files never change under their id.

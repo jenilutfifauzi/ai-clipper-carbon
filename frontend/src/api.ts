@@ -290,7 +290,8 @@ export interface Panel {
   blur: boolean;
 }
 
-export type SceneLayout = "track" | "split" | "blur" | "passthrough";
+// "fill": a Media Library video cropped to fill the frame.
+export type SceneLayout = "track" | "split" | "blur" | "passthrough" | "fill";
 
 export interface ScenePlan {
   start: number;
@@ -409,6 +410,33 @@ export interface AudioEvent {
   fade_out: number;
 }
 
+// A video or image from the Media Library laid over the Clip: from `start` for `secs` in Timeline
+// time (a video from `offset` into it), centred on (x, y), `size` pixels wide, at `opacity`, a
+// video's sound at `volume` (0, muted, by default).
+export interface Overlay {
+  id: string;
+  media: string;
+  start: number;
+  secs: number;
+  offset: number;
+  x: number;
+  y: number;
+  size: number;
+  opacity: number;
+  volume: number;
+}
+
+// An Overlay as drawn: scaled into `area`, from `start` to `end`; `image` for a still.
+export interface OverlayEvent {
+  media: string;
+  area: Box;
+  start: number;
+  end: number;
+  offset: number;
+  opacity: number;
+  image: boolean;
+}
+
 // A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,
 // from `start` to `end` seconds into the Clip.
 export interface SegmentPlan {
@@ -416,6 +444,10 @@ export interface SegmentPlan {
   end: number;
   source_start: number;
   source_end: number;
+  // A Media Library video's instead of the Source's, its sound at `volume` (none when `silent`).
+  media: string | null;
+  volume: number;
+  silent: boolean;
 }
 
 export interface RenderPlan {
@@ -440,6 +472,8 @@ export interface RenderPlan {
   source_volume: number;
   // A Clip cut into several Segments: each, in order; [] for a Clip of one range.
   segments: SegmentPlan[];
+  // Laid over the Segments, in drawing order.
+  overlays: OverlayEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
@@ -478,12 +512,19 @@ export interface FontInfo {
   descent: number;
 }
 
+// How a Media Library video fills the vertical frame: cropped to fill it, or whole over its blur.
+export type Fit = "fill" | "blur";
+
 // A piece of a Candidate's Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source
-// from `start` to `end`, snapped to Words.
+// from `start` to `end`, snapped to Words; or, with `media`, a Media Library video from `start` to
+// `end` seconds into it, filled as `fit` says, its own sound at `volume`.
 export interface ClipSegment {
   id: string;
   start: number;
   end: number;
+  media?: string | null;
+  fit?: Fit;
+  volume?: number;
 }
 
 export interface Candidate {
@@ -525,6 +566,8 @@ export interface Candidate {
   source_volume: number;
   // Its Main Track; [] (one piece, from `start` to `end`) unless the Advanced Edit has cut it.
   segments: ClipSegment[];
+  // Laid over the Main Track, the last on top.
+  overlays: Overlay[];
 }
 
 // A Candidate's Main Track: its Segments, or its one range.
@@ -555,6 +598,8 @@ export interface CandidateChange {
   source_volume?: number;
   // Replaces the Main Track as a whole; one Segment is kept as `start` and `end`.
   segments?: ClipSegment[];
+  // Replaces the Candidate's Overlays as a whole.
+  overlays?: Overlay[];
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -590,6 +635,7 @@ export interface RenderedClip {
   music: MusicClip[];
   source_volume: number;
   segments: ClipSegment[];
+  overlays: Overlay[];
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";

@@ -84,7 +84,9 @@ class JobOptions:
 
 
 @dataclass(frozen=True)
-class Transition:
+class StatusChange:
+    """An entry of a Job's history: the status it moved to, and when. (Not a video Transition.)"""
+
     status: JobStatus
     at: datetime
 
@@ -151,7 +153,7 @@ class Job:
     source: Source | None = None
     # The version of the Selection prompts that produced the Job's Candidates.
     prompt_version: str | None = None
-    history: list[Transition] = field(default_factory=list)
+    history: list[StatusChange] = field(default_factory=list)
     # Candidates queued to be prepared for the clip editor (their caption Words transcribed and their
     # range analysed, without an encode), by the render queue before its Clips.
     preparing: list[str] = field(default_factory=list)
@@ -198,7 +200,7 @@ class JobStore:
             created_at=now,
             updated_at=now,
             profile=profile,
-            history=[Transition(JobStatus.QUEUED, now)],
+            history=[StatusChange(JobStatus.QUEUED, now)],
         )
         self.job_dir(job.id).mkdir(parents=True)
         if upload is not None:
@@ -395,7 +397,7 @@ def _changed(job: Job, changes: dict[str, Any]) -> Job:
     """The Job with `changes` applied, now; a status change is appended to its history."""
     now = datetime.now(UTC)
     if changes.get("status", job.status) != job.status:
-        changes = changes | {"history": [*job.history, Transition(changes["status"], now)]}
+        changes = changes | {"history": [*job.history, StatusChange(changes["status"], now)]}
     return replace(job, **changes, updated_at=now)
 
 

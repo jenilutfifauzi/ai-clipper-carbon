@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useParams } from "react-router";
 import {
   api,
+  mediaThumbnailUrl,
   mediaUrl,
   type Candidate,
   type CandidateChange,
@@ -28,6 +29,7 @@ import {
   type JobDetail,
   type MediaItem,
   type MusicClip,
+  type Overlay,
   type PreviewPlan,
   type TextLayer,
   type Transcript,
@@ -46,8 +48,9 @@ import { HookTimingFields } from "../HookEditor";
 import { AdvancedTimeline, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { editsOf, sameSelection, type AdvancedEdits, type Selection } from "./edits";
 import { MediaAssets, useMediaLibrary, type MediaLibrary } from "./MediaLibrary";
-import { draggedSegments, SEGMENT_MIN_SECS, SegmentFields, SourcePicker } from "./MainTrack";
+import { draggedSegments, newMediaSegment, SEGMENT_MIN_SECS, SegmentFields, SourcePicker } from "./MainTrack";
 import { MUSIC_MIN_SECS, MusicFields, newMusicClip } from "./Music";
+import { newOverlay, OVERLAY_MIN_SECS, OverlayFields } from "./Overlays";
 import { newId, newTextLayer, TEXT_MIN_SECS, trackLanes, TextAssets, TextLayerFields } from "./TextLayers";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
@@ -175,16 +178,31 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
     if (dragOrigin.current?.group !== group) dragOrigin.current = { group, segments: edits.segments };
-    change({ segments: draggedSegments(dragOrigin.current.segments, id, moved, sourceLength) }, group);
+    const lengthOf = (segment: ClipSegment) => (segment.media ? songs.get(segment.media)?.duration ?? segment.end : sourceLength);
+    change({ segments: draggedSegments(dragOrigin.current.segments, id, moved, lengthOf) }, group);
   }
-  // A moment of the episode, after the Segment the playhead is in.
+  function updateSegment(segment: ClipSegment, group?: string) {
+    change({ segments: edits.segments.map((old) => (old.id === segment.id ? segment : old)) }, group);
+  }
+  // A moment of the episode, or a video, after the Segment the playhead is in.
   function addFromSource(range: { start: number; end: number }) {
+    insertSegment({ id: newId(), ...range });
+  }
+  function insertSegment(segment: ClipSegment) {
     const at = piecesFrom(edits.segments).findIndex((piece) => playback.time < piece.end);
     const place = at === -1 ? edits.segments.length : at + 1;
-    const segment = { id: newId(), ...range };
     change({ segments: [...edits.segments.slice(0, place), segment, ...edits.segments.slice(place)] });
     select({ kind: "segment", id: segment.id });
     if (!wide) setSheet(null);
+  }
+  function addOverlay(item: MediaItem) {
+    const overlay = newOverlay(item, playback.time, duration);
+    change({ overlays: [...edits.overlays, overlay] });
+    select({ kind: "overlay", id: overlay.id });
+    if (!wide) setSheet(null);
+  }
+  function updateOverlay(overlay: Overlay, group?: string) {
+    change({ overlays: edits.overlays.map((old) => (old.id === overlay.id ? overlay : old)) }, group);
   }
   function addMusic(item: MediaItem) {
     const clip = newMusicClip(item, playback.time, duration);
@@ -225,6 +243,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           if (layer) updateText({ ...layer, x, y }, group);
         },
       }}
+      overlays={{
+        selected: selection?.kind === "overlay" ? selection.id : null,
+        // As the plan draws them: those whose items are there.
+        ids: edits.overlays.filter((overlay) => songs.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
+        onSelect: (id) => select({ kind: "overlay", id }),
+        onPlace: (id, place, group) => {
+          const overlay = edits.overlays.find((other) => other.id === id);
+          if (overlay) updateOverlay({ ...overlay, ...place }, group);
+        },
+      }}
       fit
     />
   );
@@ -247,6 +275,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onEdits={history.set}
           onText={updateText}
           onMusic={updateMusic}
+          onOverlay={updateOverlay}
           onSegment={moveSegment}
           songs={songs}
           onDelete={actions ? actions.remove : undefined}
@@ -268,6 +297,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onEdits={history.set}
       onText={updateText}
       onMusic={updateMusic}
+      onOverlay={updateOverlay}
+      onSegment={updateSegment}
     />
   );
   const status = <SaveStatus saving={saving > 0} saved={saved} error={saveError} />;
@@ -298,6 +329,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 onAddText={addText}
                 onAddMusic={addMusic}
                 onAddSource={addFromSource}
+                onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
+                onAddOverlay={addOverlay}
               />
             </div>
           </aside>
@@ -357,6 +390,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               onAddText={addText}
               onAddMusic={addMusic}
               onAddSource={addFromSource}
+              onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
+              onAddOverlay={addOverlay}
             />
           )}
         </Sheet>
@@ -366,8 +401,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 }
 
 // The Advanced Edit's lists of items on the timeline, by the kind of item they hold.
-const LISTS = { text: "text_layers", music: "music" } as const;
-type Listed = TextLayer | MusicClip;
+const LISTS = { text: "text_layers", music: "music", overlay: "overlays" } as const;
+type Listed = TextLayer | MusicClip | Overlay;
 
 /**
  * What can be done to the selected item, when it is a Text Layer or a Music Clip (the hook can only
@@ -384,13 +419,13 @@ function itemActions(
   select: (selection: Selection) => void,
 ): ItemActions | null {
   if (selection?.kind === "segment") return segmentActions(edits, selection.id, playback, change, select);
-  if (selection?.kind !== "text" && selection?.kind !== "music") return null;
+  if (selection?.kind !== "text" && selection?.kind !== "music" && selection?.kind !== "overlay") return null;
   const kind = selection.kind;
   const key = LISTS[kind];
   const list = edits[key] as Listed[];
   const item = list.find((other) => other.id === selection.id);
   if (!item) return null;
-  const least = kind === "text" ? TEXT_MIN_SECS : MUSIC_MIN_SECS;
+  const least = { text: TEXT_MIN_SECS, music: MUSIC_MIN_SECS, overlay: OVERLAY_MIN_SECS }[kind];
   const put = (items: Listed[]) => change({ [key]: items } as Partial<AdvancedEdits>);
   const canSplit = (time: number) => time > item.start + least && time < item.start + item.secs - least;
   return {
@@ -410,13 +445,14 @@ function itemActions(
     split() {
       const at = round(playback.time);
       if (!canSplit(at)) return;
-      const first = { ...item, secs: round(at - item.start), ...("offset" in item ? { fade_out: 0 } : {}) };
+      const first = { ...item, secs: round(at - item.start), ...("fade_out" in item ? { fade_out: 0 } : {}) };
       const second = {
         ...item,
         id: newId(),
         start: at,
         secs: round(item.start + item.secs - at),
-        ...("offset" in item ? { offset: round(item.offset + at - item.start), fade_in: 0 } : {}),
+        ...("offset" in item ? { offset: round(item.offset + at - item.start) } : {}),
+        ...("fade_in" in item ? { fade_in: 0 } : {}),
       };
       put(list.flatMap((other) => (other.id === item.id ? [first, second] : [other])));
       select({ kind, id: second.id });
@@ -511,7 +547,7 @@ function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, a
 // The edges items snap to, besides the playhead and the Clip's ends.
 function snapPoints(edits: AdvancedEdits, preview: PreviewPlan | null): number[] {
   const points = [edits.hook_start, edits.hook_start + edits.hook_secs];
-  for (const item of [...edits.text_layers, ...edits.music]) points.push(item.start, item.start + item.secs);
+  for (const item of [...edits.text_layers, ...edits.music, ...edits.overlays]) points.push(item.start, item.start + item.secs);
   for (const piece of piecesFrom(edits.segments)) points.push(piece.end);
   for (const scene of preview?.plan.scenes ?? []) points.push(scene.start);
   return points;
@@ -532,6 +568,7 @@ function Tracks({
   onEdits,
   onText,
   onMusic,
+  onOverlay,
   onSegment,
   songs,
   onDelete,
@@ -546,6 +583,7 @@ function Tracks({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
+  onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   // The Media Library, by id: the songs' names and lengths.
   songs: Map<string, MediaItem>;
@@ -558,6 +596,7 @@ function Tracks({
   // The first lane next to the video, later ones above it.
   const lanes = trackLanes(edits.text_layers).reverse();
   const musicLanes = trackLanes(edits.music);
+  const overlayLanes = trackLanes(edits.overlays).reverse();
   return (
     <>
       {(lanes.length ? lanes : [[]]).map((lane, i) => (
@@ -581,6 +620,46 @@ function Tracks({
               >
                 <Type aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium">{layer.text.split("\n").join(" ") || "Empty text"}</span>
+              </TimelineItem>
+            );
+          })}
+        </TrackRow>
+      ))}
+      {overlayLanes.map((lane, i) => (
+        <TrackRow key={`overlay${overlayLanes.length - i}`} label={i === overlayLanes.length - 1 ? "Overlay" : ""}>
+          {lane.map((overlay) => {
+            const selected = selection?.kind === "overlay" && selection.id === overlay.id;
+            const item = songs.get(overlay.media);
+            const length = item?.duration ?? Infinity;
+            return (
+              <TimelineItem
+                key={overlay.id}
+                geometry={geometry}
+                start={overlay.start}
+                end={Math.min(overlay.start + overlay.secs, duration)}
+                max={duration}
+                minSecs={OVERLAY_MIN_SECS}
+                maxSecs={length - overlay.offset}
+                trimMin={item?.duration != null ? overlay.start - overlay.offset : undefined}
+                tone="overlay"
+                selected={selected}
+                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
+                onSelect={() => onSelect({ kind: "overlay", id: overlay.id })}
+                onChange={({ start, end, edge }, group) =>
+                  onOverlay(
+                    {
+                      ...overlay,
+                      start: round(start),
+                      secs: round(end - start),
+                      offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
+                    },
+                    group,
+                  )
+                }
+                onDelete={selected ? onDelete : undefined}
+              >
+                <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
+                <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
               </TimelineItem>
             );
           })}
@@ -620,9 +699,16 @@ function Tracks({
               onChange={(moved, group) => onSegment(segment.id, moved, group)}
               onDelete={selected && edits.segments.length > 1 ? onDelete : undefined}
             >
-              <span className="self-start pt-1 text-[11px] font-medium tabular-nums">
-                {formatPrecise(segment.start)}
-                {edits.source_volume !== 1 && i === 0 ? ` · ${Math.round(edits.source_volume * 100)}%` : ""}
+              {segment.media ? (
+                <span
+                  aria-hidden
+                  className="absolute inset-0 bg-black bg-size-[auto_100%] bg-repeat-x opacity-80"
+                  style={{ backgroundImage: `url(${mediaThumbnailUrl(segment.media)})` }}
+                />
+              ) : null}
+              <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
+                {segment.media ? (songs.get(segment.media)?.name ?? "Video") : formatPrecise(segment.start)}
+                {edits.source_volume !== 1 && i === 0 && !segment.media ? ` · ${Math.round(edits.source_volume * 100)}%` : ""}
               </span>
             </TimelineItem>
           );
@@ -725,6 +811,8 @@ function Inspector({
   onEdits,
   onText,
   onMusic,
+  onOverlay,
+  onSegment,
 }: {
   selection: Selection;
   edits: AdvancedEdits;
@@ -738,9 +826,25 @@ function Inspector({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
+  onSegment: (segment: ClipSegment, group?: string) => void;
+  onOverlay: (overlay: Overlay, group?: string) => void;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const music = selection?.kind === "music" ? edits.music.find((clip) => clip.id === selection.id) : undefined;
+  const overlay = selection?.kind === "overlay" ? edits.overlays.find((other) => other.id === selection.id) : undefined;
+  if (overlay && actions) {
+    return (
+      <OverlayFields
+        key={overlay.id}
+        overlay={overlay}
+        item={songs.get(overlay.media)}
+        duration={duration}
+        onChange={onOverlay}
+        onDuplicate={actions.duplicate}
+        onDelete={actions.remove}
+      />
+    );
+  }
   if (music && actions) {
     return (
       <MusicFields
@@ -758,7 +862,10 @@ function Inspector({
   if (index !== -1 && actions) {
     return (
       <SegmentFields
+        key={edits.segments[index].id}
         segment={edits.segments[index]}
+        item={songs.get(edits.segments[index].media ?? "")}
+        onChange={onSegment}
         index={index}
         count={edits.segments.length}
         sourceVolume={edits.source_volume}
@@ -842,6 +949,8 @@ function AssetPanel({
   transcript,
   near,
   onAddSource,
+  onAddVideo,
+  onAddOverlay,
 }: {
   tab: AssetTab;
   fonts: FontInfo[] | null;
@@ -852,13 +961,22 @@ function AssetPanel({
   // Where the episode's transcript opens: the Clip's first Segment.
   near: ClipSegment;
   onAddSource: (range: { start: number; end: number }) => void;
+  onAddVideo: (item: MediaItem) => void;
+  onAddOverlay: (item: MediaItem) => void;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
   if (tab === "media") {
     return (
       <div className="flex flex-col gap-4">
         {transcript && <SourcePicker transcript={transcript} near={near} onAdd={onAddSource} />}
-        <MediaAssets library={library} kinds={["video", "image"]} hint="Videos up to 3 minutes (500 MB) and images, kept for every Job." />
+        <MediaAssets
+          library={library}
+          kinds={["video", "image"]}
+          onAdd={onAddVideo}
+          addable={(item) => item.kind === "video"}
+          onOverlay={onAddOverlay}
+          hint="Videos up to 3 minutes (500 MB) and images, kept for every Job. A video goes after the piece at the playhead; an image, or a video with the layers button, goes over the clip."
+        />
       </div>
     );
   }

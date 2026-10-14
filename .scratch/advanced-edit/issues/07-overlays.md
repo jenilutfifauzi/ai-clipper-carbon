@@ -16,10 +16,29 @@
 
 **Blocked by:** 06.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam B: area, clamping, span.
-- [ ] Seam A: an Overlay at its place and opacity during its span only; muted by default.
-- [ ] Typecheck and build; browser walkthrough on desktop and phone.
+- [x] Seam B: area, clamping, span.
+- [x] Seam A: an Overlay at its place and opacity during its span only; muted by default.
+- [x] Typecheck and build; browser walkthrough on desktop and phone.
 
 ## Comments
+
+**2026-10-14: done.**
+
+**Checks:**
+- `tests/test_overlays.py`:
+  - Seam B: size and place, clamping to the frame, cut where the Clip or its video ends, images, a missing item.
+  - Seam A: validation (past the video's end, an unknown item, opacity > 1); muted by default; the delete of an image in use refused.
+  - Seam A: a green video and a blue image burned in where and only when planned (pixel colour inside their areas at two times).
+- `npm run build`.
+- Browser:
+  - An uploaded PNG added as an overlay.
+  - Dragged on the preview (y 760 → 987).
+  - Resized by its corner (width 540 → 673, its top-left kept).
+
+**Changes from the plan:**
+- An Overlay's size is its width in output pixels; its height follows its shape.
+- A video's sound, when turned up, is planned as an `AudioEvent`, so the music mixer and the preview's music player handle it.
+- In the Media tab, a video's card adds it to the Main Track, and its layers button adds it as an Overlay. An image's card adds an Overlay.
+- No rounded corners or borders yet (the plan's "+ corners" option wasn't chosen).

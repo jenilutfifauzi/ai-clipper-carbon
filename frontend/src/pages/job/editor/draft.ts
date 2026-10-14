@@ -18,5 +18,6 @@ export function candidateDraft(candidate: Candidate): CandidateChange {
     text_layers: candidate.text_layers,
     music: candidate.music,
     source_volume: candidate.source_volume,
+    overlays: candidate.overlays,
   };
 }

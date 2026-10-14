@@ -50,9 +50,14 @@ They are drawn over the captions and under the hook, in their order.
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`.
 
+Overlays (videos and images laid over the Clip) are centred where the owner put them at their size,
+kept inside the frame, cut where the Clip or their video ends, drawn over the Segments and under the
+Watermark; a video's sound, when turned up, is heard as a Music Clip is.
+
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned piece by
 piece: each Segment framed on its own, from its own Scenes and faces, its Scenes moved to where it
-plays in the Clip. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
+plays in the Clip. A Segment of a Media Library video is one Scene: the video cropped to fill the
+frame (Fill), or whole over a blurred copy of itself (Blur), with no captions. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
 Everything else is planned over the whole Clip, in seconds into it.
 """
 
@@ -63,7 +68,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Layout, LayoutOverride, MusicClip, TextAlign, TextLayer, WordEdit
+from app.candidates import Fit, Layout, LayoutOverride, MusicClip, Overlay, TextAlign, TextLayer, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import (
@@ -170,13 +175,21 @@ class Face:
 class Piece:
     """A Segment of a Clip cut into several, as the planner frames it: the Source from `start` to
     `end`, its shots `scenes` and sampled `faces` (None: unanalysed), and the Layout Overrides that
-    fall in it, all in seconds into the piece."""
+    fall in it, all in seconds into the piece. With `media`, a Media Library video `width` x `height`
+    instead, from `start` to `end` seconds into it, filled as `fit` says, its own sound at `volume`
+    (none when `silent`)."""
 
     start: float
     end: float
     scenes: list["Scene"] | None = None
     faces: list["FrameFaces"] | None = None
     layout_overrides: list[LayoutOverride] = field(default_factory=list)
+    media: str | None = None
+    width: int = 0
+    height: int = 0
+    fit: Fit = Fit.BLUR
+    volume: float = 1.0
+    silent: bool = False
 
 
 @dataclass(frozen=True)
@@ -197,6 +210,8 @@ class SceneLayout(StrEnum):
     SPLIT = "split"
     BLUR = "blur"
     PASSTHROUGH = "passthrough"
+    # A Media Library video cropped to fill the frame.
+    FILL = "fill"
 
 
 @dataclass(frozen=True)
@@ -369,13 +384,42 @@ class AudioEvent:
 
 @dataclass(frozen=True)
 class SegmentPlan:
-    """A Segment as played: the Source from `source_start` to `source_end`, from `start` to `end`
-    seconds into the Clip."""
+    """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
+    `source_end`, from `start` to `end` seconds into the Clip; a video's own sound at `volume`, or
+    none when it is `silent`."""
 
     start: float
     end: float
     source_start: float
     source_end: float
+    media: str | None = None
+    volume: float = 1.0
+    silent: bool = False
+
+
+@dataclass(frozen=True)
+class MediaInfo:
+    """What the planner needs of a Media Library item: its picture's size (0 for a song), its length
+    (None for an image), and whether it has sound."""
+
+    width: int
+    height: int
+    duration: float | None
+    has_audio: bool
+
+
+@dataclass(frozen=True)
+class OverlayEvent:
+    """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
+    into it) scaled into `area` at `opacity`, from `start` to `end` seconds into the Clip."""
+
+    media: str
+    area: Box
+    start: float
+    end: float
+    offset: float
+    opacity: float
+    image: bool
 
 
 @dataclass(frozen=True)
@@ -404,6 +448,8 @@ class RenderPlan:
     source_volume: float = 1.0
     # A Clip cut into several Segments: each, in order; none for a Clip of one range.
     segments: list[SegmentPlan] = field(default_factory=list)
+    # Laid over the Segments, in drawing order.
+    overlays: list[OverlayEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -440,6 +486,8 @@ def plan_render(
     media_lengths: dict[str, float] | None = None,
     source_volume: float = 1.0,
     pieces: list[Piece] | None = None,
+    overlays: list[Overlay] | None = None,
+    media_info: dict[str, MediaInfo] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -454,6 +502,9 @@ def plan_render(
     `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
     `music` is heard as `audio_events` places it, given the lengths of the songs it plays.
 
+    `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
+    their items (whose videos' sound, when turned up, joins the music).
+
     With `pieces`, the Clip is cut into those Segments, back to back (`start` and `end` being the hull
     of what they show), each framed on its own, ignoring `scenes`, `faces` and `layout_overrides`;
     the other times are all in seconds into the Clip."""
@@ -464,9 +515,12 @@ def plan_render(
         plans, at = [], 0.0
         for piece in pieces:
             length = round(piece.end - piece.start, 3)
-            framed = _framed(length, source, piece.scenes, piece.faces, layout, camera, piece.layout_overrides)
+            if piece.media is not None:
+                framed = [_media_scene(length, piece)]
+            else:
+                framed = _framed(length, source, piece.scenes, piece.faces, layout, camera, piece.layout_overrides)
             plans.extend(_moved(scene, at) for scene in framed)
-            segments.append(SegmentPlan(at, round(at + length, 3), piece.start, piece.end))
+            segments.append(SegmentPlan(at, round(at + length, 3), piece.start, piece.end, piece.media, piece.volume, piece.silent))
             at = round(at + length, 3)
         duration = at
     else:
@@ -486,9 +540,10 @@ def plan_render(
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
-        audio=audio_events(music or [], duration, media_lengths or {}),
+        audio=audio_events(music or [], duration, media_lengths or {}) + overlay_sound(overlays or [], duration, media_info or {}),
         source_volume=source_volume,
         segments=segments,
+        overlays=overlay_events(overlays or [], duration, media_info or {}),
     )
 
 
@@ -522,6 +577,15 @@ def _framed(
                 panels = _blur(a, source)
             plans.append(ScenePlan(a, b, chosen, panels))
     return plans
+
+
+def _media_scene(duration: float, piece: Piece) -> ScenePlan:
+    """A Media Library video's Segment as one Scene: cropped 9:16 to fill the frame, or whole over a
+    blurred copy of that crop."""
+    filled = _filled(piece.width, piece.height, 0.0)
+    if piece.fit is Fit.FILL:
+        return ScenePlan(0.0, duration, SceneLayout.FILL, [filled])
+    return ScenePlan(0.0, duration, SceneLayout.BLUR, [replace(filled, blur=True), _fitted(piece.width, piece.height, 0.0)])
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:
@@ -587,6 +651,47 @@ def audio_events(music: list[MusicClip], duration: float, lengths: dict[str, flo
             AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, min(clip.fade_in, most), min(clip.fade_out, most))
         )
     return events
+
+
+def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[OverlayEvent]:
+    """The Overlays as drawn in a Clip lasting `duration` (`_overlay_event`)."""
+    return [event for overlay in overlays if (event := _overlay_event(overlay, duration, items)) is not None]
+
+
+def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[AudioEvent]:
+    """The sound of the Overlays' videos that are turned up, heard as Music Clips are, while they show."""
+    sounds = []
+    for overlay in overlays:
+        event = _overlay_event(overlay, duration, items)
+        if event is None or event.image or overlay.volume <= 0 or not items[overlay.media].has_audio:
+            continue
+        sounds.append(AudioEvent(overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0))
+    return sounds
+
+
+def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo]) -> OverlayEvent | None:
+    """The Overlay as drawn: `size` pixels wide (its item's shape giving its height), centred on its
+    place and kept inside the frame, cut where the Clip or its video ends. None when its item is gone
+    or it would start at or after either end."""
+    item = items.get(overlay.media)
+    start = round(overlay.start, 3)
+    if item is None or not item.width or not item.height or start >= duration:
+        return None
+    end = start + overlay.secs
+    if item.duration is not None:
+        if overlay.offset >= item.duration:
+            return None
+        end = min(end, start + item.duration - overlay.offset)
+    end = round(min(end, duration), 3)
+    width = min(overlay.size, OUTPUT_WIDTH)
+    height = max(2, round(width * item.height / item.width))
+    if height > OUTPUT_HEIGHT:
+        width, height = max(2, round(OUTPUT_HEIGHT * item.width / item.height)), OUTPUT_HEIGHT
+    width, height = _even(width), _even(height)
+    x = min(max(round(overlay.x - width / 2), 0), OUTPUT_WIDTH - width)
+    y = min(max(round(overlay.y - height / 2), 0), OUTPUT_HEIGHT - height)
+    offset = round(overlay.offset, 3) if item.duration is not None else 0.0
+    return OverlayEvent(overlay.media, Box(x, y, width, height), start, end, offset, overlay.opacity, item.duration is None)
 
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
@@ -1372,6 +1477,18 @@ def _centre_crop(width: int, height: int) -> Panel:
     x = _centred(width, crop_width)
     y = _centred(height, crop_height)
     return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(0.0, x, y)])
+
+
+def _filled(width: int, height: int, start: float) -> Panel:
+    """The largest 9:16 crop from the middle of a frame of any shape, filling the output."""
+    if width * OUTPUT_HEIGHT >= height * OUTPUT_WIDTH:
+        crop_height = _even_floor(height)
+        crop_width = min(_even(crop_height * OUTPUT_WIDTH / OUTPUT_HEIGHT), _even_floor(width))
+    else:
+        crop_width = _even_floor(width)
+        crop_height = min(_even(crop_width * OUTPUT_HEIGHT / OUTPUT_WIDTH), _even_floor(height))
+    x, y = _centred(width, crop_width), _centred(height, crop_height)
+    return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(start, x, y)])
 
 
 def _fitted(width: int, height: int, start: float) -> Panel:

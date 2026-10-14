@@ -267,7 +267,7 @@ function Playhead({ playback, pps }: { playback: Playback; pps: number }) {
   );
 }
 
-export type ItemTone = "accent" | "waiting" | "text" | "audio" | "neutral" | "video";
+export type ItemTone = "accent" | "waiting" | "text" | "audio" | "neutral" | "video" | "overlay";
 
 const TONES: Record<ItemTone, string> = {
   accent: "bg-accent/25 ring-accent/70",
@@ -277,6 +277,7 @@ const TONES: Record<ItemTone, string> = {
   neutral: "bg-surface-raised ring-border",
   // Over the Scenes drawn under it.
   video: "bg-transparent ring-text/40",
+  overlay: "bg-[oklch(0.66_0.13_235/0.3)] ring-[oklch(0.66_0.13_235/0.85)]",
 };
 
 let gestures = 0;

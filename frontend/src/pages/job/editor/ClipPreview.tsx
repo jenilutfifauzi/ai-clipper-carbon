@@ -18,6 +18,8 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
+import { PreviewOverlays, type OverlayControls } from "./PreviewOverlays";
+import { PreviewSegments } from "./PreviewSegments";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -67,6 +69,7 @@ export function ClipPreview({
   playback,
   onWatermarkMove,
   texts,
+  overlays,
   fit = false,
 }: {
   src: string;
@@ -75,6 +78,7 @@ export function ClipPreview({
   playback: Playback;
   onWatermarkMove?: (x: number, y: number) => void;
   texts?: TextControls;
+  overlays?: OverlayControls;
   fit?: boolean;
 }) {
   const stage = useRef<HTMLDivElement>(null);
@@ -139,6 +143,8 @@ export function ClipPreview({
           muted={slot > 0}
         />
       ))}
+      <PreviewSegments plan={plan} playback={playback} />
+      <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} />
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}

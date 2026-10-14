@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from app.candidates import Layout, LayoutOverride, MusicClip, Segment, TextLayer, WordEdit
+from app.candidates import Layout, LayoutOverride, MusicClip, Overlay, Segment, TextLayer, WordEdit
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
 CLIPS_DIR = "clips"
@@ -57,6 +57,7 @@ class RenderedClip:
     music: list[MusicClip] = field(default_factory=list)
     source_volume: float = 1.0
     segments: list[Segment] = field(default_factory=list)
+    overlays: list[Overlay] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

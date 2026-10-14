@@ -52,7 +52,7 @@ def test_the_encode_mixes_music_only_when_there_is_some(tmp_path):
 
     mixed = plan_render(0, 5, SOURCE, music=[music(volume=0.5, fade_out=1.0)], media_lengths={SONG: 30}, source_volume=0.2)
     command = renderer._command(
-        Path("s.mp4"), mixed, None, "libx264", tmp_path / "v.mp4", tmp_path / "p.jpg", None, music={SONG: Path("song.m4a")}
+        Path("s.mp4"), mixed, None, "libx264", tmp_path / "v.mp4", tmp_path / "p.jpg", None, files={SONG: Path("song.m4a")}
     )
     assert command[command.index("song.m4a") - 1] == "-i"
     graph = command[command.index("-filter_complex") + 1]

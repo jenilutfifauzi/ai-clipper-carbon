@@ -22,6 +22,7 @@ never runs at the same time as the face detection or an encode: each Clip's step
 import logging
 import threading
 import time
+from typing import Protocol
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -35,8 +36,8 @@ from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.logos import LOGOS_DIR, LogoStore
-from app.media import MEDIA_DIR, MediaStore
-from app.planner import WORD_EDIT_REACH_SECS, Piece, RenderPlan, plan_render, reframes
+from app.media import MEDIA_DIR, MediaItem, MediaStore
+from app.planner import WORD_EDIT_REACH_SECS, MediaInfo, Piece, RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
 from app.storage import write_atomic
@@ -127,12 +128,13 @@ def candidate_plan(
     presets: PresetStore,
     camera: CameraTuning,
     logos: LogoStore | None = None,
-    media: MediaStore | None = None,
+    media: "MediaFinder | None" = None,
 ) -> RenderPlan:
     """The Render Plan of the Candidate as it is: each of its Segments (`candidate.pieces()`) captioned
     with its `words` (None: no captions) and framed by its `analyses` (None: unanalysed, or a Source
-    passed through), both in seconds into the Segment; its Watermark's Logo from `logos` and the songs
-    of its music from `media`. Its Word Edits and Layout Overrides, on the Source's timeline, apply in
+    passed through), both in seconds into the Segment; its Watermark's Logo from `logos`, and the
+    songs of its music and the videos of its Segments from `media` (a video that isn't there is left
+    out). A video's Segment has no captions. Its Word Edits and Layout Overrides, on the Source's timeline, apply in
     every Segment that shows their time (docs/adr/0002-segments-and-timeline-time.md).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
@@ -148,6 +150,8 @@ def candidate_plan(
         music=candidate.music,
         media_lengths=_lengths(media, candidate.media_ids()),
         source_volume=candidate.source_volume,
+        overlays=candidate.overlays,
+        media_info=_info(media, candidate.media_ids()),
     )
     if not candidate.segments:
         [analysis] = analyses
@@ -162,6 +166,14 @@ def candidate_plan(
     pieces, heard, edits, at = [], [], [], 0.0
     for i, (segment, analysis) in enumerate(zip(candidate.pieces(), analyses)):
         length = round(segment.end - segment.start, 3)
+        if segment.media is not None:
+            item = media.find(segment.media) if media else None
+            if item is None or item.width is None or item.height is None:
+                continue
+            pieces.append(Piece(segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
+                                fit=segment.fit, volume=segment.volume, silent=not item.has_audio))
+            at = round(at + length, 3)
+            continue
         held = [replace(o, at=round(o.at - segment.start, 3)) for o in candidate.layout_overrides if segment.start <= o.at <= segment.end]
         pieces.append(Piece(segment.start, segment.end, analysis.scenes if analysis else None,
                             analysis.frames if analysis else None, held))
@@ -185,7 +197,23 @@ def candidate_plan(
     )
 
 
-def _lengths(media: MediaStore | None, ids: set[str]) -> dict[str, float]:
+class MediaFinder(Protocol):
+    """Where the Media Library's items are looked up: the MediaStore."""
+
+    def find(self, media_id: str) -> MediaItem | None: ...
+
+
+def _info(media: MediaFinder | None, ids: set[str]) -> dict[str, MediaInfo]:
+    """What the planner needs of the Media Library items that are there, by id."""
+    items = [media.find(media_id) for media_id in sorted(ids)] if media else []
+    return {
+        item.id: MediaInfo(item.width or 0, item.height or 0, item.duration if item.kind.value != "image" else None, item.has_audio)
+        for item in items
+        if item is not None
+    }
+
+
+def _lengths(media: MediaFinder | None, ids: set[str]) -> dict[str, float]:
     """The lengths of the Media Library items that are there, by id."""
     items = [media.find(media_id) for media_id in sorted(ids)] if media else []
     return {item.id: item.duration for item in items if item is not None and item.duration is not None}
@@ -265,7 +293,7 @@ class Renders:
         reframed) are saved for its range as it is."""
         assert job.source is not None
         job_dir = self.store.job_dir(job.id)
-        pieces = candidate.pieces()
+        pieces = candidate.episode_pieces()
         words = not job.options.captions or all(
             saved_words(job_dir, piece.start, piece.end, job.options.language, self.settings.whisper_model) is not None
             for piece in pieces
@@ -401,9 +429,14 @@ class Renders:
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
-            music = {event.media: self.media.file(event.media) for event in plan.audio}
+            used = (
+                {event.media for event in plan.audio}
+                | {segment.media for segment in plan.segments if segment.media}
+                | {overlay.media for overlay in plan.overlays}
+            )
+            files = {media_id: self.media.file(media_id) for media_id in used}
             encoder = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, music
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:
@@ -441,6 +474,7 @@ class Renders:
                 music=candidate.music,
                 source_volume=candidate.source_volume,
                 segments=candidate.segments,
+                overlays=candidate.overlays,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",
@@ -457,20 +491,26 @@ class Renders:
         return self.store.change_clips(job.id, finish)
 
     def _all_words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[list[Word]]:
-        """Each of the Candidate's Segments' Words (`_words`), the progress shared out by their lengths."""
-        pieces = candidate.pieces()
-        total, done, found = sum(p.end - p.start for p in pieces), 0.0, []
-        for piece in pieces:
+        """Each of the Candidate's Segments' Words (`_words`; none for a video's), the progress shared
+        out by their lengths."""
+        total, done, found = sum(p.end - p.start for p in candidate.episode_pieces()), 0.0, []
+        for piece in candidate.pieces():
+            if piece.media is not None:
+                found.append([])
+                continue
             share = (piece.end - piece.start) / total
             found.append(self._words(job, candidate, piece.start, piece.end, lambda d, done=done, share=share: progress(done + share * d)))
             done += share
         return found
 
     def _all_analyses(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[ClipAnalysis | None]:
-        """Each of the Candidate's Segments' Scenes and faces (`_analysis`), the progress shared out by their lengths."""
-        pieces = candidate.pieces()
-        total, done, found = sum(p.end - p.start for p in pieces), 0.0, []
-        for piece in pieces:
+        """Each of the Candidate's Segments' Scenes and faces (`_analysis`; none for a video's), the
+        progress shared out by their lengths."""
+        total, done, found = sum(p.end - p.start for p in candidate.episode_pieces()), 0.0, []
+        for piece in candidate.pieces():
+            if piece.media is not None:
+                found.append(None)
+                continue
             share = (piece.end - piece.start) / total
             found.append(self._analysis(job, candidate, piece.start, piece.end, lambda d, done=done, share=share: progress(done + share * d)))
             done += share

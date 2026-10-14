@@ -1,4 +1,4 @@
-import { Film, ImagePlus, Music, Pause, Play, Plus, Trash2, Upload } from "lucide-react";
+import { Film, ImagePlus, Layers, Music, Pause, Play, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -93,12 +93,17 @@ export function MediaAssets({
   library,
   kinds,
   onAdd,
+  addable = () => true,
+  onOverlay,
   hint,
 }: {
   library: MediaLibrary;
   kinds: MediaKind[];
-  // What adding an item does; none yet when left out.
+  // What adding an item does, for the items it is offered for (by default, all of them).
   onAdd?: (item: MediaItem) => void;
+  addable?: (item: MediaItem) => boolean;
+  // Adding a video or an image over the Clip instead.
+  onOverlay?: (item: MediaItem) => void;
   hint: ReactNode;
 }) {
   const audio = kinds.includes("audio");
@@ -173,7 +178,13 @@ export function MediaAssets({
       ) : (
         <ul className="grid grid-cols-2 gap-2">
           {items.map((item) => (
-            <VisualCard key={item.id} item={item} onAdd={onAdd} onDelete={() => setDeleting(item)} />
+            <VisualCard
+              key={item.id}
+              item={item}
+              onAdd={addable(item) ? onAdd : onOverlay}
+              onOverlay={addable(item) ? onOverlay : undefined}
+              onDelete={() => setDeleting(item)}
+            />
           ))}
         </ul>
       )}
@@ -236,7 +247,18 @@ function UploadButton({
   );
 }
 
-function VisualCard({ item, onAdd, onDelete }: { item: MediaItem; onAdd?: (item: MediaItem) => void; onDelete: () => void }) {
+function VisualCard({
+  item,
+  onAdd,
+  onOverlay,
+  onDelete,
+}: {
+  item: MediaItem;
+  onAdd?: (item: MediaItem) => void;
+  // A second way to add it: over the Clip.
+  onOverlay?: (item: MediaItem) => void;
+  onDelete: () => void;
+}) {
   return (
     <li className="group relative flex min-w-0 flex-col gap-1">
       <button
@@ -257,8 +279,21 @@ function VisualCard({ item, onAdd, onDelete }: { item: MediaItem; onAdd?: (item:
           </span>
         )}
       </button>
-      <span className="truncate text-xs text-muted" title={item.name}>
-        {item.name}
+      <span className="flex items-center justify-between gap-1">
+        <span className="truncate text-xs text-muted" title={item.name}>
+          {item.name}
+        </span>
+        {onOverlay && (
+          <button
+            type="button"
+            onClick={() => onOverlay(item)}
+            aria-label={`Add ${item.name} as an overlay`}
+            title="Add as an overlay"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus"
+          >
+            <Layers aria-hidden size={14} />
+          </button>
+        )}
       </span>
       <DeleteButton name={item.name} onClick={onDelete} />
     </li>

@@ -2,19 +2,24 @@ import { useSyncExternalStore } from "react";
 
 type Listener = () => void;
 
-/** A piece of the Clip: the Source from `source_start` to `source_end`, from `start` to `end` seconds into the Clip. */
+/**
+ * A piece of the Clip: the Source from `source_start` to `source_end`, from `start` to `end` seconds
+ * into the Clip; or, with `media`, a Media Library video from `source_start` to `source_end` seconds
+ * into it, which the preview plays itself while the Source waits.
+ */
 export interface Piece {
   start: number;
   end: number;
   source_start: number;
   source_end: number;
+  media?: string | null;
 }
 
-/** The pieces of a Clip of these Segments of the Source, back to back from 0 s. */
-export function piecesFrom(segments: { start: number; end: number }[]): Piece[] {
+/** The pieces of a Clip of these Segments, back to back from 0 s. */
+export function piecesFrom(segments: { start: number; end: number; media?: string | null }[]): Piece[] {
   let at = 0;
   return segments.map((segment) => {
-    const piece = { start: at, end: at + segment.end - segment.start, source_start: segment.start, source_end: segment.end };
+    const piece = { start: at, end: at + segment.end - segment.start, source_start: segment.start, source_end: segment.end, media: segment.media ?? null };
     at = piece.end;
     return piece;
   });
@@ -27,9 +32,10 @@ const HANDOVER_SECS = 0.03;
  * The clip editor's playback of a Candidate: the master <video> playing the Source, and its time in
  * seconds into the Clip. The Clip is one range of the Source or several pieces of it, back to back
  * (docs/adr/0002-segments-and-timeline-time.md): at the end of each piece the video jumps to the
- * next one's start. The preview, its follower videos and the timeline all read and set the time
- * through it. Playing stops at the Clip's end, checked every frame; started outside the Clip
- * (before its start), it plays freely.
+ * next one's start. Through a piece of a Media Library video, the Source video waits and the time
+ * runs on a clock of its own, which that video's player follows. The preview, its follower videos
+ * and the timeline all read and set the time through it. Playing stops at the Clip's end, checked
+ * every frame; started outside the Clip (before its start), it plays freely.
  */
 export class Playback {
   private video: HTMLVideoElement | null = null;
@@ -38,14 +44,22 @@ export class Playback {
   private armed = false;
   private detach: (() => void) | null = null;
   pieces: Piece[] = [{ start: 0, end: 0, source_start: 0, source_end: 0 }];
-  // The piece the video is in.
+  // The piece the time is in.
   private index = 0;
+  // While playing a video's piece: when the clock read `from` seconds into the Clip.
+  private clock: { at: number; from: number } | null = null;
+  // The Source video paused here to hand over to a video's piece: not a pause of the playback.
+  private handing = false;
   // In seconds into the Clip, as last read: updated every frame while playing.
   time = 0;
   playing = false;
 
   get duration() {
     return this.pieces[this.pieces.length - 1].end;
+  }
+
+  private get piece() {
+    return this.pieces[this.index];
   }
 
   // The Clip as one range of the Source.
@@ -57,7 +71,7 @@ export class Playback {
     if (!pieces.length || JSON.stringify(pieces) === JSON.stringify(this.pieces)) return;
     const moved = pieces[0].source_start !== this.pieces[0].source_start;
     this.pieces = pieces;
-    if (this.video && this.video.paused) {
+    if (!this.playing) {
       // A moved start waits at the new start; otherwise the time is kept, inside the Clip.
       this.seek(moved ? 0 : Math.min(this.time, this.duration));
     } else this.index = Math.min(this.index, pieces.length - 1);
@@ -70,18 +84,18 @@ export class Playback {
     if (!video) return;
     const onPlay = () => {
       this.armed = this.read() >= -0.05 && this.read() < this.duration;
-      this.playing = true;
-      cancelAnimationFrame(this.frame);
-      this.frame = requestAnimationFrame(this.tick);
-      this.emit();
+      this.start();
     };
     const onPause = () => {
-      this.playing = false;
-      cancelAnimationFrame(this.frame);
-      this.time = this.read();
-      this.emit();
+      if (this.handing) {
+        this.handing = false;
+        return;
+      }
+      if (this.clock) return;
+      this.stop();
     };
     const onSeeked = () => {
+      if (this.piece.media) return;
       this.time = this.read();
       this.emit();
     };
@@ -99,21 +113,55 @@ export class Playback {
     };
   }
 
+  private start() {
+    this.playing = true;
+    cancelAnimationFrame(this.frame);
+    this.frame = requestAnimationFrame(this.tick);
+    this.emit();
+  }
+
+  private stop() {
+    this.time = this.read();
+    this.clock = null;
+    this.playing = false;
+    cancelAnimationFrame(this.frame);
+    this.emit();
+  }
+
   private read() {
-    const piece = this.pieces[this.index];
+    const piece = this.piece;
+    if (piece.media) return this.clock ? this.clock.from + (performance.now() - this.clock.at) / 1000 : this.time;
     return this.video ? piece.start + (this.video.currentTime - piece.source_start) : this.time;
+  }
+
+  // Into the piece at `index`, from its start, still playing.
+  private enter(index: number) {
+    const from = this.piece;
+    this.index = index;
+    const next = this.piece;
+    this.time = next.start;
+    if (next.media) {
+      this.clock = { at: performance.now(), from: next.start };
+      if (!from.media && this.video && !this.video.paused) {
+        this.handing = true;
+        this.video.pause();
+      }
+    } else {
+      this.clock = null;
+      if (this.video) {
+        this.video.currentTime = next.source_start;
+        if (from.media) void this.video.play().catch(() => {});
+      }
+    }
   }
 
   private tick = () => {
     this.time = this.read();
     const last = this.index === this.pieces.length - 1;
-    if (this.armed && !last && this.time >= this.pieces[this.index].end - HANDOVER_SECS) {
-      // On to the next piece, still playing.
-      this.index += 1;
-      if (this.video) this.video.currentTime = this.pieces[this.index].source_start;
-      this.time = this.pieces[this.index].start;
+    if (this.armed && !last && this.time >= this.piece.end - HANDOVER_SECS) {
+      this.enter(this.index + 1);
     } else if (this.armed && last && this.time >= this.duration) {
-      this.video?.pause();
+      this.pause();
       this.seek(this.duration);
       return;
     }
@@ -123,21 +171,42 @@ export class Playback {
 
   // To `time` seconds into the Clip.
   seek(time: number) {
-    this.time = time;
     const index = this.pieces.findIndex((piece) => time < piece.end);
+    const wasMedia = !!this.piece.media;
     this.index = index === -1 ? this.pieces.length - 1 : index;
-    const piece = this.pieces[this.index];
-    if (this.video) this.video.currentTime = piece.source_start + (time - piece.start);
+    this.time = time;
+    const piece = this.piece;
+    if (piece.media) {
+      if (this.playing) {
+        this.clock = { at: performance.now(), from: time };
+        if (!wasMedia && this.video && !this.video.paused) {
+          this.handing = true;
+          this.video.pause();
+        }
+      }
+    } else {
+      const resume = this.playing && !!this.clock;
+      this.clock = null;
+      if (this.video) {
+        this.video.currentTime = piece.source_start + (time - piece.start);
+        if (resume) void this.video.play().catch(() => {});
+      }
+    }
     this.emit();
   }
 
   play(from?: number) {
     if (from !== undefined) this.seek(from);
-    void this.video?.play();
+    if (this.piece.media) {
+      this.armed = this.time >= -0.05 && this.time < this.duration;
+      this.clock = { at: performance.now(), from: this.time };
+      this.start();
+    } else void this.video?.play();
   }
 
   pause() {
-    this.video?.pause();
+    if (this.clock) this.stop();
+    else this.video?.pause();
   }
 
   toggle() {

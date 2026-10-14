@@ -67,14 +67,19 @@ def preview_plan(
     assert job.source is not None
     source = job.source.metadata
     pieces = candidate.pieces()
-    saved = [saved_words(job_dir, piece.start, piece.end, job.options.language, settings.whisper_model) for piece in pieces]
+    # A video's Segment has neither Words nor analysis.
+    saved = [
+        [] if piece.media else saved_words(job_dir, piece.start, piece.end, job.options.language, settings.whisper_model)
+        for piece in pieces
+    ]
     words = [
         found if found is not None else transcript_words(transcript, piece.start, piece.end, source.duration)
         for piece, found in zip(pieces, saved)
     ]
     words_source = WordsSource.CLIP if all(found is not None for found in saved) else WordsSource.TRANSCRIPT
     analyses = [
-        saved_analysis(job_dir, piece.start, piece.end, settings.analysis, BLAZE_FACE_MODEL.name) if reframes(source) else None
+        saved_analysis(job_dir, piece.start, piece.end, settings.analysis, BLAZE_FACE_MODEL.name)
+        if reframes(source) and piece.media is None else None
         for piece in pieces
     ]
     plan = candidate_plan(
@@ -96,5 +101,7 @@ def preview_plan(
             if 0 <= (word.start + word.end) / 2 < length
         ]
         at += length
-    analysed = not reframes(source) or all(analysis is not None for analysis in analyses)
+    analysed = not reframes(source) or all(
+        analysis is not None for analysis, piece in zip(analyses, pieces) if piece.media is None
+    )
     return PreviewPlan(plan, shown, words_source, analysed=analysed)

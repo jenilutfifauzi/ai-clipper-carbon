@@ -1,7 +1,8 @@
-import { Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { ClipSegment, Transcript } from "../../../api";
+import type { ClipSegment, Fit, MediaItem, Transcript } from "../../../api";
 import { Button } from "../../../components/Button";
+import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
@@ -13,14 +14,14 @@ export const SEGMENT_MIN_SECS = 0.3;
 /**
  * The Main Track's Segments after a drag of Segment `id` from `origin` (the Segments when the drag
  * began): moved, it takes the place its middle is dragged to; its start or end trimmed, it shows
- * that much more or less of the Source (within the Source's `length`), and the Segments after it
- * close up behind it.
+ * that much more or less of the Source or its video (within its `length`), and the Segments after
+ * it close up behind it.
  */
 export function draggedSegments(
   origin: ClipSegment[],
   id: string,
   change: { start: number; end: number; edge: "move" | "start" | "end" },
-  length: number,
+  lengthOf: (segment: ClipSegment) => number,
 ): ClipSegment[] {
   const index = origin.findIndex((segment) => segment.id === id);
   const segment = origin[index];
@@ -34,15 +35,29 @@ export function draggedSegments(
   const next =
     change.edge === "start"
       ? { ...segment, start: round(Math.min(Math.max(segment.start + change.start - from.start, 0), segment.end - SEGMENT_MIN_SECS)) }
-      : { ...segment, end: round(Math.max(Math.min(segment.end + change.end - from.end, length), segment.start + SEGMENT_MIN_SECS)) };
+      : { ...segment, end: round(Math.max(Math.min(segment.end + change.end - from.end, lengthOf(segment)), segment.start + SEGMENT_MIN_SECS)) };
   return origin.map((other) => (other.id === id ? next : other));
 }
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
-/** The selected Segment: what it shows of the episode, and what can be done to it. */
+const FITS = [
+  { value: "blur", label: "Fit over blur" },
+  { value: "fill", label: "Fill" },
+] as const;
+
+/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits). */
+export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
+  return { id, start: 0, end: round(Math.min(item.duration ?? 1, 180)), media: item.id, fit: "blur", volume: 1 };
+}
+
+/**
+ * The selected Segment: what it shows (of the episode, or of a video, with how it fills the frame
+ * and its sound), and what can be done to it.
+ */
 export function SegmentFields({
   segment,
+  item,
   index,
   count,
   sourceVolume,
@@ -51,8 +66,11 @@ export function SegmentFields({
   onDuplicate,
   onDelete,
   onSourceVolume,
+  onChange,
 }: {
   segment: ClipSegment;
+  // Its video, for a video's Segment.
+  item: MediaItem | undefined;
   index: number;
   count: number;
   sourceVolume: number;
@@ -61,13 +79,15 @@ export function SegmentFields({
   onDuplicate: () => void;
   onDelete: () => void;
   onSourceVolume: (volume: number) => void;
+  onChange: (segment: ClipSegment, group: string) => void;
 }) {
+  const Icon = segment.media ? Clapperboard : Film;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 font-semibold">
-          <Film aria-hidden size={17} className="text-muted" />
-          Piece {index + 1} of {count}
+        <h2 className="flex min-w-0 items-center gap-2 font-semibold">
+          <Icon aria-hidden size={17} className="shrink-0 text-muted" />
+          <span className="truncate">{segment.media ? (item?.name ?? "Video") : `Piece ${index + 1} of ${count}`}</span>
         </h2>
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={onSplit} disabled={!canSplit} aria-label="Split at the playhead">
@@ -81,19 +101,49 @@ export function SegmentFields({
           </Button>
         </div>
       </div>
-      <p className="text-sm text-pretty text-muted">
-        {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {(segment.end - segment.start).toFixed(1)} s. Drag its
-        edges to trim it, or drag it to another place. Its ends snap to words.
-      </p>
-      <Slider
-        label="Original sound"
-        value={sourceVolume}
-        min={0}
-        max={2}
-        step={0.05}
-        format={(v) => `${Math.round(v * 100)}%`}
-        onChange={onSourceVolume}
-      />
+      {segment.media ? (
+        <>
+          <p className="text-sm text-pretty text-muted">
+            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s. Drag its
+            edges to trim it, or drag it to another place.
+          </p>
+          <Segmented
+            legend="In the frame"
+            options={FITS}
+            value={segment.fit ?? "blur"}
+            onChange={(fit: Fit) => onChange({ ...segment, fit }, `segment:${segment.id}:fit`)}
+          />
+          {item?.has_audio === false ? (
+            <p className="text-sm text-muted">This video has no sound.</p>
+          ) : (
+            <Slider
+              label="Its sound"
+              value={segment.volume ?? 1}
+              min={0}
+              max={2}
+              step={0.05}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-pretty text-muted">
+            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {(segment.end - segment.start).toFixed(1)} s. Drag
+            its edges to trim it, or drag it to another place. Its ends snap to words.
+          </p>
+          <Slider
+            label="Original sound"
+            value={sourceVolume}
+            min={0}
+            max={2}
+            step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={onSourceVolume}
+          />
+        </>
+      )}
     </div>
   );
 }
