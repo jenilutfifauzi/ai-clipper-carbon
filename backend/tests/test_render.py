@@ -873,3 +873,42 @@ def test_without_captions_the_preview_has_none_but_still_gives_the_words(client,
     client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/prepare")
     rendered(client, job)
     assert transcriber.calls == [] and preview(client, job, candidate)["analysed"] is True
+
+
+def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    render(client, job)
+    rendered(client, job)
+    words = preview(client, job, candidate)["words"]
+    seru, banget = words[2], words[3]
+    start = candidate["start"]
+    at = lambda word: start + (word["start"] + word["end"]) / 2  # noqa: E731
+    edits = [
+        {"at": at(seru), "text": "  keren "},
+        {"at": at(banget), "break_before": True},
+        {"at": at(words[1]), "text": ""},
+        {"at": 1.0},  # changes nothing: dropped
+    ]
+    candidate = patch(client, job, candidate, word_edits=edits)
+    assert candidate["edited"] is True
+    assert candidate["word_edits"] == [
+        {"at": at(words[1]), "text": "", "break_before": False},
+        {"at": at(seru), "text": "keren", "break_before": False},
+        {"at": at(banget), "text": None, "break_before": True},
+    ]
+    # The preview gives each Word its edit, as saved.
+    shown = preview(client, job, candidate)
+    assert [w["edit"] for w in shown["words"]] == [None, candidate["word_edits"][0], candidate["word_edits"][1], candidate["word_edits"][2], None]
+    assert [event["text"] for event in shown["plan"]["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
+
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
+    assert [event["text"] for event in plan["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    for bad in ([{"at": 1.0, "text": "x" * 41}], [{"at": "inf", "text": "x"}], [{"at": 1.0, "text": "x"}] * 501, [{"text": "x"}]):
+        assert client.patch(url, json={"word_edits": bad}).status_code == 422

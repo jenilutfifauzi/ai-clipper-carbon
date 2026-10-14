@@ -134,6 +134,7 @@ def candidate_plan(
         scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
         layout=candidate.layout, words=words, hook=candidate.hook_text, camera=camera,
         caption_style=caption_style, hook_style=hook_style,
+        word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
     )
 
 

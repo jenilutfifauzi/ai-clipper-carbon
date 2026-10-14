@@ -17,6 +17,7 @@ import { Switch } from "../../components/Switch";
 import { loadFonts } from "../../fonts";
 import { formatPrecise } from "../../format";
 import { candidateName } from "./CandidateList";
+import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { Playback } from "./editor/playback";
 import { StylePanel, type StyleDraft } from "./editor/StylePanel";
@@ -110,6 +111,7 @@ export function CandidateEditor({
     layout: candidate.layout,
     preset_id: styleDraft?.preset_id ?? candidate.preset_id,
     style_overrides: styleDraft?.style_overrides ?? candidate.style_overrides,
+    word_edits: candidate.word_edits,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -214,6 +216,22 @@ export function CandidateEditor({
               }}
             />
           )}
+        </section>
+      )}
+
+      {preview && job.options.captions && (
+        <section aria-labelledby="caption-text-heading" className="flex flex-col gap-3">
+          <h4 id="caption-text-heading" className="font-semibold">
+            Caption text
+          </h4>
+          <CaptionTextEditor
+            key={candidate.id}
+            preview={preview}
+            clipStart={candidate.start}
+            edits={candidate.word_edits}
+            playback={playback}
+            onChange={(word_edits) => void onSave({ word_edits })}
+          />
         </section>
       )}
 

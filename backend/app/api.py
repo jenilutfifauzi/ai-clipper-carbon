@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel, ConfigDict, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
-from app.candidates import Candidate, Layout
+from app.candidates import Candidate, Layout, WordEdit
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
@@ -41,6 +41,8 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 # The longest hook text accepted. The UI warns well before this, once the text doesn't fit in the
 # hook's two lines (GET /api/hook).
 HOOK_MAX_CHARS = 200
+# The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
+WORD_EDITS_MAX = 500
 
 _OPTIONS = TypeAdapter(JobOptions)
 
@@ -99,6 +101,8 @@ class CandidateUpdate(BaseModel):
     preset_id: str | None = None
     # Replaces the Candidate's overrides as a whole.
     style_overrides: StyleOverrides | None = None
+    # Replaces the Candidate's Word Edits as a whole.
+    word_edits: Annotated[list[WordEdit], Field(max_length=WORD_EDITS_MAX)] | None = None
 
 
 class PresetBody(BaseModel):

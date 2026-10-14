@@ -6,14 +6,14 @@ analysing: the Clip's own Words and analysis when a render or a preparation has 
 range, and otherwise the episode Transcript's Words and a single Scene.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from app.candidates import Candidate
+from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
-from app.planner import RenderPlan, reframes
+from app.planner import RenderPlan, match_edits, reframes
 from app.rendering import candidate_plan, saved_analysis, saved_words, transcript_words
 from app.styles import PresetStore
 from app.transcript import Transcript, Word
@@ -27,10 +27,21 @@ class WordsSource(StrEnum):
 
 
 @dataclass(frozen=True)
+class PreviewWord:
+    """A Word the captions are made of, as heard (in seconds into the Clip), and the Candidate's Word
+    Edit that applies to it (its time on the Source's timeline), if any."""
+
+    text: str
+    start: float
+    end: float
+    edit: WordEdit | None = None
+
+
+@dataclass(frozen=True)
 class PreviewPlan:
     plan: RenderPlan
-    # The Words the captions are made of, in seconds into the Clip: those whose middle is in it.
-    words: list[Word]
+    # Those whose middle is in the Clip.
+    words: list[PreviewWord]
     words_source: WordsSource
     # Whether the Scenes and faces are the Clip's own: False while it is one Scene, unanalysed.
     analysed: bool
@@ -52,5 +63,13 @@ def preview_plan(
         analysis = saved_analysis(job_dir, candidate.start, candidate.end, settings.analysis, BLAZE_FACE_MODEL.name)
     plan = candidate_plan(candidate, source, words if job.options.captions else None, analysis, presets, settings.camera)
     duration = candidate.end - candidate.start
-    shown = [word for word in words if 0 <= (word.start + word.end) / 2 < duration]
+    ordered = sorted(words, key=lambda word: word.start)
+    # Matched on the Clip's timeline; given back as the Candidate holds them.
+    shifted = [replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits]
+    original = {id(edit): kept for edit, kept in zip(shifted, candidate.word_edits)}
+    shown = [
+        PreviewWord(word.text, word.start, word.end, None if edit is None else original[id(edit)])
+        for word, edit in zip(ordered, match_edits(ordered, shifted))
+        if 0 <= (word.start + word.end) / 2 < duration
+    ]
     return PreviewPlan(plan, shown, words_source, analysed=analysis is not None or not reframes(source))

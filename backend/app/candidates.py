@@ -2,8 +2,14 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Annotated
+
+from pydantic import FiniteFloat, StringConstraints
 
 from app.styles import DEFAULT_PRESET, StyleOverrides
+
+# The longest text a Word Edit gives a Word.
+WORD_EDIT_MAX_CHARS = 40
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,19 @@ class Layout(StrEnum):
     TRACK = "track"
     SPLIT = "split"
     BLUR = "blur"
+
+
+@dataclass(frozen=True)
+class WordEdit:
+    """The owner's correction of one caption Word: the Word whose span holds `at` (seconds on the
+    Source's timeline), or failing that the nearest within WORD_EDIT_REACH_SECS (app/planner.py).
+    `text` replaces the Word's text (None keeps it; empty removes the Word), and `break_before`
+    starts a caption line at it. Keyed by time, not by the Word's place, since a Clip's Words are
+    transcribed again when its range changes."""
+
+    at: FiniteFloat
+    text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=WORD_EDIT_MAX_CHARS)] | None = None
+    break_before: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +82,8 @@ class Candidate:
     # Its Style Preset (Default, if that has been deleted) and the fields of it replaced (app/styles.py).
     preset_id: str = DEFAULT_PRESET
     style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
+    # Corrections of its caption Words.
+    word_edits: list[WordEdit] = field(default_factory=list)
 
     @property
     def reviewed(self) -> bool:

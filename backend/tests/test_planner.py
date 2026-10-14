@@ -5,7 +5,7 @@ import math
 import pytest
 from pydantic import TypeAdapter
 
-from app.candidates import Layout
+from app.candidates import Layout, WordEdit
 from app.config import CameraTuning
 from app.styles import CaptionPosition, CaptionStyle, Highlight, HookPosition, HookStyle
 from app.planner import (
@@ -27,6 +27,7 @@ from app.planner import (
     Scene,
     SceneLayout,
     fit_hook,
+    match_edits,
     font_metrics,
     plan_render,
 )
@@ -766,3 +767,57 @@ def test_the_plan_keeps_its_styles():
     assert (plan.caption_style, plan.hook_style) == (caption, hook)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan
+
+
+# Word Edits (clip editor ticket 06). Their times are in seconds into the Clip, as candidate_plan gives them.
+
+
+def edited(words: list[Word], edits: list, secs: float = 10, **options) -> list[CaptionEvent]:
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, word_edits=edits, **options).captions
+
+
+def test_a_word_edit_replaces_or_removes_its_word_keeping_its_timing():
+    words = said("gue pernah rugi lima ratus juta")
+    rugi, lima = words[2], words[3]
+    lines = edited(words, [WordEdit(at=(rugi.start + rugi.end) / 2, text="Hermanto,"), WordEdit(at=lima.start, text="")])
+    assert " ".join(shown(lines)) == "GUE PERNAH HERMANTO RATUS JUTA"
+    # The new text keeps the Word's timing and highlight: HERMANTO from when "rugi" was said.
+    word = next(w for line in lines for w in line.words if w.text == "HERMANTO")
+    assert word.start == rugi.start
+    # A Word kept as it is: text None.
+    assert shown(edited(words, [WordEdit(at=rugi.start, text=None)])) == shown(captioned(words, 10))
+
+
+def test_a_word_edit_can_start_a_line():
+    words = said("satu dua tiga empat")
+    assert shown(captioned(words, 5)) == ["SATU DUA TIGA", "EMPAT"]
+    assert shown(edited(words, [WordEdit(at=words[1].start + 0.01, break_before=True)], 5)) == ["SATU", "DUA TIGA EMPAT"]
+
+
+def test_an_edit_matches_the_word_holding_its_time_or_the_nearest_within_a_quarter_second():
+    words = [Word("halo", 1.0, 1.4), Word("semua", 2.0, 2.4)]
+    assert match_edits(words, [WordEdit(at=1.2, text="a")])[0].text == "a"
+    # In the gap: the nearer Word within 0.25 s; further away, none.
+    assert [e and e.text for e in match_edits(words, [WordEdit(at=1.6, text="b")])] == ["b", None]
+    assert [e and e.text for e in match_edits(words, [WordEdit(at=1.85, text="c")])] == [None, "c"]
+    assert match_edits(words, [WordEdit(at=1.7, text="d")]) == [None, None]
+    assert match_edits(words, [WordEdit(at=9.0, text="e")]) == [None, None]
+    # Of two edits of one Word, the later.
+    assert match_edits(words, [WordEdit(at=1.1, text="x"), WordEdit(at=1.3, text="y")])[0].text == "y"
+
+
+def test_word_edits_survive_a_new_transcription_with_slightly_different_timings():
+    first = said("gue pernah rugi lima ratus juta")
+    edit = WordEdit(at=(first[2].start + first[2].end) / 2, text="untung")
+    # Transcribed again, each Word 80 ms later and a little shorter.
+    again = [Word(w.text, w.start + 0.08, w.end + 0.04) for w in first]
+    assert "UNTUNG" in " ".join(shown(edited(again, [edit])))
+    assert "RUGI" not in " ".join(shown(edited(again, [edit])))
+
+
+def test_edited_text_is_shown_like_a_words_in_capitals_without_end_punctuation_unless_the_style_keeps_case():
+    words = said("halo semua")
+    edit = WordEdit(at=words[1].start, text="ka-wan!")
+    assert shown(edited(words, [edit])) == ["HALO KA-WAN!"]
+    assert shown(edited(words, [edit], caption_style=CaptionStyle(uppercase=False))) == ["halo ka-wan!"]
+    assert shown(edited(words, [WordEdit(at=words[1].start, text="...")])) == ["HALO"]

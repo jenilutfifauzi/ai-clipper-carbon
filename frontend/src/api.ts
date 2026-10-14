@@ -102,6 +102,14 @@ export interface Transcript {
 
 export type Layout = "auto" | "track" | "split" | "blur";
 
+// The owner's correction of one caption Word, keyed by a time on the Source's timeline (the Word
+// whose span holds it). `text` replaces the Word's (null keeps it; "" removes the Word).
+export interface WordEdit {
+  at: number;
+  text: string | null;
+  break_before: boolean;
+}
+
 export type Highlight = "colour" | "box" | "none";
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";
 export type HookPosition = "top" | "middle" | "bottom" | "custom";
@@ -222,10 +230,14 @@ export interface RenderPlan {
   height: number;
 }
 
+// A Word the captions are made of, as heard (in seconds into the Clip), with its Word Edit.
+export interface PreviewWord extends Word {
+  edit: WordEdit | null;
+}
+
 export interface PreviewPlan {
   plan: RenderPlan;
-  // The Words the captions are made of, in seconds into the Clip.
-  words: Word[];
+  words: PreviewWord[];
   // "clip": transcribed for the Clip; "transcript": the episode's, until it is.
   words_source: "clip" | "transcript";
   // False while the Clip is planned as one Scene, unanalysed.
@@ -275,6 +287,7 @@ export interface Candidate {
   edited: boolean;
   preset_id: string;
   style_overrides: StyleOverrides;
+  word_edits: WordEdit[];
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -287,6 +300,8 @@ export interface CandidateChange {
   preset_id?: string;
   // Replaces the Candidate's overrides as a whole.
   style_overrides?: StyleOverrides;
+  // Replaces the Candidate's Word Edits as a whole.
+  word_edits?: WordEdit[];
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).

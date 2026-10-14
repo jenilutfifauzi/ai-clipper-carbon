@@ -47,7 +47,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Layout
+from app.candidates import Layout, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import CaptionPosition, CaptionStyle, HookPosition, HookStyle
@@ -68,6 +68,9 @@ SPLIT_FACE_AT = 0.4
 # A caption line stays on screen this long after its last Word, unless the next line comes sooner.
 # (How lines are broken is the Caption Style's.)
 CAPTION_LINGER_SECS = 0.3
+# A Word Edit applies to the Word whose span holds its time, or failing that to the nearest Word
+# within this long of it.
+WORD_EDIT_REACH_SECS = 0.25
 # Where the Layout changes under a line, the line moves; it isn't shown for less than this in one place.
 CAPTION_MIN_SECS = 0.2
 # The hook is shown from the Clip's start for this long, in at most two lines at its style's font
@@ -275,11 +278,13 @@ def plan_render(
     camera: CameraTuning = CameraTuning(),
     caption_style: CaptionStyle = CaptionStyle(),
     hook_style: HookStyle = HookStyle(),
+    word_edits: list[WordEdit] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
     each Scene by its faces), captioned with `words` (in seconds into the Clip; those beyond its
-    ends are left out) in `caption_style`, opening with the `hook` text in `hook_style`. Without `scenes` the Clip is one Scene;
+    ends are left out) in `caption_style` and corrected by `word_edits` (their times in seconds into
+    the Clip), opening with the `hook` text in `hook_style`. Without `scenes` the Clip is one Scene;
     without `faces` (not analysed) an Auto Scene is tracked with its crop in the middle; without
     `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
     if not 0 <= start < end:
@@ -309,7 +314,7 @@ def plan_render(
         source_height=source.height,
         fps=source.fps,
         scenes=plans,
-        captions=_captions(words or [], plans, duration, caption_style),
+        captions=_captions(words or [], plans, duration, caption_style, word_edits or []),
         hook=_hook(hook, duration, hook_style),
         caption_style=caption_style,
         hook_style=hook_style,
@@ -409,11 +414,34 @@ class _Spoken:
     start: float
     end: float
     ends_sentence: bool
+    # Edited to start a line.
+    breaks_before: bool = False
 
 
-def _captions(words: list[Word], scenes: list[ScenePlan], duration: float, style: CaptionStyle) -> list[CaptionEvent]:
+def match_edits(words: list[Word], edits: list[WordEdit]) -> list[WordEdit | None]:
+    """Each Word's Word Edit, or None: the Words and the edits' times on the same timeline. An edit
+    applies to the Word whose span holds its time, else to the nearest Word within
+    WORD_EDIT_REACH_SECS; of two edits of one Word, the later in `edits`."""
+    matched: list[WordEdit | None] = [None] * len(words)
+    for edit in edits:
+        best, distance = None, WORD_EDIT_REACH_SECS
+        for i, word in enumerate(words):
+            gap = max(word.start - edit.at, edit.at - word.end, 0.0)
+            if gap < distance:
+                best, distance = i, gap
+            if gap == 0:
+                break
+        if best is not None:
+            matched[best] = edit
+    return matched
+
+
+def _captions(
+    words: list[Word], scenes: list[ScenePlan], duration: float, style: CaptionStyle, edits: list[WordEdit]
+) -> list[CaptionEvent]:
     """The caption lines of `words` over the Clip, which lasts `duration` and is laid out in `scenes`,
-    in `style`.
+    in `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's
+    text (none, when it is empty) and a Word edited to break starts a line.
 
     The Words whose middle is in the Clip are taken in order into a line, in UPPERCASE (unless the
     style keeps their case) and without the punctuation at their ends, until the next would make it
@@ -426,10 +454,13 @@ def _captions(words: list[Word], scenes: list[ScenePlan], duration: float, style
     that would show it for less than CAPTION_MIN_SECS in one place); one whose Words are all spoken
     goes at the change."""
     spoken = []
-    for word in sorted(words, key=lambda word: word.start):
-        text, ends_sentence = _caption_text(word.text, style.uppercase)
+    ordered = sorted(words, key=lambda word: word.start)
+    for word, edit in zip(ordered, match_edits(ordered, edits)):
+        given = edit.text if edit is not None and edit.text is not None else word.text
+        text, ends_sentence = _caption_text(given, style.uppercase)
         if text and 0 <= (word.start + word.end) / 2 < duration:
-            spoken.append(_Spoken(text, max(word.start, 0.0), min(max(word.end, word.start), duration), ends_sentence))
+            breaks = edit is not None and edit.break_before
+            spoken.append(_Spoken(text, max(word.start, 0.0), min(max(word.end, word.start), duration), ends_sentence, breaks))
 
     areas = [_caption_area(style, scene.layout) for scene in scenes]
     # The Layout changes that move the captions.
@@ -443,6 +474,7 @@ def _captions(words: list[Word], scenes: list[ScenePlan], duration: float, style
         line = lines[-1] if lines else None
         if (
             line is None
+            or word.breaks_before
             or len(" ".join([*(w.text for w in line), word.text])) > style.max_chars
             or (style.max_words is not None and len(line) >= style.max_words)
             or word.end - line[0].start > style.max_secs

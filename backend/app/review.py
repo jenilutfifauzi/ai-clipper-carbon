@@ -5,7 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, Origin, manual_candidate
+from app.candidates import Candidate, Layout, Origin, WordEdit, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -36,6 +36,7 @@ class CandidateChange:
     selected: bool | None = None
     preset_id: str | None = None
     style_overrides: StyleOverrides | None = None
+    word_edits: list[WordEdit] | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,7 @@ def update(
         selected=_pick(change.selected, old.selected),
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
+        word_edits=old.word_edits if change.word_edits is None else _merged(change.word_edits),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -125,8 +127,14 @@ def _look(candidate: Candidate) -> tuple:
     """What the owner's edits change about a Candidate's Clip."""
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
-        candidate.style_overrides,
+        candidate.style_overrides, candidate.word_edits,
     )
+
+
+def _merged(edits: list[WordEdit]) -> list[WordEdit]:
+    """The edits in time order, leaving out those that change nothing; of two at the same time, the later."""
+    by_time = {round(edit.at, 3): edit for edit in edits}
+    return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
 
 
 def _index(candidates: list[Candidate], candidate_id: str) -> int:
