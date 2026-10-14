@@ -14,7 +14,7 @@
 
 **Blocked by:** 02, 03.
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] Selection test with a fake LLM: markup kept, Kicker normalised, emoji stripped, and a missing `hook_kicker` read as `""`.
 - [x] Existing Candidates load with an empty Kicker.
@@ -56,3 +56,17 @@ The sample is one short episode, and its hooks are vague too, which may be the m
 - **`selection._kicker`** drops a Kicker whose words are all in the hook ("TERIMA KASIH" over "Terima kasih, *orang baik*"). A Kicker sharing only common words like "ini" or "yang" stays.
 
 Back to `ready-for-human` until the owner reruns `make reanalyze JOB=934fb0fe1f9a` (or another episode) on v5 and the results are noted here.
+
+**2026-10-14: v5 run, and enforcement.** The owner reran `make reanalyze JOB=934fb0fe1f9a` on v5:
+
+| Hook | Kicker |
+|---|---|
+| `*Orang baik* itu masih ada` | KISAH NYATA |
+| `*Riz gorengan* wangi banget` | REVIEW |
+| `*Gojek adalah kita*` | SEMANGAT |
+
+Emphasis now lands on the concrete words. The AI still emphasised a whole hook and gave a mood as a Kicker, against the prompt, so selection now enforces both:
+- **`_hook`** drops the Emphasis when it covers every word.
+- **`_kicker`** drops a Kicker made only of moods (`MOOD_KICKERS`: semangat, motivasi, keren, inspirasi, wow, viral, mantap), as well as one made only of the hook's words.
+
+These apply from the next selection. The two Candidates of this run keep what was saved; fix them in the HookEditor or reanalyze again.

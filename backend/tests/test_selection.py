@@ -451,3 +451,15 @@ def test_a_kicker_that_only_repeats_the_hook_is_left_out(client, from_episode, l
     ]
     repeated, kept = analyzed(client, wait_for_status)["candidates"]
     assert (repeated["hook_kicker"], kept["hook_kicker"]) == ("", "Kisah nyata")
+
+
+def test_emphasis_of_the_whole_hook_and_a_mood_for_a_kicker_are_left_out(client, from_episode, llm, wait_for_status):
+    llm.clips = [
+        clip("10:00", "10:44", 80, viral_hook_text="*Gojek adalah kita*", hook_kicker="SEMANGAT"),
+        clip("20:00", "20:40", 70, viral_hook_text="*Gojek* *adalah kita!*", hook_kicker="Keren!"),
+        clip("30:00", "30:40", 60, viral_hook_text="*Orang baik* itu masih ada", hook_kicker="KISAH NYATA"),
+    ]
+    whole, split, kept = analyzed(client, wait_for_status)["candidates"]
+    assert (whole["hook_text"], whole["hook_kicker"]) == ("Gojek adalah kita", "")
+    assert (split["hook_text"], split["hook_kicker"]) == ("Gojek adalah kita!", "")
+    assert (kept["hook_text"], kept["hook_kicker"]) == ("*Orang baik* itu masih ada", "KISAH NYATA")

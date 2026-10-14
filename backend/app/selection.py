@@ -422,15 +422,29 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"\w+", text.lower()))
 
 
+# Moods and cheers the AI offers as a Kicker though they say nothing of the clip.
+MOOD_KICKERS = frozenset({"semangat", "motivasi", "keren", "inspirasi", "wow", "viral", "mantap"})
+
+
 def _kicker(text: str, hook: str) -> str:
     """The AI's Kicker as kept: cut to KICKER_MAX_CHARS, and "" when every word of it is in the
-    `hook` (it would only say the hook twice)."""
+    `hook` (it would only say the hook twice) or it is only a mood (MOOD_KICKERS)."""
     kicker = _cut(without_emoji(text), KICKER_MAX_CHARS)
-    return "" if _words(kicker) <= _words(hook) else kicker
+    words = _words(kicker)
+    return "" if words <= _words(hook) or words <= MOOD_KICKERS else kicker
+
+
+def _hook(text: str) -> str:
+    """The AI's hook as kept: without emoji, cut to HOOK_MAX_CHARS, and without its Emphasis when
+    that covers every word (it then stands out from nothing)."""
+    hook = _cut(without_emoji(text), HOOK_MAX_CHARS)
+    # Runs pair asterisks from the left, as the planner does.
+    outside = re.sub(r"\*[^*]*\*", "", hook)
+    return hook if re.search(r"\w", outside) else " ".join(hook.replace("*", "").split())
 
 
 def _candidate(proposal: ClipProposal, start: float, end: float, window_score: int | None) -> Candidate:
-    hook = _cut(without_emoji(proposal.viral_hook_text), HOOK_MAX_CHARS)
+    hook = _hook(proposal.viral_hook_text)
     hashtags = ("#" + tag.strip().lstrip("#").replace(" ", "") for tag in proposal.hashtags if tag.strip("# "))
     return Candidate(
         id=uuid4().hex[:8],
