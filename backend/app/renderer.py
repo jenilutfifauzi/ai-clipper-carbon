@@ -34,7 +34,9 @@ A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) r
 as its own input, cut from the Source like a one-range Clip (or from its Media Library video); each
 is drawn as above, in its own Scenes, and the Segments' frames and sounds are joined back to back
 (concat). With videos among them, each Segment's sound is set to its volume (the Source's at the
-Clip's own) before the join, and a video without sound adds silence.
+Clip's own) before the join, and a video without sound adds silence. A join with a Transition is an
+xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
+xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
 scaled into its area at its opacity and laid over the joined frames while it shows, before the Logo
@@ -285,7 +287,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         read = files[segment.media] if segment.media else source
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", length, "-i", str(read)]
     count = len(plan.segments)
-    if not any(segment.media for segment in plan.segments):
+    if not any(segment.media for segment in plan.segments) and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = []
@@ -295,19 +297,50 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         else:
             volume = segment.volume if segment.media else plan.source_volume
             chains.append(f"[{i}:a:0]volume={volume:g},{form}[a{i}]")
-    joined = "".join(f"[a{i}]" for i in range(count)) + f"concat=n={count}:v=0:a=1[srcv]"
-    return inputs, ";".join([*chains, joined]) + ";", "[srcv]"
+    if plan.transitions:
+        chains.append(_joins(plan, [f"[a{i}]" for i in range(count)], "a", "[srcv]"))
+    else:
+        chains.append("".join(f"[a{i}]" for i in range(count)) + f"concat=n={count}:v=0:a=1[srcv]")
+    return inputs, ";".join(chains) + ";", "[srcv]"
+
+
+def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
+    """Filters that join the Segments' pictures (`kind` "v") or sounds ("a"), from `links`, into
+    `out`, one after another: by the Transition at a join (xfade, acrossfade), else back to back."""
+    into = {transition.start: transition for transition in plan.transitions}
+    chains, joined = [], links[0]
+    for i in range(1, len(links)):
+        segment = plan.segments[i]
+        label = out if i == len(links) - 1 else f"[{kind}j{i}]"
+        transition = into.get(segment.start)
+        if transition is None:
+            chains.append(f"{joined}{links[i]}concat=n=2:v={int(kind == 'v')}:a={int(kind == 'a')}{label}")
+        elif kind == "v":
+            length = transition.end - transition.start
+            chains.append(f"{joined}{links[i]}xfade=transition={transition.kind.value}:duration={length:.3f}:offset={transition.start:.3f}{label}")
+        else:
+            chains.append(f"{joined}{links[i]}acrossfade=d={transition.end - transition.start:.3f}{label}")
+        joined = label
+    return ";".join(chains)
 
 
 def _segmented(plan: RenderPlan, tuning: RenderTuning) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment), and the Segments
     joined back to back."""
-    chains = []
+    chains, first = [], 0
     for i, segment in enumerate(plan.segments):
-        scenes = [scene for scene in plan.scenes if segment.start <= scene.start < segment.end]
+        scenes = plan.scenes[first : first + segment.scenes]
+        first += segment.scenes
         chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]", f"[g{i}]", f"g{i}s", segment.start))
-    chains.append("".join(f"[g{i}]" for i in range(len(plan.segments))) + f"concat=n={len(plan.segments)}:v=1:a=0[frame]")
+    count = len(plan.segments)
+    if not plan.transitions:
+        chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
+        return ";".join(chains)
+    # xfade takes pictures of one frame rate and time base.
+    rate = plan.fps if plan.fps > 0 else 30
+    chains += [f"[g{i}]fps={rate:g},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
+    chains.append(_joins(plan, [f"[n{i}]" for i in range(count)], "v", "[frame]"))
     return ";".join(chains)
 
 

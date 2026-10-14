@@ -25,6 +25,18 @@ export function piecesFrom(segments: { start: number; end: number; media?: strin
   });
 }
 
+/**
+ * The pieces as played from a plan's Segments: where a Transition overlaps two, the first gives way
+ * to the next where the Transition starts (the preview draws the Transition over it).
+ */
+export function playable(segments: Piece[]): Piece[] {
+  return segments.map((segment, i) => {
+    const next = segments[i + 1];
+    if (!next || next.start >= segment.end) return segment;
+    return { ...segment, end: next.start, source_end: segment.source_start + (next.start - segment.start) };
+  });
+}
+
 // A piece that isn't the last hands over this long before its end, so that no frame past it shows.
 const HANDOVER_SECS = 0.03;
 
@@ -40,6 +52,7 @@ const HANDOVER_SECS = 0.03;
 export class Playback {
   private video: HTMLVideoElement | null = null;
   private listeners = new Set<Listener>();
+  private handovers = new Set<(from: Piece, to: Piece) => void>();
   private frame = 0;
   private armed = false;
   private detach: (() => void) | null = null;
@@ -137,6 +150,8 @@ export class Playback {
   // Into the piece at `index`, from its start, still playing.
   private enter(index: number) {
     const from = this.piece;
+    // Before the picture changes: the preview copies the last one for a Transition.
+    for (const handover of this.handovers) handover(from, this.pieces[index]);
     this.index = index;
     const next = this.piece;
     this.time = next.start;
@@ -220,6 +235,14 @@ export class Playback {
       this.listeners.delete(listener);
     };
   };
+
+  /** Calls `listener` as playing goes on from one piece to the next, before the picture changes. */
+  onHandover(listener: (from: Piece, to: Piece) => void) {
+    this.handovers.add(listener);
+    return () => {
+      this.handovers.delete(listener);
+    };
+  }
 
   private emit() {
     for (const listener of this.listeners) listener();

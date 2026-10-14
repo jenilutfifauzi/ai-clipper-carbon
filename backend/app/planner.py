@@ -57,7 +57,9 @@ Watermark; a video's sound, when turned up, is heard as a Music Clip is.
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned piece by
 piece: each Segment framed on its own, from its own Scenes and faces, its Scenes moved to where it
 plays in the Clip. A Segment of a Media Library video is one Scene: the video cropped to fill the
-frame (Fill), or whole over a blurred copy of itself (Blur), with no captions. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
+frame (Fill), or whole over a blurred copy of itself (Blur), with no captions. A Transition overlaps
+the Segments either side of a join by its length (at most half the shorter of them), so the Clip
+is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
 Everything else is planned over the whole Clip, in seconds into it.
 """
 
@@ -68,7 +70,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Fit, Layout, LayoutOverride, MusicClip, Overlay, TextAlign, TextLayer, WordEdit
+from app.candidates import Fit, Layout, LayoutOverride, MusicClip, Overlay, TextAlign, TextLayer, TransitionKind, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import (
@@ -172,6 +174,14 @@ class Face:
 
 
 @dataclass(frozen=True)
+class Join:
+    """A Transition into a Segment from the one before: its kind, and how long the two overlap."""
+
+    kind: TransitionKind
+    secs: float
+
+
+@dataclass(frozen=True)
 class Piece:
     """A Segment of a Clip cut into several, as the planner frames it: the Source from `start` to
     `end`, its shots `scenes` and sampled `faces` (None: unanalysed), and the Layout Overrides that
@@ -190,6 +200,11 @@ class Piece:
     fit: Fit = Fit.BLUR
     volume: float = 1.0
     silent: bool = False
+    # Its Words and the Word Edits that fall in it, in seconds into it (None: no captions), and the
+    # Transition into it from the Segment before, if any.
+    words: list[Word] | None = None
+    word_edits: list[WordEdit] = field(default_factory=list)
+    join: Join | None = None
 
 
 @dataclass(frozen=True)
@@ -395,6 +410,18 @@ class SegmentPlan:
     media: str | None = None
     volume: float = 1.0
     silent: bool = False
+    # How many of the plan's Scenes, in order, are its.
+    scenes: int = 1
+
+
+@dataclass(frozen=True)
+class TransitionEvent:
+    """A Transition as drawn: from `start` to `end` seconds into the Clip, the Segment before gives way
+    to the next one as `kind` says."""
+
+    kind: TransitionKind
+    start: float
+    end: float
 
 
 @dataclass(frozen=True)
@@ -450,6 +477,8 @@ class RenderPlan:
     segments: list[SegmentPlan] = field(default_factory=list)
     # Laid over the Segments, in drawing order.
     overlays: list[OverlayEvent] = field(default_factory=list)
+    # Between Segments, in order.
+    transitions: list[TransitionEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -506,23 +535,38 @@ def plan_render(
     their items (whose videos' sound, when turned up, joins the music).
 
     With `pieces`, the Clip is cut into those Segments, back to back (`start` and `end` being the hull
-    of what they show), each framed on its own, ignoring `scenes`, `faces` and `layout_overrides`;
-    the other times are all in seconds into the Clip."""
+    of what they show) but for their Transitions, each framed and captioned from its own (ignoring
+    `scenes`, `faces`, `layout_overrides`, `words` and `word_edits`); the other times are all in
+    seconds into the Clip."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     segments: list[SegmentPlan] = []
+    transitions: list[TransitionEvent] = []
+    cuts: list[float] = []
     if pieces:
         plans, at = [], 0.0
-        for piece in pieces:
+        for i, piece in enumerate(pieces):
             length = round(piece.end - piece.start, 3)
+            if i and piece.join is not None:
+                # Overlapping the one before by the Transition's length, half the shorter at most.
+                before = segments[-1].end - segments[-1].start
+                overlap = round(min(piece.join.secs, before / 2, length / 2), 3)
+                at = round(at - overlap, 3)
+                transitions.append(TransitionEvent(piece.join.kind, at, round(at + overlap, 3)))
+                cuts.append(round(at + overlap / 2, 3))
+            elif i:
+                cuts.append(at)
             if piece.media is not None:
                 framed = [_media_scene(length, piece)]
             else:
                 framed = _framed(length, source, piece.scenes, piece.faces, layout, camera, piece.layout_overrides)
             plans.extend(_moved(scene, at) for scene in framed)
-            segments.append(SegmentPlan(at, round(at + length, 3), piece.start, piece.end, piece.media, piece.volume, piece.silent))
+            segments.append(
+                SegmentPlan(at, round(at + length, 3), piece.start, piece.end, piece.media, piece.volume, piece.silent, len(framed))
+            )
             at = round(at + length, 3)
         duration = at
+        words, word_edits = _pieces_words(pieces, segments, cuts, duration)
     else:
         duration = round(end - start, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides)
@@ -533,7 +577,7 @@ def plan_render(
         source_height=source.height,
         fps=source.fps,
         scenes=plans,
-        captions=_captions(words or [], plans, duration, caption_style, word_edits or [], [s.start for s in segments[1:]]),
+        captions=_captions(words or [], plans, duration, caption_style, word_edits or [], cuts),
         hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
@@ -544,7 +588,28 @@ def plan_render(
         source_volume=source_volume,
         segments=segments,
         overlays=overlay_events(overlays or [], duration, media_info or {}),
+        transitions=transitions,
     )
+
+
+def _pieces_words(
+    pieces: list[Piece], segments: list[SegmentPlan], cuts: list[float], duration: float
+) -> tuple[list[Word] | None, list[WordEdit]]:
+    """The Segments' Words and Word Edits in seconds into the Clip: each Segment's Words whose middle
+    is between the cuts either side of it (where the Segment before ends, or a Transition's middle),
+    kept between them. None when no Segment is captioned."""
+    if all(piece.words is None for piece in pieces):
+        return None, []
+    edges = [0.0, *cuts, duration]
+    words, edits = [], []
+    for i, (piece, segment) in enumerate(zip(pieces, segments)):
+        low, high = edges[i], edges[i + 1]
+        for word in piece.words or []:
+            on, off = word.start + segment.start, word.end + segment.start
+            if low <= (on + off) / 2 < high:
+                words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
+        edits += [replace(edit, at=round(edit.at + segment.start, 3)) for edit in piece.word_edits]
+    return words, sorted(edits, key=lambda edit: edit.at)
 
 
 def _framed(

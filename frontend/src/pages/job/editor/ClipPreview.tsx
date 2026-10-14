@@ -20,6 +20,7 @@ import { usePlayback, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays, type OverlayControls } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
+import { PreviewTransitions } from "./PreviewTransitions";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -144,6 +145,7 @@ export function ClipPreview({
         />
       ))}
       <PreviewSegments plan={plan} playback={playback} />
+      <PreviewTransitions plan={plan} playback={playback} stage={stage} />
       <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} />
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
@@ -595,7 +597,7 @@ function PanelView({
         }
       : { inset: 0, width: "100%", height: "100%" };
   return (
-    <div className="absolute overflow-hidden" style={box}>
+    <div data-picture className="absolute overflow-hidden" style={box}>
       <video
         ref={videoRef}
         src={src}

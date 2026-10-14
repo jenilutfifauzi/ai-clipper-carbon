@@ -437,6 +437,33 @@ export interface OverlayEvent {
   image: boolean;
 }
 
+// How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
+export type TransitionKind =
+  | "fade"
+  | "fadeblack"
+  | "fadewhite"
+  | "slideleft"
+  | "slideright"
+  | "slideup"
+  | "slidedown"
+  | "wipeleft"
+  | "zoomin"
+  | "circleopen";
+
+// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.2 to 1.5).
+export interface Transition {
+  after: string;
+  kind: TransitionKind;
+  secs: number;
+}
+
+// A Transition as drawn, from `start` to `end` seconds into the Clip.
+export interface TransitionEvent {
+  kind: TransitionKind;
+  start: number;
+  end: number;
+}
+
 // A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,
 // from `start` to `end` seconds into the Clip.
 export interface SegmentPlan {
@@ -448,6 +475,8 @@ export interface SegmentPlan {
   media: string | null;
   volume: number;
   silent: boolean;
+  // How many of the plan's Scenes, in order, are its.
+  scenes: number;
 }
 
 export interface RenderPlan {
@@ -474,6 +503,8 @@ export interface RenderPlan {
   segments: SegmentPlan[];
   // Laid over the Segments, in drawing order.
   overlays: OverlayEvent[];
+  // Between Segments, in order.
+  transitions: TransitionEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
@@ -568,6 +599,8 @@ export interface Candidate {
   segments: ClipSegment[];
   // Laid over the Main Track, the last on top.
   overlays: Overlay[];
+  // Between its Segments, each by the Segment it follows.
+  transitions: Transition[];
 }
 
 // A Candidate's Main Track: its Segments, or its one range.
@@ -600,6 +633,8 @@ export interface CandidateChange {
   segments?: ClipSegment[];
   // Replaces the Candidate's Overlays as a whole.
   overlays?: Overlay[];
+  // Replaces the Candidate's Transitions as a whole; those without a join are left out.
+  transitions?: Transition[];
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -636,6 +671,7 @@ export interface RenderedClip {
   source_volume: number;
   segments: ClipSegment[];
   overlays: Overlay[];
+  transitions: Transition[];
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";

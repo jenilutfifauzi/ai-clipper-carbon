@@ -37,7 +37,7 @@ from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaStore
-from app.planner import WORD_EDIT_REACH_SECS, MediaInfo, Piece, RenderPlan, plan_render, reframes
+from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, Piece, RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
 from app.storage import write_atomic
@@ -163,38 +163,38 @@ def candidate_plan(
             layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
             **common,
         )
-    pieces, heard, edits, at = [], [], [], 0.0
+    # Each Transition goes into the Segment after the one it follows.
+    joins = {transition.after: Join(transition.kind, transition.secs) for transition in candidate.transitions}
+    pieces, before = [], None
     for i, (segment, analysis) in enumerate(zip(candidate.pieces(), analyses)):
-        length = round(segment.end - segment.start, 3)
+        join = joins.get(before) if before is not None else None
+        before = segment.id
         if segment.media is not None:
             item = media.find(segment.media) if media else None
             if item is None or item.width is None or item.height is None:
                 continue
-            pieces.append(Piece(segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
-                                fit=segment.fit, volume=segment.volume, silent=not item.has_audio))
-            at = round(at + length, 3)
+            pieces.append(Piece(
+                segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
+                fit=segment.fit, volume=segment.volume, silent=not item.has_audio,
+                words=None if words is None else [], join=join,
+            ))
             continue
-        held = [replace(o, at=round(o.at - segment.start, 3)) for o in candidate.layout_overrides if segment.start <= o.at <= segment.end]
-        pieces.append(Piece(segment.start, segment.end, analysis.scenes if analysis else None,
-                            analysis.frames if analysis else None, held))
-        # The Words whose middle is in it, kept in it, in seconds into the Clip.
-        heard += [
-            Word(word.text, round(max(word.start, 0.0) + at, 3), round(min(word.end, length) + at, 3))
-            for word in (words[i] if words is not None else [])
-            if 0 <= (word.start + word.end) / 2 < length
-        ]
-        edits += [
-            replace(edit, at=round(edit.at - segment.start + at, 3))
-            for edit in candidate.word_edits
-            if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
-        ]
-        at = round(at + length, 3)
-    return plan_render(
-        candidate.start, candidate.end, source, pieces=pieces,
-        words=None if words is None else heard,
-        word_edits=sorted(edits, key=lambda edit: edit.at),
-        **common,
-    )
+        pieces.append(Piece(
+            segment.start, segment.end,
+            scenes=analysis.scenes if analysis else None,
+            faces=analysis.frames if analysis else None,
+            layout_overrides=[
+                replace(o, at=round(o.at - segment.start, 3)) for o in candidate.layout_overrides if segment.start <= o.at <= segment.end
+            ],
+            words=None if words is None else words[i],
+            word_edits=[
+                replace(edit, at=round(edit.at - segment.start, 3))
+                for edit in candidate.word_edits
+                if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
+            ],
+            join=join,
+        ))
+    return plan_render(candidate.start, candidate.end, source, pieces=pieces, **common)
 
 
 class MediaFinder(Protocol):
@@ -475,6 +475,7 @@ class Renders:
                 source_volume=candidate.source_volume,
                 segments=candidate.segments,
                 overlays=candidate.overlays,
+                transitions=candidate.transitions,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

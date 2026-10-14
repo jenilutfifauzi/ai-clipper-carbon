@@ -173,6 +173,31 @@ class Segment:
     volume: Volume = 1.0
 
 
+class TransitionKind(StrEnum):
+    """How one Segment gives way to the next (ffmpeg's xfade transitions of the same names)."""
+
+    FADE = "fade"
+    FADEBLACK = "fadeblack"
+    FADEWHITE = "fadewhite"
+    SLIDELEFT = "slideleft"
+    SLIDERIGHT = "slideright"
+    SLIDEUP = "slideup"
+    SLIDEDOWN = "slidedown"
+    WIPELEFT = "wipeleft"
+    ZOOMIN = "zoomin"
+    CIRCLEOPEN = "circleopen"
+
+
+@dataclass(frozen=True)
+class Transition:
+    """A Transition from the Segment `after` into the one after it, lasting `secs`: the two overlap
+    by that long, so the Clip is that much shorter. Kept to half the shorter of the two by the planner."""
+
+    after: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    kind: TransitionKind = TransitionKind.FADE
+    secs: Annotated[FiniteFloat, Field(ge=0.2, le=1.5)] = 0.5
+
+
 # The id of a Clip's one Segment when it isn't cut.
 WHOLE = "main"
 
@@ -227,6 +252,8 @@ class Candidate:
     segments: list[Segment] = field(default_factory=list)
     # Laid over its Segments, in this order (the last on top).
     overlays: list[Overlay] = field(default_factory=list)
+    # Between its Segments, each by the Segment it follows.
+    transitions: list[Transition] = field(default_factory=list)
 
     def pieces(self) -> list[Segment]:
         """Its Main Track: its Segments, or the one from `start` to `end`."""

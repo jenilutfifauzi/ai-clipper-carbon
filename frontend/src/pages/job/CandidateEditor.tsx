@@ -21,7 +21,7 @@ import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { candidateDraft } from "./editor/draft";
-import { Playback, piecesFrom } from "./editor/playback";
+import { Playback, piecesFrom, playable } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
 import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
@@ -160,7 +160,7 @@ export function CandidateEditor({
     hook_secs: timing.hook_secs,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
-  if (cut) playback.setPieces(preview?.plan.segments.length ? preview.plan.segments : piecesFrom(candidate.segments));
+  if (cut) playback.setPieces(preview?.plan.segments.length ? playable(preview.plan.segments) : piecesFrom(candidate.segments));
   else playback.setRange(candidate.start, candidate.end);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

@@ -5,7 +5,19 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, LayoutOverride, MusicClip, Origin, Overlay, Segment, TextLayer, WordEdit, manual_candidate
+from app.candidates import (
+    Candidate,
+    Layout,
+    LayoutOverride,
+    MusicClip,
+    Origin,
+    Overlay,
+    Segment,
+    TextLayer,
+    Transition,
+    WordEdit,
+    manual_candidate,
+)
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -49,6 +61,8 @@ class CandidateChange:
     # Snapped to Words; one Segment is stored as `start` and `end`.
     segments: list[Segment] | None = None
     overlays: list[Overlay] | None = None
+    # Each by the Segment it follows; one whose join isn't there is left out.
+    transitions: list[Transition] | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +156,7 @@ def update(
         source_volume=_pick(change.source_volume, old.source_volume),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
+        transitions=_joined(_pick(change.transitions, old.transitions), segments),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -188,7 +203,7 @@ def _look(candidate: Candidate) -> tuple:
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.music,
-        candidate.source_volume, candidate.segments, candidate.overlays,
+        candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions,
     )
 
 
@@ -196,6 +211,14 @@ def _merged(edits: list[WordEdit]) -> list[WordEdit]:
     """The edits in time order, leaving out those that change nothing; of two at the same time, the later."""
     by_time = {round(edit.at, 3): edit for edit in edits}
     return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
+
+
+def _joined(transitions: list[Transition], segments: list[Segment]) -> list[Transition]:
+    """The Transitions that have a join to be at: after a Segment that isn't the last; of two at one
+    join, the later. (A Segment deleted or moved to the end takes its Transition with it.)"""
+    joins = {segment.id for segment in segments[:-1]}
+    by_join = {transition.after: transition for transition in transitions if transition.after in joins}
+    return [by_join[segment.id] for segment in segments[:-1] if segment.id in by_join]
 
 
 def _check_ids(kind: str, ids: list[str]) -> None:

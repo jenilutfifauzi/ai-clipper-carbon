@@ -21,6 +21,7 @@ from app.candidates import (
     Overlay,
     Segment,
     TextLayer,
+    Transition,
     Volume,
     WordEdit,
 )
@@ -159,6 +160,8 @@ class CandidateUpdate(BaseModel):
     segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.
     overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX)] | None = None
+    # Replaces the Candidate's Transitions as a whole; those without a join are left out.
+    transitions: Annotated[list[Transition], Field(max_length=SEGMENTS_MAX)] | None = None
 
 
 class PresetBody(BaseModel):

@@ -24,10 +24,29 @@
 
 **Blocked by:** 05 (06 is not needed, but test a join with a media Segment once it exists).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam B: the overlap shortens the Clip; clamping; dropped when its join disappears.
-- [ ] Seam A: `xfade` render has the expected duration; a frame mid-transition differs from both ends.
-- [ ] Typecheck and build; browser walkthrough.
+- [x] Seam B: the overlap shortens the Clip; clamping; dropped when its join disappears.
+- [x] Seam A: `xfade` render has the expected duration; a frame mid-transition differs from both ends.
+- [x] Typecheck and build; browser walkthrough.
 
 ## Comments
+
+**2026-10-14: done.**
+
+**Checks:**
+- `tests/test_transitions.py`:
+  - Seam B: the overlap shortens the Clip; captions split at the Transition's middle; clamped to half the shorter Segment.
+  - Seam A: saved, validated, and dropped with their join.
+  - Seam A: a crossfade render is the planned length, with a frame in its middle between the two pieces' brightness.
+- `npm run build`.
+- Browser:
+  - A Fade put on a join by clicking its diamond and the kind (saved; the plan 0.5 s shorter).
+  - While playing through it, the held last picture fades over 0.5 s.
+
+**Changes from the plan:**
+- The Job's history record is renamed `StatusChange`.
+- Captions are moved into the planner's pieces: each Segment brings its own Words and Word Edits, so the planner can place them after the overlaps.
+- Each Segment's picture is brought to the Clip's frame rate and time base before an `xfade`, which needs them alike.
+- The preview plays one piece at a time. At the handover it copies the outgoing picture and animates it away as the kind does. The timing is exact and the look approximate (the outgoing piece is held still).
+- Kinds are put on a join by a click on its diamond and then on a kind, or by dragging a kind onto the diamond.

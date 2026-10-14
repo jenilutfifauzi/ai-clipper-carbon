@@ -1,6 +1,6 @@
 # Advanced Edit: a CapCut-style workspace with Text Layers, Music, Segments and Transitions
 
-Status: needs-triage
+Status: done
 Created: 2026-10-14
 
 ## Problem Statement

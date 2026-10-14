@@ -29,8 +29,10 @@ SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="
 def test_each_segment_is_framed_on_its_own_and_joined_back_to_back():
     planned = plan_render(
         10, 23, SOURCE,
-        pieces=[Piece(10, 12, layout_overrides=[LayoutOverride(0.5, Layout.SPLIT)]), Piece(20, 23)],
-        words=[Word("satu", 1.5, 1.9), Word("dua", 2.05, 2.4)],
+        pieces=[
+            Piece(10, 12, layout_overrides=[LayoutOverride(0.5, Layout.SPLIT)], words=[Word("satu", 1.5, 1.9)]),
+            Piece(20, 23, words=[Word("dua", 0.05, 0.4)]),
+        ],
     )
     assert planned.duration == 5
     assert planned.segments == [SegmentPlan(0, 2, 10, 12), SegmentPlan(2, 5, 20, 23)]

@@ -6,12 +6,12 @@ import { piecesOf, type Candidate } from "../../../api";
  */
 export type AdvancedEdits = Pick<
   Candidate,
-  "hook_start" | "hook_secs" | "text_layers" | "music" | "source_volume" | "segments" | "overlays"
+  "hook_start" | "hook_secs" | "text_layers" | "music" | "source_volume" | "segments" | "overlays" | "transitions"
 >;
 
 export function editsOf(candidate: Candidate): AdvancedEdits {
-  const { hook_start, hook_secs, text_layers, music, source_volume, overlays } = candidate;
-  return { hook_start, hook_secs, text_layers, music, source_volume, overlays, segments: piecesOf(candidate) };
+  const { hook_start, hook_secs, text_layers, music, source_volume, overlays, transitions } = candidate;
+  return { hook_start, hook_secs, text_layers, music, source_volume, overlays, transitions, segments: piecesOf(candidate) };
 }
 
 /** The item the inspector shows: the hook, the Clip's video, or a Text Layer or Music Clip. */
@@ -21,6 +21,8 @@ export type Selection =
   | { kind: "text"; id: string }
   | { kind: "music"; id: string }
   | { kind: "overlay"; id: string }
+  // The join after the Segment `after`, for its Transition.
+  | { kind: "join"; after: string }
   | null;
 
 export const sameSelection = (a: Selection, b: Selection) => JSON.stringify(a) === JSON.stringify(b);

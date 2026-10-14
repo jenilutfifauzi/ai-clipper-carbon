@@ -33,6 +33,8 @@ import {
   type PreviewPlan,
   type TextLayer,
   type Transcript,
+  type Transition,
+  type TransitionKind,
 } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Panel } from "../../../components/Panel";
@@ -42,7 +44,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ClipPreview } from "../editor/ClipPreview";
 import { candidateDraft } from "../editor/draft";
-import { piecesFrom, Playback, usePlayback } from "../editor/playback";
+import { piecesFrom, playable, Playback, usePlayback } from "../editor/playback";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { HookTimingFields } from "../HookEditor";
 import { AdvancedTimeline, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
@@ -51,6 +53,7 @@ import { MediaAssets, useMediaLibrary, type MediaLibrary } from "./MediaLibrary"
 import { draggedSegments, newMediaSegment, SEGMENT_MIN_SECS, SegmentFields, SourcePicker } from "./MainTrack";
 import { MUSIC_MIN_SECS, MusicFields, newMusicClip } from "./Music";
 import { newOverlay, OVERLAY_MIN_SECS, OverlayFields } from "./Overlays";
+import { TRANSITION_DRAG, TransitionPanel } from "./Transitions";
 import { newId, newTextLayer, TEXT_MIN_SECS, trackLanes, TextAssets, TextLayerFields } from "./TextLayers";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
@@ -152,7 +155,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const playback = useMemo(() => new Playback(), []);
   // The Segments as planned (snapped to Words) once the plan has the draft's, else as drafted.
   const planned = preview?.plan.segments ?? [];
-  playback.setPieces(planned.length > 1 && planned.length === edits.segments.length ? planned : piecesFrom(edits.segments));
+  playback.setPieces(planned.length > 1 && planned.length === edits.segments.length ? playable(planned) : piecesFrom(edits.segments));
   const duration = playback.duration;
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   // The Segments when the drag under way began, by its gesture.
@@ -195,6 +198,30 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select({ kind: "segment", id: segment.id });
     if (!wide) setSheet(null);
   }
+  // The Transition at the join after Segment `after`: set to `kind` (its length kept), or changed.
+  function setTransition(after: string, kind: TransitionKind) {
+    const old = edits.transitions.find((transition) => transition.after === after);
+    const next = { after, kind, secs: old?.secs ?? 0.5 };
+    change({ transitions: [...edits.transitions.filter((transition) => transition.after !== after), next] });
+    select({ kind: "join", after });
+  }
+  function updateTransition(transition: Transition, group?: string) {
+    change({ transitions: edits.transitions.map((old) => (old.after === transition.after ? transition : old)) }, group);
+  }
+  function removeTransition(after: string) {
+    change({ transitions: edits.transitions.filter((transition) => transition.after !== after) });
+  }
+  const joinedAfter = selection?.kind === "join" ? selection.after : null;
+  const transitionPanel = (kinds = true) => (
+    <TransitionPanel
+      kinds={kinds}
+      joined={joinedAfter !== null}
+      transition={edits.transitions.find((transition) => transition.after === joinedAfter) ?? null}
+      onPick={(kind) => joinedAfter && setTransition(joinedAfter, kind)}
+      onChange={updateTransition}
+      onRemove={() => joinedAfter && removeTransition(joinedAfter)}
+    />
+  );
   function addOverlay(item: MediaItem) {
     const overlay = newOverlay(item, playback.time, duration);
     change({ overlays: [...edits.overlays, overlay] });
@@ -277,6 +304,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onMusic={updateMusic}
           onOverlay={updateOverlay}
           onSegment={moveSegment}
+          onJoin={(after) => {
+            select({ kind: "join", after });
+            if (wide) setAssetTab("transitions");
+          }}
+          onDropTransition={setTransition}
           songs={songs}
           onDelete={actions ? actions.remove : undefined}
         />
@@ -299,6 +331,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onMusic={updateMusic}
       onOverlay={updateOverlay}
       onSegment={updateSegment}
+      transitions={transitionPanel(!wide)}
     />
   );
   const status = <SaveStatus saving={saving > 0} saved={saved} error={saveError} />;
@@ -331,6 +364,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 onAddSource={addFromSource}
                 onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
                 onAddOverlay={addOverlay}
+                transitions={transitionPanel()}
               />
             </div>
           </aside>
@@ -392,6 +426,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               onAddSource={addFromSource}
               onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
               onAddOverlay={addOverlay}
+              transitions={transitionPanel()}
             />
           )}
         </Sheet>
@@ -570,6 +605,8 @@ function Tracks({
   onMusic,
   onOverlay,
   onSegment,
+  onJoin,
+  onDropTransition,
   songs,
   onDelete,
 }: {
@@ -584,6 +621,8 @@ function Tracks({
   onText: (layer: TextLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
+  onJoin: (after: string) => void;
+  onDropTransition: (after: string, kind: TransitionKind) => void;
   onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   // The Media Library, by id: the songs' names and lengths.
   songs: Map<string, MediaItem>;
@@ -713,6 +752,37 @@ function Tracks({
             </TimelineItem>
           );
         })}
+        {/* The joins, for Transitions: a diamond between each two pieces, filled when it has one. */}
+        {playback.pieces.slice(0, -1).map((piece, i) => {
+          const after = edits.segments[i]?.id;
+          if (!after) return null;
+          const transition = edits.transitions.find((t) => t.after === after);
+          const selected = selection?.kind === "join" && selection.after === after;
+          return (
+            <button
+              key={`join-${after}`}
+              type="button"
+              onClick={() => onJoin(after)}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes(TRANSITION_DRAG)) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                const kind = event.dataTransfer.getData(TRANSITION_DRAG) as TransitionKind;
+                if (kind) onDropTransition(after, kind);
+              }}
+              aria-pressed={selected}
+              aria-label={transition ? `Transition after piece ${i + 1}: ${transition.kind}` : `Join after piece ${i + 1}: add a transition`}
+              title={transition ? `${transition.kind}, ${transition.secs.toFixed(2)} s` : "Add a transition"}
+              className={cx(
+                "absolute top-1/2 z-10 size-5 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[4px] ring-2 ring-bg",
+                "focus-visible:outline-2 focus-visible:outline-focus",
+                transition ? "bg-accent" : "bg-surface-raised hover:bg-fill",
+                selected && "ring-text",
+              )}
+              style={{ left: piece.end * pps }}
+            />
+          );
+        })}
       </TrackRow>
       <TrackRow label="Captions" height="h-8">
         {plan?.captions.map((event, i) => (
@@ -813,6 +883,7 @@ function Inspector({
   onMusic,
   onOverlay,
   onSegment,
+  transitions,
 }: {
   selection: Selection;
   edits: AdvancedEdits;
@@ -828,9 +899,19 @@ function Inspector({
   onMusic: (clip: MusicClip, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
+  // The Transitions' panel, for a selected join.
+  transitions: ReactNode;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const music = selection?.kind === "music" ? edits.music.find((clip) => clip.id === selection.id) : undefined;
+  if (selection?.kind === "join") {
+    return (
+      <div className="flex flex-col gap-3">
+        <h2 className="font-semibold">Transition</h2>
+        {transitions}
+      </div>
+    );
+  }
   const overlay = selection?.kind === "overlay" ? edits.overlays.find((other) => other.id === selection.id) : undefined;
   if (overlay && actions) {
     return (
@@ -951,6 +1032,7 @@ function AssetPanel({
   onAddSource,
   onAddVideo,
   onAddOverlay,
+  transitions,
 }: {
   tab: AssetTab;
   fonts: FontInfo[] | null;
@@ -963,6 +1045,7 @@ function AssetPanel({
   onAddSource: (range: { start: number; end: number }) => void;
   onAddVideo: (item: MediaItem) => void;
   onAddOverlay: (item: MediaItem) => void;
+  transitions: ReactNode;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
   if (tab === "media") {
@@ -990,8 +1073,7 @@ function AssetPanel({
       />
     );
   }
-  const label = ASSET_TABS.find((t) => t.value === tab)!.label;
-  return <p className="text-sm text-pretty text-muted">{label} can't be added yet.</p>;
+  return transitions;
 }
 
 function TopBar({

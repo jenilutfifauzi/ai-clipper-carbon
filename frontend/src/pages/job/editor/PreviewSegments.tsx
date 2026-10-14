@@ -61,7 +61,7 @@ function MediaSegment({ segment, fill, playback }: { segment: SegmentPlan; fill:
 
   const src = mediaProxyUrl(segment.media!);
   return (
-    <div ref={box} className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden" }}>
+    <div ref={box} data-picture className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden" }}>
       {!fill && (
         <video
           ref={back}
