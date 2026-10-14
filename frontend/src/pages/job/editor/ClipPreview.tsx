@@ -351,6 +351,30 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
             style={grown}
           />
         ))}
+      {hook.kicker && (
+        <g>
+          <rect
+            x={hook.kicker.box.x}
+            y={hook.kicker.box.y}
+            width={hook.kicker.box.width}
+            height={hook.kicker.box.height}
+            rx={Math.floor(hook.kicker.box.height / 2)}
+            fill={style.kicker_box_colour}
+            style={grown}
+          />
+          <text
+            x={hook.kicker.anchor[0]}
+            y={hook.kicker.anchor[1]}
+            textAnchor="middle"
+            fontFamily={fontFamily(font.id)}
+            fontSize={cssFontSize(font, hook.kicker.size)}
+            fill={style.kicker_colour}
+            style={{ whiteSpace: "pre", ...grown }}
+          >
+            {hook.kicker.text}
+          </text>
+        </g>
+      )}
       {style.shadow > 0 &&
         hook.lines.map((_, i) => (
           <g key={i} transform={`translate(${style.shadow} ${style.shadow})`}>

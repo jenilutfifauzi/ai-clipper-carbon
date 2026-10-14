@@ -951,3 +951,28 @@ def test_a_clip_records_the_editors_edits_it_was_rendered_with(client, settings,
         assert output[field] == candidate[field], field
     assert (output["caption_style"]["font"], output["caption_style"]["size"]) == ("poppins-black", 80)
     assert output["hook_style"]["font"] == "poppins-black"
+
+
+# The Kicker (hook-styles ticket 03).
+
+
+def test_a_kicker_is_saved_previewed_rendered_and_recorded(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = patch(client, job, add(client, job, "Podcast", "ya"), hook_text="Halo")
+    assert candidate["hook_kicker"] == ""
+    # A draft Kicker is planned, not saved.
+    draft = preview(client, job, candidate, {"hook_kicker": "Fakta"})
+    assert draft["plan"]["hook"]["kicker"]["text"] == "Fakta"
+    assert preview(client, job, candidate)["plan"]["hook"]["kicker"] is None
+
+    candidate = patch(client, job, candidate, hook_kicker="  Terbongkar\n  lho ")
+    assert (candidate["hook_kicker"], candidate["edited"]) == ("Terbongkar lho", True)
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    assert client.patch(url, json={"hook_kicker": "x" * 25}).status_code == 422
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["output"]["hook_kicker"] == "Terbongkar lho"
+    plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
+    assert plan["hook"]["kicker"]["text"] == "Terbongkar lho"

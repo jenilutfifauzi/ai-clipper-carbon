@@ -99,6 +99,8 @@ class Candidate:
     hook_secs: float = 3.0
     # Layouts of single Scenes.
     layout_overrides: list[LayoutOverride] = field(default_factory=list)
+    # A short label in a pill above the hook ("" for none).
+    hook_kicker: str = ""
 
     @property
     def reviewed(self) -> bool:

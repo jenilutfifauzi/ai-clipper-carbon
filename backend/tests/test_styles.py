@@ -275,3 +275,22 @@ def test_emphasised_runs_switch_to_the_emphasis_colour_and_back():
     hook = plan_render(0, 5, SOURCE, hook="Ini *pasti iri!* ya", hook_style=HookStyle(colour="#000000", emphasis_colour="#E11D2E"))
     texts = [line.split("}", 1)[1] for line in _ass(hook).splitlines() if line.startswith("Dialogue: 2,") and ",Hook," in line]
     assert texts == ["Ini {\\c&H2E1DE1&}pasti iri!{\\c&H000000&} ya"]
+
+
+# The Kicker (hook-styles ticket 03).
+
+
+def test_a_kicker_is_a_pill_of_its_colour_with_its_text_over_it():
+    planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_kicker="Fakta", hook_style=HookStyle(
+        kicker_colour="#112233", kicker_box_colour="#FFE600", outline=3,
+    ))
+    kicker = planned.hook.kicker
+    lines = [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
+    pill = [line for line in lines if "\\c&H00E6FF&" in line]
+    assert len(pill) == 1 and pill[0].startswith("Dialogue: 1,")
+    radius = kicker.box.height // 2
+    assert f"\\an7\\pos({kicker.box.x},{kicker.box.y})" in pill[0] and "\\bord0\\shad0" in pill[0] and "\\alpha&H00&" in pill[0]
+    assert pill[0].split("}")[1].startswith(f"m {radius} 0 l {kicker.box.width - radius} 0 ")
+    [text] = [line for line in lines if line.endswith("}Fakta")]
+    assert text.startswith("Dialogue: 2,") and f"\\fs{kicker.size:g}" in text and "\\c&H332211&" in text
+    assert f"\\pos({kicker.anchor[0]:g}," in text and "\\bord0\\shad0" in text

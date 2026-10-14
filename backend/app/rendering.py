@@ -137,6 +137,7 @@ def candidate_plan(
         word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
         hook_start=candidate.hook_start, hook_secs=candidate.hook_secs,
         layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
+        hook_kicker=candidate.hook_kicker,
     )
 
 
@@ -375,6 +376,7 @@ class Renders:
                 layout_overrides=candidate.layout_overrides,
                 caption_style=plan.caption_style,
                 hook_style=plan.hook_style,
+                hook_kicker=candidate.hook_kicker,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

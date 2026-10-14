@@ -102,6 +102,7 @@ export function CandidateEditor({
   const [tab, setTab] = useState<Tab>("text");
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
+  const [kickerDraft, setKickerDraft] = useState<string | null>(null);
   const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
   const [trimDraft, setTrimDraft] = useState<Range | null>(null);
   const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
@@ -120,6 +121,7 @@ export function CandidateEditor({
   }, []);
   useEffect(() => {
     setHookDraft(null);
+    setKickerDraft(null);
     setStyleDraft(null);
     setTrimDraft(null);
     setCaptionFocus(null);
@@ -139,6 +141,7 @@ export function CandidateEditor({
   const draft: CandidateChange = {
     ...(trimDraft ?? {}),
     hook_text: hookDraft ?? candidate.hook_text,
+    hook_kicker: kickerDraft ?? candidate.hook_kicker,
     layout: candidate.layout,
     preset_id: styleDraft?.preset_id ?? candidate.preset_id,
     style_overrides: styleDraft?.style_overrides ?? candidate.style_overrides,
@@ -297,6 +300,9 @@ export function CandidateEditor({
                   value={candidate.hook_text}
                   onSave={(hook_text) => void onSave({ hook_text })}
                   onDraft={setHookDraft}
+                  kicker={candidate.hook_kicker}
+                  onKickerSave={(hook_kicker) => void onSave({ hook_kicker })}
+                  onKickerDraft={setKickerDraft}
                   timing={timing}
                   duration={length}
                   onTiming={setTiming}

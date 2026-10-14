@@ -4,8 +4,9 @@ import { Button } from "../../components/Button";
 import { Slider } from "../../components/Slider";
 import { cx } from "../../format";
 
-// The backend's limit (HOOK_MAX_CHARS in app/api.py).
+// The backend's limits (HOOK_MAX_CHARS and KICKER_MAX_CHARS in app/api.py).
 const HOOK_MAX = 200;
+const KICKER_MAX = 24;
 // Typing is saved once it pauses this long, and at once when the field is left.
 const SAVE_AFTER_MS = 700;
 const SHORTCUT = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘B" : "Ctrl+B";
@@ -24,13 +25,17 @@ export interface HookTiming {
 }
 
 /**
- * The Candidate's hook text, saved as it is typed, and when it shows. The drafts are the editor's
- * own: saves coming back never overwrite what is being changed. Key it by the Candidate's id.
+ * The Candidate's hook text and Kicker, saved as they are typed, and when the hook shows. The drafts
+ * are the editor's own: saves coming back never overwrite what is being changed. Key it by the
+ * Candidate's id.
  */
 export function HookEditor({
   value,
   onSave,
   onDraft,
+  kicker,
+  onKickerSave,
+  onKickerDraft,
   timing,
   duration,
   onTiming,
@@ -40,6 +45,9 @@ export function HookEditor({
   onSave: (text: string) => void;
   // Each change as it is typed, before it is saved: for the preview.
   onDraft?: (text: string) => void;
+  kicker: string;
+  onKickerSave: (text: string) => void;
+  onKickerDraft?: (text: string) => void;
   // As shown (saved or a draft); the editor that owns it saves changes.
   timing: HookTiming;
   // The Clip's length: the hook is kept in it.
@@ -49,29 +57,8 @@ export function HookEditor({
   fit: HookFit | null;
 }) {
   const id = useId();
-  const [draft, setDraft] = useState(value);
-  const saved = useRef(value);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  function save(text: string) {
-    clearTimeout(timer.current);
-    // The backend collapses whitespace; compare the same way so a trailing space isn't a change.
-    if (text.split(/\s+/).join(" ").trim() === saved.current) return;
-    saved.current = text.split(/\s+/).join(" ").trim();
-    onSave(text);
-  }
-
-  // Leaving the Candidate (unmount) saves what was typed.
-  const latest = useRef(draft);
-  latest.current = draft;
-  useEffect(() => () => save(latest.current), []);
-
-  function edit(text: string) {
-    setDraft(text);
-    onDraft?.(text);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => save(text), SAVE_AFTER_MS);
-  }
+  const [draft, edit, save] = useTypedText(value, onSave, onDraft);
+  const [kickerDraft, editKicker, saveKicker] = useTypedText(kicker, onKickerSave, onKickerDraft);
 
   // The selection, widened to whole words, and whether it is one Emphasis already.
   const field = useRef<HTMLTextAreaElement>(null);
@@ -103,6 +90,31 @@ export function HookEditor({
   const lines = (count: number) => (count === 1 ? "1 line" : `${count} lines`);
   return (
     <div className="flex flex-col gap-1.5">
+      <div className="mb-3 flex flex-col gap-1.5">
+        <label htmlFor={`${id}-kicker`} className="text-sm font-medium">
+          Kicker
+        </label>
+        <span id={`${id}-kicker-hint`} className="text-sm text-muted">
+          A word or two in a pill above the hook, such as FAKTA. Empty for none.
+        </span>
+        <div className="relative">
+          <input
+            id={`${id}-kicker`}
+            type="text"
+            value={kickerDraft}
+            maxLength={KICKER_MAX}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => editKicker(event.target.value)}
+            onBlur={() => saveKicker(kickerDraft)}
+            aria-describedby={`${id}-kicker-hint`}
+            className="min-h-11 w-full rounded-control border border-border bg-fill py-2 pr-16 pl-3.5 text-base text-text"
+          />
+          <span aria-hidden className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-sm text-muted tabular-nums">
+            {kickerDraft.length}/{KICKER_MAX}
+          </span>
+        </div>
+      </div>
       <label htmlFor={`${id}-hook`} className="text-sm font-medium">
         Hook text
       </label>
@@ -197,4 +209,40 @@ function words(text: string, [start, end]: [number, number]): [number, number] {
   while (end < text.length && !/\s/.test(text[end])) end++;
   // A selection of nothing but spaces is no words.
   return text.slice(start, end).trim() ? [start, end] : [start, start];
+}
+
+/**
+ * Text saved as it is typed: once typing pauses, when the field is left (call `save`), and when the
+ * editor unmounts. Returns the draft, the change handler and `save`.
+ */
+function useTypedText(
+  value: string,
+  onSave: (text: string) => void,
+  onDraft?: (text: string) => void,
+): [string, (text: string) => void, (text: string) => void] {
+  const [draft, setDraft] = useState(value);
+  const saved = useRef(value);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  function save(text: string) {
+    clearTimeout(timer.current);
+    // The backend collapses whitespace; compare the same way so a trailing space isn't a change.
+    if (text.split(/\s+/).join(" ").trim() === saved.current) return;
+    saved.current = text.split(/\s+/).join(" ").trim();
+    onSave(text);
+  }
+
+  // Leaving the Candidate (unmount) saves what was typed.
+  const latest = useRef(draft);
+  latest.current = draft;
+  useEffect(() => () => save(latest.current), []);
+
+  function edit(text: string) {
+    setDraft(text);
+    onDraft?.(text);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => save(text), SAVE_AFTER_MS);
+  }
+
+  return [draft, edit, save];
 }

@@ -140,6 +140,9 @@ class HookStyle:
     # 0 draws no box, whatever the shape.
     box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.6
     radius: Annotated[int, Field(ge=0, le=80)] = 24
+    # The Kicker's text, and its pill.
+    kicker_colour: Colour = "#000000"
+    kicker_box_colour: Colour = "#FFE600"
     position: HookPosition = HookPosition.TOP
     y: Height = 232
     # Off at its end by a short fade, on from the first frame (which platforms show first).

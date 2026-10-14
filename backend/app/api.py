@@ -42,6 +42,8 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 # The longest hook text accepted, its Emphasis marks included. The UI warns well before this, once
 # the Preview Plan sets the hook smaller than its style's size.
 HOOK_MAX_CHARS = 200
+# The longest Kicker: a word or two over the hook.
+KICKER_MAX_CHARS = 24
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
@@ -111,6 +113,8 @@ class CandidateUpdate(BaseModel):
     hook_secs: Annotated[float, Field(ge=0.5, le=30)] | None = None
     # Replaces the Candidate's Layout Overrides as a whole.
     layout_overrides: Annotated[list[LayoutOverride], Field(max_length=LAYOUT_OVERRIDES_MAX)] | None = None
+    # Saved with its whitespace collapsed; "" for none.
+    hook_kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] | None = None
 
 
 class PresetBody(BaseModel):

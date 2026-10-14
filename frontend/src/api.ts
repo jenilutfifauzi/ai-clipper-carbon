@@ -168,6 +168,9 @@ export interface HookStyle {
   box_colour: string;
   box_opacity: number;
   radius: number;
+  // The Kicker's text, and its pill.
+  kicker_colour: string;
+  kicker_box_colour: string;
   position: HookPosition;
   // The box's top, for the custom position.
   y: number;
@@ -248,6 +251,16 @@ export interface HookEvent {
   boxes: Box[];
   // Each line's emphasised runs, as [start, end) ranges of its characters.
   emphasis: [number, number][][];
+  // Above the lines; null without one.
+  kicker: HookKicker | null;
+}
+
+// The Kicker's text at font `size` on its pill, placed by its anchor (the middle of its text and its baseline).
+export interface HookKicker {
+  text: string;
+  size: number;
+  box: Box;
+  anchor: [number, number];
 }
 
 export interface RenderPlan {
@@ -327,6 +340,8 @@ export interface Candidate {
   hook_start: number;
   hook_secs: number;
   layout_overrides: LayoutOverride[];
+  // A short label in a pill above the hook; "" for none.
+  hook_kicker: string;
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -345,6 +360,7 @@ export interface CandidateChange {
   hook_secs?: number;
   // Replaces the Candidate's Layout Overrides as a whole.
   layout_overrides?: LayoutOverride[];
+  hook_kicker?: string;
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -371,6 +387,8 @@ export interface RenderedClip {
   layout_overrides: LayoutOverride[] | null;
   caption_style: CaptionStyle | null;
   hook_style: HookStyle | null;
+  // "" in a Clip rendered before Kickers.
+  hook_kicker: string;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";

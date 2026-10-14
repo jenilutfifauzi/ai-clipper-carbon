@@ -383,8 +383,8 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
 
 
 def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
-    """The hook's Dialogue events: its boxes, drawn, and over them each line centred on its anchor;
-    animated on and off as the style says (_hook_phases)."""
+    """The hook's Dialogue events: its boxes and its Kicker's pill, drawn, and over them each line and
+    the Kicker's text centred on its anchor; animated on and off as the style says (_hook_phases)."""
     metrics = font_metrics(style.font)
     size = hook.size
     # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
@@ -402,6 +402,19 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
                 elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
             else:
                 elements.append((1, 7, box.x, box.y, "g", alpha, tags, drawing))
+    if hook.kicker is not None:
+        kicker = hook.kicker
+        box = kicker.box
+        drawing = f"{_rounded_box(box.width, box.height, box.height // 2)}{{\\p0}}"
+        tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(style.kicker_box_colour)}\\alpha&H00&"
+        if Animation.POP in (style.animation_in, style.animation_out):
+            elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", None, tags, drawing))
+        else:
+            elements.append((1, 7, box.x, box.y, "g", None, tags, drawing))
+        x, baseline = kicker.anchor
+        centre_y = baseline - metrics.ascent / metrics.units * kicker.size + kicker.size / 2
+        tags = f"\\fs{kicker.size:g}\\bord0\\shad0\\c{_tag_colour(style.kicker_colour)}"
+        elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(kicker.text)))
     for line, (x, baseline), spans in zip(hook.lines, hook.anchors, hook.emphasis):
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.

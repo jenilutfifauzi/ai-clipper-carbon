@@ -89,6 +89,12 @@ HOOK_PAD_Y = 26
 STRIP_PAD_X = 0.25
 STRIP_PAD_Y = 0.14
 STRIP_GAP = 0.06
+# The Kicker is set at this share of the hook's size, in a pill padded by these many of its own
+# sizes either side and above its capitals and below its descenders, this many hook sizes above it.
+KICKER_SCALE = 0.55
+KICKER_PAD_X = 0.5
+KICKER_PAD_Y = 0.28
+KICKER_GAP = 0.25
 
 
 # The planner's input, found by app/analysis.py.
@@ -230,6 +236,17 @@ class CaptionEvent:
 
 
 @dataclass(frozen=True)
+class HookKicker:
+    """The Kicker's text at font `size` on its pill `box`, placed by its anchor: the middle of its
+    text and its baseline."""
+
+    text: str
+    size: float
+    box: Box
+    anchor: tuple[float, float]
+
+
+@dataclass(frozen=True)
 class HookEvent:
     """The hook's lines, set at font `size`, on screen from `start` to `end` (seconds into the Clip).
     `area` holds all of it. Each line is placed by its anchor, the middle of its text and its
@@ -244,6 +261,8 @@ class HookEvent:
     boxes: list[Box]
     # Each line's emphasised runs, as [start, end) ranges of its characters.
     emphasis: list[list[tuple[int, int]]]
+    # Above the lines; None without one.
+    kicker: HookKicker | None = None
 
 
 @dataclass(frozen=True)
@@ -291,12 +310,13 @@ def plan_render(
     hook_start: float = 0.0,
     hook_secs: float = HOOK_SECS,
     layout_overrides: list[LayoutOverride] | None = None,
+    hook_kicker: str = "",
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
     each Scene by its faces), captioned with `words` (in seconds into the Clip; those beyond its
     ends are left out) in `caption_style` and corrected by `word_edits` (their times in seconds into
-    the Clip), with the `hook` text in `hook_style` from `hook_start` for `hook_secs`. A Scene that
+    the Clip), with the `hook` text and its `hook_kicker` in `hook_style` from `hook_start` for `hook_secs`. A Scene that
     holds one of `layout_overrides` (their times in seconds into the Clip) takes its Layout instead
     of `layout`, the last one if it holds several. Without `scenes` the Clip is one Scene;
     without `faces` (not analysed) an Auto Scene is tracked with its crop in the middle; without
@@ -330,7 +350,7 @@ def plan_render(
         fps=source.fps,
         scenes=plans,
         captions=_captions(words or [], plans, duration, caption_style, word_edits or []),
-        hook=_hook(hook, duration, hook_style, hook_start, hook_secs),
+        hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
     )
@@ -434,7 +454,9 @@ def _balanced(words: list[str], count: int, metrics: "FontMetrics") -> list[str]
     return lines
 
 
-def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS) -> HookEvent | None:
+def _hook(
+    text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS, kicker: str = ""
+) -> HookEvent | None:
     """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
     end, if that comes sooner), centred like the captions and as large as its lines and padding,
     placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
@@ -444,7 +466,10 @@ def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs
     A block (or no box) is HOOK_PAD_X wider than the longest line either side, its first line's
     capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart. Strips are each
     their line's width, padded by STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart. Left-aligned lines
-    (and strips) start at the left of the longest."""
+    (and strips) start at the left of the longest.
+
+    The `kicker`, if any, goes above them in a pill (`_kicker`), centred over them or starting where
+    they do, KICKER_GAP of the hook's size away."""
     lines, size = fit_hook(text, style)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
@@ -483,6 +508,19 @@ def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs
                  y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * HOOK_LEADING) * size)
                 for i, line in enumerate(widths)
             ]
+    # The lines' place in the whole hook, and the pill's.
+    lines_x = lines_y = 0
+    pill = _kicker(kicker, size, style)
+    if pill is not None:
+        pill_text, pill_size, pill_width, pill_height, pad_y = pill
+        lines_y = pill_height + round(KICKER_GAP * size)
+        if left:
+            pill_x = HOOK_PAD_X if style.shape == HookShape.NONE else 0
+            full_width = max(width, pill_x + pill_width)
+        else:
+            full_width = max(width, pill_width)
+            pill_x, lines_x = (full_width - pill_width) // 2, (full_width - width) // 2
+        width, height = full_width, lines_y + height
     bottom = SAFE_AREA.y + SAFE_AREA.height - height
     top = {
         HookPosition.TOP: SAFE_AREA.y,
@@ -491,16 +529,43 @@ def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs
         HookPosition.CUSTOM: min(max(style.y, SAFE_AREA.y), bottom),
     }[style.position]
     area = Box((OUTPUT_WIDTH - width) // 2, top, width, height)
+    placed = None
+    if pill is not None:
+        box = Box(area.x + pill_x, area.y, pill_width, pill_height)
+        baseline = box.y + pad_y + metrics.cap_height / metrics.units * pill_size
+        placed = HookKicker(pill_text, pill_size, box, (box.x + box.width / 2, baseline))
     return HookEvent(
         lines,
         start,
         round(min(start + secs, duration), 3),
         area,
         size,
-        anchors=anchors(area.x, area.y),
-        boxes=[Box(area.x + box.x, area.y + box.y, box.width, box.height) for box in boxes],
+        anchors=anchors(area.x + lines_x, area.y + lines_y),
+        boxes=[Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes],
         emphasis=emphasis,
+        kicker=placed,
     )
+
+
+def _kicker(text: str, size: float, style: HookStyle) -> tuple[str, float, int, int, float] | None:
+    """The Kicker `text` over a hook set at `size`: as shown (without emoji, in capitals if the style
+    is), its font size, its pill's width and height, and the padding above its capitals. Set
+    smaller when its pill would be wider than the captions. None when it is blank."""
+    text = " ".join("".join(char for char in text if not _is_emoji(char)).split())
+    if style.uppercase:
+        text = text.upper()
+    if not text:
+        return None
+    metrics = font_metrics(style.font)
+    pill_size = KICKER_SCALE * size
+    widest = OUTPUT_WIDTH - 2 * _CAPTION_X
+    padded = metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size
+    if padded > widest:
+        pill_size = math.floor(pill_size * widest / padded * 10) / 10
+    pad_y = KICKER_PAD_Y * pill_size
+    width = math.ceil(metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size)
+    height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * pill_size + 2 * pad_y)
+    return text, pill_size, width, height, pad_y
 
 
 @dataclass(frozen=True)

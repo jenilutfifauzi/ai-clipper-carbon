@@ -40,6 +40,7 @@ class CandidateChange:
     hook_start: float | None = None
     hook_secs: float | None = None
     layout_overrides: list[LayoutOverride] | None = None
+    hook_kicker: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ def update(
         hook_start=_pick(change.hook_start, old.hook_start),
         hook_secs=_pick(change.hook_secs, old.hook_secs),
         layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
+        hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -134,7 +136,7 @@ def _look(candidate: Candidate) -> tuple:
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
-        candidate.layout_overrides,
+        candidate.layout_overrides, candidate.hook_kicker,
     )
 
 

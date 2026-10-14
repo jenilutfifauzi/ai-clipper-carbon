@@ -88,6 +88,7 @@ function changedSince(candidate: Candidate, output: RenderedClip, presets: Style
     candidate.start !== output.start ||
     candidate.end !== output.end ||
     candidate.hook_text !== output.hook_text ||
+    candidate.hook_kicker !== output.hook_kicker ||
     candidate.layout !== output.layout
   )
     return true;

@@ -985,3 +985,47 @@ def test_emoji_are_left_out_of_the_hook():
     assert " ".join(hook.lines) == "Rahasia clipper pro bisa viral tiap hari"
     assert hooked("😱🔥") is None
     assert hooked("50% *off* ✨").lines == ["50% off"]
+
+
+# The Kicker (hook-styles ticket 03).
+
+
+def kicked(kicker: str, text: str = HOOK, **style) -> HookEvent:
+    return hooked(text, hook_kicker=kicker, hook_style=HookStyle(**style))
+
+
+def test_a_kicker_sits_in_its_pill_above_the_hook_which_moves_down_to_make_room():
+    plain, hook = hooked(HOOK), kicked("Terbongkar!")
+    kicker = hook.kicker
+    assert (kicker.text, kicker.size) == ("Terbongkar!", pytest.approx(0.55 * HOOK_SIZE))
+    # At the top of the hook, which still starts just below the top safe zone.
+    assert hook.area.y == kicker.box.y == SAFE_AREA.y
+    # The lines and their box are as before, lower by the pill and a gap of a quarter of the hook's size.
+    [box] = hook.boxes
+    assert box.y - (kicker.box.y + kicker.box.height) == round(0.25 * HOOK_SIZE)
+    assert hook.lines == plain.lines and (box.width, box.height) == (plain.area.width, plain.area.height)
+    assert hook.area.y + hook.area.height == box.y + box.height
+    # The pill is centred over the lines, as wide as its padded text, and holds it.
+    x, baseline = kicker.anchor
+    width = font_metrics().width("Terbongkar!", kicker.size)
+    assert abs(kicker.box.x + kicker.box.width / 2 - (box.x + box.width / 2)) <= 1 and x == kicker.box.x + kicker.box.width / 2
+    assert width < kicker.box.width < width + 1.2 * kicker.size
+    assert kicker.box.y < baseline < kicker.box.y + kicker.box.height
+    # No Kicker: v1's hook.
+    assert hooked(HOOK, hook_kicker="  ").kicker is None and hooked(HOOK, hook_kicker="  ") == plain
+
+
+def test_a_kicker_follows_the_hooks_alignment_case_and_position_and_has_no_emoji():
+    for shape in ("block", "strips"):
+        hook = kicked("fakta 🔥", shape=shape, align="left", uppercase=True)
+        assert hook.kicker.text == "FAKTA" and hook.kicker.box.x == hook.boxes[0].x
+    bare = kicked("pov", shape="none", align="left")
+    left = bare.anchors[0][0] - font_metrics().width(bare.lines[0], bare.size) / 2
+    assert abs(bare.kicker.box.x - left) < 1
+    bottom = kicked("Fakta", position="bottom").area
+    assert bottom.y + bottom.height == SAFE_AREA.y + SAFE_AREA.height
+    middle = kicked("Fakta", position="middle").area
+    assert abs(middle.y + middle.height / 2 - 960) <= 1
+    # Too wide for the captions' width: set smaller to fit.
+    wide = kicked("W" * 24).kicker
+    assert wide.size < 0.55 * HOOK_SIZE and wide.box.width <= 820

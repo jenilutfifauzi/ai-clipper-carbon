@@ -48,6 +48,8 @@ class RenderedClip:
     layout_overrides: list[LayoutOverride] | None = None
     caption_style: CaptionStyle | None = None
     hook_style: HookStyle | None = None
+    # "" in a Clip rendered before Kickers, which had none.
+    hook_kicker: str = ""
 
 
 @dataclass(frozen=True)

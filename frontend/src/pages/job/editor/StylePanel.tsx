@@ -342,6 +342,23 @@ export function StylePanel({
           </div>
         </Group>
 
+        <Group title="Kicker">
+          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            <ColorField
+              label="Text colour"
+              value={hook.kicker_colour}
+              onChange={(v) => set("hook", "kicker_colour", v)}
+              marker={marker("hook", "kicker_colour", "kicker text colour")}
+            />
+            <ColorField
+              label="Pill colour"
+              value={hook.kicker_box_colour}
+              onChange={(v) => set("hook", "kicker_box_colour", v)}
+              marker={marker("hook", "kicker_box_colour", "kicker pill colour")}
+            />
+          </div>
+        </Group>
+
         <Group title="Position">
           <Segmented
             legend="Where"
