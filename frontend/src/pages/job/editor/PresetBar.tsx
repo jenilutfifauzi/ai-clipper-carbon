@@ -1,9 +1,8 @@
-import { RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ChevronDown, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useId, useState } from "react";
 import { api } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
-import { Select } from "../../../components/Select";
 import { Skeleton } from "../../../components/Skeleton";
 import type { StyleControls } from "./useStyleDraft";
 
@@ -25,7 +24,7 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
     // The picker's label and field, and its hint, so nothing shifts when the Presets arrive.
     return (
       <div aria-hidden className="flex flex-col gap-2">
-        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-11 w-full" />
         <Skeleton className="h-4 w-3/4 rounded-full" />
         <Skeleton className="h-9 w-28" />
       </div>
@@ -67,18 +66,30 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
 
   return (
     <div className="flex flex-col gap-2">
-      {/* The picker, with Delete beside it (away from the saves) for the owner's Presets. */}
-      <div className="flex items-end gap-2">
-        <Select
-          label="Style preset"
-          value={preset.id}
-          options={presets.map((p) => ({ value: p.id, label: p.builtin ? p.name : `${p.name} (yours)` }))}
-          onChange={style.pick}
-          className="flex-1"
-        />
+      {/* The picker, its label inside it so it lines up with the preview's Clip/Source bar (both
+          44 px), with Delete beside it (away from the saves) for the owner's Presets. */}
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <label htmlFor={`${id}-preset`} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-sm text-muted">
+            Style preset
+          </label>
+          <select
+            id={`${id}-preset`}
+            value={preset.id}
+            onChange={(event) => style.pick(event.target.value)}
+            className="min-h-11 w-full cursor-pointer appearance-none truncate rounded-control border border-border bg-fill py-2 pr-9 pl-28 text-base font-medium"
+          >
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.builtin ? p.name : `${p.name} (yours)`}
+              </option>
+            ))}
+          </select>
+          <ChevronDown aria-hidden size={16} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
+        </div>
         {!preset.builtin && (
-          <Button size="sm" variant="ghost" className="w-10" onClick={() => setDeleting(true)} disabled={busy} aria-label={`Delete preset ${preset.name}`}>
-            <Trash2 aria-hidden size={15} />
+          <Button size="icon" variant="ghost" onClick={() => setDeleting(true)} disabled={busy} aria-label={`Delete preset ${preset.name}`}>
+            <Trash2 aria-hidden size={16} />
           </Button>
         )}
       </div>
