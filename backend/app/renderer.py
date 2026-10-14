@@ -29,6 +29,10 @@ briefly at its end.
 A text Watermark is one more event of the same script, under the captions and the hook. A Logo, an
 image libass can't draw, is a second input (its PNG, from app/logos.py), scaled into the Watermark's
 area at its opacity and laid over the joined frames before the captions are burned.
+
+Text Layers are drawn by the same script too, each in its own style and its own pair of ASS layers
+(its box, then its lines) above the captions' and the one before's, animated as the hook is. With
+any, the hook's layers move above theirs, so that it stays on top; without, the script is as before.
 """
 
 import json
@@ -47,13 +51,16 @@ from app.planner import (
     HOOK_LEADING,
     HOOK_PAD_Y,
     CaptionEvent,
+    TEXT_RADIUS,
     HookEvent,
     Panel,
     RenderPlan,
     ScenePlan,
+    TextEvent,
     WatermarkEvent,
     font_metrics,
 )
+from app.candidates import TextLayer
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -96,7 +103,8 @@ class Renderer:
         _check(plan)
         loudness = self._measure(source, plan)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
-        subtitles = video.with_name(f".{video.stem}.part.ass") if plan.captions or plan.hook or _text_watermark(plan) else None
+        drawn = plan.captions or plan.hook or plan.texts or _text_watermark(plan)
+        subtitles = video.with_name(f".{video.stem}.part.ass") if drawn else None
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         failures = []
@@ -314,7 +322,7 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
 def _ass(plan: RenderPlan) -> str:
     """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
     for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events).
-    A text Watermark comes first, under them."""
+    A text Watermark comes first, under them; Text Layers come between them (_text_events)."""
     caption, hook = plan.caption_style, plan.hook_style
     watermark = _text_watermark(plan)
     script = [
@@ -338,6 +346,7 @@ def _ass(plan: RenderPlan) -> str:
         f"{_style_colour(hook.outline_colour)},{_style_colour(hook.shadow_colour)},0,0,0,0,100,100,0,0,1,"
         f"{hook.outline},{hook.shadow},5,0,0,0,1",
         *([_watermark_style(plan.watermark_style)] if watermark else []),
+        *(_text_style(f"Text{i}", event.layer) for i, event in enumerate(plan.texts)),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -346,9 +355,62 @@ def _ass(plan: RenderPlan) -> str:
         script.append(_watermark_event(watermark, plan.watermark_style, plan.duration))
     for event in plan.captions:
         script.extend(_caption_events(event, caption))
+    for i, event in enumerate(plan.texts):
+        script.extend(_text_events(event, f"Text{i}", TEXT_LAYER_BASE + 2 * i))
     if plan.hook:
-        script.extend(_hook_events(plan.hook, hook))
+        # Above every Text Layer's layers.
+        script.extend(_hook_events(plan.hook, hook, 2 * len(plan.texts) + 1 if plan.texts else 0))
     return "\n".join(script) + "\n"
+
+
+# The ASS layer of the first Text Layer's box (its lines are one above), above the captions' 0 and 1.
+TEXT_LAYER_BASE = 2
+
+
+def _text_style(name: str, layer: TextLayer) -> str:
+    text, edge = _style_colour(layer.colour), _style_colour(layer.outline_colour)
+    return (
+        f"Style: {name},{font(layer.font).family},{layer.size},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
+        f"{layer.outline},0,5,0,0,0,1"
+    )
+
+
+def _text_events(event: TextEvent, style: str, base: int) -> list[str]:
+    """A Text Layer's Dialogue events in its `style`: its box drawn on ASS layer `base` and its lines,
+    each centred on its anchor, on the layer above; animated on and off as the hook is (_hook_phases)."""
+    layer = event.layer
+    metrics = font_metrics(layer.font)
+    size = event.size
+    elements: list[tuple[int, int, float, float, str, str | None, str, str]] = []
+    if event.box is not None:
+        box = event.box
+        alpha = f"&H{round(255 * (1 - layer.box_opacity)):02X}&"
+        tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(layer.box_colour)}\\alpha{alpha}"
+        drawing = f"{_rounded_box(box.width, box.height, min(round(TEXT_RADIUS * size), box.height // 2))}{{\\p0}}"
+        if Animation.POP in (layer.animation_in, layer.animation_out):
+            elements.append((base, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
+        else:
+            elements.append((base, 7, box.x, box.y, "g", alpha, tags, drawing))
+    for line, (x, baseline) in zip(event.lines, event.anchors):
+        if not line:
+            continue
+        centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
+        tags = f"\\fs{size:g}" if size != layer.size else ""
+        elements.append((base + 1, 5, x, centre_y, ".1f", None, tags, _ass_text(line)))
+    events = []
+    for order, (ass_layer, align, x, y, y_format, alpha, tags, body) in enumerate(elements):
+        for part, (begin, finish, phase) in enumerate(_hook_phases(event, layer)):
+            start, end = _ass_time(begin), _ass_time(finish)
+            if start >= end:
+                continue
+            place, motion = _hook_motion(phase, round((finish - begin) * 1000), x, y, y_format, alpha, layer)
+            # A box's tags (its own alpha) come before the motion's, as the hook's boxes do.
+            if ass_layer == base:
+                text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
+            else:
+                text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
+            events.append((part, order, f"Dialogue: {ass_layer},{start},{end},{style},,0,0,0,,{text}"))
+    return [event for _, _, event in sorted(events)]
 
 
 def _caption_style(style: CaptionStyle) -> str:
@@ -433,10 +495,10 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
     )
 
 
-def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
+def _hook_events(hook: HookEvent, style: HookStyle, raised: int = 0) -> list[str]:
     """The hook's Dialogue events: its boxes and its Kicker's pill, drawn, and over them each line and
     the Kicker's text centred on its anchor; then its Quote Mark's badge and marks over everything.
-    All animated on and off as the style says (_hook_phases)."""
+    All animated on and off as the style says (_hook_phases), on ASS layers 1 to 4, `raised` higher."""
     metrics = font_metrics(style.font)
     size = hook.size
     # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
@@ -501,7 +563,7 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
                 text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
             else:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
-            events.append((part, order, f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}"))
+            events.append((part, order, f"Dialogue: {layer + raised},{start},{end},Hook,,0,0,0,,{text}"))
     return [event for _, _, event in sorted(events)]
 
 
@@ -556,7 +618,12 @@ POP_FROM = 70
 SLIDE_PX = 60
 
 
-def _hook_ends(hook: HookEvent, style: HookStyle) -> tuple[float, float]:
+# What is animated as the hook is: the hook in its style, or a Text Layer in its own.
+type _Shown = HookEvent | TextEvent
+type _Motion = HookStyle | TextLayer
+
+
+def _hook_ends(hook: _Shown, style: _Motion) -> tuple[float, float]:
     """How long the hook's entrance and exit take, in seconds: the style's animation_ms each, at most
     half the hook's time; none without an animation."""
     most = (hook.end - hook.start) / 2
@@ -575,7 +642,7 @@ def _stagger(hook: HookEvent, style: HookStyle, steps: int) -> float:
     return max(0.0, min(HOOK_STAGGER_SECS, (hook.end - hook.start - on - off) / steps))
 
 
-def _hook_phases(hook: HookEvent, style: HookStyle, delay: float = 0.0) -> list[tuple[float, float, str]]:
+def _hook_phases(hook: _Shown, style: _Motion, delay: float = 0.0) -> list[tuple[float, float, str]]:
     """The parts of an element's time that are drawn differently, as (start, end, phase), for one
     coming on `delay` seconds after the hook starts. Fading alone (or no animation) is one part,
     "fade", where \\fad does both ends. Popping or sliding at either end splits it into "in", "hold"
@@ -589,7 +656,7 @@ def _hook_phases(hook: HookEvent, style: HookStyle, delay: float = 0.0) -> list[
 
 
 def _hook_motion(
-    phase: str, length: int, x: float, y: float, y_format: str, alpha: str | None, style: HookStyle
+    phase: str, length: int, x: float, y: float, y_format: str, alpha: str | None, style: _Motion
 ) -> tuple[str, str]:
     """The position tag and the animation tags of a hook element at (x, y) (y written in `y_format`)
     in a part of `length` ms (see _hook_phases), its own alpha being `alpha` (None: opaque)."""

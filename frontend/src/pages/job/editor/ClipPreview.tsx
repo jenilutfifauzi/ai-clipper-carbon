@@ -10,6 +10,7 @@ import {
   type Panel,
   type PreviewPlan,
   type RenderPlan,
+  type TextEvent,
   type WatermarkEvent,
 } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -38,6 +39,8 @@ const BLUR_SIGMA = 40;
 const BLUR_BRIGHTNESS = 0.9;
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
 const NUDGE_PX = 8;
+// A Text Layer's box has corners this many of its sizes round (planner.py's TEXT_RADIUS).
+const TEXT_RADIUS = 0.25;
 // How much of the ending "Play ending" plays.
 const ENDING_SECS = 3;
 // A follower video further than this from the master is moved back in step.
@@ -52,8 +55,9 @@ const percent = (value: number) => `${value * 100}%`;
  * scaled to fit. Two videos play the Source in step, one per panel (Split's two, or Blur's
  * background and shot); the first is the master, which `playback` drives and which is heard.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
- * centre, in output pixels. With `fit`, the frame is as large as fits the space its parent gives it
- * (the Advanced Edit's player), and the transport is a single row.
+ * centre, in output pixels. With `texts` (the Advanced Edit), a Text Layer on screen is selected by a
+ * click and dragged to a new centre. With `fit`, the frame is as large as fits the space its parent
+ * gives it (the Advanced Edit's player), and the transport is a single row.
  */
 export function ClipPreview({
   src,
@@ -61,6 +65,7 @@ export function ClipPreview({
   fonts,
   playback,
   onWatermarkMove,
+  texts,
   fit = false,
 }: {
   src: string;
@@ -68,6 +73,7 @@ export function ClipPreview({
   fonts: FontInfo[] | null;
   playback: Playback;
   onWatermarkMove?: (x: number, y: number) => void;
+  texts?: TextControls;
   fit?: boolean;
 }) {
   const stage = useRef<HTMLDivElement>(null);
@@ -110,6 +116,7 @@ export function ClipPreview({
   const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
+  const textDrag = useTextDrag(plan, stage, texts);
 
   const frame = (
     <div
@@ -135,6 +142,16 @@ export function ClipPreview({
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
           <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} />
+          {plan.texts.map((event) => (
+            <TextLayerView
+              key={event.layer.id}
+              event={event}
+              font={fontById.get(event.layer.font)}
+              playback={playback}
+              offset={textDrag.offset(event)}
+              still={event.layer.id === texts?.selected}
+            />
+          ))}
           {plan.hook && <Hook plan={plan} hook={plan.hook} font={fontById.get(plan.hook_style.font)} playback={playback} />}
         </svg>
       )}
@@ -158,6 +175,7 @@ export function ClipPreview({
           }}
         />
       )}
+      {plan && texts && <TextHandles plan={plan} playback={playback} controls={texts} drag={textDrag} />}
     </div>
   );
   if (fit) {
@@ -276,6 +294,203 @@ function useWatermarkDrag(
         }
       : null;
   return { event: shown, handlers, dragging: drag !== null };
+}
+
+/** The Advanced Edit's hold on the Text Layers in the preview: which is selected, and what a click or a drag does. */
+export interface TextControls {
+  selected: string | null;
+  onSelect: (id: string) => void;
+  // A drag moved it to centre (x, y), in output pixels; each drag is one `group` of changes.
+  onMove: (id: string, x: number, y: number, group: string) => void;
+}
+
+let textDrags = 0;
+
+/**
+ * Dragging Text Layers on the stage. A dragged one is drawn where it is put until a plan that has it
+ * there comes back, as the Watermark is.
+ */
+function useTextDrag(plan: RenderPlan | null, stage: React.RefObject<HTMLDivElement | null>, controls: TextControls | undefined) {
+  const [held, setHeld] = useState<{ id: string; x: number; y: number } | null>(null);
+  const drag = useRef<{ id: string; pointer: number; dx: number; dy: number; group: string; moved: boolean } | null>(null);
+
+  // Where the pointer is, in output pixels.
+  function at(pointer: PointerEvent): { x: number; y: number } | null {
+    const rect = stage.current?.getBoundingClientRect();
+    if (!rect || !plan) return null;
+    return { x: ((pointer.clientX - rect.left) / rect.width) * plan.width, y: ((pointer.clientY - rect.top) / rect.height) * plan.height };
+  }
+
+  const centre = (event: TextEvent) => ({ x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 });
+  // Held until the plan has the Text Layer where it was put.
+  const holding = (event: TextEvent) =>
+    held && held.id === event.layer.id && (drag.current?.id === held.id || event.layer.x !== held.x || event.layer.y !== held.y);
+
+  function offset(event: TextEvent): [number, number] {
+    if (!holding(event) || !held) return [0, 0];
+    const now = centre(event);
+    return [held.x - now.x, held.y - now.y];
+  }
+
+  function handlers(event: TextEvent) {
+    return {
+      onPointerDown: (pointer: PointerEvent<HTMLDivElement>) => {
+        const point = at(pointer);
+        if (!point || !controls || pointer.button !== 0) return;
+        pointer.preventDefault();
+        pointer.currentTarget.setPointerCapture(pointer.pointerId);
+        controls.onSelect(event.layer.id);
+        const [dx, dy] = offset(event);
+        const from = centre(event);
+        drag.current = {
+          id: event.layer.id,
+          pointer: pointer.pointerId,
+          dx: from.x + dx - point.x,
+          dy: from.y + dy - point.y,
+          group: `text-drag:${++textDrags}`,
+          moved: false,
+        };
+      },
+      onPointerMove: (pointer: PointerEvent<HTMLDivElement>) => {
+        const current = drag.current;
+        const point = at(pointer);
+        if (!current || pointer.pointerId !== current.pointer || !point || !plan) return;
+        current.moved = true;
+        const x = Math.round(Math.min(Math.max(point.x + current.dx, 0), plan.width));
+        const y = Math.round(Math.min(Math.max(point.y + current.dy, 0), plan.height));
+        setHeld({ id: current.id, x, y });
+        controls?.onMove(current.id, x, y, current.group);
+      },
+      onPointerUp: (pointer: PointerEvent<HTMLDivElement>) => {
+        if (drag.current?.pointer === pointer.pointerId) drag.current = null;
+      },
+      onPointerCancel: () => {
+        drag.current = null;
+        setHeld(null);
+      },
+    };
+  }
+
+  return { offset, handlers };
+}
+
+/** A handle over each Text Layer on screen now, to select and drag it; the selected one outlined. */
+function TextHandles({
+  plan,
+  playback,
+  controls,
+  drag,
+}: {
+  plan: RenderPlan;
+  playback: Playback;
+  controls: TextControls;
+  drag: ReturnType<typeof useTextDrag>;
+}) {
+  const shown = usePlayback(playback, (time) =>
+    plan.texts
+      .filter((event) => event.start <= time && time < event.end)
+      .map((event) => event.layer.id)
+      .join(" "),
+  );
+  const on = new Set(shown.split(" "));
+  return (
+    <>
+      {plan.texts
+        .filter((event) => on.has(event.layer.id) || event.layer.id === controls.selected)
+        .map((event) => {
+          const [dx, dy] = drag.offset(event);
+          const selected = event.layer.id === controls.selected;
+          return (
+            <div
+              key={event.layer.id}
+              role="button"
+              tabIndex={-1}
+              aria-roledescription="movable text"
+              aria-label={`Text: ${event.lines.join(" ")}`}
+              aria-pressed={selected}
+              {...drag.handlers(event)}
+              className={cx(
+                "absolute cursor-move touch-none rounded-[4px]",
+                selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed",
+                !on.has(event.layer.id) && "opacity-40",
+              )}
+              style={{
+                left: percent((event.area.x + dx) / plan.width),
+                top: percent((event.area.y + dy) / plan.height),
+                width: percent(event.area.width / plan.width),
+                height: percent(event.area.height / plan.height),
+              }}
+            />
+          );
+        })}
+    </>
+  );
+}
+
+/**
+ * A Text Layer while it is on screen, animated on and off as the hook is, moved by `offset` while
+ * dragged. A `still` one (selected in the Advanced Edit) is shown whole while paused in its time, so
+ * that it can be seen while it is edited, even on a frame its animation hasn't reached.
+ */
+function TextLayerView({
+  event,
+  font,
+  playback,
+  offset,
+  still = false,
+}: {
+  event: TextEvent;
+  font: FontInfo | undefined;
+  playback: Playback;
+  offset: [number, number];
+  still?: boolean;
+}) {
+  const layer = event.layer;
+  const key = usePlayback(playback, (time, p) => {
+    if (still && !p.playing && event.start <= time && time < event.end) return "1 1 0";
+    const look = hookLook(time, event, layer, 0);
+    return look && look.map((value) => value.toFixed(3)).join(" ");
+  });
+  if (!key || !font) return null;
+  const [opacity, scale, below] = key.split(" ").map(Number);
+  const { box, area, size } = event;
+  return (
+    <g opacity={opacity} transform={`translate(${offset[0]} ${offset[1] + below})`}>
+      <g style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box", transformOrigin: "center" }}>
+        {/* What the scale grows from: the whole area, as libass grows the box and lines from its middle. */}
+        <rect x={area.x} y={area.y} width={area.width} height={area.height} fill="none" />
+        {box && (
+          <rect
+            x={box.x}
+            y={box.y}
+            width={box.width}
+            height={box.height}
+            rx={Math.min(Math.round(TEXT_RADIUS * size), Math.floor(box.height / 2))}
+            fill={layer.box_colour}
+            fillOpacity={layer.box_opacity}
+          />
+        )}
+        {event.lines.map((line, i) => (
+          <text
+            key={i}
+            x={event.anchors[i][0]}
+            y={event.anchors[i][1]}
+            textAnchor="middle"
+            fontFamily={fontFamily(font.id)}
+            fontSize={cssFontSize(font, size)}
+            fill={layer.colour}
+            stroke={layer.outline > 0 ? layer.outline_colour : undefined}
+            strokeWidth={2 * layer.outline}
+            strokeLinejoin="round"
+            paintOrder="stroke"
+            style={{ whiteSpace: "pre" }}
+          >
+            {line}
+          </text>
+        ))}
+      </g>
+    </g>
+  );
 }
 
 const boxKey = (box: Box) => `${box.x},${box.y},${box.width},${box.height}`;
@@ -493,7 +708,11 @@ function HighlightBox({
 
 // How long the hook's entrance and exit take (renderer.py's _hook_ends), and how long after each
 // other the `steps` + 1 elements of a staggered entrance come on (_stagger).
-function hookEnds(hook: HookEvent, style: HookStyle): [number, number] {
+// What comes on and goes off as the hook does: the hook, or a Text Layer, in its style.
+type Timed = { start: number; end: number };
+type Moves = Pick<HookStyle, "animation_in" | "animation_out" | "animation_ms">;
+
+function hookEnds(hook: Timed, style: Moves): [number, number] {
   const most = (hook.end - hook.start) / 2;
   const ms = style.animation_ms / 1000;
   return [style.animation_in === "none" ? 0 : Math.min(ms, most), style.animation_out === "none" ? 0 : Math.min(ms, most)];
@@ -508,7 +727,7 @@ function stagger(hook: HookEvent, style: HookStyle, steps: number): number {
 // An element's look at `time`, coming on `delay` after the hook starts: its opacity, scale and how
 // far below its place it is, as the renderer animates it (_hook_phases, _hook_motion); null while
 // it is off screen.
-function hookLook(time: number, hook: HookEvent, style: HookStyle, delay: number): [number, number, number] | null {
+function hookLook(time: number, hook: Timed, style: Moves, delay: number): [number, number, number] | null {
   const start = hook.start + delay;
   if (time < start || time >= hook.end) return null;
   const ms = style.animation_ms / 1000;

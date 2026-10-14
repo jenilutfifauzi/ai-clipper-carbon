@@ -15,5 +15,6 @@ export function candidateDraft(candidate: Candidate): CandidateChange {
     hook_start: candidate.hook_start,
     hook_secs: candidate.hook_secs,
     layout_overrides: candidate.layout_overrides,
+    text_layers: candidate.text_layers,
   };
 }

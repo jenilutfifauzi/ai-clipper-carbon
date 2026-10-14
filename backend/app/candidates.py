@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import FiniteFloat, StringConstraints
+from pydantic import Field, FiniteFloat, StringConstraints
 
-from app.styles import DEFAULT_PRESET, StyleOverrides
+from app.fonts import DEFAULT_FONT
+from app.styles import DEFAULT_PRESET, Animation, Colour, FontId, StyleOverrides
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -17,6 +18,8 @@ WORD_EDIT_MAX_CHARS = 40
 # than its style's size.
 HOOK_MAX_CHARS = 200
 KICKER_MAX_CHARS = 24
+# The longest text a Text Layer holds, its newlines included.
+TEXT_LAYER_MAX_CHARS = 300
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,44 @@ class LayoutOverride:
     layout: Layout
 
 
+class TextAlign(StrEnum):
+    """How a Text Layer's lines line up with each other."""
+
+    CENTER = "center"
+    LEFT = "left"
+    RIGHT = "right"
+
+
+@dataclass(frozen=True)
+class TextLayer:
+    """A free text overlay of the Advanced Edit: `text` (its lines split at newlines) on screen from
+    `start` for `secs`, in Timeline time (seconds into the Clip, so that trimming the Clip leaves it
+    where it was in it), centred on (x, y) in output pixels. Its look is its own: the font at `size`
+    (libass's), its colour and outline, an optional box behind it, and the hook's animations. `id`
+    names it in the editor."""
+
+    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
+    start: Annotated[FiniteFloat, Field(ge=0, le=3600)]
+    secs: Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
+    x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
+    y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
+    font: FontId = DEFAULT_FONT
+    size: Annotated[int, Field(ge=16, le=320)] = 80
+    colour: Colour = "#FFFFFF"
+    # In output pixels; none at 0.
+    outline: Annotated[int, Field(ge=0, le=20)] = 0
+    outline_colour: Colour = "#000000"
+    # A rounded box behind the lines.
+    box: bool = False
+    box_colour: Colour = "#000000"
+    box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.7
+    align: TextAlign = TextAlign.CENTER
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
+
+
 @dataclass(frozen=True)
 class Candidate:
     # Set once, when Selection (or the owner, for a manual one) creates the Candidate; review edits
@@ -108,6 +149,8 @@ class Candidate:
     layout_overrides: list[LayoutOverride] = field(default_factory=list)
     # A short label in a pill above the hook ("" for none).
     hook_kicker: str = ""
+    # The Advanced Edit's Text Layers, drawn in this order (the last on top).
+    text_layers: list[TextLayer] = field(default_factory=list)
 
     @property
     def reviewed(self) -> bool:

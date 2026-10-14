@@ -143,6 +143,7 @@ def candidate_plan(
         hook_kicker=candidate.hook_kicker,
         watermark_style=watermark_style,
         logo_size=(logo.width, logo.height) if logo else None,
+        text_layers=candidate.text_layers,
     )
 
 
@@ -387,6 +388,7 @@ class Renders:
                 hook_style=plan.hook_style,
                 hook_kicker=candidate.hook_kicker,
                 watermark_style=plan.watermark_style,
+                text_layers=candidate.text_layers,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

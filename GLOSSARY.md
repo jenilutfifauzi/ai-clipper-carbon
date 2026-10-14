@@ -41,4 +41,5 @@ Use these terms in code, UI copy, tickets and commit messages.
 ## Advanced Edit
 
 - **Advanced Edit:** a CapCut-like workspace for one Candidate, opened from the clip editor: assets, player, inspector and a multi-track Timeline (on a phone: player, Timeline, a toolbar and bottom sheets). It edits the same Candidate, with undo and redo.
+- **Text Layer:** a free text overlay added in the Advanced Edit: its words (lines split at newlines), its time in Timeline time, its centre on the frame, and its own look and in/out animation. Drawn over the captions and under the hook.
 - **Timeline time:** seconds into the output Clip. What the Advanced Edit adds, and the hook, are anchored to it; Word Edits and Layout Overrides stay on the Source's timeline.

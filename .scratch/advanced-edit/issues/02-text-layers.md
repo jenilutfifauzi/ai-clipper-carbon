@@ -18,12 +18,30 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A Candidate without Text Layers plans and renders byte for byte as before.
-- [ ] Seam B: placement, fitting, clamping to the Clip, and animations in the plan.
-- [ ] Seam A: a Text Layer burned in where and when the plan puts it (pixel colour at two times).
-- [ ] Trimming the Clip leaves layers at the same Timeline time.
-- [ ] Undoable; typecheck and build; browser walkthrough on desktop and phone.
+- [x] A Candidate without Text Layers plans and renders byte for byte as before.
+- [x] Seam B: placement, fitting, clamping to the Clip, and animations in the plan.
+- [x] Seam A: a Text Layer burned in where and when the plan puts it (pixel colour at two times).
+- [x] Trimming the Clip leaves layers at the same Timeline time.
+- [x] Undoable; typecheck and build; browser walkthrough on desktop and phone.
 
 ## Comments
+
+**2026-10-14: done.**
+
+**Checks:**
+- `tests/test_text_layers.py`: Seam B (placement, lines and alignment, the box and shrinking, the time kept in the Clip, ASS layers and order) and Seam A (saving and validation through the API, kept through a trim, burned in by the real ffmpeg where and when planned).
+- The planner, watermark, review and styles suites still pass.
+- `npm run build`.
+- Browser walkthrough on a copy of a real Job:
+  - Added a Title and typed two lines.
+  - Dragged it on the preview (saved at y 1167).
+  - Split it at 1.52 s with Cmd+B, then undid the split.
+  - On a phone, a tap selected it and the toolbar showed Split, Duplicate and Delete.
+
+**Changes from the plan:**
+- The animations are the hook's (`none | fade | pop | slide`), with the same field names, so that the renderer animates both with one set of helpers.
+- Look presets were added to the Text tab: Text, Title, Label, Subtitle.
+- Overlapping layers stack in lanes on the Text track.
+- While paused, the selected layer is shown whole, even on a frame its animation hasn't reached, so that it can be seen while it is edited.

@@ -5,7 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, LayoutOverride, Origin, WordEdit, manual_candidate
+from app.candidates import Candidate, Layout, LayoutOverride, Origin, TextLayer, WordEdit, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -41,6 +41,7 @@ class CandidateChange:
     hook_secs: float | None = None
     layout_overrides: list[LayoutOverride] | None = None
     hook_kicker: str | None = None
+    text_layers: list[TextLayer] | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,8 @@ def update(
     start, end = old.start, old.end
     if change.start is not None or change.end is not None:
         start, end = episode.bounds(_pick(change.start, old.start), _pick(change.end, old.end))
+    if change.text_layers is not None:
+        _check_ids("Text Layer", [layer.id for layer in change.text_layers])
     new = replace(
         old,
         start=start,
@@ -91,6 +94,7 @@ def update(
         hook_secs=_pick(change.hook_secs, old.hook_secs),
         layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
+        text_layers=_pick(change.text_layers, old.text_layers),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -136,7 +140,7 @@ def _look(candidate: Candidate) -> tuple:
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
-        candidate.layout_overrides, candidate.hook_kicker,
+        candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers,
     )
 
 
@@ -144,6 +148,12 @@ def _merged(edits: list[WordEdit]) -> list[WordEdit]:
     """The edits in time order, leaving out those that change nothing; of two at the same time, the later."""
     by_time = {round(edit.at, 3): edit for edit in edits}
     return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
+
+
+def _check_ids(kind: str, ids: list[str]) -> None:
+    """InvalidEdit unless each of the items has its own id."""
+    if len(set(ids)) != len(ids):
+        raise InvalidEdit(f"Two of the {kind}s have the same id")
 
 
 def _index(candidates: list[Candidate], candidate_id: str) -> int:

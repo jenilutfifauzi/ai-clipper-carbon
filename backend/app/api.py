@@ -11,7 +11,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
-from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, WordEdit
+from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, TextLayer, WordEdit
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
@@ -55,6 +55,8 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
+# The most Text Layers a Candidate holds.
+TEXT_LAYERS_MAX = 50
 
 _OPTIONS = TypeAdapter(JobOptions)
 
@@ -127,6 +129,8 @@ class CandidateUpdate(BaseModel):
     layout_overrides: Annotated[list[LayoutOverride], Field(max_length=LAYOUT_OVERRIDES_MAX)] | None = None
     # Saved with its whitespace collapsed; "" for none.
     hook_kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] | None = None
+    # Replaces the Candidate's Text Layers as a whole.
+    text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX)] | None = None
 
 
 class PresetBody(BaseModel):

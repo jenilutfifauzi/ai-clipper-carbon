@@ -1,10 +1,10 @@
 """Clips: the rendered outputs of a Job's Candidates, one per Candidate."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from app.candidates import Layout, LayoutOverride, WordEdit
+from app.candidates import Layout, LayoutOverride, TextLayer, WordEdit
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
 CLIPS_DIR = "clips"
@@ -52,6 +52,8 @@ class RenderedClip:
     hook_kicker: str = ""
     # None in a Clip rendered before Watermarks, which had none.
     watermark_style: WatermarkStyle | None = None
+    # The Advanced Edit's, as rendered; none in a Clip rendered before them.
+    text_layers: list[TextLayer] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

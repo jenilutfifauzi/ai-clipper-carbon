@@ -42,6 +42,10 @@ styles (app/styles.py) are kept in the plan, for the Renderer to draw it in them
 The Watermark (text, or one of the Logos) shows for the whole Clip. At one of its nine positions it
 sits WATERMARK_MARGIN inside SAFE_AREA's corners, edges or middle; at the Custom position it is
 centred where the owner dragged it, kept inside the frame.
+
+Text Layers (the Advanced Edit's free text) are centred where the owner put them, kept inside the
+frame, each in its own look; one wider than the frame less TEXT_MARGIN either side is set smaller.
+They are drawn over the captions and under the hook, in their order.
 """
 
 import math
@@ -51,7 +55,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Layout, LayoutOverride, WordEdit
+from app.candidates import Layout, LayoutOverride, TextAlign, TextLayer, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import (
@@ -114,6 +118,14 @@ KICKER_GAP = 0.25
 # box, just above and left of the first line's text.
 QUOTE_SCALE = 0.9
 QUOTE_INSET = 0.75
+# A Text Layer is at most as wide as the frame less this many pixels either side. Its lines'
+# baselines are TEXT_LEADING sizes apart; its box is padded by TEXT_PAD_X and TEXT_PAD_Y sizes
+# either side and above its capitals and below its descenders, its corners TEXT_RADIUS sizes round.
+TEXT_MARGIN = 48
+TEXT_LEADING = 1.1
+TEXT_PAD_X = 0.35
+TEXT_PAD_Y = 0.22
+TEXT_RADIUS = 0.25
 
 
 # The planner's input, found by app/analysis.py.
@@ -304,6 +316,23 @@ class WatermarkEvent:
 
 
 @dataclass(frozen=True)
+class TextEvent:
+    """A Text Layer as drawn: its `lines` set at font `size` (its own, or smaller for one too wide),
+    on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it has a
+    `box` (then the box is the area). Each line is placed by its anchor: the middle of its text and
+    its baseline."""
+
+    layer: TextLayer
+    lines: list[str]
+    start: float
+    end: float
+    area: Box
+    size: float
+    anchors: list[tuple[float, float]]
+    box: Box | None = None
+
+
+@dataclass(frozen=True)
 class RenderPlan:
     # The Clip's range on the Source's timeline.
     start: float
@@ -322,6 +351,8 @@ class RenderPlan:
     height: int = OUTPUT_HEIGHT
     watermark: WatermarkEvent | None = None
     watermark_style: WatermarkStyle = WatermarkStyle()
+    # The Text Layers that show, in drawing order.
+    texts: list[TextEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -353,6 +384,7 @@ def plan_render(
     hook_kicker: str = "",
     watermark_style: WatermarkStyle = WatermarkStyle(),
     logo_size: tuple[int, int] | None = None,
+    text_layers: list[TextLayer] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -363,7 +395,8 @@ def plan_render(
     Clip) takes its Layout instead of `layout`, the last one if it holds several. Without `scenes`
     the Clip is one Scene; without `faces` (not analysed) an Auto Scene is tracked with its crop in
     the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. The
-    Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none)."""
+    Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
+    `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     duration = round(end - start, 3)
@@ -398,6 +431,7 @@ def plan_render(
         hook_style=hook_style,
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
+        texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
     )
 
 
@@ -438,6 +472,51 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
     x = {"left": left, "right": right}.get(horizontal, (OUTPUT_WIDTH - width) // 2)
     y = {"top": top, "bottom": bottom}.get(vertical, (SAFE_AREA.y * 2 + SAFE_AREA.height - height) // 2)
     return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
+
+
+def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
+    """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its lines
+    (split at newlines, without emoji, blank ones at either end left out) centred on its place and
+    kept inside the frame, set smaller when the widest, padded, is wider than the frame less
+    TEXT_MARGIN either side. None when it is blank or would start at or after the Clip's end."""
+    lines = [without_emoji(line) for line in layer.text.split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    start = round(layer.start, 3)
+    if not lines or start >= duration:
+        return None
+    metrics = font_metrics(layer.font)
+    # Its width and padding grow with the size, so a size that fits scales them alike.
+    pad = (TEXT_PAD_X, TEXT_PAD_Y) if layer.box else (0.0, 0.0)
+    widest = max(metrics.width(line, 1) for line in lines) + 2 * pad[0]
+    size = float(layer.size)
+    room = OUTPUT_WIDTH - 2 * TEXT_MARGIN
+    if widest * size > room:
+        size = math.floor(room / widest * 10) / 10
+    pad_x, pad_y = pad[0] * size, pad[1] * size
+    widths = [metrics.width(line, size) for line in lines]
+    width = math.ceil(max(widths) + 2 * pad_x)
+    letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * TEXT_LEADING * size
+    height = math.ceil(letters + 2 * pad_y)
+    x = min(max(round(layer.x - width / 2), 0), OUTPUT_WIDTH - width)
+    y = min(max(round(layer.y - height / 2), 0), OUTPUT_HEIGHT - height)
+    area = Box(x, y, width, height)
+
+    def middle(line: float) -> float:
+        if layer.align is TextAlign.LEFT:
+            return x + pad_x + line / 2
+        if layer.align is TextAlign.RIGHT:
+            return x + width - pad_x - line / 2
+        return x + width / 2
+
+    anchors = [
+        (middle(line), y + pad_y + (metrics.cap_height / metrics.units + i * TEXT_LEADING) * size)
+        for i, line in enumerate(widths)
+    ]
+    end = round(min(start + layer.secs, duration), 3)
+    return TextEvent(layer, lines, start, end, area, size, anchors, area if layer.box else None)
 
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:

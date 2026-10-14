@@ -323,6 +323,45 @@ export interface WatermarkEvent {
   logo: string | null;
 }
 
+export type TextAlign = "center" | "left" | "right";
+
+// A free text overlay of the Advanced Edit (backend/app/candidates.py): its text (lines split at
+// newlines) from `start` for `secs` in Timeline time, centred on (x, y) in output pixels.
+export interface TextLayer {
+  id: string;
+  text: string;
+  start: number;
+  secs: number;
+  x: number;
+  y: number;
+  font: string;
+  // libass's, as the captions'.
+  size: number;
+  colour: string;
+  outline: number;
+  outline_colour: string;
+  box: boolean;
+  box_colour: string;
+  box_opacity: number;
+  align: TextAlign;
+  animation_in: Animation;
+  animation_out: Animation;
+  animation_ms: number;
+}
+
+// A Text Layer as drawn: its lines at font `size`, each placed by its anchor (the middle of its text
+// and its baseline), in `area`; `box` is the area when it has one.
+export interface TextEvent {
+  layer: TextLayer;
+  lines: string[];
+  start: number;
+  end: number;
+  area: Box;
+  size: number;
+  anchors: [number, number][];
+  box: Box | null;
+}
+
 export interface RenderPlan {
   start: number;
   end: number;
@@ -338,6 +377,8 @@ export interface RenderPlan {
   height: number;
   watermark: WatermarkEvent | null;
   watermark_style: WatermarkStyle;
+  // The Text Layers that show, in drawing order.
+  texts: TextEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its Word Edit.
@@ -405,6 +446,8 @@ export interface Candidate {
   layout_overrides: LayoutOverride[];
   // A short label in a pill above the hook; "" for none.
   hook_kicker: string;
+  // The Advanced Edit's, drawn in this order (the last on top).
+  text_layers: TextLayer[];
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -424,6 +467,8 @@ export interface CandidateChange {
   // Replaces the Candidate's Layout Overrides as a whole.
   layout_overrides?: LayoutOverride[];
   hook_kicker?: string;
+  // Replaces the Candidate's Text Layers as a whole.
+  text_layers?: TextLayer[];
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -454,6 +499,8 @@ export interface RenderedClip {
   hook_kicker: string;
   // null in a Clip rendered before Watermarks.
   watermark_style: WatermarkStyle | null;
+  // [] in a Clip rendered before Text Layers.
+  text_layers: TextLayer[];
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
