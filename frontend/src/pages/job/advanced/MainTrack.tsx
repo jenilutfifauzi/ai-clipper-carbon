@@ -2,6 +2,7 @@ import { Clapperboard, Copy, Film, Plus, Scissors, Trash2, X } from "lucide-reac
 import { useState } from "react";
 import type { ClipSegment, Fit, MediaItem, Transcript } from "../../../api";
 import { Button } from "../../../components/Button";
+import { Hint } from "../../../components/InfoTip";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
@@ -112,10 +113,9 @@ export function SegmentFields({
       </div>
       {segment.media ? (
         <>
-          <p className="text-sm text-pretty text-muted">
-            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s. Drag its
-            edges to trim it, or drag it to another place.
-          </p>
+          <Hint more="Drag its edges to trim it, or drag it to another place.">
+            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s
+          </Hint>
           <Segmented
             legend="In the frame"
             options={FITS}
@@ -138,10 +138,9 @@ export function SegmentFields({
         </>
       ) : (
         <>
-          <p className="text-sm text-pretty text-muted">
-            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {(segment.end - segment.start).toFixed(1)} s. Drag
-            its edges to trim it, or drag it to another place. Its ends snap to words.
-          </p>
+          <Hint more="Drag its edges to trim it, or drag it to another place. Its ends snap to words.">
+            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {(segment.end - segment.start).toFixed(1)} s
+          </Hint>
           <Slider
             label="This Segment's sound"
             value={segment.volume ?? 1}

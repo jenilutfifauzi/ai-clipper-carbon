@@ -47,7 +47,14 @@ export function AssetPanel({
           onAdd={onAddVideo}
           addable={(item) => item.kind === "video"}
           onOverlay={onAddOverlay}
-          hint="Videos up to 3 minutes (500 MB) and PNG, JPEG or WebP images up to 5 MB, kept for every Job. Click a video to put it after the Segment at the playhead, or drag it onto the Video track; an image (or a video with its layers button) goes over the clip, or drag it onto the Overlay track."
+          hint="Click to add, or drag onto the timeline."
+          details={
+            <ul className="flex list-disc flex-col gap-1 pl-4">
+              <li>A video goes after the Segment at the playhead, or where you drop it on the Video track.</li>
+              <li>An image, or a video added with its layers button, goes over the clip, or onto the Overlay track.</li>
+              <li>MP4, MOV or WebM videos up to 3 minutes (500 MB); PNG, JPEG or WebP images up to 5 MB. Kept for every Job.</li>
+            </ul>
+          }
         />
       </div>
     );
@@ -58,7 +65,13 @@ export function AssetPanel({
         library={library}
         kinds={["audio"]}
         onAdd={onAddMusic}
-        hint="MP3, M4A, WAV or AAC songs up to 50 MB, kept for every Job. Click to add at the playhead, or drag onto the Audio track. Use music you have the rights to: the platforms mute or take down clips that don't."
+        hint="Click to add at the playhead, or drag onto the Audio track."
+        details={
+          <ul className="flex list-disc flex-col gap-1 pl-4">
+            <li>MP3, M4A, WAV or AAC, up to 50 MB. Kept for every Job.</li>
+            <li>Use music you have the rights to: the platforms mute or take down clips that don't.</li>
+          </ul>
+        }
       />
     );
   }

@@ -2,6 +2,7 @@ import { Copy, Trash2 } from "lucide-react";
 import { useId } from "react";
 import type { Animation, FontInfo, TextAlign, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
+import { Hint } from "../../../components/InfoTip";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
@@ -63,7 +64,7 @@ export function newTextLayer(look: Omit<TextLayer, "id" | "start" | "secs">, at:
 export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (look: Omit<TextLayer, "id" | "start" | "secs">) => void }) {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-pretty text-muted">Adds a text at the playhead, or drag one onto the timeline. Drag it on the video to place it.</p>
+      <Hint more="Drag a text on the video to place it.">Click to add at the playhead, or drag onto the timeline.</Hint>
       <div className="grid grid-cols-2 gap-2">
         {TEXT_PRESETS.map(({ name, layer }) => (
           <button

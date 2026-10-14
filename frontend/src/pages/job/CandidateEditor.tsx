@@ -583,7 +583,7 @@ function CutNote({ count, to }: { count: number; to: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-fill p-3 text-sm">
       <p className="min-w-0 flex-1 text-pretty">
-        This clip is cut into {count} Segments. Trim, reorder and join them in the Advanced Edit.
+        This clip is cut into {count} Segments, edited in the Advanced Edit.
       </p>
       <Link to={to} className={buttonClass("secondary", "sm")}>
         <SlidersHorizontal aria-hidden size={16} />

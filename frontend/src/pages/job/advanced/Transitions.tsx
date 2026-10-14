@@ -1,6 +1,7 @@
 import { Trash2 } from "lucide-react";
 import type { Transition, TransitionKind } from "../../../api";
 import { Button } from "../../../components/Button";
+import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { DRAG_TRANSITION } from "./drag";
@@ -46,14 +47,14 @@ export function TransitionPanel({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {!kinds && !transition && <p className="text-sm text-pretty text-muted">Pick a transition in the Transitions tab, or drag one onto a join.</p>}
+      {!kinds && !transition && <Hint>Pick a transition in the Transitions tab.</Hint>}
       {kinds && (
         <>
-          <p className="text-sm text-pretty text-muted">
-            {joined
-              ? "Pick how one Segment gives way to the next. The two overlap for its length, so the clip gets that much shorter."
-              : "Select a join between two Segments on the Video track (the diamond), or drag a transition onto one."}
-          </p>
+          {joined ? (
+            <Hint more="The two Segments overlap for its length, so the clip gets that much shorter.">Pick how one Segment gives way to the next.</Hint>
+          ) : (
+            <Hint more="Or drag a transition onto a join.">Select a join (the diamond) on the Video track.</Hint>
+          )}
           <div className="grid grid-cols-2 gap-2">
             {TRANSITIONS.map(({ kind, label }) => (
               <button

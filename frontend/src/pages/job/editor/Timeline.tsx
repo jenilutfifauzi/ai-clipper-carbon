@@ -2,6 +2,7 @@ import { Minus, Plus, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import type { RenderPlan, Word } from "../../../api";
 import { Button, buttonClass } from "../../../components/Button";
+import { Hint } from "../../../components/InfoTip";
 import { cx, formatClock, formatPrecise } from "../../../format";
 import type { HookTiming } from "../HookEditor";
 import { Link } from "react-router";
@@ -168,12 +169,16 @@ export function Timeline({
           <Playhead playback={playback} x={(time) => LABEL_WIDTH + x(range.start + time)} />
         </div>
       </div>
-      <p className="text-sm text-muted">
-        {cut
-          ? "This clip is cut into Segments: trim, reorder and join them in the Advanced Edit."
-          : "Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys."}{" "}
-        Drag the hook to move it, its right edge to change how long it stays.
-      </p>
+      {cut ? (
+        <Hint more="Its Segments are trimmed, reordered and joined in the Advanced Edit.">
+          Drag the hook to move it, its right edge to change how long it stays.
+        </Hint>
+      ) : (
+        <p className="text-sm text-muted">
+          Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys. Drag the hook to move it, its right
+          edge to change how long it stays.
+        </p>
+      )}
     </div>
   );
 }

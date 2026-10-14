@@ -11,6 +11,7 @@ import {
   type MediaUse,
 } from "../../../api";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
+import { Hint } from "../../../components/InfoTip";
 import { ProgressBar } from "../../../components/ProgressBar";
 import { Skeleton } from "../../../components/Skeleton";
 import { cx, formatBytes, formatPrecise } from "../../../format";
@@ -106,6 +107,7 @@ export function MediaAssets({
   addable = () => true,
   onOverlay,
   hint,
+  details,
 }: {
   library: MediaLibrary;
   kinds: MediaKind[];
@@ -114,7 +116,9 @@ export function MediaAssets({
   addable?: (item: MediaItem) => boolean;
   // Adding a video or an image over the Clip instead.
   onOverlay?: (item: MediaItem) => void;
+  // One sentence, and more in a tip.
   hint: ReactNode;
+  details?: ReactNode;
 }) {
   const audio = kinds.includes("audio");
   const items = library.items?.filter((item) => kinds.includes(item.kind)) ?? null;
@@ -150,7 +154,7 @@ export function MediaAssets({
         icon={audio ? Music : ImagePlus}
         onFile={library.upload}
       />
-      <p className="text-sm text-pretty text-muted">{hint}</p>
+      <Hint more={details}>{hint}</Hint>
       {library.uploads.map((upload) => (
         <div key={upload.key} className="flex flex-col gap-1.5 rounded-[10px] bg-fill p-2.5 text-sm">
           <div className="flex items-center justify-between gap-2">
