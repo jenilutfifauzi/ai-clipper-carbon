@@ -737,3 +737,39 @@ def test_the_hook_as_last_edited_is_burned_over_the_first_3_seconds_above_the_ca
     assert json.loads((job_dir / clip["output"]["plan"]).read_text())["hook"] is None
     upper = full_frame(settings, video, 1.5)[:600]
     assert (np.abs(upper - upper[100, 540]).max(axis=2) > 15).sum() == 0
+
+
+def test_captions_and_the_hook_are_burned_in_the_candidates_preset_with_its_overrides(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    start = candidate["start"]
+    green = "#00FF00"
+    candidate = patch(
+        client, job, candidate, hook_text="Halo", preset_id="yellow-pop",
+        style_overrides={"caption": {"active_colour": green, "position": "top"}, "hook": {"position": "bottom"}},
+    )
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    # The plan holds the resolved styles: the Preset's, with the overrides.
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    caption, hook = plan["caption_style"], plan["hook_style"]
+    assert (caption["size"], caption["active_colour"], caption["position"]) == (120, green, "top")
+    assert (hook["box_colour"], hook["position"]) == ("#FFE600", "bottom")
+    assert all(event["area"]["y"] == 430 for event in plan["captions"])
+    assert plan["hook"]["area"]["y"] + plan["hook"]["area"]["height"] == 1536
+
+    # Burned in: the spoken Word in green at the top, the hook's yellow box at the bottom of the safe area.
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 4.2 - start)
+    rows, columns = pixels(frame, np.array([0, 255, 0]))
+    assert len(rows) > 300 and 430 <= rows.min() and rows.max() < 630
+    rows, _ = pixels(frame, np.array([0xFF, 0xE6, 0x00]), tolerance=30)
+    assert len(rows) > 5000 and plan["hook"]["area"]["y"] <= rows.min() and rows.max() < 1536
+    # No orange highlight in the captions' band (the yellow box's antialiased edge can come near orange).
+    assert len(pixels(frame[400:700], ORANGE)[0]) == 0

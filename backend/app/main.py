@@ -13,6 +13,7 @@ from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
 from app.rendering import Renders
+from app.styles import PRESETS_FILE, PresetStore
 from app.uploads import UPLOADS_DIR
 from app.worker import Worker
 
@@ -38,6 +39,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.store = store
     app.state.worker = worker
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
+    app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.include_router(api.router)
     app.include_router(api.media)
     if (settings.frontend_dir / "index.html").is_file():

@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.candidates import Candidate, Layout, Origin, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
+from app.styles import StyleOverrides
 from app.transcript import Transcript
 
 # The longest clip an edit or a manual Candidate may make, unless the Job's range allows longer:
@@ -33,6 +34,8 @@ class CandidateChange:
     hook_text: str | None = None
     layout: Layout | None = None
     selected: bool | None = None
+    preset_id: str | None = None
+    style_overrides: StyleOverrides | None = None
 
 
 @dataclass(frozen=True)
@@ -62,8 +65,8 @@ class Episode:
 def update(
     candidates: list[Candidate], candidate_id: str, change: CandidateChange, episode: Episode
 ) -> tuple[list[Candidate], Candidate]:
-    """The Candidates with one of them changed, and that one. Changing its bounds, hook text or layout
-    marks it edited."""
+    """The Candidates with one of them changed, and that one. Changing its bounds, hook text, layout or
+    style marks it edited."""
     i = _index(candidates, candidate_id)
     old = candidates[i]
     start, end = old.start, old.end
@@ -76,8 +79,10 @@ def update(
         hook_text=old.hook_text if change.hook_text is None else " ".join(change.hook_text.split()),
         layout=_pick(change.layout, old.layout),
         selected=_pick(change.selected, old.selected),
+        preset_id=_pick(change.preset_id, old.preset_id),
+        style_overrides=_pick(change.style_overrides, old.style_overrides),
     )
-    edited = (new.start, new.end, new.hook_text, new.layout) != (old.start, old.end, old.hook_text, old.layout)
+    edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
     return [*candidates[:i], new, *candidates[i + 1 :]], new
 
@@ -114,6 +119,14 @@ def _share_words(starts: list[float], a: Candidate, b: Candidate) -> bool:
     lo, hi = max(a.start, b.start), min(a.end, b.end)
     i = bisect_left(starts, lo)
     return i < len(starts) and starts[i] < hi
+
+
+def _look(candidate: Candidate) -> tuple:
+    """What the owner's edits change about a Candidate's Clip."""
+    return (
+        candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
+        candidate.style_overrides,
+    )
 
 
 def _index(candidates: list[Candidate], candidate_id: str) -> int:

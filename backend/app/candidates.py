@@ -1,7 +1,9 @@
 """Candidates: proposed clips awaiting review."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+
+from app.styles import DEFAULT_PRESET, StyleOverrides
 
 
 @dataclass(frozen=True)
@@ -56,8 +58,11 @@ class Candidate:
     layout: Layout = Layout.AUTO
     # Chosen for rendering.
     selected: bool = False
-    # The owner has changed its bounds, hook text or layout.
+    # The owner has changed its bounds, hook text, layout or style.
     edited: bool = False
+    # Its Style Preset (Default, if that has been deleted) and the fields of it replaced (app/styles.py).
+    preset_id: str = DEFAULT_PRESET
+    style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
 
     @property
     def reviewed(self) -> bool:

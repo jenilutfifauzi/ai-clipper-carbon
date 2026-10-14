@@ -33,6 +33,7 @@ from app.planner import RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
 from app.storage import write_atomic
+from app.styles import PRESETS_FILE, PresetStore
 from app.transcriber import Transcriber, TranscriptionStalled, TranscriptionStopped, Watchdog
 from app.transcript import Word
 from app.video_source import probe
@@ -77,6 +78,7 @@ class Renders:
     def __init__(self, store: JobStore, settings: Settings, transcriber: Transcriber) -> None:
         self.store = store
         self.settings = settings
+        self.presets = PresetStore(settings.data_dir / PRESETS_FILE)
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
         self.analyzer = Analyzer(settings.ffmpeg_bin, BLAZE_FACE_MODEL, settings.analysis)
         self.transcriber = transcriber
@@ -192,10 +194,12 @@ class Renders:
         try:
             words = self._words(job, candidate, step(1 / 3)) if job.options.captions else None
             analysis = self._analysis(job, candidate, step(1 / 3))
+            caption_style, hook_style = self.presets.styles(candidate.preset_id, candidate.style_overrides)
             plan = plan_render(
                 candidate.start, candidate.end, job.source.metadata,
                 scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
                 layout=candidate.layout, words=words, hook=candidate.hook_text, camera=self.settings.camera,
+                caption_style=caption_style, hook_style=hook_style,
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             encoder = self.renderer.render(

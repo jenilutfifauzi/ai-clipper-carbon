@@ -16,13 +16,15 @@ frame is drawn once, in its own Scene's Layout. The audio isn't cut: it runs on 
 
 Captions are burned into the joined frames by libass (the `ass` filter, on the Clip's timeline), from
 an ASS file written for the render: one Dialogue event per Word of each caption line, showing the
-whole line with that Word in orange while it is spoken, so the line never moves as the highlight
-does. The font is the bundled Montserrat ExtraBold, given to libass through `fontsdir`, so no system
-font is needed. A line too wide for its area is set smaller, measured with the font's own widths.
+whole line with that Word highlighted (in the active colour, or on a box of it) while it is spoken,
+so the line never moves as the highlight does. The look is the plan's Caption Style. Its font is
+one of the bundled ones (app/fonts.py), given to libass through `fontsdir`, so no system font is
+needed. A line too wide for its area is set at the smaller size the plan gives it.
 
-The hook is drawn by the same `ass` filter, in the same encode: a dark, semi-transparent rounded
-box drawn as an ASS vector shape, and over it each of its lines as its own event, placed where the
-Render Plan's metrics put it. It shows from the first frame and fades out briefly at its end.
+The hook is drawn by the same `ass` filter, in the same encode: a semi-transparent rounded box
+drawn as an ASS vector shape, and over it each of its lines as its own event, placed where the
+Render Plan's metrics put it, in the plan's Hook Style. It shows from the first frame and fades out
+briefly at its end.
 """
 
 import json
@@ -35,11 +37,11 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from app.config import MONTSERRAT_EXTRABOLD, RenderTuning
+from app.config import FONTS_DIR, RenderTuning
+from app.fonts import font
 from app.planner import (
     HOOK_LEADING,
     HOOK_PAD_Y,
-    HOOK_SIZE,
     CaptionEvent,
     HookEvent,
     Panel,
@@ -47,26 +49,16 @@ from app.planner import (
     ScenePlan,
     font_metrics,
 )
+from app.styles import CaptionStyle, Highlight, HookStyle
 
 logger = logging.getLogger(__name__)
 
-# The captions' look, in output pixels: white UPPERCASE Montserrat ExtraBold with a black outline, the
-# Word being spoken in orange. libass sizes a font so that its ascent plus descent (Montserrat's
-# Windows metrics: 1.562 em) is the font size: at 110 the letters are 70 px to the em, with capitals
-# 49 px tall, and an average line of 16 characters is about 770 px wide.
-CAPTION_FONT = "Montserrat ExtraBold"
-CAPTION_SIZE = 110
-CAPTION_OUTLINE = 7
-CAPTION_COLOUR = "#FFFFFF"
-CAPTION_ACTIVE = "#FF9F0A"
-CAPTION_EDGE = "#000000"
-# The hook's look: white text in a black box with rounded corners (radius in pixels), 60% opaque,
-# fading out over its last moment (it is there from the first frame, which platforms show first).
-HOOK_COLOUR = "#FFFFFF"
-HOOK_BOX = "#000000"
-HOOK_BOX_OPACITY = 0.6
-HOOK_RADIUS = 24
+# The hook fades out over its last moment (it is there from the first frame, which platforms show first).
 HOOK_FADE_OUT_MS = 200
+# The highlight box's padding around its Word, in sizes of the line's font, and its corners' radius.
+HIGHLIGHT_PAD_X = 0.12
+HIGHLIGHT_PAD_Y = 0.08
+HIGHLIGHT_RADIUS = 0.12
 
 
 class RenderStopped(RuntimeError):
@@ -158,7 +150,7 @@ class Renderer:
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's timeline.
         burned = "" if subtitles is None else (
-            f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(MONTSERRAT_EXTRABOLD.parent))},"
+            f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(FONTS_DIR))},"
         )
         frame += f";[frame]{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         audio = f"[0:a:0]aresample={tuning.audio_rate}[a]"
@@ -296,13 +288,13 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
 def _ass(plan: RenderPlan) -> str:
     """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
     for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events)."""
-    white, black = _style_colour(CAPTION_COLOUR), _style_colour(CAPTION_EDGE)
+    caption, hook = plan.caption_style, plan.hook_style
     script = [
         "[Script Info]",
         "ScriptType: v4.00+",
         f"PlayResX: {plan.width}",
         f"PlayResY: {plan.height}",
-        # No wrapping: a line is set smaller instead (see _caption_size). No colour conversion.
+        # No wrapping: a line is set smaller instead (see the planner's _caption_size). No colour conversion.
         "WrapStyle: 2",
         "ScaledBorderAndShadow: yes",
         "YCbCr Matrix: None",
@@ -311,57 +303,109 @@ def _ass(plan: RenderPlan) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
         "MarginR, MarginV, Encoding",
-        # Not bold: the font is ExtraBold already, and libass would embolden it further. Centred (5) on \pos.
-        f"Style: Caption,{CAPTION_FONT},{CAPTION_SIZE},{white},{white},{black},{black},0,0,0,0,100,100,0,0,1,"
-        f"{CAPTION_OUTLINE},0,5,0,0,0,1",
-        f"Style: Hook,{CAPTION_FONT},{HOOK_SIZE},{_style_colour(HOOK_COLOUR)},{_style_colour(HOOK_COLOUR)},"
-        f"{black},{black},0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1",
+        # Not bold: the bundled fonts are heavy already, and libass would embolden them further.
+        # Centred (5) on \pos.
+        _caption_style(caption),
+        f"Style: Hook,{font(hook.font).family},{hook.size},{_style_colour(hook.colour)},{_style_colour(hook.colour)},"
+        f"{_style_colour('#000000')},{_style_colour('#000000')},0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     for event in plan.captions:
-        area = event.area
-        size = _caption_size(event)
-        place = f"\\pos({area.x + area.width / 2:g},{area.y + area.height / 2:g})"
-        if size != CAPTION_SIZE:
-            place += f"\\fs{size:g}"
-        for i, word in enumerate(event.words):
-            start, end = _ass_time(word.start), _ass_time(word.end)
-            if start >= end:
-                continue
-            text = " ".join(
-                f"{{\\c{_tag_colour(CAPTION_ACTIVE)}}}{_ass_text(other.text)}{{\\c{_tag_colour(CAPTION_COLOUR)}}}"
-                if j == i else _ass_text(other.text)
-                for j, other in enumerate(event.words)
-            )
-            script.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{text}")
+        script.extend(_caption_events(event, caption))
     if plan.hook:
-        script.extend(_hook_events(plan.hook))
+        script.extend(_hook_events(plan.hook, hook))
     return "\n".join(script) + "\n"
 
 
-def _hook_events(hook: HookEvent) -> list[str]:
+def _caption_style(style: CaptionStyle) -> str:
+    text, edge, shadow = _style_colour(style.colour), _style_colour(style.outline_colour), _style_colour(style.shadow_colour)
+    return (
+        f"Style: Caption,{font(style.font).family},{style.size},{text},{text},{edge},{shadow},0,0,0,0,100,100,0,0,1,"
+        f"{style.outline},{style.shadow},5,0,0,0,1"
+    )
+
+
+def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
+    """A caption line's Dialogue events: one per Word, while it is highlighted, showing the whole line
+    with that Word in the active colour (Colour), the line as it is over a box of the active colour
+    behind the Word (Box), or the line as it is for the whole line's time (None)."""
+    area = event.area
+    centre_x, centre_y = area.x + area.width / 2, area.y + area.height / 2
+    place = f"\\pos({centre_x:g},{centre_y:g})"
+    if event.size != style.size:
+        place += f"\\fs{event.size:g}"
+    if style.highlight is Highlight.NONE:
+        start, end = _ass_time(event.start), _ass_time(event.end)
+        line = " ".join(_ass_text(word.text) for word in event.words)
+        return [f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{line}"] if start < end else []
+    events = []
+    plain = " ".join(_ass_text(word.text) for word in event.words)
+    for i, word in enumerate(event.words):
+        start, end = _ass_time(word.start), _ass_time(word.end)
+        if start >= end:
+            continue
+        if style.highlight is Highlight.BOX:
+            events.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{_highlight_box(event, i, style)}")
+            events.append(f"Dialogue: 1,{start},{end},Caption,,0,0,0,,{{{place}}}{plain}")
+            continue
+        text = " ".join(
+            f"{{\\c{_tag_colour(style.active_colour)}}}{_ass_text(other.text)}{{\\c{_tag_colour(style.colour)}}}"
+            if j == i else _ass_text(other.text)
+            for j, other in enumerate(event.words)
+        )
+        events.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{text}")
+    return events
+
+
+def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
+    """An ASS drawing of the box behind the line's Word `index`: the Word's width (measured like the
+    line, from the centred line's left edge) and the capitals' height, padded, with rounded corners."""
+    metrics, size = font_metrics(style.font), event.size
+    words = [word.text for word in event.words]
+    line = metrics.width(" ".join(words), size)
+    before = metrics.width(" ".join(words[:index]) + (" " if index else ""), size)
+    word = metrics.width(words[index], size)
+    pad_x, pad_y = HIGHLIGHT_PAD_X * size, HIGHLIGHT_PAD_Y * size
+    area = event.area
+    # The line is centred on the area's middle: its letters' vertical middle is where the middle of
+    # its ascent-plus-descent box is, and capitals sit on the baseline below the ascent's top.
+    baseline = area.y + area.height / 2 - size / 2 + metrics.ascent / metrics.units * size
+    cap = metrics.cap_height / metrics.units * size
+    left = area.x + area.width / 2 - line / 2 + before - pad_x
+    top = baseline - cap - pad_y
+    width, height = round(word + 2 * pad_x), round(cap + 2 * pad_y)
+    radius = round(HIGHLIGHT_RADIUS * size)
+    return (
+        f"{{\\an7\\pos({left:.1f},{top:.1f})\\p1\\bord0\\shad0\\c{_tag_colour(style.active_colour)}}}"
+        f"{_rounded_box(width, height, min(radius, height // 2))}{{\\p0}}"
+    )
+
+
+def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
     """The hook's Dialogue events: its box, drawn, and over it each line centred on the box, with
     the first line's capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart."""
-    font = font_metrics()
+    metrics = font_metrics(style.font)
     area, size = hook.area, hook.size
     start, end = _ass_time(hook.start), _ass_time(hook.end)
     fade = f"\\fad(0,{HOOK_FADE_OUT_MS})"
-    alpha = f"&H{round(255 * (1 - HOOK_BOX_OPACITY)):02X}&"
-    box = (
-        f"{{\\an7\\pos({area.x},{area.y})\\p1\\c{_tag_colour(HOOK_BOX)}\\alpha{alpha}{fade}}}"
-        f"{_rounded_box(area.width, area.height, HOOK_RADIUS)}{{\\p0}}"
-    )
-    events = [f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{box}"]
+    events = []
+    if style.box_opacity > 0:
+        alpha = f"&H{round(255 * (1 - style.box_opacity)):02X}&"
+        box = (
+            f"{{\\an7\\pos({area.x},{area.y})\\p1\\c{_tag_colour(style.box_colour)}\\alpha{alpha}{fade}}}"
+            f"{_rounded_box(area.width, area.height, min(style.radius, area.height // 2))}{{\\p0}}"
+        )
+        events.append(f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{box}")
     centre_x = area.x + area.width / 2
     for i, line in enumerate(hook.lines):
-        baseline = area.y + HOOK_PAD_Y + (font.cap_height / font.units + i * HOOK_LEADING) * size
+        baseline = area.y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * HOOK_LEADING) * size
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
-        centre_y = baseline - font.ascent / font.units * size + size / 2
+        centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
         place = f"\\an5\\pos({centre_x:g},{centre_y:.1f}){fade}"
-        if size != HOOK_SIZE:
+        if size != style.size:
             place += f"\\fs{size:g}"
         events.append(f"Dialogue: 2,{start},{end},Hook,,0,0,0,,{{{place}}}{_ass_text(line)}")
     return events
@@ -377,15 +421,6 @@ def _rounded_box(width: int, height: int, radius: int) -> str:
         f"m {r} 0 l {w - r} 0 b {w - c:g} 0 {w} {c:g} {w} {r} l {w} {h - r} b {w} {h - c:g} {w - c:g} {h} {w - r} {h} "
         f"l {r} {h} b {c:g} {h} 0 {h - c:g} 0 {h - r} l 0 {r} b 0 {c:g} {c:g} 0 {r} 0"
     )
-
-
-def _caption_size(event: CaptionEvent) -> float:
-    """The font size for the caption line: CAPTION_SIZE, or smaller if the line (with its outline)
-    would be wider than its area at that size."""
-    width = font_metrics().width(event.text, CAPTION_SIZE) + 2 * CAPTION_OUTLINE
-    if width <= event.area.width:
-        return CAPTION_SIZE
-    return math.floor(CAPTION_SIZE * (event.area.width - 2 * CAPTION_OUTLINE) / (width - 2 * CAPTION_OUTLINE) * 10) / 10
 
 
 def _style_colour(hex_colour: str) -> str:

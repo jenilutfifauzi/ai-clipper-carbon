@@ -240,3 +240,45 @@ def test_media_outside_a_job_or_not_media_is_refused(client, settings, wait_for_
     response = client.get(f"/media/{job['id']}/" + path.format(other=other["id"], root=root))
     assert response.status_code == 404
     assert client.get(f"/media/not-a-job/{job['source']['video']}").status_code == 404
+
+
+def test_style_presets_are_listed_made_changed_and_deleted_but_not_builtin_ones(client):
+    builtins = client.get("/api/presets").json()
+    assert [preset["id"] for preset in builtins][:1] == ["default"] and all(preset["builtin"] for preset in builtins)
+    assert builtins[0]["caption"]["size"] == 110 and builtins[0]["hook"]["size"] == 88
+
+    made = client.post("/api/presets", json={"name": " Brand ", "caption": {"active_colour": "#00aaff"}})
+    assert made.status_code == 201, made.text
+    preset = made.json()
+    assert (preset["name"], preset["caption"]["active_colour"], preset["builtin"]) == ("Brand", "#00AAFF", False)
+    assert client.get("/api/presets").json() == [*builtins, preset]
+
+    changed = client.put(f"/api/presets/{preset['id']}", json={"name": "Brand 2", "hook": {"radius": 0}}).json()
+    assert (changed["name"], changed["hook"]["radius"], changed["caption"]["active_colour"]) == ("Brand 2", 0, "#FF9F0A")
+    assert client.delete(f"/api/presets/{preset['id']}").status_code == 204
+    assert client.get("/api/presets").json() == builtins
+
+    assert client.put("/api/presets/default", json={"name": "x"}).status_code == 409
+    assert client.delete("/api/presets/default").status_code == 409
+    assert client.delete(f"/api/presets/{preset['id']}").status_code == 404
+    assert client.put("/api/presets/nope", json={"name": "x"}).status_code == 404
+    for body in ({"name": ""}, {"name": "x", "caption": {"size": 5}}, {"name": "x", "hook": {"font": "nope"}},
+                 {"name": "x", "caption": {"colour": "red"}}, {"name": "x", "extra": 1}):
+        assert client.post("/api/presets", json=body).status_code == 422, body
+
+
+def test_a_candidates_preset_and_overrides_are_saved_and_mark_it_edited(client, from_episode, llm, wait_for_status):
+    llm.clips = [clip("10:00", "10:44", 80)]
+    job = analyzed(client, wait_for_status)
+    [candidate] = job["candidates"]
+    assert (candidate["preset_id"], candidate["style_overrides"]) == ("default", {"caption": {}, "hook": {}})
+
+    styled = patch(client, job, candidate, preset_id="yellow-pop", style_overrides={"caption": {"size": 90}})
+    assert (styled["preset_id"], styled["style_overrides"]["caption"], styled["edited"]) == ("yellow-pop", {"size": 90}, True)
+    assert candidates(client, job) == [styled]
+
+    assert client.patch(candidate_url(job, candidate), json={"preset_id": "nope"}).status_code == 404
+    for overrides in ({"caption": {"size": 5}}, {"hook": {"glow": 1}}, {"caption": {"font": "nope"}}):
+        response = client.patch(candidate_url(job, candidate), json={"style_overrides": overrides})
+        assert response.status_code == 422, overrides
+    assert candidates(client, job) == [styled]

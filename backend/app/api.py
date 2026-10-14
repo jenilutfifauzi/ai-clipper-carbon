@@ -21,6 +21,7 @@ from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import CandidateChange, CandidateNotFound, Episode, InvalidEdit
 from app.storage import DiskUsage, disk_usage
+from app.styles import BuiltinPreset, CaptionStyle, HookStyle, InvalidStyle, Name, PresetNotFound, PresetStore, StyleOverrides, StylePreset
 from app.transcript import Transcript
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
 from app.worker import Worker
@@ -58,6 +59,10 @@ def _profiles(request: Request) -> ProfileStore:
     return request.app.state.profiles
 
 
+def _presets(request: Request) -> PresetStore:
+    return request.app.state.presets
+
+
 def _job(job_id: str, request: Request) -> Job:
     """The Job, or a 404. For streaming routes, which can't answer 404 once they have started."""
     try:
@@ -70,6 +75,7 @@ AppSettings = Annotated[Settings, Depends(_settings)]
 Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
+Presets = Annotated[PresetStore, Depends(_presets)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -88,6 +94,19 @@ class CandidateUpdate(BaseModel):
     hook_text: Annotated[str, StringConstraints(max_length=HOOK_MAX_CHARS)] | None = None
     layout: Layout | None = None
     selected: bool | None = None
+    preset_id: str | None = None
+    # Replaces the Candidate's overrides as a whole.
+    style_overrides: StyleOverrides | None = None
+
+
+class PresetBody(BaseModel):
+    """A Style Preset as the owner saves it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name
+    caption: CaptionStyle = CaptionStyle()
+    hook: HookStyle = HookStyle()
 
 
 class ManualCandidate(BaseModel):
@@ -229,14 +248,24 @@ def delete_job(job_id: str, store: Store) -> None:
 
 @router.patch("/jobs/{job_id}/candidates/{candidate_id}")
 def update_candidate(
-    job_id: str, candidate_id: str, body: CandidateUpdate, store: Store, settings: AppSettings
+    job_id: str, candidate_id: str, body: CandidateUpdate, store: Store, settings: AppSettings, presets: Presets
 ) -> Candidate:
-    """Change a Candidate's bounds (snapped to Words), hook text, layout or selected flag, and save it
-    at once. 422 for a range that isn't a usable clip; 409 unless the Job is in review."""
-    change = CandidateChange(**body.model_dump())
-    return _review(
-        store, settings, job_id, lambda candidates, episode: review.update(candidates, candidate_id, change, episode)
-    )
+    """Change a Candidate's bounds (snapped to Words), hook text, layout, Style Preset, Style
+    Overrides or selected flag, and save it at once. 422 for a range that isn't a usable clip or
+    overrides that don't make a valid style; 404 for an unknown Preset; 409 unless the Job is in review."""
+    if body.preset_id is not None:
+        _preset(presets, body.preset_id)
+    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields})
+
+    def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
+        candidates, candidate = review.update(candidates, candidate_id, change, episode)
+        try:
+            presets.styles(candidate.preset_id, candidate.style_overrides)
+        except InvalidStyle as exc:
+            raise InvalidEdit(f"Invalid style overrides: {exc}") from None
+        return candidates, candidate
+
+    return _review(store, settings, job_id, update)
 
 
 @router.get("/hook")
@@ -305,6 +334,47 @@ def list_clips(job_id: str, store: Store) -> list[Clip]:
         return ranked_clips(store.load_clips(job_id), store.load_candidates(job_id) or [])
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
+
+
+@router.get("/presets")
+def list_presets(presets: Presets) -> list[StylePreset]:
+    """The built-in Style Presets, then the owner's."""
+    return presets.all()
+
+
+@router.post("/presets", status_code=201)
+def create_preset(body: PresetBody, presets: Presets) -> StylePreset:
+    return presets.create(body.name, body.caption, body.hook)
+
+
+@router.put("/presets/{preset_id}")
+def update_preset(preset_id: str, body: PresetBody, presets: Presets) -> StylePreset:
+    """Replace one of the owner's Presets. Candidates using it render in it from now on. 409 for a
+    built-in Preset."""
+    try:
+        return presets.update(preset_id, body.name, body.caption, body.hook)
+    except PresetNotFound:
+        raise HTTPException(404, f"No Preset {preset_id}") from None
+    except BuiltinPreset:
+        raise HTTPException(409, f"Preset {preset_id} is built in: save a copy instead") from None
+
+
+@router.delete("/presets/{preset_id}", status_code=204)
+def delete_preset(preset_id: str, presets: Presets) -> None:
+    """Delete one of the owner's Presets. Candidates using it render in Default. 409 for a built-in Preset."""
+    try:
+        presets.delete(preset_id)
+    except PresetNotFound:
+        raise HTTPException(404, f"No Preset {preset_id}") from None
+    except BuiltinPreset:
+        raise HTTPException(409, f"Preset {preset_id} is built in and can't be deleted") from None
+
+
+def _preset(presets: PresetStore, preset_id: str) -> StylePreset:
+    try:
+        return presets.get(preset_id)
+    except PresetNotFound:
+        raise HTTPException(404, f"No Preset {preset_id}") from None
 
 
 @router.get("/system/disk")

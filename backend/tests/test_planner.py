@@ -7,12 +7,15 @@ from pydantic import TypeAdapter
 
 from app.candidates import Layout
 from app.config import CameraTuning
+from app.styles import CaptionPosition, CaptionStyle, Highlight, HookPosition, HookStyle
 from app.planner import (
     HOOK_PAD_X,
     HOOK_SIZE,
     HOOK_WIDTH,
     LOWER_CAPTIONS,
+    SAFE_AREA,
     SEAM_CAPTIONS,
+    TOP_CAPTIONS,
     Box,
     CaptionEvent,
     CaptionWord,
@@ -668,5 +671,98 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
     assert one.height < two.height <= 200
 
     plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words, hook=HOOK)
+    adapter = TypeAdapter(RenderPlan)
+    assert adapter.validate_json(adapter.dump_json(plan)) == plan
+
+
+# Caption and Hook Styles (clip editor ticket 01). The defaults are v1's, which the tests above check.
+
+
+def styled(words: list[Word], secs: float, style: CaptionStyle, **options) -> list[CaptionEvent]:
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, caption_style=style, **options).captions
+
+
+def test_caption_lines_are_broken_by_the_styles_limits():
+    talk = "jadi waktu itu kita lagi ngobrol soal bisnis keluarga yang ternyata luar biasa ya"
+    words = said(talk)
+    # Longer lines: every Word still shown once, in order, and each line as full as 30 characters allow.
+    wide = styled(words, 12, CaptionStyle(max_chars=30, max_secs=5))
+    assert " ".join(shown(wide)) == talk.upper()
+    assert all(len(event.text) <= 30 for event in wide)
+    assert len(wide) < len(captioned(words, 12))
+    for line, after in zip(wide, wide[1:]):
+        assert len(f"{line.text} {after.words[0].text}") > 30
+    # At most two Words a line, however short they are.
+    two = styled(said("a b c d e f g"), 4, CaptionStyle(max_words=2))
+    assert shown(two) == ["A B", "C D", "E F", "G"]
+    # By time: 0.6 s a Word, at most 1.2 s a line.
+    slow = [Word(text, 0.6 * i, 0.6 * i + 0.55) for i, text in enumerate("satu dua tiga empat lima".split())]
+    assert shown(styled(slow, 4, CaptionStyle(max_secs=1.0))) == ["SATU", "DUA", "TIGA", "EMPAT", "LIMA"]
+    # A pause of 0.3 s starts a line when the style says 0.25 s does.
+    paused = [Word("halo", 0.0, 0.4), Word("semua", 0.7, 1.1)]
+    assert shown(styled(paused, 3, CaptionStyle())) == ["HALO SEMUA"]
+    assert shown(styled(paused, 3, CaptionStyle(pause_secs=0.25))) == ["HALO", "SEMUA"]
+
+
+def test_captions_keep_the_words_case_when_the_style_isnt_uppercase():
+    words = said('Halo, semua. "Kenapa?" iPhone 50%')
+    assert shown(styled(words, 10, CaptionStyle(uppercase=False))) == ["Halo semua", "Kenapa?", "iPhone 50%"]
+
+
+def test_captions_go_where_the_style_puts_them_in_every_layout():
+    faces, scenes = caption_scenes()
+    words = said("satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas", 0.2, gap=0.2)
+
+    def areas(style: CaptionStyle) -> set[Box]:
+        return {event.area for event in styled(words, 6, style, scenes=scenes, faces=faces)}
+
+    assert areas(CaptionStyle()) == {SEAM_CAPTIONS, LOWER_CAPTIONS}
+    assert areas(CaptionStyle(position=CaptionPosition.TOP)) == {TOP_CAPTIONS}
+    assert areas(CaptionStyle(position=CaptionPosition.MIDDLE)) == {SEAM_CAPTIONS}
+    assert areas(CaptionStyle(position=CaptionPosition.BOTTOM)) == {LOWER_CAPTIONS}
+    # A custom height is the line's centre, kept inside the safe area.
+    [custom] = areas(CaptionStyle(position=CaptionPosition.CUSTOM, y=700))
+    assert custom == Box(130, 600, 820, 200)
+    for y, top in ((0, SAFE_AREA.y), (1920, SAFE_AREA.y + SAFE_AREA.height - 200)):
+        assert areas(CaptionStyle(position=CaptionPosition.CUSTOM, y=y)) == {Box(130, top, 820, 200)}
+    # Where every line goes to one place, a Layout change doesn't move or cut a line.
+    one_place = styled(words, 6, CaptionStyle(position=CaptionPosition.BOTTOM), scenes=scenes, faces=faces)
+    assert shown(one_place) == shown(captioned(words, 6))
+    # Top captions stay below a two-line hook at the top.
+    assert TOP_CAPTIONS.y >= hooked(LONG_HOOK).area.y + hooked(LONG_HOOK).area.height
+
+
+def test_a_caption_line_too_wide_for_its_area_is_set_smaller_at_the_styles_size():
+    [fits] = styled([Word("halo", 0.0, 0.5)], 2, CaptionStyle(size=130))
+    assert fits.size == 130
+    [wide] = styled([Word("W" * 15, 0.0, 0.5)], 2, CaptionStyle(size=130, outline=10))
+    assert wide.size < 130
+    assert font_metrics().width(wide.text, wide.size) + 20 <= wide.area.width
+    assert font_metrics().width(wide.text, wide.size + 0.2) + 20 > wide.area.width
+
+
+def test_the_hook_goes_where_its_style_puts_it_at_its_size():
+    top = hooked(HOOK)
+    assert top.area.y == SAFE_AREA.y
+    middle = hooked(HOOK, hook_style=HookStyle(position=HookPosition.MIDDLE)).area
+    assert abs(middle.y + middle.height / 2 - 960) <= 1
+    bottom = hooked(HOOK, hook_style=HookStyle(position=HookPosition.BOTTOM)).area
+    assert bottom.y + bottom.height == SAFE_AREA.y + SAFE_AREA.height
+    assert hooked(HOOK, hook_style=HookStyle(position=HookPosition.CUSTOM, y=700)).area.y == 700
+    clamped = hooked(HOOK, hook_style=HookStyle(position=HookPosition.CUSTOM, y=1900)).area
+    assert clamped.y + clamped.height == SAFE_AREA.y + SAFE_AREA.height
+    # A smaller size: the same lines in a smaller box, and the text fits at that size.
+    small = hooked(HOOK, hook_style=HookStyle(size=60))
+    assert small.size == 60 and small.area.width < top.area.width and small.area.height < top.area.height
+    assert fit_hook(HOOK, HookStyle(size=60)) == (small.lines, 60)
+    # Too large for two lines: set smaller than the style's size.
+    assert fit_hook(LONG_HOOK, HookStyle(size=120))[1] < 120
+
+
+def test_the_plan_keeps_its_styles():
+    caption, hook = CaptionStyle(colour="#FFE600", highlight=Highlight.BOX), HookStyle(box_opacity=1.0)
+    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), words=said("halo semua"), hook=HOOK,
+                       caption_style=caption, hook_style=hook)
+    assert (plan.caption_style, plan.hook_style) == (caption, hook)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan
