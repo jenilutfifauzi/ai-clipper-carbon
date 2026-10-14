@@ -95,6 +95,11 @@ KICKER_SCALE = 0.55
 KICKER_PAD_X = 0.5
 KICKER_PAD_Y = 0.28
 KICKER_GAP = 0.25
+# The Quote Mark's badge is a square this many hook sizes wide over the top-left corner of the first
+# line's box, reaching into it by QUOTE_INSET of the box's padding (so never over the text); with no
+# box, just above and left of the first line's text.
+QUOTE_SCALE = 0.9
+QUOTE_INSET = 0.75
 
 
 # The planner's input, found by app/analysis.py.
@@ -263,6 +268,8 @@ class HookEvent:
     emphasis: list[list[tuple[int, int]]]
     # Above the lines; None without one.
     kicker: HookKicker | None = None
+    # The Quote Mark's badge; None without one.
+    quote: Box | None = None
 
 
 @dataclass(frozen=True)
@@ -469,7 +476,9 @@ def _hook(
     (and strips) start at the left of the longest.
 
     The `kicker`, if any, goes above them in a pill (`_kicker`), centred over them or starting where
-    they do, KICKER_GAP of the hook's size away."""
+    they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
+    corner: the lines move down by what of it sticks out above them, but not sideways, so they stay
+    centred."""
     lines, size = fit_hook(text, style)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
@@ -510,6 +519,7 @@ def _hook(
             ]
     # The lines' place in the whole hook, and the pill's.
     lines_x = lines_y = 0
+    lines_height = height
     pill = _kicker(kicker, size, style)
     if pill is not None:
         pill_text, pill_size, pill_width, pill_height, pad_y = pill
@@ -520,7 +530,18 @@ def _hook(
         else:
             full_width = max(width, pill_width)
             pill_x, lines_x = (full_width - pill_width) // 2, (full_width - width) // 2
-        width, height = full_width, lines_y + height
+        width = full_width
+    badge = round(QUOTE_SCALE * size) if style.quote else 0
+    # How far it reaches into the first line's box.
+    pad_x, pad_y = {
+        HookShape.BLOCK: (HOOK_PAD_X, HOOK_PAD_Y),
+        HookShape.STRIPS: (STRIP_PAD_X * size, STRIP_PAD_Y * size),
+        HookShape.NONE: (0, 0),
+    }[style.shape]
+    inset_x, inset_y = math.floor(QUOTE_INSET * pad_x), math.floor(QUOTE_INSET * pad_y)
+    if badge:
+        lines_y += badge - inset_y
+    height = lines_y + lines_height
     bottom = SAFE_AREA.y + SAFE_AREA.height - height
     top = {
         HookPosition.TOP: SAFE_AREA.y,
@@ -534,16 +555,29 @@ def _hook(
         box = Box(area.x + pill_x, area.y, pill_width, pill_height)
         baseline = box.y + pad_y + metrics.cap_height / metrics.units * pill_size
         placed = HookKicker(pill_text, pill_size, box, (box.x + box.width / 2, baseline))
+    placed_anchors = anchors(area.x + lines_x, area.y + lines_y)
+    placed_boxes = [Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes]
+    quote = None
+    if badge:
+        if placed_boxes:
+            corner_x, corner_y = placed_boxes[0].x, placed_boxes[0].y
+        else:
+            x, baseline = placed_anchors[0]
+            corner_x, corner_y = x - widths[0] / 2, baseline - metrics.cap_height / metrics.units * size
+        quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
+        left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
+        area = Box(left_edge, area.y, right_edge - left_edge, area.height)
     return HookEvent(
         lines,
         start,
         round(min(start + secs, duration), 3),
         area,
         size,
-        anchors=anchors(area.x + lines_x, area.y + lines_y),
-        boxes=[Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes],
+        anchors=placed_anchors,
+        boxes=placed_boxes,
         emphasis=emphasis,
         kicker=placed,
+        quote=quote,
     )
 
 

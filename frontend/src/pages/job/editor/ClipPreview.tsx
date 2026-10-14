@@ -10,6 +10,14 @@ import { usePlayback, type Playback } from "./playback";
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
 // and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 const SLIDE_PX = 60;
+// The Quote Mark's corners, as a share of its width, and its marks on a badge 100 units wide: two
+// dots and their tails (renderer.py's QUOTE_RADIUS, QUOTE_DOT_RADIUS, QUOTE_DOTS, _quote_marks).
+const QUOTE_RADIUS = 0.22;
+const QUOTE_DOT_RADIUS = 11;
+const QUOTE_DOTS = [
+  [35, 58.8],
+  [65, 58.8],
+];
 const HIGHLIGHT_PAD_X = 0.12;
 const HIGHLIGHT_PAD_Y = 0.08;
 const HIGHLIGHT_RADIUS = 0.12;
@@ -387,8 +395,31 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
       {hook.lines.map((_, i) => (
         <g key={i}>{text(i, style.colour, style.emphasis_colour, outline)}</g>
       ))}
+      {hook.quote && (
+        // Grows from its corner, as the renderer places it.
+        <g transform={`translate(${hook.quote.x} ${hook.quote.y})${scale === 1 ? "" : ` scale(${scale})`}`}>
+          <rect width={hook.quote.width} height={hook.quote.height} rx={Math.round(QUOTE_RADIUS * hook.quote.width)} fill={style.quote_colour} />
+          <path d={quoteMarks(hook.quote.width)} fill="#FFFFFF" />
+        </g>
+      )}
     </g>
   );
+}
+
+// The Quote Mark's two marks as an SVG path, on a badge `width` wide.
+function quoteMarks(width: number): string {
+  const scale = width / 100;
+  const r = QUOTE_DOT_RADIUS;
+  const c = 0.5523 * r;
+  const at = (x: number, y: number) => `${(x * scale).toFixed(1)} ${(y * scale).toFixed(1)}`;
+  return QUOTE_DOTS.map(
+    ([x, y]) =>
+      `M ${at(x + r, y)} C ${at(x + r, y + c)} ${at(x + c, y + r)} ${at(x, y + r)} ` +
+      `C ${at(x - c, y + r)} ${at(x - r, y + c)} ${at(x - r, y)} C ${at(x - r, y - c)} ${at(x - c, y - r)} ${at(x, y - r)} ` +
+      `C ${at(x + c, y - r)} ${at(x + r, y - c)} ${at(x + r, y)} Z ` +
+      `M ${at(x - r, y)} C ${at(x - r, y - 1.5 * r)} ${at(x - 0.4 * r, y - 2.3 * r)} ${at(x + 0.8 * r, y - 2.6 * r)} ` +
+      `L ${at(x + 0.8 * r, y - 1.9 * r)} C ${at(x + 0.1 * r, y - 1.7 * r)} ${at(x - 0.1 * r, y - 1.3 * r)} ${at(x - 0.1 * r, y - r)} Z`,
+  ).join(" ");
 }
 
 // A line cut into its plain and emphasised parts.

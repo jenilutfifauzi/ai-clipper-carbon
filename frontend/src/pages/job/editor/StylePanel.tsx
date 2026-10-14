@@ -342,6 +342,24 @@ export function StylePanel({
           </div>
         </Group>
 
+        <Group title="Quote mark">
+          <div className="grid grid-cols-1 items-end gap-x-4 gap-y-3 sm:grid-cols-2">
+            <Switch checked={hook.quote} onChange={(v) => set("hook", "quote", v)}>
+              <span className="flex items-center gap-1.5 text-sm">
+                On the first line's corner {marker("hook", "quote", "quote mark")}
+              </span>
+            </Switch>
+            {hook.quote && (
+              <ColorField
+                label="Badge colour"
+                value={hook.quote_colour}
+                onChange={(v) => set("hook", "quote_colour", v)}
+                marker={marker("hook", "quote_colour", "quote mark colour")}
+              />
+            )}
+          </div>
+        </Group>
+
         <Group title="Kicker">
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <ColorField

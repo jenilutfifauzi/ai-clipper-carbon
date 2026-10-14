@@ -294,3 +294,25 @@ def test_a_kicker_is_a_pill_of_its_colour_with_its_text_over_it():
     [text] = [line for line in lines if line.endswith("}Fakta")]
     assert text.startswith("Dialogue: 2,") and f"\\fs{kicker.size:g}" in text and "\\c&H332211&" in text
     assert f"\\pos({kicker.anchor[0]:g}," in text and "\\bord0\\shad0" in text
+
+
+# The Quote Mark (hook-styles ticket 04).
+
+
+def test_a_quote_mark_is_a_badge_of_its_colour_with_white_quote_marks_over_the_box():
+    planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(quote=True, quote_colour="#22C55E"))
+    badge = planned.hook.quote
+    lines = [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
+    [drawn] = [line for line in lines if "\\c&H5EC522&" in line]
+    # Both by the badge's top-left corner, the marks' drawing being on the badge's own grid.
+    corner = f"\\an7\\pos({badge.x},{badge.y})"
+    assert drawn.startswith("Dialogue: 3,") and corner in drawn
+    [marks] = [line for line in lines if line.startswith("Dialogue: 4,")]
+    assert "\\c&HFFFFFF&" in marks and corner in marks
+    # Popping, they grow together from that corner.
+    popping = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(quote=True, animation_in="pop"))
+    grown = [line for line in _ass(popping).splitlines() if line.startswith(("Dialogue: 3,0:00:00.00", "Dialogue: 4,0:00:00.00"))]
+    assert len(grown) == 2 and all(corner in line and "\\fscx70" in line for line in grown)
+    # Two marks, each a round dot and its tail: four closed shapes.
+    assert marks.split("}")[1].count("m ") == 4
+    assert "Dialogue: 3," not in _ass(plan()) and "Dialogue: 4," not in _ass(plan())

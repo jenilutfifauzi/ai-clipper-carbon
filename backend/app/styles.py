@@ -140,6 +140,9 @@ class HookStyle:
     # 0 draws no box, whatever the shape.
     box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.6
     radius: Annotated[int, Field(ge=0, le=80)] = 24
+    # A badge with quote marks on the corner of the first line's box.
+    quote: bool = False
+    quote_colour: Colour = "#22C55E"
     # The Kicker's text, and its pill.
     kicker_colour: Colour = "#000000"
     kicker_box_colour: Colour = "#FFE600"

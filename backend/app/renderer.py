@@ -384,7 +384,8 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
 
 def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
     """The hook's Dialogue events: its boxes and its Kicker's pill, drawn, and over them each line and
-    the Kicker's text centred on its anchor; animated on and off as the style says (_hook_phases)."""
+    the Kicker's text centred on its anchor; then its Quote Mark's badge and marks over everything.
+    All animated on and off as the style says (_hook_phases)."""
     metrics = font_metrics(style.font)
     size = hook.size
     # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
@@ -415,6 +416,15 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
         centre_y = baseline - metrics.ascent / metrics.units * kicker.size + kicker.size / 2
         tags = f"\\fs{kicker.size:g}\\bord0\\shad0\\c{_tag_colour(style.kicker_colour)}"
         elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(kicker.text)))
+    if hook.quote is not None:
+        # Both by the badge's top-left corner (a drawing is placed by its origin there, the marks'
+        # being on the badge's grid), so that a pop grows them together from it.
+        badge = hook.quote
+        drawing = f"{_rounded_box(badge.width, badge.height, round(QUOTE_RADIUS * badge.width))}{{\\p0}}"
+        tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(style.quote_colour)}"
+        elements.append((3, 7, badge.x, badge.y, "g", None, tags, drawing))
+        marks = f"{_quote_marks(badge.width)}{{\\p0}}"
+        elements.append((4, 7, badge.x, badge.y, "g", None, "\\p1\\bord0\\shad0\\c&HFFFFFF&", marks))
     for line, (x, baseline), spans in zip(hook.lines, hook.anchors, hook.emphasis):
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
@@ -448,6 +458,37 @@ def _emphasised(line: str, spans: list[tuple[int, int]], style: HookStyle) -> st
         )
         at = end
     return text + _ass_text(line[at:])
+
+
+# The Quote Mark's badge has corners of this share of its width. On a badge 100 units wide its marks
+# are two dots of radius QUOTE_DOT_RADIUS at QUOTE_DOTS, each with a tail rising from its left side
+# to above its right, like "66"; together about centred on the badge.
+QUOTE_RADIUS = 0.22
+QUOTE_DOT_RADIUS = 11
+QUOTE_DOTS = ((35, 58.8), (65, 58.8))
+
+
+def _quote_marks(width: int) -> str:
+    """An ASS drawing of the Quote Mark's two marks, on a badge `width` pixels wide."""
+    scale, r = width / 100, QUOTE_DOT_RADIUS
+    # How far from each quarter's ends its curve's control points are.
+    c = 0.5523 * r
+
+    def at(x: float, y: float) -> str:
+        return f"{x * scale:.1f} {y * scale:.1f}"
+
+    shapes = []
+    for x, y in QUOTE_DOTS:
+        shapes.append(
+            f"m {at(x + r, y)} b {at(x + r, y + c)} {at(x + c, y + r)} {at(x, y + r)} "
+            f"b {at(x - c, y + r)} {at(x - r, y + c)} {at(x - r, y)} b {at(x - r, y - c)} {at(x - c, y - r)} {at(x, y - r)} "
+            f"b {at(x + c, y - r)} {at(x + r, y - c)} {at(x + r, y)}"
+        )
+        shapes.append(
+            f"m {at(x - r, y)} b {at(x - r, y - 1.5 * r)} {at(x - 0.4 * r, y - 2.3 * r)} {at(x + 0.8 * r, y - 2.6 * r)} "
+            f"l {at(x + 0.8 * r, y - 1.9 * r)} b {at(x + 0.1 * r, y - 1.7 * r)} {at(x - 0.1 * r, y - 1.3 * r)} {at(x - 0.1 * r, y - r)}"
+        )
+    return " ".join(shapes)
 
 
 # A popping hook grows from (or shrinks to) this share of its size, in percent; a sliding one comes

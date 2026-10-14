@@ -1029,3 +1029,47 @@ def test_a_kicker_follows_the_hooks_alignment_case_and_position_and_has_no_emoji
     # Too wide for the captions' width: set smaller to fit.
     wide = kicked("W" * 24).kicker
     assert wide.size < 0.55 * HOOK_SIZE and wide.box.width <= 820
+
+
+# The Quote Mark (hook-styles ticket 04).
+
+
+def contains(outer: Box, inner: Box) -> bool:
+    return (
+        outer.x <= inner.x and inner.x + inner.width <= outer.x + outer.width
+        and outer.y <= inner.y and inner.y + inner.height <= outer.y + outer.height
+    )
+
+
+def test_a_quote_mark_overlaps_the_first_boxs_corner_within_its_padding_clear_of_the_text():
+    assert hooked(HOOK).quote is None
+    for shape, pad_x, pad_y in (("block", HOOK_PAD_X, 26), ("strips", 0.25 * HOOK_SIZE, 0.14 * HOOK_SIZE)):
+        for align in ("center", "left"):
+            hook = hooked(HOOK, hook_style=HookStyle(shape=shape, align=align, quote=True))
+            badge, first = hook.quote, hook.boxes[0]
+            assert badge.width == badge.height == round(0.9 * HOOK_SIZE)
+            # Over the corner, reaching no further into the box than its padding.
+            assert badge.x < first.x < badge.x + badge.width <= first.x + pad_x
+            assert badge.y < first.y < badge.y + badge.height <= first.y + pad_y
+            assert contains(hook.area, badge) and hook.area.y == badge.y == SAFE_AREA.y
+            # The lines stay centred in the frame, and as they were, lower by what sticks out above.
+            plain = hooked(HOOK, hook_style=HookStyle(shape=shape, align=align))
+            assert [x for x, _ in hook.anchors] == [x for x, _ in plain.anchors]
+            assert first.y == plain.boxes[0].y + first.y - badge.y
+    # No box: just above and left of the first line's text.
+    bare = hooked(HOOK, hook_style=HookStyle(shape="none", quote=True))
+    x, baseline = bare.anchors[0]
+    left = x - font_metrics().width(bare.lines[0], bare.size) / 2
+    cap = font_metrics().cap_height / font_metrics().units * bare.size
+    assert bare.quote.x + bare.quote.width <= left + 1 and bare.quote.y + bare.quote.height <= baseline - cap + 1
+    assert left - (bare.quote.x + bare.quote.width) < 2 and contains(bare.area, bare.quote)
+
+
+def test_a_quote_mark_stays_clear_of_the_kicker_and_inside_the_safe_area():
+    hook = kicked("Fakta", quote=True, align="left")
+    assert hook.quote.y >= hook.kicker.box.y + hook.kicker.box.height
+    for position in ("top", "middle", "bottom"):
+        area = kicked("Fakta", quote=True, position=position).area
+        assert SAFE_AREA.y <= area.y and area.y + area.height <= SAFE_AREA.y + SAFE_AREA.height
+    wide = hooked(LONG_HOOK, hook_style=HookStyle(quote=True))
+    assert wide.quote.x >= 0 and wide.boxes[0].x + wide.boxes[0].width <= SAFE_AREA.x + SAFE_AREA.width
