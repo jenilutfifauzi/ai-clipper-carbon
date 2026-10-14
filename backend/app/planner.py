@@ -927,8 +927,8 @@ def _hook(
     text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS, kicker: str = ""
 ) -> HookEvent | None:
     """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
-    end, if that comes sooner), centred like the captions and as large as its lines and padding,
-    placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
+    end, if that comes sooner), as large as its lines and padding, its lines' middle at the style's
+    x (kept in the frame), placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
     bottom of SAFE_AREA, or with its top at the style's height (kept inside SAFE_AREA).
     None when the text is blank or it would start at or after the Clip's end.
 
@@ -1030,18 +1030,26 @@ def _hook(
         quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
+    # Moved as far from the middle of the frame as the style's x is, but no further than its edges.
+    dx = min(max(style.x - OUTPUT_WIDTH // 2, -area.x), OUTPUT_WIDTH - area.x - area.width)
+    if dx and placed is not None:
+        placed = replace(placed, box=_shifted(placed.box, dx), anchor=(placed.anchor[0] + dx, placed.anchor[1]))
     return HookEvent(
         lines,
         start,
         round(min(start + secs, duration), 3),
-        area,
+        _shifted(area, dx),
         size,
-        anchors=placed_anchors,
-        boxes=placed_boxes,
+        anchors=[(x + dx, y) for x, y in placed_anchors],
+        boxes=[_shifted(box, dx) for box in placed_boxes],
         emphasis=emphasis,
         kicker=placed,
-        quote=quote,
+        quote=quote and _shifted(quote, dx),
     )
+
+
+def _shifted(box: Box, dx: int) -> Box:
+    return Box(box.x + dx, box.y, box.width, box.height) if dx else box
 
 
 @dataclass(frozen=True)
@@ -1227,16 +1235,25 @@ def _captions(
                 parts[short - 1][1] = parts[short][1]
             del parts[short]
         for a, b, area in parts:
+            size = _caption_size(text, area, style)
             events.append(CaptionEvent(
                 text=text,
                 start=round(a, 3),
                 end=round(b, 3),
                 words=[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
                        for word, on, off in highlights],
-                area=area,
-                size=_caption_size(text, area, style),
+                area=_caption_placed(text, area, size, style),
+                size=size,
             ))
     return events
+
+
+def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle) -> Box:
+    """`area` moved to have its middle at the style's x, or as near as keeps the line set in it at
+    `size` (with its outline) in the frame."""
+    half = (font_metrics(style.font).width(text, size) + 2 * style.outline) / 2
+    centre = min(max(style.x, half), OUTPUT_WIDTH - half)
+    return _shifted(area, round(centre - area.width / 2) - area.x)
 
 
 def _caption_area(style: CaptionStyle, layout: SceneLayout) -> Box:

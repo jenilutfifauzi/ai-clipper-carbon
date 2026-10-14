@@ -40,6 +40,8 @@ Colour = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$", to_upper
 LogoId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,32}$")]
 # A height in output pixels, which the planner keeps inside the safe area.
 Height = Annotated[int, Field(ge=0, le=1920)]
+# A distance from the frame's left edge in output pixels.
+Width = Annotated[int, Field(ge=0, le=1080)]
 
 
 class Highlight(StrEnum):
@@ -135,6 +137,8 @@ class CaptionStyle:
     highlight: Highlight = Highlight.COLOUR
     position: CaptionPosition = CaptionPosition.AUTO
     y: Height = 1396
+    # Each line's centre, in output pixels, at any position; the planner keeps the line in the frame.
+    x: Width = 540
     # A line ends before a Word that would make it longer than max_chars characters (a single longer
     # Word stands alone), hold more than max_words Words, or last more than max_secs, and after a
     # pause of pause_secs.
@@ -174,6 +178,8 @@ class HookStyle:
     kicker_box_colour: Colour = "#FFE600"
     position: HookPosition = HookPosition.TOP
     y: Height = 232
+    # The middle of its lines, in output pixels, at any position; the planner keeps it in the frame.
+    x: Width = 540
     # Off at its end by a short fade, on from the first frame (which platforms show first).
     animation_in: Animation = Animation.NONE
     animation_out: Animation = Animation.FADE
@@ -194,7 +200,7 @@ class WatermarkStyle:
     logo: LogoId | None = None
     position: WatermarkPosition = WatermarkPosition.TOP_RIGHT
     # Its centre in output pixels, for the Custom position; the planner keeps it in the frame.
-    x: Annotated[int, Field(ge=0, le=1080)] = 540
+    x: Width = 540
     y: Height = 960
     # How tall it is in output pixels: the Logo's height, or the text's font size (in libass's units).
     size: Annotated[int, Field(ge=24, le=480)] = 64

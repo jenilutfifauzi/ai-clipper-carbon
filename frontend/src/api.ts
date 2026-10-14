@@ -139,6 +139,8 @@ export interface CaptionStyle {
   position: CaptionPosition;
   // The line's centre, for the custom position.
   y: number;
+  // Each line's centre, at any position (the backend keeps the line in the frame).
+  x: number;
   max_chars: number;
   max_words: number | null;
   max_secs: number;
@@ -177,6 +179,8 @@ export interface HookStyle {
   position: HookPosition;
   // The box's top, for the custom position.
   y: number;
+  // The middle of its lines, at any position (the backend keeps it in the frame).
+  x: number;
   animation_in: Animation;
   animation_out: Animation;
   animation_ms: number;

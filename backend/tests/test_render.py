@@ -824,6 +824,12 @@ def test_a_draft_is_planned_without_being_saved(client, video_source, transcribe
     assert draft["plan"]["hook"]["lines"] == ["Kenapa?"]
     assert {event["area"]["y"] for event in draft["plan"]["captions"]} == {430}
     assert preview(client, job, candidate)["plan"]["hook"] is None
+    # Placed on the preview: the hook's and each caption line's middle at x.
+    placed = {"position": "custom", "x": 400, "y": 900}
+    moved = preview(client, job, candidate, {"hook_text": "Kenapa?", "style_overrides": {"caption": placed, "hook": placed}})["plan"]
+    middle = lambda area: area["x"] + area["width"] / 2
+    assert abs(middle(moved["hook"]["area"]) - 400) <= 1 and moved["hook"]["area"]["y"] == 900
+    assert {middle(event["area"]) for event in moved["captions"]} == {400}
     [saved] = client.get(f"/api/jobs/{job['id']}").json()["candidates"]
     assert (saved["hook_text"], saved["style_overrides"]) == ("", {"caption": {}, "hook": {}, "watermark": {}})
 

@@ -265,8 +265,13 @@ def test_a_candidates_preset_and_overrides_are_saved_and_mark_it_edited(client, 
     assert (styled["preset_id"], styled["style_overrides"]["caption"], styled["edited"]) == ("yellow-pop", {"size": 90}, True)
     assert candidates(client, job) == [styled]
 
+    # Placed on the preview (preview-direct-edit ticket 01).
+    placed = {"position": "custom", "x": 300, "y": 900}
+    styled = patch(client, job, candidate, style_overrides={"caption": {"size": 90, **placed}, "hook": placed})
+    assert (styled["style_overrides"]["caption"], styled["style_overrides"]["hook"]) == ({"size": 90, **placed}, placed)
+
     assert client.patch(candidate_url(job, candidate), json={"preset_id": "nope"}).status_code == 404
-    for overrides in ({"caption": {"size": 5}}, {"hook": {"glow": 1}}, {"caption": {"font": "nope"}}):
+    for overrides in ({"caption": {"size": 5}}, {"hook": {"glow": 1}}, {"caption": {"font": "nope"}}, {"hook": {"x": 1081}}):
         response = client.patch(candidate_url(job, candidate), json={"style_overrides": overrides})
         assert response.status_code == 422, overrides
     assert candidates(client, job) == [styled]

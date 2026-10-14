@@ -1104,3 +1104,49 @@ def test_every_pictograph_is_left_out_but_text_symbols_stay():
 def test_emphasis_stays_on_its_letters_when_capitals_lengthen_a_word():
     hook = hooked("Das *groß* ist", hook_style=HookStyle(uppercase=True))
     assert hook.lines == ["DAS GROSS IST"] and emphasised(hook) == [["GROSS"]]
+
+
+# Placed on the preview (preview-direct-edit ticket 01).
+
+
+def shifted(box: Box, dx: int) -> Box:
+    return Box(box.x + dx, box.y, box.width, box.height)
+
+
+def test_the_hook_is_centred_on_its_styles_x_with_everything_in_it_moved_along():
+    for style in ({}, {"quote": True}, {"shape": "strips", "align": "left"}):
+        centred = hooked(HOOK, hook_kicker="Fakta", hook_style=HookStyle(**style))
+        moved = hooked(HOOK, hook_kicker="Fakta", hook_style=HookStyle(x=400, **style))
+        # Moved as far as x is from the middle of the frame.
+        dx = 400 - 540
+        assert moved.area == shifted(centred.area, dx) and moved.boxes == [shifted(b, dx) for b in centred.boxes]
+        assert moved.anchors == [(x + dx, y) for x, y in centred.anchors]
+        assert moved.kicker.box == shifted(centred.kicker.box, dx)
+        assert moved.kicker.anchor == (centred.kicker.anchor[0] + dx, centred.kicker.anchor[1])
+        assert moved.quote == (centred.quote and shifted(centred.quote, dx))
+        assert moved.lines == centred.lines and moved.size == centred.size
+
+
+def test_the_hook_is_kept_in_the_frame_whatever_its_x():
+    for x, edge in ((0, "left"), (1080, "right")):
+        area = hooked(HOOK, hook_style=HookStyle(x=x)).area
+        assert (area.x == 0) if edge == "left" else (area.x + area.width == 1080)
+    # At 540, as before x was a field.
+    assert hooked(HOOK, hook_style=HookStyle(x=540)) == hooked(HOOK)
+
+
+def test_caption_lines_are_centred_on_the_styles_x_and_kept_in_the_frame():
+    words = said("halo semua apa kabar")
+    for position in (CaptionPosition.AUTO, CaptionPosition.CUSTOM):
+        centred = styled(words, 4, CaptionStyle(position=position, y=700))
+        moved = styled(words, 4, CaptionStyle(position=position, y=700, x=400))
+        # The same lines at the same size, in an area as wide, its middle at x.
+        assert shown(moved) == shown(centred) and [e.size for e in moved] == [e.size for e in centred]
+        assert [e.area for e in moved] == [shifted(e.area, -140) for e in centred]
+    # At an edge, a line is moved in until it (with its outline) is in the frame.
+    style = CaptionStyle(x=1080, outline=7)
+    for event in styled(words, 4, style):
+        width = font_metrics().width(event.text, event.size) + 2 * style.outline
+        centre = event.area.x + event.area.width / 2
+        assert abs(centre + width / 2 - 1080) <= 1
+    assert styled(words, 4, CaptionStyle(x=540)) == styled(words, 4, CaptionStyle())
