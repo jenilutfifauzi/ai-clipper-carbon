@@ -93,7 +93,7 @@ function changedSince(candidate: Candidate, output: RenderedClip, presets: Style
   )
     return true;
   if (output.preset_id === null) return false;
-  const edits = ["preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides", "text_layers"] as const;
+  const edits = ["preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides", "text_layers", "music", "source_volume"] as const;
   if (edits.some((field) => !same(candidate[field], output[field]))) return true;
   const preset = presets?.find((p) => p.id === candidate.preset_id) ?? presets?.[0];
   if (!preset || !output.caption_style || !output.hook_style) return false;

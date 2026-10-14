@@ -11,7 +11,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
-from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, TextLayer, WordEdit
+from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, MusicClip, TextLayer, Volume, WordEdit
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
@@ -19,7 +19,7 @@ from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
-from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaNotFound, MediaStore
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
@@ -56,8 +56,9 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
-# The most Text Layers a Candidate holds.
+# The most Text Layers and Music Clips a Candidate holds.
 TEXT_LAYERS_MAX = 50
+MUSIC_MAX = 50
 
 _OPTIONS = TypeAdapter(JobOptions)
 
@@ -137,6 +138,9 @@ class CandidateUpdate(BaseModel):
     hook_kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] | None = None
     # Replaces the Candidate's Text Layers as a whole.
     text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX)] | None = None
+    # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
+    music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
+    source_volume: Volume | None = None
 
 
 class PresetBody(BaseModel):
@@ -344,7 +348,14 @@ def delete_job(job_id: str, store: Store) -> None:
 
 @router.patch("/jobs/{job_id}/candidates/{candidate_id}")
 def update_candidate(
-    job_id: str, candidate_id: str, body: CandidateUpdate, store: Store, settings: AppSettings, presets: Presets, logos: Logos
+    job_id: str,
+    candidate_id: str,
+    body: CandidateUpdate,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
 ) -> Candidate:
     """Change a Candidate's bounds (snapped to Words), hook text, layout, Style Preset, Style
     Overrides or selected flag, and save it at once. 422 for a range that isn't a usable clip or
@@ -353,6 +364,7 @@ def update_candidate(
         _preset(presets, body.preset_id)
     if body.style_overrides is not None:
         _check_logo(logos, body.style_overrides.watermark.get("logo"))
+    _check_media_of(library, body)
     change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields})
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
@@ -374,6 +386,7 @@ def candidate_preview_plan(
     settings: AppSettings,
     presets: Presets,
     logos: Logos,
+    library: Media,
     body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
@@ -388,11 +401,13 @@ def candidate_preview_plan(
         raise HTTPException(409, f"Job {job_id} has no Candidates yet")
     if body is not None and body.preset_id is not None:
         _preset(presets, body.preset_id)
+    if body is not None:
+        _check_media_of(library, body)
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
     change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
     try:
         _, candidate = review.update(candidates, candidate_id, change, episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos)
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
@@ -654,11 +669,13 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
     return uses
 
 
-def _check_media(library: MediaStore, media_id: str, kinds: tuple[MediaKind, ...], what: str) -> None:
-    """422 for an edit naming an item that isn't in the Media Library, or isn't of `kinds`."""
-    item = library.find(media_id)
-    if item is None or item.kind not in kinds:
-        raise HTTPException(422, f"{what}: no {' or '.join(kind.value for kind in kinds)} {media_id} in the Media Library")
+def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
+    """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
+    be a song or a video with sound."""
+    for clip in body.music or []:
+        item = library.find(clip.media)
+        if item is None or not item.has_audio:
+            raise HTTPException(422, f"Music Clip {clip.id}: no song or video with sound {clip.media} in the Media Library")
 
 
 # Media Library files never change under their id.

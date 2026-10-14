@@ -109,6 +109,28 @@ class TextLayer:
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
 
 
+# A Media Library item's id (app/media.py).
+MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+# A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
+Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
+
+
+@dataclass(frozen=True)
+class MusicClip:
+    """A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
+    seconds into the file, heard from `start`, in Timeline time, at `volume`, faded in and out over
+    `fade_in` and `fade_out` seconds."""
+
+    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    media: MediaId
+    start: Annotated[FiniteFloat, Field(ge=0, le=3600)]
+    secs: Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
+    offset: Annotated[FiniteFloat, Field(ge=0, le=3600)] = 0.0
+    volume: Volume = 1.0
+    fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
+    fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
+
+
 @dataclass(frozen=True)
 class Candidate:
     # Set once, when Selection (or the owner, for a manual one) creates the Candidate; review edits
@@ -151,10 +173,13 @@ class Candidate:
     hook_kicker: str = ""
     # The Advanced Edit's Text Layers, drawn in this order (the last on top).
     text_layers: list[TextLayer] = field(default_factory=list)
+    # Its Music Clips, mixed under its own sound, which is at `source_volume`.
+    music: list[MusicClip] = field(default_factory=list)
+    source_volume: Volume = 1.0
 
     def media_ids(self) -> set[str]:
         """The Media Library items it uses."""
-        return set()
+        return {clip.media for clip in self.music}
 
     @property
     def reviewed(self) -> bool:

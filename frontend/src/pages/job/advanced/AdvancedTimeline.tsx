@@ -293,6 +293,7 @@ export function TimelineItem({
   max,
   minSecs = 0.1,
   maxSecs = Infinity,
+  trimMin,
   trim = true,
   tone,
   selected,
@@ -309,7 +310,9 @@ export function TimelineItem({
   min?: number;
   max: number;
   minSecs?: number;
+  // The longest it can be, and how early its start can be trimmed (a song's start, for music).
   maxSecs?: number;
+  trimMin?: number;
   // Whether its edges can be dragged.
   trim?: boolean;
   tone: ItemTone;
@@ -359,7 +362,7 @@ export function TimelineItem({
       return { start: next, end: next + length };
     }
     if (edge === "start") {
-      const lo = Math.max(min, from.end - maxSecs);
+      const lo = Math.max(min, from.end - maxSecs, trimMin ?? -Infinity);
       const next = Math.min(Math.max(snap(from.start + delta, own), lo), from.end - minSecs);
       return { start: next, end: from.end };
     }

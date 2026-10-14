@@ -42,5 +42,6 @@ Use these terms in code, UI copy, tickets and commit messages.
 
 - **Advanced Edit:** a CapCut-like workspace for one Candidate, opened from the clip editor: assets, player, inspector and a multi-track Timeline (on a phone: player, Timeline, a toolbar and bottom sheets). It edits the same Candidate, with undo and redo.
 - **Media Library:** the videos, songs and images the owner uploads for the Advanced Edit, kept for every Job, each normalized on upload. An item a Candidate uses can't be deleted.
+- **Music Clip:** part of a song (or of a video's sound) from the Media Library, heard under the Clip from a time in Timeline time, at its volume, faded in and out. The Clip's own sound has a volume too.
 - **Text Layer:** a free text overlay added in the Advanced Edit: its words (lines split at newlines), its time in Timeline time, its centre on the frame, and its own look and in/out animation. Drawn over the captions and under the hook.
 - **Timeline time:** seconds into the output Clip. What the Advanced Edit adds, and the hook, are anchored to it; Word Edits and Layout Overrides stay on the Source's timeline.

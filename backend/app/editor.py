@@ -14,6 +14,7 @@ from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
 from app.logos import LogoStore
+from app.media import MediaStore
 from app.planner import RenderPlan, match_edits, reframes
 from app.rendering import candidate_plan, saved_analysis, saved_words, transcript_words
 from app.styles import PresetStore
@@ -56,6 +57,7 @@ def preview_plan(
     settings: Settings,
     presets: PresetStore,
     logos: LogoStore | None = None,
+    media: MediaStore | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan, `job_dir` being its Job's directory."""
     assert job.source is not None
@@ -69,7 +71,7 @@ def preview_plan(
     if reframes(source):
         analysis = saved_analysis(job_dir, candidate.start, candidate.end, settings.analysis, BLAZE_FACE_MODEL.name)
     plan = candidate_plan(
-        candidate, source, words if job.options.captions else None, analysis, presets, settings.camera, logos
+        candidate, source, words if job.options.captions else None, analysis, presets, settings.camera, logos, media
     )
     duration = candidate.end - candidate.start
     ordered = sorted(words, key=lambda word: word.start)

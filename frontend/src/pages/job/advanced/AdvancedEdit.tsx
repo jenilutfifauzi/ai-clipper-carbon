@@ -1,4 +1,21 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, Copy, Film, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  AudioLines,
+  Check,
+  Copy,
+  Film,
+  Loader2,
+  Music,
+  Redo2,
+  Scissors,
+  Shuffle,
+  SlidersHorizontal,
+  Trash2,
+  Type,
+  Undo2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -8,6 +25,8 @@ import {
   type CandidateChange,
   type FontInfo,
   type JobDetail,
+  type MediaItem,
+  type MusicClip,
   type PreviewPlan,
   type TextLayer,
 } from "../../../api";
@@ -25,7 +44,8 @@ import { HookTimingFields } from "../HookEditor";
 import { AdvancedTimeline, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { editsOf, sameSelection, type AdvancedEdits, type Selection } from "./edits";
 import { MediaAssets, useMediaLibrary, type MediaLibrary } from "./MediaLibrary";
-import { newId, newTextLayer, TEXT_MIN_SECS, textLanes, TextAssets, TextLayerFields } from "./TextLayers";
+import { MUSIC_MIN_SECS, MusicFields, newMusicClip, SourceSoundFields } from "./Music";
+import { newId, newTextLayer, TEXT_MIN_SECS, trackLanes, TextAssets, TextLayerFields } from "./TextLayers";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
@@ -136,6 +156,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   const textOf = (id: string) => edits.text_layers.find((layer) => layer.id === id);
   const selectedText = selection?.kind === "text" ? textOf(selection.id) ?? null : null;
+  const songs = new Map((library.items ?? []).map((item) => [item.id, item]));
 
   function addText(look: Omit<TextLayer, "id" | "start" | "secs">) {
     const layer = newTextLayer(look, playback.time, duration);
@@ -144,37 +165,19 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     // On a phone, straight to its fields, to type its words.
     setSheet(wide ? null : "inspector");
   }
+  function addMusic(item: MediaItem) {
+    const clip = newMusicClip(item, playback.time, duration);
+    change({ music: [...edits.music, clip] });
+    select({ kind: "music", id: clip.id });
+    if (!wide) setSheet(null);
+  }
   function updateText(layer: TextLayer, group?: string) {
     change({ text_layers: edits.text_layers.map((old) => (old.id === layer.id ? layer : old)) }, group);
   }
-  // What the selected item allows: the hook can only be moved.
-  const actions = selectedText && {
-    remove() {
-      change({ text_layers: edits.text_layers.filter((layer) => layer.id !== selectedText.id) });
-      select(null);
-    },
-    duplicate() {
-      // Right after it when there is room, else over it, a little lower.
-      const after = selectedText.start + selectedText.secs;
-      const copy =
-        after + selectedText.secs <= duration + 1e-6
-          ? { ...selectedText, id: newId(), start: after }
-          : { ...selectedText, id: newId(), y: Math.min(selectedText.y + 80, 1920) };
-      change({ text_layers: [...edits.text_layers, copy] });
-      select({ kind: "text", id: copy.id });
-    },
-    canSplit: (time: number) => time > selectedText.start + TEXT_MIN_SECS && time < selectedText.start + selectedText.secs - TEXT_MIN_SECS,
-    // In two at the playhead, when it is inside.
-    split() {
-      const at = Math.round(playback.time * 100) / 100;
-      const { start, secs } = selectedText;
-      if (!(at > start + TEXT_MIN_SECS && at < start + secs - TEXT_MIN_SECS)) return;
-      const second = { ...selectedText, id: newId(), start: at, secs: round(start + secs - at) };
-      const layers = edits.text_layers.flatMap((layer) => (layer.id === selectedText.id ? [{ ...layer, secs: round(at - start) }, second] : [layer]));
-      change({ text_layers: layers });
-      select({ kind: "text", id: second.id });
-    },
-  };
+  function updateMusic(clip: MusicClip, group?: string) {
+    change({ music: edits.music.map((old) => (old.id === clip.id ? clip : old)) }, group);
+  }
+  const actions = itemActions(edits, selection, playback, duration, change, select);
   useShortcuts(history, playback, actions);
 
   async function close() {
@@ -222,6 +225,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onSelect={select}
           onEdits={history.set}
           onText={updateText}
+          onMusic={updateMusic}
+          songs={songs}
           onDelete={actions ? actions.remove : undefined}
         />
       )}
@@ -236,8 +241,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       preview={preview}
       fonts={fonts}
       actions={actions}
+      songs={songs}
       onEdits={history.set}
       onText={updateText}
+      onMusic={updateMusic}
     />
   );
   const status = <SaveStatus saving={saving > 0} saved={saved} error={saveError} />;
@@ -259,7 +266,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
             <AssetTabs value={assetTab} onChange={setAssetTab} />
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <AssetPanel tab={assetTab} fonts={fonts} library={library} onAddText={addText} />
+              <AssetPanel tab={assetTab} fonts={fonts} library={library} onAddText={addText} onAddMusic={addMusic} />
             </div>
           </aside>
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -306,11 +313,69 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           title={sheet === "inspector" ? "Edit" : ASSET_TABS.find((tab) => tab.value === sheet)!.label}
           onClose={() => setSheet(null)}
         >
-          {sheet === "inspector" ? inspector : <AssetPanel tab={sheet} fonts={fonts} library={library} onAddText={addText} />}
+          {sheet === "inspector" ? inspector : <AssetPanel tab={sheet} fonts={fonts} library={library} onAddText={addText} onAddMusic={addMusic} />}
         </Sheet>
       )}
     </div>
   );
+}
+
+// The Advanced Edit's lists of items on the timeline, by the kind of item they hold.
+const LISTS = { text: "text_layers", music: "music" } as const;
+type Listed = TextLayer | MusicClip;
+
+/**
+ * What can be done to the selected item, when it is a Text Layer or a Music Clip (the hook can only
+ * be moved): delete it, duplicate it (right after it when there is room, else at the same time), and
+ * split it at the playhead (a song's second part goes on from where the first stops, without fades
+ * at the cut).
+ */
+function itemActions(
+  edits: AdvancedEdits,
+  selection: Selection,
+  playback: Playback,
+  duration: number,
+  change: (next: Partial<AdvancedEdits>, group?: string) => void,
+  select: (selection: Selection) => void,
+): ItemActions | null {
+  if (selection?.kind !== "text" && selection?.kind !== "music") return null;
+  const kind = selection.kind;
+  const key = LISTS[kind];
+  const list = edits[key] as Listed[];
+  const item = list.find((other) => other.id === selection.id);
+  if (!item) return null;
+  const least = kind === "text" ? TEXT_MIN_SECS : MUSIC_MIN_SECS;
+  const put = (items: Listed[]) => change({ [key]: items } as Partial<AdvancedEdits>);
+  const canSplit = (time: number) => time > item.start + least && time < item.start + item.secs - least;
+  return {
+    remove() {
+      put(list.filter((other) => other.id !== item.id));
+      select(null);
+    },
+    duplicate() {
+      const after = item.start + item.secs;
+      const room = after + item.secs <= duration + 1e-6;
+      // A text that can't go after it goes a little lower, so that both show.
+      const copy = room ? { ...item, id: newId(), start: after } : "y" in item ? { ...item, id: newId(), y: Math.min(item.y + 80, 1920) } : { ...item, id: newId() };
+      put([...list, copy]);
+      select({ kind, id: copy.id });
+    },
+    canSplit,
+    split() {
+      const at = round(playback.time);
+      if (!canSplit(at)) return;
+      const first = { ...item, secs: round(at - item.start), ...("offset" in item ? { fade_out: 0 } : {}) };
+      const second = {
+        ...item,
+        id: newId(),
+        start: at,
+        secs: round(item.start + item.secs - at),
+        ...("offset" in item ? { offset: round(item.offset + at - item.start), fade_in: 0 } : {}),
+      };
+      put(list.flatMap((other) => (other.id === item.id ? [first, second] : [other])));
+      select({ kind, id: second.id });
+    },
+  };
 }
 
 interface ItemActions {
@@ -360,12 +425,15 @@ function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, a
 // The edges items snap to, besides the playhead and the Clip's ends.
 function snapPoints(edits: AdvancedEdits, preview: PreviewPlan | null): number[] {
   const points = [edits.hook_start, edits.hook_start + edits.hook_secs];
-  for (const layer of edits.text_layers) points.push(layer.start, layer.start + layer.secs);
+  for (const item of [...edits.text_layers, ...edits.music]) points.push(item.start, item.start + item.secs);
   for (const scene of preview?.plan.scenes ?? []) points.push(scene.start);
   return points;
 }
 
-/** The tracks, top to bottom: the Text Layers' lanes, the Clip and its Scenes, its caption lines, and the hook. */
+/**
+ * The tracks, top to bottom: the Text Layers' lanes, the Clip and its Scenes, its caption lines, the
+ * hook, and the Music Clips' lanes.
+ */
 function Tracks({
   geometry,
   duration,
@@ -376,6 +444,8 @@ function Tracks({
   onSelect,
   onEdits,
   onText,
+  onMusic,
+  songs,
   onDelete,
 }: {
   geometry: TimeGeometry;
@@ -387,6 +457,9 @@ function Tracks({
   onSelect: (selection: Selection) => void;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
+  onMusic: (clip: MusicClip, group?: string) => void;
+  // The Media Library, by id: the songs' names and lengths.
+  songs: Map<string, MediaItem>;
   // Deletes the selected item.
   onDelete?: () => void;
 }) {
@@ -394,7 +467,8 @@ function Tracks({
   const plan = preview?.plan ?? null;
   const hookEnd = Math.min(edits.hook_start + edits.hook_secs, duration);
   // The first lane next to the video, later ones above it.
-  const lanes = textLanes(edits.text_layers).reverse();
+  const lanes = trackLanes(edits.text_layers).reverse();
+  const musicLanes = trackLanes(edits.music);
   return (
     <>
       {(lanes.length ? lanes : [[]]).map((lane, i) => (
@@ -424,7 +498,17 @@ function Tracks({
         </TrackRow>
       ))}
       <TrackRow label="Video" height="h-14">
-        <div className="absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised ring-1 ring-border" style={{ width: duration * pps }}>
+        <button
+          type="button"
+          onClick={() => onSelect({ kind: "video" })}
+          aria-pressed={selection?.kind === "video"}
+          aria-label={`Video${edits.source_volume !== 1 ? `, sound at ${Math.round(edits.source_volume * 100)}%` : ""}`}
+          className={cx(
+            "absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised text-left ring-1 ring-border focus-visible:outline-2 focus-visible:outline-focus",
+            selection?.kind === "video" && "ring-2 ring-text",
+          )}
+          style={{ width: duration * pps }}
+        >
           {plan?.scenes.map((scene, i) => (
             <span
               key={i}
@@ -434,7 +518,12 @@ function Tracks({
               {(scene.end - scene.start) * pps > 48 ? (scene.layout === "passthrough" ? "As shot" : scene.layout) : ""}
             </span>
           ))}
-        </div>
+          {edits.source_volume !== 1 && (
+            <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1 text-[10px] text-white tabular-nums">
+              {Math.round(edits.source_volume * 100)}%
+            </span>
+          )}
+        </button>
       </TrackRow>
       <TrackRow label="Captions" height="h-8">
         {plan?.captions.map((event, i) => (
@@ -471,6 +560,48 @@ function Tracks({
           </TimelineItem>
         )}
       </TrackRow>
+      {(musicLanes.length ? musicLanes : [[]]).map((lane, i) => (
+        <TrackRow key={i} label={i === 0 ? "Audio" : ""}>
+          {lane.map((clip) => {
+            const selected = selection?.kind === "music" && selection.id === clip.id;
+            const song = songs.get(clip.media);
+            const length = song?.duration ?? clip.offset + clip.secs;
+            return (
+              <TimelineItem
+                key={clip.id}
+                geometry={geometry}
+                start={clip.start}
+                end={Math.min(clip.start + clip.secs, duration)}
+                max={duration}
+                minSecs={MUSIC_MIN_SECS}
+                maxSecs={length - clip.offset}
+                trimMin={clip.start - clip.offset}
+                tone="audio"
+                selected={selected}
+                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
+                onSelect={() => onSelect({ kind: "music", id: clip.id })}
+                onChange={({ start, end, edge }, group) =>
+                  onMusic(
+                    {
+                      ...clip,
+                      start: round(start),
+                      secs: round(end - start),
+                      // Trimming its start starts it later in the song.
+                      offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
+                    },
+                    group,
+                  )
+                }
+                onDelete={selected ? onDelete : undefined}
+              >
+                <Music aria-hidden size={12} className="shrink-0" />
+                <span className="truncate font-medium">{song?.name ?? "Music"}</span>
+                {clip.volume !== 1 && <span className="shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>}
+              </TimelineItem>
+            );
+          })}
+        </TrackRow>
+      ))}
     </>
   );
 }
@@ -486,8 +617,10 @@ function Inspector({
   preview,
   fonts,
   actions,
+  songs,
   onEdits,
   onText,
+  onMusic,
 }: {
   selection: Selection;
   edits: AdvancedEdits;
@@ -496,9 +629,28 @@ function Inspector({
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
   actions: ItemActions | null;
+  songs: Map<string, MediaItem>;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
+  onMusic: (clip: MusicClip, group?: string) => void;
 }) {
+  const music = selection?.kind === "music" ? edits.music.find((clip) => clip.id === selection.id) : undefined;
+  if (music && actions) {
+    return (
+      <MusicFields
+        key={music.id}
+        clip={music}
+        item={songs.get(music.media)}
+        duration={duration}
+        onChange={onMusic}
+        onDuplicate={actions.duplicate}
+        onDelete={actions.remove}
+      />
+    );
+  }
+  if (selection?.kind === "video") {
+    return <SourceSoundFields volume={edits.source_volume} onChange={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")} />;
+  }
   const text = selection?.kind === "text" ? edits.text_layers.find((layer) => layer.id === selection.id) : undefined;
   if (text && actions) {
     return (
@@ -567,11 +719,13 @@ function AssetPanel({
   fonts,
   library,
   onAddText,
+  onAddMusic,
 }: {
   tab: AssetTab;
   fonts: FontInfo[] | null;
   library: MediaLibrary;
   onAddText: (look: Omit<TextLayer, "id" | "start" | "secs">) => void;
+  onAddMusic: (item: MediaItem) => void;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
   if (tab === "media") {
@@ -582,6 +736,7 @@ function AssetPanel({
       <MediaAssets
         library={library}
         kinds={["audio"]}
+        onAdd={onAddMusic}
         hint="Songs up to 50 MB, kept for every Job. Use music you have the rights to: the platforms mute or take down clips that don't."
       />
     );

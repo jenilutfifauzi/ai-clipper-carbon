@@ -17,6 +17,7 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
+import { PreviewMusic } from "./PreviewMusic";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -176,6 +177,7 @@ export function ClipPreview({
         />
       )}
       {plan && texts && <TextHandles plan={plan} playback={playback} controls={texts} drag={textDrag} />}
+      <PreviewMusic plan={plan} playback={playback} master={master} />
     </div>
   );
   if (fit) {

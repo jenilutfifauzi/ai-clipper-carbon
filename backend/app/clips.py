@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from app.candidates import Layout, LayoutOverride, TextLayer, WordEdit
+from app.candidates import Layout, LayoutOverride, MusicClip, TextLayer, WordEdit
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
 CLIPS_DIR = "clips"
@@ -54,6 +54,8 @@ class RenderedClip:
     watermark_style: WatermarkStyle | None = None
     # The Advanced Edit's, as rendered; none in a Clip rendered before them.
     text_layers: list[TextLayer] = field(default_factory=list)
+    music: list[MusicClip] = field(default_factory=list)
+    source_volume: float = 1.0
 
 
 @dataclass(frozen=True)

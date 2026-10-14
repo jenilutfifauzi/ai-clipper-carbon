@@ -30,6 +30,11 @@ A text Watermark is one more event of the same script, under the captions and th
 image libass can't draw, is a second input (its PNG, from app/logos.py), scaled into the Watermark's
 area at its opacity and laid over the joined frames before the captions are burned.
 
+Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
+set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
+its volume) before the loudness is measured and normalized, so that the mix lands at −14 LUFS.
+Without music, and at its own volume, the Clip's sound goes as it did.
+
 Text Layers are drawn by the same script too, each in its own style and its own pair of ASS layers
 (its box, then its lines) above the captions' and the one before's, animated as the hook is. With
 any, the hook's layers move above theirs, so that it stays on top; without, the script is as before.
@@ -91,17 +96,20 @@ class Renderer:
         poster: Path,
         progress: Callable[[float], None] = lambda done: None,
         logo: Path | None = None,
+        music: dict[str, Path] | None = None,
     ) -> str:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
         (JPEG), and return the video encoder that made them: the first of RenderTuning.encoders that
         succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1. `logo`
-        is the PNG of the plan's Logo Watermark, which isn't drawn without it.
+        is the PNG of the plan's Logo Watermark, which isn't drawn without it; `music` has the file of
+        each song the plan's music plays, by its Media Library id.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
         """
         _check(plan)
-        loudness = self._measure(source, plan)
+        music = music or {}
+        loudness = self._measure(source, plan, music)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
         drawn = plan.captions or plan.hook or plan.texts or _text_watermark(plan)
         subtitles = video.with_name(f".{video.stem}.part.ass") if drawn else None
@@ -112,7 +120,7 @@ class Renderer:
             if subtitles is not None:
                 subtitles.write_text(_ass(plan), encoding="utf-8")
             for encoder in self.tuning.encoders:
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, music)
                 stderr = self._run(command, plan.duration, progress)
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
@@ -134,14 +142,20 @@ class Renderer:
             if self._process is not None:
                 self._process.kill()
 
-    def _measure(self, source: Path, plan: RenderPlan) -> dict[str, str] | None:
-        """loudnorm's measurement of the range's audio; None when it is silent, with nothing to normalize."""
+    def _measure(self, source: Path, plan: RenderPlan, music: dict[str, Path] | None = None) -> dict[str, str] | None:
+        """loudnorm's measurement of the range's audio, mixed with its music; None when it is silent,
+        with nothing to normalize."""
         tuning = self.tuning
+        measure = f"loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
+        inputs, index = _music_inputs(plan, music or {}, first=1)
+        mix = _audio_mix(plan, index, tuning.audio_rate)
+        if mix is None:
+            audio = ["-map", "0:a:0", "-af", measure]
+        else:
+            audio = ["-filter_complex", f"{mix};[mix]{measure}[measured]", "-map", "[measured]"]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
-            *_range(plan), "-i", str(source), "-map", "0:a:0",
-            "-af", f"loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json",
-            "-f", "null", "-",
+            *_range(plan), "-i", str(source), *inputs, *audio, "-f", "null", "-",
         ]
         result = subprocess.run(command, capture_output=True, text=True, errors="replace")
         output = result.stderr
@@ -160,6 +174,7 @@ class Renderer:
         poster: Path,
         subtitles: Path | None,
         logo: Path | None = None,
+        music: dict[str, Path] | None = None,
     ) -> list[str]:
         tuning = self.tuning
         frame = _scenes(plan, tuning)
@@ -173,10 +188,13 @@ class Renderer:
             f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(FONTS_DIR))},"
         )
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
-        audio = f"[0:a:0]aresample={tuning.audio_rate}[a]"
+        inputs, index = _music_inputs(plan, music or {}, first=2 if logo is not None else 1)
+        mix = _audio_mix(plan, index, tuning.audio_rate)
+        heard = "[0:a:0]" if mix is None else f"{mix};[mix]"
+        audio = f"{heard}aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
-                f"[0:a:0]loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
+                f"{heard}loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
                 f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
                 f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
                 f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}[a]"
@@ -190,7 +208,7 @@ class Renderer:
             codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *_range(plan), "-i", str(source), *([] if logo is None else ["-i", str(logo)]),
+            *_range(plan), "-i", str(source), *([] if logo is None else ["-i", str(logo)]), *inputs,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
@@ -296,6 +314,44 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
     else:
         drawn += f"scale={area.width}:{area.height}:flags=lanczos"
     return drawn + ",setsar=1"
+
+
+def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int) -> tuple[list[str], dict[str, int]]:
+    """The input options of the songs the plan's music plays, each once, numbered from `first`, and
+    each song's input number by its id."""
+    index: dict[str, int] = {}
+    for event in plan.audio:
+        if event.media not in index and event.media in music:
+            index[event.media] = first + len(index)
+    return [arg for media in index for arg in ("-i", str(music[media]))], index
+
+
+def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int) -> str | None:
+    """Filters that mix the Clip's sound, at its volume, with its music into [mix]: each Music Clip
+    its part of its song (input `index[media]`), at its volume, faded, delayed to its start. None
+    without music at the Clip's own volume, where the sound goes as it is."""
+    heard = [event for event in plan.audio if event.media in index]
+    if not heard and plan.source_volume == 1:
+        return None
+    if not heard:
+        return f"[0:a:0]volume={plan.source_volume:g}[mix]"
+    form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
+    chains = [f"[0:a:0]volume={plan.source_volume:g},{form}[m0]"]
+    for i, event in enumerate(heard, 1):
+        length = round(event.end - event.start, 3)
+        filters = [
+            f"atrim=start={event.offset:g}:end={event.offset + length:g}", "asetpts=PTS-STARTPTS", f"volume={event.volume:g}",
+        ]
+        if event.fade_in:
+            filters.append(f"afade=t=in:st=0:d={event.fade_in:g}")
+        if event.fade_out:
+            filters.append(f"afade=t=out:st={length - event.fade_out:g}:d={event.fade_out:g}")
+        filters.append(f"adelay={round(event.start * 1000)}:all=1")
+        chains.append(f"[{index[event.media]}:a:0]{','.join(filters)},{form}[m{i}]")
+    labels = "".join(f"[m{i}]" for i in range(len(heard) + 1))
+    # The Clip's length is its own sound's; nothing is turned down to make room (normalize=0).
+    chains.append(f"{labels}amix=inputs={len(heard) + 1}:duration=first:normalize=0[mix]")
+    return ";".join(chains)
 
 
 def _logo_overlay(watermark: WatermarkEvent, below: str, out: str) -> str:

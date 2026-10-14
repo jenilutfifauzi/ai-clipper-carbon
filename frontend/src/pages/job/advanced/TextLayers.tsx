@@ -62,11 +62,11 @@ export function newTextLayer(look: Omit<TextLayer, "id" | "start" | "secs">, at:
 const round = (seconds: number) => Math.round(seconds * 100) / 100;
 
 /**
- * The Text Layers in lanes: each in the first lane where it overlaps none, so that each row of the
- * Text track holds layers that follow one another.
+ * Items of a track in lanes: each in the first lane where it overlaps none, so that each row of the
+ * track holds items that follow one another.
  */
-export function textLanes(layers: TextLayer[]): TextLayer[][] {
-  const lanes: TextLayer[][] = [];
+export function trackLanes<T extends { start: number; secs: number }>(layers: T[]): T[][] {
+  const lanes: T[][] = [];
   for (const layer of [...layers].sort((a, b) => a.start - b.start)) {
     const lane = lanes.find((items) => items.every((item) => item.start + item.secs <= layer.start + 1e-6 || layer.start + layer.secs <= item.start + 1e-6));
     if (lane) lane.push(layer);

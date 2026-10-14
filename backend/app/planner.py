@@ -46,6 +46,9 @@ centred where the owner dragged it, kept inside the frame.
 Text Layers (the Advanced Edit's free text) are centred where the owner put them, kept inside the
 frame, each in its own look; one wider than the frame less TEXT_MARGIN either side is set smaller.
 They are drawn over the captions and under the hook, in their order.
+
+Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
+Clip's own sound at its `source_volume`.
 """
 
 import math
@@ -55,7 +58,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Layout, LayoutOverride, TextAlign, TextLayer, WordEdit
+from app.candidates import Layout, LayoutOverride, MusicClip, TextAlign, TextLayer, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import (
@@ -333,6 +336,20 @@ class TextEvent:
 
 
 @dataclass(frozen=True)
+class AudioEvent:
+    """A Music Clip as heard: the Media Library item `media` from `offset` seconds into it, from
+    `start` to `end` seconds into the Clip, at `volume`, faded in over `fade_in` and out over `fade_out`."""
+
+    media: str
+    start: float
+    end: float
+    offset: float
+    volume: float
+    fade_in: float
+    fade_out: float
+
+
+@dataclass(frozen=True)
 class RenderPlan:
     # The Clip's range on the Source's timeline.
     start: float
@@ -353,6 +370,9 @@ class RenderPlan:
     watermark_style: WatermarkStyle = WatermarkStyle()
     # The Text Layers that show, in drawing order.
     texts: list[TextEvent] = field(default_factory=list)
+    # The Music Clips heard, under the Clip's own sound at `source_volume`.
+    audio: list[AudioEvent] = field(default_factory=list)
+    source_volume: float = 1.0
 
     @property
     def duration(self) -> float:
@@ -385,6 +405,9 @@ def plan_render(
     watermark_style: WatermarkStyle = WatermarkStyle(),
     logo_size: tuple[int, int] | None = None,
     text_layers: list[TextLayer] | None = None,
+    music: list[MusicClip] | None = None,
+    media_lengths: dict[str, float] | None = None,
+    source_volume: float = 1.0,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -396,7 +419,8 @@ def plan_render(
     the Clip is one Scene; without `faces` (not analysed) an Auto Scene is tracked with its crop in
     the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. The
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
-    `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them."""
+    `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
+    `music` is heard as `audio_events` places it, given the lengths of the songs it plays."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     duration = round(end - start, 3)
@@ -432,6 +456,8 @@ def plan_render(
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
+        audio=audio_events(music or [], duration, media_lengths or {}),
+        source_volume=source_volume,
     )
 
 
@@ -472,6 +498,24 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
     x = {"left": left, "right": right}.get(horizontal, (OUTPUT_WIDTH - width) // 2)
     y = {"top": top, "bottom": bottom}.get(vertical, (SAFE_AREA.y * 2 + SAFE_AREA.height - height) // 2)
     return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
+
+
+def audio_events(music: list[MusicClip], duration: float, lengths: dict[str, float]) -> list[AudioEvent]:
+    """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
+    (whose length is in `lengths`) ends, its fades shortened to half of what is left each at most.
+    One whose song is gone, or that would start at or after either end, isn't heard."""
+    events = []
+    for clip in music:
+        length = lengths.get(clip.media)
+        start = round(clip.start, 3)
+        if length is None or start >= duration or clip.offset >= length:
+            continue
+        end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
+        most = (end - start) / 2
+        events.append(
+            AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, min(clip.fade_in, most), min(clip.fade_out, most))
+        )
+    return events
 
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:

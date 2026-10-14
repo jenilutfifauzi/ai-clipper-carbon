@@ -5,7 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, LayoutOverride, Origin, TextLayer, WordEdit, manual_candidate
+from app.candidates import Candidate, Layout, LayoutOverride, MusicClip, Origin, TextLayer, WordEdit, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -42,6 +42,8 @@ class CandidateChange:
     layout_overrides: list[LayoutOverride] | None = None
     hook_kicker: str | None = None
     text_layers: list[TextLayer] | None = None
+    music: list[MusicClip] | None = None
+    source_volume: float | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,8 @@ def update(
         start, end = episode.bounds(_pick(change.start, old.start), _pick(change.end, old.end))
     if change.text_layers is not None:
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
+    if change.music is not None:
+        _check_ids("Music Clip", [clip.id for clip in change.music])
     new = replace(
         old,
         start=start,
@@ -95,6 +99,8 @@ def update(
         layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
         text_layers=_pick(change.text_layers, old.text_layers),
+        music=_pick(change.music, old.music),
+        source_volume=_pick(change.source_volume, old.source_volume),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -140,7 +146,8 @@ def _look(candidate: Candidate) -> tuple:
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
-        candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers,
+        candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.music,
+        candidate.source_volume,
     )
 
 

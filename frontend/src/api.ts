@@ -385,6 +385,30 @@ export interface TextEvent {
   box: Box | null;
 }
 
+// A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
+// seconds into the file, heard from `start` in Timeline time, at `volume` (0 to 2), faded in and out.
+export interface MusicClip {
+  id: string;
+  media: string;
+  start: number;
+  secs: number;
+  offset: number;
+  volume: number;
+  fade_in: number;
+  fade_out: number;
+}
+
+// A Music Clip as heard, cut where the Clip or its song ends.
+export interface AudioEvent {
+  media: string;
+  start: number;
+  end: number;
+  offset: number;
+  volume: number;
+  fade_in: number;
+  fade_out: number;
+}
+
 export interface RenderPlan {
   start: number;
   end: number;
@@ -402,6 +426,9 @@ export interface RenderPlan {
   watermark_style: WatermarkStyle;
   // The Text Layers that show, in drawing order.
   texts: TextEvent[];
+  // The Music Clips heard, under the Clip's own sound at `source_volume`.
+  audio: AudioEvent[];
+  source_volume: number;
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its Word Edit.
@@ -471,6 +498,9 @@ export interface Candidate {
   hook_kicker: string;
   // The Advanced Edit's, drawn in this order (the last on top).
   text_layers: TextLayer[];
+  // Its Music Clips, under its own sound at `source_volume` (0 to 2).
+  music: MusicClip[];
+  source_volume: number;
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -492,6 +522,9 @@ export interface CandidateChange {
   hook_kicker?: string;
   // Replaces the Candidate's Text Layers as a whole.
   text_layers?: TextLayer[];
+  // Replaces the Candidate's Music Clips as a whole.
+  music?: MusicClip[];
+  source_volume?: number;
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -522,8 +555,10 @@ export interface RenderedClip {
   hook_kicker: string;
   // null in a Clip rendered before Watermarks.
   watermark_style: WatermarkStyle | null;
-  // [] in a Clip rendered before Text Layers.
+  // [] in a Clip rendered before Text Layers, and before music.
   text_layers: TextLayer[];
+  music: MusicClip[];
+  source_volume: number;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
