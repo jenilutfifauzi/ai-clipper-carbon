@@ -8,6 +8,9 @@ eval/reports/<prompt version>/<UTC time>/:
   with preview links, for the owner to judge;
 - report.json: the same, for scripts;
 - postable.yaml: where the owner writes how many of each episode's top 5 they would post.
+With SELECTION_AUDIO_SIGNAL on, the report goes under the audio variant's version (see
+prompts.prompt_version), records how many shortlisted Windows were heard, and is compared with the
+best text-only report on the same Reference Set (see `comparison`).
 
 `gate` reads a report and its postable counts back. The gate is recall of at least 60% and at
 least 3 of the top 5 postable on every eval episode.
@@ -22,7 +25,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Candidate
 from app.config import REFERENCE_SET, REPO_ROOT, LlmChoice, Settings
@@ -30,7 +33,7 @@ from app.jobs import TRANSCRIPT_FILE, Job, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import Ports
 from app.profile import PROFILE_FILE, ChannelProfile, ProfileStore
-from app.prompts import PROMPT_VERSION
+from app.prompts import prompt_version
 from app.references import EXAMPLE, Reference, load_reference_set, video_id
 from app.selection import Selection
 from app.storage import write_atomic
@@ -105,6 +108,10 @@ class EpisodeReport:
     examples: int
     # The Job's warnings, e.g. a few-shot episode left out for want of captions.
     warnings: list[str]
+    # How many Windows were shortlisted, and of them how many the Detail pass heard the audio of
+    # (None with audio-signal mode off); None in reports made before these were recorded.
+    shortlisted: int | None = None
+    audio_windows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +127,8 @@ class EvalReport:
     episodes: list[EpisodeReport]
     # The LLM every eval Job was analyzed with; None in reports made before that was recorded.
     llm: LlmChoice | None = None
+    # Whether audio-signal mode was on.
+    audio_signal: bool = False
 
 
 @dataclass(frozen=True)
@@ -184,8 +193,10 @@ def evaluate(
     results = [_episode(store, pipeline, url, clips, references, profile) for url, clips in episodes.items()]
     found = sum(episode.found for episode in results)
     total = sum(episode.total for episode in results)
+    audio = settings.selection_audio_signal
     report = EvalReport(
-        PROMPT_VERSION, created_at, shown(references), profile, found, total, found / total, results, settings.llm
+        prompt_version(audio), created_at, shown(references), profile, found, total, found / total, results,
+        settings.llm, audio,
     )
     return report, _write(report, reports_dir)
 
@@ -231,14 +242,14 @@ def latest_report(reports_dir: Path = REPORTS_DIR) -> Path | None:
 def summary(report: EvalReport, folder: Path) -> str:
     """The run in a few lines, for the terminal."""
     lines = [
-        f"Eval of prompt {report.prompt_version} with {report.llm}: "
+        f"Eval of prompt {report.prompt_version} with {report.llm}{', audio signal on' if report.audio_signal else ''}: "
         f"{len(report.episodes)} eval episodes, {report.total} references"
     ]
     for episode in report.episodes:
         how = "reused" if episode.reused else "new"
         lines.append(
             f"  {episode.url}  Job {episode.job_id} ({how}): "
-            f"{episode.found} of {episode.total} found ({percent(episode.recall)})"
+            f"{episode.found} of {episode.total} found ({percent(episode.recall)}){_heard(episode, ', ')}"
         )
         lines += [
             f"    missed {span(result.start, result.end)} (line {result.line}): {_flat(result.note)}"
@@ -246,8 +257,10 @@ def summary(report: EvalReport, folder: Path) -> str:
             if not result.found
         ]
         lines += [f"    warning: {warning}" for warning in episode.warnings]
+    lines.append(f"Recall: {percent(report.recall)} ({report.found} of {report.total}; the gate needs {percent(GATE_RECALL)})")
+    if report.audio_signal:
+        lines += ["Compared with text-only selection:", *(f"  {line}" for line in comparison(report, {}, folder.parent.parent))]
     lines += [
-        f"Recall: {percent(report.recall)} ({report.found} of {report.total}; the gate needs {percent(GATE_RECALL)})",
         f"Report: {shown(folder / REPORT_FILE)}",
         f"Next: write the postable counts in {shown(folder / POSTABLE_FILE)}, then run `make gate REPORT={shown(folder)}`",
     ]
@@ -271,7 +284,71 @@ def gate_summary(result: Gate, folder: Path) -> str:
         "fail": "Gate: failed",
         "pending": f"Gate: pending, until every episode has a count in {shown(folder / POSTABLE_FILE)}",
     }[result.status])
+    if report.audio_signal:
+        lines += ["Compared with text-only selection:", *(f"  {line}" for line in comparison(report, result.postable, folder.parent.parent))]
     return "\n".join(lines)
+
+
+def best_text_only(reports_dir: Path, reference_set: str) -> tuple[Path, EvalReport, dict[str, int | None]] | None:
+    """The folder, report and postable counts of the best text-only report (audio-signal mode off)
+    on the same Reference Set in `reports_dir`: the highest recall, then the most Candidates judged
+    postable, then the newest."""
+    best = None
+    for path in reports_dir.glob(f"*/*/{REPORT_JSON}"):
+        try:
+            report = _REPORT.validate_json(path.read_bytes())
+        except (OSError, ValidationError):
+            continue
+        if report.audio_signal or report.reference_set != reference_set:
+            continue
+        try:
+            postable = _postable(path.parent / POSTABLE_FILE, report)
+        except EvalError:
+            postable = {}
+        key = (report.recall, sum(count for count in postable.values() if count is not None), report.created_at)
+        if best is None or key > best[0]:
+            best = (key, path.parent, report, postable)
+    return None if best is None else best[1:]
+
+
+def comparison(report: EvalReport, postable: dict[str, int | None], reports_dir: Path) -> list[str]:
+    """An audio-signal report, with its postable counts, next to the best text-only report: the
+    recall, and per episode the references found and the postable counts."""
+    best = best_text_only(reports_dir, report.reference_set)
+    if best is None:
+        return [
+            f"No text-only report on {report.reference_set} in {shown(reports_dir)} to compare with: "
+            "run `make eval` with SELECTION_AUDIO_SIGNAL=false."
+        ]
+    folder, other, other_postable = best
+    lines = [
+        f"Best text-only report: {shown(folder)} (prompt {other.prompt_version}, {other.llm}), "
+        "the highest recall, then the most postable",
+        f"- Recall: {percent(other.recall)} ({other.found} of {other.total}) text-only, "
+        f"{percent(report.recall)} ({report.found} of {report.total}) with audio",
+    ]
+    episodes = {episode.url: episode for episode in other.episodes}
+    for episode in report.episodes:
+        if (text_only := episodes.get(episode.url)) is None:
+            lines.append(f"- {episode.url}: not in the text-only report")
+            continue
+        lines.append(
+            f"- {episode.url}: found {text_only.found} of {text_only.total} text-only, "
+            f"{episode.found} of {episode.total} with audio; postable {_count(other_postable.get(episode.url))} "
+            f"text-only, {_count(postable.get(episode.url))} with audio"
+        )
+    return lines
+
+
+def _count(count: int | None) -> str:
+    return "not judged" if count is None else str(count)
+
+
+def _heard(episode: EpisodeReport, separator: str) -> str:
+    """How many shortlisted Windows the Detail pass heard, in audio-signal mode."""
+    if episode.audio_windows is None:
+        return ""
+    return f"{separator}audio for {episode.audio_windows} of {episode.shortlisted} shortlisted Windows"
 
 
 def markdown(report: EvalReport, folder: Path) -> str:
@@ -283,6 +360,15 @@ def markdown(report: EvalReport, folder: Path) -> str:
         "",
         f"LLM: {report.llm}",
         "",
+        *(
+            [
+                "Audio signal: on. The Detail pass also heard each shortlisted Window's audio "
+                "(laughter, tone, energy, pacing).",
+                "",
+            ]
+            if report.audio_signal
+            else []
+        ),
         f"**Recall: {percent(report.recall)}** ({report.found} of {report.total} references found; "
         f"the gate needs {percent(GATE_RECALL)}).",
         "",
@@ -299,6 +385,8 @@ def markdown(report: EvalReport, folder: Path) -> str:
             for episode in report.episodes
         ),
     ]
+    if report.audio_signal:
+        lines += ["", "## Compared with text-only selection", "", *comparison(report, {}, folder.parent.parent)]
     for episode in report.episodes:
         lines += _episode_markdown(episode)
     return "\n".join(lines) + "\n"
@@ -351,6 +439,7 @@ def _episode(
     return EpisodeReport(
         url, job.id, reused, duration, transcript.source, found, len(results), recall(results), results,
         selection.candidates, len(selection.examples), [warning.message for warning in job.warnings],
+        len(selection.shortlist), len(selection.audio_windows) if selection.audio_signal else None,
     )
 
 
@@ -397,7 +486,7 @@ def _episode_markdown(episode: EpisodeReport) -> list[str]:
         "",
         f"Job `{episode.job_id}` ({reuse}) · {timestamp(episode.duration)} · {source} · "
         f"{episode.examples} few-shot example{'' if episode.examples == 1 else 's'} · "
-        f"{len(episode.candidates)} Candidates",
+        f"{len(episode.candidates)} Candidates{_heard(episode, ' · ')}",
         "",
         *(f"- Warning: {_flat(warning)}" for warning in episode.warnings),
         *([""] if episode.warnings else []),

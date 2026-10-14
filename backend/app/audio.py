@@ -1,5 +1,6 @@
 """Audio for transcription: decoding with the configured ffmpeg, Silero voice activity detection,
-and cutting a long Source into chunks at pauses."""
+and cutting a long Source into chunks at pauses. Also the Windows' audio that audio-signal mode
+sends to the Detail pass."""
 
 import subprocess
 from collections.abc import Iterator
@@ -17,6 +18,9 @@ _CONTEXT = 64  # samples of the previous window that Silero expects in front of 
 # A chunk ends in the middle of a pause at least this long.
 MIN_PAUSE_SECS = 0.3
 
+# A Window's audio for the Detail pass: mono Opus in Ogg, which Gemini reads as audio/ogg.
+WINDOW_AUDIO_MIME_TYPE = "audio/ogg"
+
 
 def decode(ffmpeg: Path, media: Path, start: float = 0.0, end: float | None = None) -> np.ndarray:
     """The first audio stream of `media` from `start` to `end` seconds (or its end), as 16 kHz mono float32."""
@@ -29,6 +33,28 @@ def decode(ffmpeg: Path, media: Path, start: float = 0.0, end: float | None = No
         stderr = result.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"ffmpeg couldn't decode the audio of {media.name}: {stderr}")
     return np.frombuffer(result.stdout, dtype="<f4")
+
+
+def window_audio(ffmpeg: Path, media: Path, start: float, end: float, cache: Path, bitrate: str, rate: int) -> bytes:
+    """The first audio stream of `media` from `start` to `end` seconds as mono Ogg Opus at `bitrate`
+    and `rate` Hz (WINDOW_AUDIO_MIME_TYPE). Each range is encoded once and kept in `cache`."""
+    path = cache / f"{round(1000 * start)}-{round(1000 * end)}.{bitrate}.{rate}.ogg"
+    if path.is_file():
+        return path.read_bytes()
+    cache.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(f"{path.name}.part")
+    command = [
+        str(ffmpeg), "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}", "-t", f"{max(end - start, 0):.3f}",
+        "-i", str(media), "-map", "0:a:0", "-map_metadata", "-1", "-vn", "-ac", "1", "-ar", str(rate),
+        "-c:a", "libopus", "-b:a", bitrate, "-f", "ogg", str(partial),
+    ]
+    result = subprocess.run(command, capture_output=True)
+    if result.returncode:
+        partial.unlink(missing_ok=True)
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"ffmpeg couldn't extract the audio of {media.name} from {start:g} to {end:g} s: {stderr}")
+    partial.replace(path)
+    return path.read_bytes()
 
 
 class SileroVad:

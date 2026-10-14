@@ -13,9 +13,14 @@ shortlist (the Score pass gets the profile in short), few-shot examples in the D
 in v3 the whole-sentence rule, a distinct `topic` per clip and spare clips.
 Each of these sections is left out when there is nothing to put in it.
 
+Audio-signal mode (SELECTION_AUDIO_SIGNAL) sends the shortlisted Windows' audio with the Detail
+request, each recording after an `audio_label`, and adds the AUDIO section, which asks the model to
+hear laughter, tone, energy and pacing. A run with audio has the version `prompt_version(True)`,
+PROMPT_VERSION with AUDIO_SUFFIX, so that its eval reports are kept apart from the text-only ones.
+
 Bump PROMPT_VERSION whenever a template, the way it is filled, the response schemas in
-app/llm.py, or a temperature or prompt limit in SelectionTuning changes: eval reports are kept
-per version.
+app/llm.py, or a temperature, prompt limit or audio setting in SelectionTuning changes: eval
+reports are kept per version.
 """
 
 from collections.abc import Sequence
@@ -29,6 +34,8 @@ if TYPE_CHECKING:
     from app.selection import ScoredWindow, Window
 
 PROMPT_VERSION = "v3"
+# Added to PROMPT_VERSION for a run whose Detail request carried audio.
+AUDIO_SUFFIX = "-audio"
 
 _LANGUAGES = {"id": "Indonesian", "en": "English"}
 
@@ -198,6 +205,17 @@ It is a priority, not a filter: choose the moments that fit it first, then fill 
 the strongest other moments.{over_profile}"""
 DETAIL_BRIEF_OVER_PROFILE = " Where it and the channel profile pull different ways, follow the Brief."
 
+DETAIL_AUDIO = """\
+AUDIO: before this prompt come recordings of the shortlisted windows, each introduced by its
+window id and time range. They carry what the transcript can't: how things were said. Listen for
+laughter (from the speakers or the room), the tone of voice, the energy, and the pacing, such as a
+pause before a punchline or a burst of quick back-and-forth, and use them as signals: a moment
+that makes the speakers laugh or lifts their energy is often the strongest clip, and one that reads
+well but sounds flat is weaker than it looks. A window with no recording is judged on its
+transcript alone. A recording's own clock starts at 0:00 at its window's start: always take `start`
+and `end` from the transcript's labels, never from a recording."""
+AUDIO_LABEL = "Audio of window {id} [{start}–{end}]:"
+
 _PROFILE_FIELDS = (("niche", "Niche"), ("audience", "Audience"), ("clip_style", "Clip style"), ("avoid", "Avoid"))
 
 
@@ -244,9 +262,11 @@ def detail_prompt(
     profile: ChannelProfile,
     brief: str | None,
     examples: Sequence[Example],
+    audio: bool = False,
 ) -> str:
     """The Detail prompt: the whole Transcript as (start, text) lines, each labelled with
-    `timestamp()`, then the profile in full, the examples and the Brief."""
+    `timestamp()`, then the AUDIO section when `audio` (recordings come with the request), the
+    profile in full, the examples and the Brief."""
     transcript = "\n".join(f"[{timestamp(start)}] {text}" for start, text in lines)
     windows = "\n".join(
         f"- {w.id} [{timestamp(w.start)}–{timestamp(w.end)}] score {w.score}: {w.reason}"
@@ -254,7 +274,7 @@ def detail_prompt(
         else f"- {w.id} [{timestamp(w.start)}–{timestamp(w.end)}] not scored"
         for w in shortlist
     )
-    sections = []
+    sections = [DETAIL_AUDIO] if audio else []
     if fields := _profile_fields(profile):
         listed = "\n".join(f"- {label}: {_indented(text)}" for label, text in fields)
         sections.append(DETAIL_PROFILE.format(avoid=DETAIL_AVOID if profile.avoid else "", fields=listed))
@@ -275,6 +295,16 @@ def detail_prompt(
         windows=windows,
         steering="".join(f"{section}\n\n" for section in sections),
     )
+
+
+def prompt_version(audio: bool) -> str:
+    """The version of a run's prompts: with AUDIO_SUFFIX when its Detail request carried audio."""
+    return PROMPT_VERSION + AUDIO_SUFFIX if audio else PROMPT_VERSION
+
+
+def audio_label(window: "ScoredWindow") -> str:
+    """The text that introduces a Window's recording in the Detail request."""
+    return AUDIO_LABEL.format(id=window.id, start=timestamp(window.start), end=timestamp(window.end))
 
 
 def _profile_fields(profile: ChannelProfile) -> list[tuple[str, str]]:

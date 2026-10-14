@@ -121,6 +121,17 @@ class SelectionTuning:
     # A Candidate outside the Job's duration range is trimmed or extended at Word boundaries if that
     # moves its edges by at most this much in all, and dropped otherwise.
     duration_fix_secs: float = 15
+    # Audio-signal mode (SELECTION_AUDIO_SIGNAL): each shortlisted Window's audio goes inline with the
+    # Detail request, as mono Opus at audio_bitrate and audio_rate Hz (Gemini hears audio at about
+    # 16 kb/s anyway, so more is wasted). Gemini takes inline requests of up to 20 MB, base64 and
+    # prompt included, so audio_request_max_bytes caps the request: past it, the lowest-scored
+    # Windows' audio is left out, with a warning on the Job. At 16 kb/s a 135 s Window is about
+    # 0.36 MB as base64, so the cap holds about 50 Windows next to a 3-hour Transcript.
+    audio_bitrate: str = "16k"
+    audio_rate: int = 16_000
+    # Windows' audio is encoded this many at a time (each encode takes one core for about 0.7 s).
+    audio_workers: int = 4
+    audio_request_max_bytes: int = 20_000_000
     # Transient LLM errors: llm_attempts tries in all, waiting llm_retry_secs, then twice as long each time.
     llm_attempts: int = 5
     llm_retry_secs: float = 2

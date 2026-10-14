@@ -4,6 +4,7 @@ mock transport, so the port's requests and its handling of failures are real but
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import replace
 
 import httpx
@@ -59,11 +60,13 @@ def quota_error(details: object) -> httpx.Response:
 
 
 class FakeGeminiApi:
-    """generateContent, answered the way Gemini does: a Score prompt gets a score of 50 per Window,
-    a Detail prompt gets `clips`. `fail_with(failure, ...)` answers the next requests with those
-    responses instead, or raises them if they're exceptions. Every request is recorded."""
+    """generateContent, answered the way Gemini does: a Score prompt gets `score_window(id)` (50
+    unless scripted) per Window, a Detail prompt gets `clips`. The prompt is the request's last
+    part, after any audio. `fail_with(failure, ...)` answers the next requests with those responses
+    instead, or raises them if they're exceptions. Every request is recorded."""
 
     def __init__(self) -> None:
+        self.score_window: Callable[[str], int] = lambda id: 50
         self.clips: list[dict] = []
         self.requests: list[httpx.Request] = []
         self._failures: list[httpx.Response | Exception] = []
@@ -78,9 +81,10 @@ class FakeGeminiApi:
             if isinstance(failure, Exception):
                 raise failure
             return failure
-        prompt = json.loads(request.content)["contents"][0]["parts"][0]["text"]
+        prompt = json.loads(request.content)["contents"][0]["parts"][-1]["text"]
         if windows := windows_in(prompt):
-            return answer(json.dumps({"windows": [{"id": id, "reason": "obrolan biasa", "score": 50} for id, *_ in windows]}))
+            scores = [{"id": id, "reason": "obrolan biasa", "score": self.score_window(id)} for id, *_ in windows]
+            return answer(json.dumps({"windows": scores}))
         return answer(json.dumps({"clips": self.clips}))
 
 

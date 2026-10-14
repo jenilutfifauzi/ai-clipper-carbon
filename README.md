@@ -157,8 +157,11 @@ Prompt changes are measured against clips you actually posted, not judged by eye
 
 To iterate, change `backend/app/prompts.py`, bump `PROMPT_VERSION`, then run `make eval` and
 `make gate` again. Reports are committed next to the change that produced them. If the gate still
-fails after about 5 iterations, try `SELECTION_AUDIO_SIGNAL=true`. It sends Window audio to Gemini,
-so it can hear laughter and energy. Ticket 08 (`.scratch/ai-clipper-v1/issues/08-selection-gate.md`)
+fails after about 5 iterations, try `SELECTION_AUDIO_SIGNAL=true` (with `LLM_PROVIDER=gemini`). It
+sends each shortlisted Window's audio to Gemini's Detail pass, so it can hear laughter, tone, energy
+and pacing. Its reports go under `eval/reports/<version>-audio/`, and each one is compared with the
+best text-only report (in `report.md` and in `make gate`'s output). On a long episode the audio
+adds about 32 tokens a second, so a paid Gemini tier is the practical choice. Ticket 08 (`.scratch/ai-clipper-v1/issues/08-selection-gate.md`)
 records the iterations so far.
 
 ## Troubleshooting

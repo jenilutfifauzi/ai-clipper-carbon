@@ -4,34 +4,54 @@
    the Brief and the profile in short.
 2. The best-scoring Windows form the shortlist.
 3. The Detail pass reads the whole Transcript, the profile, the Brief and the few-shot examples,
-   and proposes clips from the shortlisted Windows.
+   and proposes clips from the shortlisted Windows. In audio-signal mode it also hears the
+   shortlisted Windows' audio (see `_audio`).
 4. Post-processing turns the proposals into Candidates (see `_candidates`).
 
 Every number used here is in SelectionTuning; the prompts are in app/prompts.py.
 """
 
+import base64
+import json
 import logging
 import math
 import re
 import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from uuid import uuid4
 
 from app.candidates import Candidate, Descriptions
 from app.config import LlmChoice, SelectionTuning
 from app.fewshot import Example
-from app.llm import ClipProposal, Llm, LlmRequest, Overloaded, ScoreResponse, TransientLlmError, parse_time
+from app.llm import (
+    AudioPart,
+    ClipProposal,
+    Llm,
+    LlmRequest,
+    Overloaded,
+    ScoreResponse,
+    TransientLlmError,
+    parse_time,
+)
 from app.profile import ChannelProfile
-from app.prompts import PROMPT_VERSION, detail_prompt, score_prompt
+from app.prompts import audio_label, detail_prompt, prompt_version, score_prompt
 from app.transcript import Transcript, Word, timestamp
 
 logger = logging.getLogger(__name__)
 
 # Called with a status line, and the percent done when it has moved.
 Progress = Callable[..., None]
+# The audio of the Source from a start to an end in seconds, and its MIME type.
+WindowAudio = Callable[[float, float], tuple[bytes, str]]
+
+# What a Detail request holds besides its prompt and audio, in bytes: the generation config with
+# the response schema (about 3 kB), each part's JSON, and room to spare.
+_REQUEST_OVERHEAD = 64 * 1024
+_PART_OVERHEAD = 128
 
 
 @dataclass(frozen=True)
@@ -69,6 +89,10 @@ class Selection:
     candidates: list[Candidate]
     # The LLM it ran on; None in runs saved before that was recorded.
     llm: LlmChoice | None = None
+    # Whether audio-signal mode was on, and the shortlisted Windows whose audio the Detail pass
+    # heard: all of them unless the request's size cap left some out.
+    audio_signal: bool = False
+    audio_windows: list[str] = field(default_factory=list)
 
 
 def select(
@@ -82,8 +106,12 @@ def select(
     brief: str | None = None,
     examples: Sequence[Example] = (),
     progress: Progress = lambda message, percent=None: None,
+    window_audio: WindowAudio | None = None,
 ) -> Selection:
-    """Ranked Candidates of `min_secs` to `max_secs` from the Transcript of a `duration`-second Source."""
+    """Ranked Candidates of `min_secs` to `max_secs` from the Transcript of a `duration`-second Source.
+
+    With `window_audio` (audio-signal mode), the Detail pass also gets the shortlisted Windows' audio.
+    """
     length = max(tuning.window_min_secs, tuning.window_factor * max_secs)
     windows = _windows(transcript.words, length, tuning.window_overlap_secs)
     batches = _batches(windows, tuning.score_batch_size)
@@ -101,20 +129,31 @@ def select(
     shortlist = _shortlist(scored, round(tuning.shortlist_factor * count), tuning.shortlist_max_overlap)
     cutter = _Cutter(transcript, duration, tuning)
     proposals: list[ClipProposal] = []
+    audio: list[AudioPart] = []
     if shortlist:
-        progress(f"Choosing {count} Candidates from {len(shortlist)} shortlisted Windows", 100 * len(batches) / steps)
         lines = [
             (cutter.starts[first], " ".join(w.text for w in cutter.words[first : last + 1]))
             for first, last in cutter.line_words
         ]
-        prompt = detail_prompt(
-            lines, transcript.language, shortlist, count, tuning.spare_clips, duration, min_secs, max_secs,
-            profile, brief, examples,
-        )
-        proposals = _retrying(llm.detail, LlmRequest(prompt, tuning.detail_temperature), tuning, progress).clips
+
+        def prompt(with_audio: bool) -> str:
+            return detail_prompt(
+                lines, transcript.language, shortlist, count, tuning.spare_clips, duration, min_secs, max_secs,
+                profile, brief, examples, with_audio,
+            )
+
+        if window_audio is not None:
+            progress(f"Extracting the audio of {len(shortlist)} shortlisted Windows", 100 * len(batches) / steps)
+            audio = _audio(shortlist, window_audio, prompt(True), tuning)
+        progress(f"Choosing {count} Candidates from {len(shortlist)} shortlisted Windows", 100 * len(batches) / steps)
+        request = LlmRequest(prompt(bool(audio)), tuning.detail_temperature, tuple(audio))
+        proposals = _retrying(llm.detail, request, tuning, progress).clips
 
     candidates = _candidates(proposals, cutter, scored, count, min_secs, max_secs)
-    return Selection(PROMPT_VERSION, count, list(examples), scored, [w.id for w in shortlist], proposals, candidates)
+    return Selection(
+        prompt_version(bool(audio)), count, list(examples), scored, [w.id for w in shortlist], proposals, candidates,
+        audio_signal=window_audio is not None, audio_windows=[part.window_id for part in audio],
+    )
 
 
 def snap(
@@ -199,6 +238,30 @@ def _shortlist(windows: list[ScoredWindow], size: int, max_overlap: float) -> li
         ):
             picked.append(window)
     return sorted(picked, key=lambda w: w.start)
+
+
+def _audio(
+    shortlist: list[ScoredWindow], window_audio: WindowAudio, prompt: str, tuning: SelectionTuning
+) -> list[AudioPart]:
+    """The shortlisted Windows' recordings, in Transcript order, for a Detail request with `prompt`.
+    They are taken best-scored first (ties to the earlier) while the request stays within
+    audio_request_max_bytes, counting the audio as base64, as it is sent inline; the rest, the
+    lowest-scored, are left out. They are made audio_workers at a time."""
+    with ThreadPoolExecutor(tuning.audio_workers) as pool:
+        recordings = dict(zip((w.id for w in shortlist), pool.map(lambda w: window_audio(w.start, w.end), shortlist)))
+    room = tuning.audio_request_max_bytes - len(json.dumps(prompt)) - _REQUEST_OVERHEAD
+    kept: dict[str, AudioPart] = {}
+    for window in sorted(shortlist, key=lambda w: -1 if w.score is None else w.score, reverse=True):
+        data, mime_type = recordings[window.id]
+        part = AudioPart(window.id, audio_label(window), data, mime_type)
+        size = len(base64.b64encode(data)) + len(json.dumps(part.label)) + len(mime_type) + 2 * _PART_OVERHEAD
+        if size > room:
+            break
+        room -= size
+        kept[window.id] = part
+    if left_out := [w.id for w in shortlist if w.id not in kept]:
+        logger.warning("Left out the audio of Windows %s: the Detail request would be too large", ", ".join(left_out))
+    return [kept[w.id] for w in shortlist if w.id in kept]
 
 
 def _retrying[R](

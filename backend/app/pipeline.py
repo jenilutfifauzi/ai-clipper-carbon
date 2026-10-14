@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
-from app.audio import SileroVad, chunks
+from app.audio import WINDOW_AUDIO_MIME_TYPE, SileroVad, chunks, window_audio
 from app.candidates import Candidate
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
@@ -27,6 +27,9 @@ from app.transcript import Transcript, parse_json3
 from app.video_source import Source, UploadVideoSource
 
 logger = logging.getLogger(__name__)
+
+# Where a Job keeps its Windows' audio for audio-signal mode, one file per time range.
+WINDOW_AUDIO_DIR = "window_audio"
 
 DOWNLOAD_HINT = "If YouTube changed something, updating the downloader may fix it: run `make update-ytdlp`, then retry."
 
@@ -271,6 +274,7 @@ class Pipeline:
             job = self.store.update(
                 job.id, warnings=[*job.warnings, *(JobWarning(JobStatus.ANALYZING, w) for w in warnings)]
             )
+        audio = self._window_audio(job) if self.settings.selection_audio_signal else None
         selection = select(
             _KeptScores(self.llm, self.store, job.id, self.settings.llm),
             self.settings.selection,
@@ -282,9 +286,19 @@ class Pipeline:
             brief=job.options.brief,
             examples=examples,
             progress=progress,
+            window_audio=audio,
         )
         selection = replace(selection, llm=self.settings.llm)
         self.store.save_selection(job.id, selection)
+        if selection.audio_signal and (left_out := [w for w in selection.shortlist if w not in selection.audio_windows]):
+            warning = JobWarning(
+                JobStatus.ANALYZING,
+                f"Audio-signal mode: the audio of {len(left_out)} of the {len(selection.shortlist)} shortlisted "
+                f"Windows ({', '.join(left_out)}, the lowest-scored) was left out, as the Detail request would "
+                f"pass {self.settings.selection.audio_request_max_bytes / 1e6:g} MB, the size cap for Gemini's inline "
+                "requests. They were judged on their transcript alone.",
+            )
+            job = self.store.update(job.id, warnings=[*self.store.get(job.id).warnings, warning])
 
         def keep(_: Job, previous: list[Candidate]) -> tuple[list[Candidate], int]:
             # A Job analyzed again (`make reanalyze`, the eval) keeps the owner's review work.
@@ -298,6 +312,19 @@ class Pipeline:
             selection.llm, kept,
         )
         return self.store.update(job.id, prompt_version=selection.prompt_version)
+
+    def _window_audio(self, job: Job) -> Callable[[float, float], tuple[bytes, str]]:
+        """The audio of the Job's Source over a time range, made with the configured ffmpeg and kept
+        in the Job's WINDOW_AUDIO_DIR."""
+        assert job.source is not None
+        job_dir = self.store.job_dir(job.id)
+        media, cache, tuning = job_dir / job.source.video, job_dir / WINDOW_AUDIO_DIR, self.settings.selection
+
+        def audio(start: float, end: float) -> tuple[bytes, str]:
+            data = window_audio(self.settings.ffmpeg_bin, media, start, end, cache, tuning.audio_bitrate, tuning.audio_rate)
+            return data, WINDOW_AUDIO_MIME_TYPE
+
+        return audio
 
 
 class _KeptScores:

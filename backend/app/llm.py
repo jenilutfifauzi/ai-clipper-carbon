@@ -10,7 +10,7 @@ import math
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Protocol
 
 import httpx
@@ -96,9 +96,22 @@ class DetailResponse(BaseModel):
 
 
 @dataclass(frozen=True)
+class AudioPart:
+    """A recording sent with a request (audio-signal mode): a shortlisted Window's audio."""
+
+    window_id: str
+    # The text that introduces it, naming the Window and its time range.
+    label: str
+    data: bytes = field(repr=False)
+    mime_type: str
+
+
+@dataclass(frozen=True)
 class LlmRequest:
     prompt: str
     temperature: float
+    # Sent before the prompt, each after its label. Only Gemini takes them.
+    audio: tuple[AudioPart, ...] = ()
 
 
 class Llm(Protocol):
@@ -160,7 +173,9 @@ class PacedLlm:
 
 
 class GeminiLlm:
-    """Gemini via google-genai's generateContent, with the response schema as its JSON schema.
+    """Gemini via google-genai's generateContent, with the response schema as its JSON schema. A
+    request's audio goes inline (base64) in the same user turn, each recording after its label and
+    all of them before the prompt; Selection keeps the request under Gemini's inline size limit.
 
     The client is made on first use, so a missing API key fails the analyzing stage, not start-up.
     The SDK's own retries stay off: transient errors are retried by Selection.
@@ -183,9 +198,20 @@ class GeminiLlm:
             response_mime_type="application/json",
             response_json_schema=schema.model_json_schema(),
         )
+        contents: str | list[types.Content] = request.prompt
+        if request.audio:
+            parts = [
+                part
+                for audio in request.audio
+                for part in (
+                    types.Part.from_text(text=audio.label),
+                    types.Part.from_bytes(data=audio.data, mime_type=audio.mime_type),
+                )
+            ]
+            contents = [types.Content(role="user", parts=[*parts, types.Part.from_text(text=request.prompt)])]
         try:
             response = self._connect().models.generate_content(
-                model=self.settings.gemini_model, contents=request.prompt, config=config
+                model=self.settings.gemini_model, contents=contents, config=config
             )
         except errors.APIError as exc:
             raise _classify(exc) from exc
