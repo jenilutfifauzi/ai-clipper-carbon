@@ -282,6 +282,12 @@ export function StylePanel({
             />
             <Slider label="Size" value={hook.size} min={40} max={160} onChange={(v) => set("hook", "size", v)} marker={marker("hook", "size", "hook size")} />
             <ColorField label="Text colour" value={hook.colour} onChange={(v) => set("hook", "colour", v)} marker={marker("hook", "colour", "hook text colour")} />
+            <ColorField
+              label="Emphasis colour"
+              value={hook.emphasis_colour}
+              onChange={(v) => set("hook", "emphasis_colour", v)}
+              marker={marker("hook", "emphasis_colour", "emphasis colour")}
+            />
           </div>
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <Segmented

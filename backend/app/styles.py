@@ -129,6 +129,8 @@ class HookStyle:
     uppercase: bool = False
     align: HookAlign = HookAlign.CENTER
     colour: Colour = "#FFFFFF"
+    # Of the words marked *like this* in the hook text.
+    emphasis_colour: Colour = "#FFE600"
     # In output pixels, around and behind the text (not the box).
     outline: Annotated[int, Field(ge=0, le=20)] = 0
     outline_colour: Colour = "#000000"

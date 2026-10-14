@@ -1,6 +1,6 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Highlighter } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { api, type HookFit } from "../../api";
+import { Button } from "../../components/Button";
 import { Slider } from "../../components/Slider";
 import { cx } from "../../format";
 
@@ -8,8 +8,15 @@ import { cx } from "../../format";
 const HOOK_MAX = 200;
 // Typing is saved once it pauses this long, and at once when the field is left.
 const SAVE_AFTER_MS = 700;
-// Whether the text fits the hook's 2 lines is asked once typing pauses this long.
-const FIT_AFTER_MS = 250;
+const SHORTCUT = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘B" : "Ctrl+B";
+
+// How the Preview Plan sets the hook: how many lines, how many its style allows, and whether they
+// fit at its size (the render sets them smaller when they don't).
+export interface HookFit {
+  lines: number;
+  max_lines: number;
+  fits: boolean;
+}
 
 export interface HookTiming {
   hook_start: number;
@@ -27,6 +34,7 @@ export function HookEditor({
   timing,
   duration,
   onTiming,
+  fit,
 }: {
   value: string;
   onSave: (text: string) => void;
@@ -37,6 +45,8 @@ export function HookEditor({
   // The Clip's length: the hook is kept in it.
   duration: number;
   onTiming: (timing: HookTiming) => void;
+  // Of the text being previewed; null until it is planned.
+  fit: HookFit | null;
 }) {
   const id = useId();
   const [draft, setDraft] = useState(value);
@@ -56,18 +66,33 @@ export function HookEditor({
   latest.current = draft;
   useEffect(() => () => save(latest.current), []);
 
-  // The backend lays the hook out as the render will, with the font's own widths.
-  const [fit, setFit] = useState<HookFit | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    const wait = setTimeout(() => {
-      api.hookFit(draft, controller.signal).then(setFit, () => setFit(null));
-    }, FIT_AFTER_MS);
-    return () => {
-      clearTimeout(wait);
-      controller.abort();
-    };
-  }, [draft]);
+  function edit(text: string) {
+    setDraft(text);
+    onDraft?.(text);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => save(text), SAVE_AFTER_MS);
+  }
+
+  // The selection, widened to whole words, and whether it is one Emphasis already.
+  const field = useRef<HTMLTextAreaElement>(null);
+  const [selection, setSelection] = useState<[number, number]>([0, 0]);
+  const [from, to] = words(draft, selection);
+  const marked = to - from > 1 && draft[from] === "*" && draft[to - 1] === "*";
+
+  // Marks the selected words *like this*, or unmarks them.
+  function toggleEmphasis() {
+    const [start, end] = words(draft, selection);
+    if (start === end) return;
+    const inner = draft.slice(start, end).replaceAll("*", "");
+    const replaced = marked ? inner : `*${inner}*`;
+    edit(draft.slice(0, start) + replaced + draft.slice(end));
+    const next: [number, number] = [start, start + replaced.length];
+    setSelection(next);
+    requestAnimationFrame(() => {
+      field.current?.focus();
+      field.current?.setSelectionRange(...next);
+    });
+  }
 
   const when = timing;
   const changeWhen = (change: Partial<HookTiming>) => onTiming({ ...when, ...change });
@@ -75,25 +100,43 @@ export function HookEditor({
 
   const blank = draft.trim() === "";
   const long = !blank && fit?.fits === false;
+  const lines = (count: number) => (count === 1 ? "1 line" : `${count} lines`);
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={`${id}-hook`} className="text-sm font-medium">
         Hook text
       </label>
       <span id={`${id}-hint`} className="text-sm text-muted">
-        In at most 2 lines. Where it sits and how it moves are in Style.
+        Words marked *like this* are in the Emphasis colour. Its look, lines, place and motion are in Style.
       </span>
+      <div className="flex">
+        <Button
+          size="sm"
+          className="aria-pressed:text-accent-text"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={toggleEmphasis}
+          disabled={from === to}
+          aria-pressed={marked}
+          title={`Emphasise the selected words (${SHORTCUT})`}
+        >
+          <Highlighter aria-hidden size={15} />
+          Emphasis
+        </Button>
+      </div>
       <textarea
+        ref={field}
         id={`${id}-hook`}
         rows={2}
         value={draft}
         maxLength={HOOK_MAX}
-        onChange={(event) => {
-          const text = event.target.value;
-          setDraft(text);
-          onDraft?.(text);
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => save(text), SAVE_AFTER_MS);
+        spellCheck={false}
+        onChange={(event) => edit(event.target.value)}
+        onSelect={(event) => setSelection([event.currentTarget.selectionStart, event.currentTarget.selectionEnd])}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+            event.preventDefault();
+            toggleEmphasis();
+          }
         }}
         onBlur={() => save(draft)}
         aria-describedby={`${id}-hint ${id}-count`}
@@ -111,9 +154,9 @@ export function HookEditor({
         {blank ? (
           <span>No hook: the clip opens without one.</span>
         ) : long ? (
-          <span>Too long for 2 lines: it will be set smaller on the video.</span>
+          <span>Too long for {lines(fit.max_lines)}: it will be set smaller on the video.</span>
         ) : fit ? (
-          <span>Fits on {fit.lines.length === 1 ? "1 line" : "2 lines"}.</span>
+          <span>Fits on {lines(fit.lines)}.</span>
         ) : null}
       </p>
       <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
@@ -144,4 +187,14 @@ export function HookEditor({
       )}
     </div>
   );
+}
+
+// The range [start, end) widened to the whole words it touches (asterisks belong to their word).
+function words(text: string, [start, end]: [number, number]): [number, number] {
+  while (start < end && /\s/.test(text[start])) start++;
+  while (end > start && /\s/.test(text[end - 1])) end--;
+  while (start > 0 && !/\s/.test(text[start - 1])) start--;
+  while (end < text.length && !/\s/.test(text[end])) end++;
+  // A selection of nothing but spaces is no words.
+  return text.slice(start, end).trim() ? [start, end] : [start, start];
 }

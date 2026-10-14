@@ -402,12 +402,12 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
                 elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
             else:
                 elements.append((1, 7, box.x, box.y, "g", alpha, tags, drawing))
-    for line, (x, baseline) in zip(hook.lines, hook.anchors):
+    for line, (x, baseline), spans in zip(hook.lines, hook.anchors, hook.emphasis):
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
         tags = f"\\fs{size:g}" if size != style.size else ""
-        elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(line)))
+        elements.append((2, 5, x, centre_y, ".1f", None, tags, _emphasised(line, spans, style)))
 
     events = []
     for begin, finish, phase in _hook_phases(hook, style):
@@ -423,6 +423,18 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
             events.append(f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}")
     return events
+
+
+def _emphasised(line: str, spans: list[tuple[int, int]], style: HookStyle) -> str:
+    """A hook line as ASS text, its emphasised runs in the style's emphasis colour."""
+    text, at = "", 0
+    for start, end in spans:
+        text += (
+            f"{_ass_text(line[at:start])}{{\\c{_tag_colour(style.emphasis_colour)}}}{_ass_text(line[start:end])}"
+            f"{{\\c{_tag_colour(style.colour)}}}"
+        )
+        at = end
+    return text + _ass_text(line[at:])
 
 
 # A popping hook grows from (or shrinks to) this share of its size, in percent; a sliding one comes

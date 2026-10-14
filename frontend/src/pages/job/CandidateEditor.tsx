@@ -300,6 +300,15 @@ export function CandidateEditor({
                   timing={timing}
                   duration={length}
                   onTiming={setTiming}
+                  fit={
+                    preview?.plan.hook
+                      ? {
+                          lines: preview.plan.hook.lines.length,
+                          max_lines: preview.plan.hook_style.max_lines,
+                          fits: preview.plan.hook.size >= preview.plan.hook_style.size,
+                        }
+                      : null
+                  }
                 />
               </>
             )}

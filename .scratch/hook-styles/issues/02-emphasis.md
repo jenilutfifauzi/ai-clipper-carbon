@@ -18,9 +18,25 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam B tests: spanning runs, an unpaired `*`, `**` (empty), emoji stripped, uppercase with markup.
-- [ ] Renderer test: colour switches around an emphasised run. Text without markup gives v1's ASS.
-- [ ] Cmd/Ctrl+B toggles Emphasis and keeps the selection; the button has an accessible name and pressed state.
-- [ ] Browser check: preview and render agree on Emphasis colours.
+- [x] Seam B tests: spanning runs, an unpaired `*`, `**` (empty), emoji stripped, uppercase with markup.
+- [x] Renderer test: colour switches around an emphasised run. Text without markup gives v1's ASS.
+- [x] Cmd/Ctrl+B toggles Emphasis and keeps the selection; the button has an accessible name and pressed state.
+- [x] Browser check: preview and render agree on Emphasis colours.
+
+## Comments
+
+**2026-10-14: done.** `uv run pytest tests/test_planner.py tests/test_styles.py tests/test_review.py`: 114 passed (3 new Seam B tests, 1 renderer test; the `/api/hook` test removed with its endpoint). `npm run typecheck` and `npm run build` pass.
+
+Built:
+- **Planner:** `_hook_words` parses the markup and strips emoji (the ranges in `_EMOJI`: pictographs, dingbats, flags, variation selectors, ZWJ, keycaps, tags), then applies capitals. `HookEvent.emphasis` holds each line's runs as character ranges. A space between two emphasised words is in their run, so "*pasti iri!*" is one run.
+- **Markup rules:** asterisks pair from the left; an odd last one is shown; `**` is nothing.
+- **Renderer:** `_emphasised` switches `\c` to `emphasis_colour` and back around each run.
+- **Preview:** `<tspan>` fills per run, the shadow copy in the shadow colour throughout.
+- **HookEditor:**
+  - An "Emphasis" button and Cmd/Ctrl+B mark the selected words, or the word at the caret. A selection is trimmed, then widened to whole words. When the words are already one run, the button unmarks them (`aria-pressed`).
+  - The fit line comes from the Preview Plan (`hook.size >= hook_style.size`) and names the style's line count. `GET /api/hook` and `HookFit` are removed.
+- **Style panel:** Emphasis colour in the Text group.
+
+**Checks:** Browser (scratch clone): selecting "nuh perusahaa" and pressing Cmd+B gave `Setetes racun bisa *bunuh perusahaan?*`, previewed in yellow; Cmd+B again unmarked it.

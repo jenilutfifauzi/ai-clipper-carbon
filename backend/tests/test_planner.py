@@ -947,3 +947,41 @@ def test_left_aligned_lines_start_together_and_the_hook_stays_centred():
         if shape is HookShape.STRIPS:
             assert len({box.x for box in hook.boxes}) == 1
         assert all(hook.area.x <= box.x and box.x + box.width <= hook.area.x + hook.area.width for box in hook.boxes)
+
+
+# Emphasis, and emoji (hook-styles ticket 02).
+
+
+def emphasised(hook: HookEvent) -> list[list[str]]:
+    """Each line's emphasised text."""
+    return [[line[start:end] for start, end in spans] for line, spans in zip(hook.lines, hook.emphasis)]
+
+
+def test_words_between_asterisks_are_emphasised_and_the_asterisks_arent_shown():
+    hook = hooked("Orang kantoran *pasti iri!* anak SMP ini cuan *6 juta*", hook_style=HookStyle(max_lines=3))
+    assert " ".join(hook.lines) == "Orang kantoran pasti iri! anak SMP ini cuan 6 juta"
+    # A run is the whole emphasised phrase, the space inside it included.
+    assert emphasised(hook) == [["pasti iri!"], ["6 juta"]]
+    assert hook.emphasis == [[(15, 25)], [(18, 24)]]
+    # Fitted without the asterisks: as wide as the same text unmarked.
+    plain = hooked("Orang kantoran pasti iri! anak SMP ini cuan 6 juta", hook_style=HookStyle(max_lines=3))
+    assert (hook.lines, hook.size, hook.anchors) == (plain.lines, plain.size, plain.anchors)
+    assert plain.emphasis == [[] for _ in plain.lines]
+    assert fit_hook("Kenapa *gagal?*") == (["Kenapa gagal?"], HOOK_SIZE)
+
+
+def test_emphasis_can_cover_part_of_a_word_and_an_unpaired_asterisk_is_shown():
+    assert emphasised(hooked("Super*man* datang")) == [["man"]]
+    hook = hooked("Diskon *50% hari ini")
+    assert hook.lines == ["Diskon *50% hari ini"] and emphasised(hook) == [[]]
+    # An empty pair is nothing.
+    assert hooked("Halo ** semua").lines == ["Halo semua"]
+    # Capitals keep the emphasis.
+    assert emphasised(hooked("Ini *rahasia* kita", hook_style=HookStyle(uppercase=True))) == [["RAHASIA"]]
+
+
+def test_emoji_are_left_out_of_the_hook():
+    hook = hooked("Rahasia clipper pro 😱😱 bisa viral 🤔 tiap hari 👍🏽 ❤️")
+    assert " ".join(hook.lines) == "Rahasia clipper pro bisa viral tiap hari"
+    assert hooked("😱🔥") is None
+    assert hooked("50% *off* ✨").lines == ["50% off"]

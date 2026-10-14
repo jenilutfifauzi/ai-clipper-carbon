@@ -18,7 +18,7 @@ from app.editor import PreviewPlan, preview_plan
 from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
-from app.planner import HOOK_SIZE, fit_hook, font_metrics
+from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
@@ -39,8 +39,8 @@ EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 # What /media serves from a Job's directory: its video (or preview proxy), and its Clips and their
 # posters. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
 MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
-# The longest hook text accepted. The UI warns well before this, once the text doesn't fit in the
-# hook's two lines (GET /api/hook).
+# The longest hook text accepted, its Emphasis marks included. The UI warns well before this, once
+# the Preview Plan sets the hook smaller than its style's size.
 HOOK_MAX_CHARS = 200
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
@@ -131,12 +131,6 @@ class ManualCandidate(BaseModel):
     start: FiniteFloat
     end: FiniteFloat
 
-
-class HookFit(BaseModel):
-    """How a hook text is shown on the Clip: its lines, and whether they fit at the hook's size."""
-
-    lines: list[str]
-    fits: bool
 
 
 class FontInfo(BaseModel):
@@ -387,14 +381,6 @@ def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobW
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except JobConflict as exc:
         raise HTTPException(409, f"{exc}: Candidates can be prepared once it is in review") from None
-
-
-@router.get("/hook")
-def hook_fit(text: Annotated[str, Query(max_length=HOOK_MAX_CHARS)] = "") -> HookFit:
-    """How the hook `text` will be set (app/planner.py's fit_hook), for Review to warn about one too
-    long for two lines, which the render sets smaller."""
-    lines, size = fit_hook(text)
-    return HookFit(lines=lines, fits=size == HOOK_SIZE)
 
 
 @router.post("/jobs/{job_id}/candidates", status_code=201)

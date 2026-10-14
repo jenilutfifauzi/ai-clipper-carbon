@@ -158,6 +158,8 @@ export interface HookStyle {
   uppercase: boolean;
   align: HookAlign;
   colour: string;
+  // Of the words marked *like this*.
+  emphasis_colour: string;
   // Around and behind the text, in output pixels; the box has neither.
   outline: number;
   outline_colour: string;
@@ -244,6 +246,8 @@ export interface HookEvent {
   anchors: [number, number][];
   // Drawn behind the lines in the box colour: one block, a strip per line, or none.
   boxes: Box[];
+  // Each line's emphasised runs, as [start, end) ranges of its characters.
+  emphasis: [number, number][][];
 }
 
 export interface RenderPlan {
@@ -400,13 +404,6 @@ export interface JobProgress {
   retry_at: string | null;
 }
 
-// How a hook text is shown on the Clip: its lines, and whether they fit at the hook's size (the
-// render sets them smaller when they don't).
-export interface HookFit {
-  lines: string[];
-  fits: boolean;
-}
-
 export interface NewJob {
   url: string;
   options: Partial<JobOptions>;
@@ -468,7 +465,6 @@ export const api = {
       body: candidateIds ? JSON.stringify({ candidate_ids: candidateIds }) : undefined,
     }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
-  hookFit: (text: string, signal?: AbortSignal) => request<HookFit>(`/hook?text=${encodeURIComponent(text)}`, { signal }),
   listFonts: () => request<FontInfo[]>("/fonts"),
   // The Candidate's Render Plan, or that of an unsaved draft of its edits.
   previewPlan: (jobId: string, id: string, draft?: CandidateChange, signal?: AbortSignal) =>

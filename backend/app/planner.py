@@ -242,6 +242,8 @@ class HookEvent:
     size: float
     anchors: list[tuple[float, float]]
     boxes: list[Box]
+    # Each line's emphasised runs, as [start, end) ranges of its characters.
+    emphasis: list[list[tuple[int, int]]]
 
 
 @dataclass(frozen=True)
@@ -339,7 +341,7 @@ def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], floa
     The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size, broken between
     words where the longest is shortest. Lines still too wide are set smaller, so that the longest
     just fits: the text fits when the size is the style's."""
-    words = (text.upper() if style.uppercase else text).split()
+    words = [word for word, _ in _hook_words(text, style.uppercase)]
     if not words:
         return [], style.size
     metrics = font_metrics(style.font)
@@ -352,6 +354,58 @@ def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], floa
         if widest(lines) <= HOOK_WIDTH:
             return lines, style.size
     return lines, math.floor(style.size * HOOK_WIDTH / widest(lines) * 10) / 10
+
+
+# Emoji and the characters that join and vary them: no bundled font has them, and libass draws none.
+_EMOJI = (
+    (0x1F000, 0x1FAFF), (0x2600, 0x27BF), (0x2B00, 0x2BFF), (0x1F1E6, 0x1F1FF), (0xFE00, 0xFE0F), (0x200D, 0x200D),
+    (0x20E3, 0x20E3), (0xE0020, 0xE007F),
+)
+
+
+def _is_emoji(char: str) -> bool:
+    return any(low <= ord(char) <= high for low, high in _EMOJI)
+
+
+def _hook_words(text: str, uppercase: bool) -> list[tuple[str, tuple[bool, ...]]]:
+    """The hook `text`'s words as shown, each with which of its characters are emphasised: those
+    between a pair of asterisks, which aren't shown (an unpaired last one is). Without emoji, and in
+    capitals if `uppercase`."""
+    stars = [i for i, char in enumerate(text) if char == "*"]
+    paired = stars[: len(stars) // 2 * 2]
+    marks = set(paired)
+    chars: list[tuple[str, bool]] = []
+    inside = False
+    for i, char in enumerate(text):
+        if i in marks:
+            inside = not inside
+        elif not _is_emoji(char):
+            chars.append((char.upper() if uppercase else char, inside))
+    words, word = [], []
+    for char, emphasised in [*chars, (" ", False)]:
+        if char.isspace():
+            if word:
+                words.append(("".join(c for c, _ in word), tuple(e for _, e in word)))
+            word = []
+        else:
+            word.append((char, emphasised))
+    return words
+
+
+def _emphasis(words: list[tuple[str, tuple[bool, ...]]]) -> list[tuple[int, int]]:
+    """The emphasised runs of a line of `words` (joined by spaces), as [start, end) ranges of its
+    characters; a space between two emphasised characters is in their run."""
+    flags = [flag for i, (_, word) in enumerate(words) for flag in ((False,) if i else ()) + word]
+    for i in range(1, len(flags) - 1):
+        flags[i] = flags[i] or (flags[i - 1] and flags[i + 1])
+    spans, start = [], None
+    for i, flag in enumerate([*flags, False]):
+        if flag and start is None:
+            start = i
+        elif not flag and start is not None:
+            spans.append((start, i))
+            start = None
+    return spans
 
 
 def _balanced(words: list[str], count: int, metrics: "FontMetrics") -> list[str]:
@@ -395,6 +449,11 @@ def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
         return None
+    words, emphasis = _hook_words(text, style.uppercase), []
+    for line in lines:
+        count = len(line.split())
+        emphasis.append(_emphasis(words[:count]))
+        words = words[count:]
     metrics = font_metrics(style.font)
     widths = [metrics.width(line, size) for line in lines]
     left = style.align == HookAlign.LEFT
@@ -440,6 +499,7 @@ def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs
         size,
         anchors=anchors(area.x, area.y),
         boxes=[Box(area.x + box.x, area.y + box.y, box.width, box.height) for box in boxes],
+        emphasis=emphasis,
     )
 
 

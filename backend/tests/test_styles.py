@@ -266,3 +266,12 @@ def test_a_hook_without_a_box_draws_only_its_text_with_its_outline_and_shadow():
 def test_an_outlined_hooks_box_has_no_outline_or_shadow_of_its_own():
     [box] = hook_boxes(hook_lines(outline=4, shadow=3))
     assert "\\p1\\bord0\\shad0\\c&H000000&" in box
+
+
+# Emphasis (hook-styles ticket 02).
+
+
+def test_emphasised_runs_switch_to_the_emphasis_colour_and_back():
+    hook = plan_render(0, 5, SOURCE, hook="Ini *pasti iri!* ya", hook_style=HookStyle(colour="#000000", emphasis_colour="#E11D2E"))
+    texts = [line.split("}", 1)[1] for line in _ass(hook).splitlines() if line.startswith("Dialogue: 2,") and ",Hook," in line]
+    assert texts == ["Ini {\\c&H2E1DE1&}pasti iri!{\\c&H000000&} ya"]

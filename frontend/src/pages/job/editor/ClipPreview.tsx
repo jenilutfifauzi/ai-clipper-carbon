@@ -310,21 +310,30 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
   const [opacity, scale, below] = key.split(" ").map(Number);
   // Each element grows from its own centre, as libass scales it.
   const grown = scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box" as const, transformOrigin: "center" };
-  const text = (line: string, [x, baseline]: [number, number], props: React.SVGProps<SVGTextElement>) => (
-    <text
-      x={x}
-      y={baseline}
-      textAnchor="middle"
-      fontFamily={fontFamily(font.id)}
-      fontSize={cssFontSize(font, hook.size)}
-      strokeLinejoin="round"
-      paintOrder="stroke"
-      style={{ whiteSpace: "pre", ...grown }}
-      {...props}
-    >
-      {line}
-    </text>
-  );
+  // Line `i` in `fill`, its emphasised runs in `emphasis`.
+  const text = (i: number, fill: string, emphasis: string, props: React.SVGProps<SVGTextElement>) => {
+    const [x, baseline] = hook.anchors[i];
+    return (
+      <text
+        x={x}
+        y={baseline}
+        textAnchor="middle"
+        fontFamily={fontFamily(font.id)}
+        fontSize={cssFontSize(font, hook.size)}
+        fill={fill}
+        strokeLinejoin="round"
+        paintOrder="stroke"
+        style={{ whiteSpace: "pre", ...grown }}
+        {...props}
+      >
+        {runs(hook.lines[i], hook.emphasis[i]).map(([part, emphasised], j) => (
+          <tspan key={j} fill={emphasised ? emphasis : undefined}>
+            {part}
+          </tspan>
+        ))}
+      </text>
+    );
+  };
   const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
   return (
     <g opacity={opacity} transform={below ? `translate(0 ${below})` : undefined}>
@@ -343,20 +352,32 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
           />
         ))}
       {style.shadow > 0 &&
-        hook.lines.map((line, i) => (
+        hook.lines.map((_, i) => (
           <g key={i} transform={`translate(${style.shadow} ${style.shadow})`}>
-            {text(line, hook.anchors[i], {
-              fill: style.shadow_colour,
+            {text(i, style.shadow_colour, style.shadow_colour, {
               stroke: style.outline > 0 ? style.shadow_colour : undefined,
               strokeWidth: 2 * style.outline,
             })}
           </g>
         ))}
-      {hook.lines.map((line, i) => (
-        <g key={i}>{text(line, hook.anchors[i], { fill: style.colour, ...outline })}</g>
+      {hook.lines.map((_, i) => (
+        <g key={i}>{text(i, style.colour, style.emphasis_colour, outline)}</g>
       ))}
     </g>
   );
+}
+
+// A line cut into its plain and emphasised parts.
+function runs(line: string, spans: [number, number][]): [string, boolean][] {
+  const parts: [string, boolean][] = [];
+  let at = 0;
+  for (const [start, end] of spans) {
+    if (start > at) parts.push([line.slice(at, start), false]);
+    parts.push([line.slice(start, end), true]);
+    at = end;
+  }
+  if (at < line.length) parts.push([line.slice(at), false]);
+  return parts;
 }
 
 /** Play and pause, a scrubber over the Clip, and "Play clip" and "Play ending". */
