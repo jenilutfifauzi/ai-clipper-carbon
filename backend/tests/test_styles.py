@@ -204,10 +204,11 @@ def test_fading_hooks_are_one_event_each_with_fad():
 
 def test_a_popping_hook_grows_from_70_percent_and_shrinks_back_split_into_in_hold_and_out():
     lines = hook_lines(animation_in="pop", animation_out="pop", animation_ms=250)
-    # Box and two lines, in each of the three parts.
+    # Box and two lines, in each of the three parts; the second line comes on 80 ms after the first
+    # (hook-styles ticket 05).
     assert len(lines) == 9
     starts = sorted({line.split(",")[1] for line in lines})
-    assert starts == ["0:00:00.00", "0:00:00.25", "0:00:02.75"]
+    assert starts == ["0:00:00.00", "0:00:00.08", "0:00:00.25", "0:00:00.33", "0:00:02.75"]
     box_in, *_ = [line for line in lines if line.startswith("Dialogue: 1,0:00:00.00")]
     # The popping box is placed by its centre, so that it grows from there, and fades in to its own alpha.
     assert "\\an5\\pos(539.5,304.5)" in box_in
@@ -316,3 +317,56 @@ def test_a_quote_mark_is_a_badge_of_its_colour_with_white_quote_marks_over_the_b
     # Two marks, each a round dot and its tail: four closed shapes.
     assert marks.split("}")[1].count("m ") == 4
     assert "Dialogue: 3," not in _ass(plan()) and "Dialogue: 4," not in _ass(plan())
+
+
+# Staggered entrance (hook-styles ticket 05).
+
+
+def hook_events(hook: str, kicker: str = "", secs: float = 3.0, **style) -> list[str]:
+    planned = plan_render(0, 10, SOURCE, hook=hook, hook_kicker=kicker, hook_secs=secs, hook_style=HookStyle(**style))
+    return [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
+
+
+def starts(events: list[str], text: str) -> list[str]:
+    return sorted({line.split(",")[1] for line in events if line.endswith(text)})
+
+
+THREE = "Alhamdulillah modal AI aja bisa dapat komisi dari si oren"
+
+
+def test_the_entrance_comes_kicker_first_then_line_by_line_80_ms_apart_and_leaves_together():
+    for animation in ("fade", "pop", "slide"):
+        events = hook_events(THREE, "Fakta", shape="strips", max_lines=4, animation_in=animation, animation_ms=200)
+        lines = plan_render(0, 10, SOURCE, hook=THREE, hook_style=HookStyle(shape="strips", max_lines=4)).hook.lines
+        assert len(lines) == 3
+        firsts = [starts(events, "Fakta")[0]] + [starts(events, line)[0] for line in lines]
+        assert firsts == ["0:00:00.00", "0:00:00.08", "0:00:00.16", "0:00:00.24"], animation
+        # Each strip (the black boxes, not the yellow pill) comes on with its line.
+        strips = sorted({line.split(",")[1] for line in events if line.startswith("Dialogue: 1,") and "\\c&H000000&" in line})
+        assert strips[:3] == firsts[1:], animation
+    # They all go off at once: one exit, at the same time for every element.
+    events = hook_events(THREE, "Fakta", shape="strips", max_lines=4, animation_in="pop", animation_out="pop", animation_ms=200)
+    exits = {line.split(",")[1] for line in events if "\\t(\\fscx70" in line}
+    assert exits == {"0:00:02.80"}
+
+
+def test_a_block_and_its_quote_mark_come_on_with_the_first_line():
+    events = hook_events(HOOK, quote=True, animation_in="fade")
+    assert {line.split(",")[1] for line in events if line.startswith(("Dialogue: 1,", "Dialogue: 3,", "Dialogue: 4,"))} == {"0:00:00.00"}
+    assert starts(events, "juga?") == ["0:00:00.08"]
+
+
+def test_without_an_entrance_or_with_one_element_nothing_is_staggered():
+    assert {line.split(",")[1] for line in hook_events(HOOK, animation_in="none")} == {"0:00:00.00"}
+    assert {line.split(",")[1] for line in hook_events("Kenapa?", animation_in="fade")} == {"0:00:00.00"}
+
+
+def test_a_short_hook_staggers_less_so_that_everything_is_on_before_it_goes():
+    events = hook_events(THREE, "Fakta", secs=0.6, shape="strips", max_lines=4, animation_in="pop", animation_out="pop", animation_ms=250)
+    # 0.6 s: 0.25 on and 0.25 off leave 0.1 s for three steps.
+    lines = plan_render(0, 10, SOURCE, hook=THREE, hook_style=HookStyle(shape="strips", max_lines=4)).hook.lines
+    assert starts(events, lines[-1])[0] <= "0:00:00.10"
+    # Every element has popped in by the time they all pop out, at 0.35 s.
+    entrances = [line for line in events if "\\fscx70\\fscy70\\alpha&HFF&\\t(" in line]
+    # The Kicker's pill and text, three strips and three lines.
+    assert len(entrances) == 2 + 3 + 3 and all(line.split(",")[2] <= "0:00:00.35" for line in entrances)

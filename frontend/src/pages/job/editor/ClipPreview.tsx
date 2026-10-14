@@ -1,6 +1,6 @@
 import { Pause, Play, SkipForward } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { CaptionEvent, FontInfo, HookEvent, Panel, PreviewPlan, RenderPlan } from "../../../api";
+import type { CaptionEvent, FontInfo, HookEvent, HookStyle, Panel, PreviewPlan, RenderPlan } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { formatPrecise } from "../../../format";
@@ -10,6 +10,8 @@ import { usePlayback, type Playback } from "./playback";
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
 // and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 const SLIDE_PX = 60;
+// In a staggered entrance, each element of the hook comes on this long after the one before.
+const HOOK_STAGGER_SECS = 0.08;
 // The Quote Mark's corners, as a share of its width, and its marks on a badge 100 units wide: two
 // dots and their tails (renderer.py's QUOTE_RADIUS, QUOTE_DOT_RADIUS, QUOTE_DOTS, _quote_marks).
 const QUOTE_RADIUS = 0.22;
@@ -286,38 +288,71 @@ function HighlightBox({
   );
 }
 
-// The hook's look at `time`: its opacity, scale and how far below its place it is, as the renderer
-// animates it (_hook_phases, _hook_motion); null while it is off screen.
-function hookLook(time: number, hook: HookEvent, style: RenderPlan["hook_style"]): [number, number, number] | null {
-  if (time < hook.start || time >= hook.end) return null;
+// How long the hook's entrance and exit take (renderer.py's _hook_ends), and how long after each
+// other the `steps` + 1 elements of a staggered entrance come on (_stagger).
+function hookEnds(hook: HookEvent, style: HookStyle): [number, number] {
+  const most = (hook.end - hook.start) / 2;
+  const ms = style.animation_ms / 1000;
+  return [style.animation_in === "none" ? 0 : Math.min(ms, most), style.animation_out === "none" ? 0 : Math.min(ms, most)];
+}
+
+function stagger(hook: HookEvent, style: HookStyle, steps: number): number {
+  if (style.animation_in === "none" || !steps) return 0;
+  const [on, off] = hookEnds(hook, style);
+  return Math.max(0, Math.min(HOOK_STAGGER_SECS, (hook.end - hook.start - on - off) / steps));
+}
+
+// An element's look at `time`, coming on `delay` after the hook starts: its opacity, scale and how
+// far below its place it is, as the renderer animates it (_hook_phases, _hook_motion); null while
+// it is off screen.
+function hookLook(time: number, hook: HookEvent, style: HookStyle, delay: number): [number, number, number] | null {
+  const start = hook.start + delay;
+  if (time < start || time >= hook.end) return null;
   const ms = style.animation_ms / 1000;
   const moving = (a: string) => a === "pop" || a === "slide";
   if (!moving(style.animation_in) && !moving(style.animation_out)) {
-    const on = style.animation_in === "fade" ? (time - hook.start) / ms : 1;
+    const on = style.animation_in === "fade" ? (time - start) / ms : 1;
     const off = style.animation_out === "fade" ? (hook.end - time) / ms : 1;
     return [Math.max(0, Math.min(1, on, off)), 1, 0];
   }
-  const most = (hook.end - hook.start) / 2;
-  const on = style.animation_in === "none" ? 0 : Math.min(ms, most);
-  const off = style.animation_out === "none" ? 0 : Math.min(ms, most);
+  const [on, off] = hookEnds(hook, style);
   const animate = (animation: string, shown: number): [number, number, number] =>
     animation === "pop" ? [shown, 0.7 + 0.3 * shown, 0] : animation === "slide" ? [shown, 1, SLIDE_PX * (1 - shown)] : [shown, 1, 0];
-  if (on && time < hook.start + on) return animate(style.animation_in, (time - hook.start) / on);
+  if (on && time < start + on) return animate(style.animation_in, (time - start) / on);
   if (off && time >= hook.end - off) return animate(style.animation_out, (hook.end - time) / off);
   return [1, 1, 0];
 }
 
-/** The hook's boxes and lines while it is on screen, animated on and off as its style says. */
+/**
+ * The hook's boxes, lines, Kicker and Quote Mark while it is on screen, animated on and off as its
+ * style says: the Kicker first, then the lines one by one (each strip with its line, a block and the
+ * Quote Mark with the first).
+ */
 function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEvent; font: FontInfo | undefined; playback: Playback }) {
   const style = plan.hook_style;
+  const first = hook.kicker ? 1 : 0;
+  const steps = first + hook.lines.length - 1;
+  const step = stagger(hook, style, steps);
   const key = usePlayback(playback, (time) => {
-    const look = hookLook(time, hook, style);
-    return look && look.map((value) => value.toFixed(3)).join(" ");
+    const looks = Array.from({ length: steps + 1 }, (_, rank) => hookLook(time, hook, style, rank * step));
+    if (looks.every((look) => look === null)) return null;
+    return looks.map((look) => (look ?? [0, 1, 0]).map((value) => value.toFixed(3)).join(" ")).join("|");
   });
   if (!key || !font) return null;
-  const [opacity, scale, below] = key.split(" ").map(Number);
-  // Each element grows from its own centre, as libass scales it.
-  const grown = scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box" as const, transformOrigin: "center" };
+  const looks = key.split("|").map((look) => look.split(" ").map(Number));
+  // An element at `rank`: faded and moved as a whole, and grown from its own centre, as libass scales it.
+  const moved = (rank: number, children: React.ReactNode, key?: number) => {
+    const [opacity, , below] = looks[rank];
+    return (
+      <g key={key} opacity={opacity} transform={below ? `translate(0 ${below})` : undefined}>
+        {children}
+      </g>
+    );
+  };
+  const grown = (rank: number) => {
+    const scale = looks[rank][1];
+    return scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box" as const, transformOrigin: "center" };
+  };
   // Line `i` in `fill`, its emphasised runs in `emphasis`.
   const text = (i: number, fill: string, emphasis: string, props: React.SVGProps<SVGTextElement>) => {
     const [x, baseline] = hook.anchors[i];
@@ -331,7 +366,7 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
         fill={fill}
         strokeLinejoin="round"
         paintOrder="stroke"
-        style={{ whiteSpace: "pre", ...grown }}
+        style={{ whiteSpace: "pre", ...grown(first + i) }}
         {...props}
       >
         {runs(hook.lines[i], hook.emphasis[i]).map(([part, emphasised], j) => (
@@ -343,65 +378,80 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
     );
   };
   const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
+  const strips = hook.boxes.length > 1;
+  const kicker = hook.kicker;
+  const quote = hook.quote;
   return (
-    <g opacity={opacity} transform={below ? `translate(0 ${below})` : undefined}>
+    <g>
       {style.box_opacity > 0 &&
-        hook.boxes.map((box, i) => (
-          <rect
-            key={i}
-            x={box.x}
-            y={box.y}
-            width={box.width}
-            height={box.height}
-            rx={Math.min(style.radius, Math.floor(box.height / 2))}
-            fill={style.box_colour}
-            fillOpacity={style.box_opacity}
-            style={grown}
-          />
-        ))}
-      {hook.kicker && (
-        <g>
-          <rect
-            x={hook.kicker.box.x}
-            y={hook.kicker.box.y}
-            width={hook.kicker.box.width}
-            height={hook.kicker.box.height}
-            rx={Math.floor(hook.kicker.box.height / 2)}
-            fill={style.kicker_box_colour}
-            style={grown}
-          />
-          <text
-            x={hook.kicker.anchor[0]}
-            y={hook.kicker.anchor[1]}
-            textAnchor="middle"
-            fontFamily={fontFamily(font.id)}
-            fontSize={cssFontSize(font, hook.kicker.size)}
-            fill={style.kicker_colour}
-            style={{ whiteSpace: "pre", ...grown }}
-          >
-            {hook.kicker.text}
-          </text>
-        </g>
+        hook.boxes.map((box, i) =>
+          moved(
+            strips ? first + i : first,
+            <rect
+              x={box.x}
+              y={box.y}
+              width={box.width}
+              height={box.height}
+              rx={Math.min(style.radius, Math.floor(box.height / 2))}
+              fill={style.box_colour}
+              fillOpacity={style.box_opacity}
+              style={grown(strips ? first + i : first)}
+            />,
+            i,
+          ),
+        )}
+      {kicker &&
+        moved(
+          0,
+          <>
+            <rect
+              x={kicker.box.x}
+              y={kicker.box.y}
+              width={kicker.box.width}
+              height={kicker.box.height}
+              rx={Math.floor(kicker.box.height / 2)}
+              fill={style.kicker_box_colour}
+              style={grown(0)}
+            />
+            <text
+              x={kicker.anchor[0]}
+              y={kicker.anchor[1]}
+              textAnchor="middle"
+              fontFamily={fontFamily(font.id)}
+              fontSize={cssFontSize(font, kicker.size)}
+              fill={style.kicker_colour}
+              style={{ whiteSpace: "pre", ...grown(0) }}
+            >
+              {kicker.text}
+            </text>
+          </>,
+        )}
+      {hook.lines.map((_, i) =>
+        moved(
+          first + i,
+          <>
+            {style.shadow > 0 && (
+              <g transform={`translate(${style.shadow} ${style.shadow})`}>
+                {text(i, style.shadow_colour, style.shadow_colour, {
+                  stroke: style.outline > 0 ? style.shadow_colour : undefined,
+                  strokeWidth: 2 * style.outline,
+                })}
+              </g>
+            )}
+            {text(i, style.colour, style.emphasis_colour, outline)}
+          </>,
+          i,
+        ),
       )}
-      {style.shadow > 0 &&
-        hook.lines.map((_, i) => (
-          <g key={i} transform={`translate(${style.shadow} ${style.shadow})`}>
-            {text(i, style.shadow_colour, style.shadow_colour, {
-              stroke: style.outline > 0 ? style.shadow_colour : undefined,
-              strokeWidth: 2 * style.outline,
-            })}
-          </g>
-        ))}
-      {hook.lines.map((_, i) => (
-        <g key={i}>{text(i, style.colour, style.emphasis_colour, outline)}</g>
-      ))}
-      {hook.quote && (
-        // Grows from its corner, as the renderer places it.
-        <g transform={`translate(${hook.quote.x} ${hook.quote.y})${scale === 1 ? "" : ` scale(${scale})`}`}>
-          <rect width={hook.quote.width} height={hook.quote.height} rx={Math.round(QUOTE_RADIUS * hook.quote.width)} fill={style.quote_colour} />
-          <path d={quoteMarks(hook.quote.width)} fill="#FFFFFF" />
-        </g>
-      )}
+      {quote &&
+        moved(
+          first,
+          // Grows from its corner, as the renderer places it.
+          <g transform={`translate(${quote.x} ${quote.y})${looks[first][1] === 1 ? "" : ` scale(${looks[first][1]})`}`}>
+            <rect width={quote.width} height={quote.height} rx={Math.round(QUOTE_RADIUS * quote.width)} fill={style.quote_colour} />
+            <path d={quoteMarks(quote.width)} fill="#FFFFFF" />
+          </g>,
+        )}
     </g>
   );
 }

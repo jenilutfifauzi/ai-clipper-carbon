@@ -389,63 +389,69 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
     metrics = font_metrics(style.font)
     size = hook.size
     # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
-    # follows its tags), for each box and each line. A box that pops is placed by its centre, so
-    # that it grows from there.
-    elements: list[tuple[int, int, float, float, str, str | None, str, str]] = []
+    # follows its tags, its step in a staggered entrance), for each box and each line. A box that
+    # pops is placed by its centre, so that it grows from there. The Kicker comes on first, then
+    # the lines one by one, each strip with its line and a block and a Quote Mark with the first.
+    elements: list[tuple[int, int, float, float, str, str | None, str, str, int]] = []
+    first = 1 if hook.kicker is not None else 0
+    strips = len(hook.boxes) > 1
     if style.box_opacity > 0:
         alpha = f"&H{round(255 * (1 - style.box_opacity)):02X}&"
         # The text's outline and shadow are the style's; a box has neither.
         bare = "\\bord0\\shad0" if style.outline or style.shadow else ""
         tags = f"\\p1{bare}\\c{_tag_colour(style.box_colour)}\\alpha{alpha}"
-        for box in hook.boxes:
+        for i, box in enumerate(hook.boxes):
             drawing = f"{_rounded_box(box.width, box.height, min(style.radius, box.height // 2))}{{\\p0}}"
+            step = first + i if strips else first
             if Animation.POP in (style.animation_in, style.animation_out):
-                elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
+                elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing, step))
             else:
-                elements.append((1, 7, box.x, box.y, "g", alpha, tags, drawing))
+                elements.append((1, 7, box.x, box.y, "g", alpha, tags, drawing, step))
     if hook.kicker is not None:
         kicker = hook.kicker
         box = kicker.box
         drawing = f"{_rounded_box(box.width, box.height, box.height // 2)}{{\\p0}}"
         tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(style.kicker_box_colour)}\\alpha&H00&"
         if Animation.POP in (style.animation_in, style.animation_out):
-            elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", None, tags, drawing))
+            elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", None, tags, drawing, 0))
         else:
-            elements.append((1, 7, box.x, box.y, "g", None, tags, drawing))
+            elements.append((1, 7, box.x, box.y, "g", None, tags, drawing, 0))
         x, baseline = kicker.anchor
         centre_y = baseline - metrics.ascent / metrics.units * kicker.size + kicker.size / 2
         tags = f"\\fs{kicker.size:g}\\bord0\\shad0\\c{_tag_colour(style.kicker_colour)}"
-        elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(kicker.text)))
+        elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(kicker.text), 0))
     if hook.quote is not None:
         # Both by the badge's top-left corner (a drawing is placed by its origin there, the marks'
         # being on the badge's grid), so that a pop grows them together from it.
         badge = hook.quote
         drawing = f"{_rounded_box(badge.width, badge.height, round(QUOTE_RADIUS * badge.width))}{{\\p0}}"
         tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(style.quote_colour)}"
-        elements.append((3, 7, badge.x, badge.y, "g", None, tags, drawing))
+        elements.append((3, 7, badge.x, badge.y, "g", None, tags, drawing, first))
         marks = f"{_quote_marks(badge.width)}{{\\p0}}"
-        elements.append((4, 7, badge.x, badge.y, "g", None, "\\p1\\bord0\\shad0\\c&HFFFFFF&", marks))
-    for line, (x, baseline), spans in zip(hook.lines, hook.anchors, hook.emphasis):
+        elements.append((4, 7, badge.x, badge.y, "g", None, "\\p1\\bord0\\shad0\\c&HFFFFFF&", marks, first))
+    for i, (line, (x, baseline), spans) in enumerate(zip(hook.lines, hook.anchors, hook.emphasis)):
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
         tags = f"\\fs{size:g}" if size != style.size else ""
-        elements.append((2, 5, x, centre_y, ".1f", None, tags, _emphasised(line, spans, style)))
+        elements.append((2, 5, x, centre_y, ".1f", None, tags, _emphasised(line, spans, style), first + i))
 
+    step = _stagger(hook, style, first + len(hook.lines) - 1)
+    # By part of the hook's time, then by element, as the parts are in time.
     events = []
-    for begin, finish, phase in _hook_phases(hook, style):
-        start, end = _ass_time(begin), _ass_time(finish)
-        if start >= end:
-            continue
-        length = round((finish - begin) * 1000)
-        for layer, align, x, y, y_format, alpha, tags, body in elements:
+    for order, (layer, align, x, y, y_format, alpha, tags, body, rank) in enumerate(elements):
+        for part, (begin, finish, phase) in enumerate(_hook_phases(hook, style, rank * step)):
+            start, end = _ass_time(begin), _ass_time(finish)
+            if start >= end:
+                continue
+            length = round((finish - begin) * 1000)
             place, motion = _hook_motion(phase, length, x, y, y_format, alpha, style)
             if layer == 1:
                 text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
             else:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
-            events.append(f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}")
-    return events
+            events.append((part, order, f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}"))
+    return [event for _, _, event in sorted(events)]
 
 
 def _emphasised(line: str, spans: list[tuple[int, int]], style: HookStyle) -> str:
@@ -491,24 +497,44 @@ def _quote_marks(width: int) -> str:
     return " ".join(shapes)
 
 
+# In a staggered entrance, each element comes on this long after the one before.
+HOOK_STAGGER_SECS = 0.08
 # A popping hook grows from (or shrinks to) this share of its size, in percent; a sliding one comes
 # up from (or goes down to) this many pixels below its place.
 POP_FROM = 70
 SLIDE_PX = 60
 
 
-def _hook_phases(hook: HookEvent, style: HookStyle) -> list[tuple[float, float, str]]:
-    """The parts of the hook's time that are drawn differently, as (start, end, phase). Fading alone
-    (or no animation) is one part, "fade", where \\fad does both ends. Popping or sliding at either
-    end splits it into "in", "hold" and "out", each animation taking the style's animation_ms (at
-    most half the hook's time)."""
-    animated = {Animation.POP, Animation.SLIDE}
-    if style.animation_in not in animated and style.animation_out not in animated:
-        return [(hook.start, hook.end, "fade")]
+def _hook_ends(hook: HookEvent, style: HookStyle) -> tuple[float, float]:
+    """How long the hook's entrance and exit take, in seconds: the style's animation_ms each, at most
+    half the hook's time; none without an animation."""
     most = (hook.end - hook.start) / 2
     on = min(style.animation_ms / 1000, most) if style.animation_in != Animation.NONE else 0.0
     off = min(style.animation_ms / 1000, most) if style.animation_out != Animation.NONE else 0.0
-    return [(hook.start, hook.start + on, "in"), (hook.start + on, hook.end - off, "hold"), (hook.end - off, hook.end, "out")]
+    return on, off
+
+
+def _stagger(hook: HookEvent, style: HookStyle, steps: int) -> float:
+    """How long after each other the `steps` + 1 elements of a staggered entrance start, in seconds:
+    HOOK_STAGGER_SECS, or less in a hook too short for every element to be on before its exit.
+    Nothing without an entrance."""
+    if style.animation_in == Animation.NONE or not steps:
+        return 0.0
+    on, off = _hook_ends(hook, style)
+    return max(0.0, min(HOOK_STAGGER_SECS, (hook.end - hook.start - on - off) / steps))
+
+
+def _hook_phases(hook: HookEvent, style: HookStyle, delay: float = 0.0) -> list[tuple[float, float, str]]:
+    """The parts of an element's time that are drawn differently, as (start, end, phase), for one
+    coming on `delay` seconds after the hook starts. Fading alone (or no animation) is one part,
+    "fade", where \\fad does both ends. Popping or sliding at either end splits it into "in", "hold"
+    and "out", each animation taking _hook_ends' time."""
+    animated = {Animation.POP, Animation.SLIDE}
+    if style.animation_in not in animated and style.animation_out not in animated:
+        return [(hook.start + delay, hook.end, "fade")]
+    on, off = _hook_ends(hook, style)
+    begin = hook.start + delay
+    return [(begin, begin + on, "in"), (begin + on, hook.end - off, "hold"), (hook.end - off, hook.end, "out")]
 
 
 def _hook_motion(
