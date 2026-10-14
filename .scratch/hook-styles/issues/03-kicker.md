@@ -41,3 +41,5 @@ Built:
 - **HookEditor:** a Kicker field with a counter over its right edge; saving as it is typed now uses one `useTypedText` hook for both fields.
 
 **Checks:** Browser (scratch clone): typing "Terbongkar!" previewed a yellow pill above left-aligned strips, saved after the pause.
+
+**2026-10-14: review fix.** A long Kicker over left-aligned No-box text no longer runs past the safe area. Its pill starts nearer the left when starting at the text would take it past `KICKER_WIDEST`, the captions' width. `_kicker` became `_kicker_pill`, returning a `_KickerPill` instead of a 5-tuple.

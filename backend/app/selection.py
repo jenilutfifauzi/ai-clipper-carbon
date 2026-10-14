@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from uuid import uuid4
 
-from app.candidates import KICKER_MAX_CHARS, Candidate, Descriptions
+from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Descriptions
 from app.config import LlmChoice, SelectionTuning
 from app.fewshot import Example
 from app.llm import (
@@ -400,15 +400,20 @@ def _same_topic(topic: str, other: str, overlap: float) -> bool:
     return bool(words and others) and len(words & others) / len(words | others) >= overlap
 
 
-def _kicker(text: str) -> str:
-    """The AI's Kicker without emoji, cut to its whole words that fit in KICKER_MAX_CHARS (or to
-    that many characters, if even its first word is longer)."""
+def _cut(text: str, limit: int) -> str:
+    """`text` cut to its whole words that fit in `limit` characters (or to `limit` characters, if
+    even its first word is longer). An Emphasis cut in two loses its opening asterisk, so that no
+    unpaired one is shown."""
     kept = ""
-    for word in without_emoji(text).split():
+    for word in text.split():
         longer = f"{kept} {word}" if kept else word
-        if len(longer) > KICKER_MAX_CHARS:
-            return kept or word[:KICKER_MAX_CHARS]
+        if len(longer) > limit:
+            kept = kept or word[:limit]
+            break
         kept = longer
+    if kept.count("*") % 2:
+        at = kept.rindex("*")
+        kept = " ".join((kept[:at] + kept[at + 1 :]).split())
     return kept
 
 
@@ -423,8 +428,8 @@ def _candidate(proposal: ClipProposal, start: float, end: float, window_score: i
         emotion=proposal.emotion.strip(),
         reason=proposal.reason.strip(),
         retention_notes=proposal.retention_notes.strip(),
-        hook_text=without_emoji(proposal.viral_hook_text),
-        hook_kicker=_kicker(proposal.hook_kicker),
+        hook_text=_cut(without_emoji(proposal.viral_hook_text), HOOK_MAX_CHARS),
+        hook_kicker=_cut(without_emoji(proposal.hook_kicker), KICKER_MAX_CHARS),
         title=proposal.title.strip(),
         descriptions=Descriptions(
             tiktok=proposal.tiktok_description.strip(),

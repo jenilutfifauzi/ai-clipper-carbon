@@ -176,6 +176,8 @@ LOWER_CAPTIONS = Box(_CAPTION_X, 1296, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
 TOP_CAPTIONS = Box(_CAPTION_X, 430, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
 # The widest a hook line can be: its box, padding included, is as wide as the captions' area.
 HOOK_WIDTH = OUTPUT_WIDTH - 2 * _CAPTION_X - 2 * HOOK_PAD_X
+# The widest a Kicker's pill can be: as wide as the captions' area.
+KICKER_WIDEST = OUTPUT_WIDTH - 2 * _CAPTION_X
 # Punctuation is left out of the captions at either end of a Word ("HALO" for "halo,"), except for
 # the question and exclamation marks that end one ("KENAPA?") and signs that belong to it ("50%",
 # "#1"). Inside a Word it stays ("MAIN-MAIN", "2,5").
@@ -323,11 +325,11 @@ def plan_render(
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
     each Scene by its faces), captioned with `words` (in seconds into the Clip; those beyond its
     ends are left out) in `caption_style` and corrected by `word_edits` (their times in seconds into
-    the Clip), with the `hook` text and its `hook_kicker` in `hook_style` from `hook_start` for `hook_secs`. A Scene that
-    holds one of `layout_overrides` (their times in seconds into the Clip) takes its Layout instead
-    of `layout`, the last one if it holds several. Without `scenes` the Clip is one Scene;
-    without `faces` (not analysed) an Auto Scene is tracked with its crop in the middle; without
-    `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
+    the Clip), with the `hook` text and its `hook_kicker` in `hook_style` from `hook_start` for
+    `hook_secs`. A Scene that holds one of `layout_overrides` (their times in seconds into the
+    Clip) takes its Layout instead of `layout`, the last one if it holds several. Without `scenes`
+    the Clip is one Scene; without `faces` (not analysed) an Auto Scene is tracked with its crop in
+    the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     duration = round(end - start, 3)
@@ -383,10 +385,14 @@ def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], floa
     return lines, math.floor(style.size * HOOK_WIDTH / widest(lines) * 10) / 10
 
 
-# Emoji and the characters that join and vary them: no bundled font has them, and libass draws none.
+# Emoji (Unicode's Extended_Pictographic, but for ©, ® and ™, which fonts draw as text) and the
+# characters that join and vary them: no bundled font has them, and libass draws none.
 _EMOJI = (
-    (0x1F000, 0x1FAFF), (0x2600, 0x27BF), (0x2B00, 0x2BFF), (0x1F1E6, 0x1F1FF), (0xFE00, 0xFE0F), (0x200D, 0x200D),
-    (0x20E3, 0x20E3), (0xE0020, 0xE007F),
+    (0x203C, 0x203C), (0x2049, 0x2049), (0x2139, 0x2139), (0x2194, 0x2199), (0x21A9, 0x21AA), (0x231A, 0x231B),
+    (0x2328, 0x2328), (0x2388, 0x2388), (0x23CF, 0x23CF), (0x23E9, 0x23F3), (0x23F8, 0x23FA), (0x24C2, 0x24C2),
+    (0x25AA, 0x25AB), (0x25B6, 0x25B6), (0x25C0, 0x25C0), (0x25FB, 0x25FE), (0x2600, 0x27BF), (0x2934, 0x2935),
+    (0x2B00, 0x2BFF), (0x3030, 0x3030), (0x303D, 0x303D), (0x3297, 0x3297), (0x3299, 0x3299), (0x1F000, 0x1FAFF),
+    (0x1FC00, 0x1FFFD), (0xFE00, 0xFE0F), (0x200D, 0x200D), (0x20E3, 0x20E3), (0xE0020, 0xE007F),
 )
 
 
@@ -412,7 +418,8 @@ def _hook_words(text: str, uppercase: bool) -> list[tuple[str, tuple[bool, ...]]
         if i in marks:
             inside = not inside
         elif not _is_emoji(char):
-            chars.append((char.upper() if uppercase else char, inside))
+            # A capital may be more than one letter (ß is SS): each keeps the emphasis.
+            chars.extend((shown, inside) for shown in (char.upper() if uppercase else char))
     words, word = [], []
     for char, emphasised in [*chars, (" ", False)]:
         if char.isspace():
@@ -480,7 +487,7 @@ def _hook(
     their line's width, padded by STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart. Left-aligned lines
     (and strips) start at the left of the longest.
 
-    The `kicker`, if any, goes above them in a pill (`_kicker`), centred over them or starting where
+    The `kicker`, if any, goes above them in a pill (`_kicker_pill`), centred over them or starting where
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
     corner: the lines move down by what of it sticks out above them, but not sideways, so they stay
     centred."""
@@ -525,16 +532,17 @@ def _hook(
     # The lines' place in the whole hook, and the pill's.
     lines_x = lines_y = 0
     lines_height = height
-    pill = _kicker(kicker, size, style)
+    pill = _kicker_pill(kicker, size, style)
     if pill is not None:
-        pill_text, pill_size, pill_width, pill_height, pill_pad_y = pill
-        lines_y = pill_height + round(KICKER_GAP * size)
+        lines_y = pill.height + round(KICKER_GAP * size)
         if left:
-            pill_x = HOOK_PAD_X if style.shape == HookShape.NONE else 0
-            full_width = max(width, pill_x + pill_width)
+            # From where the text starts, or nearer the left when that would take it past the
+            # captions' width (and the safe area).
+            pill_x = min(HOOK_PAD_X if style.shape == HookShape.NONE else 0, max(0, KICKER_WIDEST - pill.width))
+            full_width = max(width, pill_x + pill.width)
         else:
-            full_width = max(width, pill_width)
-            pill_x, lines_x = (full_width - pill_width) // 2, (full_width - width) // 2
+            full_width = max(width, pill.width)
+            pill_x, lines_x = (full_width - pill.width) // 2, (full_width - width) // 2
         width = full_width
     badge = round(QUOTE_SCALE * size) if style.quote else 0
     # How far it reaches into the first line's box: into its padding.
@@ -557,9 +565,9 @@ def _hook(
     area = Box((OUTPUT_WIDTH - width) // 2, top, width, height)
     placed = None
     if pill is not None:
-        box = Box(area.x + pill_x, area.y, pill_width, pill_height)
-        baseline = box.y + pill_pad_y + metrics.cap_height / metrics.units * pill_size
-        placed = HookKicker(pill_text, pill_size, box, (box.x + box.width / 2, baseline))
+        box = Box(area.x + pill_x, area.y, pill.width, pill.height)
+        baseline = box.y + pill.pad_y + metrics.cap_height / metrics.units * pill.size
+        placed = HookKicker(pill.text, pill.size, box, (box.x + box.width / 2, baseline))
     placed_anchors = anchors(area.x + lines_x, area.y + lines_y)
     placed_boxes = [Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes]
     quote = None
@@ -586,10 +594,20 @@ def _hook(
     )
 
 
-def _kicker(text: str, size: float, style: HookStyle) -> tuple[str, float, int, int, float] | None:
-    """The Kicker `text` over a hook set at `size`: as shown (without emoji, in capitals if the style
-    is), its font size, its pill's width and height, and the padding above its capitals. Set
-    smaller when its pill would be wider than the captions. None when it is blank."""
+@dataclass(frozen=True)
+class _KickerPill:
+    """The Kicker as shown, its font size, its pill's width and height, and the padding above its capitals."""
+
+    text: str
+    size: float
+    width: int
+    height: int
+    pad_y: float
+
+
+def _kicker_pill(text: str, size: float, style: HookStyle) -> _KickerPill | None:
+    """The Kicker `text` over a hook set at `size` (without emoji, in capitals if the style is), set
+    smaller when its pill would be wider than KICKER_WIDEST. None when it is blank."""
     text = without_emoji(text)
     if style.uppercase:
         text = text.upper()
@@ -597,14 +615,13 @@ def _kicker(text: str, size: float, style: HookStyle) -> tuple[str, float, int, 
         return None
     metrics = font_metrics(style.font)
     pill_size = KICKER_SCALE * size
-    widest = OUTPUT_WIDTH - 2 * _CAPTION_X
     padded = metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size
-    if padded > widest:
-        pill_size = math.floor(pill_size * widest / padded * 10) / 10
+    if padded > KICKER_WIDEST:
+        pill_size = math.floor(pill_size * KICKER_WIDEST / padded * 10) / 10
     pad_y = KICKER_PAD_Y * pill_size
     width = math.ceil(metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size)
     height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * pill_size + 2 * pad_y)
-    return text, pill_size, width, height, pad_y
+    return _KickerPill(text, pill_size, width, height, pad_y)
 
 
 @dataclass(frozen=True)

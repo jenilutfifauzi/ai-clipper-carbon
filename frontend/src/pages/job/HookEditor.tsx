@@ -4,7 +4,7 @@ import { Button } from "../../components/Button";
 import { Slider } from "../../components/Slider";
 import { cx } from "../../format";
 
-// The backend's limits (HOOK_MAX_CHARS and KICKER_MAX_CHARS in app/api.py).
+// The backend's limits (HOOK_MAX_CHARS and KICKER_MAX_CHARS in app/candidates.py).
 const HOOK_MAX = 200;
 const KICKER_MAX = 24;
 // Typing is saved once it pauses this long, and at once when the field is left.
@@ -60,20 +60,30 @@ export function HookEditor({
   const [draft, edit, save] = useTypedText(value, onSave, onDraft);
   const [kickerDraft, editKicker, saveKicker] = useTypedText(kicker, onKickerSave, onKickerDraft);
 
-  // The selection, widened to whole words, and whether it is one Emphasis already.
+  // The selection, widened to whole words, and the Emphasis it is inside, if any.
   const field = useRef<HTMLTextAreaElement>(null);
   const [selection, setSelection] = useState<[number, number]>([0, 0]);
   const [from, to] = words(draft, selection);
-  const marked = to - from > 1 && draft[from] === "*" && draft[to - 1] === "*";
+  const run = runAround(draft, [from, to]);
 
-  // Marks the selected words *like this*, or unmarks them.
+  // Unmarks the Emphasis the selected words are in, or marks them *like this*, taking in whole any
+  // Emphasis they cut into.
   function toggleEmphasis() {
-    const [start, end] = words(draft, selection);
-    if (start === end) return;
-    const inner = draft.slice(start, end).replaceAll("*", "");
-    const replaced = marked ? inner : `*${inner}*`;
-    edit(draft.slice(0, start) + replaced + draft.slice(end));
-    const next: [number, number] = [start, start + replaced.length];
+    if (from === to) return;
+    let next: [number, number];
+    if (run) {
+      const [open, close] = run;
+      edit(draft.slice(0, open) + draft.slice(open + 1, close) + draft.slice(close + 1));
+      next = [open, close - 1];
+    } else {
+      let [start, end] = [from, to];
+      for (const [open, close] of runs(draft)) {
+        if (open < end && close >= start) [start, end] = [Math.min(start, open), Math.max(end, close + 1)];
+      }
+      const marked = `*${draft.slice(start, end).replaceAll("*", "")}*`;
+      edit(draft.slice(0, start) + marked + draft.slice(end));
+      next = [start, start + marked.length];
+    }
     setSelection(next);
     requestAnimationFrame(() => {
       field.current?.focus();
@@ -128,7 +138,7 @@ export function HookEditor({
           onMouseDown={(event) => event.preventDefault()}
           onClick={toggleEmphasis}
           disabled={from === to}
-          aria-pressed={marked}
+          aria-pressed={run !== null}
           title={`Emphasise the selected words (${SHORTCUT})`}
         >
           <Highlighter aria-hidden size={15} />
@@ -199,6 +209,23 @@ export function HookEditor({
       )}
     </div>
   );
+}
+
+// The Emphasis runs of `text`, as the positions of their asterisks: paired from the left, as the
+// planner pairs them (an odd last one is shown as it is).
+function runs(text: string): [number, number][] {
+  const stars = [...text.matchAll(/\*/g)].map((match) => match.index);
+  return Array.from({ length: Math.floor(stars.length / 2) }, (_, i) => [stars[2 * i], stars[2 * i + 1]]);
+}
+
+// The Emphasis run holding the letters of the range [start, end) (punctuation and asterisks at its
+// ends aside), or null.
+function runAround(text: string, [start, end]: [number, number]): [number, number] | null {
+  const letter = /[\p{L}\p{N}]/u;
+  while (start < end && !letter.test(text[start])) start++;
+  while (end > start && !letter.test(text[end - 1])) end--;
+  if (start === end) return null;
+  return runs(text).find(([open, close]) => open < start && end <= close) ?? null;
 }
 
 // The range [start, end) widened to the whole words it touches (asterisks belong to their word).

@@ -11,7 +11,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
-from app.candidates import KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, WordEdit
+from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, WordEdit
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
@@ -39,9 +39,6 @@ EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 # What /media serves from a Job's directory: its video (or preview proxy), and its Clips and their
 # posters. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
 MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
-# The longest hook text accepted, its Emphasis marks included. The UI warns well before this, once
-# the Preview Plan sets the hook smaller than its style's size.
-HOOK_MAX_CHARS = 200
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.

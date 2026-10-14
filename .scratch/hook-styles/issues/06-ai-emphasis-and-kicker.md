@@ -31,3 +31,5 @@ Built:
 - **Prompt (PROMPT_VERSION v3 → v4):** the HOOK PLAYBOOK asks for Emphasis on the 1–3 words that carry the hook, forbids emoji in the hook and the Kicker, and describes `hook_kicker` (1–2 words, at most 24 characters, or ""). The "at most 2 short lines" wording became "a few short lines".
 - **`selection._candidate`:** `hook_text` is the hook without emoji (markup kept, whitespace collapsed). `hook_kicker` is cut to the whole words that fit in `KICKER_MAX_CHARS`, which moved to `app/candidates.py` and is shared with the API.
 - **Evaluation:** a report's hook line adds "(kicker: …)" when there is one.
+
+**2026-10-14: review fix.** `selection._cut` cuts the AI's hook to `HOOK_MAX_CHARS` (moved to `app/candidates.py` with `KICKER_MAX_CHARS`) as well as its Kicker, both to whole words. A run of Emphasis cut in two loses its opening asterisk. The eval report writes "Kicker" with a capital, as the glossary does.

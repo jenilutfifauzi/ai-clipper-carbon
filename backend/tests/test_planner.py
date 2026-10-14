@@ -1085,3 +1085,22 @@ def test_a_quote_mark_stays_clear_of_the_kicker_and_inside_the_safe_area():
         assert SAFE_AREA.y <= area.y and area.y + area.height <= SAFE_AREA.y + SAFE_AREA.height
     wide = hooked(LONG_HOOK, hook_style=HookStyle(quote=True))
     assert wide.quote.x >= 0 and wide.boxes[0].x + wide.boxes[0].width <= SAFE_AREA.x + SAFE_AREA.width
+
+
+# Fixes from the hook-styles review.
+
+
+def test_a_long_kicker_over_left_aligned_bare_text_stays_inside_the_safe_area():
+    hook = kicked("W" * 24, shape="none", align="left")
+    assert hook.kicker.box.x + hook.kicker.box.width <= SAFE_AREA.x + SAFE_AREA.width
+    assert hook.area.x + hook.area.width <= SAFE_AREA.x + SAFE_AREA.width
+
+
+def test_every_pictograph_is_left_out_but_text_symbols_stay():
+    assert hooked("hi ⏰ ‼ ▶ ✅ 😀 ⬆ ⭐ ↔ ⌚").lines == ["hi"]
+    assert hooked("Merek® dan © 2024™").lines == ["Merek® dan © 2024™"]
+
+
+def test_emphasis_stays_on_its_letters_when_capitals_lengthen_a_word():
+    hook = hooked("Das *groß* ist", hook_style=HookStyle(uppercase=True))
+    assert hook.lines == ["DAS GROSS IST"] and emphasised(hook) == [["GROSS"]]

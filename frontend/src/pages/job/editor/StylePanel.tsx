@@ -342,7 +342,7 @@ export function StylePanel({
           </div>
         </Group>
 
-        <Group title="Quote mark">
+        <Group title="Quote Mark">
           <div className="grid grid-cols-1 items-end gap-x-4 gap-y-3 sm:grid-cols-2">
             <Switch checked={hook.quote} onChange={(v) => set("hook", "quote", v)}>
               <span className="flex items-center gap-1.5 text-sm">

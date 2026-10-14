@@ -956,11 +956,11 @@ def test_a_clip_records_the_editors_edits_it_was_rendered_with(client, settings,
 # The Kicker (hook-styles ticket 03).
 
 
-def test_a_kicker_is_saved_previewed_rendered_and_recorded(client, settings, video_source, transcriber, plain_video):
+def test_a_kicker_and_emphasis_are_saved_previewed_rendered_and_recorded(client, settings, video_source, transcriber, plain_video):
     video_source.video = plain_video
     transcriber.words = HEARD
     job = reviewed(client)
-    candidate = patch(client, job, add(client, job, "Podcast", "ya"), hook_text="Halo")
+    candidate = patch(client, job, add(client, job, "Podcast", "ya"), hook_text="*Halo* semua")
     assert candidate["hook_kicker"] == ""
     # A draft Kicker is planned, not saved.
     draft = preview(client, job, candidate, {"hook_kicker": "Fakta"})
@@ -976,3 +976,4 @@ def test_a_kicker_is_saved_previewed_rendered_and_recorded(client, settings, vid
     assert clip["output"]["hook_kicker"] == "Terbongkar lho"
     plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
     assert plan["hook"]["kicker"]["text"] == "Terbongkar lho"
+    assert (plan["hook"]["lines"], plan["hook"]["emphasis"]) == (["Halo semua"], [[[0, 4]]])

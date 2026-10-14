@@ -423,3 +423,22 @@ def test_the_detail_schema_asks_for_a_kicker():
     assert "hook_kicker" in ClipProposal.model_json_schema()["required"]
     # Proposals saved before it still load, without one.
     assert ClipProposal.model_validate(clip("10:00", "10:44")).hook_kicker == ""
+
+
+def test_a_hook_longer_than_the_limit_is_cut_at_a_word_keeping_its_emphasis_paired(client, from_episode, llm, wait_for_status):
+    long = "Gue *pernah rugi* " + "banget " * 40 + "*akhirnya untung*"
+    llm.clips = [clip("10:00", "10:44", 80, viral_hook_text=long)]
+    [candidate] = analyzed(client, wait_for_status)["candidates"]
+    hook = candidate["hook_text"]
+    assert len(hook) <= 200 and hook.startswith("Gue *pernah rugi* banget") and hook.endswith("banget")
+    assert hook.count("*") == 2
+
+
+def test_the_ais_text_is_cut_to_whole_words_and_never_leaves_an_unpaired_asterisk():
+    from app.selection import _cut
+
+    assert _cut("satu dua tiga", 8) == "satu dua"
+    assert _cut("satu dua tiga", 100) == "satu dua tiga"
+    assert _cut("supercalifragilistic", 5) == "super"
+    # Cut inside a run: its opening asterisk goes too, so no stray one is shown.
+    assert _cut("Ini *kata kata kata*", 14) == "Ini kata kata"

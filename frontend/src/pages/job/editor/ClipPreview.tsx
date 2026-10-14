@@ -472,16 +472,18 @@ function quoteMarks(width: number): string {
   ).join(" ");
 }
 
-// A line cut into its plain and emphasised parts.
+// A line cut into its plain and emphasised parts. The spans count characters as Python does (code
+// points), not UTF-16 units.
 function runs(line: string, spans: [number, number][]): [string, boolean][] {
+  const chars = Array.from(line);
   const parts: [string, boolean][] = [];
   let at = 0;
   for (const [start, end] of spans) {
-    if (start > at) parts.push([line.slice(at, start), false]);
-    parts.push([line.slice(start, end), true]);
+    if (start > at) parts.push([chars.slice(at, start).join(""), false]);
+    parts.push([chars.slice(start, end).join(""), true]);
     at = end;
   }
-  if (at < line.length) parts.push([line.slice(at), false]);
+  if (at < chars.length) parts.push([chars.slice(at).join(""), false]);
   return parts;
 }
 

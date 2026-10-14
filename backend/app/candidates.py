@@ -12,7 +12,10 @@ from app.styles import DEFAULT_PRESET, StyleOverrides
 WORD_EDIT_MAX_CHARS = 40
 
 
-# The longest Kicker: a word or two over the hook.
+# The longest hook text, its Emphasis marks included, and the longest Kicker (a word or two over
+# the hook). The UI warns well before the hook's limit, once the Preview Plan sets the hook smaller
+# than its style's size.
+HOOK_MAX_CHARS = 200
 KICKER_MAX_CHARS = 24
 
 

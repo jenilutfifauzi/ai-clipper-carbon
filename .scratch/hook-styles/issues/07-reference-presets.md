@@ -30,3 +30,5 @@ Each Preset moves its captions away from where its hook sits.
 **Checks:**
 - libass, the four Presets over a frame of 2f6cdf1b with sample hooks: next to references 2–5, the strips, the red-emphasis headline, the quote card and the bare text with its yellow Kicker match their looks.
 - Browser: Red headline and Kicker over bare text previewed with the Candidate's Kicker and Emphasis.
+
+**2026-10-14: note.** Quote card sits at the Bottom position rather than a custom y ≈ 1150. Reference 4's card sits lower than the safe area allows, and Bottom is the nearest to it for any number of lines. The render test now carries Emphasis into the plan file too.

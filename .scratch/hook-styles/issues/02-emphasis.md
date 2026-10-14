@@ -40,3 +40,9 @@ Built:
 - **Style panel:** Emphasis colour in the Text group.
 
 **Checks:** Browser (scratch clone): selecting "nuh perusahaa" and pressing Cmd+B gave `Setetes racun bisa *bunuh perusahaan?*`, previewed in yellow; Cmd+B again unmarked it.
+
+**2026-10-14: review fixes.**
+- **Emphasis button.** It now finds the run the selected letters are inside, ignoring punctuation and asterisks at the ends (`runAround`), so `*rugi 500 juta*?` unmarks instead of wrapping again. Marking takes in whole any run the selection cuts into, so `*a* b *c*` becomes `*a b c*` rather than losing both runs.
+- **Emoji.** The emoji ranges now cover Unicode's Extended_Pictographic (⏰ ‼ ▶ ↔ ⌚…), except ©, ® and ™, which fonts draw as text.
+- **Capitals that lengthen a word.** When a capital is longer than its letter (ß → SS), each of its letters keeps the emphasis.
+- **Preview.** Emphasis spans are cut by code point, as Python counts them.
