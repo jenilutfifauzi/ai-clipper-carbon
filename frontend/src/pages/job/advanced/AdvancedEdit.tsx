@@ -24,6 +24,7 @@ import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { HookTimingFields } from "../HookEditor";
 import { AdvancedTimeline, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { editsOf, sameSelection, type AdvancedEdits, type Selection } from "./edits";
+import { MediaAssets, useMediaLibrary, type MediaLibrary } from "./MediaLibrary";
 import { newId, newTextLayer, TEXT_MIN_SECS, textLanes, TextAssets, TextLayerFields } from "./TextLayers";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
@@ -101,6 +102,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [sheet, setSheet] = useState<AssetTab | "inspector" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   const wide = useMediaQuery(WIDE);
+  const library = useMediaLibrary();
 
   const save = useCallback(
     async (change: CandidateChange) => {
@@ -257,7 +259,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
             <AssetTabs value={assetTab} onChange={setAssetTab} />
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <AssetPanel tab={assetTab} fonts={fonts} onAddText={addText} />
+              <AssetPanel tab={assetTab} fonts={fonts} library={library} onAddText={addText} />
             </div>
           </aside>
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -304,7 +306,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           title={sheet === "inspector" ? "Edit" : ASSET_TABS.find((tab) => tab.value === sheet)!.label}
           onClose={() => setSheet(null)}
         >
-          {sheet === "inspector" ? inspector : <AssetPanel tab={sheet} fonts={fonts} onAddText={addText} />}
+          {sheet === "inspector" ? inspector : <AssetPanel tab={sheet} fonts={fonts} library={library} onAddText={addText} />}
         </Sheet>
       )}
     </div>
@@ -563,13 +565,27 @@ function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: Asset
 function AssetPanel({
   tab,
   fonts,
+  library,
   onAddText,
 }: {
   tab: AssetTab;
   fonts: FontInfo[] | null;
+  library: MediaLibrary;
   onAddText: (look: Omit<TextLayer, "id" | "start" | "secs">) => void;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
+  if (tab === "media") {
+    return <MediaAssets library={library} kinds={["video", "image"]} hint="Videos up to 3 minutes (500 MB) and images, kept for every Job." />;
+  }
+  if (tab === "audio") {
+    return (
+      <MediaAssets
+        library={library}
+        kinds={["audio"]}
+        hint="Songs up to 50 MB, kept for every Job. Use music you have the rights to: the platforms mute or take down clips that don't."
+      />
+    );
+  }
   const label = ASSET_TABS.find((t) => t.value === tab)!.label;
   return <p className="text-sm text-pretty text-muted">{label} can't be added yet.</p>;
 }

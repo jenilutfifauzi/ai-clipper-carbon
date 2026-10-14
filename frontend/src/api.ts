@@ -225,6 +225,29 @@ export interface Logo {
   created: string;
 }
 
+export type MediaKind = "video" | "audio" | "image";
+
+// A video, song or image in the Media Library (backend/app/media.py), normalized: its length (null
+// for an image) and picture size (null for audio).
+export interface MediaItem {
+  id: string;
+  kind: MediaKind;
+  name: string;
+  size_bytes: number;
+  duration: number | null;
+  width: number | null;
+  height: number | null;
+  has_audio: boolean;
+  created: string;
+}
+
+// A Candidate that uses a Media Library item, as a refused delete names it.
+export interface MediaUse {
+  job_id: string;
+  candidate_id: string;
+  title: string;
+}
+
 export interface StylePreset {
   id: string;
   name: string;
@@ -543,6 +566,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    // What the backend said besides its message, such as a refused delete's uses.
+    readonly detail?: unknown,
   ) {
     super(message);
   }
@@ -555,21 +580,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: typeof init?.body === "string" ? { "Content-Type": "application/json" } : undefined,
   });
   if (!response.ok) {
-    throw new ApiError(response.status, await errorMessage(response));
+    const [message, detail] = await errorMessage(response);
+    throw new ApiError(response.status, message, detail);
   }
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-// FastAPI's `detail`: a message, or a list of validation errors.
-async function errorMessage(response: Response): Promise<string> {
+// FastAPI's `detail`: a message, a list of validation errors, or an object with a message.
+async function errorMessage(response: Response): Promise<[string, unknown]> {
   try {
     const { detail } = await response.json();
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail)) return detail.map((error: { msg: string }) => error.msg).join("; ");
+    return [detailMessage(detail) ?? `${response.status} ${response.statusText}`, detail];
   } catch {
     // not JSON: fall through to the status line
   }
-  return `${response.status} ${response.statusText}`;
+  return [`${response.status} ${response.statusText}`, undefined];
+}
+
+function detailMessage(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map((error: { msg: string }) => error.msg).join("; ");
+  if (detail && typeof detail === "object" && "message" in detail && typeof detail.message === "string") return detail.message;
+  return null;
 }
 
 export const api = {
@@ -619,10 +651,17 @@ export const api = {
     return request<Logo>("/logos", { method: "POST", body: form });
   },
   deleteLogo: (id: string) => request<void>(`/logos/${id}`, { method: "DELETE" }),
+  listMedia: () => request<MediaItem[]>("/media"),
+  // Rejects with an ApiError of 409 whose detail lists the clips using it.
+  deleteMedia: (id: string) => request<void>(`/media/${id}`, { method: "DELETE" }),
 };
 
 export const fontUrl = (id: string) => `/api/fonts/${encodeURIComponent(id)}`;
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
+// A Media Library item's normalized file, a video's small copy for the preview, and its still.
+export const mediaItemUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`;
+export const mediaProxyUrl = (id: string) => `/api/media/${encodeURIComponent(id)}/proxy`;
+export const mediaThumbnailUrl = (id: string) => `/api/media/${encodeURIComponent(id)}/thumbnail`;
 
 // A file from the Job's directory (such as "clips/<id>.mp4"), served with range support for the
 // player. `version` tells a file rendered again from the one the browser has cached.
@@ -683,3 +722,31 @@ export function uploadJob(
 }
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;
+
+/**
+ * Upload a video, song or image to the Media Library, with its upload progress (XHR, as uploadJob).
+ * The backend converts it before it answers, so the upload reaching 100% isn't the end.
+ */
+export function uploadMedia(file: File, onProgress: (progress: UploadProgress) => void): { done: Promise<MediaItem>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<MediaItem>((resolve, reject) => {
+    xhr.upload.onprogress = (event) => onProgress({ loaded: event.loaded, total: event.total || file.size });
+    xhr.onload = () => {
+      let body: { detail?: unknown } | null = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON: fall through to the status line
+      }
+      if (xhr.status === 201 && body) return resolve(body as MediaItem);
+      reject(new ApiError(xhr.status, detailMessage(body?.detail) ?? `${xhr.status} ${xhr.statusText}`, body?.detail));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "The upload stopped: the connection to AI Clipper was lost."));
+    xhr.onabort = () => reject(new DOMException("The upload was cancelled", "AbortError"));
+  });
+  const form = new FormData();
+  form.append("file", file);
+  xhr.open("POST", "/api/media");
+  xhr.send(form);
+  return { done, abort: () => xhr.abort() };
+}

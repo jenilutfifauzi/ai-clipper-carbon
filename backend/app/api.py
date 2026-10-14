@@ -19,6 +19,7 @@ from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
+from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
@@ -85,6 +86,10 @@ def _logos(request: Request) -> LogoStore:
     return request.app.state.logos
 
 
+def _media(request: Request) -> MediaStore:
+    return request.app.state.media
+
+
 def _job(job_id: str, request: Request) -> Job:
     """The Job, or a 404. For streaming routes, which can't answer 404 once they have started."""
     try:
@@ -99,6 +104,7 @@ JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
+Media = Annotated[MediaStore, Depends(_media)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -570,6 +576,93 @@ def delete_logo(logo_id: str, logos: Logos) -> None:
         logos.delete(logo_id)
     except LogoNotFound:
         raise HTTPException(404, f"No Logo {logo_id}") from None
+
+
+class MediaUse(BaseModel):
+    """A Candidate that uses a Media Library item."""
+
+    job_id: str
+    candidate_id: str
+    title: str
+
+
+@router.get("/media")
+def list_media(library: Media) -> list[MediaItem]:
+    """The Media Library, in the order it was uploaded."""
+    return library.all()
+
+
+@router.post("/media", status_code=201)
+def upload_media(file: UploadFile, library: Media) -> MediaItem:
+    """Keep an uploaded video (3 minutes and 500 MB at most), song (50 MB) or image (10 MB), a
+    multipart/form-data `file`, in the Media Library, normalized. 422 for anything else. (Not async:
+    the upload is copied and converted in a worker thread.)"""
+    try:
+        return library.add(file.file, file.filename or "Media")
+    except BadMedia as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+@router.get("/media/{media_id}")
+def media_item_file(media_id: str, library: Media) -> FileResponse:
+    """An item's normalized file (MP4, M4A or PNG), with range support for the players."""
+    try:
+        item = library.get(media_id)
+        return FileResponse(library.file(media_id), media_type=MEDIA_TYPES[item.kind], headers=_KEEP)
+    except MediaNotFound:
+        raise HTTPException(404, f"No media {media_id}") from None
+
+
+@router.get("/media/{media_id}/proxy")
+def media_proxy(media_id: str, library: Media) -> FileResponse:
+    """A video's small copy, for the editor's preview."""
+    try:
+        return FileResponse(library.proxy(media_id), media_type="video/mp4", headers=_KEEP)
+    except MediaNotFound:
+        raise HTTPException(404, f"No video {media_id}") from None
+
+
+@router.get("/media/{media_id}/thumbnail")
+def media_thumbnail(media_id: str, library: Media) -> FileResponse:
+    """A still of a video (JPEG), or an image itself."""
+    try:
+        path = library.thumbnail(media_id)
+        return FileResponse(path, media_type="image/jpeg" if path.suffix == ".jpg" else "image/png", headers=_KEEP)
+    except MediaNotFound:
+        raise HTTPException(404, f"No video or image {media_id}") from None
+
+
+@router.delete("/media/{media_id}", status_code=204)
+def delete_media(media_id: str, library: Media, store: Store) -> None:
+    """Delete an item and its files. 409 while a Candidate uses it, naming them."""
+    try:
+        library.get(media_id)
+    except MediaNotFound:
+        raise HTTPException(404, f"No media {media_id}") from None
+    if uses := media_uses(store, media_id):
+        raise HTTPException(409, {"message": "Used by clips: remove it from them first", "uses": [use.model_dump() for use in uses]})
+    library.delete(media_id)
+
+
+def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
+    """The Candidates, of every Job, that use the item."""
+    uses = []
+    for job in store.all():
+        for candidate in store.load_candidates(job.id) or []:
+            if media_id in candidate.media_ids():
+                uses.append(MediaUse(job_id=job.id, candidate_id=candidate.id, title=candidate.title or f"Clip {candidate.id}"))
+    return uses
+
+
+def _check_media(library: MediaStore, media_id: str, kinds: tuple[MediaKind, ...], what: str) -> None:
+    """422 for an edit naming an item that isn't in the Media Library, or isn't of `kinds`."""
+    item = library.find(media_id)
+    if item is None or item.kind not in kinds:
+        raise HTTPException(422, f"{what}: no {' or '.join(kind.value for kind in kinds)} {media_id} in the Media Library")
+
+
+# Media Library files never change under their id.
+_KEEP = {"Cache-Control": "public, max-age=604800"}
 
 
 def _preset(presets: PresetStore, preset_id: str) -> StylePreset:

@@ -10,6 +10,7 @@ from app import api
 from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.logos import LOGOS_DIR, LogoStore
+from app.media import MEDIA_DIR, MediaStore
 from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
+    app.state.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
     app.include_router(api.router)
     app.include_router(api.media)
     if (settings.frontend_dir / "index.html").is_file():

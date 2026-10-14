@@ -152,6 +152,10 @@ class Candidate:
     # The Advanced Edit's Text Layers, drawn in this order (the last on top).
     text_layers: list[TextLayer] = field(default_factory=list)
 
+    def media_ids(self) -> set[str]:
+        """The Media Library items it uses."""
+        return set()
+
     @property
     def reviewed(self) -> bool:
         """Whether it holds the owner's review work, which a new run of Selection must keep."""

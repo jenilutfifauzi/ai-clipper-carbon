@@ -20,11 +20,24 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] API tests: each kind uploads, and bad, oversized or too-long files are refused.
-- [ ] API tests: list, serve, proxy, and delete.
+- [x] API tests: each kind uploads, and bad, oversized or too-long files are refused.
+- [x] API tests: list, serve, proxy, and delete.
 - [ ] Delete refused while a Candidate refers to the item (exercised once 04 adds a reference; until then unit-test the usage lookup).
-- [ ] Typecheck and build; browser upload on desktop and phone.
+- [x] Typecheck and build; browser upload on desktop and phone.
 
 ## Comments
+
+**2026-10-14: done**, except the in-use check, which is tested in 04 once a Candidate can refer to an item. `DELETE` already asks every Job's Candidates through `Candidate.media_ids()`.
+
+**Checks:**
+- `tests/test_media_library.py`: each kind uploaded and normalized (H.264/AAC 30 fps, AAC, PNG); the proxy and thumbnail; refusals of what isn't media, a video over 3 minutes and a file over its size; delete with its files.
+- `npm run build`.
+- In the browser, a 4 s video and a 12 s song were uploaded through the Media and Audio tabs, then listed with a thumbnail and with their length.
+
+**Changes from the plan:**
+- The kind is told by ffprobe, not by the file's name. A song's cover picture doesn't make it a video.
+- One decode writes the kept video, its 640 px proxy and its thumbnail.
+- Songs are at most 10 minutes long.
+- The upload endpoint isn't async, so the copy and the conversion run in a worker thread.
