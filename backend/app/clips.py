@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from app.candidates import Layout, LayoutOverride, WordEdit
-from app.styles import CaptionStyle, HookStyle, StyleOverrides
+from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
 CLIPS_DIR = "clips"
 
@@ -50,6 +50,8 @@ class RenderedClip:
     hook_style: HookStyle | None = None
     # "" in a Clip rendered before Kickers, which had none.
     hook_kicker: str = ""
+    # None in a Clip rendered before Watermarks, which had none.
+    watermark_style: WatermarkStyle | None = None
 
 
 @dataclass(frozen=True)

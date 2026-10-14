@@ -1,5 +1,5 @@
 import { AlertTriangle, Plus, ScanSearch, X } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   mediaUrl,
   type Candidate,
@@ -29,6 +29,7 @@ import { Timeline, type Range } from "./editor/Timeline";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { useStyleDraft } from "./editor/useStyleDraft";
+import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
@@ -47,12 +48,13 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
-type Tab = "text" | "captions" | "hook" | "trim";
+type Tab = "text" | "captions" | "hook" | "watermark" | "trim";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "captions", label: "Captions" },
   { value: "hook", label: "Hook" },
+  { value: "watermark", label: "Watermark" },
   { value: "trim", label: "Trim" },
 ];
 
@@ -241,6 +243,12 @@ export function CandidateEditor({
                   preview={preview}
                   fonts={fonts}
                   playback={playback}
+                  // Dragged on the preview while its tab is open.
+                  onWatermarkMove={
+                    tab === "watermark" && style.controls
+                      ? (x, y) => style.controls?.setMany("watermark", { position: "custom", x, y })
+                      : undefined
+                  }
                 />
               ) : (
                 <PreviewPlayer
@@ -349,6 +357,14 @@ export function CandidateEditor({
                   <HookMoreOptions style={style.controls} open={more.hook} onToggle={(open) => setMore((old) => ({ ...old, hook: open }))} />
                 )}
               </>
+            )}
+            {tab === "watermark" && (
+              <section aria-labelledby="watermark-heading" className="flex flex-col gap-3">
+                <h4 id="watermark-heading" className="sr-only">
+                  Watermark
+                </h4>
+                {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} /> : !style.error && <StyleFieldsSkeleton />}
+              </section>
             )}
             {tab === "trim" && (
               <>
@@ -478,14 +494,32 @@ export function CandidateEditor({
 // The editor's sections, as tabs: arrow keys move between them.
 function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void }) {
   // The thumb slides like Segmented's when a tab is clicked, and jumps when the arrow keys move it.
+  // The tabs are as wide as their labels (shared out when there is room), so it is measured on the
+  // selected one.
   const [keyed, setKeyed] = useState(false);
+  const list = useRef<HTMLDivElement>(null);
+  const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null);
   const index = TABS.findIndex((tab) => tab.value === value);
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    const measure = () => {
+      const selected = element.children[index + 1] as HTMLElement | undefined;
+      if (selected) setThumb({ left: selected.offsetLeft, width: selected.offsetWidth });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [index]);
   return (
     <div
+      ref={list}
       role="tablist"
       aria-label="Edit"
-      className="relative isolate flex gap-1 rounded-control bg-fill p-1"
-      style={{ "--count": TABS.length, "--index": index } as CSSProperties}
+      // Scrolls sideways where even label-wide tabs don't fit.
+      className="relative isolate flex gap-1 overflow-x-auto rounded-control bg-fill p-1 [scrollbar-width:none]"
+      style={{ "--left": `${thumb?.left ?? 4}px`, "--width": `${thumb?.width ?? 0}px` } as CSSProperties}
       onKeyDown={(event) => {
         if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
         const next = TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length].value;
@@ -497,9 +531,9 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void })
       <span
         aria-hidden
         className={cx(
-          "raised absolute inset-y-1 left-1 -z-10 w-[calc((100%-0.5rem-(var(--count)-1)*0.25rem)/var(--count))] rounded-[10px]",
-          "translate-x-[calc(var(--index)*(100%+0.25rem))]",
-          !keyed && "motion-safe:transition-transform motion-safe:duration-[380ms] motion-safe:ease-spring",
+          "raised absolute inset-y-1 left-0 -z-10 w-(--width) translate-x-(--left) rounded-[10px]",
+          !thumb && "invisible",
+          !keyed && "motion-safe:transition-[translate,width] motion-safe:duration-[380ms] motion-safe:ease-spring",
         )}
       />
       {TABS.map((tab) => (
@@ -516,7 +550,7 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void })
             onChange(tab.value);
           }}
           className={cx(
-            "min-h-9 flex-1 rounded-[10px] px-3 text-sm font-medium motion-safe:transition-colors",
+            "min-h-9 flex-auto rounded-[10px] px-2 text-sm font-medium whitespace-nowrap motion-safe:transition-colors",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
             value === tab.value ? "text-text" : "text-muted hover:text-text",
           )}

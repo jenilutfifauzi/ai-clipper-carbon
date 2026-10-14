@@ -8,6 +8,7 @@ import {
   type StyleOverrides,
   type StylePreset,
   type StyleValue,
+  type WatermarkStyle,
 } from "../../../api";
 import { useDraftSave } from "./useDraftSave";
 
@@ -16,9 +17,9 @@ export interface StyleDraft {
   style_overrides: StyleOverrides;
 }
 
-export type StylePart = "caption" | "hook";
+export type StylePart = "caption" | "hook" | "watermark";
 
-const EMPTY: StyleOverrides = { caption: {}, hook: {} };
+const EMPTY: StyleOverrides = { caption: {}, hook: {}, watermark: {} };
 
 /** The Candidate's look as edited: its Preset, the resolved styles, and the ways to change them. */
 export interface StyleControls {
@@ -26,9 +27,12 @@ export interface StyleControls {
   preset: StylePreset;
   caption: CaptionStyle;
   hook: HookStyle;
+  watermark: WatermarkStyle;
   overrides: StyleOverrides;
   // Sets a field; a value equal to the Preset's removes its override.
   set: (part: StylePart, field: string, value: StyleValue) => void;
+  // Sets several fields of `part` at once, as one change.
+  setMany: (part: StylePart, values: Record<string, StyleValue>) => void;
   reset: (part: StylePart, field: string) => void;
   pick: (presetId: string) => void;
   resetAll: () => void;
@@ -50,7 +54,8 @@ export function useStyleDraft(
   const [presets, setPresets] = useState<StylePreset[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, change] = useDraftSave<StyleDraft>(
-    { preset_id: candidate.preset_id, style_overrides: candidate.style_overrides },
+    // Overrides saved before Watermarks have none.
+    { preset_id: candidate.preset_id, style_overrides: { ...EMPTY, ...candidate.style_overrides } },
     (value) => onSave(value),
     candidate.id,
   );
@@ -63,12 +68,15 @@ export function useStyleDraft(
   const preset = presets.find((p) => p.id === draft.preset_id) ?? presets[0];
   const base = (part: StylePart) => preset[part] as unknown as Record<string, StyleValue>;
 
-  function set(part: StylePart, field: string, value: StyleValue) {
+  function setMany(part: StylePart, values: Record<string, StyleValue>) {
     const fields = { ...draft.style_overrides[part] } as Record<string, StyleValue>;
-    if (base(part)[field] === value) delete fields[field];
-    else fields[field] = value;
+    for (const [field, value] of Object.entries(values)) {
+      if (base(part)[field] === value) delete fields[field];
+      else fields[field] = value;
+    }
     change({ ...draft, style_overrides: { ...draft.style_overrides, [part]: fields } });
   }
+  const set = (part: StylePart, field: string, value: StyleValue) => setMany(part, { [field]: value });
 
   return {
     draft,
@@ -78,8 +86,10 @@ export function useStyleDraft(
       preset,
       caption: { ...preset.caption, ...draft.style_overrides.caption } as CaptionStyle,
       hook: { ...preset.hook, ...draft.style_overrides.hook } as HookStyle,
+      watermark: { ...preset.watermark, ...draft.style_overrides.watermark } as WatermarkStyle,
       overrides: draft.style_overrides,
       set,
+      setMany,
       reset: (part, field) => set(part, field, base(part)[field]),
       pick: (id) => change({ preset_id: id, style_overrides: EMPTY }),
       resetAll: () => change({ ...draft, style_overrides: EMPTY }),

@@ -25,6 +25,10 @@ The hook is drawn by the same `ass` filter, in the same encode: a semi-transpare
 drawn as an ASS vector shape, and over it each of its lines as its own event, placed where the
 Render Plan's metrics put it, in the plan's Hook Style. It shows from the first frame and fades out
 briefly at its end.
+
+A text Watermark is one more event of the same script, under the captions and the hook. A Logo, an
+image libass can't draw, is a second input (its PNG, from app/logos.py), scaled into the Watermark's
+area at its opacity and laid over the joined frames before the captions are burned.
 """
 
 import json
@@ -47,9 +51,10 @@ from app.planner import (
     Panel,
     RenderPlan,
     ScenePlan,
+    WatermarkEvent,
     font_metrics,
 )
-from app.styles import Animation, CaptionStyle, Highlight, HookStyle
+from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +83,12 @@ class Renderer:
         video: Path,
         poster: Path,
         progress: Callable[[float], None] = lambda done: None,
+        logo: Path | None = None,
     ) -> str:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
         (JPEG), and return the video encoder that made them: the first of RenderTuning.encoders that
-        succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1.
+        succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1. `logo`
+        is the PNG of the plan's Logo Watermark, which isn't drawn without it.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
@@ -89,13 +96,15 @@ class Renderer:
         _check(plan)
         loudness = self._measure(source, plan)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
-        subtitles = video.with_name(f".{video.stem}.part.ass") if plan.captions or plan.hook else None
+        subtitles = video.with_name(f".{video.stem}.part.ass") if plan.captions or plan.hook or _text_watermark(plan) else None
+        if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
+            logo = None
         failures = []
         try:
             if subtitles is not None:
                 subtitles.write_text(_ass(plan), encoding="utf-8")
             for encoder in self.tuning.encoders:
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo)
                 stderr = self._run(command, plan.duration, progress)
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
@@ -142,15 +151,20 @@ class Renderer:
         video: Path,
         poster: Path,
         subtitles: Path | None,
+        logo: Path | None = None,
     ) -> list[str]:
         tuning = self.tuning
         frame = _scenes(plan, tuning)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
+        joined = "[frame]"
+        if logo is not None and plan.watermark is not None:
+            frame += f";{_logo_overlay(plan.watermark, joined, '[marked]')}"
+            joined = "[marked]"
         # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's timeline.
         burned = "" if subtitles is None else (
             f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(FONTS_DIR))},"
         )
-        frame += f";[frame]{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
+        frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         audio = f"[0:a:0]aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
@@ -168,7 +182,7 @@ class Renderer:
             codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *_range(plan), "-i", str(source),
+            *_range(plan), "-i", str(source), *([] if logo is None else ["-i", str(logo)]),
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
@@ -276,6 +290,20 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
     return drawn + ",setsar=1"
 
 
+def _logo_overlay(watermark: WatermarkEvent, below: str, out: str) -> str:
+    """Filters that scale the Logo (input 1, one frame) into the Watermark's area at its opacity and
+    lay it over the frames `below`, into `out`. The overlay repeats the Logo's one frame to the end."""
+    area = watermark.area
+    return (
+        f"[1:v]scale={area.width}:{area.height}:flags=lanczos,format=rgba,colorchannelmixer=aa={watermark.opacity:g}[logo];"
+        f"{below}[logo]overlay={area.x}:{area.y}:eof_action=repeat{out}"
+    )
+
+
+def _text_watermark(plan: RenderPlan) -> WatermarkEvent | None:
+    return plan.watermark if plan.watermark is not None and plan.watermark.kind is WatermarkKind.TEXT else None
+
+
 def _pad(plan: RenderPlan, panel: Panel) -> str:
     area = panel.area
     if (area.width, area.height) == (plan.width, plan.height):
@@ -285,8 +313,10 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
 
 def _ass(plan: RenderPlan) -> str:
     """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
-    for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events)."""
+    for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events).
+    A text Watermark comes first, under them."""
     caption, hook = plan.caption_style, plan.hook_style
+    watermark = _text_watermark(plan)
     script = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -307,10 +337,13 @@ def _ass(plan: RenderPlan) -> str:
         f"Style: Hook,{font(hook.font).family},{hook.size},{_style_colour(hook.colour)},{_style_colour(hook.colour)},"
         f"{_style_colour(hook.outline_colour)},{_style_colour(hook.shadow_colour)},0,0,0,0,100,100,0,0,1,"
         f"{hook.outline},{hook.shadow},5,0,0,0,1",
+        *([_watermark_style(plan.watermark_style)] if watermark else []),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
+    if watermark:
+        script.append(_watermark_event(watermark, plan.watermark_style, plan.duration))
     for event in plan.captions:
         script.extend(_caption_events(event, caption))
     if plan.hook:
@@ -324,6 +357,24 @@ def _caption_style(style: CaptionStyle) -> str:
         f"Style: Caption,{font(style.font).family},{style.size},{text},{text},{edge},{shadow},0,0,0,0,100,100,0,0,1,"
         f"{style.outline},{style.shadow},5,0,0,0,1"
     )
+
+
+def _watermark_style(style: WatermarkStyle) -> str:
+    text, edge = _style_colour(style.colour), _style_colour("#000000")
+    outline = max(1, round(style.size / 20)) if style.outline else 0
+    return (
+        f"Style: Watermark,{font(style.font).family},{style.size},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
+        f"{outline},0,5,0,0,0,1"
+    )
+
+
+def _watermark_event(event: WatermarkEvent, style: WatermarkStyle, duration: float) -> str:
+    """The text Watermark's one Dialogue event, centred in its area for the whole Clip at its opacity."""
+    area = event.area
+    place = f"\\pos({area.x + area.width / 2:g},{area.y + area.height / 2:g})\\alpha&H{round((1 - event.opacity) * 255):02X}&"
+    if event.size != style.size:
+        place += f"\\fs{event.size:g}"
+    return f"Dialogue: 0,{_ass_time(0)},{_ass_time(duration)},Watermark,,0,0,0,,{{{place}}}{_ass_text(event.text)}"
 
 
 def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:

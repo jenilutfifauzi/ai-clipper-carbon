@@ -97,9 +97,12 @@ function changedSince(candidate: Candidate, output: RenderedClip, presets: Style
   if (edits.some((field) => !same(candidate[field], output[field]))) return true;
   const preset = presets?.find((p) => p.id === candidate.preset_id) ?? presets?.[0];
   if (!preset || !output.caption_style || !output.hook_style) return false;
+  // A Clip rendered before Watermarks had none.
+  const watermark = { ...preset.watermark, ...candidate.style_overrides.watermark };
   return (
     !same({ ...preset.caption, ...candidate.style_overrides.caption }, output.caption_style) ||
-    !same({ ...preset.hook, ...candidate.style_overrides.hook }, output.hook_style)
+    !same({ ...preset.hook, ...candidate.style_overrides.hook }, output.hook_style) ||
+    (output.watermark_style ? !same(watermark, output.watermark_style) : watermark.kind !== "none")
   );
 }
 

@@ -259,7 +259,7 @@ def test_a_candidates_preset_and_overrides_are_saved_and_mark_it_edited(client, 
     llm.clips = [clip("10:00", "10:44", 80)]
     job = analyzed(client, wait_for_status)
     [candidate] = job["candidates"]
-    assert (candidate["preset_id"], candidate["style_overrides"]) == ("default", {"caption": {}, "hook": {}})
+    assert (candidate["preset_id"], candidate["style_overrides"]) == ("default", {"caption": {}, "hook": {}, "watermark": {}})
 
     styled = patch(client, job, candidate, preset_id="yellow-pop", style_overrides={"caption": {"size": 90}})
     assert (styled["preset_id"], styled["style_overrides"]["caption"], styled["edited"]) == ("yellow-pop", {"size": 90}, True)

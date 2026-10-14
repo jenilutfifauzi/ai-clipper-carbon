@@ -825,7 +825,7 @@ def test_a_draft_is_planned_without_being_saved(client, video_source, transcribe
     assert {event["area"]["y"] for event in draft["plan"]["captions"]} == {430}
     assert preview(client, job, candidate)["plan"]["hook"] is None
     [saved] = client.get(f"/api/jobs/{job['id']}").json()["candidates"]
-    assert (saved["hook_text"], saved["style_overrides"]) == ("", {"caption": {}, "hook": {}})
+    assert (saved["hook_text"], saved["style_overrides"]) == ("", {"caption": {}, "hook": {}, "watermark": {}})
 
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan"
     assert client.post(url, json={"style_overrides": {"caption": {"size": 1}}}).status_code == 422

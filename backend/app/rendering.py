@@ -34,6 +34,7 @@ from app.candidates import Candidate
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
+from app.logos import LOGOS_DIR, LogoStore
 from app.planner import RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
@@ -124,11 +125,13 @@ def candidate_plan(
     analysis: ClipAnalysis | None,
     presets: PresetStore,
     camera: CameraTuning,
+    logos: LogoStore | None = None,
 ) -> RenderPlan:
     """The Render Plan of the Candidate as it is, captioned with `words` (None: no captions) and framed
-    by `analysis` (None: unanalysed, or a Source passed through). Renders and the editor's preview both
-    plan by this, so that the preview shows what the render will."""
-    caption_style, hook_style = presets.styles(candidate.preset_id, candidate.style_overrides)
+    by `analysis` (None: unanalysed, or a Source passed through), its Watermark's Logo from `logos`.
+    Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
+    caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
+    logo = logos.find(watermark_style.logo) if logos else None
     return plan_render(
         candidate.start, candidate.end, source,
         scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
@@ -138,6 +141,8 @@ def candidate_plan(
         hook_start=candidate.hook_start, hook_secs=candidate.hook_secs,
         layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
         hook_kicker=candidate.hook_kicker,
+        watermark_style=watermark_style,
+        logo_size=(logo.width, logo.height) if logo else None,
     )
 
 
@@ -150,6 +155,7 @@ class Renders:
         self.store = store
         self.settings = settings
         self.presets = PresetStore(settings.data_dir / PRESETS_FILE)
+        self.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
         self.analyzer = Analyzer(settings.ffmpeg_bin, BLAZE_FACE_MODEL, settings.analysis)
         self.transcriber = transcriber
@@ -341,10 +347,13 @@ class Renders:
         try:
             words = self._words(job, candidate, step(1 / 3)) if job.options.captions else None
             analysis = self._analysis(job, candidate, step(1 / 3))
-            plan = candidate_plan(candidate, job.source.metadata, words, analysis, self.presets, self.settings.camera)
+            plan = candidate_plan(
+                candidate, job.source.metadata, words, analysis, self.presets, self.settings.camera, self.logos
+            )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
+            logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
             encoder = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100)
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:
@@ -377,6 +386,7 @@ class Renders:
                 caption_style=plan.caption_style,
                 hook_style=plan.hook_style,
                 hook_kicker=candidate.hook_kicker,
+                watermark_style=plan.watermark_style,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

@@ -1,5 +1,5 @@
-"""Styles: how captions and the hook look, as Style Presets shared by every Job and Style Overrides
-on a Candidate.
+"""Styles: how captions, the hook and the Watermark look, as Style Presets shared by every Job and
+Style Overrides on a Candidate.
 
 A Candidate uses one Preset (`Candidate.preset_id`) and may replace any of its fields
 (`Candidate.style_overrides`); its style is the Preset with those fields replaced, validated as a
@@ -14,7 +14,7 @@ import threading
 from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NamedTuple
 from uuid import uuid4
 
 from pydantic import AfterValidator, Field, StringConstraints, TypeAdapter, ValidationError
@@ -36,6 +36,8 @@ def _known_font(font_id: str) -> str:
 FontId = Annotated[str, AfterValidator(_known_font)]
 # An opaque #RRGGBB colour, kept in capitals.
 Colour = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$", to_upper=True)]
+# A Logo's id (app/logos.py), which names its file.
+LogoId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,32}$")]
 # A height in output pixels, which the planner keeps inside the safe area.
 Height = Annotated[int, Field(ge=0, le=1920)]
 
@@ -89,6 +91,30 @@ class HookPosition(StrEnum):
     MIDDLE = "middle"
     BOTTOM = "bottom"
     # With its box's top at HookStyle.y.
+    CUSTOM = "custom"
+
+
+class WatermarkKind(StrEnum):
+    """What the Watermark is: nothing, a line of text, or one of the Logos (app/logos.py)."""
+
+    NONE = "none"
+    TEXT = "text"
+    LOGO = "logo"
+
+
+class WatermarkPosition(StrEnum):
+    """Where the Watermark goes: a corner, an edge's middle or the middle of the safe area, or anywhere."""
+
+    TOP_LEFT = "top_left"
+    TOP = "top"
+    TOP_RIGHT = "top_right"
+    LEFT = "left"
+    MIDDLE = "middle"
+    RIGHT = "right"
+    BOTTOM_LEFT = "bottom_left"
+    BOTTOM = "bottom"
+    BOTTOM_RIGHT = "bottom_right"
+    # Centred on (WatermarkStyle.x, WatermarkStyle.y).
     CUSTOM = "custom"
 
 
@@ -154,6 +180,27 @@ class HookStyle:
     animation_ms: Annotated[int, Field(ge=50, le=1000)] = 200
 
 
+@dataclass(frozen=True)
+class WatermarkStyle:
+    """A Watermark shown over the whole Clip, under the captions and the hook. Off by default."""
+
+    kind: WatermarkKind = WatermarkKind.NONE
+    text: Annotated[str, StringConstraints(max_length=60)] = ""
+    font: FontId = DEFAULT_FONT
+    colour: Colour = "#FFFFFF"
+    # A thin black outline around the text, so that it reads on any shot.
+    outline: bool = True
+    # The Logo's id; None for none.
+    logo: LogoId | None = None
+    position: WatermarkPosition = WatermarkPosition.TOP_RIGHT
+    # Its centre in output pixels, for the Custom position; the planner keeps it in the frame.
+    x: Annotated[int, Field(ge=0, le=1080)] = 540
+    y: Height = 960
+    # How tall it is in output pixels: the Logo's height, or the text's font size (in libass's units).
+    size: Annotated[int, Field(ge=24, le=480)] = 64
+    opacity: Annotated[float, Field(ge=0.05, le=1)] = 0.8
+
+
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 # A Style Override's value: what a style field holds.
 StyleValue = bool | int | float | str | None
@@ -166,6 +213,7 @@ class StylePreset:
     caption: CaptionStyle = CaptionStyle()
     hook: HookStyle = HookStyle()
     builtin: bool = False
+    watermark: WatermarkStyle = WatermarkStyle()
 
 
 @dataclass(frozen=True)
@@ -174,6 +222,15 @@ class StyleOverrides:
 
     caption: dict[str, StyleValue] = field(default_factory=dict)
     hook: dict[str, StyleValue] = field(default_factory=dict)
+    watermark: dict[str, StyleValue] = field(default_factory=dict)
+
+
+class Styles(NamedTuple):
+    """A Candidate's styles: its Preset's with its overrides."""
+
+    caption: CaptionStyle
+    hook: HookStyle
+    watermark: WatermarkStyle = WatermarkStyle()
 
 
 BUILTIN_PRESETS = [
@@ -264,12 +321,17 @@ class BuiltinPreset(ValueError):
 
 _CAPTION = TypeAdapter(CaptionStyle)
 _HOOK = TypeAdapter(HookStyle)
+_WATERMARK = TypeAdapter(WatermarkStyle)
 _PRESETS = TypeAdapter(list[StylePreset])
 
 
-def resolve(preset: StylePreset, overrides: StyleOverrides) -> tuple[CaptionStyle, HookStyle]:
+def resolve(preset: StylePreset, overrides: StyleOverrides) -> Styles:
     """The Preset's styles with `overrides` applied; InvalidStyle for an unknown field or a bad value."""
-    return _apply(preset.caption, overrides.caption, _CAPTION), _apply(preset.hook, overrides.hook, _HOOK)
+    return Styles(
+        _apply(preset.caption, overrides.caption, _CAPTION),
+        _apply(preset.hook, overrides.hook, _HOOK),
+        _apply(preset.watermark, overrides.watermark, _WATERMARK),
+    )
 
 
 def _apply[T](style: T, changes: dict[str, StyleValue], adapter: TypeAdapter[T]) -> T:
@@ -300,7 +362,7 @@ class PresetStore:
                 return preset
         raise PresetNotFound(preset_id)
 
-    def styles(self, preset_id: str, overrides: StyleOverrides) -> tuple[CaptionStyle, HookStyle]:
+    def styles(self, preset_id: str, overrides: StyleOverrides) -> Styles:
         """A Candidate's styles: its Preset's (Default's, if it has been deleted) with its overrides."""
         try:
             preset = self.get(preset_id)
@@ -308,17 +370,21 @@ class PresetStore:
             preset = DEFAULT
         return resolve(preset, overrides)
 
-    def create(self, name: str, caption: CaptionStyle, hook: HookStyle) -> StylePreset:
+    def create(
+        self, name: str, caption: CaptionStyle, hook: HookStyle, watermark: WatermarkStyle = WatermarkStyle()
+    ) -> StylePreset:
         with self._lock:
-            preset = StylePreset(uuid4().hex[:8], name, caption, hook)
+            preset = StylePreset(uuid4().hex[:8], name, caption, hook, watermark=watermark)
             self._save([*self._saved(), preset])
             return preset
 
-    def update(self, preset_id: str, name: str, caption: CaptionStyle, hook: HookStyle) -> StylePreset:
+    def update(
+        self, preset_id: str, name: str, caption: CaptionStyle, hook: HookStyle, watermark: WatermarkStyle = WatermarkStyle()
+    ) -> StylePreset:
         with self._lock:
             saved = self._saved()
             i = self._index(saved, preset_id)
-            preset = replace(saved[i], name=name, caption=caption, hook=hook)
+            preset = replace(saved[i], name=name, caption=caption, hook=hook, watermark=watermark)
             self._save([*saved[:i], preset, *saved[i + 1 :]])
             return preset
 

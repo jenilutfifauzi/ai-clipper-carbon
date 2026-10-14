@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.config import load_settings
 
-FILTERS = ("ass", "scdet")
+FILTERS = ("ass", "scdet", "overlay", "colorchannelmixer")
 ENCODERS = ("h264_videotoolbox",)
 
 

@@ -7,8 +7,8 @@ import { Skeleton } from "../../../components/Skeleton";
 import type { StyleControls } from "./useStyleDraft";
 
 /**
- * The Style Preset picker and its actions, above the editor's tabs: a Preset sets the captions and
- * the hook together. Reset the overrides, save the look as a new Preset, save it into the Preset
+ * The Style Preset picker and its actions, above the editor's tabs: a Preset sets the captions, the
+ * hook and the Watermark together. Reset the overrides, save the look as a new Preset, save it into the Preset
  * (the owner's only), or delete the Preset (the owner's only).
  */
 export function PresetBar({ style, error: loadError }: { style: StyleControls | null; error: string | null }) {
@@ -30,8 +30,8 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
       </div>
     );
   }
-  const { presets, preset, caption, hook } = style;
-  const overridden = Object.keys(style.overrides.caption).length + Object.keys(style.overrides.hook).length > 0;
+  const { presets, preset, caption, hook, watermark } = style;
+  const overridden = Object.values(style.overrides).some((fields) => Object.keys(fields).length > 0);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -47,14 +47,14 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
 
   const saveNew = () =>
     run(async () => {
-      const made = await api.createPreset({ name, caption, hook });
+      const made = await api.createPreset({ name, caption, hook, watermark });
       setNaming(false);
       setName("");
       style.saved(made, [...presets, made]);
     });
   const saveInto = () =>
     run(async () => {
-      const updated = await api.updatePreset(preset.id, { name: preset.name, caption, hook });
+      const updated = await api.updatePreset(preset.id, { name: preset.name, caption, hook, watermark });
       style.saved(updated, presets.map((p) => (p.id === updated.id ? updated : p)));
     });
   const remove = () =>
@@ -93,7 +93,7 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
           </Button>
         )}
       </div>
-      <p className="text-sm text-muted">Sets the captions and the hook together.</p>
+      <p className="text-sm text-muted">Sets the captions, the hook and the watermark together.</p>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="xs" onClick={() => setNaming((open) => !open)} disabled={busy} aria-expanded={naming}>
           <Save aria-hidden size={15} />

@@ -38,6 +38,10 @@ Layout: they never go above the seam's band, y 860.
 Like the hook, captions stay inside SAFE_AREA, clear of the platforms' buttons and text. Both are
 measured with their bundled font's own widths (`font_metrics`), the font libass sets them in. The
 styles (app/styles.py) are kept in the plan, for the Renderer to draw it in them.
+
+The Watermark (text, or one of the Logos) shows for the whole Clip. At one of its nine positions it
+sits WATERMARK_MARGIN inside SAFE_AREA's corners, edges or middle; at the Custom position it is
+centred where the owner dragged it, kept inside the frame.
 """
 
 import math
@@ -50,7 +54,17 @@ from functools import cache
 from app.candidates import Layout, LayoutOverride, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
-from app.styles import CaptionPosition, CaptionStyle, HookAlign, HookPosition, HookShape, HookStyle
+from app.styles import (
+    CaptionPosition,
+    CaptionStyle,
+    HookAlign,
+    HookPosition,
+    HookShape,
+    HookStyle,
+    WatermarkKind,
+    WatermarkPosition,
+    WatermarkStyle,
+)
 from app.transcript import Word
 from app.video_source import SourceMetadata
 
@@ -178,6 +192,8 @@ TOP_CAPTIONS = Box(_CAPTION_X, 430, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
 HOOK_WIDTH = OUTPUT_WIDTH - 2 * _CAPTION_X - 2 * HOOK_PAD_X
 # The widest a Kicker's pill can be: as wide as the captions' area.
 KICKER_WIDEST = OUTPUT_WIDTH - 2 * _CAPTION_X
+# How far inside SAFE_AREA's edges the Watermark sits, at its nine positions.
+WATERMARK_MARGIN = 32
 # Punctuation is left out of the captions at either end of a Word ("HALO" for "halo,"), except for
 # the question and exclamation marks that end one ("KENAPA?") and signs that belong to it ("50%",
 # "#1"). Inside a Word it stays ("MAIN-MAIN", "2,5").
@@ -275,6 +291,19 @@ class HookEvent:
 
 
 @dataclass(frozen=True)
+class WatermarkEvent:
+    """The Watermark, in `area` for the whole Clip at `opacity`: the text set at font `size` and
+    centred in it, or the Logo (its id) scaled to fill it."""
+
+    kind: WatermarkKind
+    area: Box
+    opacity: float
+    text: str = ""
+    size: float = 0
+    logo: str | None = None
+
+
+@dataclass(frozen=True)
 class RenderPlan:
     # The Clip's range on the Source's timeline.
     start: float
@@ -291,6 +320,8 @@ class RenderPlan:
     hook_style: HookStyle = HookStyle()
     width: int = OUTPUT_WIDTH
     height: int = OUTPUT_HEIGHT
+    watermark: WatermarkEvent | None = None
+    watermark_style: WatermarkStyle = WatermarkStyle()
 
     @property
     def duration(self) -> float:
@@ -320,6 +351,8 @@ def plan_render(
     hook_secs: float = HOOK_SECS,
     layout_overrides: list[LayoutOverride] | None = None,
     hook_kicker: str = "",
+    watermark_style: WatermarkStyle = WatermarkStyle(),
+    logo_size: tuple[int, int] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -329,7 +362,8 @@ def plan_render(
     `hook_secs`. A Scene that holds one of `layout_overrides` (their times in seconds into the
     Clip) takes its Layout instead of `layout`, the last one if it holds several. Without `scenes`
     the Clip is one Scene; without `faces` (not analysed) an Auto Scene is tracked with its crop in
-    the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
+    the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. The
+    Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none)."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     duration = round(end - start, 3)
@@ -362,7 +396,48 @@ def plan_render(
         hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
+        watermark=watermark(watermark_style, logo_size),
+        watermark_style=watermark_style,
     )
+
+
+def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None) -> WatermarkEvent | None:
+    """The Watermark in `style`, its Logo `logo_size` pixels; None when it shows nothing: off, blank
+    text (without emoji, which the bundled fonts haven't got), or a Logo that is missing."""
+    if style.kind is WatermarkKind.TEXT:
+        text = without_emoji(style.text).strip()
+        if not text:
+            return None
+        width = math.ceil(font_metrics(style.font).width(text, style.size))
+        # As wide as the frame at most: set smaller when it is wider.
+        size = float(style.size) if width <= OUTPUT_WIDTH else math.floor(style.size * OUTPUT_WIDTH / width * 10) / 10
+        area = _watermark_area(style, min(width, OUTPUT_WIDTH), math.ceil(size))
+        return WatermarkEvent(WatermarkKind.TEXT, area, style.opacity, text=text, size=size)
+    if style.kind is WatermarkKind.LOGO and style.logo is not None and logo_size is not None:
+        logo_width, logo_height = logo_size
+        height = min(style.size, OUTPUT_HEIGHT)
+        width = max(1, round(height * logo_width / logo_height))
+        if width > OUTPUT_WIDTH:
+            width, height = OUTPUT_WIDTH, max(1, round(OUTPUT_WIDTH * logo_height / logo_width))
+        return WatermarkEvent(WatermarkKind.LOGO, _watermark_area(style, width, height), style.opacity, logo=style.logo)
+    return None
+
+
+def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
+    """Where a `width` x `height` Watermark goes at the style's position."""
+    if style.position is WatermarkPosition.CUSTOM:
+        x = min(max(round(style.x - width / 2), 0), OUTPUT_WIDTH - width)
+        y = min(max(round(style.y - height / 2), 0), OUTPUT_HEIGHT - height)
+        return Box(x, y, width, height)
+    vertical, _, horizontal = style.position.value.rpartition("_")
+    vertical = vertical or (horizontal if horizontal in ("top", "bottom") else "")
+    left, top = SAFE_AREA.x + WATERMARK_MARGIN, SAFE_AREA.y + WATERMARK_MARGIN
+    right = SAFE_AREA.x + SAFE_AREA.width - WATERMARK_MARGIN - width
+    bottom = SAFE_AREA.y + SAFE_AREA.height - WATERMARK_MARGIN - height
+    # Its middle column is centred in the frame, as the captions and the hook are.
+    x = {"left": left, "right": right}.get(horizontal, (OUTPUT_WIDTH - width) // 2)
+    y = {"top": top, "bottom": bottom}.get(vertical, (SAFE_AREA.y * 2 + SAFE_AREA.height - height) // 2)
+    return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
 
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:

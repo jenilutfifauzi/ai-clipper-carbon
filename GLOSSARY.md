@@ -22,13 +22,16 @@ Use these terms in code, UI copy, tickets and commit messages.
 
 ## Clip editor
 
-- **Style Preset:** a named, global look for captions and the hook: a Caption Style and a Hook Style. Built-in Presets can't be changed or deleted.
+- **Style Preset:** a named, global look for captions, the hook and the Watermark: a Caption Style, a Hook Style and a Watermark Style. Built-in Presets can't be changed or deleted.
 - **Caption Style:** how captions look and are broken into lines: font, size, colours, outline, shadow, case, highlight, position, and line limits.
 - **Hook Style:** how the hook looks and moves: Shape, font, size, case, lines, alignment, colours, outline, shadow, Quote Mark, Kicker colours, position, and animations.
 - **Hook Shape:** how the hook's box is drawn: one block behind all its lines, a strip per line, or none.
 - **Emphasis:** words of the hook text marked `*like this*`, drawn in the Hook Style's Emphasis colour.
 - **Kicker:** an optional short label (at most 24 characters) in a pill above the hook, such as "TERBONGKAR!".
 - **Quote Mark:** a badge with quote marks on the hook's top-left corner.
+- **Watermark:** a line of text or a Logo shown over the whole Clip, under the captions and the hook, at one of nine places in the safe area or wherever it is dragged on the preview.
+- **Watermark Style:** what the Watermark is (off, text or a Logo), its text's font, colour and outline, its place, size and opacity.
+- **Logo:** an image the owner uploads for Watermarks, kept as a PNG for every Job. Deleting one leaves the Presets and Candidates that showed it with no Watermark.
 - **Style Override:** a field of the Preset's style replaced on one Candidate.
 - **Word Edit:** a correction of one caption Word, keyed by a time on the Source's timeline. It gives new text, removes the Word (empty text), or starts a new line before it.
 - **Layout Override:** a Layout for the one Scene that holds a time on the Source's timeline, replacing the Candidate's Layout there.

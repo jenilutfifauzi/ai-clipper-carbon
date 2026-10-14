@@ -13,6 +13,7 @@ from pathlib import Path
 from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
+from app.logos import LogoStore
 from app.planner import RenderPlan, match_edits, reframes
 from app.rendering import candidate_plan, saved_analysis, saved_words, transcript_words
 from app.styles import PresetStore
@@ -48,7 +49,13 @@ class PreviewPlan:
 
 
 def preview_plan(
-    job: Job, job_dir: Path, transcript: Transcript, candidate: Candidate, settings: Settings, presets: PresetStore
+    job: Job,
+    job_dir: Path,
+    transcript: Transcript,
+    candidate: Candidate,
+    settings: Settings,
+    presets: PresetStore,
+    logos: LogoStore | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan, `job_dir` being its Job's directory."""
     assert job.source is not None
@@ -61,7 +68,9 @@ def preview_plan(
     analysis = None
     if reframes(source):
         analysis = saved_analysis(job_dir, candidate.start, candidate.end, settings.analysis, BLAZE_FACE_MODEL.name)
-    plan = candidate_plan(candidate, source, words if job.options.captions else None, analysis, presets, settings.camera)
+    plan = candidate_plan(
+        candidate, source, words if job.options.captions else None, analysis, presets, settings.camera, logos
+    )
     duration = candidate.end - candidate.start
     ordered = sorted(words, key=lambda word: word.start)
     # Matched on the Clip's timeline; given back as the Candidate holds them.

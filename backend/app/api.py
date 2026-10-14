@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -18,13 +18,25 @@ from app.editor import PreviewPlan, preview_plan
 from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit
 from app.storage import DiskUsage, disk_usage
-from app.styles import BuiltinPreset, CaptionStyle, HookStyle, InvalidStyle, Name, PresetNotFound, PresetStore, StyleOverrides, StylePreset
+from app.styles import (
+    BuiltinPreset,
+    CaptionStyle,
+    HookStyle,
+    InvalidStyle,
+    Name,
+    PresetNotFound,
+    PresetStore,
+    StyleOverrides,
+    StylePreset,
+    WatermarkStyle,
+)
 from app.transcript import Transcript
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
 from app.worker import Worker
@@ -67,6 +79,10 @@ def _presets(request: Request) -> PresetStore:
     return request.app.state.presets
 
 
+def _logos(request: Request) -> LogoStore:
+    return request.app.state.logos
+
+
 def _job(job_id: str, request: Request) -> Job:
     """The Job, or a 404. For streaming routes, which can't answer 404 once they have started."""
     try:
@@ -80,6 +96,7 @@ Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
+Logos = Annotated[LogoStore, Depends(_logos)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -120,6 +137,7 @@ class PresetBody(BaseModel):
     name: Name
     caption: CaptionStyle = CaptionStyle()
     hook: HookStyle = HookStyle()
+    watermark: WatermarkStyle = WatermarkStyle()
 
 
 class ManualCandidate(BaseModel):
@@ -316,13 +334,15 @@ def delete_job(job_id: str, store: Store) -> None:
 
 @router.patch("/jobs/{job_id}/candidates/{candidate_id}")
 def update_candidate(
-    job_id: str, candidate_id: str, body: CandidateUpdate, store: Store, settings: AppSettings, presets: Presets
+    job_id: str, candidate_id: str, body: CandidateUpdate, store: Store, settings: AppSettings, presets: Presets, logos: Logos
 ) -> Candidate:
     """Change a Candidate's bounds (snapped to Words), hook text, layout, Style Preset, Style
     Overrides or selected flag, and save it at once. 422 for a range that isn't a usable clip or
     overrides that don't make a valid style; 404 for an unknown Preset; 409 unless the Job is in review."""
     if body.preset_id is not None:
         _preset(presets, body.preset_id)
+    if body.style_overrides is not None:
+        _check_logo(logos, body.style_overrides.watermark.get("logo"))
     change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields})
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
@@ -338,7 +358,13 @@ def update_candidate(
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/preview-plan")
 def candidate_preview_plan(
-    job_id: str, candidate_id: str, store: Store, settings: AppSettings, presets: Presets, body: CandidateUpdate | None = None
+    job_id: str,
+    candidate_id: str,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
     edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
@@ -356,7 +382,7 @@ def candidate_preview_plan(
     change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
     try:
         _, candidate = review.update(candidates, candidate_id, change, episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets)
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
@@ -470,16 +496,19 @@ def list_presets(presets: Presets) -> list[StylePreset]:
 
 
 @router.post("/presets", status_code=201)
-def create_preset(body: PresetBody, presets: Presets) -> StylePreset:
-    return presets.create(body.name, body.caption, body.hook)
+def create_preset(body: PresetBody, presets: Presets, logos: Logos) -> StylePreset:
+    """Save a new Preset. 422 for a Watermark whose Logo isn't one of the Logos."""
+    _check_logo(logos, body.watermark.logo)
+    return presets.create(body.name, body.caption, body.hook, body.watermark)
 
 
 @router.put("/presets/{preset_id}")
-def update_preset(preset_id: str, body: PresetBody, presets: Presets) -> StylePreset:
+def update_preset(preset_id: str, body: PresetBody, presets: Presets, logos: Logos) -> StylePreset:
     """Replace one of the owner's Presets. Candidates using it render in it from now on. 409 for a
-    built-in Preset."""
+    built-in Preset; 422 for a Watermark whose Logo isn't one of the Logos."""
+    _check_logo(logos, body.watermark.logo)
     try:
-        return presets.update(preset_id, body.name, body.caption, body.hook)
+        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark)
     except PresetNotFound:
         raise HTTPException(404, f"No Preset {preset_id}") from None
     except BuiltinPreset:
@@ -495,6 +524,48 @@ def delete_preset(preset_id: str, presets: Presets) -> None:
         raise HTTPException(404, f"No Preset {preset_id}") from None
     except BuiltinPreset:
         raise HTTPException(409, f"Preset {preset_id} is built in and can't be deleted") from None
+
+
+def _check_logo(logos: LogoStore, logo_id: object) -> None:
+    """422 for a Watermark given a Logo that isn't one of the Logos. (One deleted since it was chosen
+    shows nothing, and doesn't stop other edits.)"""
+    if isinstance(logo_id, str) and logos.find(logo_id) is None:
+        raise HTTPException(422, f"Invalid style overrides: watermark.logo: no Logo {logo_id}")
+
+
+@router.get("/logos")
+def list_logos(logos: Logos) -> list[Logo]:
+    """The Logos a Watermark can show, in the order they were uploaded."""
+    return logos.all()
+
+
+@router.post("/logos", status_code=201)
+async def upload_logo(file: UploadFile, logos: Logos) -> Logo:
+    """Keep an uploaded image (a multipart/form-data `file`: PNG, JPEG or WebP, 5 MB at most) as a
+    Logo. 422 for anything else."""
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    try:
+        return logos.add(data, file.filename or "Logo")
+    except BadLogo as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+@router.get("/logos/{logo_id}")
+def logo_file(logo_id: str, logos: Logos) -> FileResponse:
+    """A Logo's PNG, for the preview to draw."""
+    try:
+        return FileResponse(logos.file(logo_id), media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
+    except LogoNotFound:
+        raise HTTPException(404, f"No Logo {logo_id}") from None
+
+
+@router.delete("/logos/{logo_id}", status_code=204)
+def delete_logo(logo_id: str, logos: Logos) -> None:
+    """Delete a Logo. Presets and Candidates that show it show no Watermark from now on."""
+    try:
+        logos.delete(logo_id)
+    except LogoNotFound:
+        raise HTTPException(404, f"No Logo {logo_id}") from None
 
 
 def _preset(presets: PresetStore, preset_id: str) -> StylePreset:

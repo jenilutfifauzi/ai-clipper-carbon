@@ -18,6 +18,7 @@ from app.styles import (
     PresetNotFound,
     PresetStore,
     StyleOverrides,
+    WatermarkStyle,
     resolve,
 )
 from app.transcript import Word
@@ -94,10 +95,10 @@ def test_the_hook_style_sets_its_font_size_colours_box_and_radius():
 
 def test_overrides_replace_fields_of_the_presets_styles_and_are_validated():
     preset = BUILTIN_PRESETS[1]
-    caption, hook = resolve(preset, StyleOverrides(caption={"size": 90, "uppercase": False}, hook={"position": "middle"}))
+    caption, hook, _ = resolve(preset, StyleOverrides(caption={"size": 90, "uppercase": False}, hook={"position": "middle"}))
     assert (caption.size, caption.uppercase, caption.active_colour) == (90, False, preset.caption.active_colour)
     assert (hook.position, hook.box_colour) == ("middle", preset.hook.box_colour)
-    assert resolve(DEFAULT, StyleOverrides()) == (CaptionStyle(), HookStyle())
+    assert resolve(DEFAULT, StyleOverrides()) == (CaptionStyle(), HookStyle(), WatermarkStyle())
     for overrides, message in (
         (StyleOverrides(caption={"size": 10}), "size"),
         (StyleOverrides(caption={"colour": "orange"}), "colour"),
@@ -117,9 +118,9 @@ def test_the_owners_presets_are_kept_after_the_builtin_ones_which_cant_change(tm
     changed = store.update(made.id, "Brand 2", CaptionStyle(size=100), HookStyle())
     assert (changed.id, changed.name, store.get(made.id)) == (made.id, "Brand 2", changed)
     # A Candidate's styles: its Preset's, or Default's once that is deleted.
-    assert store.styles(made.id, StyleOverrides()) == (CaptionStyle(size=100), HookStyle())
+    assert store.styles(made.id, StyleOverrides()) == (CaptionStyle(size=100), HookStyle(), WatermarkStyle())
     store.delete(made.id)
-    assert store.styles(made.id, StyleOverrides(caption={"size": 80})) == (CaptionStyle(size=80), HookStyle())
+    assert store.styles(made.id, StyleOverrides(caption={"size": 80})) == (CaptionStyle(size=80), HookStyle(), WatermarkStyle())
     with pytest.raises(PresetNotFound):
         store.get(made.id)
     for builtin in BUILTIN_PRESETS:
@@ -131,7 +132,7 @@ def test_the_owners_presets_are_kept_after_the_builtin_ones_which_cant_change(tm
 
 def test_every_builtin_presets_styles_are_valid():
     for preset in BUILTIN_PRESETS:
-        assert resolve(preset, StyleOverrides()) == (preset.caption, preset.hook)
+        assert resolve(preset, StyleOverrides()) == (preset.caption, preset.hook, preset.watermark)
     assert isinstance(plan(caption_style=BUILTIN_PRESETS[2].caption).captions[0].area, Box)
 
 

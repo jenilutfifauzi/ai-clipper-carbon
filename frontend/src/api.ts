@@ -182,11 +182,55 @@ export interface HookStyle {
   animation_ms: number;
 }
 
+// Nothing, a line of text, or one of the Logos.
+export type WatermarkKind = "none" | "text" | "logo";
+// A corner, an edge's middle or the middle of the safe area; or custom, centred on (x, y).
+export type WatermarkPosition =
+  | "top_left"
+  | "top"
+  | "top_right"
+  | "left"
+  | "middle"
+  | "right"
+  | "bottom_left"
+  | "bottom"
+  | "bottom_right"
+  | "custom";
+
+// Shown over the whole Clip, under the captions and the hook.
+export interface WatermarkStyle {
+  kind: WatermarkKind;
+  text: string;
+  font: string;
+  colour: string;
+  // A thin black outline around the text.
+  outline: boolean;
+  // The Logo's id.
+  logo: string | null;
+  position: WatermarkPosition;
+  // Its centre in output pixels, for the custom position.
+  x: number;
+  y: number;
+  // How tall it is: the Logo's height, or the text's font size (libass's).
+  size: number;
+  opacity: number;
+}
+
+// An uploaded image a Watermark can show, kept as a PNG of this size.
+export interface Logo {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  created: string;
+}
+
 export interface StylePreset {
   id: string;
   name: string;
   caption: CaptionStyle;
   hook: HookStyle;
+  watermark: WatermarkStyle;
   // Built-in Presets can't be changed or deleted.
   builtin: boolean;
 }
@@ -197,6 +241,7 @@ export type StyleValue = string | number | boolean | null;
 export interface StyleOverrides {
   caption: Partial<Record<keyof CaptionStyle, StyleValue>>;
   hook: Partial<Record<keyof HookStyle, StyleValue>>;
+  watermark: Partial<Record<keyof WatermarkStyle, StyleValue>>;
 }
 
 // The Render Plan (backend/app/planner.py), in output pixels (1080x1920) and seconds into the Clip.
@@ -268,6 +313,16 @@ export interface HookKicker {
   anchor: [number, number];
 }
 
+// The Watermark in `area` for the whole Clip: the text at font `size`, centred in it, or the Logo filling it.
+export interface WatermarkEvent {
+  kind: WatermarkKind;
+  area: Box;
+  opacity: number;
+  text: string;
+  size: number;
+  logo: string | null;
+}
+
 export interface RenderPlan {
   start: number;
   end: number;
@@ -281,6 +336,8 @@ export interface RenderPlan {
   hook_style: HookStyle;
   width: number;
   height: number;
+  watermark: WatermarkEvent | null;
+  watermark_style: WatermarkStyle;
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its Word Edit.
@@ -301,6 +358,7 @@ export interface NewPreset {
   name: string;
   caption?: Partial<CaptionStyle>;
   hook?: Partial<HookStyle>;
+  watermark?: Partial<WatermarkStyle>;
 }
 
 // A bundled font and its measures in its units.
@@ -394,6 +452,8 @@ export interface RenderedClip {
   hook_style: HookStyle | null;
   // "" in a Clip rendered before Kickers.
   hook_kicker: string;
+  // null in a Clip rendered before Watermarks.
+  watermark_style: WatermarkStyle | null;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -444,7 +504,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    // A FormData body sets its own multipart type, with its boundary.
+    headers: typeof init?.body === "string" ? { "Content-Type": "application/json" } : undefined,
   });
   if (!response.ok) {
     throw new ApiError(response.status, await errorMessage(response));
@@ -503,9 +564,18 @@ export const api = {
   updatePreset: (id: string, preset: NewPreset) =>
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
+  listLogos: () => request<Logo[]>("/logos"),
+  // A PNG, JPEG or WebP image of 5 MB at most; rejects with the backend's message otherwise.
+  uploadLogo: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<Logo>("/logos", { method: "POST", body: form });
+  },
+  deleteLogo: (id: string) => request<void>(`/logos/${id}`, { method: "DELETE" }),
 };
 
 export const fontUrl = (id: string) => `/api/fonts/${encodeURIComponent(id)}`;
+export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
 
 // A file from the Job's directory (such as "clips/<id>.mp4"), served with range support for the
 // player. `version` tells a file rendered again from the one the browser has cached.

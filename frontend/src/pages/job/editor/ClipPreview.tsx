@@ -1,9 +1,20 @@
 import { Pause, Play, SkipForward } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { CaptionEvent, FontInfo, HookEvent, HookStyle, Panel, PreviewPlan, RenderPlan } from "../../../api";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  logoUrl,
+  type Box,
+  type CaptionEvent,
+  type FontInfo,
+  type HookEvent,
+  type HookStyle,
+  type Panel,
+  type PreviewPlan,
+  type RenderPlan,
+  type WatermarkEvent,
+} from "../../../api";
 import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
-import { formatPrecise } from "../../../format";
+import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
@@ -25,6 +36,8 @@ const HIGHLIGHT_PAD_Y = 0.08;
 const HIGHLIGHT_RADIUS = 0.12;
 const BLUR_SIGMA = 40;
 const BLUR_BRIGHTNESS = 0.9;
+// How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
+const NUDGE_PX = 8;
 // How much of the ending "Play ending" plays.
 const ENDING_SECS = 3;
 // A follower video further than this from the master is moved back in step.
@@ -38,17 +51,21 @@ const percent = (value: number) => `${value * 100}%`;
  * where, when and how large the render will draw them. Drawn in the output's 1080x1920 pixels and
  * scaled to fit. Two videos play the Source in step, one per panel (Split's two, or Blur's
  * background and shot); the first is the master, which `playback` drives and which is heard.
+ * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
+ * centre, in output pixels.
  */
 export function ClipPreview({
   src,
   preview,
   fonts,
   playback,
+  onWatermarkMove,
 }: {
   src: string;
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
   playback: Playback;
+  onWatermarkMove?: (x: number, y: number) => void;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const master = useRef<HTMLVideoElement>(null);
@@ -87,6 +104,7 @@ export function ClipPreview({
   const sceneIndex = usePlayback(playback, (time) => (plan ? sceneAt(plan, time) : 0));
   const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
+  const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
 
   return (
     <div className="flex flex-col gap-3">
@@ -108,13 +126,160 @@ export function ClipPreview({
         ))}
         {plan && fonts && (
           <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
+            {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
             <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} />
             {plan.hook && <Hook plan={plan} hook={plan.hook} font={fontById.get(plan.hook_style.font)} playback={playback} />}
           </svg>
         )}
+        {plan && watermark.event && onWatermarkMove && (
+          <div
+            role="button"
+            tabIndex={0}
+            aria-roledescription="movable watermark"
+            aria-label="Watermark: drag to move it, or use the arrow keys"
+            {...watermark.handlers}
+            className={cx(
+              "absolute cursor-move touch-none rounded-[4px] outline-1 outline-white/70 outline-dashed",
+              "hover:outline-white focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-solid",
+              watermark.dragging && "cursor-grabbing outline-white",
+            )}
+            style={{
+              left: percent(watermark.event.area.x / plan.width),
+              top: percent(watermark.event.area.y / plan.height),
+              width: percent(watermark.event.area.width / plan.width),
+              height: percent(watermark.event.area.height / plan.height),
+            }}
+          />
+        )}
       </div>
       <Transport playback={playback} />
     </div>
+  );
+}
+
+/**
+ * The Watermark as drawn, and the pointer and key handlers that move it. While it is dragged, and
+ * until a plan of another Watermark Style comes (the one it was moved to, or any other edit), it is
+ * drawn where it is being put: the plan comes back from the backend only after the draft changes.
+ */
+function useWatermarkDrag(
+  plan: RenderPlan | null,
+  stage: React.RefObject<HTMLDivElement | null>,
+  onMove: ((x: number, y: number) => void) | undefined,
+) {
+  const event = plan?.watermark ?? null;
+  // The centre it is put at, and the plan it was moved in (it shows while that is the plan).
+  const [held, setHeld] = useState<{ x: number; y: number; from: string } | null>(null);
+  const [drag, setDrag] = useState<{ pointer: number; dx: number; dy: number; moved: boolean } | null>(null);
+  const from = event && plan ? `${JSON.stringify(plan.watermark_style)}@${boxKey(event.area)}` : "";
+  const centre = held && held.from === from ? held : event && { x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 };
+
+  function place(x: number, y: number): { x: number; y: number } {
+    if (!event || !plan) return { x, y };
+    const { width, height } = event.area;
+    return {
+      x: Math.round(Math.min(Math.max(x, width / 2), plan.width - width / 2)),
+      y: Math.round(Math.min(Math.max(y, height / 2), plan.height - height / 2)),
+    };
+  }
+
+  // Where the pointer is, in output pixels.
+  function at(pointer: PointerEvent): { x: number; y: number } | null {
+    const rect = stage.current?.getBoundingClientRect();
+    if (!rect || !plan) return null;
+    return { x: ((pointer.clientX - rect.left) / rect.width) * plan.width, y: ((pointer.clientY - rect.top) / rect.height) * plan.height };
+  }
+
+  function put(x: number, y: number) {
+    const placed = place(x, y);
+    setHeld({ ...placed, from });
+    onMove?.(placed.x, placed.y);
+  }
+
+  const handlers = {
+    onPointerDown: (pointer: PointerEvent<HTMLDivElement>) => {
+      const point = at(pointer);
+      if (!point || !centre || pointer.button !== 0) return;
+      pointer.preventDefault();
+      pointer.currentTarget.setPointerCapture(pointer.pointerId);
+      // Held by where it was grabbed, so it doesn't jump to centre on the pointer.
+      setDrag({ pointer: pointer.pointerId, dx: centre.x - point.x, dy: centre.y - point.y, moved: false });
+    },
+    onPointerMove: (pointer: PointerEvent<HTMLDivElement>) => {
+      const point = at(pointer);
+      if (!drag || pointer.pointerId !== drag.pointer || !point) return;
+      if (!drag.moved) setDrag({ ...drag, moved: true });
+      setHeld({ ...place(point.x + drag.dx, point.y + drag.dy), from });
+    },
+    onPointerUp: (pointer: PointerEvent<HTMLDivElement>) => {
+      if (!drag || pointer.pointerId !== drag.pointer) return;
+      setDrag(null);
+      // A click that doesn't move it leaves it in its place.
+      if (drag.moved && centre) put(centre.x, centre.y);
+    },
+    onPointerCancel: () => {
+      setDrag(null);
+      setHeld(null);
+    },
+    onKeyDown: (key: KeyboardEvent<HTMLDivElement>) => {
+      const step = key.shiftKey ? NUDGE_PX * 5 : NUDGE_PX;
+      const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[key.key];
+      if (!delta || !centre) return;
+      key.preventDefault();
+      put(centre.x + delta[0], centre.y + delta[1]);
+    },
+  };
+
+  const shown: WatermarkEvent | null =
+    event && centre
+      ? {
+          ...event,
+          area: { ...event.area, x: Math.round(centre.x - event.area.width / 2), y: Math.round(centre.y - event.area.height / 2) },
+        }
+      : null;
+  return { event: shown, handlers, dragging: drag !== null };
+}
+
+const boxKey = (box: Box) => `${box.x},${box.y},${box.width},${box.height}`;
+
+/** The Watermark, under the captions and the hook: the Logo filling its area, or its text centred in it. */
+function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEvent; font: FontInfo | undefined }) {
+  const { area } = event;
+  if (event.kind === "logo" && event.logo) {
+    return (
+      <image
+        href={logoUrl(event.logo)}
+        x={area.x}
+        y={area.y}
+        width={area.width}
+        height={area.height}
+        opacity={event.opacity}
+        preserveAspectRatio="none"
+      />
+    );
+  }
+  if (!font) return null;
+  const style = plan.watermark_style;
+  // As the renderer's: centred on its position, with an outline of a twentieth of its size.
+  const baseline = area.y + area.height / 2 - event.size / 2 + (font.ascent / font.units) * event.size;
+  const outline = style.outline ? Math.max(1, Math.round(style.size / 20)) : 0;
+  return (
+    <text
+      x={area.x + area.width / 2}
+      y={baseline}
+      textAnchor="middle"
+      fontFamily={fontFamily(font.id)}
+      fontSize={cssFontSize(font, event.size)}
+      fill={style.colour}
+      stroke={outline ? "#000000" : undefined}
+      strokeWidth={2 * outline}
+      strokeLinejoin="round"
+      paintOrder="stroke"
+      opacity={event.opacity}
+      style={{ whiteSpace: "pre" }}
+    >
+      {event.text}
+    </text>
   );
 }
 
