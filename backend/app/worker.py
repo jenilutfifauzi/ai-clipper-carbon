@@ -75,6 +75,11 @@ class Worker:
         if self._renders.request(job_id, candidate_ids):
             self.submit(job_id)
 
+    def prepare(self, job_id: str, candidate_id: str) -> None:
+        """Queue the Candidate to be prepared for the editor (see Renders.prepare), in the Job's turn."""
+        if self._renders.prepare(job_id, candidate_id):
+            self.submit(job_id)
+
     def stop(self, timeout: float = 5) -> None:
         """Stop after the running Job's stage, cutting a render short; Jobs still queued, waiting for
         quota or rendering are taken back at the next start."""

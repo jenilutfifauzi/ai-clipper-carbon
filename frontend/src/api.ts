@@ -76,6 +76,8 @@ export interface Job {
   source: Source | null;
   prompt_version: string | null;
   history: { status: JobStatus; at: string }[];
+  // Candidates queued to be prepared for the clip editor.
+  preparing: string[];
 }
 
 export interface Word {
@@ -153,6 +155,81 @@ export type StyleValue = string | number | boolean | null;
 export interface StyleOverrides {
   caption: Partial<Record<keyof CaptionStyle, StyleValue>>;
   hook: Partial<Record<keyof HookStyle, StyleValue>>;
+}
+
+// The Render Plan (backend/app/planner.py), in output pixels (1080x1920) and seconds into the Clip.
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CropPoint {
+  at: number;
+  x: number;
+  y: number;
+}
+
+export interface Panel {
+  area: Box;
+  // The crop's size in Source pixels; `path` holds where it is from each change point on.
+  crop_width: number;
+  crop_height: number;
+  path: CropPoint[];
+  blur: boolean;
+}
+
+export type SceneLayout = "track" | "split" | "blur" | "passthrough";
+
+export interface ScenePlan {
+  start: number;
+  end: number;
+  layout: SceneLayout;
+  panels: Panel[];
+}
+
+export interface CaptionEvent {
+  text: string;
+  start: number;
+  end: number;
+  // Each highlighted from its start to its end.
+  words: Word[];
+  area: Box;
+  size: number;
+}
+
+export interface HookEvent {
+  lines: string[];
+  start: number;
+  end: number;
+  area: Box;
+  size: number;
+}
+
+export interface RenderPlan {
+  start: number;
+  end: number;
+  source_width: number;
+  source_height: number;
+  fps: number;
+  scenes: ScenePlan[];
+  captions: CaptionEvent[];
+  hook: HookEvent | null;
+  caption_style: CaptionStyle;
+  hook_style: HookStyle;
+  width: number;
+  height: number;
+}
+
+export interface PreviewPlan {
+  plan: RenderPlan;
+  // The Words the captions are made of, in seconds into the Clip.
+  words: Word[];
+  // "clip": transcribed for the Clip; "transcript": the episode's, until it is.
+  words_source: "clip" | "transcript";
+  // False while the Clip is planned as one Scene, unanalysed.
+  analysed: boolean;
 }
 
 export interface NewPreset {
@@ -333,6 +410,15 @@ export const api = {
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   hookFit: (text: string, signal?: AbortSignal) => request<HookFit>(`/hook?text=${encodeURIComponent(text)}`, { signal }),
   listFonts: () => request<FontInfo[]>("/fonts"),
+  // The Candidate's Render Plan, or that of an unsaved draft of its edits.
+  previewPlan: (jobId: string, id: string, draft?: CandidateChange, signal?: AbortSignal) =>
+    request<PreviewPlan>(`/jobs/${jobId}/candidates/${id}/preview-plan`, {
+      method: "POST",
+      body: draft ? JSON.stringify(draft) : undefined,
+      signal,
+    }),
+  prepareCandidate: (jobId: string, id: string) =>
+    request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
   listPresets: () => request<StylePreset[]>("/presets"),
   createPreset: (preset: NewPreset) => request<StylePreset>("/presets", { method: "POST", body: JSON.stringify(preset) }),
   updatePreset: (id: string, preset: NewPreset) =>

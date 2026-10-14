@@ -14,6 +14,7 @@ from app import review
 from app.candidates import Candidate, Layout
 from app.clips import Clip
 from app.config import Settings
+from app.editor import PreviewPlan, preview_plan
 from app.events import job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
@@ -281,6 +282,52 @@ def update_candidate(
         return candidates, candidate
 
     return _review(store, settings, job_id, update)
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/preview-plan")
+def candidate_preview_plan(
+    job_id: str, candidate_id: str, store: Store, settings: AppSettings, presets: Presets, body: CandidateUpdate | None = None
+) -> PreviewPlan:
+    """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
+    edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
+    edit; 409 for a Job without Candidates."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    transcript, candidates = store.load_transcript(job_id), store.load_candidates(job_id)
+    if job.source is None or transcript is None or candidates is None:
+        raise HTTPException(409, f"Job {job_id} has no Candidates yet")
+    if body is not None and body.preset_id is not None:
+        _preset(presets, body.preset_id)
+    episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
+    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
+    try:
+        _, candidate = review.update(candidates, candidate_id, change, episode)
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets)
+    except CandidateNotFound as exc:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
+    except InvalidEdit as exc:
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)
+def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobWorker) -> Job:
+    """Queue the Candidate to be prepared for the editor: its caption Words transcribed and its range
+    analysed, in the render queue, so that its Preview Plan shows the Clip's own captions and Scenes.
+    The Job is `rendering` meanwhile. Nothing is queued when both are saved already. 409 unless the
+    Job is in review or rendering."""
+    try:
+        worker.prepare(job_id, candidate_id)
+        return store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except CandidateNotFound as exc:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: Candidates can be prepared once it is in review") from None
 
 
 @router.get("/hook")

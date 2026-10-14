@@ -773,3 +773,103 @@ def test_captions_and_the_hook_are_burned_in_the_candidates_preset_with_its_over
     assert len(rows) > 5000 and plan["hook"]["area"]["y"] <= rows.min() and rows.max() < 1536
     # No orange highlight in the captions' band (the yellow box's antialiased edge can come near orange).
     assert len(pixels(frame[400:700], ORANGE)[0]) == 0
+
+
+# The clip editor's Preview Plan and preparation (clip-editor ticket 03).
+
+
+def preview(client, job: dict, candidate: dict, draft: dict | None = None) -> dict:
+    response = client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan", json=draft)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_preview_plan_is_the_plan_the_render_makes(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = patch(client, job, add(client, job, "Podcast", "ya"), hook_text="Halo", preset_id="yellow-pop")
+    start = candidate["start"]
+
+    # Before a render: the episode Transcript's Words, one Scene, the captions and the hook planned.
+    before = preview(client, job, candidate)
+    assert (before["words_source"], before["analysed"]) == ("transcript", False)
+    episode = [w for w in job["transcript"]["words"] if candidate["start"] < (w["start"] + w["end"]) / 2 < candidate["end"]]
+    assert [(w["text"], w["start"]) for w in before["words"]] == [
+        (w["text"], pytest.approx(w["start"] - start, abs=1e-3)) for w in episode
+    ]
+    assert [w["text"] for w in episode][0] == "Podcast"
+    assert len(before["plan"]["scenes"]) == 1 and before["plan"]["captions"]
+    assert before["plan"]["hook"]["lines"] == ["Halo"] and before["plan"]["caption_style"]["font"] == "anton"
+
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    after = preview(client, job, candidate)
+    assert (after["words_source"], after["analysed"]) == ("clip", True)
+    # The Clip's own Words (in it, not its margins), and exactly the plan its render saved.
+    assert [word["text"] for word in after["words"]] == ["podcast", "ini", "seru", "banget,", "ya!"]
+    assert after["words"][0]["start"] == pytest.approx(4.0 - start, abs=1e-3)
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    assert after["plan"] == json.loads((job_dir / clip["output"]["plan"]).read_text())
+
+
+def test_a_draft_is_planned_without_being_saved(client, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    draft = preview(client, job, candidate, {
+        "hook_text": "Kenapa?", "style_overrides": {"caption": {"position": "top"}, "hook": {"position": "middle"}},
+    })
+    assert draft["plan"]["hook"]["lines"] == ["Kenapa?"]
+    assert {event["area"]["y"] for event in draft["plan"]["captions"]} == {430}
+    assert preview(client, job, candidate)["plan"]["hook"] is None
+    [saved] = client.get(f"/api/jobs/{job['id']}").json()["candidates"]
+    assert (saved["hook_text"], saved["style_overrides"]) == ("", {"caption": {}, "hook": {}})
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan"
+    assert client.post(url, json={"style_overrides": {"caption": {"size": 1}}}).status_code == 422
+    assert client.post(url, json={"start": 9999}).status_code == 422
+    assert client.post(url, json={"preset_id": "nope"}).status_code == 404
+    assert client.post(f"/api/jobs/{job['id']}/candidates/nope/preview-plan").status_code == 404
+
+
+def test_preparing_a_candidate_transcribes_and_analyses_it_without_a_render(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/prepare"
+    response = client.post(url)
+    assert response.status_code == 202, response.text
+    done = rendered(client, job)
+    assert (done["preparing"], done["clips"]) == ([], [])
+    assert "rendering" in [change["status"] for change in done["history"]]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    assert len(list((job_dir / "words").iterdir())) == len(list((job_dir / "analysis").iterdir())) == 1
+    assert not (job_dir / "clips").exists() or not list((job_dir / "clips").iterdir())
+    prepared = preview(client, job, candidate)
+    assert (prepared["words_source"], prepared["analysed"]) == ("clip", True)
+
+    # Prepared already: nothing is queued, and the Job stays in review.
+    assert client.post(url).json()["status"] == "review"
+    assert len(transcriber.calls) == 1
+    # A render then uses what was prepared.
+    render(client, job)
+    rendered(client, job)
+    assert len(transcriber.calls) == 1
+
+    assert client.post(f"/api/jobs/{job['id']}/candidates/nope/prepare").status_code == 404
+
+
+def test_without_captions_the_preview_has_none_but_still_gives_the_words(client, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = wait_for(client, create_job(client, captions=False)["id"], "review")
+    candidate = add(client, job, "Podcast", "ya")
+    plan = preview(client, job, candidate)
+    assert plan["plan"]["captions"] == [] and [word["text"] for word in plan["words"]][0] == "Podcast"
+    # Preparing analyses it without transcribing.
+    client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/prepare")
+    rendered(client, job)
+    assert transcriber.calls == [] and preview(client, job, candidate)["analysed"] is True

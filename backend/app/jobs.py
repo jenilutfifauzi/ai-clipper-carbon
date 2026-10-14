@@ -152,6 +152,9 @@ class Job:
     # The version of the Selection prompts that produced the Job's Candidates.
     prompt_version: str | None = None
     history: list[Transition] = field(default_factory=list)
+    # Candidates queued to be prepared for the clip editor (their caption Words transcribed and their
+    # range analysed, without an encode), by the render queue before its Clips.
+    preparing: list[str] = field(default_factory=list)
 
 
 # Called with a Job's id and its new state each time the store saves it, or None once it's deleted.
