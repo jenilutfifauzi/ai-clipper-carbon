@@ -19,6 +19,7 @@ import { formatPrecise } from "../../format";
 import { candidateName } from "./CandidateList";
 import { ClipPreview } from "./editor/ClipPreview";
 import { Playback } from "./editor/playback";
+import { StylePanel, type StyleDraft } from "./editor/StylePanel";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { HookEditor } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
@@ -87,6 +88,7 @@ export function CandidateEditor({
   const [view, setView] = useState<"clip" | "source">("clip");
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
+  const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
   const [preparing, setPreparing] = useState<string | null>(null);
   const playback = useMemo(() => new Playback(), []);
   playback.setRange(candidate.start, candidate.end);
@@ -94,7 +96,10 @@ export function CandidateEditor({
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
   }, []);
-  useEffect(() => setHookDraft(null), [candidate.id]);
+  useEffect(() => {
+    setHookDraft(null);
+    setStyleDraft(null);
+  }, [candidate.id]);
   // A preparation asked for here is over once the Job is back in review.
   useEffect(() => {
     if (progress.status !== "rendering") setPreparing(null);
@@ -103,8 +108,8 @@ export function CandidateEditor({
   const draft: CandidateChange = {
     hook_text: hookDraft ?? candidate.hook_text,
     layout: candidate.layout,
-    preset_id: candidate.preset_id,
-    style_overrides: candidate.style_overrides,
+    preset_id: styleDraft?.preset_id ?? candidate.preset_id,
+    style_overrides: styleDraft?.style_overrides ?? candidate.style_overrides,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -289,6 +294,19 @@ export function CandidateEditor({
         />
         <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
       </div>
+
+      <section aria-labelledby="style-heading" className="flex flex-col gap-3">
+        <h4 id="style-heading" className="font-semibold">
+          Style
+        </h4>
+        <StylePanel
+          key={candidate.id}
+          candidate={candidate}
+          fonts={fonts}
+          onDraft={setStyleDraft}
+          onSave={(change) => void onSave(change)}
+        />
+      </section>
 
       {candidate.origin === "ai" && <Analysis candidate={candidate} />}
     </div>
