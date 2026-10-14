@@ -5,7 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, LayoutOverride, MusicClip, Origin, TextLayer, WordEdit, manual_candidate
+from app.candidates import Candidate, Layout, LayoutOverride, MusicClip, Origin, Segment, TextLayer, WordEdit, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -44,6 +44,8 @@ class CandidateChange:
     text_layers: list[TextLayer] | None = None
     music: list[MusicClip] | None = None
     source_volume: float | None = None
+    # Snapped to Words; one Segment is stored as `start` and `end`.
+    segments: list[Segment] | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,18 @@ class Episode:
             raise InvalidEdit(f"A clip can last at most {longest:g} s; this one would last {snapped[1] - snapped[0]:.0f} s")
         return snapped
 
+    def segments(self, segments: list[Segment]) -> list[Segment]:
+        """The Segments with their ends snapped to Words (as `bounds` snaps a Clip's); InvalidEdit
+        for none, for one that isn't a usable piece, or for more than the longest clip in all."""
+        if not segments:
+            raise InvalidEdit("A clip needs at least one Segment")
+        snapped = [Segment(segment.id, *self.bounds(segment.start, segment.end)) for segment in segments]
+        longest = max(MAX_CLIP_SECS, self.max_secs)
+        total = sum(segment.end - segment.start for segment in snapped)
+        if total > longest:
+            raise InvalidEdit(f"A clip can last at most {longest:g} s; its Segments would last {total:.0f} s")
+        return snapped
+
 
 def update(
     candidates: list[Candidate], candidate_id: str, change: CandidateChange, episode: Episode
@@ -77,9 +91,18 @@ def update(
     style marks it edited."""
     i = _index(candidates, candidate_id)
     old = candidates[i]
-    start, end = old.start, old.end
+    start, end, segments = old.start, old.end, old.segments
     if change.start is not None or change.end is not None:
+        if old.segments and change.segments is None:
+            raise InvalidEdit("This clip is cut into Segments: change them in the Advanced Edit")
         start, end = episode.bounds(_pick(change.start, old.start), _pick(change.end, old.end))
+    if change.segments is not None:
+        _check_ids("Segment", [segment.id for segment in change.segments])
+        segments = episode.segments(change.segments)
+        # The hull of what they show; one Segment is a plain range.
+        start, end = min(s.start for s in segments), max(s.end for s in segments)
+        if len(segments) == 1:
+            segments = []
     if change.text_layers is not None:
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
     if change.music is not None:
@@ -101,6 +124,7 @@ def update(
         text_layers=_pick(change.text_layers, old.text_layers),
         music=_pick(change.music, old.music),
         source_volume=_pick(change.source_volume, old.source_volume),
+        segments=segments,
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -147,7 +171,7 @@ def _look(candidate: Candidate) -> tuple:
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.music,
-        candidate.source_volume,
+        candidate.source_volume, candidate.segments,
     )
 
 

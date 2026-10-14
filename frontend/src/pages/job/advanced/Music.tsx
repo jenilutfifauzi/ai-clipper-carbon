@@ -92,16 +92,3 @@ export function MusicFields({
     </div>
   );
 }
-
-/** The Clip's own sound, under its music. */
-export function SourceSoundFields({ volume, onChange }: { volume: number; onChange: (volume: number) => void }) {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h2 className="font-semibold">Video</h2>
-        <p className="text-sm text-pretty text-muted">The clip from the episode. Its framing and trim are changed in the clip editor.</p>
-      </div>
-      <Slider label="Original sound" value={volume} min={0} max={2} step={0.05} format={percent} onChange={onChange} />
-    </div>
-  );
-}

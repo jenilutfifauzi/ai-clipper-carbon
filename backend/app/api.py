@@ -11,7 +11,18 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
-from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Layout, LayoutOverride, MusicClip, TextLayer, Volume, WordEdit
+from app.candidates import (
+    HOOK_MAX_CHARS,
+    KICKER_MAX_CHARS,
+    Candidate,
+    Layout,
+    LayoutOverride,
+    MusicClip,
+    Segment,
+    TextLayer,
+    Volume,
+    WordEdit,
+)
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
@@ -56,9 +67,10 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
-# The most Text Layers and Music Clips a Candidate holds.
+# The most Text Layers, Music Clips and Segments a Candidate holds.
 TEXT_LAYERS_MAX = 50
 MUSIC_MAX = 50
+SEGMENTS_MAX = 100
 
 _OPTIONS = TypeAdapter(JobOptions)
 
@@ -141,6 +153,8 @@ class CandidateUpdate(BaseModel):
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
+    # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
+    segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX)] | None = None
 
 
 class PresetBody(BaseModel):
@@ -304,7 +318,8 @@ def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, setti
     if job.source is None:
         raise HTTPException(404, f"Job {job.id} has no Source")
     job_dir = store.job_dir(job.id)
-    at = candidate.start + min(settings.render.poster_secs, (candidate.end - candidate.start) / 2)
+    first = candidate.pieces()[0]
+    at = first.start + min(settings.render.poster_secs, (first.end - first.start) / 2)
     still = job_dir / STILLS_DIR / f"{round(at * 1000)}.jpg"
     if not still.is_file():
         try:

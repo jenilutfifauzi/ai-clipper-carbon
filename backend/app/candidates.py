@@ -132,11 +132,27 @@ class MusicClip:
 
 
 @dataclass(frozen=True)
+class Segment:
+    """A piece of the Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source from `start`
+    to `end` on its timeline, snapped to Words as a Clip's edges are. A Clip's Segments play in order,
+    back to back. `id` names it in the editor."""
+
+    id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
+    start: Annotated[FiniteFloat, Field(ge=0)]
+    end: Annotated[FiniteFloat, Field(ge=0)]
+
+
+# The id of a Clip's one Segment when it isn't cut.
+WHOLE = "main"
+
+
+@dataclass(frozen=True)
 class Candidate:
     # Set once, when Selection (or the owner, for a manual one) creates the Candidate; review edits
     # address it by this.
     id: str
-    # On the Source's timeline, from just before a Word's start to just after a Word's end.
+    # On the Source's timeline, from just before a Word's start to just after a Word's end. With
+    # several Segments, the hull of the Source they show.
     start: float
     end: float
     # The AI's assessment; None for a manual Candidate.
@@ -176,6 +192,17 @@ class Candidate:
     # Its Music Clips, mixed under its own sound, which is at `source_volume`.
     music: list[MusicClip] = field(default_factory=list)
     source_volume: Volume = 1.0
+    # Its Main Track, in order; none (the default) for one Segment from `start` to `end`.
+    segments: list[Segment] = field(default_factory=list)
+
+    def pieces(self) -> list[Segment]:
+        """Its Main Track: its Segments, or the one from `start` to `end`."""
+        return self.segments or [Segment(WHOLE, self.start, self.end)]
+
+    @property
+    def duration(self) -> float:
+        """How long its Clip is."""
+        return round(sum(piece.end - piece.start for piece in self.pieces()), 3)
 
     def media_ids(self) -> set[str]:
         """The Media Library items it uses."""

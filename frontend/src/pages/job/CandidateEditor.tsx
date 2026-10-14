@@ -21,7 +21,7 @@ import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { candidateDraft } from "./editor/draft";
-import { Playback } from "./editor/playback";
+import { Playback, piecesFrom } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
 import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
@@ -124,7 +124,9 @@ export function CandidateEditor({
   );
   const [preparing, setPreparing] = useState<string | null>(null);
   const playback = useMemo(() => new Playback(), []);
-  playback.setRange(candidate.start, candidate.end);
+  // Cut into Segments in the Advanced Edit: the trim and the Source-time timeline give way to it.
+  const cut = candidate.segments.length > 0;
+  const advanced = `/jobs/${job.id}/candidates/${candidate.id}/advanced`;
 
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
@@ -158,12 +160,14 @@ export function CandidateEditor({
     hook_secs: timing.hook_secs,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
+  if (cut) playback.setPieces(preview?.plan.segments.length ? preview.plan.segments : piecesFrom(candidate.segments));
+  else playback.setRange(candidate.start, candidate.end);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const words = transcript.words;
   const duration = job.source?.metadata.duration ?? Infinity;
-  const length = candidate.end - candidate.start;
+  const length = cut ? playback.duration : candidate.end - candidate.start;
   const { min_secs, max_secs } = job.options;
   const name = candidateName(candidate, index);
 
@@ -215,7 +219,7 @@ export function CandidateEditor({
             <span className="text-muted tabular-nums">#{index + 1}</span> {name}
           </h3>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <Link to={`/jobs/${job.id}/candidates/${candidate.id}/advanced`} className={buttonClass("secondary", "sm")}>
+            <Link to={advanced} className={buttonClass("secondary", "sm")}>
               <SlidersHorizontal aria-hidden size={16} />
               Edit Advanced
             </Link>
@@ -225,7 +229,8 @@ export function CandidateEditor({
           </div>
         </div>
         <p className="text-sm text-muted tabular-nums">
-          {formatPrecise(candidate.start)} – {formatPrecise(candidate.end)} · {length.toFixed(1)} s
+          {cut ? `${candidate.segments.length} pieces of the episode` : `${formatPrecise(candidate.start)} – ${formatPrecise(candidate.end)}`} ·{" "}
+          {length.toFixed(1)} s
           {candidate.predicted_score !== null && ` · score ${candidate.predicted_score}`}
           {candidate.origin === "manual" && " · added by hand"}
         </p>
@@ -242,8 +247,10 @@ export function CandidateEditor({
           {job.source && (
             <section aria-label="Preview" className="flex flex-col gap-3">
               {/* The legend is for screen readers only, so this bar lines up with the editor's tabs. */}
-              <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs [&>legend]:sr-only" />
-              {view === "clip" ? (
+              {!cut && (
+                <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs [&>legend]:sr-only" />
+              )}
+              {view === "clip" || cut ? (
                 <ClipPreview
                   src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
                   preview={preview}
@@ -263,7 +270,7 @@ export function CandidateEditor({
                   end={candidate.end}
                 />
               )}
-              {view === "clip" && (
+              {(view === "clip" || cut) && (
                 <PreviewNotes
                   wordsFromTranscript={preview?.words_source === "transcript" && job.options.captions}
                   unanalysed={preview?.analysed === false}
@@ -288,7 +295,6 @@ export function CandidateEditor({
                 <CaptionTextEditor
                   key={candidate.id}
                   preview={preview}
-                  clipStart={candidate.start}
                   edits={candidate.word_edits}
                   playback={playback}
                   focus={captionFocus}
@@ -384,72 +390,77 @@ export function CandidateEditor({
                   />
                   <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
                 </div>
-                <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
-                  <h4 id="picker-heading" className="font-semibold">
-                    Transcript
-                  </h4>
-                  <Segmented
-                    legend="Clicking a word sets"
-                    options={MODES}
-                    value={mode}
-                    onChange={(value) => {
-                      setMode(value);
-                      setNotice(null);
-                      if (value !== "new") setPending((old) => (old && old.last === null ? null : old));
-                    }}
-                    className="max-w-sm"
-                  />
-                  <p className="text-sm text-muted">{MODE_HINTS[mode]}</p>
-                  <TranscriptPicker
-                    key={candidate.id}
-                    words={words}
-                    segments={transcript.segments}
-                    start={candidate.start}
-                    end={candidate.end}
-                    pending={pending}
-                    onPick={pick}
-                    onRange={selectRange}
-                  />
-                  <div aria-live="polite" className="flex flex-col gap-2 empty:hidden">
-                    {notice && <p className="text-sm text-accent-text">{notice}</p>}
-                    {pending && (
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-dashed border-waiting bg-waiting-surface p-3">
-                        <p className="text-sm">
-                          {pendingRange ? (
-                            <>
-                              New clip {formatPrecise(pendingRange.start)} – {formatPrecise(pendingRange.end)} ·{" "}
-                              {(pendingRange.end - pendingRange.start).toFixed(1)} s
-                            </>
-                          ) : (
-                            <>New clip from {formatPrecise(words[pending.first].start)}: now click its last word.</>
-                          )}
-                        </p>
-                        <div className="ml-auto flex gap-2">
-                          <Button variant="ghost" onClick={() => setPending(null)} size="sm">
-                            <X aria-hidden size={16} />
-                            Cancel
-                          </Button>
-                          <Button
-                            variant="primary"
-                            onClick={addClip}
-                            disabled={!pendingRange || adding}
-                            size="sm"
-                          >
-                            <Plus aria-hidden size={16} />
-                            {adding ? "Adding…" : "Add manual clip"}
-                          </Button>
+                {cut ? (
+                  <CutNote count={candidate.segments.length} to={advanced} />
+                ) : (
+                  <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
+                    <h4 id="picker-heading" className="font-semibold">
+                      Transcript
+                    </h4>
+                    <Segmented
+                      legend="Clicking a word sets"
+                      options={MODES}
+                      value={mode}
+                      onChange={(value) => {
+                        setMode(value);
+                        setNotice(null);
+                        if (value !== "new") setPending((old) => (old && old.last === null ? null : old));
+                      }}
+                      className="max-w-sm"
+                    />
+                    <p className="text-sm text-muted">{MODE_HINTS[mode]}</p>
+                    <TranscriptPicker
+                      key={candidate.id}
+                      words={words}
+                      segments={transcript.segments}
+                      start={candidate.start}
+                      end={candidate.end}
+                      pending={pending}
+                      onPick={pick}
+                      onRange={selectRange}
+                    />
+                    <div aria-live="polite" className="flex flex-col gap-2 empty:hidden">
+                      {notice && <p className="text-sm text-accent-text">{notice}</p>}
+                      {pending && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-dashed border-waiting bg-waiting-surface p-3">
+                          <p className="text-sm">
+                            {pendingRange ? (
+                              <>
+                                New clip {formatPrecise(pendingRange.start)} – {formatPrecise(pendingRange.end)} ·{" "}
+                                {(pendingRange.end - pendingRange.start).toFixed(1)} s
+                              </>
+                            ) : (
+                              <>New clip from {formatPrecise(words[pending.first].start)}: now click its last word.</>
+                            )}
+                          </p>
+                          <div className="ml-auto flex gap-2">
+                            <Button variant="ghost" onClick={() => setPending(null)} size="sm">
+                              <X aria-hidden size={16} />
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="primary"
+                              onClick={addClip}
+                              disabled={!pendingRange || adding}
+                              size="sm"
+                            >
+                              <Plus aria-hidden size={16} />
+                              {adding ? "Adding…" : "Add manual clip"}
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                </section>
+                      )}
+                    </div>
+                  </section>
+                )}
               </>
             )}
           </div>
         </div>
       </div>
 
-      {job.source && (
+      {job.source && cut && <CutNote count={candidate.segments.length} to={advanced} />}
+      {job.source && !cut && (
         <Timeline
           words={words}
           range={range}
@@ -481,7 +492,7 @@ export function CandidateEditor({
         />
       )}
 
-      {preview && scene !== null && (
+      {preview && scene !== null && !cut && (
         <SceneLayoutPicker
           plan={preview.plan}
           index={scene}
@@ -564,6 +575,21 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void })
           {tab.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// A Clip cut into Segments is trimmed and timed in the Advanced Edit.
+function CutNote({ count, to }: { count: number; to: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-fill p-3 text-sm">
+      <p className="min-w-0 flex-1 text-pretty">
+        This clip is cut into {count} pieces of the episode. Trim, reorder and time them in the Advanced Edit.
+      </p>
+      <Link to={to} className={buttonClass("secondary", "sm")}>
+        <SlidersHorizontal aria-hidden size={16} />
+        Edit Advanced
+      </Link>
     </div>
   );
 }

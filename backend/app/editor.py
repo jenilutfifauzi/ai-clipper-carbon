@@ -30,13 +30,15 @@ class WordsSource(StrEnum):
 
 @dataclass(frozen=True)
 class PreviewWord:
-    """A Word the captions are made of, as heard (in seconds into the Clip), and the Candidate's Word
-    Edit that applies to it (its time on the Source's timeline), if any."""
+    """A Word the captions are made of, as heard (in seconds into the Clip), the middle of it on the
+    Source's timeline (`at`, which a Word Edit of it is keyed by), and the Candidate's Word Edit that
+    applies to it, if any."""
 
     text: str
     start: float
     end: float
     edit: WordEdit | None = None
+    at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -59,28 +61,40 @@ def preview_plan(
     logos: LogoStore | None = None,
     media: MediaStore | None = None,
 ) -> PreviewPlan:
-    """The Candidate's Preview Plan, `job_dir` being its Job's directory."""
+    """The Candidate's Preview Plan, `job_dir` being its Job's directory. Each of its Segments is
+    planned from what is saved for its range: its Words are the Clip's own only when every Segment's
+    are, and it is analysed only when every Segment is."""
     assert job.source is not None
     source = job.source.metadata
-    clip_words = saved_words(job_dir, candidate.start, candidate.end, job.options.language, settings.whisper_model)
-    if clip_words is not None:
-        words, words_source = clip_words, WordsSource.CLIP
-    else:
-        words, words_source = transcript_words(transcript, candidate.start, candidate.end, source.duration), WordsSource.TRANSCRIPT
-    analysis = None
-    if reframes(source):
-        analysis = saved_analysis(job_dir, candidate.start, candidate.end, settings.analysis, BLAZE_FACE_MODEL.name)
-    plan = candidate_plan(
-        candidate, source, words if job.options.captions else None, analysis, presets, settings.camera, logos, media
-    )
-    duration = candidate.end - candidate.start
-    ordered = sorted(words, key=lambda word: word.start)
-    # Matched on the Clip's timeline; given back as the Candidate holds them.
-    shifted = [replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits]
-    original = {id(edit): kept for edit, kept in zip(shifted, candidate.word_edits)}
-    shown = [
-        PreviewWord(word.text, word.start, word.end, None if edit is None else original[id(edit)])
-        for word, edit in zip(ordered, match_edits(ordered, shifted))
-        if 0 <= (word.start + word.end) / 2 < duration
+    pieces = candidate.pieces()
+    saved = [saved_words(job_dir, piece.start, piece.end, job.options.language, settings.whisper_model) for piece in pieces]
+    words = [
+        found if found is not None else transcript_words(transcript, piece.start, piece.end, source.duration)
+        for piece, found in zip(pieces, saved)
     ]
-    return PreviewPlan(plan, shown, words_source, analysed=analysis is not None or not reframes(source))
+    words_source = WordsSource.CLIP if all(found is not None for found in saved) else WordsSource.TRANSCRIPT
+    analyses = [
+        saved_analysis(job_dir, piece.start, piece.end, settings.analysis, BLAZE_FACE_MODEL.name) if reframes(source) else None
+        for piece in pieces
+    ]
+    plan = candidate_plan(
+        candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
+    )
+    shown, at = [], 0.0
+    for piece, heard in zip(pieces, words):
+        length = piece.end - piece.start
+        ordered = sorted(heard, key=lambda word: word.start)
+        # Matched in the Segment; given back as the Candidate holds them.
+        shifted = [replace(edit, at=edit.at - piece.start) for edit in candidate.word_edits]
+        original = {id(edit): kept for edit, kept in zip(shifted, candidate.word_edits)}
+        shown += [
+            PreviewWord(
+                word.text, round(word.start + at, 3), round(word.end + at, 3),
+                None if edit is None else original[id(edit)], round(piece.start + (word.start + word.end) / 2, 3),
+            )
+            for word, edit in zip(ordered, match_edits(ordered, shifted))
+            if 0 <= (word.start + word.end) / 2 < length
+        ]
+        at += length
+    analysed = not reframes(source) or all(analysis is not None for analysis in analyses)
+    return PreviewPlan(plan, shown, words_source, analysed=analysed)

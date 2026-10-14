@@ -1,0 +1,158 @@
+import { Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import type { ClipSegment, Transcript } from "../../../api";
+import { Button } from "../../../components/Button";
+import { Slider } from "../../../components/Slider";
+import { formatPrecise } from "../../../format";
+import { TranscriptPicker } from "../TranscriptPicker";
+import { piecesFrom } from "../editor/playback";
+
+// The shortest Segment the editor makes; the backend snaps each to Words.
+export const SEGMENT_MIN_SECS = 0.3;
+
+/**
+ * The Main Track's Segments after a drag of Segment `id` from `origin` (the Segments when the drag
+ * began): moved, it takes the place its middle is dragged to; its start or end trimmed, it shows
+ * that much more or less of the Source (within the Source's `length`), and the Segments after it
+ * close up behind it.
+ */
+export function draggedSegments(
+  origin: ClipSegment[],
+  id: string,
+  change: { start: number; end: number; edge: "move" | "start" | "end" },
+  length: number,
+): ClipSegment[] {
+  const index = origin.findIndex((segment) => segment.id === id);
+  const segment = origin[index];
+  const from = piecesFrom(origin)[index];
+  if (change.edge === "move") {
+    const middle = change.start + (from.end - from.start) / 2;
+    const others = origin.filter((other) => other.id !== id);
+    const place = piecesFrom(others).filter((piece) => piece.start + (piece.end - piece.start) / 2 < middle).length;
+    return [...others.slice(0, place), segment, ...others.slice(place)];
+  }
+  const next =
+    change.edge === "start"
+      ? { ...segment, start: round(Math.min(Math.max(segment.start + change.start - from.start, 0), segment.end - SEGMENT_MIN_SECS)) }
+      : { ...segment, end: round(Math.max(Math.min(segment.end + change.end - from.end, length), segment.start + SEGMENT_MIN_SECS)) };
+  return origin.map((other) => (other.id === id ? next : other));
+}
+
+const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+/** The selected Segment: what it shows of the episode, and what can be done to it. */
+export function SegmentFields({
+  segment,
+  index,
+  count,
+  sourceVolume,
+  canSplit,
+  onSplit,
+  onDuplicate,
+  onDelete,
+  onSourceVolume,
+}: {
+  segment: ClipSegment;
+  index: number;
+  count: number;
+  sourceVolume: number;
+  canSplit: boolean;
+  onSplit: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onSourceVolume: (volume: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 font-semibold">
+          <Film aria-hidden size={17} className="text-muted" />
+          Piece {index + 1} of {count}
+        </h2>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" onClick={onSplit} disabled={!canSplit} aria-label="Split at the playhead">
+            <Scissors aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate piece">
+            <Copy aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onDelete} disabled={count < 2} aria-label="Delete piece">
+            <Trash2 aria-hidden size={17} />
+          </Button>
+        </div>
+      </div>
+      <p className="text-sm text-pretty text-muted">
+        {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {(segment.end - segment.start).toFixed(1)} s. Drag its
+        edges to trim it, or drag it to another place. Its ends snap to words.
+      </p>
+      <Slider
+        label="Original sound"
+        value={sourceVolume}
+        min={0}
+        max={2}
+        step={0.05}
+        format={(v) => `${Math.round(v * 100)}%`}
+        onChange={onSourceVolume}
+      />
+    </div>
+  );
+}
+
+/**
+ * "Add from the episode": the Transcript, on which a range is picked (a click on its first and last
+ * Word, or a drag across them) and added to the Main Track as a new Segment.
+ */
+export function SourcePicker({ transcript, near, onAdd }: { transcript: Transcript; near: ClipSegment; onAdd: (range: { start: number; end: number }) => void }) {
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
+  const words = transcript.words;
+  const range =
+    pending && pending.last !== null
+      ? { start: words[Math.min(pending.first, pending.last)].start, end: words[Math.max(pending.first, pending.last)].end }
+      : null;
+  if (!open) {
+    return (
+      <Button onClick={() => setOpen(true)}>
+        <Plus aria-hidden size={18} />
+        Add from the episode
+      </Button>
+    );
+  }
+  return (
+    <section aria-labelledby="source-picker-heading" className="flex flex-col gap-2 rounded-control bg-fill p-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 id="source-picker-heading" className="text-sm font-semibold">
+          Add from the episode
+        </h3>
+        <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Close">
+          <X aria-hidden size={16} />
+        </Button>
+      </div>
+      <p className="text-xs text-pretty text-muted">Click the first and the last word of the moment, or drag across them.</p>
+      <div className="max-h-72 overflow-y-auto">
+        <TranscriptPicker
+          words={words}
+          segments={transcript.segments}
+          start={near.start}
+          end={near.end}
+          pending={pending}
+          onPick={(i) => setPending((old) => (old && old.last === null ? { first: old.first, last: i } : { first: i, last: null }))}
+          onRange={setPending}
+        />
+      </div>
+      <Button
+        variant="primary"
+        size="sm"
+        disabled={!range}
+        onClick={() => {
+          if (!range) return;
+          onAdd(range);
+          setPending(null);
+          setOpen(false);
+        }}
+      >
+        {range ? `Add ${formatPrecise(range.start)} – ${formatPrecise(range.end)}` : "Pick a moment"}
+      </Button>
+    </section>
+  );
+}

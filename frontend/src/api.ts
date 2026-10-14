@@ -409,6 +409,15 @@ export interface AudioEvent {
   fade_out: number;
 }
 
+// A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,
+// from `start` to `end` seconds into the Clip.
+export interface SegmentPlan {
+  start: number;
+  end: number;
+  source_start: number;
+  source_end: number;
+}
+
 export interface RenderPlan {
   start: number;
   end: number;
@@ -429,11 +438,15 @@ export interface RenderPlan {
   // The Music Clips heard, under the Clip's own sound at `source_volume`.
   audio: AudioEvent[];
   source_volume: number;
+  // A Clip cut into several Segments: each, in order; [] for a Clip of one range.
+  segments: SegmentPlan[];
 }
 
-// A Word the captions are made of, as heard (in seconds into the Clip), with its Word Edit.
+// A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
+// Source's timeline (what a Word Edit of it is keyed by) and its Word Edit.
 export interface PreviewWord extends Word {
   edit: WordEdit | null;
+  at: number;
 }
 
 export interface PreviewPlan {
@@ -465,8 +478,17 @@ export interface FontInfo {
   descent: number;
 }
 
+// A piece of a Candidate's Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source
+// from `start` to `end`, snapped to Words.
+export interface ClipSegment {
+  id: string;
+  start: number;
+  end: number;
+}
+
 export interface Candidate {
   id: string;
+  // On the Source's timeline; with several Segments, the hull of what they show.
   start: number;
   end: number;
   // The AI's assessment; null for a manual Candidate.
@@ -501,7 +523,13 @@ export interface Candidate {
   // Its Music Clips, under its own sound at `source_volume` (0 to 2).
   music: MusicClip[];
   source_volume: number;
+  // Its Main Track; [] (one piece, from `start` to `end`) unless the Advanced Edit has cut it.
+  segments: ClipSegment[];
 }
+
+// A Candidate's Main Track: its Segments, or its one range.
+export const piecesOf = (candidate: Pick<Candidate, "start" | "end" | "segments">): ClipSegment[] =>
+  candidate.segments.length ? candidate.segments : [{ id: "main", start: candidate.start, end: candidate.end }];
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
 export interface CandidateChange {
@@ -525,6 +553,8 @@ export interface CandidateChange {
   // Replaces the Candidate's Music Clips as a whole.
   music?: MusicClip[];
   source_volume?: number;
+  // Replaces the Main Track as a whole; one Segment is kept as `start` and `end`.
+  segments?: ClipSegment[];
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
@@ -559,6 +589,7 @@ export interface RenderedClip {
   text_layers: TextLayer[];
   music: MusicClip[];
   source_volume: number;
+  segments: ClipSegment[];
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";

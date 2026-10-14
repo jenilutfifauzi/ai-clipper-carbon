@@ -36,7 +36,7 @@ from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaStore
-from app.planner import RenderPlan, plan_render, reframes
+from app.planner import WORD_EDIT_REACH_SECS, Piece, RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
 from app.storage import write_atomic
@@ -122,27 +122,25 @@ def transcript_words(transcript: Transcript, start: float, end: float, duration:
 def candidate_plan(
     candidate: Candidate,
     source: SourceMetadata,
-    words: list[Word] | None,
-    analysis: ClipAnalysis | None,
+    words: list[list[Word]] | None,
+    analyses: list[ClipAnalysis | None],
     presets: PresetStore,
     camera: CameraTuning,
     logos: LogoStore | None = None,
     media: MediaStore | None = None,
 ) -> RenderPlan:
-    """The Render Plan of the Candidate as it is, captioned with `words` (None: no captions) and framed
-    by `analysis` (None: unanalysed, or a Source passed through), its Watermark's Logo from `logos`
-    and the songs of its music from `media`.
+    """The Render Plan of the Candidate as it is: each of its Segments (`candidate.pieces()`) captioned
+    with its `words` (None: no captions) and framed by its `analyses` (None: unanalysed, or a Source
+    passed through), both in seconds into the Segment; its Watermark's Logo from `logos` and the songs
+    of its music from `media`. Its Word Edits and Layout Overrides, on the Source's timeline, apply in
+    every Segment that shows their time (docs/adr/0002-segments-and-timeline-time.md).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
-    return plan_render(
-        candidate.start, candidate.end, source,
-        scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
-        layout=candidate.layout, words=words, hook=candidate.hook_text, camera=camera,
+    common = dict(
+        layout=candidate.layout, hook=candidate.hook_text, camera=camera,
         caption_style=caption_style, hook_style=hook_style,
-        word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
         hook_start=candidate.hook_start, hook_secs=candidate.hook_secs,
-        layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
         hook_kicker=candidate.hook_kicker,
         watermark_style=watermark_style,
         logo_size=(logo.width, logo.height) if logo else None,
@@ -150,6 +148,40 @@ def candidate_plan(
         music=candidate.music,
         media_lengths=_lengths(media, candidate.media_ids()),
         source_volume=candidate.source_volume,
+    )
+    if not candidate.segments:
+        [analysis] = analyses
+        return plan_render(
+            candidate.start, candidate.end, source,
+            scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
+            words=None if words is None else words[0],
+            word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
+            layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
+            **common,
+        )
+    pieces, heard, edits, at = [], [], [], 0.0
+    for i, (segment, analysis) in enumerate(zip(candidate.pieces(), analyses)):
+        length = round(segment.end - segment.start, 3)
+        held = [replace(o, at=round(o.at - segment.start, 3)) for o in candidate.layout_overrides if segment.start <= o.at <= segment.end]
+        pieces.append(Piece(segment.start, segment.end, analysis.scenes if analysis else None,
+                            analysis.frames if analysis else None, held))
+        # The Words whose middle is in it, kept in it, in seconds into the Clip.
+        heard += [
+            Word(word.text, round(max(word.start, 0.0) + at, 3), round(min(word.end, length) + at, 3))
+            for word in (words[i] if words is not None else [])
+            if 0 <= (word.start + word.end) / 2 < length
+        ]
+        edits += [
+            replace(edit, at=round(edit.at - segment.start + at, 3))
+            for edit in candidate.word_edits
+            if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
+        ]
+        at = round(at + length, 3)
+    return plan_render(
+        candidate.start, candidate.end, source, pieces=pieces,
+        words=None if words is None else heard,
+        word_edits=sorted(edits, key=lambda edit: edit.at),
+        **common,
     )
 
 
@@ -233,12 +265,15 @@ class Renders:
         reframed) are saved for its range as it is."""
         assert job.source is not None
         job_dir = self.store.job_dir(job.id)
-        words = not job.options.captions or saved_words(
-            job_dir, candidate.start, candidate.end, job.options.language, self.settings.whisper_model
-        ) is not None
-        analysed = not reframes(job.source.metadata) or saved_analysis(
-            job_dir, candidate.start, candidate.end, self.analyzer.tuning, self.analyzer.model.name
-        ) is not None
+        pieces = candidate.pieces()
+        words = not job.options.captions or all(
+            saved_words(job_dir, piece.start, piece.end, job.options.language, self.settings.whisper_model) is not None
+            for piece in pieces
+        )
+        analysed = not reframes(job.source.metadata) or all(
+            saved_analysis(job_dir, piece.start, piece.end, self.analyzer.tuning, self.analyzer.model.name) is not None
+            for piece in pieces
+        )
         return words and analysed
 
     def run(self, job_id: str, rendered: Callable[[Clip, Candidate], None] = lambda clip, candidate: None) -> int:
@@ -321,8 +356,8 @@ class Renders:
         warning = None
         try:
             if job.options.captions:
-                self._words(job, candidate, lambda done: progress(done / 2))
-            self._analysis(job, candidate, lambda done: progress(0.5 + done / 2))
+                self._all_words(job, candidate, lambda done: progress(done / 2))
+            self._all_analyses(job, candidate, lambda done: progress(0.5 + done / 2))
         except RenderStopped:
             raise
         except Exception as exc:
@@ -359,10 +394,10 @@ class Renders:
 
         began = time.monotonic()
         try:
-            words = self._words(job, candidate, step(1 / 3)) if job.options.captions else None
-            analysis = self._analysis(job, candidate, step(1 / 3))
+            words = self._all_words(job, candidate, step(1 / 3)) if job.options.captions else None
+            analyses = self._all_analyses(job, candidate, step(1 / 3))
             plan = candidate_plan(
-                candidate, job.source.metadata, words, analysis, self.presets, self.settings.camera, self.logos, self.media
+                candidate, job.source.metadata, words, analyses, self.presets, self.settings.camera, self.logos, self.media
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
@@ -405,6 +440,7 @@ class Renders:
                 text_layers=candidate.text_layers,
                 music=candidate.music,
                 source_volume=candidate.source_volume,
+                segments=candidate.segments,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",
@@ -420,18 +456,39 @@ class Renders:
 
         return self.store.change_clips(job.id, finish)
 
-    def _words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[Word]:
-        """The Words of the Candidate's range and CAPTION_MARGIN_SECS either side, in seconds into the
-        Clip: as saved by an earlier render of the same range in the same language with the same
-        Whisper model, or transcribed now and saved."""
+    def _all_words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[list[Word]]:
+        """Each of the Candidate's Segments' Words (`_words`), the progress shared out by their lengths."""
+        pieces = candidate.pieces()
+        total, done, found = sum(p.end - p.start for p in pieces), 0.0, []
+        for piece in pieces:
+            share = (piece.end - piece.start) / total
+            found.append(self._words(job, candidate, piece.start, piece.end, lambda d, done=done, share=share: progress(done + share * d)))
+            done += share
+        return found
+
+    def _all_analyses(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[ClipAnalysis | None]:
+        """Each of the Candidate's Segments' Scenes and faces (`_analysis`), the progress shared out by their lengths."""
+        pieces = candidate.pieces()
+        total, done, found = sum(p.end - p.start for p in pieces), 0.0, []
+        for piece in pieces:
+            share = (piece.end - piece.start) / total
+            found.append(self._analysis(job, candidate, piece.start, piece.end, lambda d, done=done, share=share: progress(done + share * d)))
+            done += share
+        return found
+
+    def _words(self, job: Job, candidate: Candidate, start: float, end: float, progress: Callable[[float], None]) -> list[Word]:
+        """The Words of the Candidate's range (or Segment) from `start` to `end` on the Source and
+        CAPTION_MARGIN_SECS either side, in seconds into it: as saved by an earlier render of the
+        same range in the same language with the same Whisper model, or transcribed now and saved."""
         assert job.source is not None
         language, model = job.options.language, self.settings.whisper_model
-        path = self.store.job_dir(job.id) / words_file(candidate.start, candidate.end)
-        saved = saved_words(self.store.job_dir(job.id), candidate.start, candidate.end, language, model)
+        path = self.store.job_dir(job.id) / words_file(start, end)
+        saved = saved_words(self.store.job_dir(job.id), start, end, language, model)
         if saved is not None:
             return saved
-        start = max(0.0, candidate.start - CAPTION_MARGIN_SECS)
-        end = min(job.source.metadata.duration, candidate.end + CAPTION_MARGIN_SECS)
+        clip_start, clip_end = start, end
+        start = max(0.0, clip_start - CAPTION_MARGIN_SECS)
+        end = min(job.source.metadata.duration, clip_end + CAPTION_MARGIN_SECS)
         source = self.store.job_dir(job.id) / job.source.video
         began = time.monotonic()
         self._transcribing = True
@@ -448,7 +505,7 @@ class Renders:
         finally:
             self._transcribing = False
         words = [
-            Word(word.text, round(word.start - candidate.start, 3), round(word.end - candidate.start, 3))
+            Word(word.text, round(word.start - clip_start, 3), round(word.end - clip_start, 3))
             for word in transcript.words
         ]
         logger.info(
@@ -456,27 +513,27 @@ class Renders:
             job.id, candidate.id, end - start, time.monotonic() - began, len(words),
         )
         path.parent.mkdir(exist_ok=True)
-        write_atomic(path, _WORDS.dump_json(ClipWords(candidate.start, candidate.end, language, model, words)))
+        write_atomic(path, _WORDS.dump_json(ClipWords(clip_start, clip_end, language, model, words)))
         progress(1.0)
         return words
 
-    def _analysis(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> ClipAnalysis | None:
-        """The Scenes and faces of the Candidate's range, as saved by an earlier render of the same
-        range with the same tuning and face model, or found now and saved; None for a Source that
-        isn't reframed. (An analysis saved before the model was recorded doesn't validate, so it is
-        done again.)"""
+    def _analysis(
+        self, job: Job, candidate: Candidate, start: float, end: float, progress: Callable[[float], None]
+    ) -> ClipAnalysis | None:
+        """The Scenes and faces of the Candidate's range (or Segment) from `start` to `end` on the
+        Source, as saved by an earlier render of the same range with the same tuning and face model,
+        or found now and saved; None for a Source that isn't reframed. (An analysis saved before the
+        model was recorded doesn't validate, so it is done again.)"""
         assert job.source is not None
         if not reframes(job.source.metadata):
             return None
-        path = self.store.job_dir(job.id) / analysis_file(candidate.start, candidate.end)
-        saved = saved_analysis(
-            self.store.job_dir(job.id), candidate.start, candidate.end, self.analyzer.tuning, self.analyzer.model.name
-        )
+        path = self.store.job_dir(job.id) / analysis_file(start, end)
+        saved = saved_analysis(self.store.job_dir(job.id), start, end, self.analyzer.tuning, self.analyzer.model.name)
         if saved is not None:
             return saved
         began = time.monotonic()
         source = self.store.job_dir(job.id) / job.source.video
-        analysis = self.analyzer.analyze(source, job.source.metadata, candidate.start, candidate.end, progress)
+        analysis = self.analyzer.analyze(source, job.source.metadata, start, end, progress)
         logger.info(
             "Job %s: analysed Candidate %s in %.1f s: %d scenes, faces in %d of %d sampled frames",
             job.id, candidate.id, time.monotonic() - began, len(analysis.scenes),

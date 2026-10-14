@@ -8,7 +8,7 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Source:** the episode video. Times "on the Source's timeline" are seconds into it.
 - **Transcript / Words:** the episode's normalized text with per-Word timing.
 - **Window:** a Transcript slice scored by the AI.
-- **Candidate:** a proposed clip under review: a range of the Source, its hook text, Layout, style and edits.
+- **Candidate:** a proposed clip under review: a range of the Source (or, once cut in the Advanced Edit, its Segments), its hook text, Layout, style and edits.
 - **Clip:** a rendered output of a Candidate.
 - **Channel Profile / Brief:** standing and per-Job steering for Selection.
 - **Reference Set:** past clips used for evaluation and few-shot examples.
@@ -41,6 +41,8 @@ Use these terms in code, UI copy, tickets and commit messages.
 ## Advanced Edit
 
 - **Advanced Edit:** a CapCut-like workspace for one Candidate, opened from the clip editor: assets, player, inspector and a multi-track Timeline (on a phone: player, Timeline, a toolbar and bottom sheets). It edits the same Candidate, with undo and redo.
+- **Main Track:** the Clip's video in the Advanced Edit: its Segments, back to back.
+- **Segment:** a piece of the Main Track: a range of the Source, its ends snapped to Words. A Clip that isn't cut is one Segment (`start` to `end`); with several, `start` and `end` are the hull of what they show. Word Edits and Layout Overrides apply in every Segment that shows their time (docs/adr/0002-segments-and-timeline-time.md).
 - **Media Library:** the videos, songs and images the owner uploads for the Advanced Edit, kept for every Job, each normalized on upload. An item a Candidate uses can't be deleted.
 - **Music Clip:** part of a song (or of a video's sound) from the Media Library, heard under the Clip from a time in Timeline time, at its volume, faded in and out. The Clip's own sound has a volume too.
 - **Text Layer:** a free text overlay added in the Advanced Edit: its words (lines split at newlines), its time in Timeline time, its centre on the frame, and its own look and in/out animation. Drawn over the captions and under the hook.

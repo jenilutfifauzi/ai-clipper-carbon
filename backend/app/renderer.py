@@ -30,6 +30,10 @@ A text Watermark is one more event of the same script, under the captions and th
 image libass can't draw, is a second input (its PNG, from app/logos.py), scaled into the Watermark's
 area at its opacity and laid over the joined frames before the captions are burned.
 
+A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) reads each Segment
+as its own input, cut from the Source like a one-range Clip; each is drawn as above, in its own
+Scenes, and the Segments' frames and sounds are joined back to back (concat).
+
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
 its volume) before the loudness is measured and normalized, so that the mix lands at −14 LUFS.
@@ -147,15 +151,17 @@ class Renderer:
         with nothing to normalize."""
         tuning = self.tuning
         measure = f"loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
-        inputs, index = _music_inputs(plan, music or {}, first=1)
-        mix = _audio_mix(plan, index, tuning.audio_rate)
-        if mix is None:
+        sources, sounds, sound = _source_inputs(plan, source)
+        inputs, index = _music_inputs(plan, music or {}, first=len(sources) // _INPUT_ARGS)
+        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
+        if mix is None and not sounds:
             audio = ["-map", "0:a:0", "-af", measure]
         else:
-            audio = ["-filter_complex", f"{mix};[mix]{measure}[measured]", "-map", "[measured]"]
+            heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+            audio = ["-filter_complex", f"{heard}{measure}[measured]", "-map", "[measured]"]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
-            *_range(plan), "-i", str(source), *inputs, *audio, "-f", "null", "-",
+            *sources, *inputs, *audio, "-f", "null", "-",
         ]
         result = subprocess.run(command, capture_output=True, text=True, errors="replace")
         output = result.stderr
@@ -177,20 +183,22 @@ class Renderer:
         music: dict[str, Path] | None = None,
     ) -> list[str]:
         tuning = self.tuning
-        frame = _scenes(plan, tuning)
+        sources, sounds, sound = _source_inputs(plan, source)
+        count = len(sources) // _INPUT_ARGS
+        frame = _segmented(plan, tuning) if plan.segments else _scenes(plan, tuning)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
         if logo is not None and plan.watermark is not None:
-            frame += f";{_logo_overlay(plan.watermark, joined, '[marked]')}"
+            frame += f";{_logo_overlay(plan.watermark, joined, '[marked]', count)}"
             joined = "[marked]"
         # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's timeline.
         burned = "" if subtitles is None else (
             f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(FONTS_DIR))},"
         )
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
-        inputs, index = _music_inputs(plan, music or {}, first=2 if logo is not None else 1)
-        mix = _audio_mix(plan, index, tuning.audio_rate)
-        heard = "[0:a:0]" if mix is None else f"{mix};[mix]"
+        inputs, index = _music_inputs(plan, music or {}, first=count + (1 if logo is not None else 0))
+        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
+        heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
         audio = f"{heard}aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
@@ -208,7 +216,7 @@ class Renderer:
             codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *_range(plan), "-i", str(source), *([] if logo is None else ["-i", str(logo)]), *inputs,
+            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
@@ -248,22 +256,64 @@ def _check(plan: RenderPlan) -> None:
         raise ValueError("A Render Plan needs at least one scene, each with at least one panel")
 
 
-def _scenes(plan: RenderPlan, tuning: RenderTuning) -> str:
-    """The filtergraph that draws the plan's Scenes from [0:v] into [frame]. With several, the video
-    is split into a branch per Scene, trimmed to it from half a frame before its first frame (so that
-    rounding can't move a frame across a cut) and restarted at 0 s, and the branches are concatenated."""
-    if len(plan.scenes) == 1:
-        return _scene(plan, plan.scenes[0], "s0", "[0:v]", "[frame]", tuning)
-    count = len(plan.scenes)
-    chains = [f"[0:v]split={count}" + "".join(f"[s{i}]" for i in range(count))]
-    for i, scene in enumerate(plan.scenes):
+# How many arguments read one input: -ss, its start, -t, its length, -i, the file.
+_INPUT_ARGS = 6
+
+
+def _source_inputs(plan: RenderPlan, source: Path) -> tuple[list[str], str, str]:
+    """The input options that read the Source (its one range, or each Segment's in order: inputs 0,
+    1, ...), the filters that join the Segments' sounds (none for one range), and the link the
+    Clip's sound is then heard from."""
+    if not plan.segments:
+        return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
+    inputs = []
+    for segment in plan.segments:
+        inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{segment.source_end - segment.source_start:.3f}", "-i", str(source)]
+    count = len(plan.segments)
+    return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
+
+
+def _segmented(plan: RenderPlan, tuning: RenderTuning) -> str:
+    """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
+    input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment), and the Segments
+    joined back to back."""
+    chains = []
+    for i, segment in enumerate(plan.segments):
+        scenes = [scene for scene in plan.scenes if segment.start <= scene.start < segment.end]
+        chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]", f"[g{i}]", f"g{i}s", segment.start))
+    chains.append("".join(f"[g{i}]" for i in range(len(plan.segments))) + f"concat=n={len(plan.segments)}:v=1:a=0[frame]")
+    return ";".join(chains)
+
+
+def _scenes(
+    plan: RenderPlan,
+    tuning: RenderTuning,
+    scenes: list[ScenePlan] | None = None,
+    given: str = "[0:v]",
+    out: str = "[frame]",
+    prefix: str = "s",
+    offset: float = 0.0,
+) -> str:
+    """The filtergraph that draws the plan's Scenes (or `scenes`, starting `offset` seconds into the
+    Clip) from `given` (by default [0:v]) into `out` (by default [frame]), its filters named from
+    `prefix`. With several, the video is split into a branch per Scene, trimmed to it from half a
+    frame before its first frame (so that rounding can't move a frame across a cut) and restarted at
+    0 s, and the branches are concatenated."""
+    scenes = plan.scenes if scenes is None else scenes
+    if len(scenes) == 1:
+        return _scene(plan, scenes[0], f"{prefix}0", given, out, tuning)
+    count = len(scenes)
+    chains = [f"{given}split={count}" + "".join(f"[{prefix}{i}]" for i in range(count))]
+    for i, scene in enumerate(scenes):
         bounds = []
         if i > 0:
-            bounds.append(f"start={scene.start - 0.5 / plan.fps:.4f}")
+            bounds.append(f"start={scene.start - offset - 0.5 / plan.fps:.4f}")
         if i < count - 1:
-            bounds.append(f"end={scene.end - 0.5 / plan.fps:.4f}")
-        chains.append(_scene(plan, scene, f"s{i}", f"[s{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[v{i}]", tuning))
-    chains.append("".join(f"[v{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
+            bounds.append(f"end={scene.end - offset - 0.5 / plan.fps:.4f}")
+        chains.append(
+            _scene(plan, scene, f"{prefix}{i}", f"[{prefix}{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[{prefix}v{i}]", tuning)
+        )
+    chains.append("".join(f"[{prefix}v{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0{out}")
     return ";".join(chains)
 
 
@@ -326,17 +376,17 @@ def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int) -> tuple
     return [arg for media in index for arg in ("-i", str(music[media]))], index
 
 
-def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int) -> str | None:
-    """Filters that mix the Clip's sound, at its volume, with its music into [mix]: each Music Clip
-    its part of its song (input `index[media]`), at its volume, faded, delayed to its start. None
-    without music at the Clip's own volume, where the sound goes as it is."""
+def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str = "[0:a:0]") -> str | None:
+    """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into [mix]: each Music Clip its part of its song (input
+    `index[media]`), at its volume, faded, delayed to its start. None without music at the Clip's own
+    volume, where the sound goes as it is."""
     heard = [event for event in plan.audio if event.media in index]
     if not heard and plan.source_volume == 1:
         return None
     if not heard:
-        return f"[0:a:0]volume={plan.source_volume:g}[mix]"
+        return f"{source}volume={plan.source_volume:g}[mix]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
-    chains = [f"[0:a:0]volume={plan.source_volume:g},{form}[m0]"]
+    chains = [f"{source}volume={plan.source_volume:g},{form}[m0]"]
     for i, event in enumerate(heard, 1):
         length = round(event.end - event.start, 3)
         filters = [
@@ -354,12 +404,12 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int) -> str | None
     return ";".join(chains)
 
 
-def _logo_overlay(watermark: WatermarkEvent, below: str, out: str) -> str:
-    """Filters that scale the Logo (input 1, one frame) into the Watermark's area at its opacity and
-    lay it over the frames `below`, into `out`. The overlay repeats the Logo's one frame to the end."""
+def _logo_overlay(watermark: WatermarkEvent, below: str, out: str, index: int = 1) -> str:
+    """Filters that scale the Logo (input `index`, one frame) into the Watermark's area at its opacity
+    and lay it over the frames `below`, into `out`. The overlay repeats the Logo's one frame to the end."""
     area = watermark.area
     return (
-        f"[1:v]scale={area.width}:{area.height}:flags=lanczos,format=rgba,colorchannelmixer=aa={watermark.opacity:g}[logo];"
+        f"[{index}:v]scale={area.width}:{area.height}:flags=lanczos,format=rgba,colorchannelmixer=aa={watermark.opacity:g}[logo];"
         f"{below}[logo]overlay={area.x}:{area.y}:eof_action=repeat{out}"
     )
 

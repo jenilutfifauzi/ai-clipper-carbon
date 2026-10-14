@@ -16,35 +16,38 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   api,
   mediaUrl,
   type Candidate,
   type CandidateChange,
+  type ClipSegment,
   type FontInfo,
   type JobDetail,
   type MediaItem,
   type MusicClip,
   type PreviewPlan,
   type TextLayer,
+  type Transcript,
 } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Panel } from "../../../components/Panel";
 import { loadFonts } from "../../../fonts";
-import { cx } from "../../../format";
+import { cx, formatPrecise } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ClipPreview } from "../editor/ClipPreview";
 import { candidateDraft } from "../editor/draft";
-import { Playback, usePlayback } from "../editor/playback";
+import { piecesFrom, Playback, usePlayback } from "../editor/playback";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { HookTimingFields } from "../HookEditor";
 import { AdvancedTimeline, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { editsOf, sameSelection, type AdvancedEdits, type Selection } from "./edits";
 import { MediaAssets, useMediaLibrary, type MediaLibrary } from "./MediaLibrary";
-import { MUSIC_MIN_SECS, MusicFields, newMusicClip, SourceSoundFields } from "./Music";
+import { draggedSegments, SEGMENT_MIN_SECS, SegmentFields, SourcePicker } from "./MainTrack";
+import { MUSIC_MIN_SECS, MusicFields, newMusicClip } from "./Music";
 import { newId, newTextLayer, TEXT_MIN_SECS, trackLanes, TextAssets, TextLayerFields } from "./TextLayers";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
@@ -144,8 +147,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, job.status);
   const playback = useMemo(() => new Playback(), []);
-  playback.setRange(candidate.start, candidate.end);
-  const duration = candidate.end - candidate.start;
+  // The Segments as planned (snapped to Words) once the plan has the draft's, else as drafted.
+  const planned = preview?.plan.segments ?? [];
+  playback.setPieces(planned.length > 1 && planned.length === edits.segments.length ? planned : piecesFrom(edits.segments));
+  const duration = playback.duration;
+  const sourceLength = job.source?.metadata.duration ?? Infinity;
+  // The Segments when the drag under way began, by its gesture.
+  const dragOrigin = useRef<{ group: string; segments: ClipSegment[] } | null>(null);
 
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
@@ -164,6 +172,19 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select({ kind: "text", id: layer.id });
     // On a phone, straight to its fields, to type its words.
     setSheet(wide ? null : "inspector");
+  }
+  function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
+    if (dragOrigin.current?.group !== group) dragOrigin.current = { group, segments: edits.segments };
+    change({ segments: draggedSegments(dragOrigin.current.segments, id, moved, sourceLength) }, group);
+  }
+  // A moment of the episode, after the Segment the playhead is in.
+  function addFromSource(range: { start: number; end: number }) {
+    const at = piecesFrom(edits.segments).findIndex((piece) => playback.time < piece.end);
+    const place = at === -1 ? edits.segments.length : at + 1;
+    const segment = { id: newId(), ...range };
+    change({ segments: [...edits.segments.slice(0, place), segment, ...edits.segments.slice(place)] });
+    select({ kind: "segment", id: segment.id });
+    if (!wide) setSheet(null);
   }
   function addMusic(item: MediaItem) {
     const clip = newMusicClip(item, playback.time, duration);
@@ -226,6 +247,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onEdits={history.set}
           onText={updateText}
           onMusic={updateMusic}
+          onSegment={moveSegment}
           songs={songs}
           onDelete={actions ? actions.remove : undefined}
         />
@@ -242,6 +264,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       fonts={fonts}
       actions={actions}
       songs={songs}
+      playback={playback}
       onEdits={history.set}
       onText={updateText}
       onMusic={updateMusic}
@@ -266,7 +289,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
             <AssetTabs value={assetTab} onChange={setAssetTab} />
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <AssetPanel tab={assetTab} fonts={fonts} library={library} onAddText={addText} onAddMusic={addMusic} />
+              <AssetPanel
+                tab={assetTab}
+                fonts={fonts}
+                library={library}
+                transcript={job.transcript}
+                near={edits.segments[0]}
+                onAddText={addText}
+                onAddMusic={addMusic}
+                onAddSource={addFromSource}
+              />
             </div>
           </aside>
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
@@ -313,7 +345,20 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           title={sheet === "inspector" ? "Edit" : ASSET_TABS.find((tab) => tab.value === sheet)!.label}
           onClose={() => setSheet(null)}
         >
-          {sheet === "inspector" ? inspector : <AssetPanel tab={sheet} fonts={fonts} library={library} onAddText={addText} onAddMusic={addMusic} />}
+          {sheet === "inspector" ? (
+            inspector
+          ) : (
+            <AssetPanel
+              tab={sheet}
+              fonts={fonts}
+              library={library}
+              transcript={job.transcript}
+              near={edits.segments[0]}
+              onAddText={addText}
+              onAddMusic={addMusic}
+              onAddSource={addFromSource}
+            />
+          )}
         </Sheet>
       )}
     </div>
@@ -338,6 +383,7 @@ function itemActions(
   change: (next: Partial<AdvancedEdits>, group?: string) => void,
   select: (selection: Selection) => void,
 ): ItemActions | null {
+  if (selection?.kind === "segment") return segmentActions(edits, selection.id, playback, change, select);
   if (selection?.kind !== "text" && selection?.kind !== "music") return null;
   const kind = selection.kind;
   const key = LISTS[kind];
@@ -374,6 +420,46 @@ function itemActions(
       };
       put(list.flatMap((other) => (other.id === item.id ? [first, second] : [other])));
       select({ kind, id: second.id });
+    },
+  };
+}
+
+/**
+ * What can be done to a Segment of the Main Track: delete it (not the last one; the ones after it
+ * close up), duplicate it right after itself, and split it at the playhead.
+ */
+function segmentActions(
+  edits: AdvancedEdits,
+  id: string,
+  playback: Playback,
+  change: (next: Partial<AdvancedEdits>, group?: string) => void,
+  select: (selection: Selection) => void,
+): ItemActions | null {
+  const index = edits.segments.findIndex((segment) => segment.id === id);
+  if (index === -1) return null;
+  const segment = edits.segments[index];
+  const piece = piecesFrom(edits.segments)[index];
+  const canSplit = (time: number) => time > piece.start + SEGMENT_MIN_SECS && time < piece.end - SEGMENT_MIN_SECS;
+  const put = (segments: ClipSegment[]) => change({ segments });
+  return {
+    remove() {
+      if (edits.segments.length < 2) return;
+      put(edits.segments.filter((other) => other.id !== id));
+      select(null);
+    },
+    duplicate() {
+      const copy = { ...segment, id: newId() };
+      put([...edits.segments.slice(0, index + 1), copy, ...edits.segments.slice(index + 1)]);
+      select({ kind: "segment", id: copy.id });
+    },
+    canSplit,
+    split() {
+      const at = playback.time;
+      if (!canSplit(at)) return;
+      const cut = Math.round((segment.start + at - piece.start) * 1000) / 1000;
+      const second = { id: newId(), start: cut, end: segment.end };
+      put(edits.segments.flatMap((other) => (other.id === id ? [{ ...segment, end: cut }, second] : [other])));
+      select({ kind: "segment", id: second.id });
     },
   };
 }
@@ -426,6 +512,7 @@ function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, a
 function snapPoints(edits: AdvancedEdits, preview: PreviewPlan | null): number[] {
   const points = [edits.hook_start, edits.hook_start + edits.hook_secs];
   for (const item of [...edits.text_layers, ...edits.music]) points.push(item.start, item.start + item.secs);
+  for (const piece of piecesFrom(edits.segments)) points.push(piece.end);
   for (const scene of preview?.plan.scenes ?? []) points.push(scene.start);
   return points;
 }
@@ -445,6 +532,7 @@ function Tracks({
   onEdits,
   onText,
   onMusic,
+  onSegment,
   songs,
   onDelete,
 }: {
@@ -458,6 +546,7 @@ function Tracks({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
+  onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   // The Media Library, by id: the songs' names and lengths.
   songs: Map<string, MediaItem>;
   // Deletes the selected item.
@@ -498,32 +587,46 @@ function Tracks({
         </TrackRow>
       ))}
       <TrackRow label="Video" height="h-14">
-        <button
-          type="button"
-          onClick={() => onSelect({ kind: "video" })}
-          aria-pressed={selection?.kind === "video"}
-          aria-label={`Video${edits.source_volume !== 1 ? `, sound at ${Math.round(edits.source_volume * 100)}%` : ""}`}
-          className={cx(
-            "absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised text-left ring-1 ring-border focus-visible:outline-2 focus-visible:outline-focus",
-            selection?.kind === "video" && "ring-2 ring-text",
-          )}
-          style={{ width: duration * pps }}
-        >
+        {/* The Scenes as planned, under the Segments. */}
+        <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised" style={{ width: duration * pps }}>
           {plan?.scenes.map((scene, i) => (
             <span
               key={i}
-              className="absolute inset-y-0 border-l border-border px-1.5 pt-1 text-[11px] font-medium text-muted capitalize first:border-l-0"
+              className="absolute inset-y-0 border-l border-border px-1.5 pt-5 text-[10px] font-medium text-muted capitalize first:border-l-0"
               style={{ left: scene.start * pps, width: (scene.end - scene.start) * pps }}
             >
               {(scene.end - scene.start) * pps > 48 ? (scene.layout === "passthrough" ? "As shot" : scene.layout) : ""}
             </span>
           ))}
-          {edits.source_volume !== 1 && (
-            <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1 text-[10px] text-white tabular-nums">
-              {Math.round(edits.source_volume * 100)}%
-            </span>
-          )}
-        </button>
+        </div>
+        {/* As played: snapped to Words once the plan has them. */}
+        {playback.pieces.map((piece, i) => {
+          const segment = edits.segments[i];
+          if (!segment) return null;
+          const selected = selection?.kind === "segment" && selection.id === segment.id;
+          return (
+            <TimelineItem
+              key={segment.id}
+              geometry={geometry}
+              start={piece.start}
+              end={piece.end}
+              min={-1e6}
+              max={1e6}
+              minSecs={SEGMENT_MIN_SECS}
+              tone="video"
+              selected={selected}
+              label={`Piece ${i + 1}, ${formatPrecise(segment.start)} to ${formatPrecise(segment.end)} of the episode`}
+              onSelect={() => onSelect({ kind: "segment", id: segment.id })}
+              onChange={(moved, group) => onSegment(segment.id, moved, group)}
+              onDelete={selected && edits.segments.length > 1 ? onDelete : undefined}
+            >
+              <span className="self-start pt-1 text-[11px] font-medium tabular-nums">
+                {formatPrecise(segment.start)}
+                {edits.source_volume !== 1 && i === 0 ? ` · ${Math.round(edits.source_volume * 100)}%` : ""}
+              </span>
+            </TimelineItem>
+          );
+        })}
       </TrackRow>
       <TrackRow label="Captions" height="h-8">
         {plan?.captions.map((event, i) => (
@@ -618,6 +721,7 @@ function Inspector({
   fonts,
   actions,
   songs,
+  playback,
   onEdits,
   onText,
   onMusic,
@@ -630,10 +734,12 @@ function Inspector({
   fonts: FontInfo[] | null;
   actions: ItemActions | null;
   songs: Map<string, MediaItem>;
+  playback: Playback;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
 }) {
+  const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const music = selection?.kind === "music" ? edits.music.find((clip) => clip.id === selection.id) : undefined;
   if (music && actions) {
     return (
@@ -648,8 +754,21 @@ function Inspector({
       />
     );
   }
-  if (selection?.kind === "video") {
-    return <SourceSoundFields volume={edits.source_volume} onChange={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")} />;
+  const index = selection?.kind === "segment" ? edits.segments.findIndex((segment) => segment.id === selection.id) : -1;
+  if (index !== -1 && actions) {
+    return (
+      <SegmentFields
+        segment={edits.segments[index]}
+        index={index}
+        count={edits.segments.length}
+        sourceVolume={edits.source_volume}
+        canSplit={splittable}
+        onSplit={actions.split}
+        onDuplicate={actions.duplicate}
+        onDelete={actions.remove}
+        onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
+      />
+    );
   }
   const text = selection?.kind === "text" ? edits.text_layers.find((layer) => layer.id === selection.id) : undefined;
   if (text && actions) {
@@ -720,16 +839,28 @@ function AssetPanel({
   library,
   onAddText,
   onAddMusic,
+  transcript,
+  near,
+  onAddSource,
 }: {
   tab: AssetTab;
   fonts: FontInfo[] | null;
   library: MediaLibrary;
   onAddText: (look: Omit<TextLayer, "id" | "start" | "secs">) => void;
   onAddMusic: (item: MediaItem) => void;
+  transcript: Transcript | null;
+  // Where the episode's transcript opens: the Clip's first Segment.
+  near: ClipSegment;
+  onAddSource: (range: { start: number; end: number }) => void;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
   if (tab === "media") {
-    return <MediaAssets library={library} kinds={["video", "image"]} hint="Videos up to 3 minutes (500 MB) and images, kept for every Job." />;
+    return (
+      <div className="flex flex-col gap-4">
+        {transcript && <SourcePicker transcript={transcript} near={near} onAdd={onAddSource} />}
+        <MediaAssets library={library} kinds={["video", "image"]} hint="Videos up to 3 minutes (500 MB) and images, kept for every Job." />
+      </div>
+    );
   }
   if (tab === "audio") {
     return (

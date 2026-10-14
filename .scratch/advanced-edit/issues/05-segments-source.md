@@ -29,13 +29,39 @@ The largest change: a Clip stops being one range of the Source.
 
 **Blocked by:** 02 (Timeline-time layers must exist first, so their anchoring is tested across cuts).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Every existing Candidate and fixture plans and renders byte for byte as before.
-- [ ] Seam B: a middle piece deleted gives the expected Scenes, captions and duration.
-- [ ] Seam B: reordered Segments; Word Edits applied in both copies of a repeated piece.
-- [ ] Seam A: a 3-Segment render has the summed duration and the right frame at each join.
-- [ ] Preview seeks and plays across joins without visible stalls on desktop and phone.
-- [ ] Undoable; typecheck and build; browser walkthrough.
+- [x] Every existing Candidate and fixture plans and renders byte for byte as before.
+- [x] Seam B: a middle piece deleted gives the expected Scenes, captions and duration.
+- [x] Seam B: reordered Segments; Word Edits applied in both copies of a repeated piece.
+- [x] Seam A: a 3-Segment render has the summed duration and the right frame at each join.
+- [x] Preview seeks and plays across joins without visible stalls on desktop and phone.
+- [x] Undoable; typecheck and build; browser walkthrough.
 
 ## Comments
+
+**2026-10-14: done.** ADR 0002 records the model.
+
+**Model:**
+- `segments` is empty for a Clip that isn't cut.
+- `start`/`end` are kept: the range, or the hull.
+- An edit that leaves one Segment is stored as a plain range.
+
+**Checks:**
+- `tests/test_segments.py`:
+  - Seam B: each Segment framed on its own and joined; caption lines broken at a cut; a one-range Clip unchanged.
+  - Seam B: Word Edits and Layout Overrides applied in both copies of a repeated piece.
+  - Seam A: Segments saved, snapped and validated; a whole-clip trim refused while cut; back to one Segment as a plain range.
+  - Seam A: a 3-Segment render of a brightening Source shows each piece's own moment, in order, at the summed length.
+- The full backend suite passes. `tests/test_selection.py`'s full Candidate JSON gained the fields added since ticket 02; it had been failing since then.
+- `npm run build`.
+- Browser on a copy of a real Job:
+  - Split twice with Cmd+B and deleted the middle piece (saved, snapped, 22.9 s).
+  - Played across the join: the video jumped to the second piece.
+  - Dragged the second piece first (reordered), then undid it.
+  - Opened "Add from the episode" on the Transcript.
+
+**Changes from the plan:**
+- The preview jumps at a join with a seek on the same video, not a preloaded second one. On a local file the pause is short. A second video for the next Segment would hide it, and is left for later.
+- Clicking the Video track selects a Segment. "Original sound" moved to the Segment's inspector.
+- The clip editor shows a cut Clip's preview and caption text. Its trim and Source-time Timeline give way to a note with a link to the Advanced Edit.

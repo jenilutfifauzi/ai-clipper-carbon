@@ -2,11 +2,34 @@ import { useSyncExternalStore } from "react";
 
 type Listener = () => void;
 
+/** A piece of the Clip: the Source from `source_start` to `source_end`, from `start` to `end` seconds into the Clip. */
+export interface Piece {
+  start: number;
+  end: number;
+  source_start: number;
+  source_end: number;
+}
+
+/** The pieces of a Clip of these Segments of the Source, back to back from 0 s. */
+export function piecesFrom(segments: { start: number; end: number }[]): Piece[] {
+  let at = 0;
+  return segments.map((segment) => {
+    const piece = { start: at, end: at + segment.end - segment.start, source_start: segment.start, source_end: segment.end };
+    at = piece.end;
+    return piece;
+  });
+}
+
+// A piece that isn't the last hands over this long before its end, so that no frame past it shows.
+const HANDOVER_SECS = 0.03;
+
 /**
  * The clip editor's playback of a Candidate: the master <video> playing the Source, and its time in
- * seconds into the Clip (the Source's time less the Clip's start). The preview, its follower videos
- * and the timeline all read and set the time through it. Playing stops at the Clip's end, checked
- * every frame; started outside the Clip (before its start), it plays freely.
+ * seconds into the Clip. The Clip is one range of the Source or several pieces of it, back to back
+ * (docs/adr/0002-segments-and-timeline-time.md): at the end of each piece the video jumps to the
+ * next one's start. The preview, its follower videos and the timeline all read and set the time
+ * through it. Playing stops at the Clip's end, checked every frame; started outside the Clip
+ * (before its start), it plays freely.
  */
 export class Playback {
   private video: HTMLVideoElement | null = null;
@@ -14,24 +37,30 @@ export class Playback {
   private frame = 0;
   private armed = false;
   private detach: (() => void) | null = null;
-  start = 0;
-  end = 0;
+  pieces: Piece[] = [{ start: 0, end: 0, source_start: 0, source_end: 0 }];
+  // The piece the video is in.
+  private index = 0;
   // In seconds into the Clip, as last read: updated every frame while playing.
   time = 0;
   playing = false;
 
   get duration() {
-    return this.end - this.start;
+    return this.pieces[this.pieces.length - 1].end;
   }
 
+  // The Clip as one range of the Source.
   setRange(start: number, end: number) {
-    const moved = start !== this.start;
-    this.start = start;
-    this.end = end;
+    this.setPieces([{ start: 0, end: end - start, source_start: start, source_end: end }]);
+  }
+
+  setPieces(pieces: Piece[]) {
+    if (!pieces.length || JSON.stringify(pieces) === JSON.stringify(this.pieces)) return;
+    const moved = pieces[0].source_start !== this.pieces[0].source_start;
+    this.pieces = pieces;
     if (this.video && this.video.paused) {
       // A moved start waits at the new start; otherwise the time is kept, inside the Clip.
       this.seek(moved ? 0 : Math.min(this.time, this.duration));
-    }
+    } else this.index = Math.min(this.index, pieces.length - 1);
   }
 
   attach(video: HTMLVideoElement | null) {
@@ -71,12 +100,19 @@ export class Playback {
   }
 
   private read() {
-    return this.video ? this.video.currentTime - this.start : this.time;
+    const piece = this.pieces[this.index];
+    return this.video ? piece.start + (this.video.currentTime - piece.source_start) : this.time;
   }
 
   private tick = () => {
     this.time = this.read();
-    if (this.armed && this.time >= this.duration) {
+    const last = this.index === this.pieces.length - 1;
+    if (this.armed && !last && this.time >= this.pieces[this.index].end - HANDOVER_SECS) {
+      // On to the next piece, still playing.
+      this.index += 1;
+      if (this.video) this.video.currentTime = this.pieces[this.index].source_start;
+      this.time = this.pieces[this.index].start;
+    } else if (this.armed && last && this.time >= this.duration) {
       this.video?.pause();
       this.seek(this.duration);
       return;
@@ -88,7 +124,10 @@ export class Playback {
   // To `time` seconds into the Clip.
   seek(time: number) {
     this.time = time;
-    if (this.video) this.video.currentTime = this.start + time;
+    const index = this.pieces.findIndex((piece) => time < piece.end);
+    this.index = index === -1 ? this.pieces.length - 1 : index;
+    const piece = this.pieces[this.index];
+    if (this.video) this.video.currentTime = piece.source_start + (time - piece.start);
     this.emit();
   }
 

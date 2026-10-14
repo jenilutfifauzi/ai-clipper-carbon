@@ -13,15 +13,12 @@ import { usePlayback, type Playback } from "./playback";
  */
 export function CaptionTextEditor({
   preview,
-  clipStart,
   edits,
   playback,
   focus,
   onChange,
 }: {
   preview: PreviewPlan;
-  // The Clip's start on the Source's timeline: edits are keyed on it.
-  clipStart: number;
   edits: WordEdit[];
   playback: Playback;
   focus?: { at: number } | null;
@@ -45,7 +42,8 @@ export function CaptionTextEditor({
   }, [focus, words]);
 
   // The time a Word's edit is keyed by: its edit's own, or its middle on the Source's timeline.
-  const keyOf = (word: PreviewWord) => word.edit?.at ?? Math.round((clipStart + (word.start + word.end) / 2) * 1000) / 1000;
+  // Edits are keyed by the Word's time on the Source's timeline, which a cut Clip may show twice.
+  const keyOf = (word: PreviewWord) => word.edit?.at ?? word.at;
 
   function apply(word: PreviewWord, change: Partial<Pick<WordEdit, "text" | "break_before">>) {
     const at = keyOf(word);
@@ -110,7 +108,6 @@ export function CaptionTextEditor({
         <WordForm
           key={keyOf(words[open])}
           word={words[open]}
-          clipStart={clipStart}
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}
         />
@@ -221,12 +218,10 @@ function lines(words: PreviewWord[], starts: Set<string>): number[][] {
 // The open Word's correction: its text, and buttons to remove it, start a line at it, or restore it.
 function WordForm({
   word,
-  clipStart,
   onApply,
   onClose,
 }: {
   word: PreviewWord;
-  clipStart: number;
   onApply: (change: Partial<Pick<WordEdit, "text" | "break_before">>) => void;
   onClose: () => void;
 }) {
@@ -250,7 +245,7 @@ function WordForm({
     >
       <div className="flex flex-col gap-1">
         <label htmlFor={`${id}-text`} className="text-sm font-medium">
-          Word at {formatPrecise(clipStart + word.start)}, heard as “{word.text}”
+          Word at {formatPrecise(word.at)}, heard as “{word.text}”
         </label>
         <input
           ref={input}

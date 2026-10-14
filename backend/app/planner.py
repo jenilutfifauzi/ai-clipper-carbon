@@ -49,6 +49,11 @@ They are drawn over the captions and under the hook, in their order.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`.
+
+A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned piece by
+piece: each Segment framed on its own, from its own Scenes and faces, its Scenes moved to where it
+plays in the Clip. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
+Everything else is planned over the whole Clip, in seconds into it.
 """
 
 import math
@@ -159,6 +164,19 @@ class Face:
     @property
     def centre_y(self) -> float:
         return self.y + self.height / 2
+
+
+@dataclass(frozen=True)
+class Piece:
+    """A Segment of a Clip cut into several, as the planner frames it: the Source from `start` to
+    `end`, its shots `scenes` and sampled `faces` (None: unanalysed), and the Layout Overrides that
+    fall in it, all in seconds into the piece."""
+
+    start: float
+    end: float
+    scenes: list["Scene"] | None = None
+    faces: list["FrameFaces"] | None = None
+    layout_overrides: list[LayoutOverride] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -350,8 +368,19 @@ class AudioEvent:
 
 
 @dataclass(frozen=True)
+class SegmentPlan:
+    """A Segment as played: the Source from `source_start` to `source_end`, from `start` to `end`
+    seconds into the Clip."""
+
+    start: float
+    end: float
+    source_start: float
+    source_end: float
+
+
+@dataclass(frozen=True)
 class RenderPlan:
-    # The Clip's range on the Source's timeline.
+    # The Clip's range on the Source's timeline; with several Segments, the hull of what they show.
     start: float
     end: float
     source_width: int
@@ -373,10 +402,12 @@ class RenderPlan:
     # The Music Clips heard, under the Clip's own sound at `source_volume`.
     audio: list[AudioEvent] = field(default_factory=list)
     source_volume: float = 1.0
+    # A Clip cut into several Segments: each, in order; none for a Clip of one range.
+    segments: list[SegmentPlan] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
-        return self.end - self.start
+        return self.segments[-1].end if self.segments else self.end - self.start
 
 
 def reframes(source: SourceMetadata) -> bool:
@@ -408,6 +439,7 @@ def plan_render(
     music: list[MusicClip] | None = None,
     media_lengths: dict[str, float] | None = None,
     source_volume: float = 1.0,
+    pieces: list[Piece] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -420,10 +452,57 @@ def plan_render(
     the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. The
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
     `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
-    `music` is heard as `audio_events` places it, given the lengths of the songs it plays."""
+    `music` is heard as `audio_events` places it, given the lengths of the songs it plays.
+
+    With `pieces`, the Clip is cut into those Segments, back to back (`start` and `end` being the hull
+    of what they show), each framed on its own, ignoring `scenes`, `faces` and `layout_overrides`;
+    the other times are all in seconds into the Clip."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
-    duration = round(end - start, 3)
+    segments: list[SegmentPlan] = []
+    if pieces:
+        plans, at = [], 0.0
+        for piece in pieces:
+            length = round(piece.end - piece.start, 3)
+            framed = _framed(length, source, piece.scenes, piece.faces, layout, camera, piece.layout_overrides)
+            plans.extend(_moved(scene, at) for scene in framed)
+            segments.append(SegmentPlan(at, round(at + length, 3), piece.start, piece.end))
+            at = round(at + length, 3)
+        duration = at
+    else:
+        duration = round(end - start, 3)
+        plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides)
+    return RenderPlan(
+        start=start,
+        end=end,
+        source_width=source.width,
+        source_height=source.height,
+        fps=source.fps,
+        scenes=plans,
+        captions=_captions(words or [], plans, duration, caption_style, word_edits or [], [s.start for s in segments[1:]]),
+        hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
+        caption_style=caption_style,
+        hook_style=hook_style,
+        watermark=watermark(watermark_style, logo_size),
+        watermark_style=watermark_style,
+        texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
+        audio=audio_events(music or [], duration, media_lengths or {}),
+        source_volume=source_volume,
+        segments=segments,
+    )
+
+
+def _framed(
+    duration: float,
+    source: SourceMetadata,
+    scenes: list[Scene] | None,
+    faces: list[FrameFaces] | None,
+    layout: Layout,
+    camera: CameraTuning,
+    layout_overrides: list[LayoutOverride] | None,
+) -> list[ScenePlan]:
+    """The Scenes of a range of `source` lasting `duration`, whose shots are `scenes` and whose
+    sampled frames have `faces`, framed as plan_render says; in seconds into the range."""
     if not reframes(source):
         plans = [ScenePlan(0.0, duration, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, 0.0)])]
     else:
@@ -442,23 +521,15 @@ def plan_render(
             else:
                 panels = _blur(a, source)
             plans.append(ScenePlan(a, b, chosen, panels))
-    return RenderPlan(
-        start=start,
-        end=end,
-        source_width=source.width,
-        source_height=source.height,
-        fps=source.fps,
-        scenes=plans,
-        captions=_captions(words or [], plans, duration, caption_style, word_edits or []),
-        hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
-        caption_style=caption_style,
-        hook_style=hook_style,
-        watermark=watermark(watermark_style, logo_size),
-        watermark_style=watermark_style,
-        texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
-        audio=audio_events(music or [], duration, media_lengths or {}),
-        source_volume=source_volume,
-    )
+    return plans
+
+
+def _moved(scene: ScenePlan, by: float) -> ScenePlan:
+    """The Scene `by` seconds later, its crops' change points with it."""
+    if not by:
+        return scene
+    panels = [replace(panel, path=[replace(point, at=round(point.at + by, 3)) for point in panel.path]) for panel in scene.panels]
+    return ScenePlan(round(scene.start + by, 3), round(scene.end + by, 3), scene.layout, panels)
 
 
 def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None) -> WatermarkEvent | None:
@@ -892,7 +963,12 @@ def match_edits(words: list[Word], edits: list[WordEdit]) -> list[WordEdit | Non
 
 
 def _captions(
-    words: list[Word], scenes: list[ScenePlan], duration: float, style: CaptionStyle, edits: list[WordEdit]
+    words: list[Word],
+    scenes: list[ScenePlan],
+    duration: float,
+    style: CaptionStyle,
+    edits: list[WordEdit],
+    cuts: list[float] | None = None,
 ) -> list[CaptionEvent]:
     """The caption lines of `words` over the Clip, which lasts `duration` and is laid out in `scenes`,
     in `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's
@@ -907,7 +983,9 @@ def _captions(
     the next one is.
     A line still being spoken at a Layout change that moves the captions moves there with it (unless
     that would show it for less than CAPTION_MIN_SECS in one place); one whose Words are all spoken
-    goes at the change."""
+    goes at the change. At each of `cuts` (where a Segment ends and the next starts), a line ends and
+    the next starts."""
+    cuts = cuts or []
     spoken = []
     ordered = sorted(words, key=lambda word: word.start)
     for word, edit in zip(ordered, match_edits(ordered, edits)):
@@ -936,6 +1014,7 @@ def _captions(
             or word.start - line[-1].end >= style.pause_secs
             or line[-1].ends_sentence
             or area_at(word.start) != area_at(line[0].start)
+            or any(line[0].start < cut <= word.start for cut in cuts)
         ):
             lines.append([word])
         else:
@@ -947,7 +1026,7 @@ def _captions(
         end = min(line[-1].end + CAPTION_LINGER_SECS, start + style.max_secs, duration)
         if i + 1 < len(lines):
             end = min(end, lines[i + 1][0].start)
-        end = min([end, *(at for at in moves if line[-1].end <= at < end)])
+        end = min([end, *(at for at in [*moves, *cuts] if line[-1].end <= at < end)])
         if end <= start:
             continue
         text = " ".join(word.text for word in line)
