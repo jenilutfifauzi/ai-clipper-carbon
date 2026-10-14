@@ -59,6 +59,16 @@ class CaptionPosition(StrEnum):
     CUSTOM = "custom"
 
 
+class Animation(StrEnum):
+    """How the hook comes on or goes off screen: at once, fading, popping (growing from 70% while
+    fading in, or the reverse), or sliding (60 px up from below while fading in, or the reverse)."""
+
+    NONE = "none"
+    FADE = "fade"
+    POP = "pop"
+    SLIDE = "slide"
+
+
 class HookPosition(StrEnum):
     TOP = "top"
     MIDDLE = "middle"
@@ -105,6 +115,10 @@ class HookStyle:
     radius: Annotated[int, Field(ge=0, le=80)] = 24
     position: HookPosition = HookPosition.TOP
     y: Height = 232
+    # Off at its end by a short fade, on from the first frame (which platforms show first).
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.FADE
+    animation_ms: Annotated[int, Field(ge=50, le=1000)] = 200
 
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]

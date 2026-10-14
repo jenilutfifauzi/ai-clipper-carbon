@@ -49,12 +49,10 @@ from app.planner import (
     ScenePlan,
     font_metrics,
 )
-from app.styles import CaptionStyle, Highlight, HookStyle
+from app.styles import Animation, CaptionStyle, Highlight, HookStyle
 
 logger = logging.getLogger(__name__)
 
-# The hook fades out over its last moment (it is there from the first frame, which platforms show first).
-HOOK_FADE_OUT_MS = 200
 # The highlight box's padding around its Word, in sizes of the line's font, and its corners' radius.
 HIGHLIGHT_PAD_X = 0.12
 HIGHLIGHT_PAD_Y = 0.08
@@ -385,30 +383,91 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
 
 def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
     """The hook's Dialogue events: its box, drawn, and over it each line centred on the box, with
-    the first line's capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart."""
+    the first line's capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart;
+    animated on and off as the style says (_hook_phases)."""
     metrics = font_metrics(style.font)
     area, size = hook.area, hook.size
-    start, end = _ass_time(hook.start), _ass_time(hook.end)
-    fade = f"\\fad(0,{HOOK_FADE_OUT_MS})"
-    events = []
+    # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
+    # follows its tags), for the box
+    # and each line. A box that pops is placed by its centre, so that it grows from there.
+    elements: list[tuple[int, int, float, float, str, str | None, str, str]] = []
     if style.box_opacity > 0:
         alpha = f"&H{round(255 * (1 - style.box_opacity)):02X}&"
-        box = (
-            f"{{\\an7\\pos({area.x},{area.y})\\p1\\c{_tag_colour(style.box_colour)}\\alpha{alpha}{fade}}}"
-            f"{_rounded_box(area.width, area.height, min(style.radius, area.height // 2))}{{\\p0}}"
-        )
-        events.append(f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{box}")
+        drawing = f"{_rounded_box(area.width, area.height, min(style.radius, area.height // 2))}{{\\p0}}"
+        tags = f"\\p1\\c{_tag_colour(style.box_colour)}\\alpha{alpha}"
+        if Animation.POP in (style.animation_in, style.animation_out):
+            elements.append((1, 5, area.x + area.width / 2, area.y + area.height / 2, "g", alpha, tags, drawing))
+        else:
+            elements.append((1, 7, area.x, area.y, "g", alpha, tags, drawing))
     centre_x = area.x + area.width / 2
     for i, line in enumerate(hook.lines):
         baseline = area.y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * HOOK_LEADING) * size
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
-        place = f"\\an5\\pos({centre_x:g},{centre_y:.1f}){fade}"
-        if size != style.size:
-            place += f"\\fs{size:g}"
-        events.append(f"Dialogue: 2,{start},{end},Hook,,0,0,0,,{{{place}}}{_ass_text(line)}")
+        tags = f"\\fs{size:g}" if size != style.size else ""
+        elements.append((2, 5, centre_x, centre_y, ".1f", None, tags, _ass_text(line)))
+
+    events = []
+    for begin, finish, phase in _hook_phases(hook, style):
+        start, end = _ass_time(begin), _ass_time(finish)
+        if start >= end:
+            continue
+        length = round((finish - begin) * 1000)
+        for layer, align, x, y, y_format, alpha, tags, body in elements:
+            place, motion = _hook_motion(phase, length, x, y, y_format, alpha, style)
+            if layer == 1:
+                text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
+            else:
+                text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
+            events.append(f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}")
     return events
+
+
+# A popping hook grows from (or shrinks to) this share of its size, in percent; a sliding one comes
+# up from (or goes down to) this many pixels below its place.
+POP_FROM = 70
+SLIDE_PX = 60
+
+
+def _hook_phases(hook: HookEvent, style: HookStyle) -> list[tuple[float, float, str]]:
+    """The parts of the hook's time that are drawn differently, as (start, end, phase). Fading alone
+    (or no animation) is one part, "fade", where \\fad does both ends. Popping or sliding at either
+    end splits it into "in", "hold" and "out", each animation taking the style's animation_ms (at
+    most half the hook's time)."""
+    animated = {Animation.POP, Animation.SLIDE}
+    if style.animation_in not in animated and style.animation_out not in animated:
+        return [(hook.start, hook.end, "fade")]
+    most = (hook.end - hook.start) / 2
+    on = min(style.animation_ms / 1000, most) if style.animation_in != Animation.NONE else 0.0
+    off = min(style.animation_ms / 1000, most) if style.animation_out != Animation.NONE else 0.0
+    return [(hook.start, hook.start + on, "in"), (hook.start + on, hook.end - off, "hold"), (hook.end - off, hook.end, "out")]
+
+
+def _hook_motion(
+    phase: str, length: int, x: float, y: float, y_format: str, alpha: str | None, style: HookStyle
+) -> tuple[str, str]:
+    """The position tag and the animation tags of a hook element at (x, y) (y written in `y_format`)
+    in a part of `length` ms (see _hook_phases), its own alpha being `alpha` (None: opaque)."""
+    shown = alpha or "&H00&"
+    place = f"\\pos({x:g},{y:{y_format}})"
+    if phase == "fade":
+        on = style.animation_ms if style.animation_in == Animation.FADE else 0
+        off = style.animation_ms if style.animation_out == Animation.FADE else 0
+        return place, f"\\fad({on},{off})" if on or off else ""
+    animation = style.animation_in if phase == "in" else style.animation_out if phase == "out" else Animation.NONE
+    if animation == Animation.FADE:
+        return place, f"\\fad({length},0)" if phase == "in" else f"\\fad(0,{length})"
+    if animation == Animation.POP:
+        if phase == "in":
+            return place, f"\\fscx{POP_FROM}\\fscy{POP_FROM}\\alpha&HFF&\\t(\\fscx100\\fscy100\\alpha{shown})"
+        return place, f"\\t(\\fscx{POP_FROM}\\fscy{POP_FROM}\\alpha&HFF&)"
+    if animation == Animation.SLIDE:
+        here, below = f"{x:g},{y:{y_format}}", f"{x:g},{y + SLIDE_PX:{y_format}}"
+        if phase == "in":
+            return f"\\move({below},{here})", f"\\alpha&HFF&\\t(\\alpha{shown})"
+        return f"\\move({here},{below})", "\\t(\\alpha&HFF&)"
+    return place, ""
 
 
 def _rounded_box(width: int, height: int, radius: int) -> str:

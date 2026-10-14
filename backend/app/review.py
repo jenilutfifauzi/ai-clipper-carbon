@@ -37,6 +37,8 @@ class CandidateChange:
     preset_id: str | None = None
     style_overrides: StyleOverrides | None = None
     word_edits: list[WordEdit] | None = None
+    hook_start: float | None = None
+    hook_secs: float | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,8 @@ def update(
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
         word_edits=old.word_edits if change.word_edits is None else _merged(change.word_edits),
+        hook_start=_pick(change.hook_start, old.hook_start),
+        hook_secs=_pick(change.hook_secs, old.hook_secs),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -127,7 +131,7 @@ def _look(candidate: Candidate) -> tuple:
     """What the owner's edits change about a Candidate's Clip."""
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
-        candidate.style_overrides, candidate.word_edits,
+        candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
     )
 
 

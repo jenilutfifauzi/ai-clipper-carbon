@@ -135,6 +135,7 @@ def candidate_plan(
         layout=candidate.layout, words=words, hook=candidate.hook_text, camera=camera,
         caption_style=caption_style, hook_style=hook_style,
         word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
+        hook_start=candidate.hook_start, hook_secs=candidate.hook_secs,
     )
 
 

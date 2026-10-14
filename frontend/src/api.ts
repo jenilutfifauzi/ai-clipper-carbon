@@ -113,6 +113,8 @@ export interface WordEdit {
 export type Highlight = "colour" | "box" | "none";
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";
 export type HookPosition = "top" | "middle" | "bottom" | "custom";
+// How the hook comes on or goes off: at once, fading, popping from 70%, or sliding 60 px up.
+export type Animation = "none" | "fade" | "pop" | "slide";
 
 // How captions look and are broken into lines (backend/app/styles.py). Sizes are libass's, which
 // sets a font so that its Windows ascent plus descent is the size (see FontInfo).
@@ -146,6 +148,9 @@ export interface HookStyle {
   position: HookPosition;
   // The box's top, for the custom position.
   y: number;
+  animation_in: Animation;
+  animation_out: Animation;
+  animation_ms: number;
 }
 
 export interface StylePreset {
@@ -288,6 +293,9 @@ export interface Candidate {
   preset_id: string;
   style_overrides: StyleOverrides;
   word_edits: WordEdit[];
+  // When the hook comes on, in seconds into the Clip, and how long it stays.
+  hook_start: number;
+  hook_secs: number;
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -302,6 +310,8 @@ export interface CandidateChange {
   style_overrides?: StyleOverrides;
   // Replaces the Candidate's Word Edits as a whole.
   word_edits?: WordEdit[];
+  hook_start?: number;
+  hook_secs?: number;
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).

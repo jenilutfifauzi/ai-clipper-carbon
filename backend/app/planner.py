@@ -279,12 +279,14 @@ def plan_render(
     caption_style: CaptionStyle = CaptionStyle(),
     hook_style: HookStyle = HookStyle(),
     word_edits: list[WordEdit] | None = None,
+    hook_start: float = 0.0,
+    hook_secs: float = HOOK_SECS,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
     each Scene by its faces), captioned with `words` (in seconds into the Clip; those beyond its
     ends are left out) in `caption_style` and corrected by `word_edits` (their times in seconds into
-    the Clip), opening with the `hook` text in `hook_style`. Without `scenes` the Clip is one Scene;
+    the Clip), with the `hook` text in `hook_style` from `hook_start` for `hook_secs`. Without `scenes` the Clip is one Scene;
     without `faces` (not analysed) an Auto Scene is tracked with its crop in the middle; without
     `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
     if not 0 <= start < end:
@@ -315,7 +317,7 @@ def plan_render(
         fps=source.fps,
         scenes=plans,
         captions=_captions(words or [], plans, duration, caption_style, word_edits or []),
-        hook=_hook(hook, duration, hook_style),
+        hook=_hook(hook, duration, hook_style, hook_start, hook_secs),
         caption_style=caption_style,
         hook_style=hook_style,
     )
@@ -344,13 +346,15 @@ def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], floa
     return lines, math.floor(style.size * HOOK_WIDTH / width * 10) / 10
 
 
-def _hook(text: str, duration: float, style: HookStyle) -> HookEvent | None:
-    """The hook `text` over the Clip's first HOOK_SECS (all of it, if it is shorter), in a box centred
-    like the captions and as large as its lines and padding, placed by `style`: just below the top
-    of SAFE_AREA, in the middle of the frame, just above the bottom of SAFE_AREA, or with its top at
-    the style's height (kept inside SAFE_AREA). None when the text is blank."""
+def _hook(text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS) -> HookEvent | None:
+    """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
+    end, if that comes sooner), in a box centred like the captions and as large as its lines and
+    padding, placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just
+    above the bottom of SAFE_AREA, or with its top at the style's height (kept inside SAFE_AREA).
+    None when the text is blank or it would start at or after the Clip's end."""
     lines, size = fit_hook(text, style)
-    if not lines:
+    start = round(max(start, 0.0), 3)
+    if not lines or start >= duration:
         return None
     metrics = font_metrics(style.font)
     width = math.ceil(max(metrics.width(line, size) for line in lines)) + 2 * HOOK_PAD_X
@@ -364,7 +368,7 @@ def _hook(text: str, duration: float, style: HookStyle) -> HookEvent | None:
         HookPosition.CUSTOM: min(max(style.y, SAFE_AREA.y), bottom),
     }[style.position]
     area = Box((OUTPUT_WIDTH - width) // 2, top, width, height)
-    return HookEvent(lines, 0.0, round(min(HOOK_SECS, duration), 3), area, size)
+    return HookEvent(lines, start, round(min(start + secs, duration), 3), area, size)
 
 
 @dataclass(frozen=True)

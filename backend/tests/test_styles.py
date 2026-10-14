@@ -189,3 +189,47 @@ def test_another_fonts_metrics_set_the_caption_size_and_the_hook():
     bebas = font_metrics("bebas-neue")
     assert 740 < max(bebas.width(line, hook.size) for line in hook.lines) <= 748
     assert hook.size != plan_render(0, 5, SOURCE, hook=HOOK).hook.size
+
+
+def hook_lines(**style) -> list[str]:
+    script = _ass(plan(hook_style=HookStyle(**style)))
+    return [line for line in script.splitlines() if line.startswith("Dialogue") and ",Hook," in line]
+
+
+def test_fading_hooks_are_one_event_each_with_fad():
+    lines = hook_lines(animation_in="fade", animation_out="fade", animation_ms=300)
+    assert len(lines) == 3 and all("\\fad(300,300)" in line for line in lines)
+    assert all("\\fad" not in line for line in hook_lines(animation_out="none"))
+
+
+def test_a_popping_hook_grows_from_70_percent_and_shrinks_back_split_into_in_hold_and_out():
+    lines = hook_lines(animation_in="pop", animation_out="pop", animation_ms=250)
+    # Box and two lines, in each of the three parts.
+    assert len(lines) == 9
+    starts = sorted({line.split(",")[1] for line in lines})
+    assert starts == ["0:00:00.00", "0:00:00.25", "0:00:02.75"]
+    box_in, *_ = [line for line in lines if line.startswith("Dialogue: 1,0:00:00.00")]
+    # The popping box is placed by its centre, so that it grows from there, and fades in to its own alpha.
+    assert "\\an5\\pos(539.5,304.5)" in box_in
+    assert "\\fscx70\\fscy70\\alpha&HFF&\\t(\\fscx100\\fscy100\\alpha&H66&)" in box_in
+    line_out = [line for line in lines if line.startswith("Dialogue: 2,0:00:02.75")][0]
+    assert "\\t(\\fscx70\\fscy70\\alpha&HFF&)" in line_out
+    holds = [line for line in lines if line.split(",")[1] == "0:00:00.25"]
+    assert holds and all("\\t(" not in line and "\\fad" not in line for line in holds)
+
+
+def test_a_sliding_hook_comes_up_from_60_px_below_and_fades_out_with_fad():
+    lines = hook_lines(animation_in="slide", animation_out="fade", animation_ms=400)
+    box_in = [line for line in lines if line.startswith("Dialogue: 1,0:00:00.00")][0]
+    assert "\\an7\\move(130,292,130,232)" in box_in and "\\alpha&HFF&\\t(\\alpha&H66&)" in box_in
+    line_in = [line for line in lines if line.startswith("Dialogue: 2,0:00:00.00")][0]
+    assert "\\move(539.5,333.3,539.5,273.3)" in line_in
+    out = [line for line in lines if line.startswith("Dialogue: 2,0:00:02.60")]
+    assert out and all("\\fad(0,400)" in line for line in out)
+
+
+def test_the_hooks_animations_take_at_most_half_its_time():
+    plan_ = plan_render(100, 110, SOURCE, words=WORDS, hook=HOOK, hook_secs=0.6,
+                        hook_style=HookStyle(animation_in="pop", animation_out="slide", animation_ms=1000))
+    lines = [line for line in _ass(plan_).splitlines() if ",Hook," in line and line.startswith("Dialogue")]
+    assert sorted({line.split(",")[1] for line in lines}) == ["0:00:00.00", "0:00:00.30"]

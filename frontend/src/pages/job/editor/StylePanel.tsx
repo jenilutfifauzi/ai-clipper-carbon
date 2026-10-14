@@ -51,6 +51,13 @@ const HOOK_POSITIONS = [
   { value: "custom", label: "Custom" },
 ] as const;
 
+const ANIMATIONS = [
+  { value: "none", label: "None" },
+  { value: "fade", label: "Fade" },
+  { value: "pop", label: "Pop" },
+  { value: "slide", label: "Slide" },
+] as const;
+
 const MAX_WORDS = [
   { value: "", label: "No limit" },
   ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) })),
@@ -274,6 +281,20 @@ export function StylePanel({
         {hook.position === "custom" && (
           <Slider label="Height of the box's top" value={hook.y} min={232} max={1400} format={(v) => `${v} px`} onChange={(v) => set("hook", "y", v)} marker={marker("hook", "y", "hook height")} />
         )}
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
+          <Select label="Comes on" value={hook.animation_in} options={ANIMATIONS} onChange={(v) => set("hook", "animation_in", v)} marker={marker("hook", "animation_in", "how it comes on")} />
+          <Select label="Goes off" value={hook.animation_out} options={ANIMATIONS} onChange={(v) => set("hook", "animation_out", v)} marker={marker("hook", "animation_out", "how it goes off")} />
+          <Slider
+            label="Animation"
+            value={hook.animation_ms}
+            min={50}
+            max={1000}
+            step={50}
+            format={(v) => `${(v / 1000).toFixed(2)} s`}
+            onChange={(v) => set("hook", "animation_ms", v)}
+            marker={marker("hook", "animation_ms", "animation length")}
+          />
+        </div>
       </fieldset>
     </div>
   );

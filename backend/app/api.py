@@ -21,7 +21,7 @@ from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobSt
 from app.planner import HOOK_SIZE, fit_hook, font_metrics
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
-from app.review import CandidateChange, CandidateNotFound, Episode, InvalidEdit
+from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit
 from app.storage import DiskUsage, disk_usage
 from app.styles import BuiltinPreset, CaptionStyle, HookStyle, InvalidStyle, Name, PresetNotFound, PresetStore, StyleOverrides, StylePreset
 from app.transcript import Transcript
@@ -103,6 +103,9 @@ class CandidateUpdate(BaseModel):
     style_overrides: StyleOverrides | None = None
     # Replaces the Candidate's Word Edits as a whole.
     word_edits: Annotated[list[WordEdit], Field(max_length=WORD_EDITS_MAX)] | None = None
+    # Seconds into the Clip; the planner keeps them in it.
+    hook_start: Annotated[float, Field(ge=0, le=MAX_CLIP_SECS)] | None = None
+    hook_secs: Annotated[float, Field(ge=0.5, le=30)] | None = None
 
 
 class PresetBody(BaseModel):

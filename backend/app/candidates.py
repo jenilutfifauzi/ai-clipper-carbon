@@ -84,6 +84,9 @@ class Candidate:
     style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
     # Corrections of its caption Words.
     word_edits: list[WordEdit] = field(default_factory=list)
+    # When the hook comes on, in seconds into the Clip, and how long it stays (both kept in the Clip).
+    hook_start: float = 0.0
+    hook_secs: float = 3.0
 
     @property
     def reviewed(self) -> bool:

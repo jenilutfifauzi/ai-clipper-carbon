@@ -22,7 +22,7 @@ import { ClipPreview } from "./editor/ClipPreview";
 import { Playback } from "./editor/playback";
 import { StylePanel, type StyleDraft } from "./editor/StylePanel";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
-import { HookEditor } from "./HookEditor";
+import { HookEditor, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
 
@@ -90,6 +90,7 @@ export function CandidateEditor({
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
   const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
+  const [timingDraft, setTimingDraft] = useState<HookTiming | null>(null);
   const [preparing, setPreparing] = useState<string | null>(null);
   const playback = useMemo(() => new Playback(), []);
   playback.setRange(candidate.start, candidate.end);
@@ -100,6 +101,7 @@ export function CandidateEditor({
   useEffect(() => {
     setHookDraft(null);
     setStyleDraft(null);
+    setTimingDraft(null);
   }, [candidate.id]);
   // A preparation asked for here is over once the Job is back in review.
   useEffect(() => {
@@ -112,6 +114,8 @@ export function CandidateEditor({
     preset_id: styleDraft?.preset_id ?? candidate.preset_id,
     style_overrides: styleDraft?.style_overrides ?? candidate.style_overrides,
     word_edits: candidate.word_edits,
+    hook_start: timingDraft?.hook_start ?? candidate.hook_start,
+    hook_secs: timingDraft?.hook_secs ?? candidate.hook_secs,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -300,6 +304,10 @@ export function CandidateEditor({
         value={candidate.hook_text}
         onSave={(hook_text) => void onSave({ hook_text })}
         onDraft={setHookDraft}
+        timing={{ hook_start: candidate.hook_start, hook_secs: candidate.hook_secs }}
+        duration={length}
+        onTimingDraft={setTimingDraft}
+        onTimingSave={(timing) => void onSave(timing)}
       />
 
       <div className="flex flex-col gap-1.5">

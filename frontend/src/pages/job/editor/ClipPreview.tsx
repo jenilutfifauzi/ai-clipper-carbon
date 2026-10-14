@@ -7,12 +7,12 @@ import { formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
-// the hook box's padding above its first line's capitals and its lines' spacing, in sizes; its
-// fade-out; the highlight box's padding and corners, in sizes of the line's font; and Blur's
+// the hook box's padding above its first line's capitals and its lines' spacing, in sizes; how far
+// a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font; and Blur's
 // background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 const HOOK_PAD_Y = 26;
 const HOOK_LEADING = 0.82;
-const HOOK_FADE_OUT_SECS = 0.2;
+const SLIDE_PX = 60;
 const HIGHLIGHT_PAD_X = 0.12;
 const HIGHLIGHT_PAD_Y = 0.08;
 const HIGHLIGHT_RADIUS = 0.12;
@@ -281,18 +281,42 @@ function HighlightBox({
   );
 }
 
-/** The hook's box and lines while it is on screen, fading out over its last moment. */
+// The hook's look at `time`: its opacity, scale and how far below its place it is, as the renderer
+// animates it (_hook_phases, _hook_motion); null while it is off screen.
+function hookLook(time: number, hook: HookEvent, style: RenderPlan["hook_style"]): [number, number, number] | null {
+  if (time < hook.start || time >= hook.end) return null;
+  const ms = style.animation_ms / 1000;
+  const moving = (a: string) => a === "pop" || a === "slide";
+  if (!moving(style.animation_in) && !moving(style.animation_out)) {
+    const on = style.animation_in === "fade" ? (time - hook.start) / ms : 1;
+    const off = style.animation_out === "fade" ? (hook.end - time) / ms : 1;
+    return [Math.max(0, Math.min(1, on, off)), 1, 0];
+  }
+  const most = (hook.end - hook.start) / 2;
+  const on = style.animation_in === "none" ? 0 : Math.min(ms, most);
+  const off = style.animation_out === "none" ? 0 : Math.min(ms, most);
+  const animate = (animation: string, shown: number): [number, number, number] =>
+    animation === "pop" ? [shown, 0.7 + 0.3 * shown, 0] : animation === "slide" ? [shown, 1, SLIDE_PX * (1 - shown)] : [shown, 1, 0];
+  if (on && time < hook.start + on) return animate(style.animation_in, (time - hook.start) / on);
+  if (off && time >= hook.end - off) return animate(style.animation_out, (hook.end - time) / off);
+  return [1, 1, 0];
+}
+
+/** The hook's box and lines while it is on screen, animated on and off as its style says. */
 function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEvent; font: FontInfo | undefined; playback: Playback }) {
-  const opacity = usePlayback(playback, (time) => {
-    if (time < hook.start || time >= hook.end) return 0;
-    return Math.round(Math.min(1, (hook.end - time) / HOOK_FADE_OUT_SECS) * 20) / 20;
-  });
-  if (!opacity || !font) return null;
   const style = plan.hook_style;
+  const key = usePlayback(playback, (time) => {
+    const look = hookLook(time, hook, style);
+    return look && look.map((value) => value.toFixed(3)).join(" ");
+  });
+  if (!key || !font) return null;
+  const [opacity, scale, below] = key.split(" ").map(Number);
   const { area, size } = hook;
   const centreX = area.x + area.width / 2;
+  // Each element grows from its own centre, as libass scales it.
+  const grown = scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box" as const, transformOrigin: "center" };
   return (
-    <g opacity={opacity}>
+    <g opacity={opacity} transform={below ? `translate(0 ${below})` : undefined}>
       {style.box_opacity > 0 && (
         <rect
           x={area.x}
@@ -302,6 +326,7 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
           rx={Math.min(style.radius, area.height / 2)}
           fill={style.box_colour}
           fillOpacity={style.box_opacity}
+          style={grown}
         />
       )}
       {hook.lines.map((line, i) => (
@@ -313,7 +338,7 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
           fontFamily={fontFamily(font.id)}
           fontSize={cssFontSize(font, size)}
           fill={style.colour}
-          style={{ whiteSpace: "pre" }}
+          style={{ whiteSpace: "pre", ...grown }}
         >
           {line}
         </text>

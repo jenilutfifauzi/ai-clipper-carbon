@@ -821,3 +821,18 @@ def test_edited_text_is_shown_like_a_words_in_capitals_without_end_punctuation_u
     assert shown(edited(words, [edit])) == ["HALO KA-WAN!"]
     assert shown(edited(words, [edit], caption_style=CaptionStyle(uppercase=False))) == ["halo ka-wan!"]
     assert shown(edited(words, [WordEdit(at=words[1].start, text="...")])) == ["HALO"]
+
+
+# Hook timing (clip editor ticket 07).
+
+
+def test_the_hook_shows_from_its_start_for_its_time_kept_in_the_clip():
+    assert (hooked(HOOK).start, hooked(HOOK).end) == (0.0, 3.0)
+    late = hooked(HOOK, hook_start=2.5, hook_secs=4)
+    assert (late.start, late.end) == (2.5, 6.5)
+    # Cut at the Clip's end; none when it would start at or after it.
+    assert (hooked(HOOK, secs=5, hook_start=3, hook_secs=4).end) == 5.0
+    assert hooked(HOOK, secs=5, hook_start=5) is None
+    assert hooked(HOOK, secs=5, hook_start=7) is None
+    # Where and how large doesn't depend on when.
+    assert late.area == hooked(HOOK).area and late.lines == hooked(HOOK).lines

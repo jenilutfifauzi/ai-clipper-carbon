@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { api, type HookFit } from "../../api";
+import { Slider } from "../../components/Slider";
 import { cx } from "../../format";
 
 // The backend's limit (HOOK_MAX_CHARS in app/api.py).
@@ -10,19 +11,33 @@ const SAVE_AFTER_MS = 700;
 // Whether the text fits the hook's 2 lines is asked once typing pauses this long.
 const FIT_AFTER_MS = 250;
 
+export interface HookTiming {
+  hook_start: number;
+  hook_secs: number;
+}
+
 /**
- * The Candidate's hook text, saved as it is typed. The draft is the field's own: saves coming back
- * never overwrite what is being typed. Key it by the Candidate's id.
+ * The Candidate's hook text, saved as it is typed, and when it shows. The drafts are the editor's
+ * own: saves coming back never overwrite what is being changed. Key it by the Candidate's id.
  */
 export function HookEditor({
   value,
   onSave,
   onDraft,
+  timing,
+  duration,
+  onTimingDraft,
+  onTimingSave,
 }: {
   value: string;
   onSave: (text: string) => void;
   // Each change as it is typed, before it is saved: for the preview.
   onDraft?: (text: string) => void;
+  timing: HookTiming;
+  // The Clip's length: the hook is kept in it.
+  duration: number;
+  onTimingDraft: (timing: HookTiming) => void;
+  onTimingSave: (timing: HookTiming) => void;
 }) {
   const id = useId();
   const [draft, setDraft] = useState(value);
@@ -55,6 +70,27 @@ export function HookEditor({
     };
   }, [draft]);
 
+  const [when, setWhen] = useState(timing);
+  const whenTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const latestWhen = useRef(when);
+  latestWhen.current = when;
+  const savedWhen = useRef(JSON.stringify(timing));
+  function saveWhen(next: HookTiming) {
+    clearTimeout(whenTimer.current);
+    if (JSON.stringify(next) === savedWhen.current) return;
+    savedWhen.current = JSON.stringify(next);
+    onTimingSave(next);
+  }
+  useEffect(() => () => saveWhen(latestWhen.current), []);
+  function changeWhen(change: Partial<HookTiming>) {
+    const next = { ...when, ...change };
+    setWhen(next);
+    onTimingDraft(next);
+    clearTimeout(whenTimer.current);
+    whenTimer.current = setTimeout(() => saveWhen(next), SAVE_AFTER_MS);
+  }
+  const shownFor = Math.max(0, Math.min(when.hook_secs, duration - when.hook_start));
+
   const blank = draft.trim() === "";
   const long = !blank && fit?.fits === false;
   return (
@@ -63,7 +99,7 @@ export function HookEditor({
         Hook text
       </label>
       <span id={`${id}-hint`} className="text-sm text-muted">
-        Shown at the top for the first 3 seconds, in at most 2 lines.
+        In at most 2 lines. Where it sits and how it moves are in Style.
       </span>
       <textarea
         id={`${id}-hook`}
@@ -98,6 +134,32 @@ export function HookEditor({
           <span>Fits on {fit.lines.length === 1 ? "1 line" : "2 lines"}.</span>
         ) : null}
       </p>
+      <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+        <Slider
+          label="Comes on at"
+          value={Math.min(when.hook_start, Math.max(0, duration - 0.5))}
+          min={0}
+          max={Math.max(0.5, duration - 0.5)}
+          step={0.1}
+          format={(v) => `${v.toFixed(1)} s`}
+          onChange={(hook_start) => changeWhen({ hook_start })}
+        />
+        <Slider
+          label="Stays for"
+          value={when.hook_secs}
+          min={0.5}
+          max={Math.min(30, Math.max(0.5, duration))}
+          step={0.1}
+          format={(v) => `${v.toFixed(1)} s${v > shownFor + 0.05 ? ` (${shownFor.toFixed(1)} s in the clip)` : ""}`}
+          onChange={(hook_secs) => changeWhen({ hook_secs })}
+        />
+      </div>
+      {when.hook_start > 0 && !blank && (
+        <p className="flex items-center gap-1.5 text-sm text-accent-text">
+          <AlertTriangle aria-hidden size={15} />
+          Not on the first frame, which the platforms show before the clip plays.
+        </p>
+      )}
     </div>
   );
 }
