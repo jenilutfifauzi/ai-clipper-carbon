@@ -94,9 +94,20 @@ export function HookPosition({ style }: { style: StyleControls }) {
   const { hook, set, marker } = hookFields(style);
   return (
     <>
-      <Segmented legend="Position" options={POSITIONS} value={hook.position} onChange={(v) => set("position", v)} marker={marker("position", "hook position")} className="max-w-md" />
+      <Segmented
+        legend="Position"
+        options={POSITIONS}
+        value={hook.position}
+        // Top, Middle and Bottom are centred across; Custom keeps where it was dragged.
+        onChange={(v) => (v === "custom" ? set("position", v) : style.setMany("hook", { position: v, x: null }))}
+        marker={marker("position", "hook position")}
+        className="max-w-md"
+      />
       {hook.position === "custom" && (
-        <Slider label="Height of the hook's top" value={hook.y} min={232} max={1400} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "hook height")} />
+        <>
+          <Slider label="Height of the hook's top" value={hook.y} min={232} max={1536} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "hook height")} />
+          <Slider label="Hook's middle across" value={hook.x ?? 540} min={0} max={1080} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "hook middle across")} />
+        </>
       )}
     </>
   );

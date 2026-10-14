@@ -1,6 +1,6 @@
 # Edit the hook and captions on the preview
 
-Status: ready-for-agent
+Status: done
 Created: 2026-10-15
 
 ## Problem Statement

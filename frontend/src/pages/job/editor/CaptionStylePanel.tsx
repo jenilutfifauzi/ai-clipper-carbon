@@ -70,9 +70,19 @@ export function CaptionStylePanel({
         marker={marker("highlight", "highlight")}
         className="max-w-sm"
       />
-      <Segmented legend="Position" options={POSITIONS} value={caption.position} onChange={(v) => set("position", v)} marker={marker("position", "position")} />
+      <Segmented
+        legend="Position"
+        options={POSITIONS}
+        value={caption.position}
+        // Auto, Top, Middle and Bottom are centred across; Custom keeps where they were dragged.
+        onChange={(v) => (v === "custom" ? set("position", v) : style.setMany("caption", { position: v, x: null }))}
+        marker={marker("position", "position")}
+      />
       {caption.position === "custom" && (
-        <Slider label="Height of the line's centre" value={caption.y} min={332} max={1436} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "height")} />
+        <>
+          <Slider label="Height of the line's centre" value={caption.y} min={332} max={1436} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "height")} />
+          <Slider label="Line's centre across" value={caption.x ?? 540} min={0} max={1080} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
+        </>
       )}
       <Switch checked={caption.uppercase} onChange={(v) => set("uppercase", v)}>
         <span className="flex items-center gap-1.5 text-sm">
