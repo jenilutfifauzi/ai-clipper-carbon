@@ -22,6 +22,8 @@ const SNAP_PX = 8;
 // sooner scrolls the timeline.
 const LONG_PRESS_MS = 350;
 const SLOP_PX = 8;
+// A touch that moves further than this before it lifts is a swipe, not a tap.
+const TAP_SLOP_PX = 8;
 // The arrow keys move an item this far (with Alt, ten times as far).
 const STEP_SECS = 0.1;
 
@@ -37,9 +39,9 @@ export interface TimeGeometry {
 }
 
 /**
- * The Advanced Edit's multi-track Timeline, in Timeline time (seconds into the output): a ruler that
- * moves the playhead when clicked or scrubbed, the tracks `children` draws, and the playhead over
- * them. Zoomed by its buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by
+ * The Advanced Edit's multi-track Timeline, in Timeline time (seconds into the output): a ruler, the
+ * tracks `children` draws, and the playhead over them. A click anywhere off the items (on the ruler
+ * or the tracks) moves the playhead there, and dragging scrubs, as in CapCut or Premiere Pro. Zoomed by its buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by
  * Ctrl or Cmd with the scroll wheel, about the pointer.
  */
 export function AdvancedTimeline({
@@ -58,6 +60,9 @@ export function AdvancedTimeline({
   children: (geometry: TimeGeometry) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  // A press on the tracks or the ruler that moves the playhead: at once and while dragged (`now`), or
+  // when it lifts where it went down (a tap, which may yet turn into a scroll).
+  const scrub = useRef<{ pointer: number; x: number; y: number; now: boolean } | null>(null);
   const [width, setWidth] = useState(600);
   const [zoom, setZoom] = useState(1);
   // A zoom about a point: the time under it and where it is in the view, kept there after the zoom.
@@ -172,9 +177,41 @@ export function AdvancedTimeline({
         </div>
       </div>
       <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto overscroll-contain select-none">
-        <div className="relative flex min-h-full flex-col pb-2" style={{ width: total + LABEL_WIDTH + 16 }}>
+        <div
+          className="relative flex min-h-full flex-col pb-2"
+          style={{ width: total + LABEL_WIDTH + 16 }}
+          onPointerDown={(event) => {
+            const target = event.target as HTMLElement;
+            // Items and buttons are picked and dragged as they are; the labels' column isn't time.
+            if (event.button !== 0 || target.closest("button, a, input, [role=button]")) return;
+            const left = scroller.current!.getBoundingClientRect().left + LABEL_WIDTH;
+            if (event.clientX < left) return;
+            // A touch on the tracks may be a swipe that scrolls: it moves the playhead when it ends
+            // where it started. A mouse, or a touch on the ruler, moves it at once and scrubs.
+            const now = event.pointerType !== "touch" || !!target.closest("[data-scrub]");
+            scrub.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, now };
+            if (now) {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              playback.seek(timeAt(event.clientX));
+            }
+          }}
+          onPointerMove={(event) => {
+            const current = scrub.current;
+            if (!current || current.pointer !== event.pointerId) return;
+            if (current.now) playback.seek(timeAt(event.clientX));
+            else if (Math.hypot(event.clientX - current.x, event.clientY - current.y) > TAP_SLOP_PX) scrub.current = null;
+          }}
+          onPointerUp={(event) => {
+            const current = scrub.current;
+            if (current?.pointer === event.pointerId && !current.now) playback.seek(timeAt(event.clientX));
+            scrub.current = null;
+          }}
+          onPointerCancel={() => {
+            scrub.current = null;
+          }}
+        >
           <TrackRow label="" height="h-7">
-            <Ruler duration={duration} pps={pps} playback={playback} timeAt={timeAt} />
+            <Ruler duration={duration} pps={pps} />
           </TrackRow>
           {children(geometry)}
           <Playhead playback={playback} pps={pps} />
@@ -234,41 +271,13 @@ export function TrackRow({
 }
 
 // Ticks every 1, 2, 5, 10, 15, 30 or 60 s, whichever leaves room for the labels, with tenths
-// between when zoomed far in. Pressing it moves the playhead there, and dragging scrubs.
-function Ruler({
-  duration,
-  pps,
-  playback,
-  timeAt,
-}: {
-  duration: number;
-  pps: number;
-  playback: Playback;
-  timeAt: (clientX: number) => number;
-}) {
+// between when zoomed far in. A touch on it scrubs at once (`data-scrub`), as a mouse does anywhere.
+function Ruler({ duration, pps }: { duration: number; pps: number }) {
   const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 56) ?? 60;
   const ticks = [];
   for (let t = 0; t <= duration + 1e-6; t += step) ticks.push(Math.round(t * 10) / 10);
-  const scrubbing = useRef(false);
   return (
-    <div
-      aria-hidden
-      className="absolute inset-0 cursor-pointer touch-none"
-      onPointerDown={(event) => {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        scrubbing.current = true;
-        playback.seek(timeAt(event.clientX));
-      }}
-      onPointerMove={(event) => {
-        if (scrubbing.current) playback.seek(timeAt(event.clientX));
-      }}
-      onPointerUp={() => {
-        scrubbing.current = false;
-      }}
-      onPointerCancel={() => {
-        scrubbing.current = false;
-      }}
-    >
+    <div aria-hidden data-scrub className="absolute inset-0 cursor-pointer touch-none">
       {ticks.map((t) => (
         <span
           key={t}
