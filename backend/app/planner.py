@@ -927,8 +927,8 @@ def _hook(
     text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS, kicker: str = ""
 ) -> HookEvent | None:
     """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
-    end, if that comes sooner), as large as its lines and padding, its lines' middle at the style's
-    x (kept in the frame), placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
+    end, if that comes sooner), as large as its lines and padding, its lines centred in the frame
+    or its middle at the style's x (kept in the frame), placed by `style`: just below the top of SAFE_AREA, in the middle of the frame, just above the
     bottom of SAFE_AREA, or with its top at the style's height (kept inside SAFE_AREA).
     None when the text is blank or it would start at or after the Clip's end.
 
@@ -1030,8 +1030,8 @@ def _hook(
         quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
-    # Moved as far from the middle of the frame as the style's x is, but no further than its edges.
-    dx = min(max(style.x - OUTPUT_WIDTH // 2, -area.x), OUTPUT_WIDTH - area.x - area.width)
+    # With its middle at the style's x, or as near as keeps it in the frame.
+    dx = 0 if style.x is None else min(max((2 * style.x - area.width) // 2, 0), OUTPUT_WIDTH - area.width) - area.x
     if dx and placed is not None:
         placed = replace(placed, box=_shifted(placed.box, dx), anchor=(placed.anchor[0] + dx, placed.anchor[1]))
     return HookEvent(
@@ -1250,7 +1250,9 @@ def _captions(
 
 def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle) -> Box:
     """`area` moved to have its middle at the style's x, or as near as keeps the line set in it at
-    `size` (with its outline) in the frame."""
+    `size` (with its outline) in the frame. Without an x, it stays centred."""
+    if style.x is None:
+        return area
     half = (font_metrics(style.font).width(text, size) + 2 * style.outline) / 2
     centre = min(max(style.x, half), OUTPUT_WIDTH - half)
     return _shifted(area, round(centre - area.width / 2) - area.x)

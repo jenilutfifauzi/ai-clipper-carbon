@@ -20,10 +20,10 @@
 **2026-10-15: done.** `uv run pytest`: 384 passed. `npm run typecheck` passes.
 
 Built:
-- **Styles:** `HookStyle.x` and `CaptionStyle.x` (`Width`, 0–1080, default 540).
-- **Planner:** `_hook` moves the whole hook (area, boxes, anchors, Kicker, Quote Mark) by `x - 540`, no further than the frame's edges. `_caption_placed` centres each caption line's area on x, or as near as keeps the line as set (with its outline) in the frame. At 540 nothing moves.
-- **Frontend types:** `x` on `CaptionStyle` and `HookStyle`.
+- **Styles:** `HookStyle.x` and `CaptionStyle.x` (`Width`, 0–1080), default None: centred as before.
+- **Planner:** `_hook` puts the middle of the whole hook as drawn (Quote Mark's badge included) at x, kept in the frame; boxes, anchors, Kicker and Quote Mark move with it. `_caption_placed` centres each caption line's area on x, or as near as keeps the line as set (with its outline) in the frame.
+- **Frontend types:** `x: number | null` on `CaptionStyle` and `HookStyle`.
 
-**Change from the plan:** the hook's x is how far its lines' middle is moved from the frame's middle, so that a hook whose area grows to the left for a Quote Mark still moves by exactly what was dragged.
+**Change from the plan:** x defaults to None, not 540, and is the middle of the hook's area as drawn. The preview's gestures work on the areas the plan draws, so a dragged area's middle is exactly the x to save, even for a hook whose badge sticks out to its left. None keeps every existing plan as it was.
 
-**Checks:** Seam B (`test_planner.py`, 3 new tests), Seam A (`test_review.py`: PATCH takes x and refuses 1081; `test_render.py`: a draft with x places the hook and captions).
+**Checks:** `uv run pytest`: 383 passed, 1 timing flake in `test_resilience.py` that passes alone (3 runs). Seam B (`test_planner.py`, 3 new tests), Seam A (`test_review.py`: PATCH takes x and refuses 1081; `test_render.py`: a draft with x places the hook and captions). `npm run typecheck` passes.

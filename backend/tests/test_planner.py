@@ -1117,8 +1117,9 @@ def test_the_hook_is_centred_on_its_styles_x_with_everything_in_it_moved_along()
     for style in ({}, {"quote": True}, {"shape": "strips", "align": "left"}):
         centred = hooked(HOOK, hook_kicker="Fakta", hook_style=HookStyle(**style))
         moved = hooked(HOOK, hook_kicker="Fakta", hook_style=HookStyle(x=400, **style))
-        # Moved as far as x is from the middle of the frame.
-        dx = 400 - 540
+        # Its middle (the Quote Mark's badge included) at x.
+        assert abs(moved.area.x + moved.area.width / 2 - 400) <= 1
+        dx = moved.area.x - centred.area.x
         assert moved.area == shifted(centred.area, dx) and moved.boxes == [shifted(b, dx) for b in centred.boxes]
         assert moved.anchors == [(x + dx, y) for x, y in centred.anchors]
         assert moved.kicker.box == shifted(centred.kicker.box, dx)
@@ -1131,7 +1132,7 @@ def test_the_hook_is_kept_in_the_frame_whatever_its_x():
     for x, edge in ((0, "left"), (1080, "right")):
         area = hooked(HOOK, hook_style=HookStyle(x=x)).area
         assert (area.x == 0) if edge == "left" else (area.x + area.width == 1080)
-    # At 540, as before x was a field.
+    # Without an x, its lines are centred in the frame, as before; at 540, so is a hook without a badge.
     assert hooked(HOOK, hook_style=HookStyle(x=540)) == hooked(HOOK)
 
 
@@ -1149,4 +1150,4 @@ def test_caption_lines_are_centred_on_the_styles_x_and_kept_in_the_frame():
         width = font_metrics().width(event.text, event.size) + 2 * style.outline
         centre = event.area.x + event.area.width / 2
         assert abs(centre + width / 2 - 1080) <= 1
-    assert styled(words, 4, CaptionStyle(x=540)) == styled(words, 4, CaptionStyle())
+    assert styled(words, 4, CaptionStyle(x=540)) == styled(words, 4, CaptionStyle(x=None)) == styled(words, 4, CaptionStyle())

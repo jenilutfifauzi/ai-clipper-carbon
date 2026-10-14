@@ -137,8 +137,9 @@ class CaptionStyle:
     highlight: Highlight = Highlight.COLOUR
     position: CaptionPosition = CaptionPosition.AUTO
     y: Height = 1396
-    # Each line's centre, in output pixels, at any position; the planner keeps the line in the frame.
-    x: Width = 540
+    # Each line's centre, in output pixels, at any position (the planner keeps the line in the
+    # frame); None centres it in the frame.
+    x: Width | None = None
     # A line ends before a Word that would make it longer than max_chars characters (a single longer
     # Word stands alone), hold more than max_words Words, or last more than max_secs, and after a
     # pause of pause_secs.
@@ -178,8 +179,9 @@ class HookStyle:
     kicker_box_colour: Colour = "#FFE600"
     position: HookPosition = HookPosition.TOP
     y: Height = 232
-    # The middle of its lines, in output pixels, at any position; the planner keeps it in the frame.
-    x: Width = 540
+    # Where its middle is, in output pixels, at any position (the planner keeps it in the frame);
+    # None centres its lines in the frame.
+    x: Width | None = None
     # Off at its end by a short fade, on from the first frame (which platforms show first).
     animation_in: Animation = Animation.NONE
     animation_out: Animation = Animation.FADE
