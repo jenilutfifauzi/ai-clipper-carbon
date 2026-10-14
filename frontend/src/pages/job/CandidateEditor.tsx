@@ -1,5 +1,6 @@
-import { AlertTriangle, Plus, ScanSearch, X } from "lucide-react";
+import { AlertTriangle, Plus, ScanSearch, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Link } from "react-router";
 import {
   mediaUrl,
   type Candidate,
@@ -10,7 +11,7 @@ import {
   type Layout,
   type Transcript,
 } from "../../api";
-import { Button } from "../../components/Button";
+import { Button, buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
@@ -19,6 +20,7 @@ import { cx, formatPrecise } from "../../format";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
+import { candidateDraft } from "./editor/draft";
 import { Playback } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
@@ -146,16 +148,14 @@ export function CandidateEditor({
 
   const range = trimDraft ?? { start: candidate.start, end: candidate.end };
   const draft: CandidateChange = {
+    ...candidateDraft(candidate),
     ...(trimDraft ?? {}),
     hook_text: hookDraft ?? candidate.hook_text,
     hook_kicker: kickerDraft ?? candidate.hook_kicker,
-    layout: candidate.layout,
     preset_id: style.draft.preset_id,
     style_overrides: style.draft.style_overrides,
-    word_edits: candidate.word_edits,
     hook_start: timing.hook_start,
     hook_secs: timing.hook_secs,
-    layout_overrides: candidate.layout_overrides,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -214,9 +214,15 @@ export function CandidateEditor({
           <h3 className="text-lg font-semibold tracking-tight text-balance">
             <span className="text-muted tabular-nums">#{index + 1}</span> {name}
           </h3>
-          <Switch checked={candidate.selected} onChange={(selected) => void onSave({ selected })}>
-            <span className="text-sm">Render this clip</span>
-          </Switch>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Link to={`/jobs/${job.id}/candidates/${candidate.id}/advanced`} className={buttonClass("secondary", "sm")}>
+              <SlidersHorizontal aria-hidden size={16} />
+              Edit Advanced
+            </Link>
+            <Switch checked={candidate.selected} onChange={(selected) => void onSave({ selected })}>
+              <span className="text-sm">Render this clip</span>
+            </Switch>
+          </div>
         </div>
         <p className="text-sm text-muted tabular-nums">
           {formatPrecise(candidate.start)} – {formatPrecise(candidate.end)} · {length.toFixed(1)} s

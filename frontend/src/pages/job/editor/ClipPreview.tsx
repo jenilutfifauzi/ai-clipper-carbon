@@ -52,7 +52,8 @@ const percent = (value: number) => `${value * 100}%`;
  * scaled to fit. Two videos play the Source in step, one per panel (Split's two, or Blur's
  * background and shot); the first is the master, which `playback` drives and which is heard.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
- * centre, in output pixels.
+ * centre, in output pixels. With `fit`, the frame is as large as fits the space its parent gives it
+ * (the Advanced Edit's player), and the transport is a single row.
  */
 export function ClipPreview({
   src,
@@ -60,17 +61,21 @@ export function ClipPreview({
   fonts,
   playback,
   onWatermarkMove,
+  fit = false,
 }: {
   src: string;
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
   playback: Playback;
   onWatermarkMove?: (x: number, y: number) => void;
+  fit?: boolean;
 }) {
   const stage = useRef<HTMLDivElement>(null);
+  const room = useRef<HTMLDivElement>(null);
   const master = useRef<HTMLVideoElement>(null);
   const follower = useRef<HTMLVideoElement>(null);
   const [scale, setScale] = useState(1 / 3);
+  const fitted = useFittedSize(room, fit);
   const plan = preview?.plan ?? null;
 
   useEffect(() => {
@@ -106,55 +111,88 @@ export function ClipPreview({
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
 
+  const frame = (
+    <div
+      ref={stage}
+      className={cx(
+        "relative mx-auto overflow-hidden rounded-control bg-black outline-1 -outline-offset-1 outline-white/10",
+        fit ? "shrink-0" : "aspect-[9/16] w-full max-w-[22rem]",
+      )}
+      style={{ "--scale": scale, ...(fit ? { width: fitted.width, height: fitted.height } : {}) } as CSSProperties}
+    >
+      {[master, follower].map((ref, slot) => (
+        <PanelView
+          key={slot}
+          videoRef={ref}
+          src={src}
+          plan={plan}
+          panel={scene?.panels[slot] ?? null}
+          playback={playback}
+          muted={slot > 0}
+        />
+      ))}
+      {plan && fonts && (
+        <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
+          {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
+          <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} />
+          {plan.hook && <Hook plan={plan} hook={plan.hook} font={fontById.get(plan.hook_style.font)} playback={playback} />}
+        </svg>
+      )}
+      {plan && watermark.event && onWatermarkMove && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-roledescription="movable watermark"
+          aria-label="Watermark: drag to move it, or use the arrow keys"
+          {...watermark.handlers}
+          className={cx(
+            "absolute cursor-move touch-none rounded-[4px] outline-1 outline-white/70 outline-dashed",
+            "hover:outline-white focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-solid",
+            watermark.dragging && "cursor-grabbing outline-white",
+          )}
+          style={{
+            left: percent(watermark.event.area.x / plan.width),
+            top: percent(watermark.event.area.y / plan.height),
+            width: percent(watermark.event.area.width / plan.width),
+            height: percent(watermark.event.area.height / plan.height),
+          }}
+        />
+      )}
+    </div>
+  );
+  if (fit) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
+          {frame}
+        </div>
+        <Transport playback={playback} compact />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-3">
-      <div
-        ref={stage}
-        className="relative mx-auto aspect-[9/16] w-full max-w-[22rem] overflow-hidden rounded-control bg-black outline-1 -outline-offset-1 outline-white/10"
-        style={{ "--scale": scale } as CSSProperties}
-      >
-        {[master, follower].map((ref, slot) => (
-          <PanelView
-            key={slot}
-            videoRef={ref}
-            src={src}
-            plan={plan}
-            panel={scene?.panels[slot] ?? null}
-            playback={playback}
-            muted={slot > 0}
-          />
-        ))}
-        {plan && fonts && (
-          <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
-            {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
-            <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} />
-            {plan.hook && <Hook plan={plan} hook={plan.hook} font={fontById.get(plan.hook_style.font)} playback={playback} />}
-          </svg>
-        )}
-        {plan && watermark.event && onWatermarkMove && (
-          <div
-            role="button"
-            tabIndex={0}
-            aria-roledescription="movable watermark"
-            aria-label="Watermark: drag to move it, or use the arrow keys"
-            {...watermark.handlers}
-            className={cx(
-              "absolute cursor-move touch-none rounded-[4px] outline-1 outline-white/70 outline-dashed",
-              "hover:outline-white focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-solid",
-              watermark.dragging && "cursor-grabbing outline-white",
-            )}
-            style={{
-              left: percent(watermark.event.area.x / plan.width),
-              top: percent(watermark.event.area.y / plan.height),
-              width: percent(watermark.event.area.width / plan.width),
-              height: percent(watermark.event.area.height / plan.height),
-            }}
-          />
-        )}
-      </div>
+      {frame}
       <Transport playback={playback} />
     </div>
   );
+}
+
+// The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
+function useFittedSize(room: React.RefObject<HTMLDivElement | null>, on: boolean) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const element = room.current;
+    if (!on || !element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      const unit = Math.max(0, Math.min(width / 9, height / 16));
+      setSize({ width: Math.floor(unit * 9), height: Math.floor(unit * 16) });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [room, on]);
+  return size;
 }
 
 /**
@@ -652,8 +690,8 @@ function runs(line: string, spans: [number, number][]): [string, boolean][] {
   return parts;
 }
 
-/** Play and pause, a scrubber over the Clip, and "Play clip" and "Play ending". */
-function Transport({ playback }: { playback: Playback }) {
+/** Play and pause, a scrubber over the Clip, and "Play clip" and "Play ending" (not when `compact`). */
+function Transport({ playback, compact = false }: { playback: Playback; compact?: boolean }) {
   const playing = usePlayback(playback, (_, p) => p.playing);
   // Tenths of a second: enough for the label and the scrubber, and few re-renders.
   const tenths = usePlayback(playback, (time) => Math.round(time * 10));
@@ -678,16 +716,18 @@ function Transport({ playback }: { playback: Playback }) {
           {formatPrecise(Math.max(0, tenths / 10))} / {formatPrecise(duration)}
         </span>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" size="sm" onClick={() => playback.play(0)}>
-          <Play aria-hidden size={16} />
-          Play clip
-        </Button>
-        <Button size="sm" onClick={() => playback.play(Math.max(0, duration - ENDING_SECS))}>
-          <SkipForward aria-hidden size={16} />
-          Play ending
-        </Button>
-      </div>
+      {!compact && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" size="sm" onClick={() => playback.play(0)}>
+            <Play aria-hidden size={16} />
+            Play clip
+          </Button>
+          <Button size="sm" onClick={() => playback.play(Math.max(0, duration - ENDING_SECS))}>
+            <SkipForward aria-hidden size={16} />
+            Play ending
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

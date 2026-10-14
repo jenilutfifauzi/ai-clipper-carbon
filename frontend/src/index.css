@@ -190,3 +190,11 @@
     transform: translateX(250%);
   }
 }
+
+/* The Advanced Edit's bottom sheet, rising onto the timeline on a phone. */
+@keyframes sheet-in {
+  from {
+    translate: 0 40%;
+    opacity: 0;
+  }
+}
