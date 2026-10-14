@@ -1,6 +1,6 @@
 # Clip Editor: caption text and style, hook, and timeline
 
-Status: ready-for-agent
+Status: done
 Created: 2026-10-14
 
 ## Problem Statement

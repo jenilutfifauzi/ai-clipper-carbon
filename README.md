@@ -3,9 +3,10 @@
 A local macOS app that turns a long podcast episode into short vertical clips. Give it a YouTube URL
 or upload the master file. It builds a word-level transcript (YouTube's captions, or Whisper on your
 Mac), and an LLM proposes Candidates: the moments most likely to work as Shorts, Reels or TikToks.
-You review them in the browser. You can move the edges word by word, edit the hook, pick a layout
-or add your own clip. Then it renders each selected Candidate as a 1080×1920 Clip with a
-speaker-tracking crop, burned captions and the hook at the top.
+You review them in the browser, in a clip editor with a live 9:16 preview: trim on a timeline or
+word by word, correct the captions, style them from presets, time and animate the hook, pick a
+layout per scene, or add your own clip. Then it renders each selected Candidate as a 1080×1920 Clip
+with a speaker-tracking crop, burned captions and the hook.
 
 Everything except the LLM call runs on your machine. The plan and design notes are in
 [`docs/PLAN.md`](docs/PLAN.md). The spec (`spec.md`, which defines terms such as Job, Candidate, Clip
@@ -28,7 +29,7 @@ and Reference Set) and one file per ticket are in `.scratch/ai-clipper-v1/`.
 
 ```sh
 git clone <this repo> ai-clipper && cd ai-clipper
-make setup        # Python and npm dependencies, the face model, the caption font, an ffmpeg check
+make setup        # Python and npm dependencies, the face model, the caption fonts, an ffmpeg check
 cp .env.example .env
 ```
 
@@ -93,12 +94,24 @@ so the copy buttons fall back to the older `execCommand("copy")`.
 2. **Watch it progress.** The Job page shows each stage live: Download (or Upload), Transcript,
    Analyze, then Review. With YouTube captions the transcript is instant. An upload, or a video
    without captions, is transcribed by Whisper on your Mac, at about 1–2× realtime on an M1.
-3. **Review the Candidates.** The list is ranked by predicted score. Open one to:
-   - play it ("Play clip", "Play ending");
-   - click words in the transcript to set its start or end, or to mark a new clip;
-   - edit the hook (it says whether the text fits on 2 lines);
-   - pick a layout: Auto (per scene), Track, Split or Blur;
-   - switch on **Render this clip**.
+3. **Review the Candidates.** The list is ranked by predicted score. Open one to edit it:
+   - **Preview.** The Clip as it will look, with its captions and hook drawn live over the framed
+     video (**Source** shows the episode instead). Until the clip is prepared, the preview uses the
+     episode transcript and one scene. **Prepare clip** transcribes and analyses it, as a render
+     would.
+   - **Text.** Click a caption word to correct it, remove it, or start a new line there.
+   - **Style.** Pick a style preset (Default, Yellow pop, Box highlight, Minimal, or your own) and
+     change any of it for this clip:
+     - captions: font, size, colours, outline, shadow, highlight, position, case, and how lines break;
+     - the hook's look and animation.
+
+     **Save as new** keeps the look as a preset for every Job.
+   - **Hook.** The text (it says whether it fits on 2 lines), when it comes on and how long it stays.
+   - **Clip.** The clip's layout (Auto, Track, Split or Blur), and the transcript: click words to set
+     the start or end, or to mark a new clip.
+   - **Timeline.** Drag the clip's edges (they snap to words), click a caption line to edit it,
+     drag or resize the hook, and click a scene to give it its own layout.
+   - Switch on **Render this clip**.
 
    Every change is saved as you make it. Below the editor are the AI's reasons and the posting
    copy, each with a copy button.
@@ -198,6 +211,7 @@ records the iterations so far.
 ```
 data/                        DATA_DIR, git-ignored
   profile.json               the Channel Profile
+  presets.json               your style presets (the built-in ones are in the code)
   uploads/                   uploads in progress (cleared at start)
   jobs/<job-id>/
     job.json                 status, options, history, Source metadata
@@ -211,7 +225,7 @@ data/                        DATA_DIR, git-ignored
 eval/references.yaml         your Reference Set (committed)
 eval/reports/                eval reports and postable judgements (committed)
 backend/models/, backend/assets/fonts/
-                             face model and caption font from `make setup` (git-ignored)
+                             face model and caption fonts from `make setup` (git-ignored)
 ~/.cache/huggingface/        the Whisper model
 ```
 

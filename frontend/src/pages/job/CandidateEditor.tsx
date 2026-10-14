@@ -15,7 +15,7 @@ import { CopyButton } from "../../components/CopyButton";
 import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
 import { loadFonts } from "../../fonts";
-import { formatPrecise } from "../../format";
+import { cx, formatPrecise } from "../../format";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
@@ -42,6 +42,15 @@ const MODE_HINTS: Record<Mode, string> = {
   end: "Click the word the clip should end with.",
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
+
+type Tab = "text" | "style" | "hook" | "clip";
+
+const TABS: { value: Tab; label: string }[] = [
+  { value: "text", label: "Text" },
+  { value: "style", label: "Style" },
+  { value: "hook", label: "Hook" },
+  { value: "clip", label: "Clip" },
+];
 
 const VIEWS = [
   { value: "clip", label: "Clip" },
@@ -90,6 +99,7 @@ export function CandidateEditor({
 }) {
   const [mode, setMode] = useState<Mode>("start");
   const [view, setView] = useState<"clip" | "source">("clip");
+  const [tab, setTab] = useState<Tab>("text");
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
   const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
@@ -211,34 +221,163 @@ export function CandidateEditor({
         )}
       </header>
 
-      {job.source && (
-        <section aria-label="Preview" className="flex flex-col gap-3">
-          <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs" />
-          {view === "clip" ? (
-            <ClipPreview
-              src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
-              preview={preview}
-              fonts={fonts}
-              playback={playback}
-            />
-          ) : (
-            <PreviewPlayer
-              src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
-              start={candidate.start}
-              end={candidate.end}
-            />
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:items-start">
+        <div className="flex flex-col gap-3 xl:sticky xl:top-4">
+          {job.source && (
+            <section aria-label="Preview" className="flex flex-col gap-3">
+              <Segmented legend="Preview" options={VIEWS} value={view} onChange={setView} className="max-w-xs" />
+              {view === "clip" ? (
+                <ClipPreview
+                  src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
+                  preview={preview}
+                  fonts={fonts}
+                  playback={playback}
+                />
+              ) : (
+                <PreviewPlayer
+                  src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
+                  start={candidate.start}
+                  end={candidate.end}
+                />
+              )}
+              {view === "clip" && (
+                <PreviewNotes
+                  wordsFromTranscript={preview?.words_source === "transcript" && job.options.captions}
+                  unanalysed={preview?.analysed === false}
+                  error={previewError}
+                  preparing={preparing === candidate.id}
+                  onPrepare={prepare}
+                />
+              )}
+            </section>
           )}
-          {view === "clip" && (
-            <PreviewNotes
-              wordsFromTranscript={preview?.words_source === "transcript" && job.options.captions}
-              unanalysed={preview?.analysed === false}
-              error={previewError}
-              preparing={preparing === candidate.id}
-              onPrepare={prepare}
-            />
-          )}
-        </section>
-      )}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-4">
+          <Tabs value={tab} onChange={setTab} />
+          <div id={`editor-panel-${tab}`} role="tabpanel" aria-labelledby={`editor-tab-${tab}`} className="flex flex-col gap-6">
+            {tab === "text" && preview && job.options.captions && (
+              <section aria-labelledby="caption-text-heading" className="flex flex-col gap-3">
+                <h4 id="caption-text-heading" className="font-semibold">
+                  Caption text
+                </h4>
+                <CaptionTextEditor
+                  key={candidate.id}
+                  preview={preview}
+                  clipStart={candidate.start}
+                  edits={candidate.word_edits}
+                  playback={playback}
+                  focus={captionFocus}
+                  onChange={(word_edits) => void onSave({ word_edits })}
+                />
+              </section>
+            )}
+            {tab === "text" && !job.options.captions && (
+              <p className="text-sm text-muted">This Job's captions are off: turn them on in a new Job to caption its clips.</p>
+            )}
+            {tab === "style" && (
+              <section aria-labelledby="style-heading" className="flex flex-col gap-3">
+                <h4 id="style-heading" className="sr-only">
+                  Style
+                </h4>
+                <StylePanel
+                  key={candidate.id}
+                  candidate={candidate}
+                  fonts={fonts}
+                  onDraft={setStyleDraft}
+                  onSave={(change) => void onSave(change)}
+                />
+              </section>
+            )}
+            {tab === "hook" && (
+              <>
+                <HookEditor
+                  key={candidate.id}
+                  value={candidate.hook_text}
+                  onSave={(hook_text) => void onSave({ hook_text })}
+                  onDraft={setHookDraft}
+                  timing={timing}
+                  duration={length}
+                  onTiming={setTiming}
+                />
+              </>
+            )}
+            {tab === "clip" && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <Segmented
+                    legend="Layout"
+                    options={LAYOUTS}
+                    value={candidate.layout}
+                    onChange={(layout) => void onSave({ layout })}
+                    className="max-w-md"
+                  />
+                  <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
+                </div>
+                <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
+                  <h4 id="picker-heading" className="font-semibold">
+                    Transcript
+                  </h4>
+                  <Segmented
+                    legend="Clicking a word sets"
+                    options={MODES}
+                    value={mode}
+                    onChange={(value) => {
+                      setMode(value);
+                      setNotice(null);
+                      if (value !== "new") setPending((old) => (old && old.last === null ? null : old));
+                    }}
+                    className="max-w-sm"
+                  />
+                  <p className="text-sm text-muted">{MODE_HINTS[mode]}</p>
+                  <TranscriptPicker
+                    key={candidate.id}
+                    words={words}
+                    segments={transcript.segments}
+                    start={candidate.start}
+                    end={candidate.end}
+                    pending={pending}
+                    onPick={pick}
+                    onRange={selectRange}
+                  />
+                  <div aria-live="polite" className="flex flex-col gap-2 empty:hidden">
+                    {notice && <p className="text-sm text-accent-text">{notice}</p>}
+                    {pending && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-dashed border-waiting bg-waiting-surface p-3">
+                        <p className="text-sm">
+                          {pendingRange ? (
+                            <>
+                              New clip {formatPrecise(pendingRange.start)} – {formatPrecise(pendingRange.end)} ·{" "}
+                              {(pendingRange.end - pendingRange.start).toFixed(1)} s
+                            </>
+                          ) : (
+                            <>New clip from {formatPrecise(words[pending.first].start)}: now click its last word.</>
+                          )}
+                        </p>
+                        <div className="ml-auto flex gap-2">
+                          <Button variant="ghost" onClick={() => setPending(null)} size="sm">
+                            <X aria-hidden size={16} />
+                            Cancel
+                          </Button>
+                          <Button
+                            variant="primary"
+                            onClick={addClip}
+                            disabled={!pendingRange || adding}
+                            size="sm"
+                          >
+                            <Plus aria-hidden size={16} />
+                            {adding ? "Adding…" : "Add manual clip"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
 
       {job.source && (
         <Timeline
@@ -265,6 +404,7 @@ export function CandidateEditor({
             />
           )}
           onCaption={(at) => {
+            setTab("text");
             setCaptionFocus({ at });
             requestAnimationFrame(() => document.getElementById("caption-text-heading")?.scrollIntoView({ block: "nearest" }));
           }}
@@ -282,118 +422,45 @@ export function CandidateEditor({
         />
       )}
 
-      {preview && job.options.captions && (
-        <section aria-labelledby="caption-text-heading" className="flex flex-col gap-3">
-          <h4 id="caption-text-heading" className="font-semibold">
-            Caption text
-          </h4>
-          <CaptionTextEditor
-            key={candidate.id}
-            preview={preview}
-            clipStart={candidate.start}
-            edits={candidate.word_edits}
-            playback={playback}
-            focus={captionFocus}
-            onChange={(word_edits) => void onSave({ word_edits })}
-          />
-        </section>
-      )}
-
-      <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
-        <h4 id="picker-heading" className="font-semibold">
-          Transcript
-        </h4>
-        <Segmented
-          legend="Clicking a word sets"
-          options={MODES}
-          value={mode}
-          onChange={(value) => {
-            setMode(value);
-            setNotice(null);
-            if (value !== "new") setPending((old) => (old && old.last === null ? null : old));
-          }}
-          className="max-w-sm"
-        />
-        <p className="text-sm text-muted">{MODE_HINTS[mode]}</p>
-        <TranscriptPicker
-          key={candidate.id}
-          words={words}
-          segments={transcript.segments}
-          start={candidate.start}
-          end={candidate.end}
-          pending={pending}
-          onPick={pick}
-          onRange={selectRange}
-        />
-        <div aria-live="polite" className="flex flex-col gap-2 empty:hidden">
-          {notice && <p className="text-sm text-accent-text">{notice}</p>}
-          {pending && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-dashed border-waiting bg-waiting-surface p-3">
-              <p className="text-sm">
-                {pendingRange ? (
-                  <>
-                    New clip {formatPrecise(pendingRange.start)} – {formatPrecise(pendingRange.end)} ·{" "}
-                    {(pendingRange.end - pendingRange.start).toFixed(1)} s
-                  </>
-                ) : (
-                  <>New clip from {formatPrecise(words[pending.first].start)}: now click its last word.</>
-                )}
-              </p>
-              <div className="ml-auto flex gap-2">
-                <Button variant="ghost" onClick={() => setPending(null)} size="sm">
-                  <X aria-hidden size={16} />
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={addClip}
-                  disabled={!pendingRange || adding}
-                  size="sm"
-                >
-                  <Plus aria-hidden size={16} />
-                  {adding ? "Adding…" : "Add manual clip"}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <HookEditor
-        key={candidate.id}
-        value={candidate.hook_text}
-        onSave={(hook_text) => void onSave({ hook_text })}
-        onDraft={setHookDraft}
-        timing={timing}
-        duration={length}
-        onTiming={setTiming}
-      />
-
-      <div className="flex flex-col gap-1.5">
-        <Segmented
-          legend="Layout"
-          options={LAYOUTS}
-          value={candidate.layout}
-          onChange={(layout) => void onSave({ layout })}
-          className="max-w-md"
-        />
-        <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
-      </div>
-
-      <section aria-labelledby="style-heading" className="flex flex-col gap-3">
-        <h4 id="style-heading" className="font-semibold">
-          Style
-        </h4>
-        <StylePanel
-          key={candidate.id}
-          candidate={candidate}
-          fonts={fonts}
-          onDraft={setStyleDraft}
-          onSave={(change) => void onSave(change)}
-        />
-      </section>
-
       {candidate.origin === "ai" && <Analysis candidate={candidate} />}
+    </div>
+  );
+}
+
+// The editor's sections, as tabs: arrow keys move between them.
+function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Edit"
+      className="flex gap-1 rounded-control bg-fill p-1"
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+        const i = TABS.findIndex((tab) => tab.value === value);
+        const next = TABS[(i + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length].value;
+        onChange(next);
+        document.getElementById(`editor-tab-${next}`)?.focus();
+      }}
+    >
+      {TABS.map((tab) => (
+        <button
+          key={tab.value}
+          id={`editor-tab-${tab.value}`}
+          type="button"
+          role="tab"
+          aria-selected={value === tab.value}
+          aria-controls={`editor-panel-${tab.value}`}
+          tabIndex={value === tab.value ? 0 : -1}
+          onClick={() => onChange(tab.value)}
+          className={cx(
+            "min-h-9 flex-1 rounded-[10px] px-3 text-sm font-medium",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+            value === tab.value ? "raised text-text" : "text-muted hover:text-text",
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
     </div>
   );
 }

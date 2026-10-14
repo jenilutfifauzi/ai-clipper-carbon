@@ -367,6 +367,14 @@ class Renders:
                 encoder=encoder,
                 render_secs=round(secs, 1),
                 at=datetime.now(UTC),
+                preset_id=candidate.preset_id,
+                style_overrides=candidate.style_overrides,
+                word_edits=candidate.word_edits,
+                hook_start=candidate.hook_start,
+                hook_secs=candidate.hook_secs,
+                layout_overrides=candidate.layout_overrides,
+                caption_style=plan.caption_style,
+                hook_style=plan.hook_style,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

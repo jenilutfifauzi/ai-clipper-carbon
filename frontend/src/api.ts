@@ -338,6 +338,16 @@ export interface RenderedClip {
   encoder: string;
   render_secs: number;
   at: string;
+  // The clip editor's edits as rendered and the styles they resolved to; null in a Clip rendered
+  // before the editor.
+  preset_id: string | null;
+  style_overrides: StyleOverrides | null;
+  word_edits: WordEdit[] | null;
+  hook_start: number | null;
+  hook_secs: number | null;
+  layout_overrides: LayoutOverride[] | null;
+  caption_style: CaptionStyle | null;
+  hook_style: HookStyle | null;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";

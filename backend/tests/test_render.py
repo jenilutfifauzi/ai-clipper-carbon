@@ -932,3 +932,22 @@ def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
     assert client.patch(url, json={"layout_overrides": [{"at": 1.0, "layout": "sideways"}]}).status_code == 422
     assert client.patch(url, json={"layout_overrides": [{"at": 1.0, "layout": "blur"}] * 201}).status_code == 422
+
+
+def test_a_clip_records_the_editors_edits_it_was_rendered_with(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    candidate = patch(
+        client, job, candidate, preset_id="minimal", style_overrides={"caption": {"size": 80}, "hook": {}},
+        word_edits=[{"at": 4.5, "text": "keren"}], hook_start=0.5, hook_secs=2.0,
+        layout_overrides=[{"at": 4.0, "layout": "track"}],
+    )
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    output = clip["output"]
+    for field in ("preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides"):
+        assert output[field] == candidate[field], field
+    assert (output["caption_style"]["font"], output["caption_style"]["size"]) == ("poppins-black", 80)
+    assert output["hook_style"]["font"] == "poppins-black"

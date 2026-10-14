@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from app.candidates import Layout
+from app.candidates import Layout, LayoutOverride, WordEdit
+from app.styles import CaptionStyle, HookStyle, StyleOverrides
 
 CLIPS_DIR = "clips"
 
@@ -37,6 +38,16 @@ class RenderedClip:
     encoder: str
     render_secs: float
     at: datetime
+    # The clip editor's edits as rendered, and the styles they resolved to (Preset and overrides);
+    # None in a Clip rendered before the editor, which is compared by the fields above only.
+    preset_id: str | None = None
+    style_overrides: StyleOverrides | None = None
+    word_edits: list[WordEdit] | None = None
+    hook_start: float | None = None
+    hook_secs: float | None = None
+    layout_overrides: list[LayoutOverride] | None = None
+    caption_style: CaptionStyle | None = None
+    hook_style: HookStyle | None = None
 
 
 @dataclass(frozen=True)

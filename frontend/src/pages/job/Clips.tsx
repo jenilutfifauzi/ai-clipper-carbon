@@ -1,5 +1,6 @@
 import { AlertCircle, Clapperboard, Download, Hourglass, Loader2 } from "lucide-react";
-import { mediaUrl, type Candidate, type Clip, type JobProgress } from "../../api";
+import { useEffect, useState } from "react";
+import { api, mediaUrl, type Candidate, type Clip, type JobProgress, type RenderedClip, type StylePreset } from "../../api";
 import { Button, buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
@@ -26,6 +27,10 @@ export function Clips({
   progress: JobProgress;
   onRender: (candidateIds: string[]) => Promise<void>;
 }) {
+  const [presets, setPresets] = useState<StylePreset[] | null>(null);
+  useEffect(() => {
+    if (clips.length > 0) api.listPresets().then(setPresets, () => {});
+  }, [clips.length > 0]);
   if (clips.length === 0) return null;
   const done = clips.filter((clip) => clip.output).length;
   const waiting = clips.filter((clip) => clip.status === "queued" || clip.status === "rendering").length;
@@ -48,6 +53,7 @@ export function Clips({
               jobId={jobId}
               clip={clip}
               candidate={candidates[index] ?? null}
+              presets={presets}
               index={index}
               percent={clip.status === "rendering" ? progress.progress : null}
               onRender={() => onRender([clip.candidate_id])}
@@ -59,10 +65,44 @@ export function Clips({
   );
 }
 
+/**
+ * Whether the Candidate would render differently from its Clip: a different range, hook, layout or
+ * edit, or (with the Presets at hand) styles its Preset now resolves differently. A Clip rendered
+ * before the editor is compared by range, hook and layout only.
+ */
+function changedSince(candidate: Candidate, output: RenderedClip, presets: StylePreset[] | null): boolean {
+  if (
+    candidate.start !== output.start ||
+    candidate.end !== output.end ||
+    candidate.hook_text !== output.hook_text ||
+    candidate.layout !== output.layout
+  )
+    return true;
+  if (output.preset_id === null) return false;
+  const edits = ["preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides"] as const;
+  if (edits.some((field) => !same(candidate[field], output[field]))) return true;
+  const preset = presets?.find((p) => p.id === candidate.preset_id) ?? presets?.[0];
+  if (!preset || !output.caption_style || !output.hook_style) return false;
+  return (
+    !same({ ...preset.caption, ...candidate.style_overrides.caption }, output.caption_style) ||
+    !same({ ...preset.hook, ...candidate.style_overrides.hook }, output.hook_style)
+  );
+}
+
+// Deep equality of JSON values, whatever the order of their keys.
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].every((key) => same((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+}
+
 function ClipCard({
   jobId,
   clip,
   candidate,
+  presets,
   index,
   percent,
   onRender,
@@ -71,19 +111,14 @@ function ClipCard({
   clip: Clip;
   // Null once Selection has replaced it.
   candidate: Candidate | null;
+  presets: StylePreset[] | null;
   index: number;
   percent: number | null;
   onRender: () => void;
 }) {
   const output = clip.output;
   const name = candidate ? candidateName(candidate, index) : "Clip of a Candidate no longer listed";
-  const changed =
-    output &&
-    candidate &&
-    (candidate.start !== output.start ||
-      candidate.end !== output.end ||
-      candidate.hook_text !== output.hook_text ||
-      candidate.layout !== output.layout);
+  const changed = output && candidate && changedSince(candidate, output, presets);
   const busy = clip.status === "queued" || clip.status === "rendering";
 
   return (
