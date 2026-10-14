@@ -1,6 +1,7 @@
 """Seam A: the Job lifecycle through the HTTP API, with a fake Video Source."""
 
 import json
+from itertools import groupby
 
 import pytest
 
@@ -54,6 +55,17 @@ def test_job_moves_from_queued_through_downloading_transcribing_and_analyzing_to
     assert statuses(job) == ["queued", "downloading", "transcribing", "analyzing", "review"]
     assert job["stage"] is None
     assert job["error"] is None
+
+
+def test_the_download_reports_its_progress_in_whole_percents(client, video_source, wait_for_status):
+    video_source.progress_steps = [0.0, 0.004, 0.25, 0.251, 0.5, 1.0]
+    seen = []
+    with client.app.state.store.watch(lambda job_id, job: job and seen.append((job.status, job.progress))):
+        job = wait_for_status(create_job(client)["id"], "review", "error")
+
+    assert job["status"] == "review" and job["progress"] is None
+    downloading = [progress for status, progress in seen if status == "downloading" and progress is not None]
+    assert [progress for progress, _ in groupby(downloading)] == [0, 25, 50, 100]  # each change once
 
 
 def test_job_returns_source_metadata_and_transcript_words(client, wait_for_status):

@@ -6,11 +6,13 @@ import json
 import logging
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from yt_dlp import YoutubeDL
+from yt_dlp.postprocessor import PostProcessor
 
 from app.config import Settings
 
@@ -41,8 +43,11 @@ class Source:
 
 
 class VideoSource(Protocol):
-    def fetch(self, url: str, language: str, dest: Path) -> Source:
-        """Write the video and, if one exists, its json3 auto-caption track in `language` into `dest`."""
+    def fetch(
+        self, url: str, language: str, dest: Path, progress: Callable[[float], None] = lambda done: None
+    ) -> Source:
+        """Write the video and, if one exists, its json3 auto-caption track in `language` into `dest`.
+        `progress` is called with the fraction of the download done, as it goes."""
         ...
 
     def fetch_captions(self, url: str, language: str, dest: Path) -> str | None:
@@ -57,15 +62,20 @@ class YtDlpVideoSource:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def fetch(self, url: str, language: str, dest: Path) -> Source:
+    def fetch(
+        self, url: str, language: str, dest: Path, progress: Callable[[float], None] = lambda done: None
+    ) -> Source:
+        tracker = DownloadProgress(progress)
         options = self._options(language, dest) | {
             "format": "bv*[height<=1080]+ba/b[height<=1080]",
             "format_sort": ["res:1080", "vcodec:h264", "acodec:m4a"],
             "merge_output_format": "mp4",
             "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
             "ffmpeg_location": str(self.settings.ffmpeg_bin),
+            "progress_hooks": [tracker.hook],
         }
         with YoutubeDL(options) as ydl:
+            ydl.add_post_processor(tracker, when="before_dl")
             ydl.download([url])
 
         video = dest / VIDEO_FILE
@@ -98,6 +108,39 @@ class YtDlpVideoSource:
         return options
 
 
+class DownloadProgress(PostProcessor):
+    """The bytes yt-dlp has downloaded, of all the formats it fetches, as one fraction for `report`.
+
+    yt-dlp downloads a video and an audio stream one after the other, and reports each from zero, so
+    run before the download (`when="before_dl"`) this reads the sizes of the formats it chose.
+    Without them, it goes by the sizes each download reports. The caption track yt-dlp fetches
+    first, through the same hook, doesn't count.
+    """
+
+    def __init__(self, report: Callable[[float], None]) -> None:
+        super().__init__()
+        self.report = report
+        self.expected: int | None = None  # set when the download starts
+        self.files: dict[str, tuple[int, int]] = {}  # file name: (downloaded, total) bytes
+
+    def run(self, info: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        formats = info.get("requested_formats") or [info]
+        self.expected = sum(f.get("filesize") or f.get("filesize_approx") or 0 for f in formats)
+        return [], info
+
+    def hook(self, status: dict[str, Any]) -> None:
+        if self.expected is None or status["status"] not in ("downloading", "finished"):
+            return
+        total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+        # A file found complete on disk (a download resumed after a restart) is reported finished,
+        # without downloaded bytes.
+        done = status.get("downloaded_bytes") or (total if status["status"] == "finished" else 0)
+        self.files[status["filename"]] = (done, total)
+        expected = max(self.expected, sum(total for _, total in self.files.values()))
+        if expected:
+            self.report(min(1.0, sum(done for done, _ in self.files.values()) / expected))
+
+
 class UploadVideoSource:
     """A master file the owner uploaded, already stored in the Job directory (app/uploads.py). It
     has no captions, so the whole episode is transcribed locally."""
@@ -105,8 +148,10 @@ class UploadVideoSource:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def fetch(self, url: str, language: str, dest: Path) -> Source:
-        """`url` is the stored file's name in `dest`."""
+    def fetch(
+        self, url: str, language: str, dest: Path, progress: Callable[[float], None] = lambda done: None
+    ) -> Source:
+        """`url` is the stored file's name in `dest`. It is already there, so there is no progress to report."""
         video = dest / url
         if not video.is_file():
             raise RuntimeError(f"The uploaded file {url} is missing: upload it again in a new Job")

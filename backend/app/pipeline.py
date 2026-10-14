@@ -157,7 +157,7 @@ class Pipeline:
         which play as they are.)"""
         dest = self.store.job_dir(job.id)
         if job.upload is None:
-            source = self.ports.video_source.fetch(job.url, job.options.language, dest)
+            source = self.ports.video_source.fetch(job.url, job.options.language, dest, self._reporter(job.id))
         else:
             source = self.uploads.fetch(job.upload.file, job.options.language, dest)
             if reason := unplayable(self.settings.ffprobe_bin, dest / source.video):
@@ -169,22 +169,28 @@ class Pipeline:
             job.id, progress=0.0, message=f"Making a preview copy the browser can play (the Source is {reason})."
         )
         began = time.monotonic()
-        reported = 0
-
-        def progress(done: float) -> None:
-            nonlocal reported
-            if (percent := round(100 * done)) != reported:
-                reported = percent
-                self.store.update(job.id, progress=float(percent))
-
         media = self.store.job_dir(job.id) / source.video
-        preview = make_preview(self.settings.ffmpeg_bin, media, source.metadata, self.settings.preview, progress)
+        preview = make_preview(
+            self.settings.ffmpeg_bin, media, source.metadata, self.settings.preview, self._reporter(job.id, reported=0)
+        )
         elapsed = time.monotonic() - began
         logger.info(
             "Job %s: made the preview proxy of %.0f s of %s in %.0f s (%.1fx realtime)",
             job.id, source.metadata.duration, reason, elapsed, source.metadata.duration / max(elapsed, 1e-6),
         )
         return preview
+
+    def _reporter(self, job_id: str, reported: int | None = None) -> Callable[[float], None]:
+        """A progress callback that records the fraction done on the Job, in whole percents, only
+        when the percent changes. `reported` is the percent the Job already shows, if any."""
+
+        def progress(done: float) -> None:
+            nonlocal reported
+            if (percent := round(100 * done)) != reported:
+                reported = percent
+                self.store.update(job_id, progress=float(percent))
+
+        return progress
 
     def _transcribe(self, job: Job) -> Job:
         assert job.source is not None

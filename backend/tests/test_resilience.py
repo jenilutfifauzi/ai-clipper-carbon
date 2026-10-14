@@ -3,6 +3,8 @@ API with call-counting fakes at the ports; and the disk endpoint."""
 
 import re
 import shutil
+import time
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime
 
@@ -346,6 +348,38 @@ def test_a_job_another_process_is_running_is_left_to_it_on_start_up(settings, vi
 
     with store.running(job.id), TestClient(create_app(settings, Ports(video_source, transcriber, llm))) as client:
         assert statuses(client.get(f"/api/jobs/{job.id}").json()) == ["queued", "downloading"]
+    assert video_source.calls == []
+
+
+def test_a_job_the_other_process_leaves_unfinished_is_taken_back_when_it_lets_go(settings, video_source, transcriber, llm):
+    # As a server still shutting down at a restart leaves a Job when it dies mid-download.
+    store = JobStore(settings.data_dir / "jobs")
+    job = store.create(URL, JobOptions(), ChannelProfile())
+    store.update(job.id, status=JobStatus.DOWNLOADING, stage=JobStatus.DOWNLOADING)
+
+    other = ExitStack()
+    other.enter_context(store.running(job.id))
+    with other, TestClient(create_app(settings, Ports(video_source, transcriber, llm))) as client:
+        assert client.get(f"/api/jobs/{job.id}").json()["status"] == "downloading"
+        other.close()
+        done = wait_for(client, job.id, "review", "error")
+
+    assert statuses(done)[-5:] == ["queued", "downloading", "transcribing", "analyzing", "review"]
+    assert [url for url, _ in video_source.calls] == [URL]
+
+
+def test_a_job_the_other_process_finishes_is_not_run_again_when_it_lets_go(settings, video_source, transcriber, llm):
+    store = JobStore(settings.data_dir / "jobs")
+    job = store.create(URL, JobOptions(), ChannelProfile())
+    store.update(job.id, status=JobStatus.DOWNLOADING, stage=JobStatus.DOWNLOADING)
+
+    other = ExitStack()
+    other.enter_context(store.running(job.id))
+    with other, TestClient(create_app(settings, Ports(video_source, transcriber, llm))) as client:
+        store.update(job.id, status=JobStatus.ERROR, stage=JobStatus.DOWNLOADING, error="Download failed")
+        other.close()
+        time.sleep(0.3)
+        assert client.get(f"/api/jobs/{job.id}").json()["status"] == "error"
     assert video_source.calls == []
 
 

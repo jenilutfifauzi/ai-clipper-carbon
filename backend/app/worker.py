@@ -20,6 +20,9 @@ from app.rendering import Renders
 
 logger = logging.getLogger(__name__)
 
+# The statuses of a Job a process left unfinished, which the worker takes back.
+_RESUMED = frozenset({JobStatus.QUEUED, JobStatus.WAITING_QUOTA, JobStatus.RENDERING, *RUNNING})
+
 
 class Worker:
     def __init__(self, store: JobStore, pipeline: Pipeline, renders: Renders) -> None:
@@ -36,22 +39,17 @@ class Worker:
         """Start, taking back the Jobs a previous process left unfinished: those queued or in a
         stage are queued again, oldest first, and those waiting for quota wait out what is left of
         their wait. A Job left rendering renders its queued Clips, and the one it was rendering, again.
-        A Job that another process (a CLI run) is running is left to it."""
-        resumed = {JobStatus.QUEUED, JobStatus.WAITING_QUOTA, JobStatus.RENDERING, *RUNNING}
+        A Job that another process (a CLI run, or the previous server still shutting down) is
+        running is left to it, and taken back once that process lets go if it left the Job unfinished."""
         for job in sorted(self._store.all(), key=lambda job: job.created_at):
-            if job.status not in resumed or self._store.busy(job.id):
+            if job.status not in _RESUMED:
                 continue
-            if job.status is JobStatus.WAITING_QUOTA:
-                self._wake_later(job)
+            if self._store.busy(job.id):
+                threading.Thread(
+                    target=self._take_back_when_free, args=(job.id,), name=f"wait-{job.id}", daemon=True
+                ).start()
                 continue
-            if job.status is JobStatus.RENDERING:
-                self._renders.recover(job.id)
-                self.submit(job.id)
-                continue
-            if job.status is not JobStatus.QUEUED:
-                logger.info("Job %s was left %s: queued again", job.id, job.status)
-                self._store.update(job.id, status=JobStatus.QUEUED, stage=None, progress=None, message=None)
-            self.submit(job.id)
+            self._take_back(job)
         self._thread.start()
 
     def submit(self, job_id: str) -> None:
@@ -87,6 +85,29 @@ class Worker:
         self._renders.stop()
         self._queue.put(None)
         self._thread.join(timeout)
+
+    def _take_back(self, job: Job) -> None:
+        if job.status is JobStatus.WAITING_QUOTA:
+            self._wake_later(job)
+            return
+        if job.status is JobStatus.RENDERING:
+            self._renders.recover(job.id)
+            self.submit(job.id)
+            return
+        if job.status is not JobStatus.QUEUED:
+            logger.info("Job %s was left %s: queued again", job.id, job.status)
+            self._store.update(job.id, status=JobStatus.QUEUED, stage=None, progress=None, message=None)
+        self.submit(job.id)
+
+    def _take_back_when_free(self, job_id: str) -> None:
+        try:
+            self._store.wait_until_free(job_id)
+            job = self._store.get(job_id)
+        except JobNotFound:
+            return
+        if job.status in _RESUMED and not self._stopping.is_set():
+            logger.info("Job %s: the process running it let go of it", job_id)
+            self._take_back(job)
 
     def _loop(self) -> None:
         while (job_id := self._queue.get()) is not None and not self._stopping.is_set():

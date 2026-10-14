@@ -291,6 +291,15 @@ class JobStore:
         except JobConflict:
             return True
 
+    def wait_until_free(self, job_id: str) -> None:
+        """Block until no other process holds the Job's run lock (at once if none does)."""
+        try:
+            lock = open(self.job_dir(job_id) / RUN_LOCK, "a")
+        except FileNotFoundError:
+            raise JobNotFound(job_id) from None
+        with lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+
     def job_dir(self, job_id: str) -> Path:
         if not _JOB_ID.fullmatch(job_id):
             raise JobNotFound(job_id)

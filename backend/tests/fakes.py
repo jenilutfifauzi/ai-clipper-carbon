@@ -16,7 +16,8 @@ from app.video_source import VIDEO_FILE, Source, probe
 class FakeVideoSource:
     """Copies a fixture video and json3 track into the Job directory.
 
-    `hold()` makes `fetch` block until `release()`; `fail_with()` makes it raise.
+    `hold()` makes `fetch` block until `release()`; `fail_with()` makes it raise. `fetch` reports
+    each of `progress_steps` as the download's progress.
     `fetch_captions` copies `captions[url]` (`caption_track` for other URLs): a track, None for a
     video without one, or an exception to raise. Its calls are recorded apart from `fetch`'s.
     """
@@ -29,6 +30,7 @@ class FakeVideoSource:
         self.calls: list[tuple[str, str]] = []
         self.caption_calls: list[tuple[str, str]] = []
         self.error: Exception | None = None
+        self.progress_steps: list[float] = []
         self._released = threading.Event()
         self._released.set()
 
@@ -41,12 +43,16 @@ class FakeVideoSource:
     def fail_with(self, error: Exception | None) -> None:
         self.error = error
 
-    def fetch(self, url: str, language: str, dest: Path) -> Source:
+    def fetch(
+        self, url: str, language: str, dest: Path, progress: Callable[[float], None] = lambda done: None
+    ) -> Source:
         self.calls.append((url, language))
         if not self._released.wait(timeout=10):
             raise TimeoutError("FakeVideoSource was held and never released")
         if self.error:
             raise self.error
+        for done in self.progress_steps:
+            progress(done)
 
         shutil.copy(self.video, dest / VIDEO_FILE)
         track = None
