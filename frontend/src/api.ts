@@ -102,6 +102,13 @@ export interface Transcript {
 
 export type Layout = "auto" | "track" | "split" | "blur";
 
+// The Layout of the one Scene that holds `at` (seconds on the Source's timeline), in place of the
+// Candidate's there. Auto chooses that Scene's by its faces.
+export interface LayoutOverride {
+  at: number;
+  layout: Layout;
+}
+
 // The owner's correction of one caption Word, keyed by a time on the Source's timeline (the Word
 // whose span holds it). `text` replaces the Word's (null keeps it; "" removes the Word).
 export interface WordEdit {
@@ -296,6 +303,7 @@ export interface Candidate {
   // When the hook comes on, in seconds into the Clip, and how long it stays.
   hook_start: number;
   hook_secs: number;
+  layout_overrides: LayoutOverride[];
 }
 
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
@@ -312,6 +320,8 @@ export interface CandidateChange {
   word_edits?: WordEdit[];
   hook_start?: number;
   hook_secs?: number;
+  // Replaces the Candidate's Layout Overrides as a whole.
+  layout_overrides?: LayoutOverride[];
 }
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).

@@ -47,7 +47,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
-from app.candidates import Layout, WordEdit
+from app.candidates import Layout, LayoutOverride, WordEdit
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.styles import CaptionPosition, CaptionStyle, HookPosition, HookStyle
@@ -281,12 +281,15 @@ def plan_render(
     word_edits: list[WordEdit] | None = None,
     hook_start: float = 0.0,
     hook_secs: float = HOOK_SECS,
+    layout_overrides: list[LayoutOverride] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
     each Scene by its faces), captioned with `words` (in seconds into the Clip; those beyond its
     ends are left out) in `caption_style` and corrected by `word_edits` (their times in seconds into
-    the Clip), with the `hook` text in `hook_style` from `hook_start` for `hook_secs`. Without `scenes` the Clip is one Scene;
+    the Clip), with the `hook` text in `hook_style` from `hook_start` for `hook_secs`. A Scene that
+    holds one of `layout_overrides` (their times in seconds into the Clip) takes its Layout instead
+    of `layout`, the last one if it holds several. Without `scenes` the Clip is one Scene;
     without `faces` (not analysed) an Auto Scene is tracked with its crop in the middle; without
     `words`, nothing is captioned; with a blank `hook`, no hook is shown."""
     if not 0 <= start < end:
@@ -301,7 +304,8 @@ def plan_render(
         for a, b in _merge_short(edges):
             seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
             count = None if seen is None else _face_count(seen)
-            chosen = _choose(layout, count)
+            held = [o.layout for o in layout_overrides or [] if a <= o.at < b or (b == duration and o.at == b)]
+            chosen = _choose(held[-1] if held else layout, count)
             if chosen is SceneLayout.TRACK:
                 panels = [_track(a, b, seen, source, camera)]
             elif chosen is SceneLayout.SPLIT:

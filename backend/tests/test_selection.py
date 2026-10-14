@@ -106,6 +106,7 @@ def test_job_reaches_review_with_candidates_ranked_by_predicted_score(client, fr
         "word_edits": [],
         "hook_start": 0.0,
         "hook_secs": 3.0,
+        "layout_overrides": [],
     }
     assert client.get(f"/api/jobs/{job['id']}").json()["candidates"] == job["candidates"]
 

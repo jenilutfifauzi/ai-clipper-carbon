@@ -11,7 +11,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
-from app.candidates import Candidate, Layout, WordEdit
+from app.candidates import Candidate, Layout, LayoutOverride, WordEdit
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
@@ -43,6 +43,8 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 HOOK_MAX_CHARS = 200
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
+# The most Layout Overrides a Candidate holds: more than a clip has Scenes.
+LAYOUT_OVERRIDES_MAX = 200
 
 _OPTIONS = TypeAdapter(JobOptions)
 
@@ -106,6 +108,8 @@ class CandidateUpdate(BaseModel):
     # Seconds into the Clip; the planner keeps them in it.
     hook_start: Annotated[float, Field(ge=0, le=MAX_CLIP_SECS)] | None = None
     hook_secs: Annotated[float, Field(ge=0.5, le=30)] | None = None
+    # Replaces the Candidate's Layout Overrides as a whole.
+    layout_overrides: Annotated[list[LayoutOverride], Field(max_length=LAYOUT_OVERRIDES_MAX)] | None = None
 
 
 class PresetBody(BaseModel):

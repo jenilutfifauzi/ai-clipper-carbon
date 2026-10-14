@@ -52,6 +52,16 @@ class WordEdit:
 
 
 @dataclass(frozen=True)
+class LayoutOverride:
+    """The Layout of the one Scene (as planned, short ones merged) that holds `at`, seconds on the
+    Source's timeline, in place of the Candidate's Layout there. Auto chooses that Scene's by its
+    faces even where the Candidate's Layout is forced."""
+
+    at: FiniteFloat
+    layout: Layout
+
+
+@dataclass(frozen=True)
 class Candidate:
     # Set once, when Selection (or the owner, for a manual one) creates the Candidate; review edits
     # address it by this.
@@ -87,6 +97,8 @@ class Candidate:
     # When the hook comes on, in seconds into the Clip, and how long it stays (both kept in the Clip).
     hook_start: float = 0.0
     hook_secs: float = 3.0
+    # Layouts of single Scenes.
+    layout_overrides: list[LayoutOverride] = field(default_factory=list)
 
     @property
     def reviewed(self) -> bool:

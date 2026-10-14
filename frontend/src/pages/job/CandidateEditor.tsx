@@ -20,6 +20,7 @@ import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { Playback } from "./editor/playback";
+import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { StylePanel, type StyleDraft } from "./editor/StylePanel";
 import { Timeline, type Range } from "./editor/Timeline";
 import { useDraftSave } from "./editor/useDraftSave";
@@ -94,6 +95,7 @@ export function CandidateEditor({
   const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
   const [trimDraft, setTrimDraft] = useState<Range | null>(null);
   const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
+  const [scene, setScene] = useState<number | null>(null);
   const [timing, setTiming] = useDraftSave<HookTiming>(
     { hook_start: candidate.hook_start, hook_secs: candidate.hook_secs },
     (value) => void onSave(value),
@@ -111,11 +113,17 @@ export function CandidateEditor({
     setStyleDraft(null);
     setTrimDraft(null);
     setCaptionFocus(null);
+    setScene(null);
   }, [candidate.id]);
   // A preparation asked for here is over once the Job is back in review.
   useEffect(() => {
     if (progress.status !== "rendering") setPreparing(null);
   }, [progress.status]);
+
+  function prepare() {
+    setPreparing(candidate.id);
+    onPrepare(candidate.id).catch(() => setPreparing(null));
+  }
 
   const range = trimDraft ?? { start: candidate.start, end: candidate.end };
   const draft: CandidateChange = {
@@ -127,6 +135,7 @@ export function CandidateEditor({
     word_edits: candidate.word_edits,
     hook_start: timing.hook_start,
     hook_secs: timing.hook_secs,
+    layout_overrides: candidate.layout_overrides,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -225,10 +234,7 @@ export function CandidateEditor({
               unanalysed={preview?.analysed === false}
               error={previewError}
               preparing={preparing === candidate.id}
-              onPrepare={() => {
-                setPreparing(candidate.id);
-                onPrepare(candidate.id).catch(() => setPreparing(null));
-              }}
+              onPrepare={prepare}
             />
           )}
         </section>
@@ -246,10 +252,33 @@ export function CandidateEditor({
           onTrimDraft={setTrimDraft}
           onTrim={onSave}
           onTiming={setTiming}
+          scenes={(geometry) => (
+            <ScenesTrack
+              plan={preview?.plan ?? null}
+              geometry={geometry}
+              analysed={preview?.analysed ?? true}
+              overrides={candidate.layout_overrides}
+              selected={scene}
+              preparing={preparing === candidate.id}
+              onSelect={(i) => setScene((old) => (old === i ? null : i))}
+              onPrepare={prepare}
+            />
+          )}
           onCaption={(at) => {
             setCaptionFocus({ at });
             requestAnimationFrame(() => document.getElementById("caption-text-heading")?.scrollIntoView({ block: "nearest" }));
           }}
+        />
+      )}
+
+      {preview && scene !== null && (
+        <SceneLayoutPicker
+          plan={preview.plan}
+          index={scene}
+          clipStart={candidate.start}
+          clipLayout={candidate.layout}
+          overrides={candidate.layout_overrides}
+          onChange={(layout_overrides) => void onSave({ layout_overrides })}
         />
       )}
 

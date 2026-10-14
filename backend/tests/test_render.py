@@ -912,3 +912,23 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
     for bad in ([{"at": 1.0, "text": "x" * 41}], [{"at": "inf", "text": "x"}], [{"at": 1.0, "text": "x"}] * 501, [{"text": "x"}]):
         assert client.patch(url, json={"word_edits": bad}).status_code == 422
+
+
+def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_source, face_then_two):
+    video_source.video = face_then_two
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    # The two people's Scene (from 3 s into the Source) in Blur instead of Split.
+    candidate = patch(client, job, candidate, layout_overrides=[{"at": 4.5, "layout": "blur"}])
+    assert candidate["edited"] is True and candidate["layout_overrides"] == [{"at": 4.5, "layout": "blur"}]
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    assert [scene["layout"] for scene in plan["scenes"]] == ["track", "blur"]
+    assert preview(client, job, candidate)["plan"] == plan
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    assert client.patch(url, json={"layout_overrides": [{"at": 1.0, "layout": "sideways"}]}).status_code == 422
+    assert client.patch(url, json={"layout_overrides": [{"at": 1.0, "layout": "blur"}] * 201}).status_code == 422

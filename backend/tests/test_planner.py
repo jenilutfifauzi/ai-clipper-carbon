@@ -5,7 +5,7 @@ import math
 import pytest
 from pydantic import TypeAdapter
 
-from app.candidates import Layout, WordEdit
+from app.candidates import Layout, LayoutOverride, WordEdit
 from app.config import CameraTuning
 from app.styles import CaptionPosition, CaptionStyle, Highlight, HookPosition, HookStyle
 from app.planner import (
@@ -836,3 +836,38 @@ def test_the_hook_shows_from_its_start_for_its_time_kept_in_the_clip():
     assert hooked(HOOK, secs=5, hook_start=7) is None
     # Where and how large doesn't depend on when.
     assert late.area == hooked(HOOK).area and late.lines == hooked(HOOK).lines
+
+
+# Layout Overrides (clip editor ticket 09). Their times are in seconds into the Clip.
+
+
+def overridden(overrides: list, layout: Layout = Layout.AUTO, secs: float = 6, words: list[Word] | None = None) -> RenderPlan:
+    faces, scenes = caption_scenes()
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces, layout, words, layout_overrides=overrides)
+
+
+def test_a_layout_override_changes_only_the_scene_holding_it():
+    assert [s.layout for s in overridden([]).scenes] == ["blur", "track", "split"]
+    assert [s.layout for s in overridden([LayoutOverride(3.0, Layout.BLUR)]).scenes] == ["blur", "blur", "split"]
+    # At a cut, the Scene starting there; the last of several in one Scene.
+    assert [s.layout for s in overridden([LayoutOverride(4.0, Layout.TRACK)]).scenes] == ["blur", "track", "track"]
+    two = [LayoutOverride(0.5, Layout.SPLIT), LayoutOverride(1.5, Layout.TRACK)]
+    assert [s.layout for s in overridden(two).scenes] == ["track", "track", "split"]
+    # Outside the Clip: nothing.
+    assert [s.layout for s in overridden([LayoutOverride(-1, Layout.TRACK), LayoutOverride(9, Layout.TRACK)]).scenes] == [
+        "blur", "track", "split"
+    ]
+
+
+def test_a_layout_override_works_with_the_candidates_layout_forced_and_auto_chooses_by_faces():
+    forced = overridden([LayoutOverride(5.0, Layout.BLUR)], Layout.TRACK)
+    assert [s.layout for s in forced.scenes] == ["track", "track", "blur"]
+    by_faces = overridden([LayoutOverride(5.0, Layout.AUTO)], Layout.TRACK)
+    assert [s.layout for s in by_faces.scenes] == ["track", "track", "split"]
+
+
+def test_captions_move_with_a_scenes_overridden_layout():
+    words = said("satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas", 0.2, gap=0.2)
+    plan = overridden([LayoutOverride(3.0, Layout.SPLIT)], words=words)
+    areas = {(event.start >= 2 and event.end <= 4, event.area) for event in plan.captions}
+    assert (True, SEAM_CAPTIONS) in areas and (True, LOWER_CAPTIONS) not in areas

@@ -5,7 +5,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
-from app.candidates import Candidate, Layout, Origin, WordEdit, manual_candidate
+from app.candidates import Candidate, Layout, LayoutOverride, Origin, WordEdit, manual_candidate
 from app.config import SelectionTuning
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -39,6 +39,7 @@ class CandidateChange:
     word_edits: list[WordEdit] | None = None
     hook_start: float | None = None
     hook_secs: float | None = None
+    layout_overrides: list[LayoutOverride] | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ def update(
         word_edits=old.word_edits if change.word_edits is None else _merged(change.word_edits),
         hook_start=_pick(change.hook_start, old.hook_start),
         hook_secs=_pick(change.hook_secs, old.hook_secs),
+        layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
     )
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -132,6 +134,7 @@ def _look(candidate: Candidate) -> tuple:
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
+        candidate.layout_overrides,
     )
 
 
