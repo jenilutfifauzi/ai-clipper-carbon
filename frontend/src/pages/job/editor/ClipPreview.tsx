@@ -20,7 +20,9 @@ import { usePlayback, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays, type OverlayControls } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
+import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
+import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -59,8 +61,8 @@ const percent = (value: number) => `${value * 100}%`;
  * scaled to fit. Two videos play the Source in step, one per panel (Split's two, or Blur's
  * background and shot); the first is the master, which `playback` drives and which is heard.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
- * centre, in output pixels. With `texts` (the Advanced Edit), a Text Layer on screen is selected by a
- * click and dragged to a new centre. With `fit`, the frame is as large as fits the space its parent
+ * centre, in output pixels. With `stage`, the hook, the captions and (in the Advanced Edit) the Text
+ * Layers on screen are selected by a click, moved, resized and edited on the frame (StageEdit.tsx). With `fit`, the frame is as large as fits the space its parent
  * gives it (the Advanced Edit's player), and the transport is a single row.
  */
 export function ClipPreview({
@@ -69,7 +71,7 @@ export function ClipPreview({
   fonts,
   playback,
   onWatermarkMove,
-  texts,
+  stage: controls,
   overlays,
   fit = false,
 }: {
@@ -78,7 +80,7 @@ export function ClipPreview({
   fonts: FontInfo[] | null;
   playback: Playback;
   onWatermarkMove?: (x: number, y: number) => void;
-  texts?: TextControls;
+  stage?: StageControls;
   overlays?: OverlayControls;
   fit?: boolean;
 }) {
@@ -122,7 +124,8 @@ export function ClipPreview({
   const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
-  const textDrag = useTextDrag(plan, stage, texts);
+  const items = plan && fonts && controls ? stageItems(plan, fontById, controls) : [];
+  const edit = useStageEdit(plan, stage, items, controls?.selected ?? null, (id) => controls?.onSelect(id));
 
   const frame = (
     <div
@@ -150,18 +153,27 @@ export function ClipPreview({
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
-          <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} />
+          <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} edit={edit} />
           {plan.texts.map((event) => (
             <TextLayerView
               key={event.layer.id}
               event={event}
               font={fontById.get(event.layer.font)}
               playback={playback}
-              offset={textDrag.offset(event)}
-              still={event.layer.id === texts?.selected}
+              moving={edit.transform(`text:${event.layer.id}`, event.area)}
+              still={`text:${event.layer.id}` === controls?.selected}
             />
           ))}
-          {plan.hook && <Hook plan={plan} hook={plan.hook} font={fontById.get(plan.hook_style.font)} playback={playback} />}
+          {plan.hook && (
+            <Hook
+              plan={plan}
+              hook={plan.hook}
+              font={fontById.get(plan.hook_style.font)}
+              playback={playback}
+              moving={edit.transform("hook", plan.hook.area)}
+              still={controls?.selected === "hook"}
+            />
+          )}
         </svg>
       )}
       {plan && watermark.event && onWatermarkMove && (
@@ -184,7 +196,7 @@ export function ClipPreview({
           }}
         />
       )}
-      {plan && texts && <TextHandles plan={plan} playback={playback} controls={texts} drag={textDrag} />}
+      {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} />}
       <PreviewMusic plan={plan} playback={playback} master={master} />
     </div>
   );
@@ -306,139 +318,91 @@ function useWatermarkDrag(
   return { event: shown, handlers, dragging: drag !== null };
 }
 
-/** The Advanced Edit's hold on the Text Layers in the preview: which is selected, and what a click or a drag does. */
-export interface TextControls {
+/**
+ * The hold of an editor on what can be moved on the preview: the hook ("hook"), the captions
+ * ("captions") and, with `texts`, each Text Layer ("text:<id>"). Which is selected, what a click
+ * selects, where a move or resize puts one, and what editing one does.
+ */
+export interface StageControls {
   selected: string | null;
   onSelect: (id: string) => void;
-  // A drag moved it to centre (x, y), in output pixels; each drag is one `group` of changes.
-  onMove: (id: string, x: number, y: number, group: string) => void;
+  // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
+  // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
+  onPlace: (id: string, place: Place, group: string) => void;
+  onEdit?: (id: string) => void;
+  texts?: boolean;
 }
 
-let textDrags = 0;
+// The sizes the hook, the captions and a Text Layer can be set to (styles.py, candidates.py).
+const HOOK_SIZES = { min: 40, max: 160 };
+const CAPTION_SIZES = { min: 40, max: 200 };
+const TEXT_SIZES = { min: 16, max: 320 };
+// Around a caption line's letters, what can be grabbed of it, in output pixels.
+const CAPTION_GRAB_PAD = 12;
+// The safe area's top and bottom (planner.py's SAFE_AREA): the hook stays between them, and a
+// caption line's middle stays half its area's height (100) inside them (_caption_area).
+const SAFE_TOP = 232;
+const SAFE_BOTTOM = 1536;
+const CAPTION_CENTRES: [number, number] = [SAFE_TOP + 100, SAFE_BOTTOM - 100];
 
-/**
- * Dragging Text Layers on the stage. A dragged one is drawn where it is put until a plan that has it
- * there comes back, as the Watermark is.
- */
-function useTextDrag(plan: RenderPlan | null, stage: React.RefObject<HTMLDivElement | null>, controls: TextControls | undefined) {
-  const [held, setHeld] = useState<{ id: string; x: number; y: number } | null>(null);
-  const drag = useRef<{ id: string; pointer: number; dx: number; dy: number; group: string; moved: boolean } | null>(null);
-
-  // Where the pointer is, in output pixels.
-  function at(pointer: PointerEvent): { x: number; y: number } | null {
-    const rect = stage.current?.getBoundingClientRect();
-    if (!rect || !plan) return null;
-    return { x: ((pointer.clientX - rect.left) / rect.width) * plan.width, y: ((pointer.clientY - rect.top) / rect.height) * plan.height };
+/** What of the plan `controls` can move on the stage, in the order they are drawn. */
+function stageItems(plan: RenderPlan, fontById: Map<string, FontInfo>, controls: StageControls): StageItem[] {
+  const items: StageItem[] = [];
+  const middle = (area: Box) => ({ x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) });
+  const captionFont = fontById.get(plan.caption_style.font);
+  if (plan.captions.length && captionFont) {
+    const style = plan.caption_style;
+    items.push({
+      id: "captions",
+      label: "Captions (every line moves together)",
+      shows: plan.captions.map((event) => ({ start: event.start, end: event.end, area: captionGrab(event, captionFont, style.outline) })),
+      size: { now: style.size, ...CAPTION_SIZES },
+      centreY: CAPTION_CENTRES,
+      onPlace: (area, size, group) => controls.onPlace("captions", { ...middle(area), size }, group),
+      onEdit: controls.onEdit && (() => controls.onEdit?.("captions")),
+    });
   }
-
-  const centre = (event: TextEvent) => ({ x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 });
-  // Held until the plan has the Text Layer where it was put.
-  const holding = (event: TextEvent) =>
-    held && held.id === event.layer.id && (drag.current?.id === held.id || event.layer.x !== held.x || event.layer.y !== held.y);
-
-  function offset(event: TextEvent): [number, number] {
-    if (!holding(event) || !held) return [0, 0];
-    const now = centre(event);
-    return [held.x - now.x, held.y - now.y];
+  if (controls.texts) {
+    for (const event of plan.texts) {
+      const id = `text:${event.layer.id}`;
+      items.push({
+        id,
+        label: `Text: ${event.lines.join(" ")}`,
+        shows: [{ start: event.start, end: event.end, area: event.area }],
+        size: { now: event.layer.size, ...TEXT_SIZES },
+        onPlace: (area, size, group) => controls.onPlace(id, { ...middle(area), size }, group),
+      });
+    }
   }
-
-  function handlers(event: TextEvent) {
-    return {
-      onPointerDown: (pointer: PointerEvent<HTMLDivElement>) => {
-        const point = at(pointer);
-        if (!point || !controls || pointer.button !== 0) return;
-        pointer.preventDefault();
-        pointer.currentTarget.setPointerCapture(pointer.pointerId);
-        controls.onSelect(event.layer.id);
-        const [dx, dy] = offset(event);
-        const from = centre(event);
-        drag.current = {
-          id: event.layer.id,
-          pointer: pointer.pointerId,
-          dx: from.x + dx - point.x,
-          dy: from.y + dy - point.y,
-          group: `text-drag:${++textDrags}`,
-          moved: false,
-        };
-      },
-      onPointerMove: (pointer: PointerEvent<HTMLDivElement>) => {
-        const current = drag.current;
-        const point = at(pointer);
-        if (!current || pointer.pointerId !== current.pointer || !point || !plan) return;
-        current.moved = true;
-        const x = Math.round(Math.min(Math.max(point.x + current.dx, 0), plan.width));
-        const y = Math.round(Math.min(Math.max(point.y + current.dy, 0), plan.height));
-        setHeld({ id: current.id, x, y });
-        controls?.onMove(current.id, x, y, current.group);
-      },
-      onPointerUp: (pointer: PointerEvent<HTMLDivElement>) => {
-        if (drag.current?.pointer === pointer.pointerId) drag.current = null;
-      },
-      onPointerCancel: () => {
-        drag.current = null;
-        setHeld(null);
-      },
-    };
+  if (plan.hook) {
+    const hook = plan.hook;
+    items.push({
+      id: "hook",
+      label: "Hook",
+      shows: [{ start: hook.start, end: hook.end, area: hook.area }],
+      size: { now: plan.hook_style.size, ...HOOK_SIZES },
+      centreY: [SAFE_TOP + hook.area.height / 2, SAFE_BOTTOM - hook.area.height / 2],
+      onPlace: (area, size, group) => controls.onPlace("hook", { x: middle(area).x, y: Math.round(area.y), size }, group),
+      onEdit: controls.onEdit && (() => controls.onEdit?.("hook")),
+    });
   }
-
-  return { offset, handlers };
+  return items;
 }
 
-/** A handle over each Text Layer on screen now, to select and drag it; the selected one outlined. */
-function TextHandles({
-  plan,
-  playback,
-  controls,
-  drag,
-}: {
-  plan: RenderPlan;
-  playback: Playback;
-  controls: TextControls;
-  drag: ReturnType<typeof useTextDrag>;
-}) {
-  const shown = usePlayback(playback, (time) =>
-    plan.texts
-      .filter((event) => event.start <= time && time < event.end)
-      .map((event) => event.layer.id)
-      .join(" "),
-  );
-  const on = new Set(shown.split(" "));
-  return (
-    <>
-      {plan.texts
-        .filter((event) => on.has(event.layer.id) || event.layer.id === controls.selected)
-        .map((event) => {
-          const [dx, dy] = drag.offset(event);
-          const selected = event.layer.id === controls.selected;
-          return (
-            <div
-              key={event.layer.id}
-              role="button"
-              tabIndex={-1}
-              aria-roledescription="movable text"
-              aria-label={`Text: ${event.lines.join(" ")}`}
-              aria-pressed={selected}
-              {...drag.handlers(event)}
-              className={cx(
-                "absolute cursor-move touch-none rounded-[4px]",
-                selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed",
-                !on.has(event.layer.id) && "opacity-40",
-              )}
-              style={{
-                left: percent((event.area.x + dx) / plan.width),
-                top: percent((event.area.y + dy) / plan.height),
-                width: percent(event.area.width / plan.width),
-                height: percent(event.area.height / plan.height),
-              }}
-            />
-          );
-        })}
-    </>
-  );
+// What can be grabbed of a caption line: its letters (and outline) as set, padded, around its middle.
+function captionGrab(event: CaptionEvent, font: FontInfo, outline: number): Box {
+  let width = event.area.width;
+  if (measure) {
+    measure.font = `${cssFontSize(font, event.size)}px "${fontFamily(font.id)}"`;
+    width = Math.min(measure.measureText(event.text).width + 2 * outline + 2 * CAPTION_GRAB_PAD, event.area.width);
+  }
+  const height = event.size + 2 * CAPTION_GRAB_PAD;
+  const { x, y } = { x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 };
+  return { x: Math.round(x - width / 2), y: Math.round(y - height / 2), width: Math.round(width), height: Math.round(height) };
 }
 
 /**
- * A Text Layer while it is on screen, animated on and off as the hook is, moved by `offset` while
+ * A Text Layer while it is on screen, animated on and off as the hook is, moved by `moving` while
  * dragged. A `still` one (selected in the Advanced Edit) is shown whole while paused in its time, so
  * that it can be seen while it is edited, even on a frame its animation hasn't reached.
  */
@@ -446,13 +410,13 @@ function TextLayerView({
   event,
   font,
   playback,
-  offset,
+  moving,
   still = false,
 }: {
   event: TextEvent;
   font: FontInfo | undefined;
   playback: Playback;
-  offset: [number, number];
+  moving: string | undefined;
   still?: boolean;
 }) {
   const layer = event.layer;
@@ -465,7 +429,8 @@ function TextLayerView({
   const [opacity, scale, below] = key.split(" ").map(Number);
   const { box, area, size } = event;
   return (
-    <g opacity={opacity} transform={`translate(${offset[0]} ${offset[1] + below})`}>
+    <g opacity={opacity} transform={moving}>
+      <g transform={below ? `translate(0 ${below})` : undefined}>
       <g style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box", transformOrigin: "center" }}>
         {/* What the scale grows from: the whole area, as libass grows the box and lines from its middle. */}
         <rect x={area.x} y={area.y} width={area.width} height={area.height} fill="none" />
@@ -498,6 +463,7 @@ function TextLayerView({
             {line}
           </text>
         ))}
+      </g>
       </g>
     </g>
   );
@@ -621,8 +587,8 @@ export function PanelView({
   );
 }
 
-/** The caption line on screen, with its spoken Word highlighted as the Caption Style says. */
-function Captions({ plan, font, playback }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback }) {
+/** The caption line on screen, with its spoken Word highlighted as the Caption Style says, moved while it is. */
+function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback; edit: StageEdit }) {
   const key = usePlayback(playback, (time) => {
     const event = plan.captions.findIndex((caption) => caption.start <= time && time < caption.end);
     if (event === -1) return "";
@@ -631,7 +597,12 @@ function Captions({ plan, font, playback }: { plan: RenderPlan; font: FontInfo |
   });
   if (!key || !font) return null;
   const [event, word] = key.split(":").map(Number);
-  return <CaptionLine event={plan.captions[event]} active={word} plan={plan} font={font} />;
+  const line = plan.captions[event];
+  return (
+    <g transform={edit.transform("captions", line.area)}>
+      <CaptionLine event={line} active={word} plan={plan} font={font} />
+    </g>
+  );
 }
 
 function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; active: number; plan: RenderPlan; font: FontInfo }) {
@@ -768,14 +739,30 @@ function hookLook(time: number, hook: Timed, style: Moves, delay: number): [numb
 /**
  * The hook's boxes, lines, Kicker and Quote Mark while it is on screen, animated on and off as its
  * style says: the Kicker first, then the lines one by one (each strip with its line, a block and the
- * Quote Mark with the first).
+ * Quote Mark with the first); moved by `moving` while it is. A `still` one (selected) is shown whole
+ * while paused in its time, as a selected Text Layer is.
  */
-function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEvent; font: FontInfo | undefined; playback: Playback }) {
+function Hook({
+  plan,
+  hook,
+  font,
+  playback,
+  moving,
+  still = false,
+}: {
+  plan: RenderPlan;
+  hook: HookEvent;
+  font: FontInfo | undefined;
+  playback: Playback;
+  moving: string | undefined;
+  still?: boolean;
+}) {
   const style = plan.hook_style;
   const first = hook.kicker ? 1 : 0;
   const steps = first + hook.lines.length - 1;
   const step = stagger(hook, style, steps);
-  const key = usePlayback(playback, (time) => {
+  const key = usePlayback(playback, (time, p) => {
+    if (still && !p.playing && hook.start <= time && time < hook.end) return Array.from({ length: steps + 1 }, () => "1 1 0").join("|");
     const looks = Array.from({ length: steps + 1 }, (_, rank) => hookLook(time, hook, style, rank * step));
     if (looks.every((look) => look === null)) return null;
     return looks.map((look) => (look ?? [0, 1, 0]).map((value) => value.toFixed(3)).join(" ")).join("|");
@@ -824,7 +811,7 @@ function Hook({ plan, hook, font, playback }: { plan: RenderPlan; hook: HookEven
   const kicker = hook.kicker;
   const quote = hook.quote;
   return (
-    <g>
+    <g transform={moving}>
       {style.box_opacity > 0 &&
         hook.boxes.map((box, i) =>
           moved(

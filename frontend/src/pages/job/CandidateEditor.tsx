@@ -30,6 +30,7 @@ import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
+import { placedFields } from "./editor/placing";
 import { useStyleDraft } from "./editor/useStyleDraft";
 import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
@@ -117,6 +118,8 @@ export function CandidateEditor({
   const [trimDraft, setTrimDraft] = useState<Range | null>(null);
   const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
   const [scene, setScene] = useState<number | null>(null);
+  // The hook or the captions, selected on the preview.
+  const [onStage, setOnStage] = useState<string | null>(null);
   const [timing, setTiming] = useDraftSave<HookTiming>(
     { hook_start: candidate.hook_start, hook_secs: candidate.hook_secs },
     (value) => void onSave(value),
@@ -139,6 +142,7 @@ export function CandidateEditor({
     setTrimDraft(null);
     setCaptionFocus(null);
     setScene(null);
+    setOnStage(null);
   }, [candidate.id]);
   // A preparation asked for here is over once the Job is back in review.
   useEffect(() => {
@@ -262,6 +266,19 @@ export function CandidateEditor({
                   onWatermarkMove={
                     tab === "watermark" && style.controls
                       ? (x, y) => style.controls?.setMany("watermark", { position: "custom", x, y })
+                      : undefined
+                  }
+                  // The hook and the captions, moved and resized on the preview but not while the Watermark is.
+                  stage={
+                    tab !== "watermark" && style.controls
+                      ? {
+                          selected: onStage,
+                          onSelect: (id) => {
+                            setOnStage(id);
+                            if (id === "hook" || id === "captions") setTab(id);
+                          },
+                          onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place)),
+                        }
                       : undefined
                   }
                 />

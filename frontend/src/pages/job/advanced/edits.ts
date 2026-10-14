@@ -3,23 +3,51 @@ import { mainTrackOf, type Candidate } from "../../../api";
 /**
  * What the Advanced Edit changes of a Candidate, saved and undone together. Its Main Track is always
  * its Segments here, one for a Clip that isn't cut (the backend keeps that one as `start` and `end`).
+ * The hook's words and the captions' (Word Edits), and their places and sizes (Style Overrides), are
+ * changed on the preview.
  */
 export type AdvancedEdits = Pick<
   Candidate,
-  "hook_start" | "hook_secs" | "text_layers" | "music" | "source_volume" | "segments" | "overlays" | "transitions"
+  | "hook_start"
+  | "hook_secs"
+  | "hook_text"
+  | "hook_kicker"
+  | "style_overrides"
+  | "word_edits"
+  | "text_layers"
+  | "music"
+  | "source_volume"
+  | "segments"
+  | "overlays"
+  | "transitions"
 >;
 
 export function editsOf(candidate: Candidate): AdvancedEdits {
-  const { hook_start, hook_secs, text_layers, music, source_volume, overlays, transitions } = candidate;
-  return { hook_start, hook_secs, text_layers, music, source_volume, overlays, transitions, segments: mainTrackOf(candidate) };
+  const { hook_start, hook_secs, hook_text, hook_kicker, style_overrides, word_edits, text_layers, music, source_volume, overlays, transitions } =
+    candidate;
+  return {
+    hook_start,
+    hook_secs,
+    hook_text,
+    hook_kicker,
+    style_overrides,
+    word_edits,
+    text_layers,
+    music,
+    source_volume,
+    overlays,
+    transitions,
+    segments: mainTrackOf(candidate),
+  };
 }
 
 /**
- * The item picked on the timeline or the preview, which the inspector shows: the hook, a Segment, a
- * Text Layer, a Music Clip, an Overlay, or the join after a Segment (for its Transition).
+ * The item picked on the timeline or the preview, which the inspector shows: the hook, the captions,
+ * a Segment, a Text Layer, a Music Clip, an Overlay, or the join after a Segment (for its Transition).
  */
 export type Picked =
   | { kind: "hook" }
+  | { kind: "captions" }
   | { kind: "segment"; id: string }
   | { kind: "text"; id: string }
   | { kind: "music"; id: string }
@@ -49,4 +77,16 @@ export function trackLanes<T extends { start: number; secs: number }>(items: T[]
     else lanes.push([item]);
   }
   return lanes;
+}
+
+/** The id on the preview's stage (StageControls) of the picked item, if it is on the stage. */
+export function stageIdOf(picked: Picked): string | null {
+  if (picked?.kind === "hook" || picked?.kind === "captions") return picked.kind;
+  return picked?.kind === "text" ? `text:${picked.id}` : null;
+}
+
+/** The item a stage id names. */
+export function pickedOf(stageId: string): Picked {
+  if (stageId === "hook" || stageId === "captions") return { kind: stageId };
+  return { kind: "text", id: stageId.slice("text:".length) };
 }

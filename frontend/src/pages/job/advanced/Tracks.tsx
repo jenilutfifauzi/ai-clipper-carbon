@@ -35,6 +35,9 @@ export interface TrackHandlers {
  * Segments as played over their Scenes, and the joins between them), the caption lines, the hook,
  * and the Music Clips' lanes. Each track takes what is dropped on it from the asset panel.
  */
+// How far into a caption line a click on it seeks, so that the line shows.
+const CAPTION_SEEK_IN = 0.05;
+
 export function Tracks({
   geometry,
   duration,
@@ -236,9 +239,17 @@ export function Tracks({
           <button
             key={i}
             type="button"
-            onClick={() => playback.seek(event.start)}
+            onClick={() => {
+              // Just inside the line, which a frame's rounding of its start can miss.
+              playback.seek(event.start + Math.min(CAPTION_SEEK_IN, (event.end - event.start) / 2));
+              onSelect({ kind: "captions" });
+            }}
             title={event.text}
-            className="absolute inset-y-1 overflow-hidden rounded bg-fill px-1 text-left text-[11px] leading-5 text-ellipsis whitespace-nowrap text-muted ring-1 ring-border hover:text-text"
+            aria-pressed={picked?.kind === "captions"}
+            className={cx(
+              "absolute inset-y-1 overflow-hidden rounded bg-fill px-1 text-left text-[11px] leading-5 text-ellipsis whitespace-nowrap text-muted ring-1 ring-border hover:text-text",
+              picked?.kind === "captions" && "text-text ring-text",
+            )}
             style={{ left: event.start * pps, width: Math.max(2, (event.end - event.start) * pps - 1) }}
           >
             {event.text}

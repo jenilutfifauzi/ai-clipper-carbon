@@ -13,8 +13,14 @@
 
 **Blocked by:** none.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Text Layers drag, nudge and snap in the Advanced Edit; undo takes back one drag at a time.
+- [x] Text Layers drag, nudge and snap in the Advanced Edit; undo takes back one drag at a time.
 
 ## Comments
+
+**2026-10-15: done.** `npm run typecheck` and `npm run build` pass.
+
+Built: `editor/StageEdit.tsx`. `useStageEdit(plan, stage, items, selected, onSelect)` takes `StageItem`s (an id, a label, where and when each is drawn, an optional size range, an optional vertical range for its middle, `onPlace`, `onEdit`). It returns `transform(id, area)` for the drawing and `StageHandles` for the handles. Inside: pointer capture, output-pixel points, the held offset (until a plan made after the last change comes), one undo group per gesture, arrow nudges, corner resize, snapping with guide lines (Alt: none), and double-tap or Enter to edit. Text Layers use it in place of `useTextDrag`/`TextHandles`, and gain nudging, snapping and corner resize (`size`, 16–320).
+
+**Checks:** Browser (scratch clone, test server on :8010): the hook snapped to the safe area's bottom with the guide drawn; arrow keys nudge.

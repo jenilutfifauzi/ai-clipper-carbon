@@ -7,8 +7,12 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Browser: resize in both editors; the render matches the preview.
+- [x] Browser: resize in both editors; the render matches the preview.
 
 ## Comments
+
+**2026-10-15: done** (with 02: the corners are part of `StageHandles`).
+
+**Checks:** Browser: the hook's bottom-right corner was pulled out, saved as `size: 144` with its middle kept, and Cmd+Z took it back as one step.

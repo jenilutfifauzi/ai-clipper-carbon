@@ -22,13 +22,14 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ClipPreview } from "../editor/ClipPreview";
 import { candidateDraft } from "../editor/draft";
+import { placedOverrides } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { itemActions, type ItemActions } from "./actions";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
-import { editsOf, newId, samePicked, type AdvancedEdits, type Picked } from "./edits";
+import { editsOf, newId, pickedOf, samePicked, stageIdOf, type AdvancedEdits, type Picked } from "./edits";
 import { Inspector } from "./Inspector";
 import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
@@ -229,13 +230,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       preview={preview}
       fonts={fonts}
       playback={playback}
-      texts={{
-        selected: picked?.kind === "text" ? picked.id : null,
-        onSelect: (id) => select({ kind: "text", id }),
-        onMove: (id, x, y, group) => {
-          const layer = edits.text_layers.find((other) => other.id === id);
-          if (layer) updateText({ ...layer, x, y }, group);
+      stage={{
+        selected: stageIdOf(picked),
+        onSelect: (id) => select(pickedOf(id)),
+        onPlace: (id, place, group) => {
+          if (id === "hook" || id === "captions") {
+            change({ style_overrides: placedOverrides(edits.style_overrides, id === "hook" ? "hook" : "caption", place) }, group);
+            return;
+          }
+          const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
+          if (layer) updateText({ ...layer, x: place.x, y: place.y, size: place.size ?? layer.size }, group);
         },
+        texts: true,
       }}
       overlays={{
         selected: picked?.kind === "overlay" ? picked.id : null,
@@ -290,7 +296,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       picked={picked}
       edits={edits}
       duration={duration}
-      candidate={candidate}
       preview={preview}
       fonts={fonts}
       actions={actions}

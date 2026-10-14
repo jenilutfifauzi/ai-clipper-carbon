@@ -1,6 +1,10 @@
+import { RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
-import type { Candidate, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
+import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
+import { Button } from "../../../components/Button";
+import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
+import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
 import type { ItemActions } from "./actions";
 import type { AdvancedEdits, Picked } from "./edits";
@@ -14,7 +18,6 @@ export function Inspector({
   picked,
   edits,
   duration,
-  candidate,
   preview,
   fonts,
   actions,
@@ -30,7 +33,6 @@ export function Inspector({
   picked: Picked;
   edits: AdvancedEdits;
   duration: number;
-  candidate: Candidate;
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
   actions: ItemActions | null;
@@ -112,22 +114,61 @@ export function Inspector({
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <h2 className="font-semibold">Hook</h2>
-          <p className="text-sm text-pretty break-words">“{preview?.plan.hook?.lines.join(" ") ?? candidate.hook_text}”</p>
-          <p className="text-sm text-pretty text-muted">Its words and look are changed in the clip editor.</p>
+          <p className="text-sm text-pretty break-words">“{preview?.plan.hook?.lines.join(" ") ?? edits.hook_text}”</p>
+          <Hint more="Drag it to move it, or a corner to resize it; arrow keys nudge it. Its look is changed in the clip editor.">
+            Double-click it on the preview to change its words.
+          </Hint>
         </div>
+        <ResetPlace edits={edits} part="hook" onEdits={onEdits} />
         <HookTimingFields
           timing={edits}
           duration={duration}
           onTiming={(timing) => onEdits({ ...edits, ...timing }, "hook-timing")}
-          blank={candidate.hook_text.trim() === ""}
+          blank={edits.hook_text.trim() === ""}
         />
+      </div>
+    );
+  }
+  if (picked?.kind === "captions") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="font-semibold">Captions</h2>
+          <Hint more="Drag one to move them all, or a corner to resize them; arrow keys nudge them. Their look is changed in the clip editor.">
+            Double-click a line on the preview to correct its words.
+          </Hint>
+        </div>
+        <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
       </div>
     );
   }
   return (
     <div className="flex flex-col gap-1">
       <h2 className="font-semibold">Nothing selected</h2>
-      <p className="text-sm text-pretty text-muted">Select an item on the timeline to change it.</p>
+      <p className="text-sm text-pretty text-muted">Select an item on the timeline or the preview to change it.</p>
     </div>
+  );
+}
+
+/** "Reset position": the hook or the captions back where their Style Preset puts them, once moved. */
+function ResetPlace({
+  edits,
+  part,
+  onEdits,
+}: {
+  edits: AdvancedEdits;
+  part: "hook" | "caption";
+  onEdits: (edits: AdvancedEdits, group?: string) => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      className="self-start"
+      disabled={!isPlaced(edits.style_overrides, part)}
+      onClick={() => onEdits({ ...edits, style_overrides: unplacedOverrides(edits.style_overrides, part) })}
+    >
+      <RotateCcw aria-hidden size={16} />
+      Reset position
+    </Button>
   );
 }
