@@ -21,6 +21,8 @@ import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { Playback } from "./editor/playback";
 import { StylePanel, type StyleDraft } from "./editor/StylePanel";
+import { Timeline, type Range } from "./editor/Timeline";
+import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { HookEditor, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
@@ -90,7 +92,13 @@ export function CandidateEditor({
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
   const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
-  const [timingDraft, setTimingDraft] = useState<HookTiming | null>(null);
+  const [trimDraft, setTrimDraft] = useState<Range | null>(null);
+  const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
+  const [timing, setTiming] = useDraftSave<HookTiming>(
+    { hook_start: candidate.hook_start, hook_secs: candidate.hook_secs },
+    (value) => void onSave(value),
+    candidate.id,
+  );
   const [preparing, setPreparing] = useState<string | null>(null);
   const playback = useMemo(() => new Playback(), []);
   playback.setRange(candidate.start, candidate.end);
@@ -101,21 +109,24 @@ export function CandidateEditor({
   useEffect(() => {
     setHookDraft(null);
     setStyleDraft(null);
-    setTimingDraft(null);
+    setTrimDraft(null);
+    setCaptionFocus(null);
   }, [candidate.id]);
   // A preparation asked for here is over once the Job is back in review.
   useEffect(() => {
     if (progress.status !== "rendering") setPreparing(null);
   }, [progress.status]);
 
+  const range = trimDraft ?? { start: candidate.start, end: candidate.end };
   const draft: CandidateChange = {
+    ...(trimDraft ?? {}),
     hook_text: hookDraft ?? candidate.hook_text,
     layout: candidate.layout,
     preset_id: styleDraft?.preset_id ?? candidate.preset_id,
     style_overrides: styleDraft?.style_overrides ?? candidate.style_overrides,
     word_edits: candidate.word_edits,
-    hook_start: timingDraft?.hook_start ?? candidate.hook_start,
-    hook_secs: timingDraft?.hook_secs ?? candidate.hook_secs,
+    hook_start: timing.hook_start,
+    hook_secs: timing.hook_secs,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -223,6 +234,25 @@ export function CandidateEditor({
         </section>
       )}
 
+      {job.source && (
+        <Timeline
+          words={words}
+          range={range}
+          saved={{ start: candidate.start, end: candidate.end }}
+          sourceDuration={job.source.metadata.duration}
+          plan={preview?.plan ?? null}
+          playback={playback}
+          timing={timing}
+          onTrimDraft={setTrimDraft}
+          onTrim={onSave}
+          onTiming={setTiming}
+          onCaption={(at) => {
+            setCaptionFocus({ at });
+            requestAnimationFrame(() => document.getElementById("caption-text-heading")?.scrollIntoView({ block: "nearest" }));
+          }}
+        />
+      )}
+
       {preview && job.options.captions && (
         <section aria-labelledby="caption-text-heading" className="flex flex-col gap-3">
           <h4 id="caption-text-heading" className="font-semibold">
@@ -234,6 +264,7 @@ export function CandidateEditor({
             clipStart={candidate.start}
             edits={candidate.word_edits}
             playback={playback}
+            focus={captionFocus}
             onChange={(word_edits) => void onSave({ word_edits })}
           />
         </section>
@@ -304,10 +335,9 @@ export function CandidateEditor({
         value={candidate.hook_text}
         onSave={(hook_text) => void onSave({ hook_text })}
         onDraft={setHookDraft}
-        timing={{ hook_start: candidate.hook_start, hook_secs: candidate.hook_secs }}
+        timing={timing}
         duration={length}
-        onTimingDraft={setTimingDraft}
-        onTimingSave={(timing) => void onSave(timing)}
+        onTiming={setTiming}
       />
 
       <div className="flex flex-col gap-1.5">

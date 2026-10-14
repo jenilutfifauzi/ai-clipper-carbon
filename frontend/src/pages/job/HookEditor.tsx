@@ -26,18 +26,17 @@ export function HookEditor({
   onDraft,
   timing,
   duration,
-  onTimingDraft,
-  onTimingSave,
+  onTiming,
 }: {
   value: string;
   onSave: (text: string) => void;
   // Each change as it is typed, before it is saved: for the preview.
   onDraft?: (text: string) => void;
+  // As shown (saved or a draft); the editor that owns it saves changes.
   timing: HookTiming;
   // The Clip's length: the hook is kept in it.
   duration: number;
-  onTimingDraft: (timing: HookTiming) => void;
-  onTimingSave: (timing: HookTiming) => void;
+  onTiming: (timing: HookTiming) => void;
 }) {
   const id = useId();
   const [draft, setDraft] = useState(value);
@@ -70,25 +69,8 @@ export function HookEditor({
     };
   }, [draft]);
 
-  const [when, setWhen] = useState(timing);
-  const whenTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const latestWhen = useRef(when);
-  latestWhen.current = when;
-  const savedWhen = useRef(JSON.stringify(timing));
-  function saveWhen(next: HookTiming) {
-    clearTimeout(whenTimer.current);
-    if (JSON.stringify(next) === savedWhen.current) return;
-    savedWhen.current = JSON.stringify(next);
-    onTimingSave(next);
-  }
-  useEffect(() => () => saveWhen(latestWhen.current), []);
-  function changeWhen(change: Partial<HookTiming>) {
-    const next = { ...when, ...change };
-    setWhen(next);
-    onTimingDraft(next);
-    clearTimeout(whenTimer.current);
-    whenTimer.current = setTimeout(() => saveWhen(next), SAVE_AFTER_MS);
-  }
+  const when = timing;
+  const changeWhen = (change: Partial<HookTiming>) => onTiming({ ...when, ...change });
   const shownFor = Math.max(0, Math.min(when.hook_secs, duration - when.hook_start));
 
   const blank = draft.trim() === "";
