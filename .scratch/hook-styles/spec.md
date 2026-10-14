@@ -150,7 +150,7 @@ Exact sizes and heights are tuned against the reference screenshots in the ticke
   4. **Position.**
   5. **Animation.**
 - **Rules for the panel:**
-  - Subheadings, not accordions: everything stays visible.
+  - Subheadings, not accordions: everything stays visible. *(Replaced by `style-hook-split/spec.md`: the hook's style is in the Hook tab, with the less used fields behind More options.)*
   - Override markers work for every new field as for the old ones.
   - Hidden controls keep their values.
 - **HookEditor:**

@@ -25,9 +25,8 @@ export interface HookTiming {
 }
 
 /**
- * The Candidate's hook text and Kicker, saved as they are typed, and when the hook shows. The drafts
- * are the editor's own: saves coming back never overwrite what is being changed. Key it by the
- * Candidate's id.
+ * The Candidate's hook text and Kicker, saved as they are typed. The drafts are the editor's own:
+ * saves coming back never overwrite what is being changed. Key it by the Candidate's id.
  */
 export function HookEditor({
   value,
@@ -36,9 +35,6 @@ export function HookEditor({
   kicker,
   onKickerSave,
   onKickerDraft,
-  timing,
-  duration,
-  onTiming,
   fit,
 }: {
   value: string;
@@ -48,11 +44,6 @@ export function HookEditor({
   kicker: string;
   onKickerSave: (text: string) => void;
   onKickerDraft?: (text: string) => void;
-  // As shown (saved or a draft); the editor that owns it saves changes.
-  timing: HookTiming;
-  // The Clip's length: the hook is kept in it.
-  duration: number;
-  onTiming: (timing: HookTiming) => void;
   // Of the text being previewed; null until it is planned.
   fit: HookFit | null;
 }) {
@@ -91,10 +82,6 @@ export function HookEditor({
     });
   }
 
-  const when = timing;
-  const changeWhen = (change: Partial<HookTiming>) => onTiming({ ...when, ...change });
-  const shownFor = Math.max(0, Math.min(when.hook_secs, duration - when.hook_start));
-
   const blank = draft.trim() === "";
   const long = !blank && fit?.fits === false;
   const lines = (count: number) => (count === 1 ? "1 line" : `${count} lines`);
@@ -129,7 +116,7 @@ export function HookEditor({
         Hook text
       </label>
       <span id={`${id}-hint`} className="text-sm text-muted">
-        Words marked *like this* are in the Emphasis colour. Its look, lines, place and motion are in Style.
+        Words marked *like this* are in the Emphasis colour.
       </span>
       <div className="flex">
         <Button
@@ -176,12 +163,38 @@ export function HookEditor({
         {blank ? (
           <span>No hook: the clip opens without one.</span>
         ) : long ? (
-          <span>Too long for {lines(fit.max_lines)}: it will be set smaller on the video.</span>
+          <span>Too long for {lines(fit.max_lines)}: it will be set smaller on the video. Allow more lines in More options.</span>
         ) : fit ? (
           <span>Fits on {lines(fit.lines)}.</span>
         ) : null}
       </p>
-      <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+    </div>
+  );
+}
+
+/**
+ * When the hook shows: from when, and for how long, kept in the Clip. `blank` is whether the hook
+ * text is empty (then nothing shows, so nothing is warned of).
+ */
+export function HookTimingFields({
+  timing,
+  duration,
+  onTiming,
+  blank,
+}: {
+  // As shown (saved or a draft); the editor that owns it saves changes.
+  timing: HookTiming;
+  // The Clip's length: the hook is kept in it.
+  duration: number;
+  onTiming: (timing: HookTiming) => void;
+  blank: boolean;
+}) {
+  const when = timing;
+  const changeWhen = (change: Partial<HookTiming>) => onTiming({ ...when, ...change });
+  const shownFor = Math.max(0, Math.min(when.hook_secs, duration - when.hook_start));
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
         <Slider
           label="Comes on at"
           value={Math.min(when.hook_start, Math.max(0, duration - 0.5))}
@@ -207,7 +220,7 @@ export function HookEditor({
           Not on the first frame, which the platforms show before the clip plays.
         </p>
       )}
-    </div>
+    </>
   );
 }
 

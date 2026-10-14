@@ -21,11 +21,15 @@ import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview } from "./editor/ClipPreview";
 import { Playback } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
-import { StylePanel, type StyleDraft } from "./editor/StylePanel";
+import { CaptionStylePanel } from "./editor/CaptionStylePanel";
+import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
+import { PresetBar } from "./editor/PresetBar";
+import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
-import { HookEditor, type HookTiming } from "./HookEditor";
+import { useStyleDraft } from "./editor/useStyleDraft";
+import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
 
@@ -43,11 +47,11 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
-type Tab = "text" | "style" | "hook" | "trim";
+type Tab = "text" | "captions" | "hook" | "trim";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "text", label: "Text" },
-  { value: "style", label: "Style" },
+  { value: "captions", label: "Captions" },
   { value: "hook", label: "Hook" },
   { value: "trim", label: "Trim" },
 ];
@@ -103,7 +107,9 @@ export function CandidateEditor({
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
   const [kickerDraft, setKickerDraft] = useState<string | null>(null);
-  const [styleDraft, setStyleDraft] = useState<StyleDraft | null>(null);
+  const style = useStyleDraft(candidate, (change) => void onSave(change));
+  // Whether each tab's More options is open, kept from one Candidate to the next.
+  const [more, setMore] = useState({ captions: false, hook: false });
   const [trimDraft, setTrimDraft] = useState<Range | null>(null);
   const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
   const [scene, setScene] = useState<number | null>(null);
@@ -122,7 +128,6 @@ export function CandidateEditor({
   useEffect(() => {
     setHookDraft(null);
     setKickerDraft(null);
-    setStyleDraft(null);
     setTrimDraft(null);
     setCaptionFocus(null);
     setScene(null);
@@ -143,8 +148,8 @@ export function CandidateEditor({
     hook_text: hookDraft ?? candidate.hook_text,
     hook_kicker: kickerDraft ?? candidate.hook_kicker,
     layout: candidate.layout,
-    preset_id: styleDraft?.preset_id ?? candidate.preset_id,
-    style_overrides: styleDraft?.style_overrides ?? candidate.style_overrides,
+    preset_id: style.draft.preset_id,
+    style_overrides: style.draft.style_overrides,
     word_edits: candidate.word_edits,
     hook_start: timing.hook_start,
     hook_secs: timing.hook_secs,
@@ -258,6 +263,7 @@ export function CandidateEditor({
         </div>
 
         <div className="flex min-w-0 flex-col gap-3">
+          <PresetBar style={style.controls} error={style.error} />
           <Tabs value={tab} onChange={setTab} />
           <div id={`editor-panel-${tab}`} role="tabpanel" aria-labelledby={`editor-tab-${tab}`} className="flex flex-col gap-6">
             {tab === "text" && preview && job.options.captions && (
@@ -279,43 +285,69 @@ export function CandidateEditor({
             {tab === "text" && !job.options.captions && (
               <p className="text-sm text-muted">This Job's captions are off: turn them on in a new Job to caption its clips.</p>
             )}
-            {tab === "style" && (
-              <section aria-labelledby="style-heading" className="flex flex-col gap-3">
-                <h4 id="style-heading" className="sr-only">
-                  Style
+            {tab === "captions" && (
+              <section aria-labelledby="captions-heading" className="flex flex-col gap-3">
+                <h4 id="captions-heading" className="sr-only">
+                  Captions
                 </h4>
-                <StylePanel
-                  key={candidate.id}
-                  candidate={candidate}
-                  fonts={fonts}
-                  onDraft={setStyleDraft}
-                  onSave={(change) => void onSave(change)}
-                />
+                {style.controls ? (
+                  <CaptionStylePanel
+                    style={style.controls}
+                    fonts={fonts}
+                    more={more.captions}
+                    onMore={(open) => setMore((old) => ({ ...old, captions: open }))}
+                  />
+                ) : (
+                  !style.error && <StyleFieldsSkeleton />
+                )}
               </section>
             )}
             {tab === "hook" && (
               <>
-                <HookEditor
-                  key={candidate.id}
-                  value={candidate.hook_text}
-                  onSave={(hook_text) => void onSave({ hook_text })}
-                  onDraft={setHookDraft}
-                  kicker={candidate.hook_kicker}
-                  onKickerSave={(hook_kicker) => void onSave({ hook_kicker })}
-                  onKickerDraft={setKickerDraft}
-                  timing={timing}
-                  duration={length}
-                  onTiming={setTiming}
-                  fit={
-                    preview?.plan.hook
-                      ? {
-                          lines: preview.plan.hook.lines.length,
-                          max_lines: preview.plan.hook_style.max_lines,
-                          fits: preview.plan.hook.size >= preview.plan.hook_style.size,
-                        }
-                      : null
-                  }
-                />
+                <section aria-labelledby="hook-words-heading" className="flex flex-col gap-3">
+                  <h4 id="hook-words-heading" className="font-semibold">
+                    Words
+                  </h4>
+                  <HookEditor
+                    key={candidate.id}
+                    value={candidate.hook_text}
+                    onSave={(hook_text) => void onSave({ hook_text })}
+                    onDraft={setHookDraft}
+                    kicker={candidate.hook_kicker}
+                    onKickerSave={(hook_kicker) => void onSave({ hook_kicker })}
+                    onKickerDraft={setKickerDraft}
+                    fit={
+                      preview?.plan.hook
+                        ? {
+                            lines: preview.plan.hook.lines.length,
+                            max_lines: preview.plan.hook_style.max_lines,
+                            fits: preview.plan.hook.size >= preview.plan.hook_style.size,
+                          }
+                        : null
+                    }
+                  />
+                </section>
+                <section aria-labelledby="hook-look-heading" className="flex flex-col gap-3">
+                  <h4 id="hook-look-heading" className="font-semibold">
+                    Look
+                  </h4>
+                  {style.controls ? <HookLook style={style.controls} fonts={fonts} /> : !style.error && <StyleFieldsSkeleton />}
+                </section>
+                <section aria-labelledby="hook-when-heading" className="flex flex-col gap-3">
+                  <h4 id="hook-when-heading" className="font-semibold">
+                    When and where
+                  </h4>
+                  {style.controls && <HookPosition style={style.controls} />}
+                  <HookTimingFields
+                    timing={timing}
+                    duration={length}
+                    onTiming={setTiming}
+                    blank={(hookDraft ?? candidate.hook_text).trim() === ""}
+                  />
+                </section>
+                {style.controls && (
+                  <HookMoreOptions style={style.controls} open={more.hook} onToggle={(open) => setMore((old) => ({ ...old, hook: open }))} />
+                )}
               </>
             )}
             {tab === "trim" && (
