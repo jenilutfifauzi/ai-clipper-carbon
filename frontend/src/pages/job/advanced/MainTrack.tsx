@@ -76,6 +76,7 @@ export function SegmentFields({
   onDuplicate,
   onDelete,
   onSourceVolume,
+  onVolume,
   onChange,
 }: {
   segment: ClipSegment;
@@ -89,6 +90,8 @@ export function SegmentFields({
   onDuplicate: () => void;
   onDelete: () => void;
   onSourceVolume: (volume: number) => void;
+  // A video's Segment's volume.
+  onVolume: (volume: number, group: string) => void;
   onChange: (segment: ClipSegment, group: string) => void;
 }) {
   const Icon = segment.media ? Clapperboard : Film;
@@ -132,7 +135,7 @@ export function SegmentFields({
               max={2}
               step={0.05}
               format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
+              onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
             />
           )}
         </>

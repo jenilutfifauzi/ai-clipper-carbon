@@ -264,3 +264,23 @@ export function gainAt(time: number, { volume, secs, fade_in, fade_out }: { volu
   const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
   return volume * ramp(time, fade_in) * ramp(secs - time, fade_out);
 }
+
+// --- The Volume Line ---
+
+// The Volume Line's curve: a volume is 2 · height^VOLUME_CURVE, so that 100% sits at two thirds of
+// an item's height (0% at the bottom, 200% at the top), which gives the quiet range room.
+const VOLUME_CURVE = Math.log(1 / 2) / Math.log(2 / 3);
+// The loudest volume, at the top of an item.
+const VOLUME_MAX = 2;
+
+/** The volume the Volume Line sets at `height` up an item (0 at the bottom, 1 at the top), rounded to 0.01. */
+export function volumeOfHeight(height: number): number {
+  const p = Math.min(Math.max(height, 0), 1);
+  return Math.round(VOLUME_MAX * p ** VOLUME_CURVE * 100) / 100;
+}
+
+/** How far up an item (0 at the bottom, 1 at the top) the Volume Line of `volume` is drawn. */
+export function volumeHeight(volume: number): number {
+  const gain = Math.min(Math.max(volume, 0), VOLUME_MAX);
+  return (gain / VOLUME_MAX) ** (1 / VOLUME_CURVE);
+}

@@ -26,6 +26,7 @@ export function MusicFields({
   item,
   duration,
   onChange,
+  onVolume,
   onDuplicate,
   onDelete,
 }: {
@@ -34,6 +35,7 @@ export function MusicFields({
   item: MediaItem | undefined;
   duration: number;
   onChange: (clip: MusicClip, group: string) => void;
+  onVolume: (volume: number, group: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -57,7 +59,7 @@ export function MusicFields({
         </div>
       </div>
       <Group title="Sound">
-        <Slider label="Volume" value={clip.volume} min={0} max={2} step={0.05} format={percent} onChange={(volume) => set("volume", volume)} />
+        <Slider label="Volume" value={clip.volume} min={0} max={2} step={0.05} format={percent} onChange={(volume) => onVolume(volume, `music:${clip.id}:volume`)} />
         <Slider label="Fade in" value={Math.min(clip.fade_in, fades)} min={0} max={fades} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(v) => set("fade_in", v)} />
         <Slider label="Fade out" value={Math.min(clip.fade_out, fades)} min={0} max={fades} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(v) => set("fade_out", v)} />
       </Group>

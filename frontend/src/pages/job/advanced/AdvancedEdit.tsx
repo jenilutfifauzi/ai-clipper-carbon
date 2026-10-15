@@ -46,6 +46,7 @@ import {
   pickAll,
   placeAfter,
   placeDropped,
+  setVolume,
   type ItemActions,
   type Outcome,
   type SegmentDrag,
@@ -620,6 +621,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onOverlay: updateOverlay,
             onSegment: moveSegment,
             onMove: moveLayers,
+            onVolume: (item, volume, group) => {
+              const outcome = setVolume(scene, item, volume);
+              if (outcome) history.set(outcome.edits, group);
+            },
             onJoin: (after) => {
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");

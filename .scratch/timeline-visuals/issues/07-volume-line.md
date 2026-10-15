@@ -20,12 +20,23 @@ Source Segments have no line. Locked Tracks show the line, but it doesn't drag.
 
 **Blocked by:** 01 (One gesture is one step of undo), 05 (Waveform on Music Clips and media Segments).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D (vitest): setting the volume on a Music Clip and on a media Segment rounds and clamps it. There is no setting for a Source Segment.
-- [ ] Seam E (vitest): the curve gives gains 0, 1 and 2 at p = 0, ⅔ and 1, and its inverse round-trips.
+- [x] Seam D (vitest): setting the volume on a Music Clip and on a media Segment rounds and clamps it. There is no setting for a Source Segment.
+- [x] Seam E (vitest): the curve gives gains 0, 1 and 2 at p = 0, ⅔ and 1, and its inverse round-trips.
 - [ ] In the browser:
   - drag the line of a picked Music Clip, pausing while holding, and one Cmd+Z restores it;
   - on a phone, dragging an unpicked Music Clip moves it, with its volume unchanged;
   - a locked Music Track's line doesn't drag.
-- [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
+- [x] `npm run typecheck`, `npm test` and `npm run build` pass.
+
+## Comments
+
+**2026-10-15: done.** Built as specified: `setVolume` in `actions.ts` (Seam D), `volumeOfHeight` and `volumeHeight` in `timelineView.ts` (Seam E), and on the Timeline `VolumeLine` in `Tracks.tsx`, dragged through `ItemHandle` in `AdvancedTimeline.tsx`. Choices made on the way:
+- `ItemHandle` is the on-item handle, for the Fade Ramp's handles (08) to reuse. It is a hit area that drags on its own: it captures the pointer and stops the item's move and the Timeline's scrub or rubber band, and its `touch-action: none` lets a touch drag at once instead of scrolling. `onGrab(handle)` is called as a drag begins and gives what each move does, with `{ dx, dy }` from where the pointer went down and the drag's group, `drag:handle:<n>`. `label` shows beside where it was grabbed while the drag lasts.
+- The line drags from where it was when grabbed, by the share of the item's height dragged, so it doesn't jump to the pointer. Its 24px hit area is kept inside the item, so that at 200% or 0% it isn't clipped.
+- The inspector's volume sliders, for a Music Clip and a video's Segment, also go through `setVolume`, keeping their groups (`music:<id>:volume`, `segment:<id>:volume`). A Source Segment's slider is unchanged.
+- A video's Segment without sound has no Volume Line, as its inspector has no volume.
+- The line is drawn in the DOM over the item's canvas, not as a canvas layer: it needs no windowing, and its hit area sits with it.
+
+Not seen in a browser yet: left for the walkthrough (09).

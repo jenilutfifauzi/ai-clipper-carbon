@@ -14,6 +14,7 @@ import {
   remove,
   restyle,
   rippleRemove,
+  setVolume,
   canSplitAt,
   clipTrimmed,
   pickAll,
@@ -410,6 +411,38 @@ describe("editing several Text Layers", () => {
       edits: { ...before, text_layers: [{ ...a, colour: "#0000FF" }, { ...b, colour: "#0000FF" }, c] },
       pick,
     });
+  });
+});
+
+describe("setting an item's volume", () => {
+  test("a Music Clip's volume is rounded to a hundredth and kept within 0–200%, and the Pick stays", () => {
+    const before = edits({ music: [music("m1", 0, 5), music("m2", 2, 5)] });
+    const pick = picked({ kind: "music", id: "m1" }, { kind: "music", id: "m2" });
+
+    expect(setVolume(scene(before, pick), { kind: "music", id: "m2" }, 0.614)).toEqual({
+      edits: { ...before, music: [music("m1", 0, 5), music("m2", 2, 5, { volume: 0.61 })] },
+      pick,
+    });
+    expect(setVolume(scene(before, pick), { kind: "music", id: "m1" }, 2.4)?.edits.music[0].volume).toBe(2);
+    expect(setVolume(scene(before, pick), { kind: "music", id: "m1" }, -0.1)?.edits.music[0].volume).toBe(0);
+  });
+
+  test("a media Segment's volume is rounded and kept within 0–200% too", () => {
+    const video = segment("v1", 0, 4, { media: "clip", volume: 1 });
+    const before = edits({ segments: [segment("s1", 100, 110), video] });
+
+    expect(setVolume(scene(before, null), { kind: "segment", id: "v1" }, 1.256)).toEqual({
+      edits: { ...before, segments: [segment("s1", 100, 110), { ...video, volume: 1.26 }] },
+      pick: null,
+    });
+    expect(setVolume(scene(before, null), { kind: "segment", id: "v1" }, 7)?.edits.segments[1].volume).toBe(2);
+  });
+
+  test("a Source Segment has no volume of its own to set here, and an item that isn't there has none", () => {
+    const before = edits({ segments: [segment("s1", 100, 110), segment("v1", 0, 4, { media: "clip" })] });
+
+    expect(setVolume(scene(before, null), { kind: "segment", id: "s1" }, 0.5)).toBeNull();
+    expect(setVolume(scene(before, null), { kind: "music", id: "gone" }, 0.5)).toBeNull();
   });
 });
 

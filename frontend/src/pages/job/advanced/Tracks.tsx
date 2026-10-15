@@ -18,7 +18,7 @@ import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
-import { TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
+import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
@@ -27,7 +27,7 @@ import { SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { HOOK_MIN_SECS } from "./ripple";
-import { gainAt } from "./timelineView";
+import { gainAt, volumeHeight, volumeOfHeight } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -46,6 +46,8 @@ export interface TrackHandlers {
   onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   // The picked Text Layers, Music Clips and Overlays moved `delta` seconds, together.
   onMove: (delta: number, group: string) => void;
+  // A Music Clip's or media Segment's volume set by its Volume Line.
+  onVolume: (item: { kind: "music" | "segment"; id: string }, volume: number, group: string) => void;
   onJoin: (after: string) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
   // A Media Library item (its id) or a Text Layer's look (its name) dropped at `time`.
@@ -275,6 +277,13 @@ export function Tracks({
               ) : (
                 <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} />
               )}
+              {segment.media && mediaById.get(segment.media)?.has_audio !== false && (
+                <VolumeLine
+                  volume={segment.volume ?? 1}
+                  grab={selected && !locked("video")}
+                  onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
+                />
+              )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(shown.source_start)}
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
@@ -417,6 +426,11 @@ export function Tracks({
                 {song?.has_audio && !!song.duration && (
                   <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} secs={end - clip.start} length={song.duration} />
                 )}
+                <VolumeLine
+                  volume={clip.volume}
+                  grab={selected && !locked("music")}
+                  onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
+                />
                 <Music aria-hidden size={12} className="relative shrink-0" />
                 <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
                 {clip.volume !== 1 && <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>}
@@ -549,6 +563,39 @@ function SongWaveform({ geometry, cache, clip, secs, length }: { geometry: TimeG
         }),
       ]}
     />
+  );
+}
+
+// The Volume Line's hit area, at least this many pixels tall, kept inside its item.
+const VOLUME_HIT_PX = 24;
+
+/**
+ * A Music Clip's or media Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
+ * height. On a picked item of an unlocked Track (`grab`), it drags up and down to set the volume, with
+ * a % label while it does; elsewhere on the item, a drag moves or trims it as ever.
+ */
+function VolumeLine({ volume, grab, onVolume }: { volume: number; grab: boolean; onVolume: (volume: number, group: string) => void }) {
+  const top = `${(1 - volumeHeight(volume)) * 100}%`;
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0">
+      <span
+        className={cx("absolute inset-x-0 -translate-y-1/2 bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_0.5px_rgb(0_0_0/0.5)]", grab ? "h-0.5" : "h-px")}
+        style={{ top }}
+      />
+      {grab && (
+        <ItemHandle
+          className="absolute inset-x-0 cursor-ns-resize"
+          style={{ height: VOLUME_HIT_PX, top: `clamp(0px, calc(${top} - ${VOLUME_HIT_PX / 2}px), calc(100% - ${VOLUME_HIT_PX}px))` }}
+          label={`${Math.round(volume * 100)}%`}
+          onGrab={(handle) => {
+            // From where it was when grabbed, by the share of the item's height dragged.
+            const from = volumeHeight(volume);
+            const height = handle.parentElement!.getBoundingClientRect().height;
+            return ({ dy }, group) => onVolume(volumeOfHeight(from - dy / height), group);
+          }}
+        />
+      )}
+    </span>
   );
 }
 

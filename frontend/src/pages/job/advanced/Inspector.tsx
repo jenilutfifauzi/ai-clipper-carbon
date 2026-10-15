@@ -6,7 +6,7 @@ import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { restyle, type ItemActions } from "./actions";
+import { restyle, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { SegmentFields } from "./MainTrack";
 import { MusicFields } from "./Music";
@@ -53,6 +53,11 @@ export function Inspector({
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
+  // An item's volume set from its slider, as its Volume Line sets it.
+  const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
+    const outcome = setVolume({ edits, pick }, item, volume);
+    if (outcome) onEdits(outcome.edits, group);
+  };
 
   const items = itemsOf(pick);
   if (items.length > 1 && actions) {
@@ -93,6 +98,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onChange={onSegment}
+        onVolume={volumeOf({ kind: "segment", id: segment.id })}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
       />
     );
@@ -110,6 +116,7 @@ export function Inspector({
         item={mediaById.get(clip.media)}
         duration={duration}
         onChange={onMusic}
+        onVolume={volumeOf({ kind: "music", id: clip.id })}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
       />

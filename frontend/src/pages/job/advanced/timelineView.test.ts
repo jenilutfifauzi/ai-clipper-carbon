@@ -15,6 +15,8 @@ import {
   peaksLevel,
   peaksPyramid,
   tileWidth,
+  volumeHeight,
+  volumeOfHeight,
   zoomToFit,
   type Peaks,
 } from "./timelineView";
@@ -259,5 +261,33 @@ describe("the Waveform", () => {
     expect(gainAt(3, clip)).toBe(1);
     expect(gainAt(1.5, clip)).toBeCloseTo(0.5);
     expect(gainAt(3.5, clip)).toBeCloseTo(0.5);
+  });
+});
+
+describe("the Volume Line", () => {
+  test("silence is at the bottom, 100% at two thirds of the height and 200% at the top", () => {
+    expect(volumeOfHeight(0)).toBe(0);
+    expect(volumeOfHeight(2 / 3)).toBe(1);
+    expect(volumeOfHeight(1)).toBe(2);
+    expect(volumeHeight(0)).toBe(0);
+    expect(volumeHeight(1)).toBeCloseTo(2 / 3);
+    expect(volumeHeight(2)).toBe(1);
+  });
+
+  test("the quiet range has room: halfway up is 61%, rounded to a hundredth", () => {
+    // 2 · 0.5^1.7095 = 0.6115.
+    expect(volumeOfHeight(0.5)).toBe(0.61);
+    // 150% is at 0.845 of the height: (0.75)^(1/1.7095).
+    expect(volumeHeight(1.5)).toBeCloseTo(0.845, 3);
+  });
+
+  test("past either end, the line stops there", () => {
+    expect(volumeOfHeight(-0.2)).toBe(0);
+    expect(volumeOfHeight(1.3)).toBe(2);
+    expect(volumeHeight(3)).toBe(1);
+  });
+
+  test("a volume's height gives the volume back", () => {
+    for (const volume of [0, 0.05, 0.25, 0.61, 1, 1.37, 1.99, 2]) expect(volumeOfHeight(volumeHeight(volume))).toBe(volume);
   });
 });

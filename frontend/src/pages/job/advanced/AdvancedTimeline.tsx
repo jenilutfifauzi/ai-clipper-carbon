@@ -702,3 +702,75 @@ export function TimelineItem({
     </div>
   );
 }
+
+/** What each move of a handle's drag does: given how far the pointer is from where it went down, in CSS pixels. */
+export type HandleMove = (moved: { dx: number; dy: number }, group: string) => void;
+
+let handleGestures = 0;
+
+/**
+ * A handle on a Timeline item, such as its Volume Line: a hit area dragged on its own, by a mouse or
+ * at once by a touch, instead of the item being moved or trimmed (or the Timeline scrolled). `onGrab`,
+ * given the handle as a drag begins, gives what each move of it does; each drag is one `group` of
+ * changes, undone as one. While it lasts, `label` shows beside where it was grabbed. `children` are
+ * what it shows of itself.
+ */
+export function ItemHandle({
+  className,
+  style,
+  label,
+  onGrab,
+  children,
+}: {
+  className?: string;
+  style?: CSSProperties;
+  label?: ReactNode;
+  onGrab: (handle: HTMLElement) => HandleMove;
+  children?: ReactNode;
+}) {
+  const drag = useRef<{ pointer: number; x: number; y: number; move: HandleMove; group: string } | null>(null);
+  // Where it was grabbed, in pixels from its left edge, while the drag lasts.
+  const [grabbed, setGrabbed] = useState<number | null>(null);
+  const stop = () => {
+    drag.current = null;
+    setGrabbed(null);
+  };
+  return (
+    <span
+      aria-hidden
+      className={cx("pointer-events-auto touch-none", className)}
+      style={style}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        // Not the item's drag, nor the Timeline's scrub or rubber band.
+        event.stopPropagation();
+        const handle = event.currentTarget;
+        handle.setPointerCapture(event.pointerId);
+        drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, move: onGrab(handle), group: `drag:handle:${++handleGestures}` };
+        setGrabbed(event.clientX - handle.getBoundingClientRect().left);
+      }}
+      onPointerMove={(event) => {
+        const gesture = drag.current;
+        if (!gesture || event.pointerId !== gesture.pointer) return;
+        event.stopPropagation();
+        gesture.move({ dx: event.clientX - gesture.x, dy: event.clientY - gesture.y }, gesture.group);
+      }}
+      onPointerUp={(event) => {
+        if (drag.current?.pointer !== event.pointerId) return;
+        event.stopPropagation();
+        stop();
+      }}
+      onPointerCancel={stop}
+    >
+      {children}
+      {grabbed !== null && label != null && (
+        <span
+          className="pointer-events-none absolute top-1/2 -translate-y-1/2 rounded bg-black/75 px-1 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
+          style={{ left: grabbed + 12 }}
+        >
+          {label}
+        </span>
+      )}
+    </span>
+  );
+}
