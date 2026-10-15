@@ -3,6 +3,7 @@ import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../..
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, round } from "./edits";
 import { LISTS, picked, type ItemRef } from "./pick";
+import { ripple } from "./ripple";
 
 // The Clipboard (GLOSSARY.md): the Advanced Edit's copied items, kept in memory while the browser tab
 // is open, keeping their order and their times relative to one another.
@@ -69,7 +70,7 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
 /**
  * `clipboard` pasted into the Candidate `to` as one change, every item new, the pasted items picked.
  * Its Segments go in at the join nearest the playhead (`at`), with the Transitions between them, and
- * the Segments after them play later; its Text Layers, Music Clips and Overlays keep their times from
+ * the Segments after them play later (and, on the Magnetic timeline, the layers after them); its Text Layers, Music Clips and Overlays keep their times from
  * there (from the playhead when there are no Segments). Whatever would run past the Clip's end is cut
  * short there, or left out when it would start there or be too short, and the owner is told.
  *
@@ -111,6 +112,8 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
       duration -= overlap(transition.secs, length(segments[index]), length(segments[index + 1]));
     }
     pasted.push(...segments.map((segment) => ({ kind: "segment" as const, id: segment.id })));
+    // On the Magnetic timeline, the layers already there after the join play later.
+    if (scene.magnetic) Object.assign(next, ripple(next, [{ kind: "inserted", at: joins[place], secs: duration - scene.duration }]).edits);
   }
   if (sameJob && to.candidate !== clipboard.from.candidate && segments.length) {
     const pastedRanges = kept.filter(({ segment }) => !segment.media).map(({ segment }) => segment);

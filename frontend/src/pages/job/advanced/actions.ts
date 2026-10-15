@@ -98,14 +98,26 @@ export function remove(scene: PickContext, rippled = scene.magnetic ?? false): O
 // `next`, with the Segments of the context's edits that it no longer has cut out of the Main Track
 // when `rippled`, and what to tell of the layers that went with them.
 function rippledAfter(scene: PickContext, next: AdvancedEdits, rippled: boolean): { edits: AdvancedEdits; notice?: string } {
-  if (!rippled) return { edits: next };
   const changes: TrackChange[] = scene.edits.segments.flatMap((segment, i) => {
     const shown = scene.played[i];
     return shown && !next.segments.some((other) => other.id === segment.id) ? [{ kind: "removed" as const, at: shown.start, secs: shown.end - shown.start }] : [];
   });
-  const { edits, removed } = ripple(next, changes);
-  return { edits, notice: removedNotice(removed) };
+  return following(next, changes, rippled);
 }
+
+// `next` with its layers and hook following the Main Track's `changes` when they do (`on`), and what
+// to tell of the layers that a cut took.
+function following(next: AdvancedEdits, changes: TrackChange[], on: boolean): { edits: AdvancedEdits; notice?: string } {
+  if (!on || !changes.length) return { edits: next };
+  const { edits, removed } = ripple(next, changes);
+  const notice = removedNotice(removed);
+  return notice ? { edits, notice } : { edits };
+}
+
+// The layers and the hook of `edits`: what a ripple changes.
+const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: AdvancedEdits) => ({ text_layers, music, overlays, hook_start, hook_secs });
+
+const segmentSecs = (segment: ClipSegment) => segment.end - segment.start;
 
 /** Where a Segment added at the playhead (`time`) goes on the Main Track: after the one playing there, else last. */
 export function placeAfter(played: PlayedSegment[], time: number): number {
@@ -116,10 +128,12 @@ export function placeAfter(played: PlayedSegment[], time: number): number {
 /** Where a Segment dropped at `time` goes on the Main Track: after each Segment whose middle is before it. */
 export const placeDropped = (played: PlayedSegment[], time: number) => played.filter((shown) => (shown.start + shown.end) / 2 < time).length;
 
-/** `segment` put in on the Main Track at `place`, picked. */
+/** `segment` put in on the Main Track at `place`, picked; on the Magnetic timeline the layers after it play later. */
 export function insertSegment(scene: PickContext, segment: ClipSegment, place: number): Outcome {
   const { segments } = scene.edits;
-  return { edits: { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] }, pick: picked({ kind: "segment", id: segment.id }) };
+  const next = { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] };
+  const at = scene.played[place]?.start ?? scene.duration;
+  return { edits: following(next, [{ kind: "inserted", at, secs: segmentSecs(segment) }], scene.magnetic ?? false).edits, pick: picked({ kind: "segment", id: segment.id }) };
 }
 
 /**
@@ -134,7 +148,8 @@ export interface SegmentDrag {
 
 /**
  * Segment `id` dragged since `origin`: moved to another place, or its start or end trimmed (within its
- * file's `lengthOf`). See draggedSegments.
+ * file's `lengthOf`). See draggedSegments. Trimmed on the Magnetic timeline, the layers move with
+ * the edge from where they were when the drag began; moved, they stay.
  */
 export function dragSegment(
   scene: PickContext,
@@ -144,7 +159,14 @@ export function dragSegment(
   lengthOf: (segment: ClipSegment) => number,
 ): Outcome {
   const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned);
-  return { edits: { ...scene.edits, segments }, pick: scene.pick };
+  const index = segments.findIndex((segment) => segment.id === id);
+  const whole = origin.planned[index];
+  if (change.edge === "move" || !whole || !scene.magnetic) return { edits: { ...scene.edits, segments }, pick: scene.pick };
+  // Longer (or shorter) by `by` at the trimmed edge, as planned.
+  const by = segments[index].end - segments[index].start - (whole.source_end - whole.source_start);
+  const at = change.edge === "end" ? whole.end + Math.min(by, 0) : whole.start;
+  const { edits, notice } = following(origin.edits, [{ kind: by < 0 ? "removed" : "inserted", at, secs: Math.abs(by) }], Math.abs(by) > 1e-6);
+  return { edits: { ...scene.edits, segments, ...layersOf(edits) }, pick: scene.pick, ...(notice ? { notice } : {}) };
 }
 
 /** Every Segment, Text Layer, Music Clip and Overlay picked (not the hook, the captions or a join). */
@@ -168,7 +190,7 @@ export function pickedItems(scene: PickContext) {
  * The Pick duplicated, the copies picked. Its Segments are copied as a block, in order, right after
  * the last of them. Its Text Layers, Music Clips and Overlays are copied as they are placed, right
  * after the group they make when there is room before the Clip's end, else each where its kind puts
- * it aside.
+ * it aside. On the Magnetic timeline, the layers after the copied Segments play later.
  */
 export function duplicate(scene: PickContext): Outcome | null {
   const { edits, duration } = scene;
@@ -180,6 +202,8 @@ export function duplicate(scene: PickContext): Outcome | null {
     const last = edits.segments.indexOf(segments.at(-1)!);
     const block = segments.map((segment) => ({ ...segment, id: idOf(scene) }));
     next.segments = [...edits.segments.slice(0, last + 1), ...block, ...edits.segments.slice(last + 1)];
+    const at = scene.played[last + 1]?.start ?? duration;
+    Object.assign(next, following(next, [{ kind: "inserted", at, secs: block.reduce((sum, segment) => sum + segmentSecs(segment), 0) }], scene.magnetic ?? false).edits);
     copies.push(...block.map((segment) => ({ kind: "segment" as const, id: segment.id })));
   }
   if (layers.length) {

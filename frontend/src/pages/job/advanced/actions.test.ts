@@ -654,3 +654,82 @@ describe("inserting and trimming Segments", () => {
     expect(second.edits).toEqual(dragSegment(context, origin, "s2", { start: 10, end: 13, edge: "end" }, lengthOf).edits);
   });
 });
+
+describe("the magnetic timeline, as Segments are trimmed or put in", () => {
+  const three = (changes: Partial<AdvancedEdits> = {}) =>
+    edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("s3", 300, 310)], ...changes });
+  const magnetic = (context: PickContext): PickContext => ({ ...context, magnetic: true });
+  const lengthOf = () => Infinity;
+  const trim = (context: PickContext, change: { start: number; end: number; edge: "move" | "start" | "end" }) =>
+    dragSegment(context, { edits: context.edits, shown: context.played, planned: context.played }, "s2", change, lengthOf).edits;
+
+  test("trimming a Segment's end shorter moves the later layers up, and longer moves them back", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)] });
+    const context = magnetic(scene(before, null));
+
+    // s2's end from 15 s to 13 s, then to 17 s.
+    expect(trim(context, { start: 10, end: 13, edge: "end" }).text_layers).toEqual([layer("later", 14, 2)]);
+    expect(trim(context, { start: 10, end: 17, edge: "end" }).text_layers).toEqual([layer("later", 18, 2)]);
+  });
+
+  test("trimming a Segment's start later cuts out what it no longer shows", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)] });
+
+    expect(trim(magnetic(scene(before, null)), { start: 11, end: 15, edge: "start" }).text_layers).toEqual([layer("later", 15, 2)]);
+  });
+
+  test("a trim drag's steps move the layers from where they were when it began", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)] });
+    const context = magnetic(scene(before, null));
+    const origin = { edits: before, shown: context.played, planned: context.played };
+    const first = dragSegment(context, origin, "s2", { start: 10, end: 14, edge: "end" }, lengthOf);
+    const second = dragSegment(magnetic(scene(first.edits, null)), origin, "s2", { start: 10, end: 13, edge: "end" }, lengthOf);
+
+    expect(second.edits.text_layers).toEqual([layer("later", 14, 2)]);
+  });
+
+  test("reordering a Segment moves no layer", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)] });
+
+    expect(trim(magnetic(scene(before, null)), { start: 20, end: 25, edge: "move" }).text_layers).toEqual([layer("later", 16, 2)]);
+  });
+
+  test("a Segment put in moves the layers after it back, and leaves those across it", () => {
+    const before = three({ text_layers: [layer("later", 16, 2), layer("across", 14, 2)] });
+    const context = magnetic(scene(before, null));
+
+    // After s2, at 15 s, 2 s long.
+    expect(insertSegment(context, segment("x", 400, 402), 2).edits.text_layers).toEqual([layer("later", 18, 2), layer("across", 14, 2)]);
+  });
+
+  test("duplicated Segments move the layers after them back by the copies' length", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)], hook_start: 20 });
+
+    const outcome = duplicate(magnetic(scene(before, picked(seg("s2")))));
+
+    expect(outcome?.edits).toMatchObject({ text_layers: [layer("later", 21, 2)], hook_start: 25 });
+  });
+
+  test("pasted Segments move the layers after their join back; the pasted layers land as pasted", () => {
+    const source = edits({ segments: [segment("c", 500, 505)], text_layers: [layer("t", 1, 1)] });
+    const clipboard = copy(scene(source, picked(seg("c"), text("t"))), { job: "j", candidate: "one" })!;
+    const before = three({ text_layers: [layer("early", 2, 1), layer("later", 16, 2)] });
+
+    // At 15 s, the join after s2: the 5 s pasted go in there.
+    const outcome = paste(magnetic(scene(before, null)), clipboard, 15, { job: "j", candidate: "two" });
+
+    expect(outcome.edits.segments.map((s) => s.id)).toEqual(["s1", "s2", "n1", "s3"]);
+    expect(outcome.edits.text_layers).toEqual([layer("early", 2, 1), layer("later", 21, 2), layer("n2", 16, 1, { text: "t" })]);
+  });
+
+  test("off, trimming, putting in, duplicating and pasting Segments leave the layers where they are", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)] });
+    const context = scene(before, picked(seg("s2")));
+    const clipboard = copy(scene(edits({ segments: [segment("c", 500, 505)] }), picked(seg("c"))), { job: "j", candidate: "one" })!;
+
+    expect(trim(context, { start: 10, end: 13, edge: "end" }).text_layers).toEqual(before.text_layers);
+    expect(insertSegment(context, segment("x", 400, 402), 2).edits.text_layers).toEqual(before.text_layers);
+    expect(duplicate(context)?.edits.text_layers).toEqual(before.text_layers);
+    expect(paste(context, clipboard, 15, { job: "j", candidate: "two" }).edits.text_layers).toEqual(before.text_layers);
+  });
+});

@@ -363,7 +363,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
     if (dragOrigin.current?.group !== group) dragOrigin.current = { group, edits, shown: played, planned: track };
     const lengthOf = (segment: ClipSegment) => (segment.media ? (mediaById.get(segment.media)?.duration ?? segment.end) : sourceLength);
-    history.set(dragSegment(scene, dragOrigin.current, id, moved, lengthOf).edits, group);
+    const outcome = dragSegment(scene, dragOrigin.current, id, moved, lengthOf);
+    history.set(outcome.edits, group);
+    // Told once while the drag cuts the same layers out, not at every step.
+    const text = outcome.notice;
+    if (text) setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
   }
   // What is dropped from the asset panel onto a track, at `time`.
   function dropMedia(onto: DropTrack, media: string, time: number) {
