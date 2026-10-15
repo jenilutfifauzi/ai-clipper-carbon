@@ -224,6 +224,18 @@ export function nudge(scene: Scene, dx: number, dy: number): Outcome | null {
   return { edits: next, pick: scene.pick };
 }
 
+/** The value `field` has in every one of `layers`, or undefined where they differ (mixed). */
+export function shared<K extends keyof TextLayer>(layers: TextLayer[], field: K): TextLayer[K] | undefined {
+  const [first, ...rest] = layers;
+  return first && rest.every((layer) => layer[field] === first[field]) ? first[field] : undefined;
+}
+
+/** `field` of every picked Text Layer set to `value`. */
+export function restyle<K extends keyof TextLayer>(scene: { edits: AdvancedEdits; pick: Pick }, field: K, value: TextLayer[K]): Outcome {
+  const text_layers = scene.edits.text_layers.map((layer) => (isPicked(scene.pick, "text", layer.id) ? { ...layer, [field]: value } : layer));
+  return { edits: { ...scene.edits, text_layers }, pick: scene.pick };
+}
+
 /** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
 export interface ItemActions {
   remove: () => void;

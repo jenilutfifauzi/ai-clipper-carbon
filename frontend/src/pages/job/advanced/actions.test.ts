@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { duplicate, move, nudge, remove, selectAll, split, type Scene } from "./actions";
+import { duplicate, move, nudge, remove, restyle, selectAll, shared, split, type Scene } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
 
@@ -358,5 +358,26 @@ describe("moving a Pick on the preview", () => {
       layer("a", 0, 2, { x: 1080 }),
       layer("b", 0, 2, { x: 580 }),
     ]);
+  });
+});
+
+describe("editing several Text Layers", () => {
+  const a = layer("a", 0, 2, { font: "anton", colour: "#FF0000" });
+  const b = layer("b", 3, 2, { font: "anton", colour: "#00FF00" });
+
+  test("a field they all have the same shows its value, one they differ in shows as mixed", () => {
+    expect(shared([a, b], "font")).toBe("anton");
+    expect(shared([a, b], "colour")).toBeUndefined();
+  });
+
+  test("setting a field sets it on every picked Text Layer, and changes nothing else", () => {
+    const c = layer("c", 6, 2);
+    const before = edits({ text_layers: [a, b, c] });
+    const pick = picked(text("a"), text("b"));
+
+    expect(restyle(scene(before, pick), "colour", "#0000FF")).toEqual({
+      edits: { ...before, text_layers: [{ ...a, colour: "#0000FF" }, { ...b, colour: "#0000FF" }, c] },
+      pick,
+    });
   });
 });

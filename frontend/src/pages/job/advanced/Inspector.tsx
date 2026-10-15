@@ -6,13 +6,13 @@ import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import type { ItemActions } from "./actions";
+import { restyle, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { SegmentFields } from "./MainTrack";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
-import { TextLayerFields } from "./TextLayers";
+import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
  * The picked item's properties: a Segment's, a Text Layer's, a Music Clip's, an Overlay's, the hook's,
@@ -54,7 +54,21 @@ export function Inspector({
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
 
-  if (itemsOf(pick).length > 1 && actions) return <PickSummary pick={pick} actions={actions} />;
+  const items = itemsOf(pick);
+  if (items.length > 1 && actions) {
+    if (items.every((item) => item.kind === "text")) {
+      return (
+        <TextLayersFields
+          layers={edits.text_layers.filter((layer) => items.some((item) => item.id === layer.id))}
+          fonts={fonts}
+          onChange={(field, value, group) => onEdits(restyle({ edits, pick }, field, value).edits, group)}
+          onDuplicate={actions.duplicate}
+          onDelete={actions.remove}
+        />
+      );
+    }
+    return <PickSummary pick={pick} actions={actions} />;
+  }
   if (pick?.kind === "join") {
     return (
       <div className="flex flex-col gap-3">

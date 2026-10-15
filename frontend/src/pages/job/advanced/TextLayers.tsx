@@ -11,6 +11,7 @@ import { Switch } from "../../../components/Switch";
 import { fontFamily } from "../../../fonts";
 import { fontChoices, Group } from "../editor/StyleFields";
 import { DRAG_TEXT } from "./drag";
+import { shared } from "./actions";
 import { newId, round } from "./edits";
 import { TimingFields } from "./TimingFields";
 
@@ -200,4 +201,122 @@ export function TextLayerFields({
       <TimingFields item={layer} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>
   );
+}
+
+/**
+ * Several picked Text Layers' look and motion, set on every one of them at once. A field they differ
+ * in shows the first one's value, marked Mixed, until it is set. Their words and places stay their own.
+ */
+export function TextLayersFields({
+  layers,
+  fonts,
+  onChange,
+  onDuplicate,
+  onDelete,
+}: {
+  layers: TextLayer[];
+  fonts: FontInfo[] | null;
+  // `field` set on them all; `group` names the field, so that its changes are undone as one.
+  onChange: <K extends keyof TextLayer>(field: K, value: TextLayer[K], group: string) => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const value = <K extends keyof TextLayer>(field: K) => shared(layers, field) ?? layers[0][field];
+  const mixed = (field: keyof TextLayer) => shared(layers, field) === undefined;
+  const marker = (field: keyof TextLayer) => (mixed(field) ? <Mixed /> : undefined);
+  const set = <K extends keyof TextLayer>(field: K, next: TextLayer[K]) => onChange(field, next, `texts:${field}`);
+  // A number as its slider shows it, or Mixed.
+  const shown = (field: keyof TextLayer, format: (v: number) => string) => (v: number) => (mixed(field) ? "Mixed" : format(v));
+  const any = (test: (layer: TextLayer) => boolean) => layers.some(test);
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold">Editing {layers.length} layers</h2>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate them">
+            <Copy aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete them">
+            <Trash2 aria-hidden size={17} />
+          </Button>
+        </div>
+      </div>
+      <Hint more="Their words, places and times stay each one's own: change those one at a time.">A change here applies to every picked text.</Hint>
+      <Group title="Look">
+        <Select label="Font" value={value("font")} onChange={(font) => set("font", font)} marker={marker("font")} {...fontChoices(fonts)} />
+        <Slider label="Size" value={value("size")} min={16} max={320} format={shown("size", String)} onChange={(size) => set("size", size)} />
+        <ColorField label="Colour" value={value("colour")} onChange={(colour) => set("colour", colour)} marker={marker("colour")} />
+        <Slider
+          label="Outline"
+          value={value("outline")}
+          min={0}
+          max={20}
+          format={shown("outline", (v) => (v ? `${v} px` : "None"))}
+          onChange={(outline) => set("outline", outline)}
+        />
+        {any((layer) => layer.outline > 0) && (
+          <ColorField
+            label="Outline colour"
+            value={value("outline_colour")}
+            onChange={(colour) => set("outline_colour", colour)}
+            marker={marker("outline_colour")}
+          />
+        )}
+        <Switch checked={value("box")} onChange={(box) => set("box", box)}>
+          <span className="flex items-center gap-1.5 text-sm font-medium">
+            Box behind the text {marker("box")}
+          </span>
+        </Switch>
+        {any((layer) => layer.box) && (
+          <>
+            <ColorField label="Box colour" value={value("box_colour")} onChange={(colour) => set("box_colour", colour)} marker={marker("box_colour")} />
+            <Slider
+              label="Box opacity"
+              value={value("box_opacity")}
+              min={0}
+              max={1}
+              step={0.05}
+              format={shown("box_opacity", (v) => `${Math.round(v * 100)}%`)}
+              onChange={(opacity) => set("box_opacity", opacity)}
+            />
+          </>
+        )}
+        <Segmented legend="Lines" options={ALIGNS} value={value("align")} onChange={(align: TextAlign) => set("align", align)} marker={marker("align")} />
+      </Group>
+      <Group title="Motion">
+        <div className="grid grid-cols-2 gap-3">
+          <Select
+            label="Comes on"
+            value={value("animation_in")}
+            options={ANIMATIONS}
+            onChange={(next: Animation) => set("animation_in", next)}
+            marker={marker("animation_in")}
+          />
+          <Select
+            label="Goes off"
+            value={value("animation_out")}
+            options={ANIMATIONS}
+            onChange={(next: Animation) => set("animation_out", next)}
+            marker={marker("animation_out")}
+          />
+        </div>
+        {any((layer) => layer.animation_in !== "none" || layer.animation_out !== "none") && (
+          <Slider
+            label="Animation length"
+            value={value("animation_ms")}
+            min={100}
+            max={2000}
+            step={50}
+            format={shown("animation_ms", (v) => `${(v / 1000).toFixed(2)} s`)}
+            onChange={(ms) => set("animation_ms", ms)}
+          />
+        )}
+      </Group>
+    </div>
+  );
+}
+
+// A field the picked Text Layers differ in.
+function Mixed() {
+  return <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-normal text-muted">Mixed</span>;
 }

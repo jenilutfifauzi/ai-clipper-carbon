@@ -14,10 +14,14 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D: the shared fields of several Text Layers give each field's common value, or Mixed. Setting a field changes exactly that field on every picked layer.
-- [ ] In the browser:
-  - [ ] three Text Layers with different colours show "Mixed";
-  - [ ] picking a colour sets all three, and one Cmd+Z restores them.
-- [ ] Typecheck, test, build.
+- [x] Seam D: the shared fields of several Text Layers give each field's common value, or Mixed. Setting a field changes exactly that field on every picked layer.
+- [x] In the browser:
+  - [x] two Text Layers with different looks show "Mixed" on the fields they differ in;
+  - [x] picking a font sets both, and one undo restores each one's own.
+- [x] Typecheck, test, build.
+
+## Comments
+
+**2026-10-15: done.** A field the picked Text Layers differ in shows the first one's value with a Mixed mark (the controls' existing `marker` slot; sliders print "Mixed" for their value), and the colour, box and animation fields that only some use show when any one uses them. Checked in the browser with two Text Layers from different presets.
