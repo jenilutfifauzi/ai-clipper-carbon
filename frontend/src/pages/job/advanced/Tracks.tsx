@@ -1,6 +1,17 @@
 import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
 import type { ReactNode } from "react";
-import { mediaFilmstripUrl, mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
+import {
+  jobFilmstripUrl,
+  mediaFilmstripUrl,
+  mediaThumbnailUrl,
+  type MediaItem,
+  type MusicClip,
+  type Overlay,
+  type RenderPlan,
+  type SourceMetadata,
+  type TextLayer,
+  type TransitionKind,
+} from "../../../api";
 import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
@@ -59,6 +70,7 @@ export function Tracks({
   playback,
   mediaById,
   mediaCache,
+  source,
   handlers,
   changed,
   picking = false,
@@ -77,6 +89,8 @@ export function Tracks({
   mediaById: Map<string, MediaItem>;
   // The Filmstrips' chunks, as fetched and decoded.
   mediaCache: MediaCache;
+  // The Job, and its Source's length and size, for the Source Segments' Filmstrips.
+  source: { job: string; metadata: SourceMetadata };
   handlers: TrackHandlers;
   // The items just changed in another editor, by id ("hook" for the hook).
   changed: Set<string>;
@@ -212,18 +226,8 @@ export function Tracks({
         </TrackRow>
       ))}
       <TrackRow label={label("video")} height="h-14" dimmed={dimmed("video")} locked={locked("video")} drop={dropMedia("segment")}>
-        {/* The Scenes as planned, under the Segments. */}
-        <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised" style={{ width: duration * pps }}>
-          {plan?.scenes.map((scene, i) => (
-            <span
-              key={i}
-              className="absolute inset-y-0 border-l border-border px-1.5 pt-5 text-[10px] font-medium text-muted capitalize first:border-l-0"
-              style={{ left: scene.start * pps, width: (scene.end - scene.start) * pps }}
-            >
-              {(scene.end - scene.start) * pps > 48 ? (scene.layout === "passthrough" ? "As shot" : scene.layout) : ""}
-            </span>
-          ))}
-        </div>
+        {/* The Scenes' lane, under the Segments. */}
+        <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 rounded-md bg-surface-raised" style={{ width: duration * pps }} />
         {played.map((shown, i) => {
           const segment = edits.segments[i];
           if (!segment) return null;
@@ -250,7 +254,11 @@ export function Tracks({
               }}
               onDelete={selected ? onDelete : undefined}
             >
-              {segment.media && <MediaFilmstrip geometry={geometry} cache={mediaCache} shown={shown} media={segment.media} item={mediaById.get(segment.media)} />}
+              {segment.media ? (
+                <MediaFilmstrip geometry={geometry} cache={mediaCache} shown={shown} media={segment.media} item={mediaById.get(segment.media)} />
+              ) : (
+                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} />
+              )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(shown.source_start)}
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
@@ -258,6 +266,20 @@ export function Tracks({
             </TimelineItem>
           );
         })}
+        {/* The Scenes as planned, and their Layouts, over the Segments' frames. */}
+        <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md" style={{ width: duration * pps }}>
+          {plan?.scenes.map((scene, i) => (
+            <span
+              key={i}
+              className="absolute inset-y-0 border-l border-border px-1.5 pt-5 text-[10px] font-medium capitalize first:border-l-0"
+              style={{ left: scene.start * pps, width: (scene.end - scene.start) * pps }}
+            >
+              {(scene.end - scene.start) * pps > 48 && (
+                <span className="rounded bg-black/50 px-1 py-px text-white/90">{scene.layout === "passthrough" ? "As shot" : scene.layout}</span>
+              )}
+            </span>
+          ))}
+        </div>
         {/* The joins, for Transitions: a diamond between each two Segments, filled when it has one. */}
         {played.slice(0, -1).map((shown, i) => {
           const after = edits.segments[i]?.id;
@@ -429,6 +451,38 @@ function MediaFilmstrip({
         />
       )}
     </span>
+  );
+}
+
+/** A Source Segment's picture: the Source's frames along it (its Filmstrip), over the plain lane until they arrive. */
+function SourceFilmstrip({
+  geometry,
+  cache,
+  shown,
+  source,
+}: {
+  geometry: TimeGeometry;
+  cache: MediaCache;
+  shown: PlayedSegment;
+  source: { job: string; metadata: SourceMetadata };
+}) {
+  const { pps } = geometry;
+  return (
+    <ItemCanvas
+      view={geometry.view}
+      cache={cache}
+      left={shown.start * pps}
+      width={(shown.end - shown.start) * pps}
+      pps={pps}
+      layers={[
+        filmstripLayer({
+          cache,
+          url: (start) => jobFilmstripUrl(source.job, start),
+          mediaStart: shown.source_start,
+          media: source.metadata,
+        }),
+      ]}
+    />
   );
 }
 

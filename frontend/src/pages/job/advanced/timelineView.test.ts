@@ -125,6 +125,27 @@ describe("the Filmstrip", () => {
   });
 });
 
+describe("a Source Segment's Filmstrip", () => {
+  // A Source Segment from 28 s to 95 s of an hour-long Source, played after one of 10 s.
+  const shown = playedFrom([
+    { start: 300, end: 310 },
+    { start: 28, end: 95 },
+  ])[1];
+
+  test("needs the chunks of its range of the Source", () => {
+    expect(chunksOf(shown.source_start, shown.source_end)).toEqual([0, 30, 60, 90]);
+  });
+
+  test("shows the Source's frames, not the Timeline's time", () => {
+    // 5 px a second, from 50 px on the Timeline: 335 px wide, in tiles of 80 px (16 s).
+    const width = (shown.end - shown.start) * 5;
+    const all = { left: 0, right: width };
+    const tiles = filmstripTiles({ width, mediaStart: shown.source_start, frames: 3600, tile: 80, pps: 5, view: all, span: all });
+    // The middles of the tiles, 8 s, 24 s, 40 s and 56 s in, and of the last 15 px, 65.5 s in.
+    expect(tiles.map((tile) => tile.frame)).toEqual([36, 52, 68, 84, 94]);
+  });
+});
+
 describe("an item's canvas", () => {
   // A viewport 400 px wide, scrolled to 1000 px.
   const view = { left: 1000, right: 1400 };

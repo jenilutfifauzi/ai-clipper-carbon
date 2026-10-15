@@ -607,6 +607,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           playback={playback}
           mediaById={mediaById}
           mediaCache={mediaCache}
+          source={{ job: job.id, metadata: source.metadata }}
           changed={changed}
           picking={picking}
           tracks={tracks}

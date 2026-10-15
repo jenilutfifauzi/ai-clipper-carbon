@@ -888,6 +888,9 @@ export const mediaUrl = (jobId: string, file: string, version?: string) =>
 export const candidateThumbnailUrl = (jobId: string, candidate: Pick<Candidate, "id" | "start" | "end">) =>
   `/api/jobs/${jobId}/candidates/${candidate.id}/thumbnail?v=${candidate.start}-${candidate.end}`;
 
+// A Filmstrip chunk of the Job's Source from `start` seconds, a multiple of 30, made when first asked for.
+export const jobFilmstripUrl = (jobId: string, start: number) => `/api/jobs/${encodeURIComponent(jobId)}/filmstrip/v1/${start}.jpg`;
+
 export interface UploadProgress {
   loaded: number;
   total: number;

@@ -14,13 +14,23 @@
 
 **Blocked by:** 03 (Filmstrip on media Segments).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A (real ffmpeg, a tiny Source made with `lavfi`):
+- [x] Seam A (real ffmpeg, a tiny Source made with `lavfi`):
   - chunk counts and the last chunk's frames;
   - off-grid and out-of-range starts give 404;
   - a second request leaves the chunk's file unchanged;
   - two concurrent requests for one chunk both succeed and leave one file.
-- [ ] Seam E (vitest): a Source Segment from 28 s to 95 s needs chunks 0, 30, 60 and 90.
+- [x] Seam E (vitest): a Source Segment from 28 s to 95 s needs chunks 0, 30, 60 and 90.
 - [ ] In the browser, Source Segments show frames at every zoom while the Scenes row keeps its labels, and a second Candidate of the Job shows them at once.
-- [ ] `npm run typecheck`, `npm test`, `npm run build` and the backend's tests pass.
+- [x] `npm run typecheck`, `npm test`, `npm run build` and the backend's tests pass.
+
+## Comments
+
+**2026-10-15: done.** Built as specified: `GET /api/jobs/{id}/filmstrip/v1/{start}.jpg` in `backend/app/api.py`, on `derived.py`'s grid and `make_strip` (so under the on-demand lock), and on the Timeline a `SourceFilmstrip` in `Tracks.tsx` that gives each Source Segment the canvas and Filmstrip layer from 03, from the Segment's start in the Source, at the Source's size (already in the Job's metadata). Choices made on the way:
+- Chunks are kept at `jobs/<id>/strips/v1-1fps-h112/<start>.jpg`, as the ADR says, and counted by the Source's length (its metadata), whether read from `preview.mp4` or the Source.
+- A chunk ffmpeg can't make (the Source gone from the disk) answers 404, as the Job's thumbnails do.
+- The Scenes' Layout labels moved from under the Segments to a layer over them, each in a dark chip, so the frames don't hide them; the Scenes' plain lane stays under the Segments. The labels now show over media Segments too.
+- Seam A's proxy test uploads an MKV master and removes it, so the chunk can only come from `preview.mp4`.
+
+Not seen in a browser yet: left for the walkthrough (09).
