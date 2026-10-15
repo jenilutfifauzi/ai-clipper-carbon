@@ -628,8 +628,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               const outcome = setVolume(scene, item, volume);
               if (outcome) history.set(outcome.edits, group);
             },
-            onFade: (id, fade, secs, group) => {
-              const outcome = setFade(scene, id, fade, secs);
+            onFade: (id, fade, secs, heard, group) => {
+              const outcome = setFade(scene, id, fade, secs, heard);
               if (outcome) history.set(outcome.edits, group);
             },
             onJoin: (after) => {

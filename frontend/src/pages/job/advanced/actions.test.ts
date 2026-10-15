@@ -26,7 +26,7 @@ import {
   type PickContext,
 } from "./actions";
 import { copy, cut, paste } from "./clipboard";
-import type { AdvancedEdits } from "./edits";
+import { fadesWithin, type AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, unlockedPick, type Pick } from "./pick";
 
 function layer(id: string, start: number, secs: number, changes: Partial<TextLayer> = {}): TextLayer {
@@ -467,6 +467,21 @@ describe("setting a Music Clip's fades", () => {
 
     expect(setFade(scene(before, null), "m", "fade_in", 9)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 7, fade_out: 3 })]);
     expect(setFade(scene(before, null), "m", "fade_out", 9.5)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 1, fade_out: 9 })]);
+  });
+
+  test("on a Music Clip cut short by the Clip's end, a fade is set within what is heard, and the other kept as heard", () => {
+    // 10 s long, but the Clip ends 6 s into it: its 4 s fades are heard as 3 s each.
+    const before = edits({ music: [music("m", 0, 10, { fade_in: 4, fade_out: 4 })] });
+
+    expect(setFade(scene(before, null), "m", "fade_in", 2, 6)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 2, fade_out: 3 })]);
+    expect(setFade(scene(before, null), "m", "fade_in", 5, 6)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 3, fade_out: 3 })]);
+  });
+
+  test("fades are heard as the planner hears them (its worked examples in backend/tests/test_music.py)", () => {
+    // Fitting: as they are. Twice as long as the Music Clip: halved. A 4 s Clip cut to 3 s: 3/4 each.
+    expect(fadesWithin({ fade_in: 3, fade_out: 0.5 }, 4)).toEqual({ fade_in: 3, fade_out: 0.5 });
+    expect(fadesWithin({ fade_in: 3, fade_out: 3 }, 2)).toEqual({ fade_in: 1, fade_out: 1 });
+    expect(fadesWithin({ fade_in: 3, fade_out: 1 }, 3)).toEqual({ fade_in: 2.25, fade_out: 0.75 });
   });
 
   test("a Music Clip that isn't there has no fades to set", () => {

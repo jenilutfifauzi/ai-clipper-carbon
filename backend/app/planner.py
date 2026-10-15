@@ -713,9 +713,9 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
 def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
     """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
     (whose length is in `items`) ends, its fades, when together they are longer than what is left,
-    both shortened by the same share to fit (as the Timeline draws them: fadesWithin in
-    frontend/src/pages/job/advanced/edits.ts). One whose song is gone, or that would start at or after
-    either end, isn't heard."""
+    both shortened by the same share to fit. This is the rule; the Timeline draws the fades by a copy
+    of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts), tested on the same worked
+    examples. One whose song is gone, or that would start at or after either end, isn't heard."""
     events = []
     for clip in music:
         item = items.get(clip.media)

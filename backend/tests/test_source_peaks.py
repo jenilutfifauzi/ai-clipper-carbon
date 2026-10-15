@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from app import derived
 from app.config import load_settings
 
 # The speech's stand-in: an eighth of full scale, 440 Hz, for the first 5 s of every 10.
@@ -101,8 +102,19 @@ def test_a_chunk_shows_the_pauses_where_they_are_in_the_source(client, video_sou
 def test_a_source_without_sound_has_no_peaks(client, settings, video_source, sources):
     job = with_source(client, video_source, sources["silent"])
     assert client.get(f"/api/jobs/{job['id']}/peaks/v1/0.peaks").status_code == 404
-    # Nor a temporary file left behind.
-    assert list(peaks(settings, job["id"]).glob("*")) == []
+    # Nor a temporary file left behind: only the note that it has no sound.
+    assert [file.name for file in peaks(settings, job["id"]).glob("*")] == ["no-sound"]
+
+
+def test_a_source_without_sound_is_not_decoded_again(client, settings, video_source, sources, monkeypatch):
+    job = with_source(client, video_source, sources["silent"])
+    assert client.get(f"/api/jobs/{job['id']}/peaks/v1/0.peaks").status_code == 404
+
+    def decode(*_):
+        raise AssertionError("ffmpeg ran again")
+
+    monkeypatch.setattr(derived, "_run", decode)
+    assert client.get(f"/api/jobs/{job['id']}/peaks/v1/30.peaks").status_code == 404
 
 
 def test_a_chunk_is_made_once(client, settings, video_source, sources):

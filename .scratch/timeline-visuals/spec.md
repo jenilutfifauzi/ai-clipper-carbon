@@ -18,7 +18,7 @@ The Advanced Edit's Timeline shows where things are, but not what they look or s
 The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume Line** and **Fade Ramps** to drag, and the Timeline's bar gets a **Zoom to fit** button. See GLOSSARY.md and ADR 0005 (Filmstrips and Peaks are files derived per 30-second chunk).
 
 **Filmstrip**
-- **Source Segments** fill the Video row with frames of the Source as it is, one for each whole second. The Scenes row under them keeps its Layout labels.
+- **Source Segments** fill the Video row with frames of the Source as it is, one for each whole second. The Scenes' Layout labels, once drawn on a layer under the Segments that the frames would hide, sit over the frames as small dark chips, along the whole Video row.
 - **Media Segments of a video** do the same with the media item's frames. An image Segment keeps its tiled picture.
 - **Each tile** is as wide as a frame at the row's height. It shows the frame under the middle of its visible part. When zoomed in far, neighbouring tiles show the same frame.
 
@@ -28,7 +28,7 @@ The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume
 - **The Waveform is drawn as it will be heard:** scaled by the item's volume and its fades. On Source Segments it uses the Clip's own sound's volume.
 
 **Volume Line**
-- **Every Music Clip and media Segment** shows a thin line at its volume. 100% sits at two thirds of the height and 200% at the top, on a curve that gives the quiet range room.
+- **Every Music Clip and media Segment with sound** shows a thin line at its volume (a silent video or an image has none, as in the inspector). 100% sits at two thirds of the height and 200% at the top, on a curve that gives the quiet range room.
 - **On a picked item,** the line can be dragged up and down. A label shows the %, and the Waveform reshapes live. Releasing the drag ends one step of undo.
 - **Source Segments have no Volume Line.** The Clip's own sound keeps its one volume, in the inspector.
 
@@ -52,7 +52,7 @@ The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume
 4. As an owner, I want the Filmstrip of a Segment that starts mid-tile to stay aligned with time while I scroll, so that frames don't jump about.
 5. As an owner, I want a trimmed Segment's Filmstrip to follow its new range live while I drag its edge, so that I see the frame I am cutting at.
 6. As an owner, I want a Segment I drag to a new place to carry its frames with it, so that the strip always belongs to its Segment.
-7. As an owner, I want the Layout labels kept on the Scenes row under the frames, so that I still see how each Scene is framed.
+7. As an owner, I want each Scene's Layout label shown over the frames, so that I still see how each Scene is framed.
 8. As an owner, I want the Filmstrip to show the video as it is, not cropped by the Layout, so that it looks the same however I change the framing.
 9. As an owner, I want an image Segment to keep showing its picture, so that it is recognisable.
 10. As an owner, I want frames to appear soon after I open a Candidate or scroll to a new stretch, without blocking the Timeline, so that I can keep editing while they load.
@@ -110,7 +110,7 @@ The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume
 
 ## Implementation Decisions
 
-**No model change.** `MusicClip.volume` (0–2), `fade_in` and `fade_out` (0–10 s) and `Segment.volume` already exist. The planner, the Render Plan, the renderer, the Revision merge and the MCP server are unchanged. ADR 0001 holds: the backend plans, and the frontend draws. Filmstrips and Peaks are drawing data, not the plan.
+**No model change.** `MusicClip.volume` (0–2), `fade_in` and `fade_out` (0–10 s) and `Segment.volume` already exist. The Render Plan, the renderer, the Revision merge and the MCP server are unchanged. The planner changes in one place, agreed with the owner after review: a Music Clip's fades, when together longer than what is heard of it, are both shortened by the same share (before, each was cut to half of it). So a 7 s fade in on a 10 s Music Clip, already saved, now renders 7 s long, as the Timeline draws it. The Timeline draws the fades by a copy of that rule, tested on the planner's worked examples. ADR 0001 holds: the backend plans, and the frontend draws. Filmstrips and Peaks are drawing data, not the plan.
 
 **Derived media, as in ADR 0005.** One time grid for Sources and media items: chunks of 30 seconds, each starting at a multiple of 30 seconds of the Source or the item.
 - **A Filmstrip chunk** is one JPEG at quality 75, frames laid out left to right.
@@ -272,5 +272,6 @@ A good test checks behaviour at a public boundary: what goes in and what comes b
   - Fit's shortcut is Shift+Z;
   - Fit leaves a 5% margin on each side.
 - **The Volume Line's curve is perceptual, not a strict dB scale.** It puts 100% at two thirds of the height, as agreed, and keeps 0% reachable.
-- **Amends no ADR.** ADR 0005 records the derived-media decision.
+- **Amends no ADR.** ADR 0005 records the derived-media decision. The fade rule copied to the frontend is in the spirit of ADR 0001's warning about two copies of a rule: the planner's is the rule, and both are tested on the same worked examples.
+- **Changed after review (2026-10-15, agreed with the owner):** the planner's fade rule (see Model); the Layout labels moved over the frames; no Volume Line on a silent media Segment. Also beyond the tickets, kept: the preview's stage and Overlay drags are one undo step per gesture too; the phone's Timeline bar scrolls sideways; a split Music Clip's parts keep fades that fit them.
 - **Roadmap:** item 3, `timeline-visuals`, in the Advanced Edit v2 roadmap. `audio-mixing` (item 14) builds on the Volume Line and Fade Ramp.

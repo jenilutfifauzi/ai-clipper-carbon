@@ -84,8 +84,9 @@ export const FADE_MAX_SECS = 10;
 
 /**
  * A Music Clip's fades within `secs` of it, as the planner hears them (audio_events in
- * backend/app/planner.py): each 10 s at most, and when together they are longer than it, both
- * shortened by the same share to fit.
+ * backend/app/planner.py, which is the rule; both are tested on the same worked examples): each 10 s
+ * at most, and when together they are longer than it, both shortened by the same share to fit. To a
+ * hundredth, as edits are kept; the planner rounds to the millisecond.
  */
 export function fadesWithin({ fade_in, fade_out }: { fade_in: number; fade_out: number }, secs: number): { fade_in: number; fade_out: number } {
   const fadeIn = Math.min(Math.max(fade_in, 0), FADE_MAX_SECS);

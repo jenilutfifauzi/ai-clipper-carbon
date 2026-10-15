@@ -438,15 +438,25 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
 /**
  * Music Clip `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle or the
  * inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins, so
- * that the two together are never longer than the Music Clip. Null for one that isn't there.
+ * that the two together are never longer than the Music Clip. Cut short by the Clip's end (`heard`
+ * seconds of it are heard), both are set as they are heard, so that what is stored is what the
+ * Timeline draws and the Clip plays. Null for one that isn't there.
  */
-export function setFade(scene: { edits: AdvancedEdits; pick: Pick }, id: string, fade: "fade_in" | "fade_out", secs: number): Outcome | null {
+export function setFade(
+  scene: { edits: AdvancedEdits; pick: Pick },
+  id: string,
+  fade: "fade_in" | "fade_out",
+  secs: number,
+  heard?: number,
+): Outcome | null {
   const { edits, pick } = scene;
   const clip = edits.music.find((other) => other.id === id);
   if (!clip) return null;
-  const other = fade === "fade_in" ? clip.fade_out : clip.fade_in;
-  const most = Math.max(0, Math.min(FADE_MAX_SECS, clip.secs - other));
-  const set = { ...clip, [fade]: round(Math.min(Math.max(secs, 0), most)) };
+  // Its fades as heard: shortened when the Clip's end cuts it short (`heard` seconds of it).
+  const fades = fadesWithin(clip, heard ?? clip.secs);
+  const other = fade === "fade_in" ? "fade_out" : "fade_in";
+  const most = Math.max(0, Math.min(FADE_MAX_SECS, (heard ?? clip.secs) - fades[other]));
+  const set = { ...clip, [other]: fades[other], [fade]: round(Math.min(Math.max(secs, 0), most)) };
   return { edits: { ...edits, music: edits.music.map((each) => (each.id === id ? set : each)) }, pick };
 }
 

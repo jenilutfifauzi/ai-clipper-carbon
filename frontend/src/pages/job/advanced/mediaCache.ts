@@ -6,6 +6,10 @@ const MAX_BITMAPS = 12;
 // A chunk evicted this recently isn't fetched again at once, so that more chunks on screen than the
 // cache holds don't fetch one another out in a loop.
 const REFETCH_MS = 1000;
+// A chunk whose fetch failed (but not with a 404, which is for good) is asked for again after this.
+const RETRY_MS = 5000;
+// The most askers a queued chunk remembers: those that asked last.
+const MAX_WANTED = 8;
 
 /** A Filmstrip chunk, decoded: its frames side by side, how many, and when it arrived (to fade in). */
 export interface StripChunk {
@@ -33,11 +37,14 @@ export class MediaCache {
   private strips = new Map<string, StripChunk>();
   private peaksChunks = new Map<string, PeaksChunk>();
   private evicted = new Map<string, number>();
-  // Chunks with no answer to show: off the grid, made in error, or gone.
-  private failed = new Set<string>();
+  // Chunks with no answer to show, until when: for good when answered 404 (off the grid, no sound,
+  // gone), a while when the fetch failed otherwise.
+  private failed = new Map<string, number>();
   private queue = new Map<string, Load>();
   private loading = new Set<string>();
   private listeners = new Set<() => void>();
+  // Counts clear()s, so that a load that finishes after one is dropped.
+  private generation = 0;
 
   /**
    * The Filmstrip chunk at `url`, decoded `height` device pixels tall, or null while it isn't here; it
@@ -52,13 +59,13 @@ export class MediaCache {
       this.strips.set(key, chunk);
       return chunk;
     }
-    if (this.failed.has(key) || performance.now() - (this.evicted.get(key) ?? -Infinity) < REFETCH_MS) return null;
-    this.ask(key, wanted, async () => {
-      const answer = await fetch(url);
-      if (!answer.ok) throw new Error(`${answer.status}`);
+    if (this.failing(key) || performance.now() - (this.evicted.get(key) ?? -Infinity) < REFETCH_MS) return null;
+    this.ask(key, wanted, async (current) => {
+      const answer = await fetched(url);
       const frames = Number(answer.headers.get("X-Frames"));
       const bitmap = await createImageBitmap(await answer.blob(), { resizeHeight: height, resizeQuality: "medium" });
-      this.keep(key, { bitmap, frames, arrived: performance.now() });
+      if (current()) this.keep(key, { bitmap, frames, arrived: performance.now() });
+      else bitmap.close();
     });
     return null;
   }
@@ -70,11 +77,10 @@ export class MediaCache {
   peaks(url: string, wanted: () => boolean): PeaksChunk | null {
     const chunk = this.peaksChunks.get(url);
     if (chunk) return chunk;
-    if (this.failed.has(url)) return null;
-    this.ask(url, wanted, async () => {
-      const answer = await fetch(url);
-      if (!answer.ok) throw new Error(`${answer.status}`);
-      this.peaksChunks.set(url, { levels: peaksPyramid(readPeaks(await answer.arrayBuffer())), arrived: performance.now() });
+    if (this.failing(url)) return null;
+    this.ask(url, wanted, async (current) => {
+      const levels = peaksPyramid(readPeaks(await (await fetched(url)).arrayBuffer()));
+      if (current()) this.peaksChunks.set(url, { levels, arrived: performance.now() });
     });
     return null;
   }
@@ -85,12 +91,19 @@ export class MediaCache {
     return () => this.listeners.delete(listener);
   }
 
-  /** Releases every chunk. */
+  /** Releases every chunk, and forgets what failed; loads under way are dropped when they finish. */
   clear() {
+    this.generation++;
     for (const chunk of this.strips.values()) chunk.bitmap.close();
     this.strips.clear();
     this.peaksChunks.clear();
     this.queue.clear();
+    this.failed.clear();
+    this.evicted.clear();
+  }
+
+  private failing(key: string) {
+    return (this.failed.get(key) ?? -Infinity) > performance.now();
   }
 
   private keep(key: string, chunk: StripChunk) {
@@ -104,11 +117,15 @@ export class MediaCache {
     }
   }
 
-  private ask(key: string, wanted: () => boolean, run: () => Promise<void>) {
+  // `run` is given what says whether no clear() came since it started.
+  private ask(key: string, wanted: () => boolean, run: (current: () => boolean) => Promise<void>) {
     if (this.loading.has(key)) return;
     const queued = this.queue.get(key);
-    if (queued) queued.wanted.push(wanted);
-    else this.queue.set(key, { run, wanted: [wanted] });
+    if (queued) queued.wanted = [...queued.wanted.slice(1 - MAX_WANTED), wanted];
+    else {
+      const generation = this.generation;
+      this.queue.set(key, { run: () => run(() => this.generation === generation), wanted: [wanted] });
+    }
     this.next();
   }
 
@@ -120,7 +137,7 @@ export class MediaCache {
       this.loading.add(key);
       load
         .run()
-        .catch(() => this.failed.add(key))
+        .catch((error) => this.failed.set(key, error instanceof Gone ? Infinity : performance.now() + RETRY_MS))
         .finally(() => {
           this.loading.delete(key);
           for (const listener of this.listeners) listener();
@@ -128,6 +145,16 @@ export class MediaCache {
         });
     }
   }
+}
+
+// A chunk answered 404: there is none to show, for good.
+class Gone extends Error {}
+
+async function fetched(url: string): Promise<Response> {
+  const answer = await fetch(url);
+  if (answer.status === 404) throw new Gone(url);
+  if (!answer.ok) throw new Error(`${answer.status} for ${url}`);
+  return answer;
 }
 
 // A Peaks chunk as served (backend/app/derived.py), little-endian:

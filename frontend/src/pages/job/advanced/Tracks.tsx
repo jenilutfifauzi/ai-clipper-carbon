@@ -50,7 +50,8 @@ export interface TrackHandlers {
   // A Music Clip's or media Segment's volume set by its Volume Line.
   onVolume: (item: { kind: "music" | "segment"; id: string }, volume: number, group: string) => void;
   // A Music Clip's fade in or fade out set by its Fade Ramp's handle.
-  onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, group: string) => void;
+  // `heard`: the seconds of the Music Clip heard, where the Clip's end cuts it short.
+  onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
   // A Media Library item (its id) or a Text Layer's look (its name) dropped at `time`.
@@ -440,7 +441,7 @@ export function Tracks({
                   fades={fades}
                   pps={pps}
                   grab={selected && !locked("music")}
-                  onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, group)}
+                  onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, end - clip.start, group)}
                 />
                 <Music aria-hidden size={12} className="relative shrink-0" />
                 <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
