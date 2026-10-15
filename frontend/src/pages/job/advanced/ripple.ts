@@ -16,6 +16,9 @@ type LayerKind = "text" | "music" | "overlay";
 const LAYER_LISTS = { text: "text_layers", music: "music", overlay: "overlays" } as const;
 const NAMES: Record<LayerKind, string> = { text: "Text Layer", music: "Music Clip", overlay: "Overlay" };
 
+/** What a ripple moves: the Text Layers, Music Clips, Overlays and the hook. */
+export type Layers = Pick<AdvancedEdits, "text_layers" | "music" | "overlays" | "hook_start" | "hook_secs">;
+
 /** How many layers of each kind a ripple removed. */
 export type Removed = Record<LayerKind, number>;
 
@@ -42,11 +45,11 @@ function cutOut(start: number, secs: number, a: number, b: number): { start: num
  * shorter than the shortest a layer lasts, is removed; `removed` counts them by kind. The hook is
  * never removed: wholly inside, it moves to where the stretch was, as long as it was.
  */
-export function ripple(edits: AdvancedEdits, changes: TrackChange[]): { edits: AdvancedEdits; removed: Removed } {
+export function ripple<T extends Layers>(edits: T, changes: TrackChange[]): { edits: T; removed: Removed } {
   const removed: Removed = { text: 0, music: 0, overlay: 0 };
   let next = edits;
   for (const change of [...changes].sort((x, y) => y.at - x.at)) {
-    const lists = {} as Partial<AdvancedEdits>;
+    const lists = {} as Partial<Layers>;
     for (const kind of Object.keys(LAYER_LISTS) as LayerKind[]) {
       const list = LAYER_LISTS[kind];
       const items = (next[list] as Layer[]).flatMap((item): Layer[] => {

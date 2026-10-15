@@ -17,10 +17,12 @@ import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
 import { loadFonts } from "../../fonts";
 import { cx, formatPrecise } from "../../format";
+import { clipTrimmed } from "./advanced/actions";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview, type StageId } from "./editor/ClipPreview";
 import { candidateDraft } from "./editor/draft";
+import { useMagnetic } from "./editor/magnetic";
 import { Playback, playedFrom, playable } from "./editor/playback";
 import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
@@ -190,6 +192,18 @@ export function CandidateEditor({
   const length = cut ? playback.duration : candidate.end - candidate.start;
   const { min_secs, max_secs } = job.options;
   const name = candidateName(candidate, index);
+  const magnetic = useMagnetic();
+
+  // The uncut Clip's start or end moved: on the Magnetic timeline its Text Layers, Music Clips,
+  // Overlays and hook move with it, in the same save (docs/adr/0004-layers-ripple-with-the-main-track.md).
+  function trim(change: { start?: number; end?: number }): Promise<boolean> {
+    if (!magnetic || cut) return onSave(change);
+    const { start, end, text_layers, music, overlays, hook_start, hook_secs } = candidate;
+    const to = { start: change.start ?? start, end: change.end ?? end };
+    const { layers, notice } = clipTrimmed({ text_layers, music, overlays, hook_start, hook_secs }, { start, end }, to);
+    if (notice) setNotice(notice);
+    return onSave({ ...change, ...layers });
+  }
 
   // The backend snaps an edge to the Word it falls in: send the Word's own start or end.
   function pick(i: number) {
@@ -201,10 +215,10 @@ export function CandidateEditor({
     const word = words[i];
     if (clickMode === "start") {
       if (word.start >= candidate.end) return setNotice("The start must come before the clip's end. Move the end first.");
-      void onSave({ start: word.start });
+      void trim({ start: word.start });
     } else {
       if (word.end <= candidate.start) return setNotice("The end must come after the clip's start. Move the start first.");
-      void onSave({ end: Math.min(word.end, duration) });
+      void trim({ end: Math.min(word.end, duration) });
     }
   }
 
@@ -520,7 +534,7 @@ export function CandidateEditor({
           playback={playback}
           timing={timing}
           onTrimDraft={setTrimDraft}
-          onTrim={onSave}
+          onTrim={trim}
           onTiming={setTiming}
           scenes={(geometry) => (
             <ScenesTrack

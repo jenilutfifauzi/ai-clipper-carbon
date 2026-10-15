@@ -15,6 +15,7 @@ import {
   restyle,
   rippleRemove,
   canSplitAt,
+  clipTrimmed,
   pickAll,
   shared,
   split,
@@ -881,3 +882,35 @@ describe("locked Tracks", () => {
     expect(outcome?.edits.text_layers).toEqual([layer("title", 2, 1)]);
   });
 });
+
+describe("the clip editor's trim, on the Magnetic timeline", () => {
+  // A Clip from 100 to 120 s of the Source, with a title at 5 s and the hook at 1 s.
+  const layers = { text_layers: [layer("title", 5, 2)], music: [music("song", 0, 20, { offset: 3 })], overlays: [], hook_start: 1, hook_secs: 3 };
+  const range = { start: 100, end: 120 };
+
+  test("a start 2 s later moves everything up 2 s, cutting what it took", () => {
+    expect(clipTrimmed(layers, range, { start: 102, end: 120 }).layers).toEqual({
+      ...layers,
+      text_layers: [layer("title", 3, 2)],
+      music: [music("song", 0, 18, { offset: 5 })],
+      hook_start: 0,
+      hook_secs: 2,
+    });
+  });
+
+  test("a start 2 s earlier moves everything back 2 s", () => {
+    expect(clipTrimmed(layers, range, { start: 98, end: 120 }).layers).toMatchObject({ text_layers: [layer("title", 7, 2)], hook_start: 3 });
+  });
+
+  test("an end earlier cuts what it took, and tells of what went", () => {
+    const outcome = clipTrimmed(layers, range, { start: 100, end: 106 });
+
+    expect(outcome.layers).toMatchObject({ text_layers: [layer("title", 5, 1)], music: [music("song", 0, 6, { offset: 3 })] });
+    expect(clipTrimmed(layers, range, { start: 100, end: 104 }).notice).toBe("1 Text Layer inside the cut was removed.");
+  });
+
+  test("an end later moves nothing", () => {
+    expect(clipTrimmed(layers, range, { start: 100, end: 125 }).layers).toEqual(layers);
+  });
+});
+

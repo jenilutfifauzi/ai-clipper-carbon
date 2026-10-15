@@ -3,7 +3,7 @@ import type { PlayedSegment } from "../editor/playback";
 import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
-import { removedNotice, ripple, type TrackChange } from "./ripple";
+import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import type { TrackKind } from "./trackState";
 
 /**
@@ -112,7 +112,7 @@ function rippledAfter(scene: PickContext, next: AdvancedEdits, rippled: boolean)
 
 // `next` with its layers and hook following the Main Track's `changes` when they do (`on`), and what
 // to tell of the layers that a cut took.
-function following(next: AdvancedEdits, changes: TrackChange[], on: boolean): { edits: AdvancedEdits; notice?: string } {
+function following<T extends Layers>(next: T, changes: TrackChange[], on: boolean): { edits: T; notice?: string } {
   if (!on || !changes.length) return { edits: next };
   const { edits, removed } = ripple(next, changes);
   const notice = removedNotice(removed);
@@ -162,6 +162,24 @@ function covered(spans: { start: number; end: number }[]): number {
     reached = Math.max(reached, span.end);
   }
   return total;
+}
+
+/**
+ * The layers and the hook after the clip editor trims an uncut Clip from `from` to `to` (on the
+ * Source's timeline), on the Magnetic timeline: a later start cuts the Clip's first seconds out, an
+ * earlier one puts seconds in before them; an earlier end cuts its last seconds out.
+ */
+export function clipTrimmed<T extends Layers>(
+  layers: T,
+  from: { start: number; end: number },
+  to: { start: number; end: number },
+): { layers: T; notice?: string } {
+  const changes: TrackChange[] = [];
+  if (to.start > from.start) changes.push({ kind: "removed", at: 0, secs: to.start - from.start });
+  if (to.start < from.start) changes.push({ kind: "inserted", at: 0, secs: from.start - to.start });
+  if (to.end < from.end) changes.push({ kind: "removed", at: to.end - from.start, secs: from.end - to.end });
+  const { edits, notice } = following(layers, changes, true);
+  return notice ? { layers: edits, notice } : { layers: edits };
 }
 
 /** Where a Segment added at the playhead (`time`) goes on the Main Track: after the one playing there, else last. */

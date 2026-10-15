@@ -7,6 +7,7 @@ import { cx, formatClock, formatPrecise } from "../../../format";
 import type { HookTiming } from "../HookEditor";
 import { Link } from "react-router";
 import { usePlayback, type PlayedSegment, type Playback } from "./playback";
+import { MagneticToggle } from "./MagneticToggle";
 
 // How much of the Source either side of the clip the timeline shows, and the longest clip (as
 // app/review.py's MAX_CLIP_SECS).
@@ -174,10 +175,13 @@ export function Timeline({
           Drag the hook to move it, its right edge to change how long it stays.
         </Hint>
       ) : (
-        <p className="text-sm text-muted">
-          Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys. Drag the hook to move it, its right
-          edge to change how long it stays.
-        </p>
+        <div className="flex items-start gap-2">
+          <p className="flex-1 text-sm text-muted">
+            Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys. Drag the hook to move it, its right edge to
+            change how long it stays. With the magnet on, a trim moves the hook and the Advanced Edit's layers with it.
+          </p>
+          <MagneticToggle />
+        </div>
       )}
     </div>
   );
