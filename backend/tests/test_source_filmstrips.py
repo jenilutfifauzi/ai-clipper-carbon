@@ -4,12 +4,14 @@ Seam A, through the API with the real ffmpeg."""
 
 import json
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from app import derived
 from app.config import load_settings
 
 
@@ -118,3 +120,79 @@ def test_a_source_the_browser_cant_play_is_read_from_its_preview_proxy(client, s
     chunk = client.get(f"/api/jobs/{job['id']}/filmstrip/v1/0.jpg")
     assert chunk.status_code == 200 and chunk.headers["x-frames"] == "2"
     assert size(settings, chunk.content, tmp_path)[1] == 112
+
+
+def decodes(monkeypatch) -> list[list[str]]:
+    """The ffmpeg commands derived media runs from now on (still run)."""
+    commands: list[list[str]] = []
+    run = derived._run
+
+    def spy(command: list[str], what: str) -> bytes:
+        commands.append(command)
+        return run(command, what)
+
+    monkeypatch.setattr(derived, "_run", spy)
+    return commands
+
+
+def threads(command: list[str]) -> str:
+    """The decoding threads asked of ffmpeg: those set before its input."""
+    return command[command.index("-threads", 0, command.index("-i")) + 1]
+
+
+def test_a_chunk_is_decoded_on_every_core_while_the_worker_is_idle(client, settings, video_source, long_source, wait_for_status, monkeypatch):
+    job = with_source(client, video_source, long_source)
+    wait_for_status(job["id"], "review")
+    commands = decodes(monkeypatch)
+
+    assert client.get(f"/api/jobs/{job['id']}/filmstrip/v1/0.jpg").status_code == 200
+    assert threads(commands[-1]) == "0"
+
+
+def test_a_chunk_is_decoded_on_one_thread_while_the_worker_runs_a_job(client, settings, video_source, long_source, wait_for_status, monkeypatch):
+    job = with_source(client, video_source, long_source)
+    wait_for_status(job["id"], "review")
+    # Another Job's download is held: the Worker is busy with it.
+    video_source.hold()
+    try:
+        client.post("/api/jobs", json={"url": "https://www.youtube.com/watch?v=another"})
+        deadline = time.monotonic() + 5
+        while not client.app.state.worker.busy:
+            assert time.monotonic() < deadline, "The Worker never took the other Job"
+            time.sleep(0.01)
+        commands = decodes(monkeypatch)
+        assert client.get(f"/api/jobs/{job['id']}/filmstrip/v1/30.jpg").status_code == 200
+        assert threads(commands[-1]) == "1"
+    finally:
+        video_source.release()
+
+
+def test_waiting_requests_are_served_latest_first(tmp_path):
+    # One chunk is being made; three more are asked for, one after another, while it is.
+    made: list[str] = []
+    started = threading.Event()
+    go = threading.Event()
+
+    def make(name: str):
+        def write(part: Path) -> None:
+            if name == "first":
+                started.set()
+                go.wait(5)
+            made.append(name)
+            part.write_bytes(b"x")
+
+        return write
+
+    with ThreadPoolExecutor(4) as pool:
+        first = pool.submit(derived.on_demand, tmp_path / "first", make("first"))
+        started.wait(5)
+        later = []
+        for name in ("a", "b", "c"):
+            later.append(pool.submit(derived.on_demand, tmp_path / name, make(name)))
+            time.sleep(0.1)
+        go.set()
+        for future in [first, *later]:
+            future.result(5)
+
+    # The one asked for last (where a fling stopped) is made next.
+    assert made == ["first", "c", "b", "a"]

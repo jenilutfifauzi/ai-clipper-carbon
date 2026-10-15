@@ -11,7 +11,9 @@ new format is a new version, in new paths.
 
 Chunks are written under a temporary name and renamed when complete, so a half-written one is never
 served. Those made on request (a Source's, or an item's uploaded before them) are made outside
-the Worker, one at a time under a lock of their own, by an ffmpeg at low priority on one thread.
+the Worker, one at a time under a lock of their own, by an ffmpeg at low priority: on one thread
+while the Worker runs a Job, on every core while it is idle. Requests waiting for that lock are
+served latest first, so that where a fling across the Timeline stops comes before what it passed.
 """
 
 import math
@@ -20,7 +22,8 @@ import struct
 import subprocess
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,8 +58,34 @@ _SAMPLE_BYTES = 2
 # request seek this many seconds before the chunk, and decode up to it.
 _PEAKS_PREROLL = 1
 
+
+class _LatestFirst:
+    """A lock handed, when let go, to the request that began waiting for it last."""
+
+    def __init__(self) -> None:
+        self._changed = threading.Condition()
+        self._held = False
+        self._waiting: list[object] = []
+
+    @contextmanager
+    def held(self) -> Iterator[None]:
+        me = object()
+        with self._changed:
+            self._waiting.append(me)
+            while self._held or self._waiting[-1] is not me:
+                self._changed.wait()
+            self._waiting.pop()
+            self._held = True
+        try:
+            yield
+        finally:
+            with self._changed:
+                self._held = False
+                self._changed.notify_all()
+
+
 # One ffmpeg at a time for chunks made on request.
-_on_demand = threading.Lock()
+_on_demand = _LatestFirst()
 
 
 def chunk_starts(duration: float) -> list[int]:
@@ -106,17 +135,24 @@ def strip_outputs(source: str, duration: float, folder: Path) -> StripOutputs:
     return StripOutputs(graph, args, parts)
 
 
-def make_strip(ffmpeg: Path, video: Path, start: int, duration: float, target: Path) -> Path:
+def make_strip(
+    ffmpeg: Path, video: Path, start: int, duration: float, target: Path, threads: Callable[[], int] = lambda: 1
+) -> Path:
     """The chunk of the Filmstrip of `video` (`duration` seconds long) from `start`, at `target`:
-    made now, by seeking to `start`, if it isn't there yet."""
+    made now, by seeking to `start`, if it isn't there yet. Decoded on `threads()` threads (0: as
+    many as ffmpeg likes), asked when its turn comes."""
     frames = frames_in(start, duration)
-    command = [
-        str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y", "-threads", "1",
-        "-ss", str(start), "-t", str(frames), "-i", str(video),
-        "-map", "0:v:0", "-vf", f"{_STRIP_FRAMES},tile={frames}x1", "-frames:v", "1",
-        "-q:v", _STRIP_QUALITY, "-threads", "1", "-f", "image2",
-    ]
-    return on_demand(target, lambda part: _run([*command, str(part)], f"a Filmstrip of {video.name}"))
+
+    def make(part: Path) -> None:
+        command = [
+            str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y", "-threads", str(threads()),
+            "-ss", str(start), "-t", str(frames), "-i", str(video),
+            "-map", "0:v:0", "-vf", f"{_STRIP_FRAMES},tile={frames}x1", "-frames:v", "1",
+            "-q:v", _STRIP_QUALITY, "-threads", "1", "-f", "image2", str(part),
+        ]
+        _run(command, f"a Filmstrip of {video.name}")
+
+    return on_demand(target, make)
 
 
 def fold_peaks(samples: bytes) -> bytes:
@@ -212,7 +248,7 @@ def on_demand(target: Path, make: Callable[[Path], None]) -> Path:
     requests for one chunk make it once."""
     if target.is_file():
         return target
-    with _on_demand:
+    with _on_demand.held():
         if target.is_file():
             return target
         target.parent.mkdir(parents=True, exist_ok=True)

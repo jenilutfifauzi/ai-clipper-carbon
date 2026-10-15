@@ -16,6 +16,7 @@ import {
   peaksPyramid,
   sourceGain,
   tileWidth,
+  volumeDragged,
   volumeHeight,
   volumeOfHeight,
   zoomToFit,
@@ -306,5 +307,18 @@ describe("the Volume Line", () => {
 
   test("a volume's height gives the volume back", () => {
     for (const volume of [0, 0.05, 0.25, 0.61, 1, 1.37, 1.99, 2]) expect(volumeOfHeight(volumeHeight(volume))).toBe(volume);
+  });
+});
+
+describe("dragging the Volume Line", () => {
+  test("in a short lane (a phone's Music lane), a drag goes as if over 120 px, so small moves are small", () => {
+    // 14 px down from 100% in a 35 px lane: 14/120 of the height, from 2/3 to 0.55, 72%.
+    expect(volumeDragged(1, 14, 35)).toBe(0.72);
+    expect(volumeDragged(1, -14, 35)).toBe(1.32);
+  });
+
+  test("in a lane at least 120 px tall, the line follows the pointer", () => {
+    // A third of 240 px down from 100% (2/3) lands at 1/3 of the height: 31%.
+    expect(volumeDragged(1, 80, 240)).toBe(0.31);
   });
 });

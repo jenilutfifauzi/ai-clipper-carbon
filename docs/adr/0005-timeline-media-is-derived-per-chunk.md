@@ -26,7 +26,8 @@ Concat makes one 24-frame strip for each whole file, finer strips per short cut,
 - **When they are made:**
   - **Media items:** in the same ffmpeg pass on upload. Items uploaded before this are filled in on their first request.
   - **Sources:** on demand, one chunk per request, when the Timeline asks for it.
-- **The on-demand work runs outside the Worker.** It has its own lock, one ffmpeg at a time, at low priority (`nice`) and with `-threads 1`. It reads `preview.mp4` when the Job has one.
+- **The on-demand work runs outside the Worker.** It has its own lock, one ffmpeg at a time, at low priority (`nice`). A Source's Filmstrip decodes on one thread while the Worker runs a Job, and on every core while it is idle (decided when the chunk's turn comes). It reads `preview.mp4` when the Job has one.
+- **Requests waiting for that lock are served latest first,** and the editor cancels the fetches no canvas wants any more, so that where a fling across the Timeline stops is made before what it passed. (Amended 2026-10-16 after the walkthrough: one thread made a 1080p50 chunk in about 5 s, every core in about 2.5 s; first-come order made the stopping point wait for every chunk passed.)
 
 ## Considered options
 
@@ -42,5 +43,5 @@ Concat makes one 24-frame strip for each whole file, finer strips per short cut,
 
 - **The first look at a stretch of a Source waits for its chunk** (one ffmpeg seek and decode of 30 seconds). Later looks are instant, and are cached by the browser too.
 - **Uploading a media item takes a little longer.**
-- **A transcription and a Filmstrip can run at the same time.** The lock and the low priority keep that to one extra ffmpeg.
+- **A transcription and a Filmstrip can run at the same time.** The lock, the low priority and the one thread while the Worker is busy keep that to one extra ffmpeg on one core.
 - **The Timeline's deepest zoom shows repeated frames.** The 1 fps grid is the only grid.

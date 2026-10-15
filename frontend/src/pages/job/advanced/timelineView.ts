@@ -292,3 +292,12 @@ export function volumeHeight(volume: number): number {
   const gain = Math.min(Math.max(volume, 0), VOLUME_MAX);
   return (gain / VOLUME_MAX) ** (1 / VOLUME_CURVE);
 }
+
+// A drag of the Volume Line goes as if over at least this many pixels, so that in a short lane (a
+// phone's Music lane is 35 px) a small move is a small change.
+const VOLUME_TRAVEL_PX = 120;
+
+/** The volume a drag of the Volume Line by `dy` pixels (down is quieter) sets, from `volume`, on an item `height` pixels tall. */
+export function volumeDragged(volume: number, dy: number, height: number): number {
+  return volumeOfHeight(volumeHeight(volume) - dy / Math.max(height, VOLUME_TRAVEL_PX));
+}

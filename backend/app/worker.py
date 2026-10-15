@@ -31,6 +31,7 @@ class Worker:
         self._renders = renders
         self._queue: Queue[str | None] = Queue()
         self._stopping = threading.Event()
+        self._working = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="job-worker", daemon=True)
         self._timers: dict[str, threading.Timer] = {}
         self._timers_lock = threading.Lock()
@@ -51,6 +52,11 @@ class Worker:
                 continue
             self._take_back(job)
         self._thread.start()
+
+    @property
+    def busy(self) -> bool:
+        """Whether a Job's turn (a stage, a render or a preparation) is running now."""
+        return self._working.is_set()
 
     def submit(self, job_id: str) -> None:
         self._queue.put(job_id)
@@ -116,6 +122,7 @@ class Worker:
 
     def _loop(self) -> None:
         while (job_id := self._queue.get()) is not None and not self._stopping.is_set():
+            self._working.set()
             try:
                 status = self._store.get(job_id).status
                 if status is JobStatus.RENDERING:
@@ -135,6 +142,8 @@ class Worker:
             else:
                 if job.status is JobStatus.WAITING_QUOTA:
                     self._wake_later(job)
+            finally:
+                self._working.clear()
 
     def _wake_later(self, job: Job) -> None:
         """Queue the Job again once its quota wait is over. While stopping, the next start does it."""

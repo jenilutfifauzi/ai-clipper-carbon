@@ -10,7 +10,7 @@
 
 - [ ] A 90-second Candidate of an hour-long Source, opened while a transcription runs: frames and Waveforms appear, and scrolling and pinching stay smooth on the phone.
 - [ ] Scrolling the whole Clip at 40× on Safari iOS keeps memory steady, and the page doesn't reload.
-- [ ] A fast fling across the Clip loads the stretch it stops at first.
+- [x] A fast fling across the Clip loads the stretch it stops at first (after the one already in ffmpeg; see the fixes below).
 - [ ] Volume Line and Fade Ramp: drag with a pause while holding, then undo each with one Cmd+Z, on both devices.
 - [x] On the phone, dragging an unpicked Music Clip moves it, with its volume unchanged.
 - [x] Fit with a Pick, with none, and on a very short item, on both devices. Shift+Z on the desktop.
@@ -34,3 +34,9 @@
 - **Fling:** with cold chunks, the two chunks asked for at 1× (0:00–1:00) were already being made when the fling reached the end, so the end's chunk came third (at 21 s). Queued chunks that left the view were dropped (no Peaks asked for 0:00–1:00), but loads already sent aren't cancelled and the server makes chunks one at a time in arrival order. **Not met** as written; fixing it means cancelling sent requests (AbortController) and letting the server skip chunks nobody waits for any more.
 
 **Left for a human, on real devices:** Safari iOS memory at 40×; scrolling and pinching while a transcription runs (no transcription was running here); the Fade Ramp by touch; and the two findings above (chunk speed, fling order) to decide on.
+
+**2026-10-16: the three findings, fixed** (ADR 0005 and the spec amended):
+- **Chunk speed:** a Source's Filmstrip now decodes on every core while the Worker is idle (one thread while it runs a Job, decided when the chunk's turn comes). Measured on this Source: about 5 s a chunk on one thread, 2.3–3 s on every core.
+- **Fling order:** requests waiting for the on-demand lock are served latest first, and the media cache cancels fetches no canvas wants any more. Re-run with cold chunks: the chunk where the fling stopped (6:00) was made second, 7.2 s after the fling (21 s before), right after the one ffmpeg was already making.
+- **Volume Line on a phone:** in a lane shorter than 120 px a drag goes as if over 120 px: 14 px down from 100% is now 72% (was 21%). Seam E tests; not re-tried by touch.
+- While re-testing, `make dev`'s backend hung on its auto-reload (uvicorn waits for open event streams to close); its stuck child process was killed so the reloader started a fresh one. Worth knowing for `make dev`, not this feature's.

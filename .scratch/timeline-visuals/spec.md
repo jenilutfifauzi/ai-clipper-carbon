@@ -29,7 +29,7 @@ The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume
 
 **Volume Line**
 - **Every Music Clip and media Segment with sound** shows a thin line at its volume (a silent video or an image has none, as in the inspector). 100% sits at two thirds of the height and 200% at the top, on a curve that gives the quiet range room.
-- **On a picked item,** the line can be dragged up and down. A label shows the %, and the Waveform reshapes live. Releasing the drag ends one step of undo.
+- **On a picked item,** the line can be dragged up and down. A label shows the %, and the Waveform reshapes live. Releasing the drag ends one step of undo. In a lane shorter than 120 px (a phone's Music lane is 35 px), a drag goes as if over 120 px, so that a small move is a small change (added after the walkthrough).
 - **Source Segments have no Volume Line.** The Clip's own sound keeps its one volume, in the inspector.
 
 **Fade Ramp**
@@ -135,7 +135,7 @@ The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume
 **When chunks are made.**
 - **Media items: on upload.** The upload's single normalize pass also writes every chunk's Filmstrip and Peaks, so the upload answers with them ready. An item without them (uploaded before this feature) has them made on its first request.
 - **Sources: on demand.** A request for a missing chunk makes it and then answers.
-  - Chunks are made under one lock of their own, outside the Worker: one ffmpeg at a time, at low CPU priority and on one thread. Transcription and analysis keep the Worker.
+  - Chunks are made under one lock of their own, outside the Worker: one ffmpeg at a time, at low CPU priority, on one thread while the Worker runs a Job and on every core while it is idle. Transcription and analysis keep the Worker. Requests waiting for the lock are served latest first (amended after the walkthrough, ADR 0005).
   - The Job's browser-playable proxy is read when it has one. Otherwise the Source is read, seeking to the chunk's start.
   - A request that waited on the lock checks the cache again before making anything, so two requests for one chunk run ffmpeg once.
 
@@ -181,7 +181,7 @@ The Timeline draws **Filmstrips** and **Waveforms**. Picked items get a **Volume
   - the Volume Line and its label sit over them;
   - the existing name and volume % stay.
 - **A media cache held by the Advanced Edit,** for the session:
-  - at most two chunk requests at a time; queued requests that leave the margin before they start are dropped;
+  - at most two chunk requests at a time; queued requests that leave the margin before they start are dropped, and fetches under way that no canvas wants any more are cancelled;
   - Filmstrips decoded as bitmaps resized to the row's height × the device pixel ratio;
   - decoded bitmaps kept in an LRU of 12 chunks, released when evicted;
   - Peaks kept as they are (small), with their pyramids built once.

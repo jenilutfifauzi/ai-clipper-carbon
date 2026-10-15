@@ -359,11 +359,12 @@ def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, setti
 
 
 @router.get(f"/jobs/{{job_id}}/filmstrip/{STRIP_VERSION}/{{start}}.jpg")
-def job_filmstrip(start: int, job: ExistingJob, store: Store, settings: AppSettings) -> FileResponse:
+def job_filmstrip(start: int, job: ExistingJob, store: Store, settings: AppSettings, worker: JobWorker) -> FileResponse:
     """A Filmstrip chunk of the Job's Source from `start` seconds (a multiple of 30): its frames at
     each whole second, side by side, with their count in X-Frames. Made the first time it's asked
-    for, from the preview proxy when the Job has one, then kept in the Job's directory. 404 for a
-    `start` off the grid or past the end, or a Job without its Source yet."""
+    for, from the preview proxy when the Job has one, on every core unless the Worker is running a
+    Job, then kept in the Job's directory. 404 for a `start` off the grid or past the end, or a Job
+    without its Source yet."""
     source = job.source
     frames = frames_in(start, source.metadata.duration) if source else 0
     if source is None or not frames:
@@ -371,7 +372,10 @@ def job_filmstrip(start: int, job: ExistingJob, store: Store, settings: AppSetti
     job_dir = store.job_dir(job.id)
     chunk = job_dir / "strips" / STRIP_FORMAT / f"{start}.jpg"
     try:
-        make_strip(settings.ffmpeg_bin, job_dir / (source.preview or source.video), start, source.metadata.duration, chunk)
+        make_strip(
+            settings.ffmpeg_bin, job_dir / (source.preview or source.video), start, source.metadata.duration, chunk,
+            threads=lambda: 1 if worker.busy else 0,
+        )
     except RuntimeError as exc:
         raise HTTPException(404, str(exc)) from None
     return FileResponse(chunk, media_type="image/jpeg", headers={**_DERIVED, "X-Frames": str(frames)})

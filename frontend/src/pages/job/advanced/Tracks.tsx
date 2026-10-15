@@ -28,7 +28,7 @@ import { SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { HOOK_MIN_SECS } from "./ripple";
-import { gainAt, sourceGain, volumeHeight, volumeOfHeight } from "./timelineView";
+import { gainAt, sourceGain, volumeDragged, volumeHeight } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -627,10 +627,10 @@ function VolumeLine({ volume, grab, onVolume }: { volume: number; grab: boolean;
           style={{ height: VOLUME_HIT_PX, top: `clamp(0px, calc(${top} - ${VOLUME_HIT_PX / 2}px), calc(100% - ${VOLUME_HIT_PX}px))` }}
           label={`${Math.round(volume * 100)}%`}
           onGrab={(handle) => {
-            // From where it was when grabbed, by the share of the item's height dragged.
-            const from = volumeHeight(volume);
+            // From where it was when grabbed, by how far it is dragged.
+            const from = volume;
             const height = handle.parentElement!.getBoundingClientRect().height;
-            return ({ dy }, group) => onVolume(volumeOfHeight(from - dy / height), group);
+            return ({ dy }, group) => onVolume(volumeDragged(from, dy, height), group);
           }}
         />
       )}
