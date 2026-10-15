@@ -446,6 +446,8 @@ export function TimelineItem({
     y: number;
     from: { start: number; end: number };
     armed: boolean;
+    // Lifted by a long press, which picked it.
+    lifted: boolean;
     moved: boolean;
     // A click with Shift, Cmd or Ctrl.
     toggle: boolean;
@@ -506,6 +508,7 @@ export function TimelineItem({
         y: event.clientY,
         from: { start, end },
         armed: !touch && !!onChange,
+        lifted: false,
         moved: false,
         toggle: event.shiftKey || event.metaKey || event.ctrlKey,
         group: `drag:${++gestures}`,
@@ -518,6 +521,7 @@ export function TimelineItem({
         gesture.timer = setTimeout(() => {
           if (drag.current !== gesture) return;
           gesture.armed = true;
+          gesture.lifted = true;
           setLifted(true);
           if (!selected) onSelect(false);
           try {
@@ -551,7 +555,7 @@ export function TimelineItem({
     onPointerUp: (event: PointerEvent<HTMLDivElement>) => {
       const gesture = drag.current;
       if (!gesture || event.pointerId !== gesture.pointer) return;
-      if (!gesture.moved) onSelect(gesture.toggle);
+      if (!gesture.moved && !gesture.lifted) onSelect(gesture.toggle);
       stop();
     },
     onPointerCancel: stop,

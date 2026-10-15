@@ -1,11 +1,11 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import type { Pick } from "./pick";
+import { itemsOf, type Pick } from "./pick";
 import type { EditHistory } from "./useEditHistory";
 
 // The Advanced Edit's frame around its player, inspector and timeline: its bar, the asset tabs, the
@@ -123,28 +123,52 @@ export function SaveStatus({
   );
 }
 
-/** The phone's bottom bar: the asset tabs, or what can be done to the picked item. */
+/**
+ * The phone's bottom bar: the asset tabs and Pick, or what can be done to the picked items. In picking
+ * mode (`picking`, started by Pick), a tap adds an item to the Pick or takes it out, and the bar counts
+ * them and offers what can be done to them all, Paste while the Clipboard holds something
+ * (`paste`), and Done.
+ */
 export function Toolbar({
   pick,
   actions,
   playback,
+  picking,
+  paste,
   onAsset,
   onInspect,
+  onPicking,
   onDeselect,
 }: {
   pick: Pick;
   actions: ItemActions | null;
   playback: Playback;
+  picking: boolean;
+  paste: (() => void) | null;
   onAsset: (tab: AssetTab) => void;
   onInspect: () => void;
+  onPicking: () => void;
   onDeselect: () => void;
 }) {
+  const count = itemsOf(pick).length;
   return (
     <nav
       aria-label="Tools"
       className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-t border-border px-2 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]"
     >
-      {pick ? (
+      {picking ? (
+        <>
+          <ToolButton icon={Check} label="Done" onClick={onDeselect} />
+          <p aria-live="polite" className="flex min-w-16 flex-1 items-center justify-center text-[11px] font-medium text-text tabular-nums">
+            {count} picked
+          </p>
+          <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} disabled={!count} />
+          <ToolButton icon={Copy} label="Duplicate" onClick={() => actions?.duplicate()} disabled={!actions} />
+          <ToolButton icon={ClipboardCopy} label="Copy" onClick={() => actions?.copy()} disabled={!actions} />
+          <ToolButton icon={ClipboardPaste} label="Paste" onClick={() => paste?.()} disabled={!paste} />
+          <ToolButton icon={Trash2} label="Delete" onClick={() => actions?.remove()} disabled={!actions} />
+        </>
+      ) : pick ? (
         <>
           <ToolButton icon={X} label="Done" onClick={onDeselect} />
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
@@ -157,7 +181,12 @@ export function Toolbar({
           )}
         </>
       ) : (
-        ASSET_TABS.map((tab) => <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />)
+        <>
+          {ASSET_TABS.map((tab) => (
+            <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
+          ))}
+          <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
+        </>
       )}
     </nav>
   );

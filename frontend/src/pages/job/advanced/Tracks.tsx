@@ -52,6 +52,7 @@ export function Tracks({
   mediaById,
   handlers,
   changed,
+  picking = false,
 }: {
   geometry: TimeGeometry;
   duration: number;
@@ -66,11 +67,13 @@ export function Tracks({
   handlers: TrackHandlers;
   // The items just changed in another editor, by id ("hook" for the hook).
   changed: Set<string>;
+  // In picking mode (a phone's), where a tap adds an item to the Pick or takes it out.
+  picking?: boolean;
 }) {
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
   // An item clicked: picked alone, or added to the Pick or taken out of it.
-  const choose = (item: ItemRef) => (toggle: boolean) => onSelect(toggle ? toggled(pick, item) : picked(item));
+  const choose = (item: ItemRef) => (toggle: boolean) => onSelect(toggle || picking ? toggled(pick, item) : picked(item));
   // An item of several picked moved: the picked Text Layers, Music Clips and Overlays move with it.
   // Trimmed (or, for a Segment, moved), it is picked alone.
   const together = (item: ItemRef, edge: "move" | "start" | "end") =>

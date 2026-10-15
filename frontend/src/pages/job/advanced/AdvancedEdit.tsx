@@ -115,6 +115,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [sheet, setSheet] = useState<AssetTab | "inspector" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   const wide = useMediaQuery(WIDE);
+  // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
+  const [pickingMode, setPicking] = useState(false);
+  const picking = pickingMode && !wide;
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
 
@@ -449,7 +452,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         selected: stageIdsOf(pick),
         onSelect: (id, toggle) => {
           const item = stageItem(id);
-          select("id" in item ? (toggle ? toggled(pick, item) : picked(item)) : item);
+          select("id" in item ? (toggle || picking ? toggled(pick, item) : picked(item)) : item);
         },
         onPlace: (id, place, group) => {
           if (id === "hook" || id === "captions") {
@@ -481,7 +484,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           .map((item) => item.id),
         // As the plan draws them: those whose items are there, starting in the Clip.
         ids: edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
-        onSelect: (id, toggle) => select(toggle ? toggled(pick, { kind: "overlay", id }) : picked({ kind: "overlay", id })),
+        onSelect: (id, toggle) => select(toggle || picking ? toggled(pick, { kind: "overlay", id }) : picked({ kind: "overlay", id })),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
@@ -512,6 +515,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           playback={playback}
           mediaById={mediaById}
           changed={changed}
+          picking={picking}
           handlers={{
             onSelect: select,
             onEdits: history.set,
@@ -675,9 +679,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           setAssetTab(tab);
           setSheet(tab);
         }}
+        picking={picking}
+        paste={pasteHere}
         onInspect={() => setSheet("inspector")}
+        onPicking={() => setPicking(true)}
         onDeselect={() => {
           select(null);
+          setPicking(false);
           setSheet(null);
         }}
       />
