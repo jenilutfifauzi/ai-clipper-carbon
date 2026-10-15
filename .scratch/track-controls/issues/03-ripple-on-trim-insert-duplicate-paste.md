@@ -19,14 +19,18 @@
 
 **Blocked by:** 01, 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D, magnetic on:
-  - [ ] trimming an edge shorter moves the later layers up, and longer moves them back;
-  - [ ] a trim drag's steps from one origin give the same layers as one step;
-  - [ ] an insert and a duplicate of Segments move the later layers back, and leave layers across the point as they are;
-  - [ ] a paste with Segments moves the existing later layers back and leaves the pasted layers at their paste offsets;
-  - [ ] a reorder moves no layer.
-- [ ] Seam D: magnetic off, each of these leaves the layers as they are.
-- [ ] In the browser, dragging a Segment's edge moves a later Text Layer live, and one undo puts both back.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] Seam D, magnetic on:
+  - [x] trimming an edge shorter moves the later layers up, and longer moves them back;
+  - [x] a trim drag's steps from one origin give the same layers as one step;
+  - [x] an insert and a duplicate of Segments move the later layers back, and leave layers across the point as they are;
+  - [x] a paste with Segments moves the existing later layers back and leaves the pasted layers at their paste offsets;
+  - [x] a reorder moves no layer.
+- [x] Seam D: magnetic off, each of these leaves the layers as they are.
+- [x] In the browser, dragging a Segment's edge moves a later Text Layer live, and one undo puts both back.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified. In the browser, dragging Segment 1's end 2 s in moved a later Text Layer live (20.1 → 19.3 → 18.2 s), and one undo put both back. The review found duplicate placing layer copies before their moved originals; fixed in 02d6d0e.

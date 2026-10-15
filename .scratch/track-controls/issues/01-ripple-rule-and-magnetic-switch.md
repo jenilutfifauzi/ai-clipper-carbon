@@ -28,20 +28,24 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D, a three-Segment Clip with its middle Segment removed, magnetic on:
-  - [ ] a layer before it is unchanged;
-  - [ ] a layer after it moves up by the Segment's played length;
-  - [ ] layers across its start and across its end are shortened, with a song's offset advanced only when its start was cut;
-  - [ ] a layer inside it is deleted and counted in the notice;
-  - [ ] the hook inside it moves to the join;
-  - [ ] a layer left shorter than the minimum is deleted.
-- [ ] Seam D: magnetic off, the same remove leaves every layer as it is.
-- [ ] Seam D: several Segments removed at once move the layers as if removed one at a time from the latest.
-- [ ] Seam D: a Segment removed with its Transition moves the layers by the Clip's actual loss.
-- [ ] Seam D: an insertion moves the later layers back, and leaves the ones across its point as they are.
+- [x] Seam D, a three-Segment Clip with its middle Segment removed, magnetic on:
+  - [x] a layer before it is unchanged;
+  - [x] a layer after it moves up by the Segment's played length;
+  - [x] layers across its start and across its end are shortened, with a song's offset advanced only when its start was cut;
+  - [x] a layer inside it is deleted and counted in the notice;
+  - [x] the hook inside it moves to the join;
+  - [x] a layer left shorter than the minimum is deleted.
+- [x] Seam D: magnetic off, the same remove leaves every layer as it is.
+- [x] Seam D: several Segments removed at once move the layers as if removed one at a time from the latest.
+- [x] Seam D: a Segment removed with its Transition moves the layers by the Clip's actual loss.
+- [x] Seam D: an insertion moves the later layers back, and leaves the ones across its point as they are.
 - [ ] The switch is on by default, survives a reload, and still works with blocked storage.
-- [ ] One undo brings back the Segment and every layer it moved or deleted.
-- [ ] The MCP instructions carry the new point, and the backend's tests pass.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] One undo brings back the Segment and every layer it moved or deleted.
+- [x] The MCP instructions carry the new point, and the backend's tests pass.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified. Checked in the browser (Job 934fb0fe1f9a, Candidate #2): the switch is on at first, stays off across a reload once turned off; deleting the middle of three Segments moved a Text Layer from 20.1 s to 15.9 s with it on, left it with it off, and one undo brought both back. Not checked: blocked storage (the code falls back to on). Insertions are tested through ticket 03's actions.

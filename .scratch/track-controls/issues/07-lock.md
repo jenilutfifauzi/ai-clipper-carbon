@@ -19,14 +19,18 @@
 
 **Blocked by:** 05, 06.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D:
-  - [ ] click, toggle, band and select all skip locked kinds;
-  - [ ] locking prunes the Pick;
-  - [ ] a paste leaves out locked kinds with a notice;
-  - [ ] split all skips locked kinds but not hidden ones;
-  - [ ] a remove with magnetic on still moves a locked Text Layer.
+- [x] Seam D:
+  - [x] click, toggle, band and select all skip locked kinds;
+  - [x] locking prunes the Pick;
+  - [x] a paste leaves out locked kinds with a notice;
+  - [x] split all skips locked kinds but not hidden ones;
+  - [x] a remove with magnetic on still moves a locked Text Layer.
 - [ ] On a locked Track, dragging, trimming, dropping and the stage handles do nothing, and adding gives a notice.
-- [ ] Locks are gone after a reload, and never enter the undo history.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] Locks are gone after a reload, and never enter the undo history.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified. In the browser, a Text Layer on the locked Text Track couldn't be picked, and adding a text gave "The Text Track is locked." Drags, drops and the stage handles on locked Tracks are left for the walkthrough (10).

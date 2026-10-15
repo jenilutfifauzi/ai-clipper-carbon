@@ -10,9 +10,13 @@
 
 **Blocked by:** 01, 06, 07.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] At phone width, the Tracks button opens the sheet, and each button hides, mutes or locks its Track as on a desktop.
 - [ ] The Magnetic switch in the sheet and the desktop's bar show and set the same preference.
 - [ ] The sheet fits a 375 px wide screen without horizontal scroll, with tap targets of at least 44 px.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified; not yet seen at phone width. Left for the walkthrough (10).

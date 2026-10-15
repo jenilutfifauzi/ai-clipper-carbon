@@ -15,9 +15,13 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D: start later, start earlier, end earlier and end later each give the expected layer times and hook.
+- [x] Seam D: start later, start earlier, end earlier and end later each give the expected layer times and hook.
 - [ ] In the browser, trimming an uncut Clip's start 2 s later moves a Text Layer at 5 s to 3 s, in one Revision.
 - [ ] Switching it off in the clip editor switches it off in the Advanced Edit.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified (a new range chosen from the transcript doesn't ripple, since it may be a different moment). The review found a hook in an end trimmed off moved past the new end; fixed in 02d6d0e. Not yet driven in the browser; left for the walkthrough (10).

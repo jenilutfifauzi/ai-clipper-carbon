@@ -10,10 +10,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Dropping a video on the Video Track, "add to clip" from the Source and from the Media Library, trimming either edge of a Source or media Segment, and reordering all behave as before, with the same Pick and undo.
-- [ ] Seam D:
-  - [ ] an insert at the playhead lands after the Segment there, and at a given place lands there;
-  - [ ] two steps of one trim drag from one origin give the same edits as the last step alone.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] Seam D:
+  - [x] an insert at the playhead lands after the Segment there, and at a given place lands there;
+  - [x] two steps of one trim drag from one origin give the same edits as the last step alone.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified. Only trimming a Segment's end was driven in the browser; drops, "add to clip" and reorder are left for the walkthrough (10).

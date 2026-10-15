@@ -13,12 +13,16 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D:
-  - [ ] with an empty Pick, every Segment, Text Layer, Music Clip and Overlay under the playhead is cut, and items not under it are not;
-  - [ ] a Source Segment is cut in the silence between Words;
-  - [ ] the hook is untouched;
-  - [ ] the tails are the Pick.
+- [x] Seam D:
+  - [x] with an empty Pick, every Segment, Text Layer, Music Clip and Overlay under the playhead is cut, and items not under it are not;
+  - [x] a Source Segment is cut in the silence between Words;
+  - [x] the hook is untouched;
+  - [x] the tails are the Pick.
 - [ ] Cmd/Ctrl+B with nothing picked, the desktop Split button and the phone's Split button all split all, in one undo step.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified. Cmd+B with nothing picked cut the one Segment twice in the browser, at silences between Words, and left the hook whole. The bar's and phone's Split buttons are left for the walkthrough (10).

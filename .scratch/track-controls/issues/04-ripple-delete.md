@@ -14,13 +14,17 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D:
-  - [ ] with magnetic off, ripple delete of a Segment still moves the later layers up;
-  - [ ] ripple delete of a Text Layer moves the later Text Layers up by its length, leaves an overlapping one in place, and leaves Music Clips and Overlays alone;
-  - [ ] a mixed Pick of a Segment and a Music Clip gives both effects in one outcome;
-  - [ ] the hook alone behaves like Delete.
+- [x] Seam D:
+  - [x] with magnetic off, ripple delete of a Segment still moves the later layers up;
+  - [x] ripple delete of a Text Layer moves the later Text Layers up by its length, leaves an overlapping one in place, and leaves Music Clips and Overlays alone;
+  - [x] a mixed Pick of a Segment and a Music Clip gives both effects in one outcome;
+  - [x] the hook alone behaves like Delete.
 - [ ] Shift+Delete and Shift+Backspace work, and typing in a field is left alone.
 - [ ] The phone's picked items' bar has Ripple delete.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built as specified, except that a Track closes by how long the deleted items before an item cover, overlaps counted once (the spec now says so). Shift+Delete on a Segment with the switch off rippled in the browser. Shift+Backspace and the phone's Ripple button are left for the walkthrough (10).

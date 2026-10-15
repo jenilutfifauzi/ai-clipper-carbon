@@ -32,10 +32,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Each hide and mute button changes exactly its Track in the preview, and turns back off.
 - [ ] A hidden Track's items stay on the Timeline, dimmed, and its stage items can't be clicked.
-- [ ] Hide and mute are gone after a reload, and never enter the undo history.
+- [x] Hide and mute are gone after a reload, and never enter the undo history.
 - [ ] A Clip rendered with a Track hidden and another muted is complete.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** Built, with one change agreed in the spec afterwards: mute plans the preview from a draft without that sound (an Overlay's sound reaches the plan beside the music), and hide filters the plan the player draws. In the browser, hiding the Text Track took a Text Layer off the preview and showing it brought it back. Hearing a mute, the dimmed rows' look and a render with a Track hidden are left for the walkthrough (10).
