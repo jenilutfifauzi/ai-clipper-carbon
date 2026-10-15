@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { duplicate, move, nudge, remove, restyle, selectAll, shared, split, type Scene } from "./actions";
+import { duplicate, move, nudge, remove, restyle, pickAll, shared, split, type PickContext } from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
@@ -67,7 +67,7 @@ function edits(changes: Partial<AdvancedEdits> = {}): AdvancedEdits {
 }
 
 // The scene of `edits` with `pick`: its Main Track played back to back, new ids numbered from n1.
-function scene(state: AdvancedEdits, pick: Pick, gap = (time: number) => time): Scene {
+function scene(state: AdvancedEdits, pick: Pick, gap = (time: number) => time): PickContext {
   let n = 0;
   const played = playedFrom(state.segments);
   return { edits: state, pick, played, duration: played.at(-1)?.end ?? 0, gap, ids: () => `n${++n}` };
@@ -202,7 +202,19 @@ describe("removing a Pick", () => {
   });
 });
 
-describe("select all", () => {
+describe("removing every Segment", () => {
+  test("keeps the first, picked, and removes the others", () => {
+    const before = edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("s3", 300, 305)] });
+
+    const outcome = remove(scene(before, picked(seg("s1"), seg("s2"), seg("s3"))));
+
+    expect(outcome?.edits).toEqual({ ...before, segments: [segment("s1", 100, 110)] });
+    expect(outcome?.pick).toEqual(picked(seg("s1")));
+    expect(outcome?.notice).toMatch(/first Segment/);
+  });
+});
+
+describe("pick all", () => {
   test("picks every Segment, Text Layer, Music Clip and Overlay, and not the hook or captions", () => {
     const now = edits({
       segments: [segment("s1", 100, 110), segment("s2", 200, 205)],
@@ -211,13 +223,13 @@ describe("select all", () => {
       overlays: [overlay("o", 1, 1)],
     });
 
-    expect(selectAll(now)).toEqual(
+    expect(pickAll(now)).toEqual(
       picked(seg("s1"), seg("s2"), text("a"), { kind: "music", id: "m" }, { kind: "overlay", id: "o" }),
     );
   });
 
   test("picks the one Segment of a Clip that has nothing else", () => {
-    expect(selectAll(edits())).toEqual(picked(seg("s1")));
+    expect(pickAll(edits())).toEqual(picked(seg("s1")));
   });
 });
 

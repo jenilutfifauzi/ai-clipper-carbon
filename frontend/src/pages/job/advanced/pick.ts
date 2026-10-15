@@ -40,6 +40,9 @@ export function toggled(pick: Pick, item: ItemRef): Pick {
     : picked(...items, item);
 }
 
+/** The Pick after a click on `item`: it alone, or with Shift, Cmd or Ctrl (`toggle`) added or taken out. */
+export const clicked = (pick: Pick, item: ItemRef, toggle: boolean): Pick => (toggle ? toggled(pick, item) : picked(item));
+
 /** `pick` with what `edits` no longer has left out: after an undo, a redo or a change from elsewhere. */
 export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {
   if (pick?.kind === "join") {

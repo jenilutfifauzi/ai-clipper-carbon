@@ -179,6 +179,7 @@ export function Toolbar({
               <ToolButton icon={Trash2} label="Delete" onClick={actions.remove} />
             </>
           )}
+          <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
         </>
       ) : (
         <>

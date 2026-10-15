@@ -140,6 +140,13 @@ export function ClipPreview({
   // What is picked on the stage, Overlays as "overlay:<id>": moving one of several moves them all.
   const picked = [...(controls?.selected ?? []), ...(overlays?.selected ?? []).map((id) => `overlay:${id}`)];
   const [overlayHold, setOverlayHold] = useState<OverlayHold | null>(null);
+  // Let go once a plan has the dropped Overlay elsewhere: an undo bringing it back where it was
+  // grabbed mustn't hold it again.
+  useEffect(() => {
+    if (!plan || !overlays || !overlayHold || overlayHold.dragging) return;
+    const event = plan.overlays[overlays.ids.indexOf(overlayHold.id)];
+    if (!event || !heldArea(overlayHold, overlayHold.id, event)) setOverlayHold(null);
+  }, [plan, overlays, overlayHold]);
   const edit = useStageEdit(
     plan,
     stage,

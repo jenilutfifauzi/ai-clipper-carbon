@@ -5,11 +5,11 @@ import { SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, type ItemKind, type ItemRef, type Pick } from "./pick";
 
 /**
- * What the actions on a Pick are done in: the edits and the Pick, the Main Track as it plays, the
+ * What the actions on a Pick are done in (not a Scene of the plan): the edits and the Pick, the Main Track as it plays, the
  * Clip's length, `gap` (which moves a time on the Source's timeline into the silence between Words
  * nearest it) and `ids` (new items' ids).
  */
-export interface Scene {
+export interface PickContext {
   edits: AdvancedEdits;
   pick: Pick;
   played: PlayedSegment[];
@@ -61,13 +61,13 @@ const KINDS: {
   },
 };
 
-export const idOf = (scene: Scene) => (scene.ids ?? newId)();
+export const idOf = (scene: PickContext) => (scene.ids ?? newId)();
 
 /**
  * The picked items removed. The Main Track is never left empty: with every Segment picked, the first
  * stays, picked, and the owner is told.
  */
-export function remove(scene: Scene): Outcome | null {
+export function remove(scene: PickContext): Outcome | null {
   const { edits, pick } = scene;
   if (!itemsOf(pick).length) return null;
   const kept = <T extends { id: string }>(items: T[], kind: ItemKind) => items.filter((item) => !isPicked(pick, kind, item.id));
@@ -81,20 +81,20 @@ export function remove(scene: Scene): Outcome | null {
   if (next.segments.length) return { edits: next, pick: null };
   const first = edits.segments[0];
   const outcome = { pick: picked({ kind: "segment", id: first.id }), notice: "The first Segment stays: a clip needs at least one." };
-  // Nothing but the Segments picked: nothing changes.
-  if (itemsOf(pick).every((item) => item.kind === "segment")) return { edits, ...outcome };
+  // Only the one Segment there is picked: nothing changes.
+  if (itemsOf(pick).length === 1 && edits.segments.length === 1) return { edits, ...outcome };
   return { edits: { ...next, segments: [first] }, ...outcome };
 }
 
 /** Every Segment, Text Layer, Music Clip and Overlay picked (not the hook, the captions or a join). */
-export function selectAll(edits: AdvancedEdits): Pick {
+export function pickAll(edits: AdvancedEdits): Pick {
   const refs = (kind: ItemKind) => edits[LISTS[kind]].map((item) => ({ kind, id: item.id }));
   return picked(...refs("segment"), ...refs("text"), ...refs("music"), ...refs("overlay"));
 }
 
 // The picked Segments in Main Track order, and the picked Text Layers, Music Clips and Overlays in
 // their lists' order: the order their copies and parts are made and picked in.
-export function pickedItems(scene: Scene) {
+export function pickedItems(scene: PickContext) {
   const { edits, pick } = scene;
   const segments = edits.segments.filter((segment) => isPicked(pick, "segment", segment.id));
   const layers = (Object.keys(KINDS) as TimedKind[]).flatMap((kind) =>
@@ -109,7 +109,7 @@ export function pickedItems(scene: Scene) {
  * after the group they make when there is room before the Clip's end, else each where its kind puts
  * it aside.
  */
-export function duplicate(scene: Scene): Outcome | null {
+export function duplicate(scene: PickContext): Outcome | null {
   const { edits, duration } = scene;
   const { segments, layers } = pickedItems(scene);
   if (!segments.length && !layers.length) return null;
@@ -136,7 +136,7 @@ export function duplicate(scene: Scene): Outcome | null {
 }
 
 // Whether the playhead at `time` is inside picked item `ref`, so that it can be split there.
-function inside(scene: Scene, ref: ItemRef, time: number): boolean {
+function inside(scene: PickContext, ref: ItemRef, time: number): boolean {
   if (ref.kind === "segment") {
     const shown = scene.played[scene.edits.segments.findIndex((segment) => segment.id === ref.id)];
     return !!shown && time > shown.start + SEGMENT_MIN_SECS && time < shown.end - SEGMENT_MIN_SECS;
@@ -146,7 +146,7 @@ function inside(scene: Scene, ref: ItemRef, time: number): boolean {
 }
 
 /** Whether a picked item can be split at `time`: when it is inside one. */
-export function canSplit(scene: Scene, time: number): boolean {
+export function canSplit(scene: PickContext, time: number): boolean {
   return itemsOf(scene.pick).some((ref) => inside(scene, ref, time));
 }
 
@@ -156,7 +156,7 @@ export function canSplit(scene: Scene, time: number): boolean {
  * of the Source in the silence between Words nearest the playhead, since the backend snaps each
  * part's edge to the Words it holds and a cut through a Word would give that Word to both.
  */
-export function split(scene: Scene, at: number): Outcome | null {
+export function split(scene: PickContext, at: number): Outcome | null {
   const { edits } = scene;
   const { segments, layers } = pickedItems(scene);
   const next = { ...edits };
@@ -187,7 +187,7 @@ export function split(scene: Scene, at: number): Outcome | null {
  * The picked Text Layers, Music Clips and Overlays moved `delta` seconds later (earlier when it is
  * negative), as a group: no further than keeps them all inside the Clip. Picked Segments stay.
  */
-export function move(scene: Scene, delta: number): Outcome | null {
+export function move(scene: PickContext, delta: number): Outcome | null {
   const { layers } = pickedItems(scene);
   if (!layers.length) return null;
   const first = Math.min(...layers.map(({ item }) => item.start));
@@ -208,7 +208,7 @@ const FRAME = { width: 1080, height: 1920 };
  * The picked Text Layers and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
  * further than keeps each one's middle in the frame.
  */
-export function nudge(scene: Scene, dx: number, dy: number): Outcome | null {
+export function nudge(scene: PickContext, dx: number, dy: number): Outcome | null {
   const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "overlay"; item: TextLayer | Overlay }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
@@ -254,7 +254,7 @@ export interface ItemActions {
  * playhead's time, and `clip` puts them on the Clipboard.
  */
 export function itemActions(
-  scene: Scene,
+  scene: PickContext,
   now: () => number,
   apply: (outcome: Outcome) => void,
   clip: { copy: () => void; cut: () => void },

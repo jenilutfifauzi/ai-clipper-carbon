@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
-import { idOf, pickedItems, remove, type Outcome, type Scene, type Timed, type TimedKind } from "./actions";
+import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, round } from "./edits";
 import { LISTS, picked, type ItemRef } from "./pick";
 
@@ -29,7 +29,7 @@ export interface Clipboard {
 }
 
 /** The Pick's Segments, Text Layers, Music Clips and Overlays, as copied from `from`. */
-export function copy(scene: Scene, from: Place): Clipboard | null {
+export function copy(scene: PickContext, from: Place): Clipboard | null {
   const { edits, played } = scene;
   const { segments, layers } = pickedItems(scene);
   if (!segments.length && !layers.length) return null;
@@ -51,7 +51,7 @@ export function copy(scene: Scene, from: Place): Clipboard | null {
 }
 
 /** The Pick copied, and removed in one change. */
-export function cut(scene: Scene, from: Place): { clipboard: Clipboard; outcome: Outcome } | null {
+export function cut(scene: PickContext, from: Place): { clipboard: Clipboard; outcome: Outcome } | null {
   const clipboard = copy(scene, from);
   const outcome = remove(scene);
   return clipboard && outcome ? { clipboard, outcome } : null;
@@ -77,7 +77,7 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
  * of their ranges, but where it has its own: a Word Edit of the same Word (by the Source's `words`)
  * or a Layout Override in that range. Into another Job, they are left out, with their Transitions.
  */
-export function paste(scene: Scene, clipboard: Clipboard, at: number, to: Place, words: { start: number; end: number }[] = []): Outcome {
+export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: Place, words: { start: number; end: number }[] = []): Outcome {
   const { edits, played } = scene;
   const ids = new Map<string, string>();
   const fresh = (id: string) => {
@@ -152,12 +152,12 @@ export function paste(scene: Scene, clipboard: Clipboard, at: number, to: Place,
   return { edits: next, pick: picked(...pasted), ...(notice ? { notice } : {}) };
 }
 
-let held: Clipboard | null = null;
+let current: Clipboard | null = null;
 const listeners = new Set<() => void>();
 
 /** What is copied now: kept for the browser tab, across Candidates and Jobs. */
-export function hold(clipboard: Clipboard) {
-  held = clipboard;
+export function setClipboard(clipboard: Clipboard) {
+  current = clipboard;
   for (const listener of listeners) listener();
 }
 
@@ -167,6 +167,6 @@ export function useClipboard(): Clipboard | null {
       listeners.add(listener);
       return () => void listeners.delete(listener);
     },
-    () => held,
+    () => current,
   );
 }

@@ -33,8 +33,8 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { itemActions, move, nudge, selectAll, type ItemActions, type Outcome } from "./actions";
-import { copy, cut, hold, paste, useClipboard } from "./clipboard";
+import { itemActions, move, nudge, pickAll, type ItemActions, type Outcome } from "./actions";
+import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
@@ -44,7 +44,7 @@ import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { bandPick, isPicked, itemsOf, picked, prunedPick, samePick, stageIdsOf, stageItem, toggled, type ItemKind, type Pick } from "./pick";
+import { bandPick, clicked, isPicked, itemsOf, picked, prunedPick, samePick, stageIdsOf, stageItem, type ItemKind, type Pick } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -56,6 +56,9 @@ const EDITABLE = new Set(["review", "rendering"]);
 const WIDE = "(min-width: 64rem)";
 // How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
 type Taken = "elsewhere" | "refused" | "restored";
+
+// How far the arrow keys move the picked items (with Alt, ten times as far), as on the Timeline.
+const ARROW_SECS = 0.1;
 
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
@@ -110,13 +113,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
-  const [held, setHeld] = useState<Pick>(null);
+  const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab or of the inspector.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   const wide = useMediaQuery(WIDE);
   // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
-  const [pickingMode, setPicking] = useState(false);
+  const [pickingMode, setPickingMode] = useState(false);
   const picking = pickingMode && !wide;
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
@@ -205,10 +208,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const edits = history.value;
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away.
-  const pick = prunedPick(held, edits);
+  const pick = prunedPick(pickState, edits);
   useEffect(() => {
-    if (pick !== held) setHeld(pick);
-  }, [pick, held]);
+    if (pick !== pickState) setPickState(pick);
+  }, [pick, pickState]);
 
   // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once; the edits
   // waiting here are merged onto it and saved from it, mine winning where both changed the same item.
@@ -324,7 +327,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     history.set({ ...edits, ...next }, group);
   }
   function select(next: Pick) {
-    setHeld((old) => (samePick(old, next) ? old : next));
+    setPickState((old) => (samePick(old, next) ? old : next));
   }
   // An item added: picked, and on a phone the sheet closed (or, for a text, its fields opened to type in).
   function added(next: Pick, fields = false) {
@@ -409,18 +412,28 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const clip = {
     copy() {
       const copied = copy(scene, here);
-      if (copied) hold(copied);
+      if (copied) setClipboard(copied);
     },
     cut() {
       const done = cut(scene, here);
       if (!done) return;
-      hold(done.clipboard);
+      setClipboard(done.clipboard);
       apply(done.outcome);
     },
   };
   const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here, job.transcript?.words ?? [])));
   const actions = itemActions(scene, () => playback.time, apply, clip);
-  useShortcuts(history, playback, actions, { all: () => select(selectAll(edits)), none: () => select(null), paste: pasteHere });
+  // The picked Text Layers, Music Clips and Overlays moved `delta` seconds, together.
+  function moveLayers(delta: number, group: string) {
+    const moved = move(scene, delta);
+    if (moved) history.set(moved.edits, group);
+  }
+  useShortcuts(history, playback, actions, {
+    pickAll: () => select(pickAll(edits)),
+    pickNone: () => select(null),
+    paste: pasteHere,
+    move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
+  });
 
   async function close() {
     await history.flush();
@@ -452,7 +465,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         selected: stageIdsOf(pick),
         onSelect: (id, toggle) => {
           const item = stageItem(id);
-          select("id" in item ? (toggle || picking ? toggled(pick, item) : picked(item)) : item);
+          select("id" in item ? clicked(pick, item, toggle || picking) : item);
         },
         onPlace: (id, place, group) => {
           if (id === "hook" || id === "captions") {
@@ -484,7 +497,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           .map((item) => item.id),
         // As the plan draws them: those whose items are there, starting in the Clip.
         ids: edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
-        onSelect: (id, toggle) => select(toggle || picking ? toggled(pick, { kind: "overlay", id }) : picked({ kind: "overlay", id })),
+        onSelect: (id, toggle) => select(clicked(pick, { kind: "overlay", id }, toggle || picking)),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
@@ -523,10 +536,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onMusic: updateMusic,
             onOverlay: updateOverlay,
             onSegment: moveSegment,
-            onMove: (delta, group) => {
-              const moved = move(scene, delta);
-              if (moved) history.set(moved.edits, group);
-            },
+            onMove: moveLayers,
             onJoin: (after) => {
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");
@@ -682,10 +692,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         picking={picking}
         paste={pasteHere}
         onInspect={() => setSheet("inspector")}
-        onPicking={() => setPicking(true)}
+        onPicking={() => setPickingMode(true)}
         onDeselect={() => {
           select(null);
-          setPicking(false);
+          setPickingMode(false);
           setSheet(null);
         }}
       />
@@ -700,13 +710,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 
 // Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
 // and Escape to pick none, Cmd/Ctrl+V to paste, and for the picked items Delete, Cmd/Ctrl+D to
-// duplicate them, Cmd/Ctrl+B to split them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them; except
-// while typing.
+// duplicate them, Cmd/Ctrl+B to split them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the
+// arrow keys (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no
+// item has the focus; except while typing, and Cmd/Ctrl+C while text on the page is selected.
 function useShortcuts(
   history: EditHistory<AdvancedEdits>,
   playback: Playback,
   actions: ItemActions | null,
-  pick: { all: () => void; none: () => void; paste: (() => void) | null },
+  more: { pickAll: () => void; pickNone: () => void; paste: (() => void) | null; move: ((delta: number, group: string) => void) | null },
 ) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -723,9 +734,12 @@ function useShortcuts(
         history.redo();
       } else if (command && key === "a") {
         event.preventDefault();
-        pick.all();
+        more.pickAll();
       } else if (key === "escape") {
-        pick.none();
+        more.pickNone();
+      } else if (more.move && (key === "arrowleft" || key === "arrowright") && !command && !event.shiftKey && target === document.body) {
+        event.preventDefault();
+        more.move((key === "arrowright" ? 1 : -1) * ARROW_SECS * (event.altKey ? 10 : 1), "key:move");
       } else if (key === " " && target === document.body) {
         event.preventDefault();
         playback.toggle();
@@ -738,20 +752,20 @@ function useShortcuts(
       } else if (actions && command && key === "b") {
         event.preventDefault();
         actions.split();
-      } else if (actions && command && key === "c") {
+      } else if (actions && command && key === "c" && !window.getSelection()?.toString()) {
         event.preventDefault();
         actions.copy();
       } else if (actions && command && key === "x") {
         event.preventDefault();
         actions.cut();
-      } else if (pick.paste && command && key === "v") {
+      } else if (more.paste && command && key === "v") {
         event.preventDefault();
-        pick.paste();
+        more.paste();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [history, playback, actions, pick]);
+  }, [history, playback, actions, more]);
 }
 
 /**

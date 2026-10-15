@@ -6,7 +6,7 @@ import { TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, itemsOf, keyOf, picked, toggled, type ItemRef, type Pick } from "./pick";
+import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 
 // The hook's shortest and longest time (hook_secs in backend/app/api.py).
 const HOOK_MIN_SECS = 0.5;
@@ -72,14 +72,21 @@ export function Tracks({
 }) {
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
-  // An item clicked: picked alone, or added to the Pick or taken out of it.
-  const choose = (item: ItemRef) => (toggle: boolean) => onSelect(toggle || picking ? toggled(pick, item) : picked(item));
-  // An item of several picked moved: the picked Text Layers, Music Clips and Overlays move with it.
-  // Trimmed (or, for a Segment, moved), it is picked alone.
-  const together = (item: ItemRef, edge: "move" | "start" | "end") =>
-    edge === "move" && item.kind !== "segment" && isPicked(pick, item.kind, item.id) && itemsOf(pick).filter((other) => other.kind !== "segment").length > 1;
+  // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
+  const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
+  // A picked item of several dragged or trimmed (or a Segment moved): picked alone.
   const alone = (item: ItemRef) => {
     if (itemsOf(pick).length > 1) onSelect(picked(item));
+  };
+  // A Text Layer, Music Clip or Overlay dragged or trimmed, from `now` (its start): moved with the
+  // other picked ones when it is picked with others, else changed alone by `update`.
+  const layerChanged = (item: ItemRef, now: number, { start, edge }: { start: number; edge: "move" | "start" | "end" }, group: string, update: () => void) => {
+    if (edge === "move" && isPicked(pick, item.kind, item.id) && itemsOf(pick).length > 1) {
+      handlers.onMove(round(start) - now, group);
+      return;
+    }
+    alone(item);
+    update();
   };
   const hookEnd = Math.min(edits.hook_start + edits.hook_secs, duration);
   // The first lane next to the video, later ones above it; one row even when empty, to drop on.
@@ -118,12 +125,11 @@ export function Tracks({
                 label={`Text "${layer.text}", from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s`}
                 pickKey={keyOf({ kind: "text", id: layer.id })}
                 onSelect={choose({ kind: "text", id: layer.id })}
-                onChange={({ start, end, edge }, group) => {
-                  const ref = { kind: "text", id: layer.id } as const;
-                  if (together(ref, edge)) return handlers.onMove(round(start) - layer.start, group);
-                  alone(ref);
-                  handlers.onText({ ...layer, start: round(start), secs: round(end - start) }, group);
-                }}
+                onChange={(range, group) =>
+                  layerChanged({ kind: "text", id: layer.id }, layer.start, range, group, () =>
+                    handlers.onText({ ...layer, start: round(range.start), secs: round(range.end - range.start) }, group),
+                  )
+                }
                 onDelete={selected ? onDelete : undefined}
               >
                 <Type aria-hidden size={12} className="shrink-0" />
@@ -155,21 +161,20 @@ export function Tracks({
                 label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
                 pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
-                onChange={({ start, end, edge }, group) => {
-                  const ref = { kind: "overlay", id: overlay.id } as const;
-                  if (together(ref, edge)) return handlers.onMove(round(start) - overlay.start, group);
-                  alone(ref);
-                  handlers.onOverlay(
-                    {
-                      ...overlay,
-                      start: round(start),
-                      secs: round(end - start),
-                      // Trimming a video's start starts it later in the video.
-                      offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
-                    },
-                    group,
-                  );
-                }}
+                onChange={({ start, end, edge }, group) =>
+                  layerChanged({ kind: "overlay", id: overlay.id }, overlay.start, { start, edge }, group, () =>
+                    handlers.onOverlay(
+                      {
+                        ...overlay,
+                        start: round(start),
+                        secs: round(end - start),
+                        // Trimming a video's start starts it later in the video.
+                        offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
+                      },
+                      group,
+                    ),
+                  )
+                }
                 onDelete={selected ? onDelete : undefined}
               >
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
@@ -333,21 +338,20 @@ export function Tracks({
                 label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
-                onChange={({ start, end, edge }, group) => {
-                  const ref = { kind: "music", id: clip.id } as const;
-                  if (together(ref, edge)) return handlers.onMove(round(start) - clip.start, group);
-                  alone(ref);
-                  handlers.onMusic(
-                    {
-                      ...clip,
-                      start: round(start),
-                      secs: round(end - start),
-                      // Trimming its start starts it later in the song.
-                      offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
-                    },
-                    group,
-                  );
-                }}
+                onChange={({ start, end, edge }, group) =>
+                  layerChanged({ kind: "music", id: clip.id }, clip.start, { start, edge }, group, () =>
+                    handlers.onMusic(
+                      {
+                        ...clip,
+                        start: round(start),
+                        secs: round(end - start),
+                        // Trimming its start starts it later in the song.
+                        offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
+                      },
+                      group,
+                    ),
+                  )
+                }
                 onDelete={selected ? onDelete : undefined}
               >
                 <Music aria-hidden size={12} className="shrink-0" />
