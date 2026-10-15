@@ -23,12 +23,16 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Every current gesture and key behaves as before: picking, delete, Cmd+D, Cmd+B, drag, trim, the stage, the phone toolbar.
-- [ ] Seam D:
-  - [ ] single-item remove, duplicate and split give the same edits and Pick as before;
-  - [ ] pruning keeps ids that exist and empties the Pick when none do.
-- [ ] An undo that removes the picked item leaves nothing picked. An agent deleting the picked Text Layer does the same.
-- [ ] Layout Overrides survive a save from the Advanced Edit, and a merge.
-- [ ] `npm run typecheck`, `npm test`, `npm run build`.
+- [x] Every current gesture and key behaves as before: picking, delete, Cmd+D, Cmd+B, drag, trim, the stage, the phone toolbar.
+- [x] Seam D:
+  - [x] single-item remove, duplicate and split give the same edits and Pick as before;
+  - [x] pruning keeps ids that exist and empties the Pick when none do.
+- [x] An undo that removes the picked item leaves nothing picked. An agent deleting the picked Text Layer does the same.
+- [x] Layout Overrides survive a save from the Advanced Edit, and a merge.
+- [x] `npm run typecheck`, `npm test`, `npm run build`.
+
+## Comments
+
+**2026-10-15: done.** The Pick lives in its own module beside the edits; the actions on it are pure functions over a Scene (the edits, the Pick, the Main Track as played, the Clip's length, the Word gap and an id source) returning an Outcome, which the Advanced Edit applies as one change. The Pick is pruned against the edits on every render, so undo, redo and changes from elsewhere drop items that are gone.

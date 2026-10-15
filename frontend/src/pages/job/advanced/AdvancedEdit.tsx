@@ -33,16 +33,17 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { itemActions, type ItemActions } from "./actions";
+import { itemActions, type ItemActions, type Outcome } from "./actions";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
-import { changedItems, editsOf, newId, pickedOf, samePicked, stageIdOf, type AdvancedEdits, type Picked } from "./edits";
+import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { Inspector } from "./Inspector";
 import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
+import { onlyItem, picked, prunedPick, samePick, stageIdsOf, stageItem, type Pick } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -108,7 +109,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
-  const [picked, setPicked] = useState<Picked>(null);
+  const [held, setHeld] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab or of the inspector.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
@@ -198,6 +199,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   const history = useEditHistory<AdvancedEdits>(editsOf(initial), save);
   const edits = history.value;
+  // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
+  // some of it away.
+  const pick = prunedPick(held, edits);
+  useEffect(() => {
+    if (pick !== held) setHeld(pick);
+  }, [pick, held]);
 
   // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once; the edits
   // waiting here are merged onto it and saved from it, mine winning where both changed the same item.
@@ -312,11 +319,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function change(next: Partial<AdvancedEdits>, group?: string) {
     history.set({ ...edits, ...next }, group);
   }
-  function select(next: Picked) {
-    setPicked((old) => (samePicked(old, next) ? old : next));
+  function select(next: Pick) {
+    setHeld((old) => (samePick(old, next) ? old : next));
   }
   // An item added: picked, and on a phone the sheet closed (or, for a text, its fields opened to type in).
-  function added(next: Picked, fields = false) {
+  function added(next: Pick, fields = false) {
     select(next);
     if (!wide) setSheet(fields ? "inspector" : null);
   }
@@ -325,24 +332,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function addText(look: Omit<TextLayer, "id" | "start" | "secs">, at = playback.time) {
     const layer = newTextLayer(look, at, duration);
     change({ text_layers: [...edits.text_layers, layer] });
-    added({ kind: "text", id: layer.id }, true);
+    added(picked({ kind: "text", id: layer.id }), true);
   }
   function addMusic(item: MediaItem, at = playback.time) {
     const clip = newMusicClip(item, at, duration);
     change({ music: [...edits.music, clip] });
-    added({ kind: "music", id: clip.id });
+    added(picked({ kind: "music", id: clip.id }));
   }
   function addOverlay(item: MediaItem, at = playback.time) {
     const overlay = newOverlay(item, at, duration);
     change({ overlays: [...edits.overlays, overlay] });
-    added({ kind: "overlay", id: overlay.id });
+    added(picked({ kind: "overlay", id: overlay.id }));
   }
   // A Segment at `place`: by default after the one at the playhead.
   function insertSegment(segment: ClipSegment, place?: number) {
     const at = played.findIndex((shown) => playback.time < shown.end);
     const where = place ?? (at === -1 ? edits.segments.length : at + 1);
     change({ segments: [...edits.segments.slice(0, where), segment, ...edits.segments.slice(where)] });
-    added({ kind: "segment", id: segment.id });
+    added(picked({ kind: "segment", id: segment.id }));
   }
   function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
     if (dragOrigin.current?.group !== group) dragOrigin.current = { group, segments: edits.segments, shown: played, planned: track };
@@ -370,7 +377,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function updateTransition(transition: Transition, group?: string) {
     change({ transitions: edits.transitions.map((old) => (old.after === transition.after ? transition : old)) }, group);
   }
-  const joinedAfter = picked?.kind === "join" ? picked.after : null;
+  const joinedAfter = pick?.kind === "join" ? pick.after : null;
   const transitionPanel = (kinds: boolean) => (
     <TransitionPanel
       kinds={kinds}
@@ -385,7 +392,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateMusic = (clip: MusicClip, group?: string) => change({ music: replaced(edits.music, clip) }, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
-  const actions = itemActions(edits, picked, playback, played, duration, (time) => wordGap(job.transcript?.words ?? [], time), change, select);
+  // An action's outcome: its edits as one change, what it picks, and what it tells.
+  function apply(outcome: Outcome) {
+    if (outcome.edits !== edits) history.set(outcome.edits);
+    select(outcome.pick);
+    if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
+  }
+  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time) };
+  const actions = itemActions(scene, () => playback.time, apply);
   useShortcuts(history, playback, actions);
 
   async function close() {
@@ -407,8 +421,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       fonts={fonts}
       playback={playback}
       stage={{
-        selected: stageIdOf(picked),
-        onSelect: (id) => select(pickedOf(id)),
+        selected: stageIdsOf(pick)[0] ?? null,
+        onSelect: (id) => {
+          const item = stageItem(id);
+          select("id" in item ? picked(item) : item);
+        },
         onPlace: (id, place, group) => {
           if (id === "hook" || id === "captions") {
             change({ style_overrides: placedOverrides(edits.style_overrides, id === "hook" ? "hook" : "caption", place) }, group);
@@ -432,10 +449,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         texts: true,
       }}
       overlays={{
-        selected: picked?.kind === "overlay" ? picked.id : null,
+        selected: onlyItem(pick)?.kind === "overlay" ? onlyItem(pick)!.id : null,
         // As the plan draws them: those whose items are there, starting in the Clip.
         ids: edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
-        onSelect: (id) => select({ kind: "overlay", id }),
+        onSelect: (id) => select(picked({ kind: "overlay", id })),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (overlay) updateOverlay({ ...overlay, ...place }, group);
@@ -452,7 +469,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           duration={duration}
           plan={preview?.plan ?? null}
           edits={edits}
-          picked={picked}
+          pick={pick}
           played={played}
           playback={playback}
           mediaById={mediaById}
@@ -482,7 +499,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
   const inspector = (
     <Inspector
-      picked={picked}
+      pick={pick}
       edits={edits}
       duration={duration}
       preview={preview}
@@ -609,7 +626,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         {timeline}
       </section>
       <Toolbar
-        picked={picked}
+        pick={pick}
         actions={actions}
         playback={playback}
         onAsset={(tab) => {

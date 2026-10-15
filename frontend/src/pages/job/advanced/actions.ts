@@ -1,21 +1,32 @@
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
-import type { PlayedSegment, Playback } from "../editor/playback";
-import { ITEM_MIN_SECS, newId, round, type AdvancedEdits, type Picked } from "./edits";
+import type { PlayedSegment } from "../editor/playback";
+import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
+import { itemsOf, onlyItem, picked, type Pick } from "./pick";
 
-/** What can be done to the picked item from the toolbar, the timeline's bar and the keyboard. */
-export interface ItemActions {
-  remove: () => void;
-  duplicate: () => void;
-  // Whether the item can be split at `time`: when it is inside it.
-  canSplit: (time: number) => boolean;
-  // At the playhead; nothing when it can't be.
-  split: () => void;
+/**
+ * What the actions on a Pick are done in: the edits and the Pick, the Main Track as it plays, the
+ * Clip's length, `gap` (which moves a time on the Source's timeline into the silence between Words
+ * nearest it) and `ids` (new items' ids).
+ */
+export interface Scene {
+  edits: AdvancedEdits;
+  pick: Pick;
+  played: PlayedSegment[];
+  duration: number;
+  gap: (time: number) => number;
+  ids?: () => string;
 }
 
-type Change = (next: Partial<AdvancedEdits>, group?: string) => void;
-type Select = (picked: Picked) => void;
+/** An action's result: the edits after it (one change, so one step of undo), what is picked then, and what to tell. */
+export interface Outcome {
+  edits: AdvancedEdits;
+  pick: Pick;
+  notice?: string;
+}
+
 type Timed = TextLayer | MusicClip | Overlay;
+type TimedKind = "text" | "music" | "overlay";
 
 /**
  * How each kind of timed item behaves: its list in the edits; where a copy goes when there is no
@@ -24,7 +35,7 @@ type Timed = TextLayer | MusicClip | Overlay;
  * fades at the cut).
  */
 const KINDS: {
-  [K in "text" | "music" | "overlay"]: {
+  [K in TimedKind]: {
     list: "text_layers" | "music" | "overlays";
     aside: (item: Timed) => Partial<Timed>;
     cut: (item: Timed, at: number) => { first: Partial<Timed>; second: Partial<Timed> };
@@ -50,97 +61,117 @@ const KINDS: {
   },
 };
 
-/**
- * What can be done to the picked item, when it is a Segment, a Text Layer, a Music Clip or an Overlay
- * (the hook can only be moved, a join only given a Transition): delete it, duplicate it (right after
- * it when there is room), and split it at the playhead. `played` is the Main Track as it plays, and
- * `gap` moves a time on the Source's timeline into the silence between Words nearest it.
- */
-export function itemActions(
-  edits: AdvancedEdits,
-  picked: Picked,
-  playback: Playback,
-  played: PlayedSegment[],
-  duration: number,
-  gap: (time: number) => number,
-  change: Change,
-  select: Select,
-): ItemActions | null {
-  if (picked?.kind === "segment") return segmentActions(edits, picked.id, playback, played, gap, change, select);
-  if (picked?.kind !== "text" && picked?.kind !== "music" && picked?.kind !== "overlay") return null;
-  const kind = picked.kind;
-  const behaviour = KINDS[kind];
-  const list = edits[behaviour.list] as Timed[];
-  const item = list.find((other) => other.id === picked.id);
+const idOf = (scene: Scene) => (scene.ids ?? newId)();
+
+// The picked timed item of `kind` named `id`, and its list.
+function timed(scene: Scene, kind: TimedKind, id: string) {
+  const list = scene.edits[KINDS[kind].list] as Timed[];
+  return { list, item: list.find((other) => other.id === id) };
+}
+
+/** The Pick removed. A Segment isn't when it is the only one. */
+export function remove(scene: Scene): Outcome | null {
+  const { edits } = scene;
+  const item = onlyItem(scene.pick);
   if (!item) return null;
-  const put = (items: Timed[]) => change({ [behaviour.list]: items } as Partial<AdvancedEdits>);
-  const canSplit = (time: number) => time > item.start + ITEM_MIN_SECS && time < item.start + item.secs - ITEM_MIN_SECS;
-  return {
-    remove() {
-      put(list.filter((other) => other.id !== item.id));
-      select(null);
-    },
-    duplicate() {
-      const after = item.start + item.secs;
-      const copy = { ...item, id: newId(), ...(after + item.secs <= duration + 1e-6 ? { start: after } : behaviour.aside(item)) } as Timed;
-      put([...list, copy]);
-      select({ kind, id: copy.id });
-    },
-    canSplit,
-    split() {
-      const at = round(playback.time);
-      if (!canSplit(at)) return;
-      const { first, second } = behaviour.cut(item, at);
-      const head = { ...item, secs: round(at - item.start), ...first } as Timed;
-      const tail = { ...item, id: newId(), start: at, secs: round(item.start + item.secs - at), ...second } as Timed;
-      put(list.flatMap((other) => (other.id === item.id ? [head, tail] : [other])));
-      select({ kind, id: tail.id });
-    },
-  };
+  if (item.kind === "segment") {
+    if (edits.segments.length < 2) return { edits, pick: scene.pick };
+    return { edits: { ...edits, segments: edits.segments.filter((other) => other.id !== item.id) }, pick: null };
+  }
+  const { list } = timed(scene, item.kind, item.id);
+  return { edits: { ...edits, [KINDS[item.kind].list]: list.filter((other) => other.id !== item.id) }, pick: null };
 }
 
 /**
- * What can be done to a Segment of the Main Track: delete it (not the last one; the ones after it
- * close up), duplicate it right after itself, and split it at the playhead, where it is in the
- * Source (or its video) as played, Transitions and Word snapping included. A Segment of the Source
- * is cut in the silence between Words nearest the playhead: the backend snaps each part's edge to
- * the Words it holds, so a cut through a Word would give that Word to both.
+ * The Pick duplicated, the copy picked: a Segment right after itself; a Text Layer, Music Clip or
+ * Overlay right after itself when there is room, else where its kind puts it aside.
  */
-function segmentActions(
-  edits: AdvancedEdits,
-  id: string,
-  playback: Playback,
-  played: PlayedSegment[],
-  gap: (time: number) => number,
-  change: Change,
-  select: Select,
-): ItemActions | null {
-  const index = edits.segments.findIndex((segment) => segment.id === id);
-  const shown = played[index];
-  if (index === -1 || !shown) return null;
-  const segment = edits.segments[index];
-  const canSplit = (time: number) => time > shown.start + SEGMENT_MIN_SECS && time < shown.end - SEGMENT_MIN_SECS;
-  const put = (segments: ClipSegment[]) => change({ segments });
+export function duplicate(scene: Scene): Outcome | null {
+  const { edits, duration } = scene;
+  const ref = onlyItem(scene.pick);
+  if (!ref) return null;
+  if (ref.kind === "segment") {
+    const index = edits.segments.findIndex((segment) => segment.id === ref.id);
+    if (index === -1) return null;
+    const copy = { ...edits.segments[index], id: idOf(scene) };
+    return {
+      edits: { ...edits, segments: [...edits.segments.slice(0, index + 1), copy, ...edits.segments.slice(index + 1)] },
+      pick: picked({ kind: "segment", id: copy.id }),
+    };
+  }
+  const { list, item } = timed(scene, ref.kind, ref.id);
+  if (!item) return null;
+  const after = item.start + item.secs;
+  const room = after + item.secs <= duration + 1e-6;
+  const copy = { ...item, id: idOf(scene), ...(room ? { start: after } : KINDS[ref.kind].aside(item)) } as Timed;
+  return { edits: { ...edits, [KINDS[ref.kind].list]: [...list, copy] }, pick: picked({ kind: ref.kind, id: copy.id }) };
+}
+
+/** Whether a picked item can be split at `time`: when it is inside it. */
+export function canSplit(scene: Scene, time: number): boolean {
+  return itemsOf(scene.pick).some((item) => {
+    if (item.kind === "segment") {
+      const shown = scene.played[scene.edits.segments.findIndex((segment) => segment.id === item.id)];
+      return !!shown && time > shown.start + SEGMENT_MIN_SECS && time < shown.end - SEGMENT_MIN_SECS;
+    }
+    const found = timed(scene, item.kind, item.id).item;
+    return !!found && time > found.start + ITEM_MIN_SECS && time < found.start + found.secs - ITEM_MIN_SECS;
+  });
+}
+
+/**
+ * The Pick split at the playhead (`at`), the second part picked. A Segment is cut where it is in the
+ * Source (or its video) as played, Transitions and Word snapping included; one of the Source in the
+ * silence between Words nearest the playhead, since the backend snaps each part's edge to the Words
+ * it holds and a cut through a Word would give that Word to both.
+ */
+export function split(scene: Scene, at: number): Outcome | null {
+  const { edits } = scene;
+  const ref = onlyItem(scene.pick);
+  if (!ref || !canSplit(scene, at)) return null;
+  if (ref.kind === "segment") {
+    const index = edits.segments.findIndex((segment) => segment.id === ref.id);
+    const segment = edits.segments[index];
+    const shown = scene.played[index];
+    const there = shown.source_start + at - shown.start;
+    const cut = Math.round((segment.media ? there : scene.gap(there)) * 1000) / 1000;
+    const second: ClipSegment = { ...segment, id: idOf(scene), start: cut };
+    const segments = edits.segments.flatMap((other) => (other.id === ref.id ? [{ ...segment, start: shown.source_start, end: cut }, second] : [other]));
+    return { edits: { ...edits, segments }, pick: picked({ kind: "segment", id: second.id }) };
+  }
+  const { list, item } = timed(scene, ref.kind, ref.id);
+  if (!item) return null;
+  const time = round(at);
+  const { first, second } = KINDS[ref.kind].cut(item, time);
+  const head = { ...item, secs: round(time - item.start), ...first } as Timed;
+  const tail = { ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed;
   return {
-    remove() {
-      if (edits.segments.length < 2) return;
-      put(edits.segments.filter((other) => other.id !== id));
-      select(null);
-    },
-    duplicate() {
-      const copy = { ...segment, id: newId() };
-      put([...edits.segments.slice(0, index + 1), copy, ...edits.segments.slice(index + 1)]);
-      select({ kind: "segment", id: copy.id });
-    },
-    canSplit,
-    split() {
-      const at = playback.time;
-      if (!canSplit(at)) return;
-      const there = shown.source_start + at - shown.start;
-      const cut = Math.round((segment.media ? there : gap(there)) * 1000) / 1000;
-      const second = { ...segment, id: newId(), start: cut };
-      put(edits.segments.flatMap((other) => (other.id === id ? [{ ...segment, start: shown.source_start, end: cut }, second] : [other])));
-      select({ kind: "segment", id: second.id });
-    },
+    edits: { ...edits, [KINDS[ref.kind].list]: list.flatMap((other) => (other.id === item.id ? [head, tail] : [other])) },
+    pick: picked({ kind: ref.kind, id: tail.id }),
+  };
+}
+
+/** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
+export interface ItemActions {
+  remove: () => void;
+  duplicate: () => void;
+  // Whether a picked item can be split at `time`: when it is inside it.
+  canSplit: (time: number) => boolean;
+  // At the playhead; nothing when it can't be.
+  split: () => void;
+}
+
+/**
+ * The actions on the picked items, when some are, each applied (`apply`) as one change: `now` is the
+ * playhead's time.
+ */
+export function itemActions(scene: Scene, now: () => number, apply: (outcome: Outcome) => void): ItemActions | null {
+  if (!itemsOf(scene.pick).length) return null;
+  const run = (outcome: Outcome | null) => outcome && apply(outcome);
+  return {
+    remove: () => run(remove(scene)),
+    duplicate: () => run(duplicate(scene)),
+    canSplit: (time) => canSplit(scene, time),
+    split: () => run(split(scene, now())),
   };
 }

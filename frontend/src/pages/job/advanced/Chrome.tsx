@@ -4,7 +4,8 @@ import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { ItemActions } from "./actions";
-import type { AdvancedEdits, Picked } from "./edits";
+import type { AdvancedEdits } from "./edits";
+import type { Pick } from "./pick";
 import type { EditHistory } from "./useEditHistory";
 
 // The Advanced Edit's frame around its player, inspector and timeline: its bar, the asset tabs, the
@@ -124,14 +125,14 @@ export function SaveStatus({
 
 /** The phone's bottom bar: the asset tabs, or what can be done to the picked item. */
 export function Toolbar({
-  picked,
+  pick,
   actions,
   playback,
   onAsset,
   onInspect,
   onDeselect,
 }: {
-  picked: Picked;
+  pick: Pick;
   actions: ItemActions | null;
   playback: Playback;
   onAsset: (tab: AssetTab) => void;
@@ -143,7 +144,7 @@ export function Toolbar({
       aria-label="Tools"
       className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-t border-border px-2 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]"
     >
-      {picked ? (
+      {pick ? (
         <>
           <ToolButton icon={X} label="Done" onClick={onDeselect} />
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />

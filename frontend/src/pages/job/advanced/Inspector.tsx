@@ -7,15 +7,16 @@ import { usePlayback, type Playback } from "../editor/playback";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
 import type { ItemActions } from "./actions";
-import type { AdvancedEdits, Picked } from "./edits";
+import type { AdvancedEdits } from "./edits";
 import { SegmentFields } from "./MainTrack";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
+import { onlyItem, type Pick } from "./pick";
 import { TextLayerFields } from "./TextLayers";
 
 /** The picked item's properties: a Segment's, a Text Layer's, a Music Clip's, an Overlay's, the hook's, or a join's Transition. */
 export function Inspector({
-  picked,
+  pick,
   edits,
   duration,
   preview,
@@ -30,7 +31,7 @@ export function Inspector({
   onOverlay,
   onSegment,
 }: {
-  picked: Picked;
+  pick: Pick;
   edits: AdvancedEdits;
   duration: number;
   preview: PreviewPlan | null;
@@ -47,10 +48,10 @@ export function Inspector({
   onSegment: (segment: ClipSegment, group?: string) => void;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
-  const find = <T extends { id: string }>(items: T[], kind: string) =>
-    picked && "id" in picked && picked.kind === kind ? items.find((item) => item.id === picked.id) : undefined;
+  const only = onlyItem(pick);
+  const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
 
-  if (picked?.kind === "join") {
+  if (pick?.kind === "join") {
     return (
       <div className="flex flex-col gap-3">
         <h2 className="font-semibold">Transition</h2>
@@ -109,7 +110,7 @@ export function Inspector({
       />
     );
   }
-  if (picked?.kind === "hook") {
+  if (pick?.kind === "hook") {
     return (
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
@@ -129,7 +130,7 @@ export function Inspector({
       </div>
     );
   }
-  if (picked?.kind === "captions") {
+  if (pick?.kind === "captions") {
     return (
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">

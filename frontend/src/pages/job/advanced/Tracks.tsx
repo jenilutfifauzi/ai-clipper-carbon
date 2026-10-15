@@ -4,8 +4,9 @@ import { cx, formatPrecise } from "../../../format";
 import type { PlayedSegment, Playback } from "../editor/playback";
 import { TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
-import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits, type Picked } from "./edits";
+import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
+import { isPicked, picked, type Pick } from "./pick";
 
 // The hook's shortest and longest time (hook_secs in backend/app/api.py).
 const HOOK_MIN_SECS = 0.5;
@@ -15,7 +16,7 @@ const HOOK_MAX_SECS = 30;
 export type DropTrack = "segment" | "overlay" | "music";
 
 export interface TrackHandlers {
-  onSelect: (picked: Picked) => void;
+  onSelect: (pick: Pick) => void;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
@@ -43,7 +44,7 @@ export function Tracks({
   duration,
   plan,
   edits,
-  picked,
+  pick,
   played,
   playback,
   mediaById,
@@ -54,7 +55,7 @@ export function Tracks({
   duration: number;
   plan: RenderPlan | null;
   edits: AdvancedEdits;
-  picked: Picked;
+  pick: Pick;
   // The Main Track as it plays: snapped to Words once the plan has it, cut short at Transitions.
   played: PlayedSegment[];
   playback: Playback;
@@ -88,7 +89,7 @@ export function Tracks({
           drop={{ types: [DRAG_TEXT], onDrop: (data, clientX) => handlers.onDropText(data.getData(DRAG_TEXT), geometry.timeAt(clientX)) }}
         >
           {lane.map((layer) => {
-            const selected = picked?.kind === "text" && picked.id === layer.id;
+            const selected = isPicked(pick, "text", layer.id);
             return (
               <TimelineItem
                 key={layer.id}
@@ -101,7 +102,7 @@ export function Tracks({
                 selected={selected}
                 changed={changed.has(layer.id)}
                 label={`Text "${layer.text}", from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s`}
-                onSelect={() => onSelect({ kind: "text", id: layer.id })}
+                onSelect={() => onSelect(picked({ kind: "text", id: layer.id }))}
                 onChange={({ start, end }, group) => handlers.onText({ ...layer, start: round(start), secs: round(end - start) }, group)}
                 onDelete={selected ? onDelete : undefined}
               >
@@ -115,7 +116,7 @@ export function Tracks({
       {overlayLanes.map((lane, i) => (
         <TrackRow key={`overlay${overlayLanes.length - i}`} label={i === overlayLanes.length - 1 ? "Overlay" : ""} drop={dropMedia("overlay")}>
           {lane.map((overlay) => {
-            const selected = picked?.kind === "overlay" && picked.id === overlay.id;
+            const selected = isPicked(pick, "overlay", overlay.id);
             const item = mediaById.get(overlay.media);
             const length = item?.duration ?? Infinity;
             return (
@@ -132,7 +133,7 @@ export function Tracks({
                 selected={selected}
                 changed={changed.has(overlay.id)}
                 label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
-                onSelect={() => onSelect({ kind: "overlay", id: overlay.id })}
+                onSelect={() => onSelect(picked({ kind: "overlay", id: overlay.id }))}
                 onChange={({ start, end, edge }, group) =>
                   handlers.onOverlay(
                     {
@@ -170,7 +171,7 @@ export function Tracks({
         {played.map((shown, i) => {
           const segment = edits.segments[i];
           if (!segment) return null;
-          const selected = picked?.kind === "segment" && picked.id === segment.id;
+          const selected = isPicked(pick, "segment", segment.id);
           const volume = segment.media ? 1 : edits.source_volume * (segment.volume ?? 1);
           return (
             <TimelineItem
@@ -185,7 +186,7 @@ export function Tracks({
               selected={selected}
               changed={changed.has(segment.id)}
               label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}`}
-              onSelect={() => onSelect({ kind: "segment", id: segment.id })}
+              onSelect={() => onSelect(picked({ kind: "segment", id: segment.id }))}
               onChange={(moved, group) => handlers.onSegment(segment.id, moved, group)}
               onDelete={selected && edits.segments.length > 1 ? onDelete : undefined}
             >
@@ -208,7 +209,7 @@ export function Tracks({
           const after = edits.segments[i]?.id;
           if (!after) return null;
           const transition = edits.transitions.find((t) => t.after === after);
-          const selected = picked?.kind === "join" && picked.after === after;
+          const selected = pick?.kind === "join" && pick.after === after;
           return (
             <button
               key={`join-${after}`}
@@ -251,10 +252,10 @@ export function Tracks({
               onSelect({ kind: "captions" });
             }}
             title={event.text}
-            aria-pressed={picked?.kind === "captions"}
+            aria-pressed={pick?.kind === "captions"}
             className={cx(
               "absolute inset-y-1 overflow-hidden rounded bg-fill px-1 text-left text-[11px] leading-5 text-ellipsis whitespace-nowrap text-muted ring-1 ring-border hover:text-text",
-              picked?.kind === "captions" && "text-text ring-text",
+              pick?.kind === "captions" && "text-text ring-text",
             )}
             style={{ left: event.start * pps, width: Math.max(2, (event.end - event.start) * pps - 1) }}
           >
@@ -272,7 +273,7 @@ export function Tracks({
             minSecs={HOOK_MIN_SECS}
             maxSecs={HOOK_MAX_SECS}
             tone="waiting"
-            selected={picked?.kind === "hook"}
+            selected={pick?.kind === "hook"}
             changed={changed.has("hook")}
             label={`Hook, from ${edits.hook_start.toFixed(1)} s for ${(hookEnd - edits.hook_start).toFixed(1)} s`}
             onSelect={() => onSelect({ kind: "hook" })}
@@ -285,7 +286,7 @@ export function Tracks({
       {musicLanes.map((lane, i) => (
         <TrackRow key={`music${i}`} label={i === 0 ? "Audio" : ""} drop={dropMedia("music")}>
           {lane.map((clip) => {
-            const selected = picked?.kind === "music" && picked.id === clip.id;
+            const selected = isPicked(pick, "music", clip.id);
             const song = mediaById.get(clip.media);
             const length = song?.duration ?? clip.offset + clip.secs;
             return (
@@ -302,7 +303,7 @@ export function Tracks({
                 selected={selected}
                 changed={changed.has(clip.id)}
                 label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
-                onSelect={() => onSelect({ kind: "music", id: clip.id })}
+                onSelect={() => onSelect(picked({ kind: "music", id: clip.id }))}
                 onChange={({ start, end, edge }, group) =>
                   handlers.onMusic(
                     {
