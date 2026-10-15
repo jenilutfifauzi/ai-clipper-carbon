@@ -218,3 +218,10 @@ async def test_the_agent_lists_and_restores_revisions(mcp):
     restored = await call(mcp, "restore_candidate_revision", **ids, restore=1, revision=2)
     assert (restored["revision"], restored["hook_text"]) == (3, candidate["hook_text"])
     assert "Revision 3" in await fails(mcp, "restore_candidate_revision", **ids, restore=1, revision=2)
+
+
+def test_the_agent_is_told_the_owner_sees_its_edits_live_and_wins_a_clash(client):
+    instructions = " ".join(client.app.state.mcp.instructions.split())
+    assert "show these edits as they are saved" in instructions
+    assert "the owner's change wins" in instructions
+    assert "list_candidate_revisions" in instructions

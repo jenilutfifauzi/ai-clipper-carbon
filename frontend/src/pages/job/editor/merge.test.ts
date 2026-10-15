@@ -2,8 +2,8 @@
 // rebasing its undo history, as worked examples of base (the edits the editor started from), mine
 // (its unsaved edits) and theirs (the newer Revision's).
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, TextLayer } from "../../../api";
-import { mergeEdits, rebaseHistory } from "./merge";
+import type { Candidate, ClipSegment, TextLayer } from "../../../api";
+import { collidedParts, fieldsOf, mergeEdits, rebaseHistory } from "./merge";
 
 function layer(id: string, changes: Partial<TextLayer> = {}): TextLayer {
   return {
@@ -200,5 +200,15 @@ describe("undo rebase", () => {
     const theirs = { text_layers: [layer("b")] };
 
     expect(rebaseHistory([step], base, theirs)).toEqual([{ text_layers: [layer("b")] }]);
+  });
+});
+
+describe("a change of some fields", () => {
+  test("is merged from those fields of the Candidate it was made from, and its collisions are named as parts", () => {
+    const candidate = { hook_text: "Hook", hook_kicker: "", layout: "auto", source_volume: 1 } as unknown as Candidate;
+    expect(fieldsOf(candidate, { hook_text: "Mine", source_volume: 0.5 })).toEqual({ hook_text: "Hook", source_volume: 1 });
+    expect(collidedParts([{ field: "hook_text" }, { field: "hook_kicker" }, { field: "text_layers", item: "a" }, { field: "start" }])).toBe(
+      "Hook, Text Layers, Range",
+    );
   });
 });

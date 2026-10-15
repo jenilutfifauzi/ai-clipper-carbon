@@ -17,9 +17,12 @@ export interface EditHistory<T> {
   canRedo: boolean;
   // Saves what is waiting now; resolves once the save is answered.
   flush: () => Promise<void>;
-  // Takes `value`, saved elsewhere, as the edits and a new start of the history, unless changes
-  // are waiting to be saved: then it does nothing and answers false.
-  adopt: (value: T) => boolean;
+  // Whether changes wait to be saved.
+  waiting: () => boolean;
+  // Takes a newer Revision saved elsewhere (ADR 0003): the edits become `value` (it, or it merged
+  // with the changes here), and `rebase` is applied to every step of the history, so that undo takes
+  // back only this editor's own. With `save`, `value` is saved once changes pause.
+  elsewhere: (value: T, rebase: (step: T) => T, save: boolean) => void;
 }
 
 /**
@@ -82,11 +85,10 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     persist(value);
   }
 
-  function adopt(value: T): boolean {
-    if (pending.current) return false;
+  function elsewhere(value: T, rebase: (step: T) => T, save: boolean) {
     last.current = null;
-    setState({ past: [], value, future: [] });
-    return true;
+    setState((old) => ({ past: old.past.map(rebase), value, future: old.future.map(rebase) }));
+    if (save) persist(value);
   }
 
   return {
@@ -97,6 +99,7 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
     flush,
-    adopt,
+    waiting: () => pending.current !== null,
+    elsewhere,
   };
 }

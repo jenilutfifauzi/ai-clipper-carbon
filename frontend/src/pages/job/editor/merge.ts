@@ -1,4 +1,4 @@
-import type { CandidateChange } from "../../../api";
+import type { Candidate, CandidateChange } from "../../../api";
 
 /**
  * Merging an editor's unsaved edits onto a newer Revision of its Candidate (ADR 0003), three ways:
@@ -79,6 +79,37 @@ function mergeOverrides(base: Overrides, mine: Overrides, theirs: Overrides, col
 export function rebaseHistory<T extends Edits>(snapshots: T[], base: T, theirs: T): T[] {
   // The same merge with the sides swapped: here theirs wins.
   return snapshots.map((snapshot) => mergeEdits(base, theirs, snapshot).merged);
+}
+
+// The fields of `edits` as `candidate` has them: what a change of those fields is merged from.
+export function fieldsOf<T extends Edits>(candidate: Candidate, edits: T): T {
+  return Object.fromEntries(Object.keys(edits).map((field) => [field, (candidate as unknown as Record<string, unknown>)[field]])) as T;
+}
+
+// The parts the editors name, by the Candidate field a Collision names.
+const PART_OF: Record<Collision["field"], string> = {
+  start: "Range",
+  end: "Range",
+  segments: "Segments",
+  text_layers: "Text Layers",
+  music: "Music",
+  overlays: "Overlays",
+  transitions: "Transitions",
+  hook_text: "Hook",
+  hook_kicker: "Hook",
+  hook_start: "Hook",
+  hook_secs: "Hook",
+  preset_id: "Style",
+  style_overrides: "Style",
+  word_edits: "Word Edits",
+  layout: "Layout",
+  layout_overrides: "Layout Overrides",
+  source_volume: "Source volume",
+};
+
+// The parts of a merge's Collisions, each once.
+export function collidedParts(collisions: Collision[]): string {
+  return [...new Set(collisions.map((collision) => PART_OF[collision.field]))].join(", ");
 }
 
 // Edits seen as plain JSON fields.

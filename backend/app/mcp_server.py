@@ -80,8 +80,13 @@ Edits:
   {KICKER_MAX_CHARS} characters, above the hook.
 - Music, Overlays and Segments of other videos name Media Library items: add_asset adds a song,
   video or image from a file on this Mac, list_assets lists them.
-- The owner may have the Job open in the browser: it shows these edits as they are saved, and an
-  edit made there meanwhile can be saved over by the next one made here (and the other way round).
+- The owner may have the Job open in the browser: its editors show these edits as they are saved.
+  Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
+  someone else's is then refused with the Candidate as it is now; redo yours on top of it.
+  merge_candidate_items and remove_candidate_items do this themselves. When the owner changes the
+  same item at the same time, the owner's change wins.
+- list_candidate_revisions shows a Candidate's last 50 saved states and who saved each;
+  restore_candidate_revision brings one back (a mistake of yours, say) as a new revision.
 """
 
 _JOB = TypeAdapter(Job)

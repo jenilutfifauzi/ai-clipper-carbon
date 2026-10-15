@@ -17,6 +17,7 @@ import { CandidateEditor } from "./CandidateEditor";
 import { CandidateList } from "./CandidateList";
 import { Clips } from "./Clips";
 import { ChangeNotice, type Notice } from "./editor/ChangeNotice";
+import { collidedParts, fieldsOf, mergeEdits, type Collision } from "./editor/merge";
 import { changedText, useCandidateEvents } from "./editor/useCandidateEvents";
 
 /**
@@ -48,13 +49,11 @@ export function Review({
   // Saves still on their way, per Candidate: only the last one's answer is shown, so an earlier
   // answer never undoes a change made since.
   const inFlight = useRef(new Map<string, number>());
-  // Each Candidate's Revision as last saved or loaded, which its next save is made from; and its
-  // saves, sent one after another so that each is made from the Revision the one before made.
-  const revisions = useRef(new Map((job.candidates ?? []).map((candidate) => [candidate.id, candidate.revision])));
+  // Each Candidate as last saved here or taken from elsewhere: the Revision its next save is made
+  // from, and what the edits made here meanwhile are merged from (ADR 0003). Its saves are sent one
+  // after another.
+  const server = useRef(new Map((job.candidates ?? []).map((candidate) => [candidate.id, candidate])));
   const sending = useRef(new Map<string, Promise<unknown>>());
-  // How many of each Candidate's saves were refused for a stale Revision: a save queued before a
-  // refusal was made from what was shown then, so it isn't sent after it.
-  const refusals = useRef(new Map<string, number>());
   // Kept in step with other editors (ADR 0003): how many times each Candidate was taken as saved
   // elsewhere, which starts its editor's drafts again from it.
   const [synced, setSynced] = useState<Record<string, number>>({});
@@ -70,14 +69,19 @@ export function Review({
   // A Candidate saved elsewhere is taken at once, unless a save of it here is still unanswered: that
   // save then meets the newer Revision.
   function fromElsewhere(next: Candidate, source: SavedBy, parts: string[]) {
-    const known = revisions.current.get(next.id);
+    const known = server.current.get(next.id)?.revision;
     if (known === undefined) {
       // Added elsewhere.
-      revisions.current.set(next.id, next.revision);
+      server.current.set(next.id, next);
       setCandidates((old) => [...old, next]);
       return;
     }
-    if (next.revision <= known || (inFlight.current.get(next.id) ?? 0) > 0) return;
+    if (next.revision <= known) return;
+    if ((inFlight.current.get(next.id) ?? 0) > 0) {
+      // Its saves under way are merged onto it; their answer shows it.
+      server.current.set(next.id, next);
+      return;
+    }
     taken(next);
     if (next.id === active?.id) {
       // The state this replaces is kept in the Revision History: the notice's Restore brings it back.
@@ -87,7 +91,7 @@ export function Review({
 
   // Shows the Candidate as saved, and starts its editor's drafts again from it.
   function taken(next: Candidate) {
-    revisions.current.set(next.id, next.revision);
+    server.current.set(next.id, next);
     replaceCandidate(next.id, () => next);
     setSynced((old) => ({ ...old, [next.id]: (old[next.id] ?? 0) + 1 }));
   }
@@ -97,7 +101,7 @@ export function Review({
   async function restore(id: string, entry: number): Promise<string | null> {
     await sending.current.get(id);
     try {
-      taken(await api.restoreRevision(job.id, id, entry, revisions.current.get(id) ?? 1, "clip-editor"));
+      taken(await api.restoreRevision(job.id, id, entry, server.current.get(id)?.revision ?? 1, "clip-editor"));
       setError(null);
       return null;
     } catch (reason) {
@@ -117,7 +121,7 @@ export function Review({
   }
 
   function removed(id: string) {
-    revisions.current.delete(id);
+    server.current.delete(id);
     setCandidates((old) => old.filter((candidate) => candidate.id !== id));
     if (id === active?.id) setNotice({ id: Date.now(), text: "This clip was removed elsewhere" });
   }
@@ -126,7 +130,7 @@ export function Review({
     onReady: (stored) => {
       for (const candidate of stored) fromElsewhere(candidate, "unknown", []);
       const ids = new Set(stored.map((candidate) => candidate.id));
-      for (const id of revisions.current.keys()) if (!ids.has(id)) removed(id);
+      for (const id of [...server.current.keys()]) if (!ids.has(id)) removed(id);
     },
     onCandidate: (event) => fromElsewhere(event.candidate, event.source, event.parts),
     onRemoved: removed,
@@ -151,6 +155,35 @@ export function Review({
     setCandidates((old) => old.map((candidate) => (candidate.id === id ? change(candidate) : candidate)));
   }
 
+  // Sends `change`, made from `base`: merged onto the Candidate as it is now if it has moved on (mine
+  // winning where both changed the same thing), and once more onto the one a refusal carries.
+  async function sendMerged(
+    id: string,
+    change: CandidateChange,
+    base: Candidate | undefined,
+    retried = false,
+  ): Promise<{ answer: Candidate; collisions: Collision[]; theirs: number | null }> {
+    // Choosing a Candidate for rendering isn't an edit: it is saved whatever changed meanwhile.
+    if (Object.keys(change).every((key) => key === "selected")) {
+      return { answer: await api.updateCandidate(job.id, id, change, "clip-editor"), collisions: [], theirs: null };
+    }
+    const now = server.current.get(id);
+    let body = change;
+    let collisions: Collision[] = [];
+    if (base && now && now.revision !== base.revision) {
+      ({ merged: body, collisions } = mergeEdits(fieldsOf(base, change), change, fieldsOf(now, change)));
+    }
+    try {
+      const answer = await api.updateCandidate(job.id, id, { ...body, revision: now?.revision }, "clip-editor");
+      return { answer, collisions, theirs: base && now && now.revision !== base.revision ? now.revision : null };
+    } catch (reason) {
+      const latest = staleCandidate(reason);
+      if (!latest || retried) throw reason;
+      server.current.set(id, latest);
+      return sendMerged(id, change, base, true);
+    }
+  }
+
   async function save(id: string, change: CandidateChange): Promise<boolean> {
     // Shown at once, except the bounds: the backend snaps them to Words.
     const { start: _start, end: _end, ...shown } = change;
@@ -158,39 +191,31 @@ export function Review({
     inFlight.current.set(id, (inFlight.current.get(id) ?? 0) + 1);
     setSaving((n) => n + 1);
     setError(null);
-    // Choosing a Candidate for rendering isn't an edit: it is saved whatever changed meanwhile.
-    const choosing = Object.keys(change).every((key) => key === "selected");
-    const refused = refusals.current.get(id) ?? 0;
-    const send = (sending.current.get(id) ?? Promise.resolve()).then(() => {
-      if (!choosing && (refusals.current.get(id) ?? 0) !== refused) return null;
-      return api.updateCandidate(job.id, id, choosing ? change : { ...change, revision: revisions.current.get(id) }, "clip-editor");
-    });
+    // What it was made from: merged onto the newer Revision if one is saved before it is sent.
+    const base = server.current.get(id);
+    const send = (sending.current.get(id) ?? Promise.resolve()).then(() => sendMerged(id, change, base));
     sending.current.set(id, send.catch(() => {}));
     try {
-      const answer = await send;
-      // Made before a refusal: dropped, as the refusal's message says.
-      if (!answer) return false;
-      revisions.current.set(id, answer.revision);
+      const { answer, collisions, theirs } = await send;
+      server.current.set(id, answer);
       if (inFlight.current.get(id) === 1) replaceCandidate(id, () => answer);
+      if (collisions.length && theirs && id === active?.id) {
+        setNotice({
+          id: Date.now(),
+          text: `Your changes to ${collidedParts(collisions)} replaced a change made elsewhere`,
+          action: restoreButton(id, theirs),
+        });
+      }
       setSaved(true);
       return true;
     } catch (reason) {
-      const latest = staleCandidate(reason);
-      if (latest) {
-        // Changed elsewhere since it was loaded: show it as it is now, and edit on from there.
-        setError("Not saved: changed elsewhere (another tab or the agent). Showing the clip as it is now.");
-        refusals.current.set(id, refused + 1);
-        revisions.current.set(id, latest.revision);
-        replaceCandidate(id, () => latest);
-        return false;
-      }
-      setError(`Not saved: ${(reason as Error).message}`);
-      // Show what is stored instead.
-      api.getJob(job.id).then((stored) => {
-        if (!stored.candidates) return;
-        setCandidates(stored.candidates);
-        for (const candidate of stored.candidates) revisions.current.set(candidate.id, candidate.revision);
-      }, () => {});
+      const latest = staleCandidate(reason) ?? server.current.get(id);
+      setError(
+        staleCandidate(reason)
+          ? "Not saved: this clip kept changing elsewhere (another tab or the agent). Showing it as it is now."
+          : `Not saved: ${(reason as Error).message}. Showing the clip as it is now.`,
+      );
+      if (latest) taken(latest);
       return false;
     } finally {
       inFlight.current.set(id, (inFlight.current.get(id) ?? 1) - 1);
@@ -202,7 +227,7 @@ export function Review({
     setError(null);
     try {
       const added = await api.addCandidate(job.id, range);
-      revisions.current.set(added.id, added.revision);
+      server.current.set(added.id, added);
       setCandidates((old) => [...old, added]);
       activate(added.id);
       setSaved(true);
