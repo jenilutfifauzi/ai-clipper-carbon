@@ -10,6 +10,7 @@ from app import api
 from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.logos import LOGOS_DIR, LogoStore
+from app.mcp_server import build_mcp
 from app.media import MEDIA_DIR, MediaStore
 from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
@@ -31,10 +32,12 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     worker = Worker(store, Pipeline(store, ports, settings), Renders(store, settings, ports.transcriber))
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        worker.start()
-        yield
-        worker.stop()
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # The MCP server's sessions: a mounted app's own lifespan doesn't run.
+        async with app.state.mcp.session_manager.run():
+            worker.start()
+            yield
+            worker.stop()
 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
     app.state.settings = settings
@@ -46,6 +49,10 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
     app.include_router(api.router)
     app.include_router(api.media)
+    # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its
+    # route is added as it is, not mounted: a mount at /mcp wouldn't match /mcp itself.
+    app.state.mcp = build_mcp(app)
+    app.router.routes.extend(app.state.mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True).routes)
     if (settings.frontend_dir / "index.html").is_file():
         _serve_frontend(app, settings.frontend_dir)
     return app
@@ -53,12 +60,12 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
 
 def _serve_frontend(app: FastAPI, dist: Path) -> None:
     """Serve the built frontend: its files as they are, and index.html for every other path, so that
-    the client-side routes (such as /jobs/<id>) survive a reload. Unknown /api and /media paths stay 404."""
+    the client-side routes (such as /jobs/<id>) survive a reload. Unknown /api, /media and /mcp paths stay 404."""
     dist = dist.resolve()
 
     @app.get("/{path:path}", include_in_schema=False)
     def frontend(path: str) -> FileResponse:
-        if path.split("/", 1)[0] in {"api", "media"}:
+        if path.split("/", 1)[0] in {"api", "media", "mcp"}:
             raise HTTPException(404)
         file = (dist / path).resolve()
         if path and file.is_file() and file.is_relative_to(dist):

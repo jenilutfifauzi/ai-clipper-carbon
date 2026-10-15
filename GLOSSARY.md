@@ -4,7 +4,7 @@ Use these terms in code, UI copy, tickets and commit messages.
 
 ## Jobs and selection
 
-- **Job:** one episode being processed, from its URL or upload to its Clips.
+- **Job:** one episode being processed, from its URL, upload or a file on this Mac to its Clips.
 - **Source:** the episode video. Times "on the Source's timeline" are seconds into it.
 - **Transcript / Words:** the episode's normalized text with per-Word timing.
 - **Window:** a Transcript slice scored by the AI.

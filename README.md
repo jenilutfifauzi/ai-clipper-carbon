@@ -131,6 +131,28 @@ curl -X PUT localhost:8000/api/profile -H 'content-type: application/json' \
   -d '{"niche": "business podcasts", "audience": "...", "clip_style": "...", "avoid": "..."}'
 ```
 
+## Using with Claude Code (MCP)
+
+The backend is also an MCP server, at `http://127.0.0.1:8000/mcp`, so an agent such as Claude Code
+can do everything the app does: start Jobs (from a YouTube URL or a file on your Mac), wait for them,
+read the Transcript, pick and edit Candidates (hook, Kicker, layout, style, Text Layers, music,
+Overlays, Segments, Transitions, Word Edits), render, and hand you the Clips' file paths.
+
+With the backend running (`make dev`), Claude Code started in this repo finds it through `.mcp.json`
+and asks once to use it. From anywhere else, add it with:
+
+```sh
+claude mcp add --transport http ai-clipper http://127.0.0.1:8000/mcp
+```
+
+Then ask, for example: "Make three clips from <url> about money, each with a Title, and render
+them." The server's instructions tell the agent the workflow and the app's words (`GLOSSARY.md` is
+its `ai-clipper://glossary` resource). Its edits show in the open browser as they are saved; an edit
+made in the browser at the same moment can be saved over, and the other way round.
+
+It answers only on localhost (other Hosts are refused) and, like the API, has no login. Its tools
+read the files you name by path, as you could.
+
 ## Command line
 
 The pipeline runs without the UI too. Each command prints progress and exits non-zero on failure.

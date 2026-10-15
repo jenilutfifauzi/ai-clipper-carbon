@@ -8,6 +8,7 @@ deleted, here or (after a crash) when the app next starts.
 """
 
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,27 @@ async def receive[T](
         raise
     assert accepted is not None
     return Received(path, form.file_name, form.fields), accepted
+
+
+def stage(file: Path, folder: Path, reserve: int) -> Received:
+    """Stage a file on this Mac in `folder` as an upload is received, leaving the file where it is: a
+    clone where the volume can make one (APFS), a copy otherwise. Refused (NotEnoughSpace) unless the
+    volume has room for a copy and `reserve` after it, as an upload would be; BadUpload for a path
+    that isn't a file."""
+    if not file.is_file():
+        raise BadUpload(f"No file {file}")
+    folder.mkdir(parents=True, exist_ok=True)
+    check_room(folder, file.stat().st_size, reserve)
+    path = folder / f"{uuid4().hex}.part"
+    try:
+        # -c clones (clonefile(2)), and copies where the volume can't clone.
+        done = subprocess.run(["cp", "-c", str(file), str(path)], capture_output=True, text=True)
+        if done.returncode != 0:
+            raise BadUpload(f"Can't copy {file}: {done.stderr.strip()}")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return Received(path, file.name, {})
 
 
 class _Form:

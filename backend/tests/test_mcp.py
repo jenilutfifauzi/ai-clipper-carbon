@@ -1,0 +1,334 @@
+"""Seam A through MCP (.scratch/mcp-server/): the tools, called by an MCP client connected in-process
+to the app's MCP server, on the app with fake ports, its Worker running. The tools go through the
+app's real routes. One test posts to /mcp over HTTP."""
+
+import json
+import subprocess
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from mcp import Client
+
+from app import uploads
+from app.config import load_settings
+from app.main import create_app
+from app.ports import Ports
+from test_jobs_api import URL
+
+# tests/fixtures/captions.json3's Words "halo" to "kabar", and "kita" to "soal" (Source time).
+HALO_KABAR = (0.1, 1.6)
+KITA_SOAL = (1.6, 2.6)
+# The tool list is sent to the agent's context with every conversation: keep it within this.
+TOOLS_BUDGET_BYTES = 60_000
+INITIALIZE = {
+    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+    "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
+}
+MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+async def mcp(client):
+    async with Client(client.app.state.mcp) as session:
+        yield session
+
+
+async def call(mcp: Client, tool: str, **arguments) -> dict:
+    result = await mcp.call_tool(tool, arguments)
+    [content] = result.content
+    assert not result.is_error, content.text
+    return json.loads(content.text)
+
+
+async def fails(mcp: Client, tool: str, **arguments) -> str:
+    result = await mcp.call_tool(tool, arguments)
+    assert result.is_error, result.content
+    return result.content[0].text
+
+
+async def reviewed(mcp: Client, **options) -> dict:
+    job = await call(mcp, "create_job_from_url", url=URL, options=options)
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=30)
+    assert waited["reached"] and waited["job"]["status"] == "review", waited
+    return waited["job"]
+
+
+async def manual(mcp: Client, job: dict, start: float, end: float, **changes) -> dict:
+    candidate = await call(mcp, "add_candidate", job_id=job["id"], start=start, end=end)
+    if changes:
+        return await call(mcp, "edit_candidate", job_id=job["id"], candidate_id=candidate["id"], changes=changes)
+    return candidate
+
+
+def make(path: Path, *args: str) -> Path:
+    subprocess.run([str(load_settings().ffmpeg_bin), "-v", "error", "-y", *args, str(path)], check=True)
+    return path
+
+
+# 01: the endpoint and Job tools
+
+
+def test_mcp_answers_at_mcp_beside_the_frontend_and_only_to_local_hosts(settings, video_source, transcriber, llm, tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html>")
+    app = create_app(replace(settings, frontend_dir=dist), Ports(video_source, transcriber, llm))
+    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+        response = client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
+        assert response.status_code == 200, response.text
+        assert '"serverInfo":{"name":"AI Clipper"' in response.text
+        assert client.post("/mcp", json=INITIALIZE, headers={**MCP_HEADERS, "Host": "evil.example"}).status_code == 421
+        assert client.get("/jobs/abc").text == "<!doctype html>"
+        assert client.get("/mcp/other").status_code == 404
+
+
+@pytest.mark.anyio
+async def test_a_job_made_through_mcp_reaches_review_and_is_listed_without_its_transcript(mcp):
+    job = await reviewed(mcp)
+
+    got = await call(mcp, "get_job", job_id=job["id"])
+    assert got["status"] == "review" and got["source"] == URL
+    assert "transcript" not in got and "history" not in got and "profile" not in got
+    assert got["candidates"] == [] and got["clips"] == []
+    assert [listed["id"] for listed in (await call(mcp, "list_jobs"))["jobs"]] == [job["id"]]
+
+
+@pytest.mark.anyio
+async def test_api_errors_come_back_as_tool_errors_with_their_message(mcp):
+    assert "No Job nope" in await fails(mcp, "get_job", job_id="nope")
+    job = await reviewed(mcp)
+    assert "only a Job in error can be retried" in await fails(mcp, "retry_job", job_id=job["id"])
+
+    assert await call(mcp, "delete_job", job_id=job["id"]) == {"deleted": job["id"]}
+    assert (await call(mcp, "list_jobs"))["jobs"] == []
+
+
+# 02: waiting
+
+
+@pytest.mark.anyio
+async def test_waiting_follows_a_job_with_progress_and_times_out(mcp, video_source):
+    video_source.hold()
+    job = await call(mcp, "create_job_from_url", url=URL)
+
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=5, until=["downloading"])
+    assert waited["reached"] and waited["job"]["status"] == "downloading"
+    result = await mcp.call_tool("wait_for_job", {"job_id": job["id"], "timeout_secs": 5}, read_timeout_seconds=10)
+    assert json.loads(result.content[0].text)["reached"] is False
+
+    video_source.release()
+    notes = []
+
+    async def progress(progress: float, total: float | None, message: str | None) -> None:
+        notes.append(message)
+
+    result = await mcp.call_tool("wait_for_job", {"job_id": job["id"], "timeout_secs": 30}, progress_callback=progress)
+    assert json.loads(result.content[0].text)["job"]["status"] == "review"
+    assert any(note and note.startswith("transcribing") for note in notes), notes
+    # Already there: at once.
+    assert (await call(mcp, "wait_for_job", job_id=job["id"]))["reached"]
+    assert "No Job nope" in await fails(mcp, "wait_for_job", job_id="nope")
+
+
+# 03: Jobs from a file on this Mac
+
+
+@pytest.mark.anyio
+async def test_a_job_from_a_file_on_this_mac_reaches_review_and_leaves_the_file(mcp, settings, fixture_video, tmp_path):
+    master = tmp_path / "Episode 12.mp4"
+    master.write_bytes(fixture_video.read_bytes())
+
+    job = await call(mcp, "create_job_from_file", path=str(master), options={"captions": False})
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=30)
+
+    assert waited["job"]["status"] == "review", waited
+    assert waited["job"]["source"] == "Episode 12.mp4"
+    assert master.read_bytes() == fixture_video.read_bytes()
+    assert not list((settings.data_dir / uploads.UPLOADS_DIR).iterdir())
+
+
+@pytest.mark.anyio
+async def test_a_missing_file_or_a_folder_makes_no_job(mcp, settings, tmp_path):
+    assert "No file" in await fails(mcp, "create_job_from_file", path=str(tmp_path / "missing.mp4"))
+    assert "No file" in await fails(mcp, "create_job_from_file", path=str(tmp_path))
+    assert (await call(mcp, "list_jobs"))["jobs"] == []
+
+
+# 04: reviewing Candidates
+
+
+@pytest.mark.anyio
+async def test_the_transcript_is_read_a_page_at_a_time(mcp):
+    job = await reviewed(mcp)
+
+    page = await call(mcp, "get_transcript", job_id=job["id"], end=2, words=True)
+    assert [line["text"] for line in page["lines"]] == ["halo semua apa kabar", "kita ngobrol soal"]
+    assert [word["text"] for word in page["words"]] == ["halo", "semua", "apa", "kabar", "kita", "ngobrol", "soal"]
+    assert page["next_start"] == 2.6
+    rest = await call(mcp, "get_transcript", job_id=job["id"], start=page["next_start"])
+    assert [line["text"] for line in rest["lines"]] == ["Podcast ya"] and rest["next_start"] is None
+
+
+@pytest.mark.anyio
+async def test_candidates_are_added_edited_and_dry_run_through_mcp(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    edited = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Halo *semua*", "hook_kicker": "EPS 12", "selected": True})
+    assert (edited["hook_text"], edited["hook_kicker"], edited["selected"], edited["edited"]) == ("Halo *semua*", "EPS 12", True, True)
+    [listed] = (await call(mcp, "get_job", job_id=job["id"]))["candidates"]
+    assert listed["hook_text"] == "Halo *semua*" and "descriptions" not in listed
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba dulu"}, dry_run=True)
+    assert plan["hook"]["lines"] == ["Coba dulu"]
+    assert [word["text"] for word in plan["words"]][:2] == ["halo", "semua"] and "at" in plan["words"][0]
+    assert (await call(mcp, "get_candidate", **ids))["hook_text"] == "Halo *semua*"  # not saved
+
+    message = await fails(mcp, "edit_candidate", **ids, changes={"start": 5, "end": 1})
+    assert "end" in message.lower() or "start" in message.lower()
+    assert "hook_kicker" in await fails(mcp, "edit_candidate", **ids, changes={"hook_kicker": "x" * 40})
+    assert "has no Candidate nope" in await fails(mcp, "edit_candidate", job_id=job["id"], candidate_id="nope", changes={})
+
+
+@pytest.mark.anyio
+async def test_candidates_of_a_job_not_in_review_cant_be_edited(mcp, video_source):
+    video_source.hold()
+    job = await call(mcp, "create_job_from_url", url=URL)
+    try:
+        assert "while it is in review" in await fails(mcp, "add_candidate", job_id=job["id"], start=0.1, end=1.6)
+    finally:
+        video_source.release()
+
+
+# 05: rendering
+
+
+@pytest.mark.anyio
+async def test_selected_candidates_render_into_clips_with_their_paths(mcp):
+    job = await reviewed(mcp)
+    assert "Select at least one Candidate" in await fails(mcp, "render_clips", job_id=job["id"])
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+
+    queued = (await call(mcp, "render_clips", job_id=job["id"]))["clips"]
+    assert [clip["candidate_id"] for clip in queued] == [candidate["id"]]
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=60)
+    assert waited["reached"] and waited["job"]["status"] == "review"
+
+    [clip] = (await call(mcp, "list_clips", job_id=job["id"]))["clips"]
+    assert clip["status"] == "done", clip
+    assert Path(clip["video_path"]).is_file() and Path(clip["poster_path"]).is_file()
+    assert clip["duration"] == pytest.approx(candidate["end"] - candidate["start"], abs=0.05)
+
+
+# 06: Style Presets, assets and the Channel Profile
+
+
+@pytest.mark.anyio
+async def test_presets_are_saved_replaced_and_deleted_but_not_builtin_ones(mcp):
+    presets = (await call(mcp, "list_presets"))["presets"]
+    builtin = next(preset for preset in presets if preset["builtin"])
+    assert set(builtin) == {"id", "name", "builtin"}
+
+    saved = await call(mcp, "save_preset", preset={"name": "Mine", "caption": {"size": 90}})
+    assert saved["caption"]["size"] == 90
+    renamed = await call(mcp, "save_preset", preset_id=saved["id"], preset={"name": "Mine 2"})
+    assert renamed["name"] == "Mine 2"
+    assert "built in" in await fails(mcp, "save_preset", preset_id=builtin["id"], preset={"name": "x"})
+    assert "built in" in await fails(mcp, "delete_preset", preset_id=builtin["id"])
+    await call(mcp, "delete_preset", preset_id=saved["id"])
+    assert saved["id"] not in {preset["id"] for preset in (await call(mcp, "list_presets"))["presets"]}
+
+
+@pytest.mark.anyio
+async def test_logos_and_media_are_added_from_files_and_media_in_use_is_kept(mcp, tmp_path):
+    song = make(tmp_path / "song.wav", "-f", "lavfi", "-i", "sine=frequency=330:duration=1")
+    logo = make(tmp_path / "logo.png", "-f", "lavfi", "-i", "color=c=blue:size=64x48", "-frames:v", "1")
+    text = tmp_path / "notes.txt"
+    text.write_text("not media")
+
+    item = await call(mcp, "add_asset", kind="media", path=str(song))
+    added = await call(mcp, "add_asset", kind="logo", path=str(logo))
+    assert song.is_file() and logo.is_file()
+    assets = await call(mcp, "list_assets")
+    assert [m["id"] for m in assets["media"]] == [item["id"]]
+    assert [l["id"] for l in assets["logos"]] == [added["id"]]
+    assert assets["fonts"] and set(assets["fonts"][0]) == {"id", "label", "family"}
+    assert "PNG, JPEG or WebP" in await fails(mcp, "add_asset", kind="logo", path=str(text))
+    assert await fails(mcp, "add_asset", kind="media", path=str(text))
+
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    await call(mcp, "merge_candidate_items", job_id=job["id"], candidate_id=candidate["id"],
+               music=[{"id": "song", "media": item["id"], "start": 0, "secs": 1}])
+    message = await fails(mcp, "delete_asset", kind="media", asset_id=item["id"])
+    assert "Used by clips" in message and candidate["id"] in message
+    assert await call(mcp, "delete_asset", kind="logo", asset_id=added["id"]) == {"deleted": added["id"]}
+
+
+@pytest.mark.anyio
+async def test_the_channel_profile_round_trips(mcp):
+    profile = {"niche": "bisnis", "audience": "founder muda", "clip_style": "lucu", "avoid": "politik"}
+    assert await call(mcp, "set_channel_profile", profile=profile) == profile
+    assert await call(mcp, "get_channel_profile") == profile
+
+
+# 07: Advanced Edit items
+
+
+@pytest.mark.anyio
+async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    merged = await call(mcp, "merge_candidate_items", **ids, text_layers=[
+        {"id": "title", "text": "Judul", "start": 0, "secs": 1, "y": 300},
+        {"id": "label", "text": "Label", "start": 0.5, "secs": 0.5},
+    ])
+    assert [(layer["id"], layer["text"]) for layer in merged["text_layers"]] == [("title", "Judul"), ("label", "Label")]
+    merged = await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "text": "Judul baru"}])
+    title = merged["text_layers"][0]
+    assert (title["id"], title["text"], title["y"]) == ("title", "Judul baru", 300)  # the rest kept
+    assert "secs" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "new", "text": "x"}])
+
+    await call(mcp, "merge_candidate_items", **ids, word_edits=[{"at": 0.1, "text": "Halo"}])
+    merged = await call(mcp, "merge_candidate_items", **ids, word_edits=[{"at": 0.1, "text": "HALO"}, {"at": 0.5, "text": "Semua"}])
+    assert [(edit["at"], edit["text"]) for edit in merged["word_edits"]] == [(0.1, "HALO"), (0.5, "Semua")]
+
+    await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"size": 90}, "hook": {"size": 100}})
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"colour": "#FFEE00"}})
+    assert merged["style_overrides"]["caption"] == {"size": 90, "colour": "#FFEE00"}
+    assert merged["style_overrides"]["hook"] == {"size": 100}
+
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="text_layers", keys=["label"])
+    assert [layer["id"] for layer in removed["text_layers"]] == ["title"]
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.5])
+    assert [edit["at"] for edit in removed["word_edits"]] == [0.1]
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="style_overrides", keys=["caption.size"])
+    assert removed["style_overrides"]["caption"] == {"colour": "#FFEE00"}
+    assert "no text_layers item" in await fails(mcp, "remove_candidate_items", **ids, kind="text_layers", keys=["nope"])
+
+    message = await fails(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "media": "0" * 32, "start": 0, "secs": 1}])
+    assert f"no song or video with sound {"0" * 32}" in message
+
+
+# 08: agent guidance
+
+
+@pytest.mark.anyio
+async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
+    tools = (await mcp.list_tools()).tools
+    size = len(json.dumps([tool.model_dump(mode="json", exclude_none=True) for tool in tools]))
+    assert size < TOOLS_BUDGET_BYTES, size
+    assert {tool.name for tool in tools} >= {"create_job_from_url", "wait_for_job", "edit_candidate", "render_clips"}
+
+    glossary = await mcp.read_resource("ai-clipper://glossary")
+    assert "Candidate" in glossary.contents[0].text
