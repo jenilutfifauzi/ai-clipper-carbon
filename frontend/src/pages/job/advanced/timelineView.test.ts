@@ -5,7 +5,19 @@ import type { ClipSegment, MusicClip, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
 import { picked, type Pick } from "./pick";
-import { canvasWindow, chunksOf, filmstripTiles, tileWidth, zoomToFit } from "./timelineView";
+import {
+  canvasWindow,
+  chunksAcross,
+  chunksOf,
+  filmstripTiles,
+  gainAt,
+  peaksExtremes,
+  peaksLevel,
+  peaksPyramid,
+  tileWidth,
+  zoomToFit,
+  type Peaks,
+} from "./timelineView";
 
 describe("zoom to fit", () => {
   // A Clip of 110 s on a Timeline 1100 px wide: 10 px a second at 1×. Segments of 30, 20 and 60 s
@@ -167,5 +179,85 @@ describe("an item's canvas", () => {
     expect(canvasWindow({ left: 0, width: 20000 }, { left: 5000, right: 9000 }, 2)).toEqual({ left: 5976, right: 8024 });
     // Kept inside the item when its visible part is at an end: 1024 CSS px at 4×.
     expect(canvasWindow({ left: 0, width: 20000 }, { left: 0, right: 1000 }, 4)).toEqual({ left: 0, right: 1024 });
+  });
+});
+
+describe("the Waveform", () => {
+  test("a Music Clip needs the chunks of the part of its song it plays", () => {
+    // From 25 s into a 100 s song, 400 px long at 10 px a second: 25 to 65 s of it.
+    const clip = { mediaStart: 25, pps: 10, width: 400, duration: 100 };
+    expect(chunksAcross({ ...clip, span: { left: 0, right: 400 } })).toEqual([0, 30, 60]);
+    // A canvas over its second half, and past its end: 45 to 65 s.
+    expect(chunksAcross({ ...clip, span: { left: 200, right: 900 } })).toEqual([30, 60]);
+    // Ending on a chunk's start doesn't need that chunk: 35 to 60 s.
+    expect(chunksAcross({ ...clip, mediaStart: 35, width: 250, span: { left: 0, right: 250 } })).toEqual([30]);
+    // Nothing past the song's end: 50 to 60 s of a 60 s song.
+    expect(chunksAcross({ ...clip, mediaStart: 50, duration: 60, span: { left: 0, right: 400 } })).toEqual([30]);
+  });
+
+  // A chunk's Peaks, `count` buckets at 1000 a second, silent but for what `set` puts in.
+  const chunk = (count: number, set: (peaks: Peaks) => void = () => {}): Peaks => {
+    const peaks = { perSecond: 1000, min: new Int8Array(count), max: new Int8Array(count) };
+    set(peaks);
+    return peaks;
+  };
+
+  test("the pyramid halves the Peaks down to 64 buckets or fewer, keeping their extremes", () => {
+    const pyramid = peaksPyramid(
+      chunk(130, (peaks) => {
+        peaks.min[3] = -50;
+        // In the trailing bucket, which a halving still counts.
+        peaks.max[129] = 100;
+      }),
+    );
+    expect(pyramid.map((level) => [level.min.length, level.perSecond])).toEqual([[130, 1000], [65, 500], [33, 250]]);
+    expect([pyramid[1].min[1], pyramid[2].min[0]]).toEqual([-50, -50]);
+    expect([pyramid[1].max[64], pyramid[2].max[32]]).toEqual([100, 100]);
+    // A whole chunk, 30 s: ten levels, to 59 buckets, about 2 a second.
+    expect(peaksPyramid(chunk(30000)).map((level) => level.min.length)).toEqual([30000, 15000, 7500, 3750, 1875, 938, 469, 235, 118, 59]);
+  });
+
+  test("the level for a zoom is the coarsest with a bucket for each device pixel", () => {
+    // Its levels have 1000, 500, 250, 125, 62.5, 31.25, 15.6, 7.8, 3.9 and 2 buckets a second.
+    const pyramid = peaksPyramid(chunk(30000));
+    // A 60 s Clip at 1× on a phone 360 px wide at 3 device pixels to a pixel: 6 px a second, 18
+    // device pixels. 31.25 buckets a second is the coarsest with one for each.
+    expect(peaksLevel(pyramid, 6, 3).perSecond).toBe(31.25);
+    // At 1× on a desktop 1200 px wide at 2×: 40 device pixels a second.
+    expect(peaksLevel(pyramid, 20, 2).perSecond).toBe(62.5);
+    // At 40× there: 1600 device pixels a second, more than the finest has; it is the finest.
+    expect(peaksLevel(pyramid, 800, 2).perSecond).toBe(1000);
+    // Never fewer buckets than columns while a finer level has them.
+    for (const pps of [1, 7, 33, 100, 499]) expect(peaksLevel(pyramid, pps, 1).perSecond).toBeGreaterThanOrEqual(pps);
+  });
+
+  test("a column reads the extremes of the buckets that begin in it", () => {
+    // 10 buckets a second.
+    const peaks = { perSecond: 10, min: Int8Array.from([-127, -64, 0, -32, 0]), max: Int8Array.from([127, 64, 32, 0, 0]) };
+    expect(peaksExtremes(peaks, 0.1, 0.3)).toEqual([-64 / 127, 64 / 127]);
+    // Narrower than a bucket: the bucket it is in.
+    expect(peaksExtremes(peaks, 0.12, 0.13)).toEqual([-64 / 127, 64 / 127]);
+    // Past the end is silence.
+    expect(peaksExtremes(peaks, 0.6, 0.7)).toEqual([0, 0]);
+  });
+
+  test("the gain is the volume through the fades' linear ramps", () => {
+    // 10 s at 150%, fading in over 4 s and out over 2 s.
+    const clip = { volume: 1.5, secs: 10, fade_in: 4, fade_out: 2 };
+    expect(gainAt(2, clip)).toBeCloseTo(0.75);
+    expect(gainAt(0, clip)).toBe(0);
+    expect(gainAt(10, clip)).toBe(0);
+    expect(gainAt(5, clip)).toBe(1.5);
+    expect(gainAt(9.5, clip)).toBeCloseTo(0.375);
+    // Without fades, the volume all along.
+    expect(gainAt(0, { volume: 0.8, secs: 10, fade_in: 0, fade_out: 0 })).toBe(0.8);
+  });
+
+  test("fades that meet peak where they meet", () => {
+    // 4 s fading in over 3 s and out over 1 s.
+    const clip = { volume: 1, secs: 4, fade_in: 3, fade_out: 1 };
+    expect(gainAt(3, clip)).toBe(1);
+    expect(gainAt(1.5, clip)).toBeCloseTo(0.5);
+    expect(gainAt(3.5, clip)).toBeCloseTo(0.5);
   });
 });

@@ -1,24 +1,30 @@
-"""Media derived for the Advanced Edit's Timeline: Filmstrips, made per 30-second chunk of a Source or
-a Media Library video (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
+"""Media derived for the Advanced Edit's Timeline: Filmstrips and Peaks, made per 30-second chunk of a
+Source or a Media Library item (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
 
-A chunk starts at a multiple of CHUNK_SECS seconds and holds the frames at each whole second from
-there: n = min(30, ceil(duration - start)), scaled to STRIP_HEIGHT pixels tall (their width set by
-the video's aspect, rounded to even) and laid side by side in one JPEG. Its path names the format
-(STRIP_FORMAT), so a chunk is never stale; a new format is a new version, in new paths.
+A chunk starts at a multiple of CHUNK_SECS seconds. A Filmstrip's holds the frames at each whole
+second from there: n = min(30, ceil(duration - start)), scaled to STRIP_HEIGHT pixels tall (their
+width set by the video's aspect, rounded to even) and laid side by side in one JPEG. A Peaks chunk
+holds the sound from there, mixed to mono at PEAK_RATE and folded into BUCKETS_PER_SECOND buckets
+(following Concat's peaks.rs): `[buckets_per_second u16][count u32][min i8 × count][max i8 × count]`,
+little-endian. A chunk's path names its format (STRIP_FORMAT, PEAKS_FORMAT), so it is never stale; a
+new format is a new version, in new paths.
 
 Chunks are written under a temporary name and renamed when complete, so a half-written one is never
-served. Those made on request (a Source's, or a video uploaded before Filmstrips) are made outside
+served. Those made on request (a Source's, or an item's uploaded before them) are made outside
 the Worker, one at a time under a lock of their own, by an ffmpeg at low priority on one thread.
 """
 
 import math
 import os
+import struct
 import subprocess
 import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 CHUNK_SECS = 30
 STRIP_HEIGHT = 112
@@ -32,6 +38,22 @@ _STRIP_SCALE = f"scale='2*round({STRIP_HEIGHT}*dar/2)':{STRIP_HEIGHT},setsar=1"
 # Frames are taken at each whole second, and a video's last picture may end a little before its sound
 # does: the last picture is held for a second, so the last tile is never missing.
 _STRIP_FRAMES = f"tpad=stop_mode=clone:stop_duration=1,fps=1,{_STRIP_SCALE}"
+
+# The folder Peaks' chunks are kept in, named by their format, and the version in their URLs.
+PEAKS_FORMAT = "v1-b1000"
+PEAKS_VERSION = "v1"
+# A bucket is a millisecond: 48 samples of the sound, mixed to mono and resampled to PEAK_RATE.
+BUCKETS_PER_SECOND = 1000
+PEAK_RATE = 48_000
+_BUCKET = PEAK_RATE // BUCKETS_PER_SECOND
+# A bucket's min, in [-1, 0], and max, in [0, 1], are kept as int8: times this.
+_PEAK_SCALE = 127
+# The output arguments that decode the first sound for Peaks: mono 16-bit samples at PEAK_RATE.
+_PEAKS_PCM = ["-map", "0:a:0", "-vn", "-ac", "1", "-ar", str(PEAK_RATE), "-c:a", "pcm_s16le", "-f", "s16le"]
+_SAMPLE_BYTES = 2
+# ffmpeg's seek in a compressed sound lands a frame or so late (16 ms into an AAC): Peaks made on
+# request seek this many seconds before the chunk, and decode up to it.
+_PEAKS_PREROLL = 1
 
 # One ffmpeg at a time for chunks made on request.
 _on_demand = threading.Lock()
@@ -97,6 +119,68 @@ def make_strip(ffmpeg: Path, video: Path, start: int, duration: float, target: P
     return on_demand(target, lambda part: _run([*command, str(part)], f"a Filmstrip of {video.name}"))
 
 
+def fold_peaks(samples: bytes) -> bytes:
+    """A Peaks chunk of `samples` (mono, 16-bit, at PEAK_RATE): the lowest and highest sample of each
+    bucket, seeded at zero (silence is a flat 0/0, and a min never sits above the axis), with a
+    trailing partial bucket counted."""
+    pcm = np.frombuffer(samples, dtype="<i2")
+    count = -(-len(pcm) // _BUCKET)
+    buckets = np.zeros(count * _BUCKET, dtype=np.int32)
+    buckets[: len(pcm)] = pcm
+    buckets = buckets.reshape(count, _BUCKET)
+    low, high = (
+        np.rint(extreme * _PEAK_SCALE / 32768).astype(np.int8)
+        for extreme in (buckets.min(axis=1, initial=0), buckets.max(axis=1, initial=0))
+    )
+    return struct.pack("<HI", BUCKETS_PER_SECOND, count) + low.tobytes() + high.tobytes()
+
+
+@dataclass(frozen=True)
+class PeaksOutputs:
+    """The Peaks' part of an ffmpeg command that already reads the sound: the output arguments to add
+    after the command's own, which decode it to `pcm`, folded into chunks in `folder` by `keep` once
+    ffmpeg has succeeded."""
+
+    args: list[str]
+    pcm: Path
+    folder: Path
+
+    def keep(self) -> None:
+        """Fold the decoded sound into its chunks, each written under a temporary name and renamed,
+        and remove it."""
+        size = CHUNK_SECS * PEAK_RATE * _SAMPLE_BYTES
+        try:
+            with self.pcm.open("rb") as pcm:
+                for start in chunk_starts(self.pcm.stat().st_size / _SAMPLE_BYTES / PEAK_RATE):
+                    pcm.seek(start * PEAK_RATE * _SAMPLE_BYTES)
+                    target = self.folder / f"{start}.peaks"
+                    part = _part(target)
+                    part.write_bytes(fold_peaks(pcm.read(size)))
+                    os.replace(part, target)
+        finally:
+            self.pcm.unlink(missing_ok=True)
+
+
+def peaks_outputs(folder: Path) -> PeaksOutputs:
+    """Every chunk of the Peaks of the first sound of an ffmpeg command's input, into `folder`, from
+    the one decode."""
+    folder.mkdir(parents=True, exist_ok=True)
+    pcm = _part(folder / "sound.pcm")
+    return PeaksOutputs([*_PEAKS_PCM, str(pcm)], pcm, folder)
+
+
+def make_peaks(ffmpeg: Path, media: Path, start: int, target: Path) -> Path:
+    """The chunk of the Peaks of the sound of `media` from `start`, at `target`: made now, by seeking
+    to `start`, if it isn't there yet."""
+    preroll = min(start, _PEAKS_PREROLL)
+    command = [
+        str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-threads", "1",
+        "-ss", str(start - preroll), "-i", str(media), "-ss", str(preroll), "-t", str(CHUNK_SECS),
+        *_PEAKS_PCM, "-threads", "1", "pipe:1",
+    ]
+    return on_demand(target, lambda part: part.write_bytes(fold_peaks(_run(command, f"the Peaks of {media.name}"))))
+
+
 def on_demand(target: Path, make: Callable[[Path], None]) -> Path:
     """`target`, made by `make` (given the temporary file to write) if it isn't there yet, under the
     on-demand lock. A request that waited for the lock looks again before making anything, so two
@@ -120,8 +204,9 @@ def _part(target: Path) -> Path:
     return target.with_name(f".{target.stem}.{uuid.uuid4().hex}.part{target.suffix}")
 
 
-def _run(command: list[str], what: str) -> None:
-    """Run ffmpeg at low priority."""
-    result = subprocess.run(["nice", "-n", "10", *command], capture_output=True, text=True)
+def _run(command: list[str], what: str) -> bytes:
+    """Run ffmpeg at low priority; what it wrote to its output."""
+    result = subprocess.run(["nice", "-n", "10", *command], capture_output=True)
     if result.returncode:
-        raise RuntimeError(f"ffmpeg couldn't make {what}: {result.stderr.strip()}")
+        raise RuntimeError(f"ffmpeg couldn't make {what}: {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout
