@@ -33,7 +33,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { itemActions, move, selectAll, type ItemActions, type Outcome } from "./actions";
+import { itemActions, move, nudge, selectAll, type ItemActions, type Outcome } from "./actions";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
@@ -43,7 +43,7 @@ import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { bandPick, isPicked, itemsOf, onlyItem, picked, prunedPick, samePick, stageIdsOf, stageItem, type ItemKind, type Pick } from "./pick";
+import { bandPick, isPicked, itemsOf, picked, prunedPick, samePick, stageIdsOf, stageItem, toggled, type ItemKind, type Pick } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -413,6 +413,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     navigate(`/jobs/${job.id}?candidate=${candidate.id}`);
   }
 
+  // Whether the Text Layer or Overlay `id` is one of several picked on the frame, which move with it.
+  const placedTogether = (kind: "text" | "overlay", id: string) =>
+    isPicked(pick, kind, id) && itemsOf(pick).filter((item) => item.kind === "text" || item.kind === "overlay").length > 1;
+  function moveOnFrame(dx: number, dy: number, group: string) {
+    const moved = nudge(scene, dx, dy);
+    if (moved) history.set(moved.edits, group);
+  }
+
   const source = job.source!;
   const player = (
     <ClipPreview
@@ -421,10 +429,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       fonts={fonts}
       playback={playback}
       stage={{
-        selected: stageIdsOf(pick)[0] ?? null,
-        onSelect: (id) => {
+        selected: stageIdsOf(pick),
+        onSelect: (id, toggle) => {
           const item = stageItem(id);
-          select("id" in item ? picked(item) : item);
+          select("id" in item ? (toggle ? toggled(pick, item) : picked(item)) : item);
         },
         onPlace: (id, place, group) => {
           if (id === "hook" || id === "captions") {
@@ -432,7 +440,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             return;
           }
           const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
-          if (layer) updateText({ ...layer, x: place.x, y: place.y, size: place.size ?? layer.size }, group);
+          if (!layer) return;
+          if (place.size == null && placedTogether("text", layer.id)) moveOnFrame(place.x - layer.x, place.y - layer.y, group);
+          else updateText({ ...layer, x: place.x, y: place.y, size: place.size ?? layer.size }, group);
         },
         retype: {
           textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
@@ -449,13 +459,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         texts: true,
       }}
       overlays={{
-        selected: onlyItem(pick)?.kind === "overlay" ? onlyItem(pick)!.id : null,
+        selected: itemsOf(pick)
+          .filter((item) => item.kind === "overlay")
+          .map((item) => item.id),
         // As the plan draws them: those whose items are there, starting in the Clip.
         ids: edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
-        onSelect: (id) => select(picked({ kind: "overlay", id })),
+        onSelect: (id, toggle) => select(toggle ? toggled(pick, { kind: "overlay", id }) : picked({ kind: "overlay", id })),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
-          if (overlay) updateOverlay({ ...overlay, ...place }, group);
+          if (!overlay) return;
+          if (place.size === undefined && placedTogether("overlay", id)) moveOnFrame(place.x - overlay.x, place.y - overlay.y, group);
+          else updateOverlay({ ...overlay, ...place }, group);
         },
       }}
       fit

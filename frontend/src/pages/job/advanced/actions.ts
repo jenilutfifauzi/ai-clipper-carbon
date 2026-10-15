@@ -201,6 +201,29 @@ export function move(scene: Scene, delta: number): Outcome | null {
   return { edits: next, pick: scene.pick };
 }
 
+// The output's size, in pixels: where the middles of Text Layers and Overlays can be.
+const FRAME = { width: 1080, height: 1920 };
+
+/**
+ * The picked Text Layers and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
+ * further than keeps each one's middle in the frame.
+ */
+export function nudge(scene: Scene, dx: number, dy: number): Outcome | null {
+  const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "overlay"; item: TextLayer | Overlay }[];
+  if (!placed.length) return null;
+  const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
+  const byX = within(dx, placed.map(({ item }) => item.x), FRAME.width);
+  const byY = within(dy, placed.map(({ item }) => item.y), FRAME.height);
+  const next = { ...scene.edits };
+  for (const { kind, item } of placed) {
+    const list = KINDS[kind].list;
+    Object.assign(next, {
+      [list]: (next[list] as (TextLayer | Overlay)[]).map((other) => (other.id === item.id ? { ...other, x: Math.round(other.x + byX), y: Math.round(other.y + byY) } : other)),
+    });
+  }
+  return { edits: next, pick: scene.pick };
+}
+
 /** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
 export interface ItemActions {
   remove: () => void;

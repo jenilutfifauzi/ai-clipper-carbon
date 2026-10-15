@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { duplicate, move, remove, selectAll, split, type Scene } from "./actions";
+import { duplicate, move, nudge, remove, selectAll, split, type Scene } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
 
@@ -337,5 +337,26 @@ describe("moving a Pick", () => {
 
   test("does nothing without Text Layers, Music Clips or Overlays picked", () => {
     expect(move(scene(edits(), picked(seg("s1"))), 1)).toBeNull();
+  });
+});
+
+describe("moving a Pick on the preview", () => {
+  test("moves its Text Layers and Overlays by the same offset, in output pixels", () => {
+    const before = edits({ text_layers: [layer("a", 0, 2), layer("b", 0, 2, { x: 200 })], overlays: [overlay("o", 0, 2)] });
+    const pick = picked(text("a"), { kind: "overlay", id: "o" });
+
+    expect(nudge(scene(before, pick), 100, -50)).toEqual({
+      edits: { ...before, text_layers: [layer("a", 0, 2, { x: 640, y: 910 }), layer("b", 0, 2, { x: 200 })], overlays: [{ ...overlay("o", 0, 2), x: 640, y: 350 }] },
+      pick,
+    });
+  });
+
+  test("keeps every middle in the frame, keeping their places relative to one another", () => {
+    const before = edits({ text_layers: [layer("a", 0, 2, { x: 1000 }), layer("b", 0, 2, { x: 500 })] });
+
+    expect(nudge(scene(before, picked(text("a"), text("b"))), 200, 0)?.edits.text_layers).toEqual([
+      layer("a", 0, 2, { x: 1080 }),
+      layer("b", 0, 2, { x: 580 }),
+    ]);
   });
 });

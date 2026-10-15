@@ -43,7 +43,13 @@ export interface StageItem {
   onEdit?: (point?: { x: number; y: number }) => void;
 }
 
-type Held = { id: string; dx: number; dy: number; scale: number; plan: RenderPlan | null };
+type Held = { id: string; kind: "move" | "size"; dx: number; dy: number; scale: number; plan: RenderPlan | null };
+
+/**
+ * How far the picked items that follow a moved one are drawn from where the plan has them, in output
+ * pixels, and the one they follow (null: none here, an Overlay).
+ */
+export type Drift = { lead: string | null; dx: number; dy: number };
 type Gesture = {
   id: string;
   pointer: number;
@@ -53,6 +59,8 @@ type Gesture = {
   grab: { x: number; y: number };
   group: string;
   moved: boolean;
+  // Grabbed as one of several picked, which move with it.
+  together: boolean;
 };
 
 let gestures = 0;
@@ -63,13 +71,19 @@ const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.heigh
  * The gestures that move, resize and edit `items` on the stage. While one is under way, and until a
  * plan comes back after its last change, the item is drawn where it is being put: the plan comes from
  * the backend only once the draft changes (docs/adr/0001-backend-plans-frontend-draws.md).
+ *
+ * `picked` are the ids picked (with "overlay:<id>" for Overlays, drawn elsewhere): a click picks an
+ * item alone, or with Shift, Cmd or Ctrl (`toggle`) adds it or takes it out. When several are picked,
+ * moving one draws the others moved as far (`drift`), as `outside` (an Overlay moved) does; only one
+ * picked alone can be resized.
  */
 export function useStageEdit(
   plan: RenderPlan | null,
   stage: React.RefObject<HTMLDivElement | null>,
   items: StageItem[],
-  selected: string | null,
-  onSelect: (id: string) => void,
+  picked: string[],
+  onSelect: (id: string, toggle: boolean) => void,
+  outside: Drift | null = null,
 ) {
   const [held, setHeld] = useState<Held | null>(null);
   const [guides, setGuides] = useState<{ x: number | null; y: number | null } | null>(null);
@@ -77,9 +91,13 @@ export function useStageEdit(
   const lastTap = useRef<{ id: string; at: number } | null>(null);
   // Held while it is moved, and until a plan made after its last change comes.
   const holding = held && (gesture.current?.id === held.id || held.plan === plan) ? held : null;
+  const drift: Drift | null =
+    holding?.kind === "move" && picked.length > 1 && picked.includes(holding.id) ? { lead: holding.id, dx: holding.dx, dy: holding.dy } : outside;
+  const follows = (id: string) => !!drift && drift.lead !== id && picked.includes(id);
 
-  // The area as drawn: moved and scaled about its middle while held.
+  // The area as drawn: moved and scaled about its middle while held, or moved with the one held.
   function shown(id: string, area: Box): Box {
+    if (follows(id)) return { ...area, x: area.x + drift!.dx, y: area.y + drift!.dy };
     if (holding?.id !== id) return area;
     const { scale, dx, dy } = holding;
     const width = area.width * scale;
@@ -89,6 +107,7 @@ export function useStageEdit(
 
   // An SVG transform for what is drawn in `area` of item `id`, while it is held.
   function transform(id: string, area: Box): string | undefined {
+    if (follows(id)) return `translate(${drift!.dx} ${drift!.dy})`;
     if (holding?.id !== id) return undefined;
     const { x, y } = centreOf(area);
     return `translate(${x + holding.dx} ${y + holding.dy}) scale(${holding.scale}) translate(${-x} ${-y})`;
@@ -110,7 +129,7 @@ export function useStageEdit(
     const dx = area.x + area.width / 2 - (planned.x + planned.width / 2);
     const dy = area.y + area.height / 2 - (planned.y + planned.height / 2);
     const scale = area.width / planned.width;
-    setHeld({ id: item.id, dx, dy, scale, plan });
+    setHeld({ id: item.id, kind: size === null ? "move" : "size", dx, dy, scale, plan });
     item.onPlace(
       { x: Math.round(area.x), y: Math.round(area.y), width: Math.round(area.width), height: Math.round(area.height) },
       size,
@@ -158,8 +177,13 @@ export function useStageEdit(
       if (!point || pointer.button !== 0) return;
       pointer.preventDefault();
       pointer.stopPropagation();
+      if (pointer.shiftKey || pointer.metaKey || pointer.ctrlKey) {
+        onSelect(item.id, true);
+        return;
+      }
       pointer.currentTarget.setPointerCapture(pointer.pointerId);
-      onSelect(item.id);
+      const together = picked.length > 1 && picked.includes(item.id);
+      if (!together) onSelect(item.id, false);
       gesture.current = {
         id: item.id,
         pointer: pointer.pointerId,
@@ -168,6 +192,7 @@ export function useStageEdit(
         grab: point,
         group: `stage-${kind}:${++gestures}`,
         moved: false,
+        together,
       };
     };
     const move = (pointer: PointerEvent<HTMLElement>) => {
@@ -204,6 +229,8 @@ export function useStageEdit(
       setGuides(null);
       // Re-drawn now that the gesture is over: held only until the next plan.
       setHeld((old) => (old ? { ...old } : old));
+      // A click on one of several picked picks it alone.
+      if (!current.moved && current.together) onSelect(item.id, false);
       if (current.moved || current.kind !== "move" || !item.onEdit) return;
       const now = performance.now();
       if (lastTap.current?.id === item.id && now - lastTap.current.at < DOUBLE_TAP_MS) {
@@ -251,15 +278,15 @@ export function useStageEdit(
     };
   }
 
-  return { items, selected, guides, shown, transform, handlers };
+  return { items, picked, drift, guides, shown, transform, handlers };
 }
 
 export type StageEdit = ReturnType<typeof useStageEdit>;
 
 /**
- * A handle over each item on screen now (and over the selected one, faded, when it has one place and
- * isn't on screen), to select, move, nudge and edit it; the selected one outlined, with a corner to
- * resize it by when it has a size. The guides it snaps to, while it does.
+ * A handle over each item on screen now (and over each picked one, faded, when it has one place and
+ * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
+ * with a corner to resize it by when it has a size. The guides it snaps to, while it does.
  */
 export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playback: Playback; edit: StageEdit }) {
   const on = usePlayback(playback, (time) =>
@@ -269,7 +296,7 @@ export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playb
   return (
     <>
       {edit.items.map((item, i) => {
-        const selected = item.id === edit.selected;
+        const selected = edit.picked.includes(item.id);
         const index = shownAt[i] ?? -1;
         const show = index >= 0 ? item.shows[index] : selected && item.shows.length === 1 ? item.shows[0] : null;
         if (!show) return null;
@@ -298,6 +325,7 @@ export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playb
             }}
           >
             {selected &&
+              edit.picked.length === 1 &&
               item.size &&
               (["-top-1.5 -left-1.5 cursor-nwse-resize", "-top-1.5 -right-1.5 cursor-nesw-resize", "-bottom-1.5 -left-1.5 cursor-nesw-resize", "-right-1.5 -bottom-1.5 cursor-nwse-resize"] as const).map(
                 (corner) => (

@@ -18,12 +18,12 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
-import { PreviewOverlays, type OverlayControls } from "./PreviewOverlays";
+import { heldArea, PreviewOverlays, type OverlayControls, type OverlayHold } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
-import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
+import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type Drift, type StageEdit, type StageItem } from "./StageEdit";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -63,7 +63,8 @@ const percent = (value: number) => `${value * 100}%`;
  * background and shot); the first is the master, which `playback` drives and which is heard.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
  * centre, in output pixels. With `stage`, the hook, the captions and (in the Advanced Edit) the Text
- * Layers on screen are selected by a click, moved, resized and retyped on the frame (StageEdit.tsx,
+ * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move together
+ * with the picked Overlays), moved, resized and retyped on the frame (StageEdit.tsx,
  * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
  * Advanced Edit's player), and the transport is a single row.
  */
@@ -136,7 +137,17 @@ export function ClipPreview({
       }
     : undefined;
   const items = plan && fonts && controls ? stageItems(plan, fontById, controls, startEditing, () => playback.time) : [];
-  const edit = useStageEdit(plan, stage, items, controls?.selected ?? null, (id) => controls?.onSelect(id as StageId));
+  // What is picked on the stage, Overlays as "overlay:<id>": moving one of several moves them all.
+  const picked = [...(controls?.selected ?? []), ...(overlays?.selected ?? []).map((id) => `overlay:${id}`)];
+  const [overlayHold, setOverlayHold] = useState<OverlayHold | null>(null);
+  const edit = useStageEdit(
+    plan,
+    stage,
+    items,
+    picked,
+    (id, toggle) => controls?.onSelect(id as StageId, toggle),
+    overlayDrift(plan, overlays, overlayHold, picked),
+  );
 
   const frame = (
     <div
@@ -160,7 +171,7 @@ export function ClipPreview({
       ))}
       <PreviewSegments plan={plan} playback={playback} />
       <PreviewTransitions plan={plan} playback={playback} src={src} />
-      <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} />
+      <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} picked={picked} hold={overlayHold} onHold={setOverlayHold} drift={edit.drift} />
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
@@ -176,7 +187,7 @@ export function ClipPreview({
                   font={fontById.get(event.layer.font)}
                   playback={playback}
                   moving={edit.transform(`text:${event.layer.id}`, event.area)}
-                  still={`text:${event.layer.id}` === controls?.selected}
+                  still={controls?.selected.includes(`text:${event.layer.id}`)}
                 />
               ),
           )}
@@ -187,7 +198,7 @@ export function ClipPreview({
               font={fontById.get(plan.hook_style.font)}
               playback={playback}
               moving={edit.transform("hook", plan.hook.area)}
-              still={controls?.selected === "hook"}
+              still={controls?.selected.includes("hook")}
             />
           )}
         </svg>
@@ -235,6 +246,15 @@ export function ClipPreview({
       <Transport playback={playback} />
     </div>
   );
+}
+
+// How far the picked items follow an Overlay of several picked that is being moved (not resized).
+function overlayDrift(plan: RenderPlan | null, overlays: OverlayControls | undefined, hold: OverlayHold | null, picked: string[]): Drift | null {
+  if (!plan || !overlays || !hold || picked.length < 2 || !overlays.selected.includes(hold.id)) return null;
+  const event = plan.overlays[overlays.ids.indexOf(hold.id)];
+  const held = event && heldArea(hold, hold.id, event);
+  if (!held || held.width !== event.area.width) return null;
+  return { lead: `overlay:${hold.id}`, dx: held.x - event.area.x, dy: held.y - event.area.y };
 }
 
 // The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
@@ -339,14 +359,14 @@ function useWatermarkDrag(
 
 /**
  * The hold of an editor on what can be moved on the preview: the hook ("hook"), the captions
- * ("captions") and, with `texts`, each Text Layer ("text:<id>"). Which is selected, what a click
- * selects, where a move or resize puts one, and what retyping one saves.
+ * ("captions") and, with `texts`, each Text Layer ("text:<id>"). Which are picked, what a click picks
+ * (with Shift, Cmd or Ctrl, `toggle`), where a move or resize puts one, and what retyping one saves.
  */
 export type StageId = "hook" | "captions" | `text:${string}`;
 
 export interface StageControls {
-  selected: StageId | null;
-  onSelect: (id: StageId) => void;
+  selected: StageId[];
+  onSelect: (id: StageId, toggle: boolean) => void;
   // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
   // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
   onPlace: (id: StageId, place: Place, group: string) => void;

@@ -295,7 +295,7 @@ export function CandidateEditor({
                   stage={
                     tab !== "watermark" && style.controls
                       ? {
-                          selected: onStage,
+                          selected: onStage ? [onStage] : [],
                           onSelect: (id) => {
                             setOnStage(id);
                             if (id === "hook" || id === "captions") setTab(id);

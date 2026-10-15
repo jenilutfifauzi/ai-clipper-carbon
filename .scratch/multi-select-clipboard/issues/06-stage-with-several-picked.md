@@ -13,11 +13,15 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] In the browser:
-  - [ ] two Text Layers and an Overlay picked are all outlined;
-  - [ ] dragging one moves all three, and one Cmd+Z undoes it;
-  - [ ] the resize corner shows only with one picked;
-  - [ ] Shift-click on the stage toggles.
-- [ ] Typecheck, test, build.
+- [x] In the browser:
+  - [x] two Text Layers and an Overlay picked are all outlined;
+  - [x] dragging one moves all three, and one Cmd+Z undoes it;
+  - [x] the resize corner shows only with one picked;
+  - [x] Shift-click on the stage toggles.
+- [x] Typecheck, test, build.
+
+## Comments
+
+**2026-10-15: done.** The stage's handles (hook, captions, Text Layers) and the Overlays share one list of what is picked. A move of one of several is saved as one change by the Pick's `nudge`, which moves every picked Text Layer and Overlay by the same offset and keeps each middle in the frame. Until the plan has them there, the others are drawn moved as far (a `Drift` from the item being moved, here or among the Overlays). Checked in the browser: two Text Layers, then a Text Layer with an Overlay, moved together and saved together; the resize corner shows only with one picked; Shift-click toggles on the stage. The clip editor passes its one stage item as a list and ignores toggling.
