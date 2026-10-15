@@ -415,7 +415,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       apply(done.outcome);
     },
   };
-  const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here)));
+  const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here, job.transcript?.words ?? [])));
   const actions = itemActions(scene, () => playback.time, apply, clip);
   useShortcuts(history, playback, actions, { all: () => select(selectAll(edits)), none: () => select(null), paste: pasteHere });
 

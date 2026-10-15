@@ -447,12 +447,12 @@ describe("copy and paste", () => {
     // At 7 s: a runs 7–10 s and c 9–9.5 s; b would start at 11 s.
     const at7 = paste(scene(before, null), held, 7, here)!;
     expect(at7.edits.text_layers.slice(3)).toEqual([layer("n1", 7, 3, { text: "a" }), layer("n2", 9, 0.5, { text: "c" })]);
-    expect(at7.notice).toBe("1 item left out, starting past the clip's end.");
+    expect(at7.notice).toBe("1 item left out, falling outside the clip.");
 
     // At 8 s: a is cut short to 8–10 s; c would start at 10 s and b at 12 s.
     const at8 = paste(scene(before, null), held, 8, here)!;
     expect(at8.edits.text_layers.slice(3)).toEqual([layer("n1", 8, 2, { text: "a" })]);
-    expect(at8.notice).toBe("1 item cut short at the clip's end; 2 items left out, starting past the clip's end.");
+    expect(at8.notice).toBe("1 item cut short to fit; 2 items left out, falling outside the clip.");
   });
 
   test("cut is a copy and a removal in one change", () => {
@@ -462,5 +462,81 @@ describe("copy and paste", () => {
 
     expect(outcome).toEqual({ edits: { ...before, text_layers: [layer("b", 3, 2)] }, pick: null });
     expect(paste(scene(outcome.edits, null), clipboard, 6, here)?.edits.text_layers).toEqual([layer("b", 3, 2), layer("n1", 6, 2, { text: "a" })]);
+  });
+});
+
+describe("pasting into another Candidate or Job", () => {
+  const here = { job: "j1", candidate: "c1" };
+  // The Source's Words around 200–210 s.
+  const words = [
+    { start: 201, end: 201.5 },
+    { start: 202, end: 202.6 },
+    { start: 207, end: 207.4 },
+  ];
+  const source = edits({
+    segments: [segment("s1", 100, 105), segment("s2", 200, 210)],
+    word_edits: [
+      { at: 201.2, text: "Gojek", break_before: false },
+      { at: 202.1, text: "", break_before: false },
+      { at: 101, text: "elsewhere", break_before: false },
+    ],
+    layout_overrides: [
+      { at: 205, layout: "split" },
+      { at: 102, layout: "blur" },
+    ],
+  });
+  const held = copy(scene(source, picked(seg("s2"))), here)!;
+
+  test("Segments of the Source bring their range's Word Edits and Layout Overrides to another Candidate", () => {
+    const target = edits({ segments: [segment("t1", 300, 306)] });
+
+    const pasted = paste(scene(target, null), held, 6, { job: "j1", candidate: "c2" }, words).edits;
+
+    expect(pasted.word_edits).toEqual([
+      { at: 201.2, text: "Gojek", break_before: false },
+      { at: 202.1, text: "", break_before: false },
+    ]);
+    expect(pasted.layout_overrides).toEqual([{ at: 205, layout: "split" }]);
+  });
+
+  test("the other Candidate's own Word Edits on the same Words, and its own Layout Overrides in the range, are kept", () => {
+    const target = edits({
+      segments: [segment("t1", 300, 306)],
+      word_edits: [{ at: 201.4, text: "GoJek", break_before: true }],
+      layout_overrides: [{ at: 208, layout: "track" }],
+    });
+
+    const pasted = paste(scene(target, null), held, 6, { job: "j1", candidate: "c2" }, words).edits;
+
+    expect(pasted.word_edits).toEqual([
+      { at: 201.4, text: "GoJek", break_before: true },
+      { at: 202.1, text: "", break_before: false },
+    ]);
+    expect(pasted.layout_overrides).toEqual([{ at: 208, layout: "track" }]);
+  });
+
+  test("pasting into the Candidate copied from brings nothing more: its edits already show there", () => {
+    const pasted = paste(scene(source, null), held, 15, here, words).edits;
+
+    expect(pasted.word_edits).toBe(source.word_edits);
+    expect(pasted.layout_overrides).toBe(source.layout_overrides);
+  });
+
+  test("in another Job, Segments of the Source and their Transitions are left out, and the rest pasted", () => {
+    const before = edits({
+      segments: [segment("s1", 100, 105), segment("v1", 0, 4, { media: "clip" }), segment("s2", 200, 205)],
+      transitions: [{ after: "s1", kind: "fade", secs: 0.5 }],
+      text_layers: [layer("a", 6, 2)],
+    });
+    const mixed = copy(scene(before, picked(seg("s1"), seg("v1"), text("a"))), here)!;
+    const target = edits({ segments: [segment("t1", 300, 310)] });
+
+    const outcome = paste(scene(target, null), mixed, 9, { job: "j2", candidate: "c9" }, []);
+
+    // v1 goes in at the end (10 s); the title, 6 s after s1's start, 1 s after v1's.
+    expect(outcome.edits.segments).toEqual([segment("t1", 300, 310), segment("n1", 0, 4, { media: "clip" })]);
+    expect(outcome.edits.transitions).toEqual([]);
+    expect(outcome.edits.text_layers).toEqual([layer("n2", 11, 2, { text: "a" })]);
+    expect(outcome.notice).toBe("1 Segment of this episode left out: another Job's clips can't show it.");
   });
 });
