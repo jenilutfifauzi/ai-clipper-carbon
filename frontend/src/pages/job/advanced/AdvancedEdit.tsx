@@ -35,7 +35,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { dragSegment, insertSegment, itemActions, move, nudge, pickAll, placeAfter, placeDropped, type ItemActions, type Outcome, type SegmentDrag } from "./actions";
+import { dragSegment, insertSegment, itemActions, splitter, move, nudge, pickAll, placeAfter, placeDropped, type ItemActions, type Outcome, type SegmentDrag } from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
@@ -428,6 +428,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   };
   const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here, job.transcript?.words ?? [])));
   const actions = itemActions(scene, () => playback.time, apply, clip);
+  const splits = splitter(scene, () => playback.time, apply);
   // The picked Text Layers, Music Clips and Overlays moved `delta` seconds, together.
   function moveLayers(delta: number, group: string) {
     const moved = move(scene, delta);
@@ -438,6 +439,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     pickNone: () => select(null),
     paste: pasteHere,
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
+    split: splits.split,
   });
 
   async function close() {
@@ -521,7 +523,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       tools={
         <>
           <MagneticToggle />
-          <ItemTools actions={actions} playback={playback} paste={pasteHere} />
+          <ItemTools actions={actions} splitter={splits} playback={playback} paste={pasteHere} />
         </>
       }
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
@@ -694,6 +696,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       <Toolbar
         pick={pick}
         actions={actions}
+        splitter={splits}
         playback={playback}
         onAsset={(tab) => {
           setAssetTab(tab);
@@ -719,16 +722,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 }
 
 // Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
-// and Escape to pick none, Cmd/Ctrl+V to paste, and for the picked items Delete (with Shift, closing
-// the gaps), Cmd/Ctrl+D to
-// duplicate them, Cmd/Ctrl+B to split them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the
-// arrow keys (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no
+// and Escape to pick none, Cmd/Ctrl+V to paste, Cmd/Ctrl+B to split (the picked items, or with nothing
+// picked everything at the playhead), and for the picked items Delete (with Shift, closing the gaps),
+// Cmd/Ctrl+D to duplicate them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the arrow keys (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no
 // item has the focus; except while typing, and Cmd/Ctrl+C while text on the page is selected.
 function useShortcuts(
   history: EditHistory<AdvancedEdits>,
   playback: Playback,
   actions: ItemActions | null,
-  more: { pickAll: () => void; pickNone: () => void; paste: (() => void) | null; move: ((delta: number, group: string) => void) | null },
+  more: {
+    pickAll: () => void;
+    pickNone: () => void;
+    paste: (() => void) | null;
+    move: ((delta: number, group: string) => void) | null;
+    // Split at the playhead: the picked items, or with nothing picked, everything there.
+    split: () => void;
+  },
 ) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -761,9 +770,9 @@ function useShortcuts(
       } else if (actions && command && key === "d") {
         event.preventDefault();
         actions.duplicate();
-      } else if (actions && command && key === "b") {
+      } else if (command && key === "b") {
         event.preventDefault();
-        actions.split();
+        more.split();
       } else if (actions && command && key === "c" && !window.getSelection()?.toString()) {
         event.preventDefault();
         actions.copy();

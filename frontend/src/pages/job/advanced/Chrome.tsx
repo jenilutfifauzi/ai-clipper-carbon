@@ -3,7 +3,7 @@ import { useEffect, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
-import type { ItemActions } from "./actions";
+import type { ItemActions, Splitter } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { itemsOf, type Pick } from "./pick";
 import type { EditHistory } from "./useEditHistory";
@@ -132,6 +132,7 @@ export function SaveStatus({
 export function Toolbar({
   pick,
   actions,
+  splitter,
   playback,
   picking,
   paste,
@@ -142,6 +143,7 @@ export function Toolbar({
 }: {
   pick: Pick;
   actions: ItemActions | null;
+  splitter: Splitter;
   playback: Playback;
   picking: boolean;
   paste: (() => void) | null;
@@ -175,7 +177,7 @@ export function Toolbar({
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
           {actions && (
             <>
-              <SplitButton actions={actions} playback={playback} />
+              <SplitButton splitter={splitter} playback={playback} />
               <ToolButton icon={Copy} label="Duplicate" onClick={actions.duplicate} />
               <ToolButton icon={Trash2} label="Delete" onClick={actions.remove} />
               <ToolButton icon={FoldHorizontal} label="Ripple" onClick={actions.rippleRemove} />
@@ -188,6 +190,7 @@ export function Toolbar({
           {ASSET_TABS.map((tab) => (
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
+          <SplitButton splitter={splitter} playback={playback} />
           <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
         </>
       )}
@@ -246,18 +249,28 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
  * The timeline bar's buttons: for the picked items, split at the playhead, duplicate, copy and delete;
  * and paste what the Clipboard holds (`paste`).
  */
-export function ItemTools({ actions, playback, paste }: { actions: ItemActions | null; playback: Playback; paste: (() => void) | null }) {
+export function ItemTools({
+  actions,
+  splitter,
+  playback,
+  paste,
+}: {
+  actions: ItemActions | null;
+  splitter: Splitter;
+  playback: Playback;
+  paste: (() => void) | null;
+}) {
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
-  const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
+  const splittable = usePlayback(playback, splitter.canSplit);
   return (
     <>
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => actions?.split()}
+        onClick={splitter.split}
         disabled={!splittable}
         aria-label="Split at the playhead"
-        title={`Split at the playhead (${shortcut}B)`}
+        title={`Split at the playhead (${shortcut}B): the picked items, or with nothing picked, everything there`}
       >
         <Scissors aria-hidden size={17} />
       </Button>
@@ -277,8 +290,9 @@ export function ItemTools({ actions, playback, paste }: { actions: ItemActions |
   );
 }
 
-// The phone toolbar's Split, enabled while the playhead is inside a picked item.
-function SplitButton({ actions, playback }: { actions: ItemActions; playback: Playback }) {
-  const splittable = usePlayback(playback, (time) => actions.canSplit(time));
-  return <ToolButton icon={Scissors} label="Split" onClick={actions.split} disabled={!splittable} />;
+// The phone toolbar's Split, enabled while the playhead is inside a picked item, or with nothing
+// picked inside any.
+function SplitButton({ splitter, playback }: { splitter: Splitter; playback: Playback }) {
+  const splittable = usePlayback(playback, splitter.canSplit);
+  return <ToolButton icon={Scissors} label="Split" onClick={splitter.split} disabled={!splittable} />;
 }

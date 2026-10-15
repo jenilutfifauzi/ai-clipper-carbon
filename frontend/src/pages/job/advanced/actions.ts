@@ -302,6 +302,26 @@ export function split(scene: PickContext, at: number): Outcome | null {
   return tails.length ? { edits: next, pick: picked(...tails) } : null;
 }
 
+// Every Segment, Text Layer, Music Clip and Overlay the playhead at `time` is inside.
+function under(scene: PickContext, time: number): ItemRef[] {
+  return itemsOf(pickAll(scene.edits)).filter((ref) => inside(scene, ref, time));
+}
+
+/** Whether Split can cut at `time`: a picked item there, or with nothing picked, any item there (Split all). */
+export function canSplitAt(scene: PickContext, time: number): boolean {
+  return scene.pick === null ? under(scene, time).length > 0 : canSplit(scene, time);
+}
+
+/**
+ * Split at the playhead (`at`): the picked items there, or with nothing picked every Segment, Text
+ * Layer, Music Clip and Overlay there (Split all, GLOSSARY.md). The hook is never split.
+ */
+export function splitAt(scene: PickContext, at: number): Outcome | null {
+  if (scene.pick !== null) return split(scene, at);
+  const items = under(scene, at);
+  return items.length ? split({ ...scene, pick: picked(...items) }, at) : null;
+}
+
 /**
  * The picked Text Layers, Music Clips and Overlays moved `delta` seconds later (earlier when it is
  * negative), as a group: no further than keeps them all inside the Clip. Picked Segments stay.
@@ -368,6 +388,23 @@ export interface ItemActions {
   // Onto the Clipboard; cut also removes them.
   copy: () => void;
   cut: () => void;
+}
+
+/** Split at the playhead, from the Timeline's bar, the phone's toolbar and Cmd/Ctrl+B: see splitAt. */
+export interface Splitter {
+  canSplit: (time: number) => boolean;
+  split: () => void;
+}
+
+/** Split at the playhead (`now`), its outcome applied (`apply`) as one change. */
+export function splitter(scene: PickContext, now: () => number, apply: (outcome: Outcome) => void): Splitter {
+  return {
+    canSplit: (time) => canSplitAt(scene, time),
+    split: () => {
+      const outcome = splitAt(scene, now());
+      if (outcome) apply(outcome);
+    },
+  };
 }
 
 /**

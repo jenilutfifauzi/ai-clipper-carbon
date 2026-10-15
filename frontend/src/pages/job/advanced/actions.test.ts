@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { dragSegment, duplicate, insertSegment, move, nudge, placeAfter, placeDropped, remove, restyle, rippleRemove, pickAll, shared, split, type PickContext } from "./actions";
+import { dragSegment, duplicate, insertSegment, move, nudge, placeAfter, placeDropped, remove, restyle, rippleRemove, canSplitAt, pickAll, shared, split, splitAt, type PickContext } from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
@@ -770,5 +770,47 @@ describe("ripple delete", () => {
 
   test("does nothing to the hook alone, as Delete doesn't", () => {
     expect(rippleRemove(scene(three(), { kind: "hook" }))).toBeNull();
+  });
+});
+
+describe("split all", () => {
+  const before = edits({
+    segments: [segment("s1", 100, 110), segment("s2", 200, 205)],
+    hook_start: 0,
+    hook_secs: 6,
+    text_layers: [layer("under", 3, 4), layer("away", 8, 1)],
+    music: [music("song", 0, 12, { offset: 5 })],
+    overlays: [overlay("pip", 4, 2)],
+  });
+
+  test("with nothing picked, cuts every Segment, Text Layer, Music Clip and Overlay under the playhead, and picks their second parts", () => {
+    // The playhead at 5 s, 105 s into the Source, inside a Word: the silence nearest it is at 105.2.
+    const gap = (time: number) => (time === 105 ? 105.2 : time);
+
+    const outcome = splitAt(scene(before, null, gap), 5);
+
+    expect(outcome?.edits).toEqual({
+      ...before,
+      segments: [segment("s1", 100, 105.2), segment("n1", 105.2, 110), segment("s2", 200, 205)],
+      text_layers: [layer("under", 3, 2), layer("n2", 5, 2, { text: "under" }), layer("away", 8, 1)],
+      music: [music("song", 0, 5, { offset: 5, fade_out: 0 }), music("n3", 5, 7, { offset: 10, fade_in: 0 })],
+      overlays: [overlay("pip", 4, 1), { ...overlay("n4", 5, 1), offset: 1 }],
+    });
+    // The hook isn't cut.
+    expect(outcome?.edits.hook_secs).toBe(6);
+    expect(outcome?.pick).toEqual(picked(seg("n1"), text("n2"), { kind: "music", id: "n3" }, { kind: "overlay", id: "n4" }));
+  });
+
+  test("with something picked, cuts only that", () => {
+    const outcome = splitAt(scene(before, picked(text("under"))), 5);
+
+    expect(outcome?.edits.segments).toEqual(before.segments);
+    expect(outcome?.pick).toEqual(picked(text("n1")));
+  });
+
+  test("can split with nothing picked wherever something is under the playhead, but not with the hook picked", () => {
+    expect(canSplitAt(scene(before, null), 5)).toBe(true);
+    expect(canSplitAt(scene(edits({ segments: [segment("s1", 100, 110)] }), null), 10)).toBe(false);
+    expect(canSplitAt(scene(before, { kind: "hook" }), 5)).toBe(false);
   });
 });
