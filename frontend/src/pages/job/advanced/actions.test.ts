@@ -552,3 +552,69 @@ describe("pasting into another Candidate or Job", () => {
     expect(outcome.notice).toBe("1 Segment of this episode left out: another Job's clips can't show it.");
   });
 });
+
+describe("the magnetic timeline", () => {
+  // Three Segments played back to back: s1 from 0 to 10 s, s2 from 10 to 15 s and s3 from 15 to 25 s.
+  const three = (changes: Partial<AdvancedEdits> = {}) =>
+    edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("s3", 300, 310)], ...changes });
+  const magnetic = (context: PickContext): PickContext => ({ ...context, magnetic: true });
+
+  test("removing a Segment moves the layers after it up by its length, and cuts those across it", () => {
+    const before = three({
+      hook_start: 11,
+      hook_secs: 3,
+      text_layers: [layer("before", 2, 3), layer("after", 16, 2), layer("across", 8, 4), layer("inside", 11, 2), layer("sliver", 9.95, 1)],
+      music: [music("song", 13, 4, { offset: 20 })],
+    });
+
+    const outcome = remove(magnetic(scene(before, picked(seg("s2")))));
+
+    expect(outcome?.edits).toEqual({
+      ...before,
+      segments: [segment("s1", 100, 110), segment("s3", 300, 310)],
+      // The hook was wholly inside the cut: it starts at the join, as long as it was.
+      hook_start: 10,
+      hook_secs: 3,
+      text_layers: [layer("before", 2, 3), layer("after", 11, 2), layer("across", 8, 2)],
+      // Its start was cut: it starts at the join, 2 s further into its song.
+      music: [music("song", 10, 2, { offset: 22 })],
+    });
+    expect(outcome?.notice).toBe("2 Text Layers inside the cut were removed.");
+  });
+
+  test("off, removing a Segment leaves the layers where they are", () => {
+    const before = three({ text_layers: [layer("after", 16, 2)] });
+
+    expect(remove(scene(before, picked(seg("s2"))))?.edits.text_layers).toEqual([layer("after", 16, 2)]);
+  });
+
+  test("removing several Segments moves each layer by what was cut before it", () => {
+    const before = three({ text_layers: [layer("in s3", 16, 2), layer("in s2", 12, 1)] });
+
+    const outcome = remove(magnetic(scene(before, picked(seg("s1"), seg("s3")))));
+
+    // s1's 10 s are cut from before both; the one in s3 went with it.
+    expect(outcome?.edits.text_layers).toEqual([layer("in s2", 2, 1)]);
+    expect(outcome?.notice).toBe("1 Text Layer inside the cut was removed.");
+  });
+
+  test("a Segment that hands over through a Transition cuts out only what it played", () => {
+    const before = three({ transitions: [{ after: "s2", kind: "fade", secs: 1 }], text_layers: [layer("after", 20, 2)] });
+    // s3 starts 1 s early, under the Transition: s2 plays from 10 to 14 s.
+    const played = [
+      { start: 0, end: 10, source_start: 100, source_end: 110, media: null, volume: 1 },
+      { start: 10, end: 14, source_start: 200, source_end: 204, media: null, volume: 1 },
+      { start: 14, end: 24, source_start: 300, source_end: 310, media: null, volume: 1 },
+    ];
+
+    const outcome = remove({ ...magnetic(scene(before, picked(seg("s2")))), played, duration: 24 });
+
+    expect(outcome?.edits.text_layers).toEqual([layer("after", 16, 2)]);
+  });
+
+  test("the hook across a cut keeps at least its shortest length", () => {
+    const before = three({ hook_start: 9.8, hook_secs: 3 });
+
+    expect(remove(magnetic(scene(before, picked(seg("s2")))))?.edits).toMatchObject({ hook_start: 9.8, hook_secs: 0.5 });
+  });
+});

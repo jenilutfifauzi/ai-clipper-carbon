@@ -26,6 +26,8 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview } from "../editor/ClipPreview";
+import { MagneticToggle } from "../editor/MagneticToggle";
+import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
 import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
 import { placedOverrides } from "../editor/placing";
@@ -307,6 +309,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, job.status);
   const playback = useMemo(() => new Playback(), []);
+  const magnetic = useMagnetic();
   // The Main Track as planned (snapped to Words, overlapping at Transitions) once the plan has the
   // draft's Segments, else as drafted; and as played, one Segment at a time. Everything placed on
   // the Main Track goes by these, as the playhead does (docs/adr/0002-segments-and-timeline-time.md).
@@ -405,7 +408,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
-  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time) };
+  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic };
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
   const clipboard = useClipboard();
@@ -513,7 +516,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       duration={duration}
       playback={playback}
       snapPoints={snapPoints(edits, played, pick)}
-      tools={<ItemTools actions={actions} playback={playback} paste={pasteHere} />}
+      tools={
+        <>
+          <MagneticToggle />
+          <ItemTools actions={actions} playback={playback} paste={pasteHere} />
+        </>
+      }
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
       onClear={() => select(null)}
     >

@@ -78,6 +78,9 @@ Edits:
   items and keep the others, use merge_candidate_items; to drop some, remove_candidate_items.
 - The hook is a line or two of text; *word* sets a word in Emphasis. The Kicker is at most
   {KICKER_MAX_CHARS} characters, above the hook.
+- Removing or trimming Segments, or changing start/end, leaves Text Layers, Music Clips, Overlays
+  and the hook where they are in Timeline time, over other words now. The owner's editors move them
+  with the cut while their Magnetic timeline is on; move them yourself when they should follow.
 - Music, Overlays and Segments of other videos name Media Library items: add_asset adds a song,
   video or image from a file on this Mac, list_assets lists them.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.

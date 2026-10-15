@@ -3,11 +3,13 @@ import type { PlayedSegment } from "../editor/playback";
 import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, type ItemKind, type ItemRef, type Pick } from "./pick";
+import { removedNotice, ripple, type TrackChange } from "./ripple";
 
 /**
  * What the actions on a Pick are done in (not a Scene of the plan): the edits and the Pick, the Main Track as it plays, the
  * Clip's length, `gap` (which moves a time on the Source's timeline into the silence between Words
- * nearest it) and `ids` (new items' ids).
+ * nearest it), `ids` (new items' ids) and `magnetic`, whether the layers follow the Main Track (the
+ * Magnetic timeline).
  */
 export interface PickContext {
   edits: AdvancedEdits;
@@ -16,6 +18,7 @@ export interface PickContext {
   duration: number;
   gap: (time: number) => number;
   ids?: () => string;
+  magnetic?: boolean;
 }
 
 /** An action's result: the edits after it (one change, so one step of undo), what is picked then, and what to tell. */
@@ -65,9 +68,10 @@ export const idOf = (scene: PickContext) => (scene.ids ?? newId)();
 
 /**
  * The picked items removed. The Main Track is never left empty: with every Segment picked, the first
- * stays, picked, and the owner is told.
+ * stays, picked, and the owner is told. On the Magnetic timeline (or `rippled`), the layers and the
+ * hook follow the Main Track: each removed Segment's stretch as played is cut out of it.
  */
-export function remove(scene: PickContext): Outcome | null {
+export function remove(scene: PickContext, rippled = scene.magnetic ?? false): Outcome | null {
   const { edits, pick } = scene;
   if (!itemsOf(pick).length) return null;
   const kept = <T extends { id: string }>(items: T[], kind: ItemKind) => items.filter((item) => !isPicked(pick, kind, item.id));
@@ -78,12 +82,29 @@ export function remove(scene: PickContext): Outcome | null {
     music: kept(edits.music, "music"),
     overlays: kept(edits.overlays, "overlay"),
   };
-  if (next.segments.length) return { edits: next, pick: null };
-  const first = edits.segments[0];
-  const outcome = { pick: picked({ kind: "segment", id: first.id }), notice: "The first Segment stays: a clip needs at least one." };
-  // Only the one Segment there is picked: nothing changes.
-  if (itemsOf(pick).length === 1 && edits.segments.length === 1) return { edits, ...outcome };
-  return { edits: { ...next, segments: [first] }, ...outcome };
+  if (!next.segments.length) {
+    const first = edits.segments[0];
+    const stays = "The first Segment stays: a clip needs at least one.";
+    const pickFirst = picked({ kind: "segment", id: first.id });
+    // Only the one Segment there is picked: nothing changes.
+    if (itemsOf(pick).length === 1 && edits.segments.length === 1) return { edits, pick: pickFirst, notice: stays };
+    next.segments = [first];
+    const after = rippledAfter(scene, next, rippled);
+    return { edits: after.edits, pick: pickFirst, notice: [stays, after.notice].filter(Boolean).join(" ") };
+  }
+  return { ...rippledAfter(scene, next, rippled), pick: null };
+}
+
+// `next`, with the Segments of the context's edits that it no longer has cut out of the Main Track
+// when `rippled`, and what to tell of the layers that went with them.
+function rippledAfter(scene: PickContext, next: AdvancedEdits, rippled: boolean): { edits: AdvancedEdits; notice?: string } {
+  if (!rippled) return { edits: next };
+  const changes: TrackChange[] = scene.edits.segments.flatMap((segment, i) => {
+    const shown = scene.played[i];
+    return shown && !next.segments.some((other) => other.id === segment.id) ? [{ kind: "removed" as const, at: shown.start, secs: shown.end - shown.start }] : [];
+  });
+  const { edits, removed } = ripple(next, changes);
+  return { edits, notice: removedNotice(removed) };
 }
 
 /** Every Segment, Text Layer, Music Clip and Overlay picked (not the hook, the captions or a join). */
