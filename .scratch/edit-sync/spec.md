@@ -1,6 +1,6 @@
 # Edit sync: Revisions, live Candidate updates and Revision History
 
-Status: ready-for-agent
+Status: in progress
 Created: 2026-10-15
 
 ## Problem Statement

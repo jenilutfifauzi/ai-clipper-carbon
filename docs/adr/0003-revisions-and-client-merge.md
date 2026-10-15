@@ -1,6 +1,6 @@
 # 0003: Candidates have Revisions; a stale edit is refused and the editor merges it item by item
 
-Status: proposed
+Status: accepted
 Date: 2026-10-15
 
 ## Context
