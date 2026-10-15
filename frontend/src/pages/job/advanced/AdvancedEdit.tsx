@@ -35,14 +35,14 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { itemActions, move, nudge, pickAll, type ItemActions, type Outcome } from "./actions";
+import { dragSegment, insertSegment, itemActions, move, nudge, pickAll, placeAfter, placeDropped, type ItemActions, type Outcome, type SegmentDrag } from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { Inspector } from "./Inspector";
-import { draggedSegments, newMediaSegment } from "./MainTrack";
+import { newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
@@ -320,7 +320,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const duration = playback.duration;
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   // The Main Track when the drag under way began, by its gesture.
-  const dragOrigin = useRef<{ group: string; segments: ClipSegment[]; shown: PlayedSegment[]; planned: PlayedSegment[] } | null>(null);
+  const dragOrigin = useRef<(SegmentDrag & { group: string }) | null>(null);
 
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
@@ -355,17 +355,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     added(picked({ kind: "overlay", id: overlay.id }));
   }
   // A Segment at `place`: by default after the one at the playhead.
-  function insertSegment(segment: ClipSegment, place?: number) {
-    const at = played.findIndex((shown) => playback.time < shown.end);
-    const where = place ?? (at === -1 ? edits.segments.length : at + 1);
-    change({ segments: [...edits.segments.slice(0, where), segment, ...edits.segments.slice(where)] });
-    added(picked({ kind: "segment", id: segment.id }));
+  function addSegment(segment: ClipSegment, place = placeAfter(played, playback.time)) {
+    const outcome = insertSegment(scene, segment, place);
+    history.set(outcome.edits);
+    added(outcome.pick);
   }
   function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
-    if (dragOrigin.current?.group !== group) dragOrigin.current = { group, segments: edits.segments, shown: played, planned: track };
-    const { segments, shown, planned: whole } = dragOrigin.current;
+    if (dragOrigin.current?.group !== group) dragOrigin.current = { group, edits, shown: played, planned: track };
     const lengthOf = (segment: ClipSegment) => (segment.media ? (mediaById.get(segment.media)?.duration ?? segment.end) : sourceLength);
-    change({ segments: draggedSegments(segments, id, moved, lengthOf, shown, whole) }, group);
+    history.set(dragSegment(scene, dragOrigin.current, id, moved, lengthOf).edits, group);
   }
   // What is dropped from the asset panel onto a track, at `time`.
   function dropMedia(onto: DropTrack, media: string, time: number) {
@@ -374,7 +372,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (onto === "music" && item.has_audio) addMusic(item, time);
     else if (onto === "overlay" && item.kind !== "audio") addOverlay(item, time);
     else if (onto === "segment" && item.kind === "video") {
-      insertSegment(newMediaSegment(item, newId()), played.filter((shown) => (shown.start + shown.end) / 2 < time).length);
+      addSegment(newMediaSegment(item, newId()), placeDropped(played, time));
     }
   }
   // The Transition at the join after Segment `after`: set to `kind` (its length kept), changed, or removed.
@@ -589,8 +587,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transitions={transitionPanel(true)}
       onAddText={(look) => addText(look)}
       onAddMusic={(item) => addMusic(item)}
-      onAddSource={(range) => insertSegment({ id: newId(), ...range })}
-      onAddVideo={(item) => insertSegment(newMediaSegment(item, newId()))}
+      onAddSource={(range) => addSegment({ id: newId(), ...range })}
+      onAddVideo={(item) => addSegment(newMediaSegment(item, newId()))}
       onAddOverlay={(item) => addOverlay(item)}
     />
   );

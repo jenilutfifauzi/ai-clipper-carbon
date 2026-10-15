@@ -1,7 +1,7 @@
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
-import { SEGMENT_MIN_SECS } from "./MainTrack";
+import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type TrackChange } from "./ripple";
 
@@ -105,6 +105,46 @@ function rippledAfter(scene: PickContext, next: AdvancedEdits, rippled: boolean)
   });
   const { edits, removed } = ripple(next, changes);
   return { edits, notice: removedNotice(removed) };
+}
+
+/** Where a Segment added at the playhead (`time`) goes on the Main Track: after the one playing there, else last. */
+export function placeAfter(played: PlayedSegment[], time: number): number {
+  const at = played.findIndex((shown) => time < shown.end);
+  return at === -1 ? played.length : at + 1;
+}
+
+/** Where a Segment dropped at `time` goes on the Main Track: after each Segment whose middle is before it. */
+export const placeDropped = (played: PlayedSegment[], time: number) => played.filter((shown) => (shown.start + shown.end) / 2 < time).length;
+
+/** `segment` put in on the Main Track at `place`, picked. */
+export function insertSegment(scene: PickContext, segment: ClipSegment, place: number): Outcome {
+  const { segments } = scene.edits;
+  return { edits: { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] }, pick: picked({ kind: "segment", id: segment.id }) };
+}
+
+/**
+ * The Main Track when a drag of a Segment began: the edits then, and the track as drawn (`shown`) and
+ * as planned (`planned`). Every step of the drag is made from it, so that the drag is one change.
+ */
+export interface SegmentDrag {
+  edits: AdvancedEdits;
+  shown: PlayedSegment[];
+  planned: PlayedSegment[];
+}
+
+/**
+ * Segment `id` dragged since `origin`: moved to another place, or its start or end trimmed (within its
+ * file's `lengthOf`). See draggedSegments.
+ */
+export function dragSegment(
+  scene: PickContext,
+  origin: SegmentDrag,
+  id: string,
+  change: { start: number; end: number; edge: "move" | "start" | "end" },
+  lengthOf: (segment: ClipSegment) => number,
+): Outcome {
+  const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned);
+  return { edits: { ...scene.edits, segments }, pick: scene.pick };
 }
 
 /** Every Segment, Text Layer, Music Clip and Overlay picked (not the hook, the captions or a join). */

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { duplicate, move, nudge, remove, restyle, pickAll, shared, split, type PickContext } from "./actions";
+import { dragSegment, duplicate, insertSegment, move, nudge, placeAfter, placeDropped, remove, restyle, pickAll, shared, split, type PickContext } from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
@@ -616,5 +616,41 @@ describe("the magnetic timeline", () => {
     const before = three({ hook_start: 9.8, hook_secs: 3 });
 
     expect(remove(magnetic(scene(before, picked(seg("s2")))))?.edits).toMatchObject({ hook_start: 9.8, hook_secs: 0.5 });
+  });
+});
+
+describe("inserting and trimming Segments", () => {
+  const three = () => edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("s3", 300, 310)] });
+  const lengthOf = () => Infinity;
+
+  test("a Segment added at the playhead goes after the one playing there, picked", () => {
+    const before = three();
+    const context = scene(before, null);
+
+    expect(insertSegment(context, segment("x", 400, 402), placeAfter(context.played, 12))).toEqual({
+      edits: { ...before, segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("x", 400, 402), segment("s3", 300, 310)] },
+      pick: picked(seg("x")),
+    });
+  });
+
+  test("a Segment added past the Clip's end goes last, and one dropped goes where its time falls", () => {
+    const context = scene(three(), null);
+
+    expect(placeAfter(context.played, 30)).toBe(3);
+    // Dropped at 6 s: after s1, whose middle is at 5 s; before s2, whose middle is at 12.5 s.
+    expect(placeDropped(context.played, 6)).toBe(1);
+    expect(insertSegment(context, segment("x", 400, 402), 0).edits.segments.map((s) => s.id)).toEqual(["x", "s1", "s2", "s3"]);
+  });
+
+  test("a trim drag's steps are each made from where the drag began", () => {
+    const before = three();
+    const context = scene(before, null);
+    const origin = { edits: before, shown: context.played, planned: context.played };
+    // s2's end, drawn at 15 s, dragged to 14 s and then to 13 s.
+    const first = dragSegment(context, origin, "s2", { start: 10, end: 14, edge: "end" }, lengthOf);
+    const second = dragSegment(scene(first.edits, null), origin, "s2", { start: 10, end: 13, edge: "end" }, lengthOf);
+
+    expect(second.edits.segments).toEqual([segment("s1", 100, 110), segment("s2", 200, 203), segment("s3", 300, 310)]);
+    expect(second.edits).toEqual(dragSegment(context, origin, "s2", { start: 10, end: 13, edge: "end" }, lengthOf).edits);
   });
 });
