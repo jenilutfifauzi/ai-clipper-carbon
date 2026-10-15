@@ -36,6 +36,8 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Word Edit:** a correction of one caption Word, keyed by a time on the Source's timeline. It gives new text, removes the Word (empty text), or starts a new line before it.
 - **Layout Override:** a Layout for the one Scene that holds a time on the Source's timeline, replacing the Candidate's Layout there.
 - **Preview Plan:** the Render Plan of a Candidate, or of an unsaved draft of its edits, computed for the editor's preview without rendering.
+- **Revision:** one saved state of a Candidate, numbered from 1; each saved change makes the next. An edit made from an older Revision is refused, so that no editor (the clip editor, the Advanced Edit, another tab or the agent) saves over another's change without knowing. The editor then merges its unsaved changes onto the newer Revision, item by item; where both changed the same item, the owner's change in front of them wins and they are told. Choosing a Candidate for rendering (selected) is not a change of its Revision.
+- **Revision History:** the Candidate's last 50 saved states kept on this Mac, one per stretch of saving from one editor (a new one when another editor saves, or after a pause), always including the state just before another editor's change. Restoring one saves it again as the next Revision; nothing is lost.
 - **Timeline:** the editor's tracks under the preview: the clip's range, Scenes, caption lines and the hook. The Advanced Edit has its own multi-track Timeline, in Timeline time.
 
 ## Advanced Edit
