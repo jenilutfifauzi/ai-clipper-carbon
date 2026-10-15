@@ -77,6 +77,7 @@ export function ClipPreview({
   stage: controls,
   overlays,
   fit = false,
+  blank = false,
 }: {
   src: string;
   preview: PreviewPlan | null;
@@ -86,6 +87,8 @@ export function ClipPreview({
   stage?: StageControls;
   overlays?: OverlayControls;
   fit?: boolean;
+  // Black where the Segments are (the Advanced Edit's Video Track hidden).
+  blank?: boolean;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -165,19 +168,22 @@ export function ClipPreview({
       )}
       style={{ "--scale": scale, ...(fit ? { width: fitted.width, height: fitted.height } : {}) } as CSSProperties}
     >
-      {[master, follower].map((ref, slot) => (
-        <PanelView
-          key={slot}
-          videoRef={ref}
-          src={src}
-          plan={plan}
-          panel={scene?.panels[slot] ?? null}
-          playback={playback}
-          muted={slot > 0}
-        />
-      ))}
-      <PreviewSegments plan={plan} playback={playback} />
-      <PreviewTransitions plan={plan} playback={playback} src={src} />
+      {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
+      <div className={cx("absolute inset-0", blank && "opacity-0")}>
+        {[master, follower].map((ref, slot) => (
+          <PanelView
+            key={slot}
+            videoRef={ref}
+            src={src}
+            plan={plan}
+            panel={scene?.panels[slot] ?? null}
+            playback={playback}
+            muted={slot > 0}
+          />
+        ))}
+        <PreviewSegments plan={plan} playback={playback} />
+        <PreviewTransitions plan={plan} playback={playback} src={src} />
+      </div>
       <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} picked={picked} hold={overlayHold} onHold={setOverlayHold} drift={edit.drift} />
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>

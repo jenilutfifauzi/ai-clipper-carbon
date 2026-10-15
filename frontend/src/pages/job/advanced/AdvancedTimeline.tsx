@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -13,6 +14,7 @@ import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
 
 // The track labels' column, in CSS pixels.
+// The labels' column, by default (a phone's): its Tracks' names.
 const LABEL_WIDTH = 64;
 // How far the timeline zooms in from showing the whole Clip.
 const MAX_ZOOM = 40;
@@ -58,6 +60,7 @@ export function AdvancedTimeline({
   tools,
   onBand,
   onClear,
+  labelWidth = LABEL_WIDTH,
   children,
 }: {
   duration: number;
@@ -68,6 +71,8 @@ export function AdvancedTimeline({
   tools?: ReactNode;
   onBand?: (items: (Area & { key: string })[], band: Area, add: boolean) => void;
   onClear?: () => void;
+  // The labels' column's width, in pixels: wider on a desktop, where it holds the Tracks' buttons.
+  labelWidth?: number;
   children: (geometry: TimeGeometry) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -82,7 +87,7 @@ export function AdvancedTimeline({
   const [zoom, setZoom] = useState(1);
   // A zoom about a point: the time under it and where it is in the view, kept there after the zoom.
   const anchor = useRef<{ time: number; offset: number } | null>(null);
-  const fit = Math.max(width - LABEL_WIDTH - 16, 100) / Math.max(duration, 1);
+  const fit = Math.max(width - labelWidth - 16, 100) / Math.max(duration, 1);
   const pps = fit * zoom;
   const total = Math.max(duration * pps, 0);
 
@@ -97,7 +102,7 @@ export function AdvancedTimeline({
   // The time under a pointer.
   const timeAt = (clientX: number) => {
     const element = scroller.current!;
-    const left = element.getBoundingClientRect().left + LABEL_WIDTH - element.scrollLeft;
+    const left = element.getBoundingClientRect().left + labelWidth - element.scrollLeft;
     return Math.min(Math.max((clientX - left) / pps, 0), duration);
   };
 
@@ -108,8 +113,8 @@ export function AdvancedTimeline({
     const clamped = Math.min(Math.max(next, 1), MAX_ZOOM);
     if (element) {
       const rect = element.getBoundingClientRect();
-      const x = clientX ?? rect.left + LABEL_WIDTH + (rect.width - LABEL_WIDTH) / 2;
-      anchor.current = { time: zoomRef.current.timeAt(x), offset: x - rect.left - LABEL_WIDTH };
+      const x = clientX ?? rect.left + labelWidth + (rect.width - labelWidth) / 2;
+      anchor.current = { time: zoomRef.current.timeAt(x), offset: x - rect.left - labelWidth };
     }
     setZoom(clamped);
   }
@@ -194,12 +199,12 @@ export function AdvancedTimeline({
       <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto overscroll-contain select-none">
         <div
           className="relative flex min-h-full flex-col pb-2"
-          style={{ width: total + LABEL_WIDTH + 16 }}
+          style={{ width: total + labelWidth + 16, "--track-label": `${labelWidth}px` } as CSSProperties}
           onPointerDown={(event) => {
             const target = event.target as HTMLElement;
             // Items and buttons are picked and dragged as they are; the labels' column isn't time.
             if (event.button !== 0 || target.closest("button, a, input, [role=button]")) return;
-            const left = scroller.current!.getBoundingClientRect().left + LABEL_WIDTH;
+            const left = scroller.current!.getBoundingClientRect().left + labelWidth;
             if (event.clientX < left) return;
             const ruler = !!target.closest("[data-scrub]");
             if (event.pointerType !== "touch" && !ruler && onBand) {
@@ -272,7 +277,7 @@ export function AdvancedTimeline({
             <Ruler duration={duration} pps={pps} />
           </TrackRow>
           {children(geometry)}
-          <Playhead playback={playback} pps={pps} />
+          <Playhead playback={playback} pps={pps} labelWidth={labelWidth} />
           {band && (
             <div
               aria-hidden
@@ -295,11 +300,14 @@ export function TrackRow({
   label,
   height = "h-11",
   drop,
+  dimmed = false,
   children,
 }: {
   label: ReactNode;
   // A Tailwind height class.
   height?: string;
+  // Its items faded: its Track is hidden in the preview.
+  dimmed?: boolean;
   drop?: { types: string[]; onDrop: (data: DataTransfer, clientX: number) => void };
   children: ReactNode;
 }) {
@@ -326,11 +334,11 @@ export function TrackRow({
     >
       <div
         className="sticky left-0 z-20 flex shrink-0 items-center bg-bg/90 px-2 text-xs font-medium text-muted backdrop-blur"
-        style={{ width: LABEL_WIDTH }}
+        style={{ width: `var(--track-label, ${LABEL_WIDTH}px)` }}
       >
         {label}
       </div>
-      <div className="relative flex-1">{children}</div>
+      <div className={cx("relative flex-1", dimmed && "opacity-40")}>{children}</div>
     </div>
   );
 }
@@ -356,13 +364,13 @@ function Ruler({ duration, pps }: { duration: number; pps: number }) {
   );
 }
 
-function Playhead({ playback, pps }: { playback: Playback; pps: number }) {
+function Playhead({ playback, pps, labelWidth }: { playback: Playback; pps: number; labelWidth: number }) {
   const time = usePlayback(playback, (t) => Math.round(t * 30) / 30);
   return (
     <div
       aria-hidden
       className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 -translate-x-1/2 bg-text"
-      style={{ left: LABEL_WIDTH + time * pps }}
+      style={{ left: labelWidth + time * pps }}
     >
       <span className="absolute -top-0.5 left-1/2 size-2.5 -translate-x-1/2 rotate-45 rounded-xs bg-text" />
     </div>

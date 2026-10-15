@@ -48,6 +48,7 @@ import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
 import { bandPick, clicked, isPicked, itemsOf, picked, prunedPick, samePick, stageIdsOf, stageItem, type ItemKind, type Pick } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
+import { ALL_ON, heardDraft, shownPlan, toggledTrack, type TrackState } from "./trackState";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
@@ -56,6 +57,8 @@ import { useEditHistory, type EditHistory } from "./useEditHistory";
 const EDITABLE = new Set(["review", "rendering"]);
 // From this width on, the desktop layout: assets, player and inspector side by side over the timeline.
 const WIDE = "(min-width: 64rem)";
+// The Timeline's labels' column on a desktop, wide enough for each Track's buttons.
+const TRACK_LABEL_WIDTH = 128;
 // How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
 type Taken = "elsewhere" | "refused" | "restored";
 
@@ -123,6 +126,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
   const [pickingMode, setPickingMode] = useState(false);
   const picking = pickingMode && !wide;
+  // What of the Tracks is hidden, muted or locked: in this editor only.
+  const [tracks, setTracks] = useState<TrackState>(ALL_ON);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
 
@@ -307,7 +312,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     onDeleted: () => end("deleted"),
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
-  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, job.status);
+  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // The plan as the player draws it, the hidden Tracks left out.
+  const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
   const playback = useMemo(() => new Playback(), []);
   const magnetic = useMagnetic();
   // The Main Track as planned (snapped to Words, overlapping at Transitions) once the plan has the
@@ -465,7 +472,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const player = (
     <ClipPreview
       src={mediaUrl(job.id, source.preview ?? source.video)}
-      preview={preview}
+      preview={shown}
+      blank={tracks.hidden.includes("video")}
       fonts={fonts}
       playback={playback}
       stage={{
@@ -503,7 +511,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           .filter((item) => item.kind === "overlay")
           .map((item) => item.id),
         // As the plan draws them: those whose items are there, starting in the Clip.
-        ids: edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
+        ids: tracks.hidden.includes("overlay")
+          ? []
+          : edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
         onSelect: (id, toggle) => select(clicked(pick, { kind: "overlay", id }, toggle || picking)),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
@@ -518,6 +528,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const timeline = (
     <AdvancedTimeline
       duration={duration}
+      labelWidth={wide ? TRACK_LABEL_WIDTH : undefined}
       playback={playback}
       snapPoints={snapPoints(edits, played, pick)}
       tools={
@@ -541,6 +552,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           mediaById={mediaById}
           changed={changed}
           picking={picking}
+          tracks={tracks}
+          onTrack={wide ? (control, kind) => setTracks((old) => toggledTrack(old, control, kind)) : undefined}
           handlers={{
             onSelect: select,
             onEdits: history.set,

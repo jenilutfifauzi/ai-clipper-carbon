@@ -1,4 +1,5 @@
-import { Music, Type } from "lucide-react";
+import { Eye, EyeOff, Music, Type, Volume2, VolumeX } from "lucide-react";
+import type { ReactNode } from "react";
 import { mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
 import { cx, formatPrecise } from "../../../format";
 import type { PlayedSegment, Playback } from "../editor/playback";
@@ -7,6 +8,7 @@ import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
+import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 
 // The hook's shortest and longest time (hook_secs in backend/app/api.py).
 const HOOK_MIN_SECS = 0.5;
@@ -53,6 +55,8 @@ export function Tracks({
   handlers,
   changed,
   picking = false,
+  tracks,
+  onTrack,
 }: {
   geometry: TimeGeometry;
   duration: number;
@@ -69,6 +73,9 @@ export function Tracks({
   changed: Set<string>;
   // In picking mode (a phone's), where a tap adds an item to the Pick or takes it out.
   picking?: boolean;
+  // What is hidden, muted and locked; with `onTrack` (a desktop's), each Track's label has its buttons.
+  tracks: TrackState;
+  onTrack?: (control: TrackControl, kind: TrackKind) => void;
 }) {
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
@@ -98,6 +105,8 @@ export function Tracks({
     types: [DRAG_MEDIA],
     onDrop: (data: DataTransfer, clientX: number) => handlers.onDropMedia(track, data.getData(DRAG_MEDIA), geometry.timeAt(clientX)),
   });
+  const label = (kind: TrackKind) => <TrackLabel kind={kind} tracks={tracks} onTrack={onTrack} />;
+  const dimmed = (kind: TrackKind) => tracks.hidden.includes(kind);
   const textLanes = lanes(edits.text_layers, true);
   const overlayLanes = lanes(edits.overlays, true);
   const musicLanes = lanes(edits.music, false);
@@ -106,7 +115,8 @@ export function Tracks({
       {textLanes.map((lane, i) => (
         <TrackRow
           key={`text${textLanes.length - i}`}
-          label={i === textLanes.length - 1 ? "Text" : ""}
+          label={i === textLanes.length - 1 ? label("text") : ""}
+          dimmed={dimmed("text")}
           drop={{ types: [DRAG_TEXT], onDrop: (data, clientX) => handlers.onDropText(data.getData(DRAG_TEXT), geometry.timeAt(clientX)) }}
         >
           {lane.map((layer) => {
@@ -140,7 +150,12 @@ export function Tracks({
         </TrackRow>
       ))}
       {overlayLanes.map((lane, i) => (
-        <TrackRow key={`overlay${overlayLanes.length - i}`} label={i === overlayLanes.length - 1 ? "Overlay" : ""} drop={dropMedia("overlay")}>
+        <TrackRow
+          key={`overlay${overlayLanes.length - i}`}
+          label={i === overlayLanes.length - 1 ? label("overlay") : ""}
+          dimmed={dimmed("overlay")}
+          drop={dropMedia("overlay")}
+        >
           {lane.map((overlay) => {
             const selected = isPicked(pick, "overlay", overlay.id);
             const item = mediaById.get(overlay.media);
@@ -184,7 +199,7 @@ export function Tracks({
           })}
         </TrackRow>
       ))}
-      <TrackRow label="Video" height="h-14" drop={dropMedia("segment")}>
+      <TrackRow label={label("video")} height="h-14" dimmed={dimmed("video")} drop={dropMedia("segment")}>
         {/* The Scenes as planned, under the Segments. */}
         <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised" style={{ width: duration * pps }}>
           {plan?.scenes.map((scene, i) => (
@@ -274,7 +289,7 @@ export function Tracks({
           );
         })}
       </TrackRow>
-      <TrackRow label="Captions" height="h-8">
+      <TrackRow label={label("captions")} height="h-8" dimmed={dimmed("captions")}>
         {plan?.captions.map((event, i) => (
           <button
             key={i}
@@ -296,7 +311,7 @@ export function Tracks({
           </button>
         ))}
       </TrackRow>
-      <TrackRow label="Hook">
+      <TrackRow label={label("hook")} dimmed={dimmed("hook")}>
         {plan?.hook && (
           <TimelineItem
             geometry={geometry}
@@ -317,7 +332,7 @@ export function Tracks({
         )}
       </TrackRow>
       {musicLanes.map((lane, i) => (
-        <TrackRow key={`music${i}`} label={i === 0 ? "Audio" : ""} drop={dropMedia("music")}>
+        <TrackRow key={`music${i}`} label={i === 0 ? label("music") : ""} drop={dropMedia("music")}>
           {lane.map((clip) => {
             const selected = isPicked(pick, "music", clip.id);
             const song = mediaById.get(clip.media);
@@ -363,5 +378,62 @@ export function Tracks({
         </TrackRow>
       ))}
     </>
+  );
+}
+
+/**
+ * A Track's label: its name, and on a desktop (`onTrack`) its buttons to hide and mute it in the
+ * preview, which leave the rendered Clip as it is.
+ */
+function TrackLabel({ kind, tracks, onTrack }: { kind: TrackKind; tracks: TrackState; onTrack?: (control: TrackControl, kind: TrackKind) => void }) {
+  const { label, hide, mute } = TRACKS[kind];
+  if (!onTrack) return label;
+  const hidden = tracks.hidden.includes(kind);
+  const muted = tracks.muted.includes(kind);
+  return (
+    <span className="flex w-full items-center justify-between gap-1">
+      <span className="truncate">{label}</span>
+      <span className="flex shrink-0">
+        {hide && (
+          <TrackButton
+            on={hidden}
+            onClick={() => onTrack("hidden", kind)}
+            label={`Hide the ${label} Track`}
+            title={hidden ? "Hidden in the preview: the clip still shows it" : "Hide in the preview (the clip still shows it)"}
+          >
+            {hidden ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}
+          </TrackButton>
+        )}
+        {mute && (
+          <TrackButton
+            on={muted}
+            onClick={() => onTrack("muted", kind)}
+            label={`Mute the ${label} Track`}
+            title={muted ? "Muted in the preview: the clip is still heard with it" : "Mute in the preview (the clip is still heard with it)"}
+          >
+            {muted ? <VolumeX aria-hidden size={14} /> : <Volume2 aria-hidden size={14} />}
+          </TrackButton>
+        )}
+      </span>
+    </span>
+  );
+}
+
+// A Track's toggle in its label: lit while on.
+export function TrackButton({ on, onClick, label, title, children }: { on: boolean; onClick: () => void; label: string; title: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      aria-label={label}
+      title={title}
+      className={cx(
+        "grid size-6 place-items-center rounded-md hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus",
+        on ? "text-accent-text" : "text-muted",
+      )}
+    >
+      {children}
+    </button>
   );
 }
