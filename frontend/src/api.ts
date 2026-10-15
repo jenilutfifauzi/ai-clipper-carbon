@@ -654,18 +654,19 @@ export type SavedBy = EditSource | "agent" | "restore" | "unknown" | "original";
 // This tab's id, sent with its edits: its own saves are then told apart from another tab's.
 export const TAB_ID = crypto.randomUUID();
 
-// A new Revision of one of a Job's Candidates, from its Candidate events: who saved it (`tab` for an
-// editor's), and the parts it changed since the one before, as the editors name them.
 // An entry of a Candidate's Revision History: the last of a stretch of saves from one editor (in one
 // tab), with the parts it changed since the entry before.
 export interface RevisionEntry {
   revision: number;
-  at: string;
+  // null when it isn't known (a state written by another process).
+  at: string | null;
   source: SavedBy;
   tab: string | null;
   parts: string[];
 }
 
+// A new Revision of one of a Job's Candidates, from its Candidate events: who saved it (`tab` for an
+// editor's), and the parts it changed since the one before, as the editors name them.
 export interface CandidateEvent {
   candidate: Candidate;
   source: SavedBy;

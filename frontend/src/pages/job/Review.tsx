@@ -18,6 +18,7 @@ import { CandidateList } from "./CandidateList";
 import { Clips } from "./Clips";
 import { ChangeNotice, type Notice } from "./editor/ChangeNotice";
 import { collidedParts, fieldsOf, mergeEdits, type Collision } from "./editor/merge";
+import { entryToRestore } from "./editor/RevisionHistory";
 import { changedText, useCandidateEvents } from "./editor/useCandidateEvents";
 
 /**
@@ -54,6 +55,11 @@ export function Review({
   // after another.
   const server = useRef(new Map((job.candidates ?? []).map((candidate) => [candidate.id, candidate])));
   const sending = useRef(new Map<string, Promise<unknown>>());
+  // The latest Revision of each Candidate saved elsewhere: a save made before it is merged onto it,
+  // while one made after only the saves here had moved it on is sent as it is.
+  const elsewhere = useRef(new Map<string, number>());
+  // A change from elsewhere that came while a save of it was under way: told once that is answered.
+  const untold = useRef(new Map<string, { source: SavedBy; parts: string[]; revision: number }>());
   // Kept in step with other editors (ADR 0003): how many times each Candidate was taken as saved
   // elsewhere, which starts its editor's drafts again from it.
   const [synced, setSynced] = useState<Record<string, number>>({});
@@ -77,16 +83,22 @@ export function Review({
       return;
     }
     if (next.revision <= known) return;
+    elsewhere.current.set(next.id, next.revision);
     if ((inFlight.current.get(next.id) ?? 0) > 0) {
-      // Its saves under way are merged onto it; their answer shows it.
+      // Its saves under way are merged onto it; their answer shows it, and then it is told.
       server.current.set(next.id, next);
+      untold.current.set(next.id, { source, parts, revision: next.revision });
       return;
     }
     taken(next);
-    if (next.id === active?.id) {
-      // The state this replaces is kept in the Revision History: the notice's Restore brings it back.
-      setNotice({ id: Date.now(), text: changedText(source, parts, "clip-editor"), action: restoreButton(next.id, known) });
-    }
+    tell(next.id, source, parts, next.revision);
+  }
+
+  // The notice of a change from elsewhere to the open Candidate, whose Restore brings back what it
+  // replaced (kept in the Revision History).
+  function tell(id: string, source: SavedBy, parts: string[], revision: number) {
+    if (id !== active?.id) return;
+    setNotice({ id: Date.now(), text: changedText(source, parts, "clip-editor"), action: restoreButton(id, "before", revision) });
   }
 
   // Shows the Candidate as saved, and starts its editor's drafts again from it.
@@ -109,12 +121,15 @@ export function Review({
     }
   }
 
-  function restoreButton(id: string, entry: number) {
+  // A notice's Restore: of the state before Revision `revision` came in, or of theirs from it on.
+  function restoreButton(id: string, which: "before" | "theirs", revision: number) {
+    async function click() {
+      const entry = await entryToRestore(job.id, id, which, revision).catch(() => null);
+      const failed = entry === null ? "That version isn't in the Revision History." : await restore(id, entry);
+      setNotice({ id: Date.now(), text: failed ?? "Restored the clip as it was" });
+    }
     return (
-      <Button
-        size="xs"
-        onClick={() => void restore(id, entry).then((failed) => setNotice({ id: Date.now(), text: failed ?? "Restored the clip as it was" }))}
-      >
+      <Button size="xs" onClick={() => void click()}>
         Restore
       </Button>
     );
@@ -168,18 +183,19 @@ export function Review({
       return { answer: await api.updateCandidate(job.id, id, change, "clip-editor"), collisions: [], theirs: null };
     }
     const now = server.current.get(id);
+    // Saved elsewhere since it was made: merged onto that.
+    const theirs = base && (elsewhere.current.get(id) ?? 0) > base.revision ? now : undefined;
     let body = change;
     let collisions: Collision[] = [];
-    if (base && now && now.revision !== base.revision) {
-      ({ merged: body, collisions } = mergeEdits(fieldsOf(base, change), change, fieldsOf(now, change)));
-    }
+    if (base && theirs) ({ merged: body, collisions } = mergeEdits(fieldsOf(base, change), change, fieldsOf(theirs, change)));
     try {
       const answer = await api.updateCandidate(job.id, id, { ...body, revision: now?.revision }, "clip-editor");
-      return { answer, collisions, theirs: base && now && now.revision !== base.revision ? now.revision : null };
+      return { answer, collisions, theirs: theirs?.revision ?? null };
     } catch (reason) {
       const latest = staleCandidate(reason);
       if (!latest || retried) throw reason;
       server.current.set(id, latest);
+      elsewhere.current.set(id, latest.revision);
       return sendMerged(id, change, base, true);
     }
   }
@@ -199,12 +215,16 @@ export function Review({
       const { answer, collisions, theirs } = await send;
       server.current.set(id, answer);
       if (inFlight.current.get(id) === 1) replaceCandidate(id, () => answer);
+      const told = untold.current.get(id);
+      untold.current.delete(id);
       if (collisions.length && theirs && id === active?.id) {
         setNotice({
           id: Date.now(),
           text: `Your changes to ${collidedParts(collisions)} replaced a change made elsewhere`,
-          action: restoreButton(id, theirs),
+          action: restoreButton(id, "theirs", theirs),
         });
+      } else if (told) {
+        tell(id, told.source, told.parts, told.revision);
       }
       setSaved(true);
       return true;

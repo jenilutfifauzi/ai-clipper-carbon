@@ -69,3 +69,16 @@
 - Ticket 07 covers these with a real agent.
 
 **Known limit:** in the clip editor, a style or hook-timing draft typed less than 0.7 s before a change from elsewhere arrives is saved as a whole when its editor starts again. On the fields of that draft, it wins over the other change.
+
+**2026-10-15: review fixes.**
+- **Advanced Edit:**
+  - A save counts as unanswered from when it is asked for, queued ones too. A save asked for before the latest change from elsewhere was taken is left out, because its edits are in the merge saved instead. Before, it could be sent after a refusal with the newer Revision and bring the refused change back.
+  - A Restore goes through the same path, so edits made while it is under way are merged onto it, not saved over it.
+  - A refusal now always gives a notice, said by who made the change when its event came meanwhile.
+- **Clip editor:**
+  - A save is merged only when a change from elsewhere came after what it was made from. The saves of this tab no longer count as "theirs", so two quick saves of the same field don't collide.
+  - A change from elsewhere that comes while a save is under way is told once the save is answered.
+- **Regression walkthrough** (scratch copy):
+  - the agent saves twice in a row, into one entry, and the notice's Restore brings back the state before both;
+  - a Label added while the agent sets the source volume: both are saved;
+  - the same Label retyped on both sides: the owner's words, with "Your changes to Text Layers replaced Agent's change".

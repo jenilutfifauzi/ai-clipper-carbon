@@ -24,13 +24,13 @@ import { Panel } from "../../../components/Panel";
 import { loadFonts } from "../../../fonts";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
-import { ClipPreview } from "../editor/ClipPreview";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
-import { RevisionHistory } from "../editor/RevisionHistory";
+import { ClipPreview } from "../editor/ClipPreview";
 import { candidateDraft } from "../editor/draft";
+import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
 import { placedOverrides } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
-import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
+import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { itemActions, type ItemActions } from "./actions";
@@ -52,6 +52,9 @@ import { useEditHistory, type EditHistory } from "./useEditHistory";
 const EDITABLE = new Set(["review", "rendering"]);
 // From this width on, the desktop layout: assets, player and inspector side by side over the timeline.
 const WIDE = "(min-width: 64rem)";
+// How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
+type Taken = "elsewhere" | "refused" | "restored";
+
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
 
@@ -117,9 +120,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // made from the Revision the one before made.
   const revision = useRef(initial.revision);
   const sending = useRef<Promise<void>>(Promise.resolve());
-  // Saves sent and not yet answered: a change from elsewhere waits for them.
+  // Saves asked for and not yet answered (queued ones too): a change from elsewhere waits for them.
   const unanswered = useRef(0);
-  // Changed elsewhere since it was loaded: the backend refuses its saves until it is loaded again.
+  // How many changes from elsewhere were taken: a save asked for before the latest is left out, as
+  // its edits are in the merge saved instead.
+  const taken = useRef(0);
+  // Changed elsewhere again after a merge was refused: saves wait for the next change from elsewhere.
   const stale = useRef(false);
   // The Job or this clip is gone: nothing more is saved.
   const gone = useRef(false);
@@ -135,49 +141,56 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // A change from elsewhere that came while a save was unanswered: taken once it is answered.
   const postponed = useRef<{ next: Candidate; source: SavedBy; parts: string[] } | null>(null);
   // This render's handlers, for a save answered after later renders.
-  const latest = useRef({ incoming: (_next: Candidate, _source: SavedBy, _parts: string[], _refused: boolean) => {} });
+  const latest = useRef({ incoming: (_next: Candidate, _source: SavedBy, _parts: string[], _how: Taken) => {} });
   function save(change: CandidateChange) {
+    const asked = taken.current;
+    unanswered.current += 1;
     const send = async () => {
-      if (gone.current) return;
-      unanswered.current += 1;
-      setSaving((n) => n + 1);
-      setSaveError(null);
       let refused: Candidate | null = null;
       try {
-        const answer = await api.updateCandidate(job.id, initial.id, { ...change, revision: revision.current }, "advanced-edit");
-        revision.current = answer.revision;
-        savedEdits.current = change as AdvancedEdits;
-        refusals.current = 0;
-        merging.current = null;
-        setCandidate(answer);
-        setSaved(true);
-      } catch (reason) {
-        refused = staleCandidate(reason);
-        if (refused) {
-          refusals.current += 1;
-        } else if (merging.current) {
-          // The merge isn't a valid edit (a Transition's join gone, say): theirs stays.
-          history.elsewhere(merging.current, (step) => step, false);
-          savedEdits.current = merging.current;
+        if (gone.current || asked !== taken.current) return;
+        setSaving((n) => n + 1);
+        setSaveError(null);
+        try {
+          const answer = await api.updateCandidate(job.id, initial.id, { ...change, revision: revision.current }, "advanced-edit");
+          revision.current = answer.revision;
+          savedEdits.current = change as AdvancedEdits;
+          refusals.current = 0;
           merging.current = null;
-          setSaveError("Your latest change couldn't be applied on top of the one made elsewhere: showing that one.");
-        } else {
-          setSaveError(`Not saved: ${(reason as Error).message}`);
+          setCandidate(answer);
+          setSaved(true);
+        } catch (reason) {
+          refused = staleCandidate(reason);
+          if (refused) {
+            refusals.current += 1;
+          } else if (merging.current) {
+            // The merge isn't a valid edit (a Transition's join gone, say): theirs stays.
+            history.elsewhere(merging.current, (step) => step, false);
+            savedEdits.current = merging.current;
+            merging.current = null;
+            setSaveError("Your latest change couldn't be applied on top of the one made elsewhere: showing that one.");
+          } else {
+            setSaveError(`Not saved: ${(reason as Error).message}`);
+          }
+        } finally {
+          setSaving((n) => n - 1);
         }
       } finally {
         unanswered.current -= 1;
-        setSaving((n) => n - 1);
       }
+      // What the refusal or a change that came meanwhile brings: the newest of them, said by who.
+      const waiting = postponed.current;
+      postponed.current = null;
       if (refused && refusals.current > 1) {
         stale.current = true;
         setSaveError("Not saved: changed elsewhere again (another tab or the agent)");
       } else if (refused) {
-        latest.current.incoming(refused, "unknown", [], true);
-      }
-      if (postponed.current && unanswered.current === 0) {
-        const { next, source, parts } = postponed.current;
-        postponed.current = null;
-        latest.current.incoming(next, source, parts, false);
+        const told = waiting && waiting.next.revision >= refused.revision ? waiting : null;
+        latest.current.incoming(told?.next ?? refused, told?.source ?? "unknown", told?.parts ?? [], "refused");
+      } else if (waiting && unanswered.current === 0) {
+        latest.current.incoming(waiting.next, waiting.source, waiting.parts, "elsewhere");
+      } else if (waiting) {
+        postponed.current = waiting;
       }
     };
     sending.current = sending.current.then(send);
@@ -197,71 +210,65 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     gone.current = true;
     setEnded(how);
   }
-  // A newer Revision saved elsewhere, or (`refused`) the one a save here was refused for: the edits
-  // here not yet saved (all of them, when refused) are merged onto it.
-  function incoming(next: Candidate, source: SavedBy, parts: string[], refused: boolean) {
+  // A newer Revision: saved elsewhere, the one a save here was refused for (then all the edits here
+  // are unsaved), or a Restore asked for here. The edits here not yet saved are merged onto it.
+  function incoming(next: Candidate, source: SavedBy, parts: string[], how: Taken) {
     if (next.revision <= revision.current) return;
-    if (unanswered.current > 0 && !refused) {
+    if (unanswered.current > 0 && how === "elsewhere") {
       postponed.current = { next, source, parts };
       return;
     }
     const base = savedEdits.current;
     const theirs = editsOf(next);
     const rebase = (step: AdvancedEdits) => rebaseHistory([step], base, theirs)[0];
-    // The state this replaces, kept in the Revision History: the notice's Restore brings it back.
-    const before = revision.current;
+    taken.current += 1;
     revision.current = next.revision;
     savedEdits.current = theirs;
     stale.current = false;
     setCandidate(next);
-    if (!refused && !history.waiting()) {
-      history.elsewhere(theirs, rebase, false);
-      setChanged(changedItems(edits, theirs));
-      setNotice({ id: Date.now(), text: changedText(source, parts, "advanced-edit"), action: restoreButton(before) });
-      return;
-    }
-    const { merged, collisions } = mergeEdits(base, edits, theirs);
-    merging.current = theirs;
-    history.elsewhere(merged, rebase, true);
+    const unsaved = how === "refused" || history.waiting();
+    const { merged, collisions } = unsaved ? mergeEdits(base, edits, theirs) : { merged: theirs, collisions: [] };
+    merging.current = unsaved ? theirs : null;
+    history.elsewhere(merged, rebase, unsaved);
     setChanged(changedItems(edits, merged));
+    if (how === "restored") return;
     if (collisions.length) {
-      const who = refused ? "the latest change elsewhere" : savedByLabel(source, null, "advanced-edit");
-      setNotice({ id: Date.now(), text: `Your changes to ${collidedParts(collisions)} replaced ${who}'s`, action: restoreButton(next.revision) });
-    } else if (!refused) {
-      setNotice({ id: Date.now(), text: changedText(source, parts, "advanced-edit"), action: restoreButton(before) });
+      const who = source === "unknown" ? "a change made elsewhere" : `${savedByLabel(source, null, "advanced-edit")}'s change`;
+      setNotice({
+        id: Date.now(),
+        text: `Your changes to ${collidedParts(collisions)} replaced ${who}`,
+        action: restoreButton("theirs", next.revision),
+      });
+    } else {
+      setNotice({ id: Date.now(), text: changedText(source, parts, "advanced-edit"), action: restoreButton("before", next.revision) });
     }
   }
   latest.current = { incoming };
 
   // Saves the clip as it was at Revision `entry` of its Revision History, once the edits waiting
-  // here are saved; answers why it couldn't, or null.
+  // here are saved; answers why it couldn't, or null. Edits made meanwhile are merged onto it.
   async function restore(entry: number): Promise<string | null> {
     await history.flush();
     await sending.current;
     try {
       const answer = await api.restoreRevision(job.id, initial.id, entry, revision.current, "advanced-edit");
-      const base = savedEdits.current;
-      const theirs = editsOf(answer);
-      revision.current = answer.revision;
-      savedEdits.current = theirs;
-      stale.current = false;
       setSaveError(null);
-      setCandidate(answer);
-      history.elsewhere(theirs, (step) => rebaseHistory([step], base, theirs)[0], false);
+      latest.current.incoming(answer, "restore", [], "restored");
       return null;
     } catch (reason) {
       return staleCandidate(reason) ? "This clip changed meanwhile (another tab or the agent): look again, then restore." : (reason as Error).message;
     }
   }
 
-  function restoreButton(entry: number) {
+  // A notice's Restore: of the state before Revision `revision` came in, or of theirs from it on.
+  function restoreButton(which: "before" | "theirs", revision: number) {
+    async function click() {
+      const entry = await entryToRestore(job.id, initial.id, which, revision).catch(() => null);
+      const failed = entry === null ? "That version isn't in the Revision History." : await restore(entry);
+      setNotice({ id: Date.now(), text: failed ?? "Restored the clip as it was" });
+    }
     return (
-      <Button
-        size="xs"
-        onClick={() =>
-          void restore(entry).then((failed) => setNotice({ id: Date.now(), text: failed ?? "Restored the clip as it was" }))
-        }
-      >
+      <Button size="xs" onClick={() => void click()}>
         Restore
       </Button>
     );
@@ -274,11 +281,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const { lost } = useCandidateEvents(job.id, {
     onReady: (candidates) => {
       const now = candidates.find((c) => c.id === initial.id);
-      if (now) incoming(now, "unknown", [], false);
+      if (now) incoming(now, "unknown", [], "elsewhere");
       else end("removed");
     },
     onCandidate: (event) => {
-      if (event.candidate.id === initial.id) incoming(event.candidate, event.source, event.parts, false);
+      if (event.candidate.id === initial.id) incoming(event.candidate, event.source, event.parts, "elsewhere");
     },
     onRemoved: (id) => id === initial.id && end("removed"),
     onDeleted: () => end("deleted"),

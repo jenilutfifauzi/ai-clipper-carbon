@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { candidateEventsUrl, TAB_ID, type Candidate, type CandidateEvent, type EditSource, type SavedBy } from "../../../api";
+import { api, ApiError, candidateEventsUrl, TAB_ID, type Candidate, type CandidateEvent, type EditSource, type SavedBy } from "../../../api";
 
 export interface CandidateEventHandlers {
   // On (re)connecting: the Candidates as they are now, to catch up with what was saved meanwhile.
@@ -22,7 +22,20 @@ export function useCandidateEvents(jobId: string, handlers: CandidateEventHandle
   useEffect(() => {
     const source = new EventSource(candidateEventsUrl(jobId));
     source.onopen = () => setLost(false);
-    source.onerror = () => setLost(true);
+    source.onerror = () => {
+      setLost(true);
+      // Closed for good (an answer that isn't a stream, such as a 404): it doesn't reconnect.
+      if (source.readyState !== EventSource.CLOSED) return;
+      api.getJob(jobId).then(
+        () => {},
+        (reason) => {
+          if (reason instanceof ApiError && reason.status === 404) {
+            setLost(false);
+            latest.current.onDeleted();
+          }
+        },
+      );
+    };
     source.addEventListener("ready", (event) => latest.current.onReady(JSON.parse(event.data).candidates));
     source.addEventListener("candidate", (event) => {
       const saved: CandidateEvent = JSON.parse(event.data);
@@ -45,7 +58,7 @@ const SAVED_BY: Record<SavedBy, string> = {
   "clip-editor": "Clip editor",
   agent: "Agent",
   restore: "Restore",
-  unknown: "Unknown",
+  unknown: "Elsewhere",
   original: "Original",
 };
 
@@ -56,6 +69,6 @@ export function savedByLabel(source: SavedBy, tab: string | null, here: EditSour
 
 // What a notice of a change from elsewhere says.
 export function changedText(source: SavedBy, parts: string[], here: EditSource): string {
-  const who = savedByLabel(source, null, here);
-  return parts.length ? `${who} changed ${parts.join(", ")}` : `${who} changed this clip`;
+  const what = parts.length ? parts.join(", ") : "this clip";
+  return source === "unknown" ? `Changed elsewhere: ${what}` : `${savedByLabel(source, null, here)} changed ${what}`;
 }

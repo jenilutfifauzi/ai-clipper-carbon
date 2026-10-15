@@ -189,8 +189,8 @@ class JobStore:
         self._lock = threading.Lock()
         self._listeners: tuple[JobListener, ...] = ()
         self._listeners_lock = threading.Lock()
-        # Who saved each Candidate's latest Revision in this process, by Job and Candidate id.
-        self._edits: dict[tuple[str, str], tuple[int, Edit]] = {}
+        # Who saved each Candidate's latest Revision in this process, and when, by Job and Candidate id.
+        self._edits: dict[tuple[str, str], tuple[int, Edit, datetime]] = {}
 
     def create(
         self, url: str, options: JobOptions, profile: ChannelProfile, upload: tuple[Path, str] | None = None
@@ -253,6 +253,7 @@ class JobStore:
                 raise JobConflict(f"Job {job_id} is {job.status}")
             with self.running(job_id):
                 shutil.rmtree(self.job_dir(job_id))
+            self._edits = {key: saved for key, saved in self._edits.items() if key[0] != job_id}
             self._notify(job_id, None)
 
     @contextmanager
@@ -357,11 +358,10 @@ class JobStore:
                 if old is not None and old.revision == candidate.revision:
                     continue
                 if old is not None:
-                    old_edit = self.edit_of(job_id, old.id, old.revision)
-                    history = recorded(self.revision_history(job_id, old.id), old, candidate, edit, old_edit, now)
+                    history = recorded(self.revision_history(job_id, old.id), old, candidate, edit, self._saved(job_id, old), now)
                     self._save_history(job_id, old.id, history)
-                self._edits[(job_id, candidate.id)] = (candidate.revision, edit)
-            self._save(replace(job, updated_at=datetime.now(UTC)))
+                self._edits[(job_id, candidate.id)] = (candidate.revision, edit, now)
+            self._save(replace(job, updated_at=now))
             return result
 
     def revision_history(self, job_id: str, candidate_id: str) -> list[HistoryEntry]:
@@ -376,8 +376,13 @@ class JobStore:
 
     def edit_of(self, job_id: str, candidate_id: str, revision: int) -> Edit:
         """Who saved this Revision of the Candidate: unknown when it wasn't saved by this process."""
-        saved, edit = self._edits.get((job_id, candidate_id), (None, Edit()))
+        saved, edit, _ = self._edits.get((job_id, candidate_id), (None, Edit(), None))
         return edit if saved == revision else Edit()
+
+    def _saved(self, job_id: str, candidate: Candidate) -> tuple[Edit, datetime | None]:
+        """Who saved the Candidate as it is, and when: unknown when it wasn't saved by this process."""
+        saved, edit, at = self._edits.get((job_id, candidate.id), (None, Edit(), None))
+        return (edit, at) if saved == candidate.revision else (Edit(), None)
 
     def load_clips(self, job_id: str) -> list[Clip]:
         path = self.job_dir(job_id) / CLIPS_FILE

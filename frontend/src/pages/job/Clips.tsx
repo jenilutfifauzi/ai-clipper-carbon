@@ -10,6 +10,7 @@ import { formatBytes } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
+import { same } from "./editor/merge";
 
 // How many more Clips are drawn each time the end of the grid comes into reach.
 const BATCH = 6;
@@ -111,15 +112,6 @@ function restyled(candidate: Candidate, output: RenderedClip, presets: StylePres
     !same({ ...preset.hook, ...candidate.style_overrides.hook }, output.hook_style) ||
     (output.watermark_style ? !same(watermark, output.watermark_style) : watermark.kind !== "none")
   );
-}
-
-// Deep equality of JSON values, whatever the order of their keys.
-function same(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].every((key) => same((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 
 function ClipCard({

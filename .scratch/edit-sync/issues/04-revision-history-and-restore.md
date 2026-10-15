@@ -67,3 +67,11 @@
   - Restore asks inline ("Restore this version?").
   - The Advanced Edit saves its waiting edits first. The clip editor waits for its saves under way, but not for a draft typed in the last 0.7 s.
 - **The notice's Restore restores the entry of the Revision the editor had before the change came in.**
+
+**2026-10-15: review fixes.**
+- **An entry is stamped with when its state was saved.** A kept "before" state is stamped with when it was saved; the Original, with when Selection made it, when that was this process. When that isn't known, `at` is null and no time is shown, instead of the time of the next save.
+- **A notice's Restore finds its entry once it is clicked.**
+  - "Before" restores the newest entry older than the change.
+  - "Theirs" restores the oldest entry from the change on.
+  - Saves keep going into the newest entry, so a Revision named in the notice may no longer have its own.
+- **The button reads "Revision History",** the glossary's term.

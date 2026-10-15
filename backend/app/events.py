@@ -143,9 +143,7 @@ async def candidate_events(store: JobStore, job_id: str, recheck_secs: float = R
 
 def _candidates(store: JobStore, job_id: str) -> list[Candidate] | None:
     """The Job's Candidates; None once it is deleted."""
-    try:
-        store.get(job_id)
-    except JobNotFound:
+    if _read(store, job_id) is None:
         return None
     return store.load_candidates(job_id) or []
 

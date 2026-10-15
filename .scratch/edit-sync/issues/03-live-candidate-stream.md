@@ -59,3 +59,9 @@
   - Taking it starts the undo history again; 05 rebases instead.
   - It also clears the "changed elsewhere, Reload" state of ticket 01.
 - **Only the Timeline highlights changed items** (Text Layers, Overlays, Segments, Music, the hook), with a fading ring. The preview doesn't yet.
+
+**2026-10-15: review fixes and limits.**
+- **The clip editor highlights nothing.** It takes the change, shows the notice and starts its drafts again, but its preview and Timeline have no highlight; only the Advanced Edit's Timeline has one.
+- **Choosing a Candidate for rendering in another tab isn't shown live.** It doesn't raise the Revision (it isn't an edit), so no event carries it.
+- **A Revision caught up on (re)connecting is told as "Changed elsewhere"** (who saved it isn't in `ready`).
+- **A stream that closes for good** (a 404: the Job was deleted before it connected) no longer leaves "Reconnecting…" up: the editor checks the Job and, when it is gone, says so.

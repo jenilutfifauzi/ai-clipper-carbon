@@ -59,7 +59,8 @@ class HistoryEntry:
     (in one tab), with when it was saved and the parts changed since the entry before."""
 
     revision: int
-    at: datetime
+    # None for a state whose save time isn't known (the Candidate as first made, say).
+    at: datetime | None
     source: str
     tab: str | None
     parts: list[str]
@@ -67,24 +68,31 @@ class HistoryEntry:
 
 
 def recorded(
-    history: list[HistoryEntry], before: Candidate, after: Candidate, edit: Edit, before_edit: Edit, now: datetime
+    history: list[HistoryEntry],
+    before: Candidate,
+    after: Candidate,
+    edit: Edit,
+    before_saved: tuple[Edit, datetime | None],
+    now: datetime,
 ) -> list[HistoryEntry]:
-    """The Revision History (oldest first) once `edit` has saved `after` over `before`, whose own
-    save was `before_edit`. A save from the editor and tab of the newest entry, soon after it, goes
-    into it; any other starts an entry, and `before` is kept as one first if it isn't the newest."""
+    """The Revision History (oldest first) once `edit` has saved `after` over `before`, which was
+    saved by and at `before_saved`. A save from the editor and tab of the newest entry, soon after
+    it, goes into it; any other starts an entry, and `before` is kept as one first if it isn't the
+    newest."""
     entries = list(history)
     newest = entries[-1] if entries else None
     if newest is not None and newest.revision == before.revision:
         same_editor = (newest.source, newest.tab) == (edit.source, edit.tab)
-        if same_editor and (now - newest.at).total_seconds() < GROUP_SECS:
+        if same_editor and newest.at is not None and (now - newest.at).total_seconds() < GROUP_SECS:
             since = entries[-2].candidate if len(entries) > 1 else None
             parts = changed_parts(since, after) if since else _union(newest.parts, changed_parts(before, after))
             entries[-1] = HistoryEntry(after.revision, now, edit.source, edit.tab, parts, after)
             return entries[-HISTORY_MAX:]
     else:
+        before_edit, before_at = before_saved
         source = ORIGINAL if before.revision == 1 else before_edit.source
         tab = None if before.revision == 1 else before_edit.tab
-        entries.append(HistoryEntry(before.revision, now, source, tab, [], before))
+        entries.append(HistoryEntry(before.revision, before_at, source, tab, [], before))
     entries.append(HistoryEntry(after.revision, now, edit.source, edit.tab, changed_parts(before, after), after))
     return entries[-HISTORY_MAX:]
 

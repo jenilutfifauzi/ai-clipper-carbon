@@ -60,9 +60,14 @@ export function RevisionHistory({
 
   return (
     <>
-      <Button variant={size === "icon" ? "ghost" : "secondary"} size={size} onClick={() => setOpen(true)} aria-label="Revision History">
+      <Button
+        variant={size === "icon" ? "ghost" : "secondary"}
+        size={size}
+        onClick={() => setOpen(true)}
+        aria-label={size === "icon" ? "Revision History" : undefined}
+      >
         <History aria-hidden size={size === "icon" ? 18 : 16} />
-        {size !== "icon" && "History"}
+        {size !== "icon" && "Revision History"}
       </Button>
       <dialog
         ref={dialog}
@@ -102,7 +107,7 @@ export function RevisionHistory({
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-sm font-medium">
                         {savedByLabel(entry.source, entry.tab, here)}
-                        <span className="font-normal text-muted"> · {formatRelative(entry.at)}</span>
+                        {entry.at && <span className="font-normal text-muted"> · {formatRelative(entry.at)}</span>}
                       </span>
                       <span className="truncate text-xs text-muted">{entry.parts.length ? entry.parts.join(", ") : "As it was"}</span>
                     </div>
@@ -140,4 +145,23 @@ export function RevisionHistory({
       </dialog>
     </>
   );
+}
+
+/**
+ * The entry a notice's Restore brings back, found once it is clicked (saves keep going into the
+ * newest entry): the state before Revision `revision` came in, or ("theirs") the other editor's
+ * version from that Revision on.
+ */
+export async function entryToRestore(
+  jobId: string,
+  candidateId: string,
+  which: "before" | "theirs",
+  revision: number,
+): Promise<number | null> {
+  const entries = await api.listRevisions(jobId, candidateId);
+  const found =
+    which === "before"
+      ? entries.find((entry) => entry.revision < revision)
+      : entries.findLast((entry) => entry.revision >= revision);
+  return found?.revision ?? null;
 }

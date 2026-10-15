@@ -160,6 +160,9 @@ def test_saves_from_one_editor_make_one_entry_and_the_state_before_another_edito
         {"revision": 3, "source": "advanced-edit", "tab": "tab-a", "parts": ["Hook", "Source volume"]},
         {"revision": 1, "source": "original", "tab": None, "parts": []},
     ]
+    # Each entry is stamped with when its state was saved: the Original with when Selection made it.
+    times = [entry["at"] for entry in client.get(f"{candidate_url(job, candidate)}/revisions").json()["revisions"]]
+    assert times == sorted(times, reverse=True) and times[-1] < times[-2]
 
 
 def test_after_a_pause_one_editors_saves_start_a_new_entry_and_the_oldest_go_beyond_the_most_kept(
