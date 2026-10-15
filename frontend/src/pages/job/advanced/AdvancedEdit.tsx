@@ -33,7 +33,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { itemActions, type ItemActions, type Outcome } from "./actions";
+import { itemActions, selectAll, type ItemActions, type Outcome } from "./actions";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
@@ -400,7 +400,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time) };
   const actions = itemActions(scene, () => playback.time, apply);
-  useShortcuts(history, playback, actions);
+  useShortcuts(history, playback, actions, { all: () => select(selectAll(edits)), none: () => select(null) });
 
   async function close() {
     await history.flush();
@@ -648,9 +648,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
 }
 
-// Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, and for the picked item
-// Delete, Cmd/Ctrl+D to duplicate it and Cmd/Ctrl+B to split it; except while typing.
-function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, actions: ItemActions | null) {
+// Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
+// and Escape to pick none, and for the picked items Delete, Cmd/Ctrl+D to duplicate them and
+// Cmd/Ctrl+B to split them; except while typing.
+function useShortcuts(
+  history: EditHistory<AdvancedEdits>,
+  playback: Playback,
+  actions: ItemActions | null,
+  pick: { all: () => void; none: () => void },
+) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -664,6 +670,11 @@ function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, a
       } else if (command && key === "y") {
         event.preventDefault();
         history.redo();
+      } else if (command && key === "a") {
+        event.preventDefault();
+        pick.all();
+      } else if (key === "escape") {
+        pick.none();
       } else if (key === " " && target === document.body) {
         event.preventDefault();
         playback.toggle();
@@ -680,7 +691,7 @@ function useShortcuts(history: EditHistory<AdvancedEdits>, playback: Playback, a
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [history, playback, actions]);
+  }, [history, playback, actions, pick]);
 }
 
 /**

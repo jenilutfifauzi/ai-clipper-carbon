@@ -1,4 +1,4 @@
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -11,10 +11,13 @@ import type { AdvancedEdits } from "./edits";
 import { SegmentFields } from "./MainTrack";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
-import { onlyItem, type Pick } from "./pick";
+import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { TextLayerFields } from "./TextLayers";
 
-/** The picked item's properties: a Segment's, a Text Layer's, a Music Clip's, an Overlay's, the hook's, or a join's Transition. */
+/**
+ * The picked item's properties: a Segment's, a Text Layer's, a Music Clip's, an Overlay's, the hook's,
+ * or a join's Transition; or, with several picked, what they are and what can be done to them.
+ */
 export function Inspector({
   pick,
   edits,
@@ -51,6 +54,7 @@ export function Inspector({
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
 
+  if (itemsOf(pick).length > 1 && actions) return <PickSummary pick={pick} actions={actions} />;
   if (pick?.kind === "join") {
     return (
       <div className="flex flex-col gap-3">
@@ -171,5 +175,35 @@ function ResetPlace({
       <RotateCcw aria-hidden size={16} />
       Reset position
     </Button>
+  );
+}
+
+// Each kind of item's name, one and several.
+const NAMES: Record<ItemKind, [string, string]> = {
+  segment: ["Segment", "Segments"],
+  text: ["Text Layer", "Text Layers"],
+  music: ["Music Clip", "Music Clips"],
+  overlay: ["Overlay", "Overlays"],
+};
+
+/** Several items picked: how many of each kind, and what can be done to them all. */
+function PickSummary({ pick, actions }: { pick: Pick; actions: ItemActions }) {
+  const items = itemsOf(pick);
+  const counts = (Object.keys(NAMES) as ItemKind[])
+    .map((kind) => [kind, items.filter((item) => item.kind === kind).length] as const)
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => `${count} ${NAMES[kind][count === 1 ? 0 : 1]}`);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold">{items.length} items</h2>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" onClick={actions.remove} aria-label="Delete them">
+            <Trash2 aria-hidden size={17} />
+          </Button>
+        </div>
+      </div>
+      <p className="text-sm text-pretty text-muted">{counts.join(", ")}</p>
+    </div>
   );
 }

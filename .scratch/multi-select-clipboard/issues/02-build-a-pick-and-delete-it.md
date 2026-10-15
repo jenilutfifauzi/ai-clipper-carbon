@@ -18,15 +18,19 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D:
-  - [ ] remove of mixed kinds is one change;
-  - [ ] with every Segment picked, the first stays and a notice is given;
-  - [ ] select all picks exactly the timed items.
-- [ ] In the browser:
-  - [ ] Shift- and Cmd-click build a Pick and highlight it;
-  - [ ] a plain click resets it;
-  - [ ] Esc and Cmd+A work;
-  - [ ] Delete removes everything picked, and Cmd+Z restores it in one step.
-- [ ] Typecheck, test, build.
+- [x] Seam D:
+  - [x] remove of mixed kinds is one change;
+  - [x] with every Segment picked, the first stays and a notice is given;
+  - [x] select all picks exactly the timed items.
+- [x] In the browser:
+  - [x] Shift- and Cmd-click build a Pick and highlight it;
+  - [x] a plain click resets it;
+  - [x] Esc and Cmd+A work;
+  - [x] Delete removes everything picked, and Cmd+Z restores it in one step.
+- [x] Typecheck, test, build.
+
+## Comments
+
+**2026-10-15: done.** Checked in the browser on a Candidate of a review Job: Shift- and Cmd-click build and trim the Pick, Cmd+A picks every timed item, Esc empties it, Delete removes a mixed Pick (keeping the first Segment with a notice) and one Cmd+Z brings it back. A Segment's own Delete key now goes through the same rule, so it works when that Segment is the Main Track's only one and other items are picked.

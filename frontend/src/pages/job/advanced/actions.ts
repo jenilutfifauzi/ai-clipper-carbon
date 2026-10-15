@@ -2,7 +2,7 @@ import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
-import { itemsOf, onlyItem, picked, type Pick } from "./pick";
+import { isPicked, itemsOf, LISTS, onlyItem, picked, type ItemKind, type Pick } from "./pick";
 
 /**
  * What the actions on a Pick are done in: the edits and the Pick, the Main Track as it plays, the
@@ -69,17 +69,33 @@ function timed(scene: Scene, kind: TimedKind, id: string) {
   return { list, item: list.find((other) => other.id === id) };
 }
 
-/** The Pick removed. A Segment isn't when it is the only one. */
+/**
+ * The picked items removed. The Main Track is never left empty: with every Segment picked, the first
+ * stays, picked, and the owner is told.
+ */
 export function remove(scene: Scene): Outcome | null {
-  const { edits } = scene;
-  const item = onlyItem(scene.pick);
-  if (!item) return null;
-  if (item.kind === "segment") {
-    if (edits.segments.length < 2) return { edits, pick: scene.pick };
-    return { edits: { ...edits, segments: edits.segments.filter((other) => other.id !== item.id) }, pick: null };
-  }
-  const { list } = timed(scene, item.kind, item.id);
-  return { edits: { ...edits, [KINDS[item.kind].list]: list.filter((other) => other.id !== item.id) }, pick: null };
+  const { edits, pick } = scene;
+  if (!itemsOf(pick).length) return null;
+  const kept = <T extends { id: string }>(items: T[], kind: ItemKind) => items.filter((item) => !isPicked(pick, kind, item.id));
+  const next = {
+    ...edits,
+    segments: kept(edits.segments, "segment"),
+    text_layers: kept(edits.text_layers, "text"),
+    music: kept(edits.music, "music"),
+    overlays: kept(edits.overlays, "overlay"),
+  };
+  if (next.segments.length) return { edits: next, pick: null };
+  const first = edits.segments[0];
+  const outcome = { pick: picked({ kind: "segment", id: first.id }), notice: "The first Segment stays: a clip needs at least one." };
+  // Nothing but the Segments picked: nothing changes.
+  if (itemsOf(pick).every((item) => item.kind === "segment")) return { edits, ...outcome };
+  return { edits: { ...next, segments: [first] }, ...outcome };
+}
+
+/** Every Segment, Text Layer, Music Clip and Overlay picked (not the hook, the captions or a join). */
+export function selectAll(edits: AdvancedEdits): Pick {
+  const refs = (kind: ItemKind) => edits[LISTS[kind]].map((item) => ({ kind, id: item.id }));
+  return picked(...refs("segment"), ...refs("text"), ...refs("music"), ...refs("overlay"));
 }
 
 /**

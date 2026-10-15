@@ -321,7 +321,8 @@ let gestures = 0;
 
 /**
  * An item on a track from `start` to `end`: dragged to move it, its edges to trim it (both snap),
- * selected by a click or tap. On a touch screen it is lifted by a long press, so that a swipe still
+ * picked by a click or tap (with Shift, Cmd or Ctrl, added to the Pick or taken out of it; dragging a
+ * picked item keeps the Pick). On a touch screen it is lifted by a long press, so that a swipe still
  * scrolls the timeline. The arrow keys move it (with Alt, further), with Shift they change its end;
  * Delete removes it. Each drag is one `group` of changes, undone as one.
  */
@@ -362,7 +363,8 @@ export function TimelineItem({
   changed?: boolean;
   // What a screen reader calls it.
   label: string;
-  onSelect: () => void;
+  // Picked alone, or (`toggle`) added to the Pick or taken out of it.
+  onSelect: (toggle: boolean) => void;
   onChange?: (range: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   onDelete?: () => void;
   children: ReactNode;
@@ -377,6 +379,8 @@ export function TimelineItem({
     from: { start: number; end: number };
     armed: boolean;
     moved: boolean;
+    // A click with Shift, Cmd or Ctrl.
+    toggle: boolean;
     group: string;
     timer?: ReturnType<typeof setTimeout>;
   } | null>(null);
@@ -435,6 +439,7 @@ export function TimelineItem({
         from: { start, end },
         armed: !touch && !!onChange,
         moved: false,
+        toggle: event.shiftKey || event.metaKey || event.ctrlKey,
         group: `drag:${++gestures}`,
         timer: undefined as ReturnType<typeof setTimeout> | undefined,
       };
@@ -446,7 +451,7 @@ export function TimelineItem({
           if (drag.current !== gesture) return;
           gesture.armed = true;
           setLifted(true);
-          onSelect();
+          if (!selected) onSelect(false);
           try {
             target.setPointerCapture(pointer);
           } catch {
@@ -470,15 +475,15 @@ export function TimelineItem({
       }
       const delta = (event.clientX - gesture.x) / pps;
       if (!gesture.moved && Math.abs(event.clientX - gesture.x) < 2) return;
-      // An item being dragged is the one selected.
-      if (!gesture.moved) onSelect();
+      // An item being dragged is picked (with the rest of the Pick, when it is in it).
+      if (!gesture.moved && !selected) onSelect(false);
       gesture.moved = true;
       onChange?.({ ...range(gesture.edge, gesture.from, delta), edge: gesture.edge }, gesture.group);
     },
     onPointerUp: (event: PointerEvent<HTMLDivElement>) => {
       const gesture = drag.current;
       if (!gesture || event.pointerId !== gesture.pointer) return;
-      if (!gesture.moved) onSelect();
+      if (!gesture.moved) onSelect(gesture.toggle);
       stop();
     },
     onPointerCancel: stop,
@@ -490,7 +495,7 @@ export function TimelineItem({
       }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        onSelect();
+        onSelect(event.shiftKey || event.metaKey || event.ctrlKey);
         return;
       }
       if ((event.key !== "ArrowLeft" && event.key !== "ArrowRight") || !onChange) return;

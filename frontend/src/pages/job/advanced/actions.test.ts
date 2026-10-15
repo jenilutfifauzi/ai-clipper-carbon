@@ -1,9 +1,9 @@
 // Seam D (.scratch/multi-select-clipboard/spec.md): what is done to a Pick (remove, duplicate, split,
 // move, select all, copy and paste), as worked examples of the edits before and after.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, MusicClip, TextLayer } from "../../../api";
+import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { duplicate, remove, split, type Scene } from "./actions";
+import { duplicate, remove, selectAll, split, type Scene } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { picked, prunedPick, type Pick } from "./pick";
 
@@ -71,6 +71,19 @@ function scene(state: AdvancedEdits, pick: Pick, gap = (time: number) => time): 
   const played = playedFrom(state.segments);
   return { edits: state, pick, played, duration: played.at(-1)?.end ?? 0, gap, ids: () => `n${++n}` };
 }
+
+const overlay = (id: string, start: number, secs: number): Overlay => ({
+  id,
+  media: "logo",
+  start,
+  secs,
+  offset: 0,
+  x: 540,
+  y: 400,
+  size: 300,
+  opacity: 1,
+  volume: 0,
+});
 
 const text = (id: string) => ({ kind: "text", id }) as const;
 const seg = (id: string) => ({ kind: "segment", id }) as const;
@@ -159,5 +172,50 @@ describe("pruning the Pick", () => {
 
   test("keeps the hook and the captions", () => {
     expect(prunedPick({ kind: "hook" }, edits())).toEqual({ kind: "hook" });
+  });
+});
+
+describe("removing a Pick", () => {
+  test("removes items of every kind in one change, and picks nothing", () => {
+    const before = edits({
+      segments: [segment("s1", 100, 110), segment("s2", 200, 205)],
+      text_layers: [layer("a", 0, 2), layer("b", 3, 2)],
+      music: [music("m", 0, 5)],
+      overlays: [overlay("o", 1, 1)],
+    });
+
+    expect(remove(scene(before, picked(seg("s2"), text("a"), { kind: "music", id: "m" }, { kind: "overlay", id: "o" })))).toEqual({
+      edits: { ...before, segments: [segment("s1", 100, 110)], text_layers: [layer("b", 3, 2)], music: [], overlays: [] },
+      pick: null,
+    });
+  });
+
+  test("with every Segment picked, the first stays, picked, and the owner is told", () => {
+    const before = edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205)], text_layers: [layer("a", 0, 2)] });
+
+    const outcome = remove(scene(before, picked(seg("s2"), seg("s1"), text("a"))));
+
+    expect(outcome?.edits).toEqual({ ...before, segments: [segment("s1", 100, 110)], text_layers: [] });
+    expect(outcome?.pick).toEqual(picked(seg("s1")));
+    expect(outcome?.notice).toMatch(/first Segment/);
+  });
+});
+
+describe("select all", () => {
+  test("picks every Segment, Text Layer, Music Clip and Overlay, and not the hook or captions", () => {
+    const now = edits({
+      segments: [segment("s1", 100, 110), segment("s2", 200, 205)],
+      text_layers: [layer("a", 0, 2)],
+      music: [music("m", 0, 5)],
+      overlays: [overlay("o", 1, 1)],
+    });
+
+    expect(selectAll(now)).toEqual(
+      picked(seg("s1"), seg("s2"), text("a"), { kind: "music", id: "m" }, { kind: "overlay", id: "o" }),
+    );
+  });
+
+  test("picks the one Segment of a Clip that has nothing else", () => {
+    expect(selectAll(edits())).toEqual(picked(seg("s1")));
   });
 });
