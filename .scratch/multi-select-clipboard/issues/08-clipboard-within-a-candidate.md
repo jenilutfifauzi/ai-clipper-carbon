@@ -24,16 +24,20 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D:
-  - [ ] copy then paste with no Segments keeps the offsets, gives new ids, and makes the pasted items the Pick;
-  - [ ] Segments are inserted at the nearest join, at the start, between two Segments and at the end;
-  - [ ] Transitions between copied neighbours are remapped, and one into an uncopied Segment is dropped;
-  - [ ] layers are placed from the join;
-  - [ ] items are trimmed or skipped at the end, and the notice counts them;
-  - [ ] cut equals copy plus remove in one change.
-- [ ] In the browser:
-  - [ ] copying a Segment with its title and pasting it near another join lands both together;
-  - [ ] one Cmd+Z removes the paste.
-- [ ] Typecheck, test, build.
+- [x] Seam D:
+  - [x] copy then paste with no Segments keeps the offsets, gives new ids, and makes the pasted items the Pick;
+  - [x] Segments are inserted at the nearest join, at the start, between two Segments and at the end;
+  - [x] Transitions between copied neighbours are remapped, and one into an uncopied Segment is dropped;
+  - [x] layers are placed from the join;
+  - [x] items are trimmed or skipped at the end, and the notice counts them;
+  - [x] cut equals copy plus remove in one change.
+- [x] In the browser:
+  - [x] copying a Segment with its title and pasting it near another join lands both together;
+  - [x] one Cmd+Z removes the paste.
+- [x] Typecheck, test, build.
+
+## Comments
+
+**2026-10-15: done.** The Clipboard is its own module: pure `copy`, `cut` and `paste` (tested at Seam D with the actions) and a store kept in module memory that the editor subscribes to. The Clip's length after an insert is estimated from the pasted Segments' ranges less their Transitions' overlaps (the planner's Word snapping can move it by a little). Checked in the browser: a Segment with its title copied and pasted near the end lands both at 27.5 s; Cmd+X and Cmd+V move a Text Layer to the playhead; each undoes in one step.

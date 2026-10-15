@@ -1,4 +1,4 @@
-import { Copy, RotateCcw, Trash2 } from "lucide-react";
+import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -63,6 +63,7 @@ export function Inspector({
           fonts={fonts}
           onChange={(field, value, group) => onEdits(restyle({ edits, pick }, field, value).edits, group)}
           onDuplicate={actions.duplicate}
+          onCopy={actions.copy}
           onDelete={actions.remove}
         />
       );
@@ -214,6 +215,9 @@ function PickSummary({ pick, actions }: { pick: Pick; actions: ItemActions }) {
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={actions.duplicate} aria-label="Duplicate them">
             <Copy aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={actions.copy} aria-label="Copy them">
+            <ClipboardCopy aria-hidden size={17} />
           </Button>
           <Button variant="ghost" size="icon" onClick={actions.remove} aria-label="Delete them">
             <Trash2 aria-hidden size={17} />

@@ -25,8 +25,8 @@ export interface Outcome {
   notice?: string;
 }
 
-type Timed = TextLayer | MusicClip | Overlay;
-type TimedKind = "text" | "music" | "overlay";
+export type Timed = TextLayer | MusicClip | Overlay;
+export type TimedKind = "text" | "music" | "overlay";
 
 /**
  * How each kind of timed item behaves: its list in the edits; where a copy goes when there is no
@@ -61,7 +61,7 @@ const KINDS: {
   },
 };
 
-const idOf = (scene: Scene) => (scene.ids ?? newId)();
+export const idOf = (scene: Scene) => (scene.ids ?? newId)();
 
 /**
  * The picked items removed. The Main Track is never left empty: with every Segment picked, the first
@@ -94,7 +94,7 @@ export function selectAll(edits: AdvancedEdits): Pick {
 
 // The picked Segments in Main Track order, and the picked Text Layers, Music Clips and Overlays in
 // their lists' order: the order their copies and parts are made and picked in.
-function pickedItems(scene: Scene) {
+export function pickedItems(scene: Scene) {
   const { edits, pick } = scene;
   const segments = edits.segments.filter((segment) => isPicked(pick, "segment", segment.id));
   const layers = (Object.keys(KINDS) as TimedKind[]).flatMap((kind) =>
@@ -244,13 +244,21 @@ export interface ItemActions {
   canSplit: (time: number) => boolean;
   // At the playhead; nothing when it can't be.
   split: () => void;
+  // Onto the Clipboard; cut also removes them.
+  copy: () => void;
+  cut: () => void;
 }
 
 /**
  * The actions on the picked items, when some are, each applied (`apply`) as one change: `now` is the
- * playhead's time.
+ * playhead's time, and `clip` puts them on the Clipboard.
  */
-export function itemActions(scene: Scene, now: () => number, apply: (outcome: Outcome) => void): ItemActions | null {
+export function itemActions(
+  scene: Scene,
+  now: () => number,
+  apply: (outcome: Outcome) => void,
+  clip: { copy: () => void; cut: () => void },
+): ItemActions | null {
   if (!itemsOf(scene.pick).length) return null;
   const run = (outcome: Outcome | null) => outcome && apply(outcome);
   return {
@@ -258,5 +266,6 @@ export function itemActions(scene: Scene, now: () => number, apply: (outcome: Ou
     duplicate: () => run(duplicate(scene)),
     canSplit: (time) => canSplit(scene, time),
     split: () => run(split(scene, now())),
+    ...clip,
   };
 }

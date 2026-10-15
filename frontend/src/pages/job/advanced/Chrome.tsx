@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, Copy, Film, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
@@ -210,8 +210,11 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
-/** The timeline bar's buttons for the picked items: split at the playhead, duplicate, delete. */
-export function ItemTools({ actions, playback }: { actions: ItemActions | null; playback: Playback }) {
+/**
+ * The timeline bar's buttons: for the picked items, split at the playhead, duplicate, copy and delete;
+ * and paste what the Clipboard holds (`paste`).
+ */
+export function ItemTools({ actions, playback, paste }: { actions: ItemActions | null; playback: Playback; paste: (() => void) | null }) {
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   return (
@@ -228,6 +231,12 @@ export function ItemTools({ actions, playback }: { actions: ItemActions | null; 
       </Button>
       <Button variant="ghost" size="icon" onClick={actions?.duplicate} disabled={!actions} aria-label="Duplicate" title={`Duplicate (${shortcut}D)`}>
         <Copy aria-hidden size={17} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={actions?.copy} disabled={!actions} aria-label="Copy" title={`Copy (${shortcut}C)`}>
+        <ClipboardCopy aria-hidden size={17} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={() => paste?.()} disabled={!paste} aria-label="Paste" title={`Paste at the playhead (${shortcut}V)`}>
+        <ClipboardPaste aria-hidden size={17} />
       </Button>
       <Button variant="ghost" size="icon" onClick={actions?.remove} disabled={!actions} aria-label="Delete" title="Delete">
         <Trash2 aria-hidden size={17} />

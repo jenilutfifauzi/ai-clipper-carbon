@@ -34,6 +34,7 @@ import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { itemActions, move, nudge, selectAll, type ItemActions, type Outcome } from "./actions";
+import { copy, cut, hold, paste, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
@@ -399,8 +400,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
   const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time) };
-  const actions = itemActions(scene, () => playback.time, apply);
-  useShortcuts(history, playback, actions, { all: () => select(selectAll(edits)), none: () => select(null) });
+  // The Clipboard, across Candidates and Jobs while the tab is open.
+  const here = { job: job.id, candidate: initial.id };
+  const clipboard = useClipboard();
+  const clip = {
+    copy() {
+      const copied = copy(scene, here);
+      if (copied) hold(copied);
+    },
+    cut() {
+      const done = cut(scene, here);
+      if (!done) return;
+      hold(done.clipboard);
+      apply(done.outcome);
+    },
+  };
+  const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here)));
+  const actions = itemActions(scene, () => playback.time, apply, clip);
+  useShortcuts(history, playback, actions, { all: () => select(selectAll(edits)), none: () => select(null), paste: pasteHere });
 
   async function close() {
     await history.flush();
@@ -480,7 +497,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       duration={duration}
       playback={playback}
       snapPoints={snapPoints(edits, played, pick)}
-      tools={<ItemTools actions={actions} playback={playback} />}
+      tools={<ItemTools actions={actions} playback={playback} paste={pasteHere} />}
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
       onClear={() => select(null)}
     >
@@ -674,13 +691,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 }
 
 // Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
-// and Escape to pick none, and for the picked items Delete, Cmd/Ctrl+D to duplicate them and
-// Cmd/Ctrl+B to split them; except while typing.
+// and Escape to pick none, Cmd/Ctrl+V to paste, and for the picked items Delete, Cmd/Ctrl+D to
+// duplicate them, Cmd/Ctrl+B to split them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them; except
+// while typing.
 function useShortcuts(
   history: EditHistory<AdvancedEdits>,
   playback: Playback,
   actions: ItemActions | null,
-  pick: { all: () => void; none: () => void },
+  pick: { all: () => void; none: () => void; paste: (() => void) | null },
 ) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -712,6 +730,15 @@ function useShortcuts(
       } else if (actions && command && key === "b") {
         event.preventDefault();
         actions.split();
+      } else if (actions && command && key === "c") {
+        event.preventDefault();
+        actions.copy();
+      } else if (actions && command && key === "x") {
+        event.preventDefault();
+        actions.cut();
+      } else if (pick.paste && command && key === "v") {
+        event.preventDefault();
+        pick.paste();
       }
     };
     window.addEventListener("keydown", onKeyDown);

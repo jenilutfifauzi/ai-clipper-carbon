@@ -1,4 +1,4 @@
-import { Copy, Trash2 } from "lucide-react";
+import { ClipboardCopy, Copy, Trash2 } from "lucide-react";
 import { useId } from "react";
 import type { Animation, FontInfo, TextAlign, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -212,6 +212,7 @@ export function TextLayersFields({
   fonts,
   onChange,
   onDuplicate,
+  onCopy,
   onDelete,
 }: {
   layers: TextLayer[];
@@ -219,6 +220,7 @@ export function TextLayersFields({
   // `field` set on them all; `group` names the field, so that its changes are undone as one.
   onChange: <K extends keyof TextLayer>(field: K, value: TextLayer[K], group: string) => void;
   onDuplicate: () => void;
+  onCopy: () => void;
   onDelete: () => void;
 }) {
   const value = <K extends keyof TextLayer>(field: K) => shared(layers, field) ?? layers[0][field];
@@ -235,6 +237,9 @@ export function TextLayersFields({
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate them">
             <Copy aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onCopy} aria-label="Copy them">
+            <ClipboardCopy aria-hidden size={17} />
           </Button>
           <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete them">
             <Trash2 aria-hidden size={17} />

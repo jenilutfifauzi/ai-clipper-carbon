@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
 import { duplicate, move, nudge, remove, restyle, selectAll, shared, split, type Scene } from "./actions";
+import { copy, cut, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
 
@@ -379,5 +380,87 @@ describe("editing several Text Layers", () => {
       edits: { ...before, text_layers: [{ ...a, colour: "#0000FF" }, { ...b, colour: "#0000FF" }, c] },
       pick,
     });
+  });
+});
+
+describe("copy and paste", () => {
+  const here = { job: "j1", candidate: "c1" };
+
+  test("a group without Segments pastes at the playhead, keeping its spacing, with new ids, picked", () => {
+    const before = edits({ segments: [segment("s1", 100, 120)], text_layers: [layer("a", 2, 2)], music: [music("m", 3, 4)] });
+    const held = copy(scene(before, picked(text("a"), { kind: "music", id: "m" })), here)!;
+
+    expect(paste(scene(before, null), held, 10, here)).toEqual({
+      edits: { ...before, text_layers: [layer("a", 2, 2), layer("n1", 10, 2, { text: "a" })], music: [music("m", 3, 4), music("n2", 11, 4)] },
+      pick: picked(text("n1"), { kind: "music", id: "n2" }),
+    });
+  });
+
+  test("Segments are inserted at the join nearest the playhead, and the layers placed from there", () => {
+    // s1 plays 0–5 s, s2 5–15 s, s3 15–20 s.
+    const before = edits({
+      segments: [segment("s1", 100, 105), segment("s2", 200, 210), segment("s3", 300, 305)],
+      text_layers: [layer("a", 6, 2)],
+    });
+    // s2 with its title, 1 s into it.
+    const held = copy(scene(before, picked(seg("s2"), text("a"))), here)!;
+
+    // The playhead at 14 s is nearest the join at 15 s, after s2.
+    expect(paste(scene(before, null), held, 14, here)).toEqual({
+      edits: {
+        ...before,
+        segments: [segment("s1", 100, 105), segment("s2", 200, 210), segment("n1", 200, 210), segment("s3", 300, 305)],
+        text_layers: [layer("a", 6, 2), layer("n2", 16, 2, { text: "a" })],
+      },
+      pick: picked(seg("n1"), text("n2")),
+    });
+  });
+
+  test("Segments paste at the Clip's start and at its end", () => {
+    const before = edits({ segments: [segment("s1", 100, 105), segment("s2", 200, 210)] });
+    const held = copy(scene(before, picked(seg("s1"))), here)!;
+
+    expect(paste(scene(before, null), held, 1, here)?.edits.segments.map((s) => s.id)).toEqual(["n1", "s1", "s2"]);
+    expect(paste(scene(before, null), held, 14, here)?.edits.segments.map((s) => s.id)).toEqual(["s1", "s2", "n1"]);
+  });
+
+  test("Transitions between copied neighbours come along; one into a Segment that wasn't copied doesn't", () => {
+    const before = edits({
+      segments: [segment("s1", 100, 105), segment("s2", 200, 210), segment("s3", 300, 305)],
+      transitions: [
+        { after: "s1", kind: "fade", secs: 0.5 },
+        { after: "s2", kind: "fadeblack", secs: 0.4 },
+      ],
+    });
+    const held = copy(scene(before, picked(seg("s1"), seg("s2"))), here)!;
+
+    const pasted = paste(scene(before, null), held, 20, here)!.edits;
+
+    expect(pasted.segments.map((s) => s.id)).toEqual(["s1", "s2", "s3", "n1", "n2"]);
+    expect(pasted.transitions).toEqual([...before.transitions, { after: "n1", kind: "fade", secs: 0.5 }]);
+  });
+
+  test("what would run past the Clip's end is cut short, or left out when it would start there, and the owner is told", () => {
+    const before = edits({ segments: [segment("s1", 100, 110)], text_layers: [layer("a", 0, 3), layer("b", 4, 2), layer("c", 2, 0.5)] });
+    const held = copy(scene(before, picked(text("a"), text("b"), text("c"))), here)!;
+
+    // At 7 s: a runs 7–10 s and c 9–9.5 s; b would start at 11 s.
+    const at7 = paste(scene(before, null), held, 7, here)!;
+    expect(at7.edits.text_layers.slice(3)).toEqual([layer("n1", 7, 3, { text: "a" }), layer("n2", 9, 0.5, { text: "c" })]);
+    expect(at7.notice).toBe("1 item left out, starting past the clip's end.");
+
+    // At 8 s: a is cut short to 8–10 s; c would start at 10 s and b at 12 s.
+    const at8 = paste(scene(before, null), held, 8, here)!;
+    expect(at8.edits.text_layers.slice(3)).toEqual([layer("n1", 8, 2, { text: "a" })]);
+    expect(at8.notice).toBe("1 item cut short at the clip's end; 2 items left out, starting past the clip's end.");
+  });
+
+  test("cut is a copy and a removal in one change", () => {
+    const before = edits({ text_layers: [layer("a", 0, 2), layer("b", 3, 2)] });
+
+    const { clipboard, outcome } = cut(scene(before, picked(text("a"))), here)!;
+
+    expect(outcome).toEqual({ edits: { ...before, text_layers: [layer("b", 3, 2)] }, pick: null });
+    expect(paste(scene(outcome.edits, null), clipboard, 6, here)?.edits.text_layers).toEqual([layer("b", 3, 2), layer("n1", 6, 2, { text: "a" })]);
   });
 });
