@@ -2,6 +2,7 @@ import { Minus, Plus } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -37,6 +38,18 @@ export interface TimeGeometry {
   snap: (time: number, own?: number[]) => number;
   // The time under a pointer (or a drop) at `clientX`.
   timeAt: (clientX: number) => number;
+  view: TimelineView;
+}
+
+/**
+ * The tracks' stretch on screen, read when drawing rather than rendered, so that a scroll redraws the
+ * items' canvases and nothing else.
+ */
+export interface TimelineView {
+  // In pixels from 0 s.
+  visible: () => { left: number; right: number };
+  // Calls `listener` whenever it scrolls; returns what stops it.
+  subscribe: (listener: () => void) => () => void;
 }
 
 // An area on screen, in CSS pixels.
@@ -89,6 +102,23 @@ export function AdvancedTimeline({
   const fit = Math.max(width - labelWidth - 16, 100) / Math.max(duration, 1);
   const pps = fit * zoom;
   const total = Math.max(duration * pps, 0);
+  const labels = useRef(labelWidth);
+  labels.current = labelWidth;
+  const view = useMemo<TimelineView>(
+    () => ({
+      visible: () => {
+        const element = scroller.current;
+        if (!element) return { left: 0, right: 0 };
+        return { left: element.scrollLeft, right: element.scrollLeft + element.clientWidth - labels.current };
+      },
+      subscribe: (listener) => {
+        const element = scroller.current;
+        element?.addEventListener("scroll", listener, { passive: true });
+        return () => element?.removeEventListener("scroll", listener);
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const element = scroller.current;
@@ -168,6 +198,7 @@ export function AdvancedTimeline({
     pps,
     duration,
     timeAt,
+    view,
     snap: (time, own = []) => {
       const points = [0, duration, playback.time, ...snapPoints].filter((point) => !own.some((o) => Math.abs(o - point) < 1e-6));
       let best = time;

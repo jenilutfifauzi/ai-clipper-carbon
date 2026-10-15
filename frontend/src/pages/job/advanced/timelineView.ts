@@ -1,0 +1,99 @@
+// Seam E (.scratch/timeline-visuals/spec.md): what the Advanced Edit's Timeline shows, worked out
+// from numbers and edits alone, without React or a canvas: Zoom to fit, the Filmstrip and Peaks
+// chunks an item needs, the frame each tile shows, the Peaks level for a zoom, the gain along an
+// item, and the Volume Line's curve.
+
+// --- Filmstrips, and the canvas they are drawn on ---
+
+// A Filmstrip or Peaks chunk holds this many seconds of its media, from a multiple of it
+// (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
+export const CHUNK_SECS = 30;
+// A Filmstrip's frames are made this many pixels tall, one for each whole second.
+export const STRIP_HEIGHT = 112;
+// An item's canvas is at most this many device pixels wide.
+const MAX_CANVAS_PX = 4096;
+
+// A stretch across the Timeline, in CSS pixels.
+export type Span = { left: number; right: number };
+
+/** The starts of the chunks holding the frames from `from` to `to` seconds of the media (both in). */
+export function chunksOf(from: number, to: number): number[] {
+  const starts = [];
+  for (let start = Math.floor(Math.max(from, 0) / CHUNK_SECS) * CHUNK_SECS; start <= to; start += CHUNK_SECS) starts.push(start);
+  return starts;
+}
+
+/**
+ * A tile's width, in CSS pixels, in a row `height` pixels tall, for a video `width` × `height`: a
+ * frame's, which is made STRIP_HEIGHT pixels tall at the video's aspect, rounded to even.
+ */
+export function tileWidth(height: number, videoWidth: number, videoHeight: number): number {
+  const made = 2 * Math.round((STRIP_HEIGHT * videoWidth) / videoHeight / 2);
+  return (made * height) / STRIP_HEIGHT;
+}
+
+/** A tile of a Filmstrip: where it is, in pixels from the item's left edge, and the frame it shows. */
+export interface Tile {
+  left: number;
+  width: number;
+  // The second of the media whose frame it shows.
+  frame: number;
+}
+
+/**
+ * The tiles of an item's Filmstrip across `span` (pixels from the item's left edge): tiles `tile`
+ * pixels wide from its left edge, so that they keep their place in time as the Timeline scrolls. Each
+ * shows the frame under the middle of its visible part, in `view` (where the item is on screen) and
+ * within the item's `width`, rounded to the nearest second and kept within the media's `frames`.
+ * `mediaStart` is the media's time at the item's left edge, and `pps` the Timeline's pixels a second.
+ */
+export function filmstripTiles({
+  width,
+  mediaStart,
+  frames,
+  tile,
+  pps,
+  view,
+  span,
+}: {
+  width: number;
+  mediaStart: number;
+  frames: number;
+  tile: number;
+  pps: number;
+  view: Span;
+  span: Span;
+}): Tile[] {
+  const tiles: Tile[] = [];
+  const from = Math.max(span.left, 0);
+  const to = Math.min(span.right, width);
+  for (let left = Math.floor(from / tile) * tile; left < to; left += tile) {
+    const right = Math.min(left + tile, width);
+    // Its visible part, or the whole of it in the margins off screen.
+    const shown = Math.min(right, view.right) > Math.max(left, view.left) ? { left: Math.max(left, view.left), right: Math.min(right, view.right) } : { left, right };
+    const time = mediaStart + (shown.left + shown.right) / 2 / pps;
+    tiles.push({ left, width: tile, frame: Math.min(Math.max(Math.round(time), 0), frames - 1) });
+  }
+  return tiles;
+}
+
+/**
+ * The stretch of an item an item's canvas covers, in CSS pixels from the item's left edge: its
+ * visible part and half the viewport on each side, at most MAX_CANVAS_PX device pixels wide (about
+ * the visible part's middle), at `dpr` device pixels to a CSS pixel. `item` and `view` are in the
+ * Timeline's pixels from 0 s. Null for an item wholly outside that margin.
+ */
+export function canvasWindow(item: { left: number; width: number }, view: Span, dpr: number): Span | null {
+  const margin = (view.right - view.left) / 2;
+  let left = Math.max(item.left, view.left - margin);
+  let right = Math.min(item.left + item.width, view.right + margin);
+  if (right <= left) return null;
+  const most = MAX_CANVAS_PX / dpr;
+  if (right - left > most) {
+    const middle = (Math.max(left, view.left) + Math.min(right, view.right)) / 2;
+    left = Math.max(left, middle - most / 2);
+    right = Math.min(right, left + most);
+    left = right - most;
+  }
+  return { left: left - item.left, right: right - item.left };
+}

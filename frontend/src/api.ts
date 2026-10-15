@@ -874,6 +874,8 @@ export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
 export const mediaItemUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`;
 export const mediaProxyUrl = (id: string) => `/api/media/${encodeURIComponent(id)}/proxy`;
 export const mediaThumbnailUrl = (id: string) => `/api/media/${encodeURIComponent(id)}/thumbnail`;
+// A video's Filmstrip chunk from `start` seconds, a multiple of 30 (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
+export const mediaFilmstripUrl = (id: string, start: number) => `/api/media/${encodeURIComponent(id)}/filmstrip/v1/${start}.jpg`;
 
 // A file from the Job's directory (such as "clips/<id>.mp4"), served with range support for the
 // player. `version` tells a file rendered again from the one the browser has cached.

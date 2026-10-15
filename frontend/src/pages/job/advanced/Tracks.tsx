@@ -1,6 +1,6 @@
 import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
 import type { ReactNode } from "react";
-import { mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
+import { mediaFilmstripUrl, mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
@@ -9,7 +9,10 @@ import type { PlayedSegment, Playback } from "../editor/playback";
 import { TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
+import { filmstripLayer } from "./filmstrip";
+import { ItemCanvas } from "./ItemCanvas";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
+import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { HOOK_MIN_SECS } from "./ripple";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
@@ -55,6 +58,7 @@ export function Tracks({
   played,
   playback,
   mediaById,
+  mediaCache,
   handlers,
   changed,
   picking = false,
@@ -71,6 +75,8 @@ export function Tracks({
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
   mediaById: Map<string, MediaItem>;
+  // The Filmstrips' chunks, as fetched and decoded.
+  mediaCache: MediaCache;
   handlers: TrackHandlers;
   // The items just changed in another editor, by id ("hook" for the hook).
   changed: Set<string>;
@@ -244,13 +250,7 @@ export function Tracks({
               }}
               onDelete={selected ? onDelete : undefined}
             >
-              {segment.media && (
-                <span
-                  aria-hidden
-                  className="absolute inset-0 bg-black bg-size-[auto_100%] bg-repeat-x opacity-80"
-                  style={{ backgroundImage: `url(${mediaThumbnailUrl(segment.media)})` }}
-                />
-              )}
+              {segment.media && <MediaFilmstrip geometry={geometry} cache={mediaCache} shown={shown} media={segment.media} item={mediaById.get(segment.media)} />}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(shown.source_start)}
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
@@ -384,6 +384,51 @@ export function Tracks({
         </TrackRow>
       ))}
     </>
+  );
+}
+
+/**
+ * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
+ * tiled, which shows until they arrive.
+ */
+function MediaFilmstrip({
+  geometry,
+  cache,
+  shown,
+  media,
+  item,
+}: {
+  geometry: TimeGeometry;
+  cache: MediaCache;
+  shown: PlayedSegment;
+  media: string;
+  item?: MediaItem;
+}) {
+  const { pps } = geometry;
+  return (
+    <span
+      aria-hidden
+      className="absolute inset-0 bg-black bg-size-[auto_100%] bg-repeat-x opacity-80"
+      style={{ backgroundImage: `url(${mediaThumbnailUrl(media)})` }}
+    >
+      {item?.kind === "video" && item.duration && item.width && item.height && (
+        <ItemCanvas
+          view={geometry.view}
+          cache={cache}
+          left={shown.start * pps}
+          width={(shown.end - shown.start) * pps}
+          pps={pps}
+          layers={[
+            filmstripLayer({
+              cache,
+              url: (start) => mediaFilmstripUrl(media, start),
+              mediaStart: shown.source_start,
+              media: { duration: item.duration, width: item.width, height: item.height },
+            }),
+          ]}
+        />
+      )}
+    </span>
   );
 }
 

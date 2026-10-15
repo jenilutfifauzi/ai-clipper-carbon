@@ -57,6 +57,7 @@ import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, t
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { Inspector } from "./Inspector";
 import { newMediaSegment } from "./MainTrack";
+import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
@@ -157,6 +158,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
+  // The Timeline's Filmstrips, fetched and decoded for as long as this editor is open.
+  const [mediaCache] = useState(() => new MediaCache());
+  useEffect(() => () => mediaCache.clear(), [mediaCache]);
 
   // The Revision the next save is made from, and the saves, sent one after another so that each is
   // made from the Revision the one before made.
@@ -596,6 +600,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           played={played}
           playback={playback}
           mediaById={mediaById}
+          mediaCache={mediaCache}
           changed={changed}
           picking={picking}
           tracks={tracks}
