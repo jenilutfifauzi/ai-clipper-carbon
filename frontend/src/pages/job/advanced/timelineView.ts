@@ -265,6 +265,14 @@ export function gainAt(time: number, { volume, secs, fade_in, fade_out }: { volu
   return volume * ramp(time, fade_in) * ramp(secs - time, fade_out);
 }
 
+/**
+ * How loud a Source Segment is all along it: the Clip's own sound's volume, with no fades, times a
+ * volume of the Segment's own (1 unless set), as the renderer has it.
+ */
+export function sourceGain({ source_volume }: { source_volume: number }, segment: { volume?: number }): number {
+  return source_volume * (segment.volume ?? 1);
+}
+
 // --- The Volume Line ---
 
 // The Volume Line's curve: a volume is 2 · height^VOLUME_CURVE, so that 100% sits at two thirds of

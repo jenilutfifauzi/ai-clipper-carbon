@@ -2,6 +2,7 @@ import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "luci
 import type { ReactNode } from "react";
 import {
   jobFilmstripUrl,
+  jobPeaksUrl,
   mediaFilmstripUrl,
   mediaPeaksUrl,
   mediaThumbnailUrl,
@@ -27,7 +28,7 @@ import { SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { HOOK_MIN_SECS } from "./ripple";
-import { gainAt, volumeHeight, volumeOfHeight } from "./timelineView";
+import { gainAt, sourceGain, volumeHeight, volumeOfHeight } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -57,8 +58,8 @@ export interface TrackHandlers {
   onDelete?: (rippled: boolean) => void;
 }
 
-// A Waveform's colour on a Music Clip (its lane's), and on a media Segment, where it takes the bottom
-// MEDIA_WAVE_BAND pixels of the frames.
+// A Waveform's colour on a Music Clip (its lane's), and on a media or Source Segment, where it takes
+// the bottom MEDIA_WAVE_BAND pixels of the frames.
 const SONG_WAVE = "oklch(0.68 0.14 160 / 0.75)";
 const MEDIA_WAVE = "rgb(255 255 255 / 0.8)";
 const MEDIA_WAVE_BAND = 14;
@@ -243,7 +244,7 @@ export function Tracks({
           const segment = edits.segments[i];
           if (!segment) return null;
           const selected = isPicked(pick, "segment", segment.id);
-          const volume = segment.media ? 1 : edits.source_volume * (segment.volume ?? 1);
+          const volume = segment.media ? 1 : sourceGain(edits, segment);
           return (
             <TimelineItem
               key={segment.id}
@@ -275,7 +276,7 @@ export function Tracks({
                   volume={segment.volume ?? 1}
                 />
               ) : (
-                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} />
+                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} gain={volume} />
               )}
               {segment.media && mediaById.get(segment.media)?.has_audio !== false && (
                 <VolumeLine
@@ -504,17 +505,22 @@ function MediaFilmstrip({
   );
 }
 
-/** A Source Segment's picture: the Source's frames along it (its Filmstrip), over the plain lane until they arrive. */
+/**
+ * A Source Segment's picture: the Source's frames along it (its Filmstrip), over the plain lane until
+ * they arrive, and the speech's Waveform along its bottom at `gain`, the Clip's own sound's volume.
+ */
 function SourceFilmstrip({
   geometry,
   cache,
   shown,
   source,
+  gain,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   shown: PlayedSegment;
   source: { job: string; metadata: SourceMetadata };
+  gain: number;
 }) {
   const { pps } = geometry;
   return (
@@ -530,6 +536,15 @@ function SourceFilmstrip({
           url: (start) => jobFilmstripUrl(source.job, start),
           mediaStart: shown.source_start,
           media: source.metadata,
+        }),
+        waveformLayer({
+          cache,
+          url: (start) => jobPeaksUrl(source.job, start),
+          mediaStart: shown.source_start,
+          duration: source.metadata.duration,
+          gain: () => gain,
+          color: MEDIA_WAVE,
+          band: MEDIA_WAVE_BAND,
         }),
       ]}
     />
