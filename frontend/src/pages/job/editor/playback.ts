@@ -101,10 +101,10 @@ export class Playback {
     if (!segments.length || JSON.stringify(segments) === JSON.stringify(this.segments)) return;
     const moved = segments[0].source_start !== this.segments[0].source_start;
     this.segments = segments;
-    if (!this.playing) {
-      // A moved start waits at the new start; otherwise the time is kept, inside the Clip.
-      this.seek(moved ? 0 : Math.min(this.time, this.duration));
-    } else this.index = Math.min(this.index, segments.length - 1);
+    // The time's Segment may be gone (one deleted): kept inside the new Segments before anything reads it.
+    this.index = Math.min(this.index, segments.length - 1);
+    // A moved start waits at the new start; otherwise the time is kept, inside the Clip.
+    if (!this.playing) this.seek(moved ? 0 : Math.min(this.time, this.duration));
   }
 
   attach(video: HTMLVideoElement | null) {
