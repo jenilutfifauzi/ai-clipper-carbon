@@ -27,6 +27,7 @@ from app.candidates import (
 )
 from app.clips import Clip
 from app.config import Settings
+from app.derived import STRIP_VERSION
 from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import FONTS
@@ -763,6 +764,18 @@ def media_thumbnail(media_id: str, library: Media) -> FileResponse:
         raise HTTPException(404, f"No video or image {media_id}") from None
 
 
+@router.get(f"/media/{{media_id}}/filmstrip/{STRIP_VERSION}/{{start}}.jpg")
+def media_filmstrip(media_id: str, start: int, library: Media) -> FileResponse:
+    """A video's Filmstrip chunk from `start` seconds (a multiple of 30): its frames at each whole
+    second, side by side, with their count in X-Frames. Made now for a video uploaded before
+    Filmstrips. 404 for a `start` off the grid or past the end, or an item that isn't a video."""
+    try:
+        chunk, frames = library.filmstrip(media_id, start)
+    except MediaNotFound:
+        raise HTTPException(404, f"No Filmstrip of {media_id} from {start} s") from None
+    return FileResponse(chunk, media_type="image/jpeg", headers={**_DERIVED, "X-Frames": str(frames)})
+
+
 @router.delete("/media/{media_id}", status_code=204)
 def delete_media(media_id: str, library: Media, store: Store) -> None:
     """Delete an item and its files. 409 while a Candidate uses it, naming them."""
@@ -810,6 +823,8 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
 
 # Media Library files never change under their id.
 _KEEP = {"Cache-Control": "public, max-age=604800"}
+# Nor do Filmstrips, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
+_DERIVED = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 
 def _preset(presets: PresetStore, preset_id: str) -> StylePreset:

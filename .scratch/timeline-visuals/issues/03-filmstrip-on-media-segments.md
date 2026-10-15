@@ -26,17 +26,29 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A (real ffmpeg, as the Media Library tests):
+- [x] Seam A (real ffmpeg, as the Media Library tests):
   - uploading a 2-second video gives a chunk with `X-Frames: 2` that is 112px tall;
   - a 65-second video gives chunks of 30, 30 and 5 frames;
   - `start = 15`, `start = 90` and an image give 404;
   - removing an item's chunks and requesting one makes it again;
   - deleting the item removes its chunks;
   - answers carry immutable cache headers.
-- [ ] Seam E (vitest):
+- [x] Seam E (vitest):
   - chunks for a media Segment's range;
   - the frame for a tile at 1× and at 40×, and for a tile half off-screen.
 - [ ] In the browser, a media Segment shows its frames at every zoom, and they follow a trim and a move. A video uploaded before the feature fills in.
-- [ ] `npm run typecheck`, `npm test`, `npm run build` and the backend's tests pass.
+- [x] `npm run typecheck`, `npm test`, `npm run build` and the backend's tests pass.
+
+## Comments
+
+**2026-10-15: done.** Built as specified, in `backend/app/derived.py` (the chunk grid, the upload's Filmstrip outputs, and `make_strip` under the on-demand lock, for the Source's chunks in 04 and the Peaks in 05 and 06 to reuse) and, on the Timeline, `timelineView.ts` (Seam E), `mediaCache.ts`, `ItemCanvas.tsx` (the windowed canvas, drawn by layers) and `filmstrip.ts` (the Filmstrip's layer). Choices made on the way:
+- A chunk's frame count is `ceil` of the length left, rounded to the millisecond first. The upload counts by the uploaded file's length and the API by the normalized one's; a chunk they would count differently is removed after the upload, to be made on request.
+- The last picture is held for a second before the frames are taken, so a video whose sound runs past its picture still fills its last tile.
+- Chunks made on request are read from the item's proxy.
+- ffmpeg's JPEG scale has no "quality 75": `-q:v 5` stands for it.
+- Seam E also has `tileWidth` and `canvasWindow` (the canvas's stretch and its 4096-pixel cap), with worked examples.
+- A chunk evicted from the cache less than a second ago isn't fetched again at once, so more than 12 chunks on screen can't fetch one another out in a loop.
+
+Not seen in a browser yet: left for the walkthrough (09).

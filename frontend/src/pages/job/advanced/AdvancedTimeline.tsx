@@ -3,6 +3,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -14,7 +15,7 @@ import {
 import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
-import { MAX_ZOOM, type TimelineView } from "./timelineView";
+import { MAX_ZOOM, type ZoomedView } from "./timelineView";
 
 // The labels' column, by default (a phone's), in CSS pixels: its Tracks' names.
 const LABEL_WIDTH = 64;
@@ -38,6 +39,18 @@ export interface TimeGeometry {
   snap: (time: number, own?: number[]) => number;
   // The time under a pointer (or a drop) at `clientX`.
   timeAt: (clientX: number) => number;
+  view: TimelineView;
+}
+
+/**
+ * The tracks' stretch on screen, read when drawing rather than rendered, so that a scroll redraws the
+ * items' canvases and nothing else.
+ */
+export interface TimelineView {
+  // In pixels from 0 s.
+  visible: () => { left: number; right: number };
+  // Calls `listener` whenever it scrolls; returns what stops it.
+  subscribe: (listener: () => void) => () => void;
 }
 
 // An area on screen, in CSS pixels.
@@ -76,7 +89,7 @@ export function AdvancedTimeline({
   onClear?: () => void;
   // The view Zoom to fit gives on a Timeline `width` CSS pixels wide for its times, now at `zoom`;
   // and, set to Zoom to fit, a ref for its shortcut.
-  toFit: (timeline: { width: number; zoom: number }) => TimelineView;
+  toFit: (timeline: { width: number; zoom: number }) => ZoomedView;
   fitRef: Ref<() => void>;
   // The labels' column's width, in pixels: wider on a desktop, where it holds the Tracks' buttons.
   labelWidth?: number;
@@ -99,6 +112,23 @@ export function AdvancedTimeline({
   const fit = usable / Math.max(duration, 1);
   const pps = fit * zoom;
   const total = Math.max(duration * pps, 0);
+  const labels = useRef(labelWidth);
+  labels.current = labelWidth;
+  const view = useMemo<TimelineView>(
+    () => ({
+      visible: () => {
+        const element = scroller.current;
+        if (!element) return { left: 0, right: 0 };
+        return { left: element.scrollLeft, right: element.scrollLeft + element.clientWidth - labels.current };
+      },
+      subscribe: (listener) => {
+        const element = scroller.current;
+        element?.addEventListener("scroll", listener, { passive: true });
+        return () => element?.removeEventListener("scroll", listener);
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const element = scroller.current;
@@ -190,6 +220,7 @@ export function AdvancedTimeline({
     pps,
     duration,
     timeAt,
+    view,
     snap: (time, own = []) => {
       const points = [0, duration, playback.time, ...snapPoints].filter((point) => !own.some((o) => Math.abs(o - point) < 1e-6));
       let best = time;
