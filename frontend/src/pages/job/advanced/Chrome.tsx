@@ -210,7 +210,7 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
-/** The timeline bar's buttons for the picked item: split at the playhead, duplicate, delete. */
+/** The timeline bar's buttons for the picked items: split at the playhead, duplicate, delete. */
 export function ItemTools({ actions, playback }: { actions: ItemActions | null; playback: Playback }) {
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
@@ -236,7 +236,7 @@ export function ItemTools({ actions, playback }: { actions: ItemActions | null; 
   );
 }
 
-// The phone toolbar's Split, enabled while the playhead is inside the picked item.
+// The phone toolbar's Split, enabled while the playhead is inside a picked item.
 function SplitButton({ actions, playback }: { actions: ItemActions; playback: Playback }) {
   const splittable = usePlayback(playback, (time) => actions.canSplit(time));
   return <ToolButton icon={Scissors} label="Split" onClick={actions.split} disabled={!splittable} />;

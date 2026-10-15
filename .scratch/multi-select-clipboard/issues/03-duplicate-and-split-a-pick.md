@@ -17,12 +17,16 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D:
-  - [ ] a layer group is shifted by its span when it fits, and placed aside when it doesn't;
-  - [ ] Segments are copied as a block after the last picked one, in order;
-  - [ ] split cuts only the items under the playhead;
-  - [ ] the copies and the tails are the new Pick.
-- [ ] In the browser, Cmd+D and Cmd+B on a mixed Pick each undo in one step.
-- [ ] Typecheck, test, build.
+- [x] Seam D:
+  - [x] a layer group is shifted by its span when it fits, and placed aside when it doesn't;
+  - [x] Segments are copied as a block after the last picked one, in order;
+  - [x] split cuts only the items under the playhead;
+  - [x] the copies and the tails are the new Pick.
+- [x] In the browser, Cmd+D and Cmd+B on a mixed Pick each undo in one step.
+- [x] Typecheck, test, build.
+
+## Comments
+
+**2026-10-15: done.** Copies and parts are made and picked in one order: the Segments in Main Track order, then the Text Layers, Music Clips and Overlays in their lists' order. Checked in the browser: Cmd+D on a Segment and a Text Layer copies both, Cmd+B at 1.5 s cuts both, and each undoes in one step.

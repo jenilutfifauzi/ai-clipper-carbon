@@ -1,4 +1,4 @@
-import { RotateCcw, Trash2 } from "lucide-react";
+import { Copy, RotateCcw, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -198,6 +198,9 @@ function PickSummary({ pick, actions }: { pick: Pick; actions: ItemActions }) {
       <div className="flex items-center justify-between gap-2">
         <h2 className="font-semibold">{items.length} items</h2>
         <div className="flex gap-1">
+          <Button variant="ghost" size="icon" onClick={actions.duplicate} aria-label="Duplicate them">
+            <Copy aria-hidden size={17} />
+          </Button>
           <Button variant="ghost" size="icon" onClick={actions.remove} aria-label="Delete them">
             <Trash2 aria-hidden size={17} />
           </Button>

@@ -219,3 +219,56 @@ describe("select all", () => {
     expect(selectAll(edits())).toEqual(picked(seg("s1")));
   });
 });
+
+describe("duplicating a Pick", () => {
+  test("a group of layer items is copied right after itself, keeping its shape, and the copies are picked", () => {
+    // From 1 s to 4 s: the copies go 3 s later.
+    const before = edits({ text_layers: [layer("a", 1, 2)], music: [music("m", 2, 2)] });
+
+    expect(duplicate(scene(before, picked(text("a"), { kind: "music", id: "m" })))).toEqual({
+      edits: { ...before, text_layers: [layer("a", 1, 2), layer("n1", 4, 2, { text: "a" })], music: [music("m", 2, 2), music("n2", 5, 2)] },
+      pick: picked(text("n1"), { kind: "music", id: "n2" }),
+    });
+  });
+
+  test("a group that wouldn't fit before the Clip's end is copied where each item's kind puts it aside", () => {
+    const before = edits({ text_layers: [layer("a", 5, 2), layer("b", 6, 2)] });
+
+    expect(duplicate(scene(before, picked(text("a"), text("b"))))?.edits.text_layers).toEqual([
+      layer("a", 5, 2),
+      layer("b", 6, 2),
+      layer("n1", 5, 2, { text: "a", y: 1040 }),
+      layer("n2", 6, 2, { text: "b", y: 1040 }),
+    ]);
+  });
+
+  test("picked Segments are copied as a block, in order, after the last picked one", () => {
+    const before = edits({ segments: [segment("s1", 100, 102), segment("s2", 200, 202), segment("s3", 300, 302)] });
+
+    expect(duplicate(scene(before, picked(seg("s3"), seg("s1"))))).toEqual({
+      edits: {
+        ...before,
+        segments: [segment("s1", 100, 102), segment("s2", 200, 202), segment("s3", 300, 302), segment("n1", 100, 102), segment("n2", 300, 302)],
+      },
+      pick: picked(seg("n1"), seg("n2")),
+    });
+  });
+});
+
+describe("splitting a Pick", () => {
+  test("cuts only the picked items the playhead is inside, and picks their second parts", () => {
+    const before = edits({
+      segments: [segment("s1", 100, 106), segment("s2", 200, 204)],
+      text_layers: [layer("a", 3, 4), layer("b", 0, 2)],
+    });
+
+    expect(split(scene(before, picked(text("a"), text("b"), seg("s1"), seg("s2"))), 5)).toEqual({
+      edits: {
+        ...before,
+        segments: [segment("s1", 100, 105), segment("n1", 105, 106), segment("s2", 200, 204)],
+        text_layers: [layer("a", 3, 2), layer("n2", 5, 2, { text: "a" }), layer("b", 0, 2)],
+      },
+      pick: picked(seg("n1"), text("n2")),
+    });
+  });
+});
