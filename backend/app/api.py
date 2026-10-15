@@ -27,7 +27,7 @@ from app.candidates import (
 )
 from app.clips import Clip
 from app.config import Settings
-from app.derived import STRIP_VERSION
+from app.derived import STRIP_FORMAT, STRIP_VERSION, frames_in, make_strip
 from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import FONTS
@@ -356,6 +356,25 @@ def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, setti
         except RuntimeError as exc:
             raise HTTPException(404, str(exc)) from None
     return FileResponse(still, headers={"Cache-Control": "max-age=86400"})
+
+
+@router.get(f"/jobs/{{job_id}}/filmstrip/{STRIP_VERSION}/{{start}}.jpg")
+def job_filmstrip(start: int, job: ExistingJob, store: Store, settings: AppSettings) -> FileResponse:
+    """A Filmstrip chunk of the Job's Source from `start` seconds (a multiple of 30): its frames at
+    each whole second, side by side, with their count in X-Frames. Made the first time it's asked
+    for, from the preview proxy when the Job has one, then kept in the Job's directory. 404 for a
+    `start` off the grid or past the end, or a Job without its Source yet."""
+    source = job.source
+    frames = frames_in(start, source.metadata.duration) if source else 0
+    if source is None or not frames:
+        raise HTTPException(404, f"No Filmstrip of Job {job.id} from {start} s")
+    job_dir = store.job_dir(job.id)
+    chunk = job_dir / "strips" / STRIP_FORMAT / f"{start}.jpg"
+    try:
+        make_strip(settings.ffmpeg_bin, job_dir / (source.preview or source.video), start, source.metadata.duration, chunk)
+    except RuntimeError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return FileResponse(chunk, media_type="image/jpeg", headers={**_DERIVED, "X-Frames": str(frames)})
 
 
 @router.get("/jobs/{job_id}/events", response_class=EventSourceResponse)
