@@ -337,6 +337,7 @@ export function TimelineItem({
   trim = true,
   tone,
   selected,
+  changed = false,
   label,
   onSelect,
   onChange,
@@ -357,6 +358,8 @@ export function TimelineItem({
   trim?: boolean;
   tone: ItemTone;
   selected: boolean;
+  // Just changed in another editor (another tab, the agent): shown for a moment.
+  changed?: boolean;
   // What a screen reader calls it.
   label: string;
   onSelect: () => void;
@@ -519,6 +522,7 @@ export function TimelineItem({
         onChange ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         TONES[tone],
         selected && "ring-2 ring-text",
+        changed && "motion-safe:animate-[changed_1.6s_var(--ease-out)] motion-reduce:ring-2 motion-reduce:ring-accent",
         lifted && "z-10 scale-y-110 shadow-raised",
       )}
       style={{ left: start * pps, width }}

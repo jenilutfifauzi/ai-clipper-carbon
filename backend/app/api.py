@@ -28,7 +28,7 @@ from app.candidates import (
 from app.clips import Clip
 from app.config import Settings
 from app.editor import PreviewPlan, preview_plan
-from app.events import job_events
+from app.events import candidate_events, job_events
 from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
@@ -38,6 +38,7 @@ from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
+from app.revisions import Edit
 from app.storage import DiskUsage, disk_usage
 from app.styles import (
     BuiltinPreset,
@@ -107,6 +108,11 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _edit(request: Request) -> Edit:
+    """Who makes an edit: the editor and tab its request names (X-Edit-Source, X-Edit-Tab)."""
+    return Edit.of(request.headers.get("X-Edit-Source"), request.headers.get("X-Edit-Tab"))
+
+
 def _job(job_id: str, request: Request) -> Job:
     """The Job, or a 404. For streaming routes, which can't answer 404 once they have started."""
     try:
@@ -122,6 +128,7 @@ Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
+EditBy = Annotated[Edit, Depends(_edit)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -349,6 +356,15 @@ async def stream_job_events(job: ExistingJob, store: Store) -> AsyncIterator[Ser
         yield event
 
 
+@router.get("/jobs/{job_id}/candidates/events", response_class=EventSourceResponse)
+async def stream_candidate_events(job: ExistingJob, store: Store) -> AsyncIterator[ServerSentEvent]:
+    """The Job's Candidates as they are saved (ADR 0003): `ready` with them as they are now, then a
+    `candidate` event per new Revision (with who saved it and the parts it changed), `removed` for
+    one that is gone, and `deleted` once the Job is."""
+    async for event in candidate_events(store, job.id):
+        yield event
+
+
 @router.post("/jobs/{job_id}/retry")
 def retry_job(job_id: str, worker: JobWorker) -> Job:
     """Queue a Job in `error` again. It resumes from the stage it failed in."""
@@ -382,6 +398,7 @@ def update_candidate(
     presets: Presets,
     logos: Logos,
     library: Media,
+    edit: EditBy,
 ) -> Candidate:
     """Change a Candidate's bounds (snapped to Words), hook text, layout, Style Preset, Style
     Overrides or selected flag, and save it at once. 422 for a range that isn't a usable clip or
@@ -401,7 +418,7 @@ def update_candidate(
             raise InvalidEdit(f"Invalid style overrides: {exc}") from None
         return candidates, candidate
 
-    return _review(store, settings, job_id, update)
+    return _review(store, settings, job_id, update, edit)
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/preview-plan")
@@ -461,10 +478,10 @@ def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobW
 
 
 @router.post("/jobs/{job_id}/candidates", status_code=201)
-def add_candidate(job_id: str, body: ManualCandidate, store: Store, settings: AppSettings) -> Candidate:
+def add_candidate(job_id: str, body: ManualCandidate, store: Store, settings: AppSettings, edit: EditBy) -> Candidate:
     """Add a manual Candidate for a transcript range, snapped to Words, after the AI's Candidates."""
     return _review(
-        store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode)
+        store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode), edit
     )
 
 
@@ -473,15 +490,16 @@ def _review(
     settings: Settings,
     job_id: str,
     change: Callable[[list[Candidate], Episode], tuple[list[Candidate], Candidate]],
+    edit: Edit,
 ) -> Candidate:
-    def edit(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
+    def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
         transcript = store.load_transcript(job.id)
         assert job.source is not None and transcript is not None  # a Job in review has both
         episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
         return change(candidates, episode)
 
     try:
-        return store.change_candidates(job_id, edit, expect=EDITABLE)
+        return store.change_candidates(job_id, changed, expect=EDITABLE, edit=edit)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     except CandidateNotFound as exc:

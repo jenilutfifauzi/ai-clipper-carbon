@@ -10,6 +10,7 @@ import {
   type ClipSegment,
   type FontInfo,
   type JobDetail,
+  type SavedBy,
   type MediaItem,
   type MusicClip,
   type Overlay,
@@ -23,15 +24,17 @@ import { loadFonts } from "../../../fonts";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ClipPreview } from "../editor/ClipPreview";
+import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { candidateDraft } from "../editor/draft";
 import { placedOverrides } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
+import { changedText, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { itemActions, type ItemActions } from "./actions";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
-import { editsOf, newId, pickedOf, samePicked, stageIdOf, type AdvancedEdits, type Picked } from "./edits";
+import { changedItems, editsOf, newId, pickedOf, samePicked, stageIdOf, type AdvancedEdits, type Picked } from "./edits";
 import { Inspector } from "./Inspector";
 import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
@@ -46,6 +49,8 @@ import { useEditHistory, type EditHistory } from "./useEditHistory";
 const EDITABLE = new Set(["review", "rendering"]);
 // From this width on, the desktop layout: assets, player and inspector side by side over the timeline.
 const WIDE = "(min-width: 64rem)";
+// How long items changed in another editor are shown as changed on the Timeline.
+const CHANGED_MS = 1600;
 
 /**
  * The Advanced Edit of a Candidate (/jobs/:jobId/candidates/:candidateId/advanced): a CapCut-like
@@ -109,13 +114,19 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // made from the Revision the one before made.
   const revision = useRef(initial.revision);
   const sending = useRef<Promise<void>>(Promise.resolve());
+  // Saves sent and not yet answered: a change from elsewhere waits for them.
+  const unanswered = useRef(0);
   // Changed elsewhere since it was loaded: the backend refuses its saves until it is loaded again.
   const stale = useRef(false);
+  // The Job or this clip is gone: nothing more is saved.
+  const gone = useRef(false);
   // Asking whether to leave with edits that weren't saved.
   const [leaving, setLeaving] = useState(false);
   const save = useCallback(
     (change: CandidateChange) => {
       const send = async () => {
+        if (gone.current) return;
+        unanswered.current += 1;
         setSaving((n) => n + 1);
         setSaveError(null);
         try {
@@ -131,6 +142,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             setSaveError(`Not saved: ${(reason as Error).message}`);
           }
         } finally {
+          unanswered.current -= 1;
           setSaving((n) => n - 1);
         }
       };
@@ -141,6 +153,46 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
   const history = useEditHistory<AdvancedEdits>(editsOf(initial), save);
   const edits = history.value;
+
+  // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once when
+  // nothing here waits to be saved; otherwise the next save here meets the newer Revision.
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const closeNotice = useCallback(() => setNotice(null), []);
+  const [changed, setChanged] = useState<Set<string>>(new Set());
+  // The Job was deleted, or this clip is gone: nothing more is saved.
+  const [ended, setEnded] = useState<"deleted" | "removed" | null>(null);
+  function end(how: "deleted" | "removed") {
+    gone.current = true;
+    setEnded(how);
+  }
+  function fromElsewhere(next: Candidate, source: SavedBy, parts: string[]) {
+    if (next.revision <= revision.current || unanswered.current > 0) return;
+    const nextEdits = editsOf(next);
+    if (!history.adopt(nextEdits)) return;
+    revision.current = next.revision;
+    // In step again: saves are made from this Revision.
+    stale.current = false;
+    setCandidate(next);
+    setChanged(changedItems(edits, nextEdits));
+    setNotice({ id: Date.now(), text: changedText(source, parts, "advanced-edit") });
+  }
+  useEffect(() => {
+    if (!changed.size) return;
+    const timer = setTimeout(() => setChanged(new Set()), CHANGED_MS);
+    return () => clearTimeout(timer);
+  }, [changed]);
+  const { lost } = useCandidateEvents(job.id, {
+    onReady: (candidates) => {
+      const now = candidates.find((c) => c.id === initial.id);
+      if (now) fromElsewhere(now, "unknown", []);
+      else end("removed");
+    },
+    onCandidate: (event) => {
+      if (event.candidate.id === initial.id) fromElsewhere(event.candidate, event.source, event.parts);
+    },
+    onRemoved: (id) => id === initial.id && end("removed"),
+    onDeleted: () => end("deleted"),
+  });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, job.status);
   const playback = useMemo(() => new Playback(), []);
@@ -307,6 +359,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           played={played}
           playback={playback}
           mediaById={mediaById}
+          changed={changed}
           handlers={{
             onSelect: select,
             onEdits: history.set,
@@ -372,6 +425,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             saving={saving > 0}
             saved={saved}
             error={saveError}
+            offline={lost}
             action={
               stale.current ? (
                 <button type="button" className="font-medium text-text underline" onClick={() => window.location.reload()}>
@@ -394,9 +448,31 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       >
         <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
       </ConfirmDialog>
+      <ChangeNotice notice={notice} onClose={closeNotice} />
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
+
+  if (ended) {
+    return (
+      <div className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-4 p-4">
+        <Panel className="flex flex-col gap-3">
+          <h1 className="text-xl font-semibold">{ended === "deleted" ? "This Job was deleted" : "This clip is gone"}</h1>
+          <p className="text-muted">
+            {ended === "deleted"
+              ? "It was deleted in another tab, so there is nothing left to edit."
+              : "It was removed from its Job in another tab or by the agent, so there is nothing left to edit."}
+          </p>
+          {ended === "removed" && (
+            <Link to={`/jobs/${job.id}`} className="inline-flex min-h-11 items-center gap-1.5 self-start text-accent-text hover:underline">
+              <ArrowLeft aria-hidden size={16} />
+              Back to the Job
+            </Link>
+          )}
+        </Panel>
+      </div>
+    );
+  }
 
   if (wide) {
     return (

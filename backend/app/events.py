@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi.sse import ServerSentEvent
+from pydantic import TypeAdapter
 
+from app.candidates import Candidate
 from app.jobs import Job, JobNotFound, JobStatus, JobStore, JobWarning
+from app.revisions import changed_parts
 
 # The statuses a Job stays in until the owner acts (reviews it, or retries it): the stream ends there.
 SETTLED = frozenset({JobStatus.REVIEW, JobStatus.ERROR})
@@ -86,3 +89,66 @@ def _read(store: JobStore, job_id: str) -> Job | None:
         return store.get(job_id)
     except JobNotFound:
         return None
+
+
+_CANDIDATE = TypeAdapter(Candidate)
+
+
+async def candidate_events(store: JobStore, job_id: str, recheck_secs: float = RECHECK_SECS) -> AsyncIterator[ServerSentEvent]:
+    """The Job's Candidates as they are saved, for as long as the Job exists (ADR 0003).
+
+    First a `ready` event with the Candidates as they are now, so that an editor can catch up with
+    what was saved before it connected. Then a `candidate` event for each new Revision of one, with
+    who saved it (`source`, `tab`) and the parts changed since the last one sent; a `removed` event
+    with the id of one that is gone; and `deleted`, which ends the stream, when the Job is deleted.
+    Saves made by another process (a CLI run) are found when the Candidates are read again, at the
+    latest every `recheck_secs`, with source unknown.
+    """
+    loop = asyncio.get_running_loop()
+    changes: asyncio.Queue[None] = asyncio.Queue()
+
+    def changed(changed_id: str, _job: Job | None) -> None:
+        if changed_id == job_id:
+            with suppress(RuntimeError):  # the event loop has closed: the app is stopping
+                loop.call_soon_threadsafe(changes.put_nowait, None)
+
+    with store.watch(changed):
+        # Read after subscribing, so that no change falls between the two.
+        candidates = _candidates(store, job_id)
+        if candidates is None:
+            yield ServerSentEvent(event="deleted", data=job_id)
+            return
+        yield ServerSentEvent(event="ready", data={"candidates": [_dump(c) for c in candidates]})
+        sent = {candidate.id: candidate for candidate in candidates}
+        while True:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(changes.get(), recheck_secs)
+            candidates = _candidates(store, job_id)
+            if candidates is None:
+                yield ServerSentEvent(event="deleted", data=job_id)
+                return
+            for candidate in candidates:
+                old = sent.get(candidate.id)
+                if old is not None and candidate.revision <= old.revision:
+                    continue
+                edit = store.edit_of(job_id, candidate.id, candidate.revision)
+                parts = changed_parts(old, candidate) if old else []
+                data = {"candidate": _dump(candidate), "source": edit.source, "tab": edit.tab, "parts": parts}
+                yield ServerSentEvent(event="candidate", data=data)
+            ids = {candidate.id for candidate in candidates}
+            for gone in sent.keys() - ids:
+                yield ServerSentEvent(event="removed", data={"id": gone})
+            sent = {candidate.id: candidate for candidate in candidates}
+
+
+def _candidates(store: JobStore, job_id: str) -> list[Candidate] | None:
+    """The Job's Candidates; None once it is deleted."""
+    try:
+        store.get(job_id)
+    except JobNotFound:
+        return None
+    return store.load_candidates(job_id) or []
+
+
+def _dump(candidate: Candidate) -> dict:
+    return _CANDIDATE.dump_python(candidate, mode="json")

@@ -647,9 +647,20 @@ export interface CandidateChange {
 
 // Which editor saves an edit, so that other editors can say who changed a Candidate.
 export type EditSource = "advanced-edit" | "clip-editor";
+// Who saved a Revision: an editor, the agent (MCP), a Restore, or unknown (a CLI run, an older caller).
+export type SavedBy = EditSource | "agent" | "restore" | "unknown";
 
 // This tab's id, sent with its edits: its own saves are then told apart from another tab's.
-const TAB_ID = crypto.randomUUID();
+export const TAB_ID = crypto.randomUUID();
+
+// A new Revision of one of a Job's Candidates, from its Candidate events: who saved it (`tab` for an
+// editor's), and the parts it changed since the one before, as the editors name them.
+export interface CandidateEvent {
+  candidate: Candidate;
+  source: SavedBy;
+  tab: string | null;
+  parts: string[];
+}
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
@@ -898,6 +909,7 @@ export function uploadJob(
 }
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;
+export const candidateEventsUrl = (id: string) => `/api/jobs/${id}/candidates/events`;
 
 /**
  * Upload a video, song or image to the Media Library, with its upload progress (XHR, as uploadJob).

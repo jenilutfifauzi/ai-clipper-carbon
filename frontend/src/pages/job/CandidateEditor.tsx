@@ -90,6 +90,7 @@ export function CandidateEditor({
   job,
   transcript,
   candidate,
+  synced,
   index,
   progress,
   onSave,
@@ -99,6 +100,8 @@ export function CandidateEditor({
   job: JobDetail;
   transcript: Transcript;
   candidate: Candidate;
+  // How many times the Candidate was taken as saved in another editor: its drafts start again from it.
+  synced: number;
   index: number;
   progress: JobProgress;
   onSave: (change: CandidateChange) => Promise<boolean>;
@@ -112,7 +115,9 @@ export function CandidateEditor({
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [hookDraft, setHookDraft] = useState<string | null>(null);
   const [kickerDraft, setKickerDraft] = useState<string | null>(null);
-  const style = useStyleDraft(candidate, (change) => void onSave(change));
+  // The drafts of this Candidate as last taken from elsewhere.
+  const drafts = `${candidate.id}:${synced}`;
+  const style = useStyleDraft(candidate, (change) => void onSave(change), drafts);
   // Whether each tab's More options is open, kept from one Candidate to the next.
   const [more, setMore] = useState({ captions: false, hook: false });
   const [trimDraft, setTrimDraft] = useState<Range | null>(null);
@@ -125,7 +130,7 @@ export function CandidateEditor({
   const [timing, setTiming] = useDraftSave<HookTiming>(
     { hook_start: candidate.hook_start, hook_secs: candidate.hook_secs },
     (value) => void onSave(value),
-    candidate.id,
+    drafts,
   );
   const [preparing, setPreparing] = useState<string | null>(null);
   const playback = useMemo(() => new Playback(), []);
@@ -139,13 +144,16 @@ export function CandidateEditor({
     loadFonts().then(setFonts, () => setFonts([]));
   }, []);
   useEffect(() => {
-    setHookDraft(null);
-    setKickerDraft(null);
-    setTrimDraft(null);
     setCaptionFocus(null);
     setScene(null);
     setOnStage(null);
   }, [candidate.id]);
+  // Drafts start again from another Candidate, and from one saved elsewhere.
+  useEffect(() => {
+    setHookDraft(null);
+    setKickerDraft(null);
+    setTrimDraft(null);
+  }, [drafts]);
   // A preparation asked for here is over once the Job is back in review.
   useEffect(() => {
     if (progress.status !== "rendering") setPreparing(null);
@@ -361,7 +369,7 @@ export function CandidateEditor({
                     Words
                   </h4>
                   <HookEditor
-                    key={`${candidate.id}:${retyped}`}
+                    key={`${drafts}:${retyped}`}
                     value={candidate.hook_text}
                     onSave={(hook_text) => void onSave({ hook_text })}
                     onDraft={setHookDraft}

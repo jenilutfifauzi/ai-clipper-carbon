@@ -1,12 +1,23 @@
-import { AlertCircle, Check, Clapperboard, Loader2 } from "lucide-react";
-import { useRef, useState } from "react";
-import { useSearchParams } from "react-router";
-import { api, staleCandidate, type Candidate, type CandidateChange, type Clip, type JobDetail, type JobProgress } from "../../api";
+import { AlertCircle, ArrowLeft, Check, Clapperboard, Loader2 } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router";
+import {
+  api,
+  staleCandidate,
+  type Candidate,
+  type CandidateChange,
+  type Clip,
+  type JobDetail,
+  type JobProgress,
+  type SavedBy,
+} from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
 import { CandidateEditor } from "./CandidateEditor";
 import { CandidateList } from "./CandidateList";
 import { Clips } from "./Clips";
+import { ChangeNotice, type Notice } from "./editor/ChangeNotice";
+import { changedText, useCandidateEvents } from "./editor/useCandidateEvents";
 
 /**
  * Review of a Job's Candidates: the ranked list beside the open Candidate's editor, then the
@@ -44,11 +55,51 @@ export function Review({
   // How many of each Candidate's saves were refused for a stale Revision: a save queued before a
   // refusal was made from what was shown then, so it isn't sent after it.
   const refusals = useRef(new Map<string, number>());
+  // Kept in step with other editors (ADR 0003): how many times each Candidate was taken as saved
+  // elsewhere, which starts its editor's drafts again from it.
+  const [synced, setSynced] = useState<Record<string, number>>({});
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const closeNotice = useCallback(() => setNotice(null), []);
+  const [deleted, setDeleted] = useState(false);
 
   const wanted = params.get("candidate");
   const index = Math.max(0, candidates.findIndex((candidate) => candidate.id === wanted));
   const active = candidates[index] ?? null;
   const selected = candidates.filter((candidate) => candidate.selected).length;
+
+  // A Candidate saved elsewhere is taken at once, unless a save of it here is still unanswered: that
+  // save then meets the newer Revision.
+  function fromElsewhere(next: Candidate, source: SavedBy, parts: string[]) {
+    const known = revisions.current.get(next.id);
+    if (known === undefined) {
+      // Added elsewhere.
+      revisions.current.set(next.id, next.revision);
+      setCandidates((old) => [...old, next]);
+      return;
+    }
+    if (next.revision <= known || (inFlight.current.get(next.id) ?? 0) > 0) return;
+    revisions.current.set(next.id, next.revision);
+    replaceCandidate(next.id, () => next);
+    setSynced((old) => ({ ...old, [next.id]: (old[next.id] ?? 0) + 1 }));
+    if (next.id === active?.id) setNotice({ id: Date.now(), text: changedText(source, parts, "clip-editor") });
+  }
+
+  function removed(id: string) {
+    revisions.current.delete(id);
+    setCandidates((old) => old.filter((candidate) => candidate.id !== id));
+    if (id === active?.id) setNotice({ id: Date.now(), text: "This clip was removed elsewhere" });
+  }
+
+  const { lost } = useCandidateEvents(job.id, {
+    onReady: (stored) => {
+      for (const candidate of stored) fromElsewhere(candidate, "unknown", []);
+      const ids = new Set(stored.map((candidate) => candidate.id));
+      for (const id of revisions.current.keys()) if (!ids.has(id)) removed(id);
+    },
+    onCandidate: (event) => fromElsewhere(event.candidate, event.source, event.parts),
+    onRemoved: removed,
+    onDeleted: () => setDeleted(true),
+  });
 
   function activate(id: string) {
     setParams({ candidate: id }, { replace: true });
@@ -142,6 +193,19 @@ export function Review({
     }
   }
 
+  if (deleted) {
+    return (
+      <Panel className="flex flex-col gap-3">
+        <h2 className="text-lg font-semibold">This Job was deleted</h2>
+        <p className="text-muted">It was deleted in another tab, so there is nothing left to edit.</p>
+        <Link to="/" className="inline-flex min-h-11 items-center gap-1.5 self-start text-accent-text hover:underline">
+          <ArrowLeft aria-hidden size={16} />
+          All Jobs
+        </Link>
+      </Panel>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
@@ -177,7 +241,12 @@ export function Review({
 
         <Panel id="candidate-editor" aria-label="Candidate" className="flex scroll-mt-4 flex-col gap-4">
           <div aria-live="polite" className="flex min-h-5 items-center gap-1.5 text-sm text-muted">
-            {saving > 0 ? (
+            {lost ? (
+              <>
+                <Loader2 aria-hidden size={15} className="motion-safe:animate-spin" />
+                Reconnecting…
+              </>
+            ) : saving > 0 ? (
               <>
                 <Loader2 aria-hidden size={15} className="motion-safe:animate-spin" />
                 Saving…
@@ -203,6 +272,7 @@ export function Review({
               job={job}
               transcript={job.transcript}
               candidate={active}
+              synced={synced[active.id] ?? 0}
               index={index}
               progress={progress}
               onSave={(change) => save(active.id, change)}
@@ -215,6 +285,7 @@ export function Review({
         </Panel>
       </div>
       <Clips jobId={job.id} clips={clips} candidates={candidates} progress={progress} onRender={render} />
+      <ChangeNotice notice={notice} onClose={closeNotice} />
     </div>
   );
 }

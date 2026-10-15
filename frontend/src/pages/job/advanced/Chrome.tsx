@@ -77,11 +77,14 @@ export function SaveStatus({
   saving,
   saved,
   error,
+  offline = false,
   action,
 }: {
   saving: boolean;
   saved: boolean;
   error: string | null;
+  // The live connection to the backend dropped: changes made elsewhere aren't seen until it is back.
+  offline?: boolean;
   // Offered beside the error, such as reloading a Candidate changed elsewhere.
   action?: ReactNode;
 }) {
@@ -93,6 +96,11 @@ export function SaveStatus({
           {error}
           {action}
         </span>
+      ) : offline ? (
+        <>
+          <Loader2 aria-hidden size={13} className="motion-safe:animate-spin" />
+          Reconnecting…
+        </>
       ) : saving ? (
         <>
           <Loader2 aria-hidden size={13} className="motion-safe:animate-spin" />

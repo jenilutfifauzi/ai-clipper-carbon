@@ -50,6 +50,8 @@ export interface StyleControls {
 export function useStyleDraft(
   candidate: Candidate,
   onSave: (change: CandidateChange) => void,
+  // Another key starts the draft again from the Candidate (another Candidate, or one saved elsewhere).
+  key: string = candidate.id,
 ): { draft: StyleDraft; controls: StyleControls | null; error: string | null } {
   const [presets, setPresets] = useState<StylePreset[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export function useStyleDraft(
     // Overrides saved before Watermarks have none.
     { preset_id: candidate.preset_id, style_overrides: { ...EMPTY, ...candidate.style_overrides } },
     (value) => onSave(value),
-    candidate.id,
+    key,
   );
 
   useEffect(() => {

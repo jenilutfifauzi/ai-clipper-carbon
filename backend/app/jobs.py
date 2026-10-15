@@ -21,6 +21,7 @@ from app.candidates import Candidate
 from app.clips import Clip
 from app.llm import ScoreResponse
 from app.profile import ChannelProfile
+from app.revisions import Edit
 from app.selection import Selection
 from app.storage import write_atomic
 from app.transcript import Transcript
@@ -185,6 +186,8 @@ class JobStore:
         self._lock = threading.Lock()
         self._listeners: tuple[JobListener, ...] = ()
         self._listeners_lock = threading.Lock()
+        # Who saved each Candidate's latest Revision in this process, by Job and Candidate id.
+        self._edits: dict[tuple[str, str], tuple[int, Edit]] = {}
 
     def create(
         self, url: str, options: JobOptions, profile: ChannelProfile, upload: tuple[Path, str] | None = None
@@ -330,19 +333,31 @@ class JobStore:
         change: Callable[[Job, list[Candidate]], tuple[list[Candidate], R]],
         *,
         expect: Collection[JobStatus] | None = None,
+        edit: Edit = Edit(),
     ) -> R:
         """Save the Candidates `change` makes of the Job's, and return what else it returns. This
         happens under the store's lock, so review edits and a run of Selection never overwrite each
         other's Candidates. Like any change to the Job, it moves `updated_at` and listeners are told.
-        With `expect`, as `update`."""
+        Each Candidate it gives a new Revision is recorded as saved by `edit` (see `edit_of`). With
+        `expect`, as `update`."""
         with self._lock:
             job = self.get(job_id)
             if expect is not None and job.status not in expect:
                 raise JobConflict(f"Job {job_id} is {job.status}")
-            candidates, result = change(job, self.load_candidates(job_id) or [])
+            before = self.load_candidates(job_id) or []
+            candidates, result = change(job, before)
             self.save_candidates(job_id, candidates)
+            revisions = {candidate.id: candidate.revision for candidate in before}
+            for candidate in candidates:
+                if revisions.get(candidate.id) != candidate.revision:
+                    self._edits[(job_id, candidate.id)] = (candidate.revision, edit)
             self._save(replace(job, updated_at=datetime.now(UTC)))
             return result
+
+    def edit_of(self, job_id: str, candidate_id: str, revision: int) -> Edit:
+        """Who saved this Revision of the Candidate: unknown when it wasn't saved by this process."""
+        saved, edit = self._edits.get((job_id, candidate_id), (None, Edit()))
+        return edit if saved == revision else Edit()
 
     def load_clips(self, job_id: str) -> list[Clip]:
         path = self.job_dir(job_id) / CLIPS_FILE

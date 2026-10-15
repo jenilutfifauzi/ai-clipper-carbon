@@ -198,3 +198,10 @@
     opacity: 0;
   }
 }
+
+/* An item changed in another editor (another tab, the agent): a ring that fades. */
+@keyframes changed {
+  from {
+    box-shadow: 0 0 0 3px var(--color-accent);
+  }
+}

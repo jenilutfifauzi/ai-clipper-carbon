@@ -1,5 +1,6 @@
 import { mainTrackOf, type Candidate } from "../../../api";
 import type { StageId } from "../editor/ClipPreview";
+import { same } from "../editor/merge";
 
 /**
  * What the Advanced Edit changes of a Candidate, saved and undone together. Its Main Track is always
@@ -40,6 +41,21 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     transitions,
     segments: mainTrackOf(candidate),
   };
+}
+
+/**
+ * The items of `next` that aren't in `old` as they are: Segments, Text Layers, Music Clips and
+ * Overlays by id, and "hook" when its timing or words changed. What the Timeline shows as changed.
+ */
+export function changedItems(old: AdvancedEdits, next: AdvancedEdits): Set<string> {
+  const changed = new Set<string>();
+  for (const field of ["segments", "text_layers", "music", "overlays"] as const) {
+    const before = new Map<string, unknown>(old[field].map((item) => [item.id, item]));
+    for (const item of next[field]) if (!same(before.get(item.id), item)) changed.add(item.id);
+  }
+  const hook = (edits: AdvancedEdits) => [edits.hook_text, edits.hook_kicker, edits.hook_start, edits.hook_secs];
+  if (!same(hook(old), hook(next))) changed.add("hook");
+  return changed;
 }
 
 /**

@@ -48,6 +48,7 @@ export function Tracks({
   playback,
   mediaById,
   handlers,
+  changed,
 }: {
   geometry: TimeGeometry;
   duration: number;
@@ -60,6 +61,8 @@ export function Tracks({
   // The Media Library, by id: names, lengths and stills.
   mediaById: Map<string, MediaItem>;
   handlers: TrackHandlers;
+  // The items just changed in another editor, by id ("hook" for the hook).
+  changed: Set<string>;
 }) {
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
@@ -96,6 +99,7 @@ export function Tracks({
                 minSecs={ITEM_MIN_SECS}
                 tone="text"
                 selected={selected}
+                changed={changed.has(layer.id)}
                 label={`Text "${layer.text}", from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s`}
                 onSelect={() => onSelect({ kind: "text", id: layer.id })}
                 onChange={({ start, end }, group) => handlers.onText({ ...layer, start: round(start), secs: round(end - start) }, group)}
@@ -126,6 +130,7 @@ export function Tracks({
                 trimMin={item?.duration != null ? overlay.start - overlay.offset : undefined}
                 tone="overlay"
                 selected={selected}
+                changed={changed.has(overlay.id)}
                 label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
                 onSelect={() => onSelect({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -178,6 +183,7 @@ export function Tracks({
               minSecs={SEGMENT_MIN_SECS}
               tone="video"
               selected={selected}
+              changed={changed.has(segment.id)}
               label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}`}
               onSelect={() => onSelect({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => handlers.onSegment(segment.id, moved, group)}
@@ -267,6 +273,7 @@ export function Tracks({
             maxSecs={HOOK_MAX_SECS}
             tone="waiting"
             selected={picked?.kind === "hook"}
+            changed={changed.has("hook")}
             label={`Hook, from ${edits.hook_start.toFixed(1)} s for ${(hookEnd - edits.hook_start).toFixed(1)} s`}
             onSelect={() => onSelect({ kind: "hook" })}
             onChange={({ start, end }, group) => handlers.onEdits({ ...edits, hook_start: round(start), hook_secs: round(end - start) }, group)}
@@ -293,6 +300,7 @@ export function Tracks({
                 trimMin={clip.start - clip.offset}
                 tone="audio"
                 selected={selected}
+                changed={changed.has(clip.id)}
                 label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
                 onSelect={() => onSelect({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>

@@ -17,6 +17,9 @@ export interface EditHistory<T> {
   canRedo: boolean;
   // Saves what is waiting now; resolves once the save is answered.
   flush: () => Promise<void>;
+  // Takes `value`, saved elsewhere, as the edits and a new start of the history, unless changes
+  // are waiting to be saved: then it does nothing and answers false.
+  adopt: (value: T) => boolean;
 }
 
 /**
@@ -79,6 +82,13 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     persist(value);
   }
 
+  function adopt(value: T): boolean {
+    if (pending.current) return false;
+    last.current = null;
+    setState({ past: [], value, future: [] });
+    return true;
+  }
+
   return {
     value: state.value,
     set,
@@ -87,5 +97,6 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
     flush,
+    adopt,
   };
 }
