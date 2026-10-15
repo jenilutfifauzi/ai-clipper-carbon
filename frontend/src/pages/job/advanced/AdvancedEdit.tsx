@@ -76,7 +76,7 @@ import {
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { ALL_ON, heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
-import { Tracks, type DropTrack } from "./Tracks";
+import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
 
@@ -146,8 +146,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [pickState, setPickState] = useState<Pick>(null);
-  // On a phone: the sheet open over the timeline, of an asset tab or of the inspector.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | null>(null);
+  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector or of the Tracks.
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   const wide = useMediaQuery(WIDE);
   // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
@@ -764,6 +764,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         picking={picking}
         paste={pasteHere}
         onInspect={() => setSheet("inspector")}
+        onTracks={() => setSheet("tracks")}
         onPicking={() => setPickingMode(true)}
         onDeselect={() => {
           select(null);
@@ -772,8 +773,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         }}
       />
       {sheet && (
-        <Sheet title={sheet === "inspector" ? "Edit" : ASSET_TABS.find((tab) => tab.value === sheet)!.label} onClose={() => setSheet(null)}>
-          {sheet === "inspector" ? inspector : assets(sheet)}
+        <Sheet
+          title={sheet === "inspector" ? "Edit" : sheet === "tracks" ? "Tracks" : ASSET_TABS.find((tab) => tab.value === sheet)!.label}
+          onClose={() => setSheet(null)}
+        >
+          {sheet === "inspector" ? inspector : sheet === "tracks" ? <TracksPanel tracks={tracks} onTrack={toggleTrack} /> : assets(sheet)}
         </Sheet>
       )}
     </div>

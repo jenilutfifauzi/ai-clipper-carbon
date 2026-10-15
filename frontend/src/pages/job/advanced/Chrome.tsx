@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, FoldHorizontal, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, FoldHorizontal, Layers2, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
@@ -138,6 +138,7 @@ export function Toolbar({
   paste,
   onAsset,
   onInspect,
+  onTracks,
   onPicking,
   onDeselect,
 }: {
@@ -149,6 +150,8 @@ export function Toolbar({
   paste: (() => void) | null;
   onAsset: (tab: AssetTab) => void;
   onInspect: () => void;
+  // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
+  onTracks: () => void;
   onPicking: () => void;
   onDeselect: () => void;
 }) {
@@ -191,6 +194,7 @@ export function Toolbar({
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
           <SplitButton splitter={splitter} playback={playback} />
+          <ToolButton icon={Layers2} label="Tracks" onClick={onTracks} />
           <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
         </>
       )}

@@ -1,7 +1,10 @@
 import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
 import type { ReactNode } from "react";
 import { mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
+import { Button } from "../../../components/Button";
+import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
+import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
 import { TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
@@ -461,3 +464,53 @@ export function TrackButton({
     </button>
   );
 }
+
+/**
+ * A phone's Tracks sheet: each Track with its buttons to hide, mute and lock it, as a desktop's
+ * labels have them, and the Magnetic timeline's switch.
+ */
+export function TracksPanel({ tracks, onTrack }: { tracks: TrackState; onTrack: (control: TrackControl, kind: TrackKind) => void }) {
+  const magnetic = useMagnetic();
+  return (
+    <div className="flex flex-col gap-2 px-4 pb-4">
+      <Switch checked={magnetic} onChange={setMagnetic}>
+        <span className="flex flex-col">
+          <span className="font-medium">Magnetic timeline</span>
+          <span className="text-sm text-muted">Deleting, trimming or inserting Segments moves the layers with them.</span>
+        </span>
+      </Switch>
+      <ul className="flex flex-col">
+        {(Object.keys(TRACKS) as TrackKind[]).map((kind) => {
+          const { label, hide, mute } = TRACKS[kind];
+          const toggle = (control: TrackControl, name: string, on: ReactNode, off: ReactNode) => {
+            const pressed = tracks[control].includes(kind);
+            return (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="aria-pressed:text-accent-text"
+                onClick={() => onTrack(control, kind)}
+                aria-pressed={pressed}
+                aria-label={`${name} the ${label} Track`}
+              >
+                {pressed ? on : off}
+              </Button>
+            );
+          };
+          return (
+            <li key={kind} className="flex min-h-11 items-center justify-between gap-2 border-b border-border last:border-b-0">
+              <span className="font-medium">{label}</span>
+              <span className="flex">
+                {hide && toggle("hidden", "Hide", <EyeOff aria-hidden size={18} />, <Eye aria-hidden size={18} />)}
+                {mute && toggle("muted", "Mute", <VolumeX aria-hidden size={18} />, <Volume2 aria-hidden size={18} />)}
+                {toggle("locked", "Lock", <Lock aria-hidden size={18} />, <LockOpen aria-hidden size={18} />)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-sm text-muted">Hiding and muting change the preview only: the clip renders everything.</p>
+    </div>
+  );
+}
+
