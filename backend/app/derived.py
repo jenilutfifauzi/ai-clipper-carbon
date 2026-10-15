@@ -173,9 +173,12 @@ def make_peaks(ffmpeg: Path, media: Path, start: int, target: Path) -> Path:
     """The chunk of the Peaks of the sound of `media` from `start`, at `target`: made now, by seeking
     to `start`, if it isn't there yet."""
     preroll = min(start, _PEAKS_PREROLL)
+    # The first chunk is read from the top: a seek to 0 in an AAC drops its first 21 ms as well as
+    # the encoder's priming.
+    seek = ["-ss", str(start - preroll)] if start else []
     command = [
         str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-threads", "1",
-        "-ss", str(start - preroll), "-i", str(media), "-ss", str(preroll), "-t", str(CHUNK_SECS),
+        *seek, "-i", str(media), "-ss", str(preroll), "-t", str(CHUNK_SECS),
         *_PEAKS_PCM, "-threads", "1", "pipe:1",
     ]
     return on_demand(target, lambda part: part.write_bytes(fold_peaks(_run(command, f"the Peaks of {media.name}"))))

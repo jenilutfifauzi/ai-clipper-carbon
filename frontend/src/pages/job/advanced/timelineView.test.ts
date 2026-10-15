@@ -14,6 +14,7 @@ import {
   peaksExtremes,
   peaksLevel,
   peaksPyramid,
+  sourceGain,
   tileWidth,
   zoomToFit,
   type Peaks,
@@ -259,5 +260,21 @@ describe("the Waveform", () => {
     expect(gainAt(3, clip)).toBe(1);
     expect(gainAt(1.5, clip)).toBeCloseTo(0.5);
     expect(gainAt(3.5, clip)).toBeCloseTo(0.5);
+  });
+});
+
+describe("a Source Segment's Waveform", () => {
+  const segment: ClipSegment = { id: "s1", start: 28, end: 95 };
+
+  test("is as loud as the Clip's own sound all along, and follows its volume", () => {
+    expect(sourceGain({ source_volume: 1 }, segment)).toBe(1);
+    // Turned down to 60% in the inspector, then up to 150%, then to silence.
+    expect(sourceGain({ source_volume: 0.6 }, segment)).toBe(0.6);
+    expect(sourceGain({ source_volume: 1.5 }, segment)).toBe(1.5);
+    expect(sourceGain({ source_volume: 0 }, segment)).toBe(0);
+  });
+
+  test("is scaled by a volume of the Segment's own, as the renderer hears it", () => {
+    expect(sourceGain({ source_volume: 0.8 }, { ...segment, volume: 0.5 })).toBeCloseTo(0.4);
   });
 });

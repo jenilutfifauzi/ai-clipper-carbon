@@ -27,7 +27,7 @@ from app.candidates import (
 )
 from app.clips import Clip
 from app.config import Settings
-from app.derived import PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_strip
+from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
 from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import FONTS
@@ -375,6 +375,25 @@ def job_filmstrip(start: int, job: ExistingJob, store: Store, settings: AppSetti
     except RuntimeError as exc:
         raise HTTPException(404, str(exc)) from None
     return FileResponse(chunk, media_type="image/jpeg", headers={**_DERIVED, "X-Frames": str(frames)})
+
+
+@router.get(f"/jobs/{{job_id}}/peaks/{PEAKS_VERSION}/{{start}}.peaks")
+def job_peaks(start: int, job: ExistingJob, store: Store, settings: AppSettings) -> FileResponse:
+    """A Peaks chunk of the Job's Source from `start` seconds (a multiple of 30): the min and max of
+    each millisecond of its sound, in the layout app/derived.py gives. Made the first time it's asked
+    for, from the preview proxy when the Job has one, then kept in the Job's directory. 404 for a
+    `start` off the grid or past the end, a Source without sound, or a Job without its Source yet."""
+    source = job.source
+    if source is None or not frames_in(start, source.metadata.duration):
+        raise HTTPException(404, f"No Peaks of Job {job.id} from {start} s")
+    job_dir = store.job_dir(job.id)
+    chunk = job_dir / "peaks" / PEAKS_FORMAT / f"{start}.peaks"
+    try:
+        make_peaks(settings.ffmpeg_bin, job_dir / (source.preview or source.video), start, chunk)
+    except RuntimeError as exc:
+        # A Source without sound, or gone from the disk.
+        raise HTTPException(404, str(exc)) from None
+    return FileResponse(chunk, media_type="application/octet-stream", headers=_DERIVED)
 
 
 @router.get("/jobs/{job_id}/events", response_class=EventSourceResponse)

@@ -264,3 +264,11 @@ export function gainAt(time: number, { volume, secs, fade_in, fade_out }: { volu
   const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
   return volume * ramp(time, fade_in) * ramp(secs - time, fade_out);
 }
+
+/**
+ * How loud a Source Segment is all along it: the Clip's own sound's volume, with no fades, times a
+ * volume of the Segment's own (1 unless set), as the renderer has it.
+ */
+export function sourceGain({ source_volume }: { source_volume: number }, segment: { volume?: number }): number {
+  return source_volume * (segment.volume ?? 1);
+}
