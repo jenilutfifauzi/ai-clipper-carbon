@@ -29,8 +29,8 @@ export interface TrackHandlers {
   // A Media Library item (its id) or a Text Layer's look (its name) dropped at `time`.
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
   onDropText: (look: string, time: number) => void;
-  // Deletes the picked items.
-  onDelete?: () => void;
+  // Deletes the picked items; `rippled` (Shift), closing their gaps.
+  onDelete?: ((rippled: boolean) => void) | null;
 }
 
 // How far into a caption line a click on it seeks, so that the line shows.
@@ -130,7 +130,7 @@ export function Tracks({
                     handlers.onText({ ...layer, start: round(range.start), secs: round(range.end - range.start) }, group),
                   )
                 }
-                onDelete={selected ? onDelete : undefined}
+                onDelete={selected ? (onDelete ?? undefined) : undefined}
               >
                 <Type aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium">{layer.text.split("\n").join(" ") || "Empty text"}</span>
@@ -175,7 +175,7 @@ export function Tracks({
                     ),
                   )
                 }
-                onDelete={selected ? onDelete : undefined}
+                onDelete={selected ? (onDelete ?? undefined) : undefined}
               >
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
                 <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
@@ -221,7 +221,7 @@ export function Tracks({
                 alone({ kind: "segment", id: segment.id });
                 handlers.onSegment(segment.id, moved, group);
               }}
-              onDelete={selected ? onDelete : undefined}
+              onDelete={selected ? (onDelete ?? undefined) : undefined}
             >
               {segment.media && (
                 <span
@@ -352,7 +352,7 @@ export function Tracks({
                     ),
                   )
                 }
-                onDelete={selected ? onDelete : undefined}
+                onDelete={selected ? (onDelete ?? undefined) : undefined}
               >
                 <Music aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium">{song?.name ?? "Music"}</span>

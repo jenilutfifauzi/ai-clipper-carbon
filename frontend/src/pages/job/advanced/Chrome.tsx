@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, FoldHorizontal, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
@@ -167,6 +167,7 @@ export function Toolbar({
           <ToolButton icon={ClipboardCopy} label="Copy" onClick={() => actions?.copy()} disabled={!actions} />
           <ToolButton icon={ClipboardPaste} label="Paste" onClick={() => paste?.()} disabled={!paste} />
           <ToolButton icon={Trash2} label="Delete" onClick={() => actions?.remove()} disabled={!actions} />
+          <ToolButton icon={FoldHorizontal} label="Ripple" onClick={() => actions?.rippleRemove()} disabled={!actions} />
         </>
       ) : pick ? (
         <>
@@ -177,6 +178,7 @@ export function Toolbar({
               <SplitButton actions={actions} playback={playback} />
               <ToolButton icon={Copy} label="Duplicate" onClick={actions.duplicate} />
               <ToolButton icon={Trash2} label="Delete" onClick={actions.remove} />
+              <ToolButton icon={FoldHorizontal} label="Ripple" onClick={actions.rippleRemove} />
             </>
           )}
           <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
@@ -268,7 +270,7 @@ export function ItemTools({ actions, playback, paste }: { actions: ItemActions |
       <Button variant="ghost" size="icon" onClick={() => paste?.()} disabled={!paste} aria-label="Paste" title={`Paste at the playhead (${shortcut}V)`}>
         <ClipboardPaste aria-hidden size={17} />
       </Button>
-      <Button variant="ghost" size="icon" onClick={actions?.remove} disabled={!actions} aria-label="Delete" title="Delete">
+      <Button variant="ghost" size="icon" onClick={actions?.remove} disabled={!actions} aria-label="Delete" title="Delete (Shift+Delete closes the gap)">
         <Trash2 aria-hidden size={17} />
       </Button>
     </>

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { dragSegment, duplicate, insertSegment, move, nudge, placeAfter, placeDropped, remove, restyle, pickAll, shared, split, type PickContext } from "./actions";
+import { dragSegment, duplicate, insertSegment, move, nudge, placeAfter, placeDropped, remove, restyle, rippleRemove, pickAll, shared, split, type PickContext } from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
@@ -731,5 +731,44 @@ describe("the magnetic timeline, as Segments are trimmed or put in", () => {
     expect(insertSegment(context, segment("x", 400, 402), 2).edits.text_layers).toEqual(before.text_layers);
     expect(duplicate(context)?.edits.text_layers).toEqual(before.text_layers);
     expect(paste(context, clipboard, 15, { job: "j", candidate: "two" }).edits.text_layers).toEqual(before.text_layers);
+  });
+});
+
+describe("ripple delete", () => {
+  const three = (changes: Partial<AdvancedEdits> = {}) =>
+    edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("s3", 300, 310)], ...changes });
+
+  test("closes the gap after a Segment even with the Magnetic timeline off", () => {
+    const before = three({ text_layers: [layer("later", 16, 2)] });
+
+    expect(rippleRemove(scene(before, picked(seg("s2"))))?.edits.text_layers).toEqual([layer("later", 11, 2)]);
+  });
+
+  test("closes a Text Layer's Track behind it, leaving those over it and the other kinds where they are", () => {
+    const before = three({
+      text_layers: [layer("gone", 2, 3), layer("over it", 4, 3), layer("next", 6, 1), layer("last", 20, 2)],
+      music: [music("song", 8, 2)],
+    });
+
+    const outcome = rippleRemove(scene(before, picked(text("gone"))));
+
+    expect(outcome).toEqual({
+      edits: { ...before, text_layers: [layer("over it", 4, 3), layer("next", 3, 1), layer("last", 17, 2)] },
+      pick: null,
+    });
+  });
+
+  test("a mixed Pick closes each Track and the layers follow the Segments, in one change", () => {
+    const before = three({ music: [music("gone", 0, 2), music("later", 18, 2)], text_layers: [layer("title", 16, 1)] });
+
+    const outcome = rippleRemove(scene(before, picked(seg("s2"), { kind: "music", id: "gone" })));
+
+    // The song after it moves up 2 s for the song and 5 s for s2; the title only for s2.
+    expect(outcome?.edits).toMatchObject({ music: [music("later", 11, 2)], text_layers: [layer("title", 11, 1)] });
+    expect(outcome?.edits.segments.map((s) => s.id)).toEqual(["s1", "s3"]);
+  });
+
+  test("does nothing to the hook alone, as Delete doesn't", () => {
+    expect(rippleRemove(scene(three(), { kind: "hook" }))).toBeNull();
   });
 });

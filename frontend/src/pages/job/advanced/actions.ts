@@ -119,6 +119,40 @@ const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: Advan
 
 const segmentSecs = (segment: ClipSegment) => segment.end - segment.start;
 
+/**
+ * The picked items removed and their gaps closed, whatever the Magnetic timeline's switch says (Ripple
+ * delete, GLOSSARY.md): the Text Layers, Music Clips and Overlays of a Track after a removed one of
+ * it move up by its length (those over it stay), and then the layers follow the removed Segments.
+ */
+export function rippleRemove(scene: PickContext): Outcome | null {
+  const { layers } = pickedItems(scene);
+  const edits = { ...scene.edits };
+  for (const kind of Object.keys(KINDS) as TimedKind[]) {
+    const gone = layers.filter((layer) => layer.kind === kind).map(({ item }) => ({ start: item.start, end: item.start + item.secs }));
+    if (!gone.length) continue;
+    const list = KINDS[kind].list;
+    const closed = (edits[list] as Timed[])
+      .filter((item) => !isPicked(scene.pick, kind, item.id))
+      .map((item) => {
+        const by = covered(gone.filter((span) => span.end <= item.start + 1e-6));
+        return by ? { ...item, start: round(item.start - by) } : item;
+      });
+    Object.assign(edits, { [list]: closed });
+  }
+  return remove({ ...scene, edits }, true);
+}
+
+// How long `spans` cover, counting where they overlap once.
+function covered(spans: { start: number; end: number }[]): number {
+  let total = 0;
+  let reached = -Infinity;
+  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
+    total += Math.max(0, span.end - Math.max(span.start, reached));
+    reached = Math.max(reached, span.end);
+  }
+  return total;
+}
+
 /** Where a Segment added at the playhead (`time`) goes on the Main Track: after the one playing there, else last. */
 export function placeAfter(played: PlayedSegment[], time: number): number {
   const at = played.findIndex((shown) => time < shown.end);
@@ -324,6 +358,8 @@ export function restyle<K extends keyof TextLayer>(scene: { edits: AdvancedEdits
 /** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
 export interface ItemActions {
   remove: () => void;
+  // Removes them and closes their gaps (Shift+Delete).
+  rippleRemove: () => void;
   duplicate: () => void;
   // Whether a picked item can be split at `time`: when it is inside it.
   canSplit: (time: number) => boolean;
@@ -348,6 +384,7 @@ export function itemActions(
   const run = (outcome: Outcome | null) => outcome && apply(outcome);
   return {
     remove: () => run(remove(scene)),
+    rippleRemove: () => run(rippleRemove(scene)),
     duplicate: () => run(duplicate(scene)),
     canSplit: (time) => canSplit(scene, time),
     split: () => run(split(scene, now())),

@@ -557,7 +557,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               const look = TEXT_PRESETS.find((preset) => preset.name === name);
               if (look) addText(look.layer, time);
             },
-            onDelete: actions?.remove,
+            onDelete: actions && ((rippled) => (rippled ? actions.rippleRemove() : actions.remove())),
           }}
         />
       )}
@@ -719,7 +719,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 }
 
 // Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
-// and Escape to pick none, Cmd/Ctrl+V to paste, and for the picked items Delete, Cmd/Ctrl+D to
+// and Escape to pick none, Cmd/Ctrl+V to paste, and for the picked items Delete (with Shift, closing
+// the gaps), Cmd/Ctrl+D to
 // duplicate them, Cmd/Ctrl+B to split them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the
 // arrow keys (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no
 // item has the focus; except while typing, and Cmd/Ctrl+C while text on the page is selected.
@@ -755,7 +756,8 @@ function useShortcuts(
         playback.toggle();
       } else if (actions && (key === "delete" || key === "backspace") && !target.closest("[role=button], button")) {
         event.preventDefault();
-        actions.remove();
+        if (event.shiftKey) actions.rippleRemove();
+        else actions.remove();
       } else if (actions && command && key === "d") {
         event.preventDefault();
         actions.duplicate();

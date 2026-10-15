@@ -434,7 +434,7 @@ export function TimelineItem({
   // Picked alone, or (`toggle`) added to the Pick or taken out of it.
   onSelect: (toggle: boolean) => void;
   onChange?: (range: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
-  onDelete?: () => void;
+  onDelete?: (rippled: boolean) => void;
   children: ReactNode;
 }) {
   const element = useRef<HTMLDivElement>(null);
@@ -562,7 +562,7 @@ export function TimelineItem({
     onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
       if ((event.key === "Delete" || event.key === "Backspace") && onDelete) {
         event.preventDefault();
-        onDelete();
+        onDelete(event.shiftKey);
         return;
       }
       if (event.key === "Enter" || event.key === " ") {
