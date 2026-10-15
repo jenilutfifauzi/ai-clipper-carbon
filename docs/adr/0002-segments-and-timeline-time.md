@@ -36,7 +36,7 @@ Two questions follow. What does the Candidate store? And what are its other edit
   - Music Clips;
   - and, later, Overlays and Transitions.
 
-  Cutting the Main Track leaves them where they are on the output.
+  Cutting the Main Track leaves them where they are on the output. (Amended by 0004: in the editors, they follow its cuts while the Magnetic timeline is on.)
 - **Word Edits and Layout Overrides stay on the Source's timeline.**
   - A piece of the Source shown twice gets the same corrections in both places.
   - The planner maps them into each Segment that holds them.
