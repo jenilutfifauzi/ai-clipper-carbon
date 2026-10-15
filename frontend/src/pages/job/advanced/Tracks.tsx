@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Music, Type, Volume2, VolumeX } from "lucide-react";
+import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
 import type { ReactNode } from "react";
 import { mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
 import { cx, formatPrecise } from "../../../format";
@@ -107,6 +107,7 @@ export function Tracks({
   });
   const label = (kind: TrackKind) => <TrackLabel kind={kind} tracks={tracks} onTrack={onTrack} />;
   const dimmed = (kind: TrackKind) => tracks.hidden.includes(kind);
+  const locked = (kind: TrackKind) => tracks.locked.includes(kind);
   const textLanes = lanes(edits.text_layers, true);
   const overlayLanes = lanes(edits.overlays, true);
   const musicLanes = lanes(edits.music, false);
@@ -117,6 +118,7 @@ export function Tracks({
           key={`text${textLanes.length - i}`}
           label={i === textLanes.length - 1 ? label("text") : ""}
           dimmed={dimmed("text")}
+          locked={locked("text")}
           drop={{ types: [DRAG_TEXT], onDrop: (data, clientX) => handlers.onDropText(data.getData(DRAG_TEXT), geometry.timeAt(clientX)) }}
         >
           {lane.map((layer) => {
@@ -154,6 +156,7 @@ export function Tracks({
           key={`overlay${overlayLanes.length - i}`}
           label={i === overlayLanes.length - 1 ? label("overlay") : ""}
           dimmed={dimmed("overlay")}
+          locked={locked("overlay")}
           drop={dropMedia("overlay")}
         >
           {lane.map((overlay) => {
@@ -199,7 +202,7 @@ export function Tracks({
           })}
         </TrackRow>
       ))}
-      <TrackRow label={label("video")} height="h-14" dimmed={dimmed("video")} drop={dropMedia("segment")}>
+      <TrackRow label={label("video")} height="h-14" dimmed={dimmed("video")} locked={locked("video")} drop={dropMedia("segment")}>
         {/* The Scenes as planned, under the Segments. */}
         <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md bg-surface-raised" style={{ width: duration * pps }}>
           {plan?.scenes.map((scene, i) => (
@@ -289,7 +292,7 @@ export function Tracks({
           );
         })}
       </TrackRow>
-      <TrackRow label={label("captions")} height="h-8" dimmed={dimmed("captions")}>
+      <TrackRow label={label("captions")} height="h-8" dimmed={dimmed("captions")} locked={locked("captions")}>
         {plan?.captions.map((event, i) => (
           <button
             key={i}
@@ -311,7 +314,7 @@ export function Tracks({
           </button>
         ))}
       </TrackRow>
-      <TrackRow label={label("hook")} dimmed={dimmed("hook")}>
+      <TrackRow label={label("hook")} dimmed={dimmed("hook")} locked={locked("hook")}>
         {plan?.hook && (
           <TimelineItem
             geometry={geometry}
@@ -332,7 +335,7 @@ export function Tracks({
         )}
       </TrackRow>
       {musicLanes.map((lane, i) => (
-        <TrackRow key={`music${i}`} label={i === 0 ? label("music") : ""} drop={dropMedia("music")}>
+        <TrackRow key={`music${i}`} label={i === 0 ? label("music") : ""} locked={locked("music")} drop={dropMedia("music")}>
           {lane.map((clip) => {
             const selected = isPicked(pick, "music", clip.id);
             const song = mediaById.get(clip.media);
@@ -383,13 +386,14 @@ export function Tracks({
 
 /**
  * A Track's label: its name, and on a desktop (`onTrack`) its buttons to hide and mute it in the
- * preview, which leave the rendered Clip as it is.
+ * preview, which leave the rendered Clip as it is, and to lock it against edits by hand.
  */
 function TrackLabel({ kind, tracks, onTrack }: { kind: TrackKind; tracks: TrackState; onTrack?: (control: TrackControl, kind: TrackKind) => void }) {
   const { label, hide, mute } = TRACKS[kind];
   if (!onTrack) return label;
   const hidden = tracks.hidden.includes(kind);
   const muted = tracks.muted.includes(kind);
+  const locked = tracks.locked.includes(kind);
   return (
     <span className="flex w-full items-center justify-between gap-1">
       <span className="truncate">{label}</span>
@@ -414,13 +418,33 @@ function TrackLabel({ kind, tracks, onTrack }: { kind: TrackKind; tracks: TrackS
             {muted ? <VolumeX aria-hidden size={14} /> : <Volume2 aria-hidden size={14} />}
           </TrackButton>
         )}
+        <TrackButton
+          on={locked}
+          onClick={() => onTrack("locked", kind)}
+          label={`Lock the ${label} Track`}
+          title={locked ? "Locked: its items can't be picked, moved or changed here" : "Lock against edits here"}
+        >
+          {locked ? <Lock aria-hidden size={14} /> : <LockOpen aria-hidden size={14} />}
+        </TrackButton>
       </span>
     </span>
   );
 }
 
 // A Track's toggle in its label: lit while on.
-export function TrackButton({ on, onClick, label, title, children }: { on: boolean; onClick: () => void; label: string; title: string; children: ReactNode }) {
+export function TrackButton({
+  on,
+  onClick,
+  label,
+  title,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+  title: string;
+  children: ReactNode;
+}) {
   return (
     <button
       type="button"

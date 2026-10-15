@@ -1,5 +1,6 @@
 import type { StageId } from "../editor/ClipPreview";
 import type { AdvancedEdits } from "./edits";
+import type { TrackKind } from "./trackState";
 
 // The Pick (GLOSSARY.md): what is picked on the Advanced Edit's Timeline or preview, which its actions
 // and inspector act on. Kept in the editor only: never saved, never undone.
@@ -42,6 +43,18 @@ export function toggled(pick: Pick, item: ItemRef): Pick {
 
 /** The Pick after a click on `item`: it alone, or with Shift, Cmd or Ctrl (`toggle`) added or taken out. */
 export const clicked = (pick: Pick, item: ItemRef, toggle: boolean): Pick => (toggle ? toggled(pick, item) : picked(item));
+
+/** The Track each kind of item is on. */
+export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", music: "music", overlay: "overlay" };
+
+/** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track. */
+export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {
+  if (!locked.length || pick === null) return pick;
+  if (pick.kind === "join") return locked.includes("video") ? null : pick;
+  if (pick.kind !== "items") return locked.includes(pick.kind) ? null : pick;
+  const kept = pick.items.filter((item) => !locked.includes(TRACK_OF[item.kind]));
+  return kept.length === pick.items.length ? pick : picked(...kept);
+}
 
 /** `pick` with what `edits` no longer has left out: after an undo, a redo or a change from elsewhere. */
 export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {

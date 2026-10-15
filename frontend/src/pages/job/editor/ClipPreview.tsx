@@ -171,15 +171,7 @@ export function ClipPreview({
       {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
         {[master, follower].map((ref, slot) => (
-          <PanelView
-            key={slot}
-            videoRef={ref}
-            src={src}
-            plan={plan}
-            panel={scene?.panels[slot] ?? null}
-            playback={playback}
-            muted={slot > 0}
-          />
+          <PanelView key={slot} videoRef={ref} src={src} plan={plan} panel={scene?.panels[slot] ?? null} playback={playback} muted={slot > 0} />
         ))}
         <PreviewSegments plan={plan} playback={playback} />
         <PreviewTransitions plan={plan} playback={playback} src={src} />
@@ -386,6 +378,8 @@ export interface StageControls {
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
   texts?: boolean;
+  // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
+  fixed?: ("hook" | "captions")[];
 }
 
 // The sizes the hook, the captions and a Text Layer can be set to (styles.py, candidates.py).
@@ -412,7 +406,7 @@ function stageItems(
   const items: StageItem[] = [];
   const middle = (area: Box) => ({ x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) });
   const captionFont = fontById.get(plan.caption_style.font);
-  if (plan.captions.length && captionFont) {
+  if (plan.captions.length && captionFont && !controls.fixed?.includes("captions")) {
     const style = plan.caption_style;
     items.push({
       id: "captions",
@@ -442,7 +436,7 @@ function stageItems(
       });
     }
   }
-  if (plan.hook) {
+  if (plan.hook && !controls.fixed?.includes("hook")) {
     const hook = plan.hook;
     items.push({
       id: "hook",

@@ -3,10 +3,27 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { dragSegment, duplicate, insertSegment, move, nudge, placeAfter, placeDropped, remove, restyle, rippleRemove, canSplitAt, pickAll, shared, split, splitAt, type PickContext } from "./actions";
+import {
+  dragSegment,
+  duplicate,
+  insertSegment,
+  move,
+  nudge,
+  placeAfter,
+  placeDropped,
+  remove,
+  restyle,
+  rippleRemove,
+  canSplitAt,
+  pickAll,
+  shared,
+  split,
+  splitAt,
+  type PickContext,
+} from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
-import { bandPick, picked, prunedPick, type Pick } from "./pick";
+import { bandPick, picked, prunedPick, unlockedPick, type Pick } from "./pick";
 
 function layer(id: string, start: number, secs: number, changes: Partial<TextLayer> = {}): TextLayer {
   return {
@@ -812,5 +829,55 @@ describe("split all", () => {
     expect(canSplitAt(scene(before, null), 5)).toBe(true);
     expect(canSplitAt(scene(edits({ segments: [segment("s1", 100, 110)] }), null), 10)).toBe(false);
     expect(canSplitAt(scene(before, { kind: "hook" }), 5)).toBe(false);
+  });
+});
+
+describe("locked Tracks", () => {
+  const before = edits({
+    segments: [segment("s1", 100, 110), segment("s2", 200, 205)],
+    text_layers: [layer("title", 3, 4)],
+    music: [music("song", 0, 12)],
+  });
+
+  test("their items drop out of any Pick: select all, a rubber band or a lock while picked", () => {
+    expect(unlockedPick(pickAll(before), ["text", "video"])).toEqual(picked({ kind: "music", id: "song" }));
+    const band = bandPick(null, [{ key: "text:title", left: 0, right: 10, top: 0, bottom: 10 }], { left: 0, right: 20, top: 0, bottom: 20 }, false);
+    expect(unlockedPick(band, ["text"])).toBeNull();
+  });
+
+  test("the hook, the captions and a join are dropped when their Track is locked", () => {
+    expect(unlockedPick({ kind: "hook" }, ["hook"])).toBeNull();
+    expect(unlockedPick({ kind: "captions" }, ["hook"])).toEqual({ kind: "captions" });
+    expect(unlockedPick({ kind: "join", after: "s1" }, ["video"])).toBeNull();
+  });
+
+  test("split all skips them, but not hidden ones", () => {
+    const outcome = splitAt({ ...scene(before, null), locked: ["video", "music"] }, 5);
+
+    expect(outcome?.edits.segments).toEqual(before.segments);
+    expect(outcome?.edits.music).toEqual(before.music);
+    expect(outcome?.pick).toEqual(picked(text("n1")));
+  });
+
+  test("a paste leaves out their items, and says so", () => {
+    const clipboard = copy(scene(before, picked(seg("s2"), text("title"), { kind: "music", id: "song" })), { job: "j", candidate: "one" })!;
+
+    const outcome = paste({ ...scene(before, null), locked: ["text", "video"] }, clipboard, 2, { job: "j", candidate: "one" });
+
+    expect(outcome.edits.segments).toEqual(before.segments);
+    expect(outcome.edits.text_layers).toEqual(before.text_layers);
+    expect(outcome.edits.music).toHaveLength(2);
+    // The song, 12 s from 2 s, is also cut short at the Clip's end.
+    expect(outcome.notice).toBe("1 item cut short to fit. 1 Segment and 1 Text Layer left out: their Tracks are locked.");
+  });
+
+  test("their layers still follow the Main Track", () => {
+    const outcome = remove({
+      ...scene(edits({ ...before, text_layers: [layer("title", 12, 1)] }), picked(seg("s1"))),
+      magnetic: true,
+      locked: ["text"],
+    });
+
+    expect(outcome?.edits.text_layers).toEqual([layer("title", 2, 1)]);
   });
 });

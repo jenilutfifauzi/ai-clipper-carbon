@@ -301,6 +301,7 @@ export function TrackRow({
   height = "h-11",
   drop,
   dimmed = false,
+  locked = false,
   children,
 }: {
   label: ReactNode;
@@ -308,10 +309,16 @@ export function TrackRow({
   height?: string;
   // Its items faded: its Track is hidden in the preview.
   dimmed?: boolean;
+  // Its items out of reach (inert): its Track is locked. Drops still come, to be refused.
+  locked?: boolean;
   drop?: { types: string[]; onDrop: (data: DataTransfer, clientX: number) => void };
   children: ReactNode;
 }) {
   const [over, setOver] = useState(false);
+  const items = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (items.current) items.current.inert = locked;
+  }, [locked]);
   const takes = (data: DataTransfer) => !!drop && drop.types.some((type) => data.types.includes(type));
   return (
     <div
@@ -338,7 +345,9 @@ export function TrackRow({
       >
         {label}
       </div>
-      <div className={cx("relative flex-1", dimmed && "opacity-40")}>{children}</div>
+      <div ref={items} className={cx("relative flex-1", dimmed && "opacity-40", locked && "pointer-events-none")}>
+        {children}
+      </div>
     </div>
   );
 }

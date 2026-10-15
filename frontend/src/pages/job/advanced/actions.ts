@@ -2,14 +2,16 @@ import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, itemsOf, LISTS, picked, type ItemKind, type ItemRef, type Pick } from "./pick";
+import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type TrackChange } from "./ripple";
+import type { TrackKind } from "./trackState";
 
 /**
  * What the actions on a Pick are done in (not a Scene of the plan): the edits and the Pick, the Main Track as it plays, the
  * Clip's length, `gap` (which moves a time on the Source's timeline into the silence between Words
- * nearest it), `ids` (new items' ids) and `magnetic`, whether the layers follow the Main Track (the
- * Magnetic timeline).
+ * nearest it), `ids` (new items' ids), `magnetic`, whether the layers follow the Main Track (the
+ * Magnetic timeline), and the `locked` Tracks, whose items aren't picked, split or pasted (but
+ * follow the Main Track all the same).
  */
 export interface PickContext {
   edits: AdvancedEdits;
@@ -19,6 +21,7 @@ export interface PickContext {
   gap: (time: number) => number;
   ids?: () => string;
   magnetic?: boolean;
+  locked?: TrackKind[];
 }
 
 /** An action's result: the edits after it (one change, so one step of undo), what is picked then, and what to tell. */
@@ -100,7 +103,9 @@ export function remove(scene: PickContext, rippled = scene.magnetic ?? false): O
 function rippledAfter(scene: PickContext, next: AdvancedEdits, rippled: boolean): { edits: AdvancedEdits; notice?: string } {
   const changes: TrackChange[] = scene.edits.segments.flatMap((segment, i) => {
     const shown = scene.played[i];
-    return shown && !next.segments.some((other) => other.id === segment.id) ? [{ kind: "removed" as const, at: shown.start, secs: shown.end - shown.start }] : [];
+    return shown && !next.segments.some((other) => other.id === segment.id)
+      ? [{ kind: "removed" as const, at: shown.start, secs: shown.end - shown.start }]
+      : [];
   });
   return following(next, changes, rippled);
 }
@@ -115,7 +120,13 @@ function following(next: AdvancedEdits, changes: TrackChange[], on: boolean): { 
 }
 
 // The layers and the hook of `edits`: what a ripple changes.
-const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: AdvancedEdits) => ({ text_layers, music, overlays, hook_start, hook_secs });
+const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: AdvancedEdits) => ({
+  text_layers,
+  music,
+  overlays,
+  hook_start,
+  hook_secs,
+});
 
 const segmentSecs = (segment: ClipSegment) => segment.end - segment.start;
 
@@ -167,7 +178,10 @@ export function insertSegment(scene: PickContext, segment: ClipSegment, place: n
   const { segments } = scene.edits;
   const next = { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] };
   const at = scene.played[place]?.start ?? scene.duration;
-  return { edits: following(next, [{ kind: "inserted", at, secs: segmentSecs(segment) }], scene.magnetic ?? false).edits, pick: picked({ kind: "segment", id: segment.id }) };
+  return {
+    edits: following(next, [{ kind: "inserted", at, secs: segmentSecs(segment) }], scene.magnetic ?? false).edits,
+    pick: picked({ kind: "segment", id: segment.id }),
+  };
 }
 
 /**
@@ -237,7 +251,10 @@ export function duplicate(scene: PickContext): Outcome | null {
     const block = segments.map((segment) => ({ ...segment, id: idOf(scene) }));
     next.segments = [...edits.segments.slice(0, last + 1), ...block, ...edits.segments.slice(last + 1)];
     const at = scene.played[last + 1]?.start ?? duration;
-    Object.assign(next, following(next, [{ kind: "inserted", at, secs: block.reduce((sum, segment) => sum + segmentSecs(segment), 0) }], scene.magnetic ?? false).edits);
+    Object.assign(
+      next,
+      following(next, [{ kind: "inserted", at, secs: block.reduce((sum, segment) => sum + segmentSecs(segment), 0) }], scene.magnetic ?? false).edits,
+    );
     copies.push(...block.map((segment) => ({ kind: "segment" as const, id: segment.id })));
   }
   if (layers.length) {
@@ -302,9 +319,10 @@ export function split(scene: PickContext, at: number): Outcome | null {
   return tails.length ? { edits: next, pick: picked(...tails) } : null;
 }
 
-// Every Segment, Text Layer, Music Clip and Overlay the playhead at `time` is inside.
+// Every Segment, Text Layer, Music Clip and Overlay the playhead at `time` is inside, but on locked Tracks.
 function under(scene: PickContext, time: number): ItemRef[] {
-  return itemsOf(pickAll(scene.edits)).filter((ref) => inside(scene, ref, time));
+  const locked = scene.locked ?? [];
+  return itemsOf(pickAll(scene.edits)).filter((ref) => !locked.includes(TRACK_OF[ref.kind]) && inside(scene, ref, time));
 }
 
 /** Whether Split can cut at `time`: a picked item there, or with nothing picked, any item there (Split all). */

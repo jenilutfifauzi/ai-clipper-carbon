@@ -26,6 +26,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview } from "../editor/ClipPreview";
+import type { OverlayControls } from "../editor/PreviewOverlays";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
@@ -35,7 +36,20 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { dragSegment, insertSegment, itemActions, splitter, move, nudge, pickAll, placeAfter, placeDropped, type ItemActions, type Outcome, type SegmentDrag } from "./actions";
+import {
+  dragSegment,
+  insertSegment,
+  itemActions,
+  splitter,
+  move,
+  nudge,
+  pickAll,
+  placeAfter,
+  placeDropped,
+  type ItemActions,
+  type Outcome,
+  type SegmentDrag,
+} from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
@@ -46,9 +60,22 @@ import { newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { bandPick, clicked, isPicked, itemsOf, picked, prunedPick, samePick, stageIdsOf, stageItem, type ItemKind, type Pick } from "./pick";
+import {
+  bandPick,
+  clicked,
+  isPicked,
+  itemsOf,
+  picked,
+  prunedPick,
+  samePick,
+  stageIdsOf,
+  stageItem,
+  unlockedPick,
+  type ItemKind,
+  type Pick,
+} from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
-import { ALL_ON, heardDraft, shownPlan, toggledTrack, type TrackState } from "./trackState";
+import { ALL_ON, heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
@@ -58,7 +85,7 @@ const EDITABLE = new Set(["review", "rendering"]);
 // From this width on, the desktop layout: assets, player and inspector side by side over the timeline.
 const WIDE = "(min-width: 64rem)";
 // The Timeline's labels' column on a desktop, wide enough for each Track's buttons.
-const TRACK_LABEL_WIDTH = 128;
+const TRACK_LABEL_WIDTH = 140;
 // How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
 type Taken = "elsewhere" | "refused" | "restored";
 
@@ -214,8 +241,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const history = useEditHistory<AdvancedEdits>(editsOf(initial), save);
   const edits = history.value;
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
-  // some of it away.
-  const pick = prunedPick(pickState, edits);
+  // some of it away, and nothing on a locked Track is picked.
+  const pick = unlockedPick(prunedPick(pickState, edits), tracks.locked);
   useEffect(() => {
     if (pick !== pickState) setPickState(pick);
   }, [pick, pickState]);
@@ -345,24 +372,37 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (!wide) setSheet(fields ? "inspector" : null);
   }
   const replaced = <T extends { id: string }>(items: T[], item: T) => items.map((old) => (old.id === item.id ? item : old));
+  // Whether `track` is locked, which refuses what is added to it: the owner is told.
+  function refused(track: TrackKind): boolean {
+    if (!tracks.locked.includes(track)) return false;
+    setNotice({ id: Date.now(), text: `The ${TRACKS[track].label} Track is locked.` });
+    return true;
+  }
+  function toggleTrack(control: TrackControl, kind: TrackKind) {
+    setTracks((old) => toggledTrack(old, control, kind));
+  }
 
   function addText(look: Omit<TextLayer, "id" | "start" | "secs">, at = playback.time) {
+    if (refused("text")) return;
     const layer = newTextLayer(look, at, duration);
     change({ text_layers: [...edits.text_layers, layer] });
     added(picked({ kind: "text", id: layer.id }), true);
   }
   function addMusic(item: MediaItem, at = playback.time) {
+    if (refused("music")) return;
     const clip = newMusicClip(item, at, duration);
     change({ music: [...edits.music, clip] });
     added(picked({ kind: "music", id: clip.id }));
   }
   function addOverlay(item: MediaItem, at = playback.time) {
+    if (refused("overlay")) return;
     const overlay = newOverlay(item, at, duration);
     change({ overlays: [...edits.overlays, overlay] });
     added(picked({ kind: "overlay", id: overlay.id }));
   }
   // A Segment at `place`: by default after the one at the playhead.
   function addSegment(segment: ClipSegment, place = placeAfter(played, playback.time)) {
+    if (refused("video")) return;
     const outcome = insertSegment(scene, segment, place);
     history.set(outcome.edits);
     added(outcome.pick);
@@ -388,6 +428,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   // The Transition at the join after Segment `after`: set to `kind` (its length kept), changed, or removed.
   function setTransition(after: string, kind: TransitionKind) {
+    if (refused("video")) return;
     const old = edits.transitions.find((transition) => transition.after === after);
     const next = { after, kind, secs: old?.secs ?? TRANSITION_SECS };
     change({ transitions: [...edits.transitions.filter((transition) => transition.after !== after), next] });
@@ -417,7 +458,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
-  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic };
+  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked };
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
   const clipboard = useClipboard();
@@ -468,6 +509,25 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (moved) history.set(moved.edits, group);
   }
 
+  // The Overlays on the preview, picked and moved there; on a locked Track, only drawn.
+  const overlayControls: OverlayControls | undefined = tracks.locked.includes("overlay")
+    ? undefined
+    : {
+        selected: itemsOf(pick)
+          .filter((item) => item.kind === "overlay")
+          .map((item) => item.id),
+        // As the plan draws them: those whose items are there, starting in the Clip.
+        ids: tracks.hidden.includes("overlay")
+          ? []
+          : edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
+        onSelect: (id, toggle) => select(clicked(pick, { kind: "overlay", id }, toggle || picking)),
+        onPlace: (id, place, group) => {
+          const overlay = edits.overlays.find((other) => other.id === id);
+          if (!overlay) return;
+          if (place.size === undefined && placedTogether("overlay", id)) moveOnFrame(place.x - overlay.x, place.y - overlay.y, group);
+          else updateOverlay({ ...overlay, ...place }, group);
+        },
+      };
   const source = job.source!;
   const player = (
     <ClipPreview
@@ -504,24 +564,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           },
           onWords: (update) => change({ word_edits: update(edits.word_edits) }),
         },
-        texts: true,
+        texts: !tracks.locked.includes("text"),
+        fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
       }}
-      overlays={{
-        selected: itemsOf(pick)
-          .filter((item) => item.kind === "overlay")
-          .map((item) => item.id),
-        // As the plan draws them: those whose items are there, starting in the Clip.
-        ids: tracks.hidden.includes("overlay")
-          ? []
-          : edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
-        onSelect: (id, toggle) => select(clicked(pick, { kind: "overlay", id }, toggle || picking)),
-        onPlace: (id, place, group) => {
-          const overlay = edits.overlays.find((other) => other.id === id);
-          if (!overlay) return;
-          if (place.size === undefined && placedTogether("overlay", id)) moveOnFrame(place.x - overlay.x, place.y - overlay.y, group);
-          else updateOverlay({ ...overlay, ...place }, group);
-        },
-      }}
+      overlays={overlayControls}
       fit
     />
   );
@@ -553,7 +599,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           changed={changed}
           picking={picking}
           tracks={tracks}
-          onTrack={wide ? (control, kind) => setTracks((old) => toggledTrack(old, control, kind)) : undefined}
+          onTrack={wide ? toggleTrack : undefined}
           handlers={{
             onSelect: select,
             onEdits: history.set,

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, round } from "./edits";
-import { LISTS, picked, type ItemRef } from "./pick";
+import { LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
 
 // The Clipboard (GLOSSARY.md): the Advanced Edit's copied items, kept in memory while the browser tab
@@ -62,6 +62,8 @@ export function cut(scene: PickContext, from: Place): { clipboard: Clipboard; ou
 // backend/app/candidates.py): at most half the shorter.
 const overlap = (secs: number, before: number, after: number) => Math.min(secs, Math.min(before, after) / 2);
 
+const NAMES: Record<ItemKind, string> = { segment: "Segment", text: "Text Layer", music: "Music Clip", overlay: "Overlay" };
+
 const count = (n: number, one = "item", several = "items") => `${n} ${n === 1 ? one : several}`;
 
 // Which of `words` holds `at` (on the Source's timeline), if one does.
@@ -91,7 +93,13 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   let anchor = at;
   let duration = scene.duration;
   const sameJob = clipboard.from.job === to.job;
-  const kept = clipboard.segments.filter(({ segment }) => sameJob || segment.media);
+  const locked = scene.locked ?? [];
+  // What the locked Tracks don't take, by kind.
+  const refused = new Map<ItemKind, number>();
+  const refuse = (kind: ItemKind) => refused.set(kind, (refused.get(kind) ?? 0) + 1);
+  const unlocked = locked.includes("video") ? [] : clipboard.segments;
+  if (clipboard.segments.length > unlocked.length) refused.set("segment", clipboard.segments.length);
+  const kept = unlocked.filter(({ segment }) => sameJob || segment.media);
   const segments = kept.map(({ segment }) => ({ ...segment, id: fresh(segment.id) }));
   if (segments.length) {
     const joins = [0, ...played.map((shown) => shown.end)];
@@ -131,6 +139,10 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   let trimmed = 0;
   let skipped = 0;
   for (const { kind, item, at: after } of clipboard.layers) {
+    if (locked.includes(TRACK_OF[kind])) {
+      refuse(kind);
+      continue;
+    }
     // Kept inside the Clip: one that would start before it (it was before the first Segment pasted)
     // starts at its start, a song or video going on from as far into it.
     const from = round(anchor + after);
@@ -146,11 +158,15 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     Object.assign(next, { [LISTS[kind]]: [...(next[LISTS[kind]] as Timed[]), copy] });
     pasted.push({ kind, id: copy.id });
   }
-  const left = clipboard.segments.length - kept.length;
+  const left = unlocked.length - kept.length;
   const told: string[] = [];
   if (left) told.push(`${count(left, "Segment", "Segments")} of this episode left out: another Job's clips can't show ${left === 1 ? "it" : "them"}.`);
   const fitted = [trimmed && `${count(trimmed)} cut short to fit`, skipped && `${count(skipped)} left out, falling outside the clip`];
   if (trimmed || skipped) told.push(`${fitted.filter(Boolean).join("; ")}.`);
+  if (refused.size) {
+    const kinds = [...refused].map(([kind, n]) => count(n, NAMES[kind], `${NAMES[kind]}s`));
+    told.push(`${kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}` : kinds[0]} left out: their Tracks are locked.`);
+  }
   const notice = told.join(" ");
   return { edits: next, pick: picked(...pasted), ...(notice ? { notice } : {}) };
 }

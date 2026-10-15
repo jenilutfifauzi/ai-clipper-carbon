@@ -8,7 +8,15 @@ const TITLE = "Magnetic timeline: deleting, trimming or inserting Segments moves
 export function MagneticToggle() {
   const on = useMagnetic();
   return (
-    <Button variant="ghost" size="icon" className="aria-pressed:text-accent-text" onClick={() => setMagnetic(!on)} aria-pressed={on} aria-label="Magnetic timeline" title={TITLE}>
+    <Button
+      variant="ghost"
+      size="icon"
+      className="aria-pressed:text-accent-text"
+      onClick={() => setMagnetic(!on)}
+      aria-pressed={on}
+      aria-label="Magnetic timeline"
+      title={TITLE}
+    >
       <Magnet aria-hidden size={17} />
     </Button>
   );
