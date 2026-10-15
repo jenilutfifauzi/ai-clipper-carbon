@@ -24,7 +24,7 @@ Trimming a Music Clip shorter than its fades shortens them. Locked Tracks show t
   - a fade dragged past 10 s clamps to 10;
   - a fade in that would cross the fade out is cut to the remaining length;
   - trimming a Music Clip below the sum of its fades shortens them.
-- [ ] In the browser:
+- [x] In the browser (walkthrough 09, desktop):
   - drag both handles of a picked Music Clip, then undo each with one Cmd+Z;
   - the ramps and Waveform match the inspector's fades;
   - a locked Music Track's handles don't drag.

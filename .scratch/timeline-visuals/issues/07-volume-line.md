@@ -24,7 +24,7 @@ Source Segments have no line. Locked Tracks show the line, but it doesn't drag.
 
 - [x] Seam D (vitest): setting the volume on a Music Clip and on a media Segment rounds and clamps it. There is no setting for a Source Segment.
 - [x] Seam E (vitest): the curve gives gains 0, 1 and 2 at p = 0, ⅔ and 1, and its inverse round-trips.
-- [ ] In the browser:
+- [x] In the browser (walkthrough 09):
   - drag the line of a picked Music Clip, pausing while holding, and one Cmd+Z restores it;
   - on a phone, dragging an unpicked Music Clip moves it, with its volume unchanged;
   - a locked Music Track's line doesn't drag.

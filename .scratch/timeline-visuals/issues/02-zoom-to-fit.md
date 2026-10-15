@@ -27,7 +27,7 @@
   - nothing picked (1×, scroll 0);
   - a Pick too short to fill the Timeline (40×, centred);
   - a picked join (current zoom, centred).
-- [ ] On a desktop and at phone width, Fit with a Pick shows exactly that Pick with a small margin. Fit with none shows the whole Clip.
+- [x] On a desktop and at phone width, Fit with a Pick shows exactly that Pick with a small margin. Fit with none shows the whole Clip.
 - [x] `npm run typecheck`, `npm test` and `npm run build` pass.
 
 ## Comments
