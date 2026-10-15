@@ -103,7 +103,7 @@ export function PreviewOverlays({
             const together = selected && picked.length > 1;
             if (!together) controls.onSelect(id, false);
             const kind = (pointer.target as HTMLElement).dataset.corner ? "size" : "move";
-            drag.current = { id, pointer: pointer.pointerId, kind, ...at, area: { ...area }, group: `overlay:${++drags}`, moved: false, together };
+            drag.current = { id, pointer: pointer.pointerId, kind, ...at, area: { ...area }, group: `drag:overlay:${++drags}`, moved: false, together };
           },
           onPointerMove: (pointer: PointerEvent<HTMLDivElement>) => {
             const current = drag.current;

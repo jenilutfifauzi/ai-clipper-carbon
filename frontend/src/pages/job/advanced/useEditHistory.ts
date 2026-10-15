@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 // Changes are saved once they pause for this long, and at once when the workspace closes.
 const SAVE_AFTER_MS = 700;
-// Changes of one group (a drag, a slider, typing) this close together are one step of the history.
+// Changes of one group (a slider, typing, arrow keys) this close together are one step of the history.
 const GROUP_MS = 1500;
+// A group with this prefix names one gesture (a drag, unique per gesture): its changes are one step
+// however long it is held.
+const GESTURE = "drag:";
 // The most steps kept to undo.
 const MAX_STEPS = 100;
 
 export interface EditHistory<T> {
   value: T;
-  // `group` names a gesture: its changes, while they keep coming, are undone as one.
+  // `group` names a gesture or a field: its changes, while they keep coming, are undone as one (`merges`).
   set: (value: T, group?: string) => void;
   undo: () => void;
   redo: () => void;
@@ -23,6 +26,16 @@ export interface EditHistory<T> {
   // with the changes here), and `rebase` is applied to every step of the history, so that undo takes
   // back only this editor's own. With `save`, `value` is saved once changes pause.
   elsewhere: (value: T, rebase: (step: T) => T, save: boolean) => void;
+}
+
+/**
+ * Whether a change of `group` at `at` (ms) joins the last step, made by `last` (null after an undo, a
+ * redo or a change without a group). No group never merges; a gesture's group, for as long as it keeps
+ * coming; any other group, within GROUP_MS of its last change.
+ */
+export function merges(last: { group: string; at: number } | null, group: string | undefined, at: number): boolean {
+  if (group === undefined || last?.group !== group) return false;
+  return group.startsWith(GESTURE) || at - last.at < GROUP_MS;
 }
 
 /**
@@ -59,7 +72,7 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
 
   function set(value: T, group?: string) {
     const now = performance.now();
-    const merge = group !== undefined && last.current?.group === group && now - last.current.at < GROUP_MS;
+    const merge = merges(last.current, group, now);
     last.current = group === undefined ? null : { group, at: now };
     setState((old) => ({
       past: merge ? old.past : [...old.past, old.value].slice(-MAX_STEPS),

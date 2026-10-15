@@ -190,7 +190,7 @@ export function useStageEdit(
         kind,
         from: shown(item.id, planned),
         grab: point,
-        group: `stage-${kind}:${++gestures}`,
+        group: `drag:stage-${kind}:${++gestures}`,
         moved: false,
         together,
       };
