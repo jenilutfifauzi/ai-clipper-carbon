@@ -40,6 +40,14 @@ class CandidateNotFound(LookupError):
     pass
 
 
+class StaleRevision(Exception):
+    """An edit made from a Revision the Candidate has moved past; `candidate` is it as it is now."""
+
+    def __init__(self, candidate: Candidate):
+        super().__init__(f"Candidate {candidate.id} is at Revision {candidate.revision}")
+        self.candidate = candidate
+
+
 @dataclass(frozen=True)
 class CandidateChange:
     """What an update changes; None leaves a field as it is. `start` and `end` are snapped to Words."""
@@ -64,6 +72,9 @@ class CandidateChange:
     overlays: list[Overlay] | None = None
     # Each by the Segment it follows; one whose join isn't there is left out.
     transitions: list[Transition] | None = None
+    # The Revision the change was made from: StaleRevision unless it is the Candidate's. None: saved
+    # over whatever is there.
+    revision: int | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +132,8 @@ def update(
     style marks it edited."""
     i = _index(candidates, candidate_id)
     old = candidates[i]
+    if change.revision is not None and change.revision != old.revision:
+        raise StaleRevision(old)
     start, end, segments = old.start, old.end, old.segments
     transitions = _pick(change.transitions, old.transitions)
     if change.start is not None or change.end is not None:
@@ -170,6 +183,8 @@ def update(
         _check_inside(new, old)
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
+    if replace(new, selected=old.selected) != old:
+        new = replace(new, revision=old.revision + 1)
     return [*candidates[:i], new, *candidates[i + 1 :]], new
 
 

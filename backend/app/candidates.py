@@ -279,6 +279,9 @@ class Candidate:
     overlays: list[Overlay] = field(default_factory=list)
     # Between its Segments, each by the Segment it follows.
     transitions: list[Transition] = field(default_factory=list)
+    # Its saved state's number (ADR 0003): each save that changes it makes the next; choosing it for
+    # rendering doesn't. One saved before Revisions is at 1.
+    revision: int = 1
 
     def main_track(self) -> list[Segment]:
         """Its Main Track: its Segments, or the one from `start` to `end`."""

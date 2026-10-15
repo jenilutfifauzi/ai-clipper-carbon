@@ -1,7 +1,7 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
@@ -37,7 +37,7 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
-from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit
+from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.storage import DiskUsage, disk_usage
 from app.styles import (
     BuiltinPreset,
@@ -76,6 +76,7 @@ SEGMENTS_MAX = 100
 OVERLAYS_MAX = 50
 
 _OPTIONS = TypeAdapter(JobOptions)
+_CANDIDATE = TypeAdapter(Candidate)
 
 
 def _settings(request: Request) -> Settings:
@@ -162,6 +163,9 @@ class CandidateUpdate(BaseModel):
     overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX)] | None = None
     # Replaces the Candidate's Transitions as a whole; those without a join are left out.
     transitions: Annotated[list[Transition], Field(max_length=SEGMENTS_MAX)] | None = None
+    # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
+    # is the Candidate's. Left out, the edit is saved over whatever is there.
+    revision: Annotated[int, Field(ge=1)] | None = None
 
 
 class PresetBody(BaseModel):
@@ -428,7 +432,8 @@ def candidate_preview_plan(
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
     change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
     try:
-        _, candidate = review.update(candidates, candidate_id, change, episode)
+        # Nothing is saved, so the draft's Revision is no reason to refuse it.
+        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
         return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
@@ -485,6 +490,9 @@ def _review(
         raise HTTPException(409, f"{exc}: Candidates can be changed while it is in review") from None
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
+    except StaleRevision as exc:
+        message = f"{exc}: it changed since this edit was made; merge the edit into it and save again"
+        raise HTTPException(409, {"message": message, "candidate": _CANDIDATE.dump_python(exc.candidate, mode="json")}) from None
 
 
 @router.post("/jobs/{job_id}/render")

@@ -73,13 +73,25 @@ export function TopBar({
   );
 }
 
-export function SaveStatus({ saving, saved, error }: { saving: boolean; saved: boolean; error: string | null }) {
+export function SaveStatus({
+  saving,
+  saved,
+  error,
+  action,
+}: {
+  saving: boolean;
+  saved: boolean;
+  error: string | null;
+  // Offered beside the error, such as reloading a Candidate changed elsewhere.
+  action?: ReactNode;
+}) {
   return (
     <span aria-live="polite" className="inline-flex items-center gap-1">
       {error ? (
         <span className="inline-flex items-center gap-1 text-danger">
           <AlertCircle aria-hidden size={13} />
           {error}
+          {action}
         </span>
       ) : saving ? (
         <>

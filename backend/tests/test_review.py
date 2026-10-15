@@ -55,8 +55,8 @@ def test_an_update_resnaps_the_bounds_to_words(client, from_episode, llm, wait_f
     words = job["transcript"]["words"]
     assert not any(word["start"] < edge < word["end"] for word in words for edge in spans({"candidates": [stored]})[0])
     # Only the edit changed: the AI's assessment and copy are as they were.
-    assert {k: v for k, v in stored.items() if k not in {"start", "end", "edited"}} == {
-        k: v for k, v in candidate.items() if k not in {"start", "end", "edited"}
+    assert {k: v for k, v in stored.items() if k not in {"start", "end", "edited", "revision"}} == {
+        k: v for k, v in candidate.items() if k not in {"start", "end", "edited", "revision"}
     }
 
 

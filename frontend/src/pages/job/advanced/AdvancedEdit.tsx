@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   api,
+  staleCandidate,
   mediaUrl,
   type Candidate,
   type CandidateChange,
@@ -16,6 +17,7 @@ import {
   type Transition,
   type TransitionKind,
 } from "../../../api";
+import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Panel } from "../../../components/Panel";
 import { loadFonts } from "../../../fonts";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
@@ -103,18 +105,37 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
 
+  // The Revision the next save is made from, and the saves, sent one after another so that each is
+  // made from the Revision the one before made.
+  const revision = useRef(initial.revision);
+  const sending = useRef<Promise<void>>(Promise.resolve());
+  // Changed elsewhere since it was loaded: the backend refuses its saves until it is loaded again.
+  const stale = useRef(false);
+  // Asking whether to leave with edits that weren't saved.
+  const [leaving, setLeaving] = useState(false);
   const save = useCallback(
-    async (change: CandidateChange) => {
-      setSaving((n) => n + 1);
-      setSaveError(null);
-      try {
-        setCandidate(await api.updateCandidate(job.id, initial.id, change));
-        setSaved(true);
-      } catch (reason) {
-        setSaveError(`Not saved: ${(reason as Error).message}`);
-      } finally {
-        setSaving((n) => n - 1);
-      }
+    (change: CandidateChange) => {
+      const send = async () => {
+        setSaving((n) => n + 1);
+        setSaveError(null);
+        try {
+          const answer = await api.updateCandidate(job.id, initial.id, { ...change, revision: revision.current }, "advanced-edit");
+          revision.current = answer.revision;
+          setCandidate(answer);
+          setSaved(true);
+        } catch (reason) {
+          if (staleCandidate(reason)) {
+            stale.current = true;
+            setSaveError("Not saved: changed elsewhere (another tab or the agent)");
+          } else {
+            setSaveError(`Not saved: ${(reason as Error).message}`);
+          }
+        } finally {
+          setSaving((n) => n - 1);
+        }
+      };
+      sending.current = sending.current.then(send);
+      return sending.current;
     },
     [job.id, initial.id],
   );
@@ -220,6 +241,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 
   async function close() {
     await history.flush();
+    // Leaving drops the edits a refused save held: only once the owner says so.
+    if (stale.current) setLeaving(true);
+    else leave();
+  }
+
+  function leave() {
     navigate(`/jobs/${job.id}?candidate=${candidate.id}`);
   }
 
@@ -337,12 +364,37 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     />
   );
   const bar = (
-    <TopBar
-      title={`#${index + 1} ${candidateName(candidate, index)}`}
-      status={<SaveStatus saving={saving > 0} saved={saved} error={saveError} />}
-      history={history}
-      onClose={() => void close()}
-    />
+    <>
+      <TopBar
+        title={`#${index + 1} ${candidateName(candidate, index)}`}
+        status={
+          <SaveStatus
+            saving={saving > 0}
+            saved={saved}
+            error={saveError}
+            action={
+              stale.current ? (
+                <button type="button" className="font-medium text-text underline" onClick={() => window.location.reload()}>
+                  Reload
+                </button>
+              ) : null
+            }
+          />
+        }
+        history={history}
+        onClose={() => void close()}
+      />
+      <ConfirmDialog
+        open={leaving}
+        title="Leave without saving?"
+        confirmLabel="Leave"
+        busyLabel="Leaving…"
+        onConfirm={leave}
+        onCancel={() => setLeaving(false)}
+      >
+        <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
+      </ConfirmDialog>
+    </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
 

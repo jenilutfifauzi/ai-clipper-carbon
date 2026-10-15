@@ -605,6 +605,8 @@ export interface Candidate {
   overlays: Overlay[];
   // Between its Segments, each by the Segment it follows.
   transitions: Transition[];
+  // Its saved state's number: each save that changes it makes the next (ADR 0003).
+  revision: number;
 }
 
 // A Candidate's Main Track: its Segments, or its one range.
@@ -639,7 +641,15 @@ export interface CandidateChange {
   overlays?: Overlay[];
   // Replaces the Candidate's Transitions as a whole; those without a join are left out.
   transitions?: Transition[];
+  // The Revision the change was made from: refused (409) if the Candidate has moved past it.
+  revision?: number;
 }
+
+// Which editor saves an edit, so that other editors can say who changed a Candidate.
+export type EditSource = "advanced-edit" | "clip-editor";
+
+// This tab's id, sent with its edits: its own saves are then told apart from another tab's.
+const TAB_ID = crypto.randomUUID();
 
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
@@ -728,14 +738,24 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
-    // A FormData body sets its own multipart type, with its boundary.
-    headers: typeof init?.body === "string" ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      // A FormData body sets its own multipart type, with its boundary.
+      ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
   });
   if (!response.ok) {
     const [message, detail] = await errorMessage(response);
     throw new ApiError(response.status, message, detail);
   }
   return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+// The Candidate as it is now, when a save was refused for being made from an older Revision.
+export function staleCandidate(reason: unknown): Candidate | null {
+  if (!(reason instanceof ApiError) || reason.status !== 409) return null;
+  const detail = reason.detail as { candidate?: Candidate } | undefined;
+  return detail?.candidate ?? null;
 }
 
 // FastAPI's `detail`: a message, a list of validation errors, or an object with a message.
@@ -769,8 +789,12 @@ export const api = {
   deleteJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
   // Rejects with the backend's message (507) when an upload this size wouldn't fit on the disk.
   checkUpload: (size: number) => request<void>(`/jobs/upload/check?size=${size}`),
-  updateCandidate: (jobId: string, id: string, change: CandidateChange) =>
-    request<Candidate>(`/jobs/${jobId}/candidates/${id}`, { method: "PATCH", body: JSON.stringify(change) }),
+  updateCandidate: (jobId: string, id: string, change: CandidateChange, source: EditSource) =>
+    request<Candidate>(`/jobs/${jobId}/candidates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(change),
+      headers: { "X-Edit-Source": source, "X-Edit-Tab": TAB_ID },
+    }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>
     request<Candidate>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(range) }),
   // Queues Clips of the given Candidates, or of the selected ones; answers with the Job's Clips.

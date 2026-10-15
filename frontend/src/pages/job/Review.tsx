@@ -1,7 +1,7 @@
 import { AlertCircle, Check, Clapperboard, Loader2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import { api, type Candidate, type CandidateChange, type Clip, type JobDetail, type JobProgress } from "../../api";
+import { api, staleCandidate, type Candidate, type CandidateChange, type Clip, type JobDetail, type JobProgress } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
 import { CandidateEditor } from "./CandidateEditor";
@@ -37,6 +37,13 @@ export function Review({
   // Saves still on their way, per Candidate: only the last one's answer is shown, so an earlier
   // answer never undoes a change made since.
   const inFlight = useRef(new Map<string, number>());
+  // Each Candidate's Revision as last saved or loaded, which its next save is made from; and its
+  // saves, sent one after another so that each is made from the Revision the one before made.
+  const revisions = useRef(new Map((job.candidates ?? []).map((candidate) => [candidate.id, candidate.revision])));
+  const sending = useRef(new Map<string, Promise<unknown>>());
+  // How many of each Candidate's saves were refused for a stale Revision: a save queued before a
+  // refusal was made from what was shown then, so it isn't sent after it.
+  const refusals = useRef(new Map<string, number>());
 
   const wanted = params.get("candidate");
   const index = Math.max(0, candidates.findIndex((candidate) => candidate.id === wanted));
@@ -68,15 +75,39 @@ export function Review({
     inFlight.current.set(id, (inFlight.current.get(id) ?? 0) + 1);
     setSaving((n) => n + 1);
     setError(null);
+    // Choosing a Candidate for rendering isn't an edit: it is saved whatever changed meanwhile.
+    const choosing = Object.keys(change).every((key) => key === "selected");
+    const refused = refusals.current.get(id) ?? 0;
+    const send = (sending.current.get(id) ?? Promise.resolve()).then(() => {
+      if (!choosing && (refusals.current.get(id) ?? 0) !== refused) return null;
+      return api.updateCandidate(job.id, id, choosing ? change : { ...change, revision: revisions.current.get(id) }, "clip-editor");
+    });
+    sending.current.set(id, send.catch(() => {}));
     try {
-      const answer = await api.updateCandidate(job.id, id, change);
+      const answer = await send;
+      // Made before a refusal: dropped, as the refusal's message says.
+      if (!answer) return false;
+      revisions.current.set(id, answer.revision);
       if (inFlight.current.get(id) === 1) replaceCandidate(id, () => answer);
       setSaved(true);
       return true;
     } catch (reason) {
+      const latest = staleCandidate(reason);
+      if (latest) {
+        // Changed elsewhere since it was loaded: show it as it is now, and edit on from there.
+        setError("Not saved: changed elsewhere (another tab or the agent). Showing the clip as it is now.");
+        refusals.current.set(id, refused + 1);
+        revisions.current.set(id, latest.revision);
+        replaceCandidate(id, () => latest);
+        return false;
+      }
       setError(`Not saved: ${(reason as Error).message}`);
       // Show what is stored instead.
-      api.getJob(job.id).then((stored) => stored.candidates && setCandidates(stored.candidates), () => {});
+      api.getJob(job.id).then((stored) => {
+        if (!stored.candidates) return;
+        setCandidates(stored.candidates);
+        for (const candidate of stored.candidates) revisions.current.set(candidate.id, candidate.revision);
+      }, () => {});
       return false;
     } finally {
       inFlight.current.set(id, (inFlight.current.get(id) ?? 1) - 1);
@@ -88,6 +119,7 @@ export function Review({
     setError(null);
     try {
       const added = await api.addCandidate(job.id, range);
+      revisions.current.set(added.id, added.revision);
       setCandidates((old) => [...old, added]);
       activate(added.id);
       setSaved(true);

@@ -9,7 +9,9 @@ stages a file on this Mac as an upload, and `add_asset` gives one to the Logo or
 
 import asyncio
 import dataclasses
+import json
 import logging
+from collections.abc import Callable
 from contextlib import aclosing
 from pathlib import Path
 from typing import Any, Literal, get_type_hints
@@ -40,6 +42,11 @@ TRANSCRIPT_PAGE_LINES = 400
 # How long `wait_for_job` waits by default, and at most, before it returns the Job as it is.
 WAIT_SECS = 120
 WAIT_MAX_SECS = 600
+# How often merge_candidate_items and remove_candidate_items make their change again when another
+# edit saves first.
+STALE_RETRIES = 5
+# Who makes the edits the tools save (ADR 0003): the editors send their own.
+EDIT_SOURCE = {"X-Edit-Source": "agent"}
 
 INSTRUCTIONS = f"""\
 AI Clipper turns a long video (a podcast episode) into vertical short Clips. Words are those of
@@ -98,9 +105,11 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """The API route's response (None for 204), or a ToolError with its message."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://ai-clipper") as client:
-            response = await client.request(method, f"/api{path}", json=json, params=params)
+            response = await client.request(method, f"/api{path}", json=json, params=params, headers=EDIT_SOURCE)
         if response.is_success:
             return None if response.status_code == 204 else response.json()
+        if (current := _stale_candidate(response)) is not None:
+            raise StaleCandidate(_message(response), current)
         raise ToolError(_message(response))
 
     async def candidate(job_id: str, candidate_id: str) -> dict:
@@ -109,6 +118,20 @@ def build_mcp(app: FastAPI) -> MCPServer:
         if found is None:
             raise ToolError(f"Job {job_id} has no Candidate {candidate_id}")
         return found
+
+    async def save_from_current(job_id: str, candidate_id: str, change: Callable[[dict], dict]) -> dict:
+        """Save the body `change` makes of the Candidate as it is, from its Revision. When another
+        edit saves first, `change` is made again of the Candidate as that left it."""
+        current = await candidate(job_id, candidate_id)
+        for _ in range(STALE_RETRIES):
+            body = change(current)
+            if not body:
+                return current
+            try:
+                return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body | {"revision": current["revision"]})
+            except StaleCandidate as stale:
+                current = stale.candidate
+        raise ToolError(f"Candidate {candidate_id} kept changing while this edit was saved: try again")
 
     def clips(job_id: str, listed: list[dict]) -> list[dict]:
         job_dir = app.state.store.job_dir(job_id).resolve()
@@ -241,8 +264,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def edit_candidate(job_id: str, candidate_id: str, changes: CandidateUpdate, dry_run: bool = False) -> dict:
         """Change a Candidate and save it: only the fields given change. start and end (Source time)
         are snapped to Words. Lists and style_overrides replace the Candidate's whole list (see
-        merge_candidate_items). With dry_run, nothing is saved: the Preview Plan of the changes comes
-        back instead, its events in Timeline time, and its Words with the `at` a Word Edit names."""
+        merge_candidate_items). With changes.revision (the `revision` you read), an edit made after
+        someone else's is refused with the Candidate as it is now, instead of saved over it. With
+        dry_run, nothing is saved: the Preview Plan of the changes comes back instead, its events in
+        Timeline time, and its Words with the `at` a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         if dry_run:
             return _plan_view(await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body))
@@ -277,17 +302,18 @@ def build_mcp(app: FastAPI) -> MCPServer:
             "text_layers": text_layers, "music": music, "overlays": overlays, "segments": segments,
             "transitions": transitions, "word_edits": word_edits, "layout_overrides": layout_overrides,
         }
-        current = await candidate(job_id, candidate_id)
-        body: dict[str, Any] = {}
-        for kind, patches in given.items():
-            if patches is not None:
-                body[kind] = _merge(current[kind], [p.model_dump(mode="json", exclude_unset=True) for p in patches], _KEYS[kind])
-        if style_overrides is not None:
-            new = _dump(StyleOverrides, style_overrides)
-            body["style_overrides"] = {section: {**fields, **new[section]} for section, fields in current["style_overrides"].items()}
-        if not body:
-            return current
-        return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body)
+
+        def merged(current: dict) -> dict:
+            body: dict[str, Any] = {}
+            for kind, patches in given.items():
+                if patches is not None:
+                    body[kind] = _merge(current[kind], [p.model_dump(mode="json", exclude_unset=True) for p in patches], _KEYS[kind])
+            if style_overrides is not None:
+                new = _dump(StyleOverrides, style_overrides)
+                body["style_overrides"] = {section: {**fields, **new[section]} for section, fields in current["style_overrides"].items()}
+            return body
+
+        return await save_from_current(job_id, candidate_id, merged)
 
     @tool()
     async def remove_candidate_items(
@@ -301,22 +327,23 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """Remove some of a Candidate's items of one kind, by key: ids; a Transition's `after`; a
         Word Edit's or Layout Override's `at`; for style_overrides, "section.field" (such as
         "caption.size"), which then falls back to the Style Preset's."""
-        current = await candidate(job_id, candidate_id)
-        if kind == "style_overrides":
-            overrides = {section: dict(fields) for section, fields in current["style_overrides"].items()}
-            for key in keys:
-                section, _, name = str(key).partition(".")
-                if overrides.get(section, {}).pop(name, None) is None:
-                    raise ToolError(f"Candidate {candidate_id} has no style override {key}")
-            body: dict[str, Any] = {"style_overrides": overrides}
-        else:
+
+        def removed(current: dict) -> dict:
+            if kind == "style_overrides":
+                overrides = {section: dict(fields) for section, fields in current["style_overrides"].items()}
+                for key in keys:
+                    section, _, name = str(key).partition(".")
+                    if overrides.get(section, {}).pop(name, None) is None:
+                        raise ToolError(f"Candidate {candidate_id} has no style override {key}")
+                return {"style_overrides": overrides}
             key = _KEYS[kind]
             items = current[kind]
             for wanted in keys:
                 if not any(_same(item[key], wanted) for item in items):
                     raise ToolError(f"Candidate {candidate_id} has no {kind} item with {key} {wanted}")
-            body = {kind: [item for item in items if not any(_same(item[key], wanted) for wanted in keys)]}
-        return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body)
+            return {kind: [item for item in items if not any(_same(item[key], wanted) for wanted in keys)]}
+
+        return await save_from_current(job_id, candidate_id, removed)
 
     # Render
 
@@ -416,14 +443,39 @@ def build_mcp(app: FastAPI) -> MCPServer:
     return mcp
 
 
+class StaleCandidate(ToolError):
+    """An edit made from a Revision the Candidate has moved past; `candidate` is it as it is now."""
+
+    def __init__(self, message: str, candidate: dict):
+        super().__init__(message)
+        self.candidate = candidate
+
+
+def _detail(response: httpx.Response) -> Any:
+    """An API error's `detail`, or None when it has none."""
+    try:
+        return response.json()["detail"]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _stale_candidate(response: httpx.Response) -> dict | None:
+    """The Candidate as it is now, when an edit was refused for being made from an older Revision."""
+    detail = _detail(response)
+    if response.status_code == 409 and isinstance(detail, dict):
+        return detail.get("candidate")
+    return None
+
+
 def _message(response: httpx.Response) -> str:
     """An API error's `detail` as one line."""
-    try:
-        detail = response.json()["detail"]
-    except (ValueError, KeyError, TypeError):
+    detail = _detail(response)
+    if detail is None:
         return f"{response.status_code} {response.reason_phrase}: {response.text}"
     if isinstance(detail, list):  # validation errors
         return "; ".join(f"{'.'.join(str(part) for part in error['loc'][1:])}: {error['msg']}" for error in detail)
+    if (current := _stale_candidate(response)) is not None:
+        return f"{detail['message']}. The Candidate now: {json.dumps(current)}"
     if isinstance(detail, dict):  # a Media Library item in use
         uses = ", ".join(f"{use['title']} (Job {use['job_id']}, Candidate {use['candidate_id']})" for use in detail.get("uses", []))
         return f"{detail.get('message')}: {uses}" if uses else str(detail.get("message"))
@@ -456,7 +508,7 @@ def _candidate_view(candidate: dict) -> dict:
     """A Candidate without its descriptions and edits."""
     keys = (
         "id", "title", "origin", "start", "end", "predicted_score", "hook_strength", "emotion", "reason",
-        "hook_text", "hook_kicker", "layout", "preset_id", "selected", "edited",
+        "hook_text", "hook_kicker", "layout", "preset_id", "selected", "edited", "revision",
     )
     view = {key: candidate[key] for key in keys}
     view["segments"] = len(candidate["segments"]) or None
