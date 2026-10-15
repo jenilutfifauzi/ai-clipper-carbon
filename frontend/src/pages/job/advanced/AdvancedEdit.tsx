@@ -75,6 +75,7 @@ import {
   type Pick,
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
+import { zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -355,6 +356,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   // The Main Track when the drag under way began, by its gesture.
   const dragOrigin = useRef<(SegmentDrag & { group: string }) | null>(null);
+  // The Timeline's Zoom to fit, for its shortcut.
+  const fitTimeline = useRef<() => void>(null);
 
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
@@ -488,6 +491,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     paste: pasteHere,
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
+    fit: () => fitTimeline.current?.(),
   });
 
   async function close() {
@@ -585,6 +589,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       }
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
       onClear={() => select(null)}
+      toFit={(timeline) => zoomToFit({ pick, edits, played, duration }, timeline)}
+      fitRef={fitTimeline}
     >
       {(geometry) => (
         <Tracks
@@ -789,7 +795,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 // picked everything at the playhead), and for the picked items Delete (with Shift, closing the gaps),
 // Cmd/Ctrl+D to duplicate them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the arrow keys
 // (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no item has the
-// focus; except while typing, and Cmd/Ctrl+C while text on the page is selected.
+// focus, and Shift+Z to zoom the Timeline to fit; except while typing, and Cmd/Ctrl+C while text on
+// the page is selected.
 function useShortcuts(
   history: EditHistory<AdvancedEdits>,
   playback: Playback,
@@ -801,6 +808,8 @@ function useShortcuts(
     move: ((delta: number, group: string) => void) | null;
     // Split at the playhead: the picked items, or with nothing picked, everything there.
     split: () => void;
+    // Zoom the Timeline to fit: what is picked, or with nothing picked, the whole Clip.
+    fit: () => void;
   },
 ) {
   useEffect(() => {
@@ -834,6 +843,9 @@ function useShortcuts(
       } else if (actions && command && key === "d") {
         event.preventDefault();
         actions.duplicate();
+      } else if (key === "z" && event.shiftKey && !command && !event.altKey) {
+        event.preventDefault();
+        more.fit();
       } else if (command && key === "b") {
         event.preventDefault();
         more.split();

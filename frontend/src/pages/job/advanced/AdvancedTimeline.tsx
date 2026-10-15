@@ -1,6 +1,7 @@
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus, UnfoldHorizontal } from "lucide-react";
 import {
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
@@ -8,15 +9,15 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
+import { MAX_ZOOM, type TimelineView } from "./timelineView";
 
 // The labels' column, by default (a phone's), in CSS pixels: its Tracks' names.
 const LABEL_WIDTH = 64;
-// How far the timeline zooms in from showing the whole Clip.
-const MAX_ZOOM = 40;
 // An edge comes within this many CSS pixels of a snap point to snap to it.
 const SNAP_PX = 8;
 // A touch held this long without moving lifts the item under it, to be dragged; one that moves
@@ -50,7 +51,8 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * `onBand` is given the items drawn (each by its `pickKey`) and the band (with Shift, `add`), and a
  * click there also calls `onClear`. On a touch screen a swipe on the tracks scrolls. Zoomed by its
  * buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by Ctrl or Cmd with the
- * scroll wheel, about the pointer.
+ * scroll wheel, about the pointer; its Fit button (or `fitRef`, called) zooms and scrolls to what
+ * `toFit` gives for its width and zoom (Zoom to fit).
  */
 export function AdvancedTimeline({
   duration,
@@ -59,6 +61,8 @@ export function AdvancedTimeline({
   tools,
   onBand,
   onClear,
+  toFit,
+  fitRef,
   labelWidth = LABEL_WIDTH,
   children,
 }: {
@@ -70,6 +74,10 @@ export function AdvancedTimeline({
   tools?: ReactNode;
   onBand?: (items: (Area & { key: string })[], band: Area, add: boolean) => void;
   onClear?: () => void;
+  // The view Zoom to fit gives on a Timeline `width` CSS pixels wide for its times, now at `zoom`;
+  // and, set to Zoom to fit, a ref for its shortcut.
+  toFit: (timeline: { width: number; zoom: number }) => TimelineView;
+  fitRef: Ref<() => void>;
   // The labels' column's width, in pixels: wider on a desktop, where it holds the Tracks' buttons.
   labelWidth?: number;
   children: (geometry: TimeGeometry) => ReactNode;
@@ -86,7 +94,9 @@ export function AdvancedTimeline({
   const [zoom, setZoom] = useState(1);
   // A zoom about a point: the time under it and where it is in the view, kept there after the zoom.
   const anchor = useRef<{ time: number; offset: number } | null>(null);
-  const fit = Math.max(width - labelWidth - 16, 100) / Math.max(duration, 1);
+  // The tracks' width for the whole Clip at 1×, and its pixels a second then.
+  const usable = Math.max(width - labelWidth - 16, 100);
+  const fit = usable / Math.max(duration, 1);
   const pps = fit * zoom;
   const total = Math.max(duration * pps, 0);
 
@@ -126,6 +136,18 @@ export function AdvancedTimeline({
     element.scrollLeft = anchor.current.time * pps - anchor.current.offset;
     anchor.current = null;
   }, [pps]);
+
+  // Zoom to fit: at a new zoom, the scroll is kept for once it is drawn.
+  function fitView() {
+    const view = toFit({ width: usable, zoom });
+    if (view.zoom === zoom) {
+      scroller.current?.scrollTo({ left: view.scroll });
+      return;
+    }
+    anchor.current = { time: view.scroll / (fit * view.zoom), offset: 0 };
+    setZoom(view.zoom);
+  }
+  useImperativeHandle(fitRef, () => fitView);
 
   // Pinching: Ctrl or Cmd with the wheel (a trackpad's pinch comes so), or two fingers.
   useEffect(() => {
@@ -185,13 +207,17 @@ export function AdvancedTimeline({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-11 items-center justify-between gap-2 px-2">
-        <div className="flex items-center gap-1">{tools}</div>
-        <div className="flex items-center gap-1" role="group" aria-label="Zoom">
+        {/* On a phone the tools scroll sideways, so that the zoom's buttons always show. */}
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">{tools}</div>
+        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Zoom">
           <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom / 1.5)} disabled={zoom <= 1} aria-label="Zoom out">
             <Minus aria-hidden size={16} />
           </Button>
           <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom * 1.5)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in">
             <Plus aria-hidden size={16} />
+          </Button>
+          <Button size="icon" variant="ghost" onClick={fitView} aria-label="Zoom to fit" aria-keyshortcuts="Shift+Z" title="Zoom to fit (Shift+Z): what is picked, or with nothing picked, the whole Clip">
+            <UnfoldHorizontal aria-hidden size={16} />
           </Button>
         </div>
       </div>
