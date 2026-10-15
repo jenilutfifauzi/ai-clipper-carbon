@@ -25,6 +25,12 @@
 
 **Blocked by:** 04, 05, 06.
 
-**Status:** ready-for-human
+**Status:** done
 
-- [ ] Every step behaves as described; anything that doesn't is filed as a new ticket in this folder.
+- [x] Every step behaves as described; anything that doesn't is filed as a new ticket in this folder.
+
+## Comments
+
+**2026-10-15: done.** The owner ran the walkthrough with `make dev` and confirmed it works.
+- **The agent's edits through MCP:** on the clip "Gojek Adalah Kita" (Job `934fb0fe1f9a`, Candidate `3df98c14`), Claude Code added a Text Layer ("Kita bersama, pasti ada jalan", Revision 7) with `merge_candidate_items`, and set the Kicker "SOLIDARITAS" (Revision 8) with `edit_candidate`.
+- **Note for the agent side:** a Claude Code session connected before the backend restarted keeps the old tool list, without `list_candidate_revisions`, `restore_candidate_revision` and `edit_candidate`'s `revision`. Reconnect the `ai-clipper` server (`/mcp`) to get them.

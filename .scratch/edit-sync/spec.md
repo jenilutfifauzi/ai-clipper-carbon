@@ -1,6 +1,6 @@
 # Edit sync: Revisions, live Candidate updates and Revision History
 
-Status: in progress
+Status: done
 Created: 2026-10-15
 
 ## Problem Statement
