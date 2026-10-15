@@ -1,5 +1,5 @@
 import type { MusicClip, Overlay, TextLayer } from "../../../api";
-import { ITEM_MIN_SECS, round, type AdvancedEdits } from "./edits";
+import { fadesWithin, ITEM_MIN_SECS, round, type AdvancedEdits } from "./edits";
 import { counted, listed, LISTS } from "./pick";
 
 // The Magnetic timeline (GLOSSARY.md, docs/adr/0004-layers-ripple-with-the-main-track.md): the Text
@@ -63,7 +63,10 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
         }
         if (moved.start === item.start && moved.secs === item.secs) return [item];
         const offset = "offset" in item && moved.skipped ? { offset: round(item.offset + moved.skipped) } : {};
-        return [{ ...item, start: round(moved.start), secs: round(moved.secs), ...offset }];
+        const secs = round(moved.secs);
+        // A Music Clip cut shorter than its fades has them shortened with it.
+        const fades = kind === "music" ? fadesWithin(item as MusicClip, secs) : {};
+        return [{ ...item, start: round(moved.start), secs, ...offset, ...fades }];
       });
       Object.assign(lists, { [list]: items });
     }

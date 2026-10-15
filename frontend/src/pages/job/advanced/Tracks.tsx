@@ -20,7 +20,7 @@ import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
-import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
+import { fadesWithin, ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
@@ -48,6 +48,8 @@ export interface TrackHandlers {
   onMove: (delta: number, group: string) => void;
   // A Music Clip's or media Segment's volume set by its Volume Line.
   onVolume: (item: { kind: "music" | "segment"; id: string }, volume: number, group: string) => void;
+  // A Music Clip's fade in or fade out set by its Fade Ramp's handle.
+  onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, group: string) => void;
   onJoin: (after: string) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
   // A Media Library item (its id) or a Text Layer's look (its name) dropped at `time`.
@@ -391,6 +393,8 @@ export function Tracks({
             const song = mediaById.get(clip.media);
             const length = song?.duration ?? clip.offset + clip.secs;
             const end = Math.min(clip.start + clip.secs, duration);
+            // Its fades over what is heard of it, as the planner has them.
+            const fades = fadesWithin(clip, end - clip.start);
             return (
               <TimelineItem
                 key={clip.id}
@@ -424,12 +428,18 @@ export function Tracks({
                 onDelete={selected ? onDelete : undefined}
               >
                 {song?.has_audio && !!song.duration && (
-                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} secs={end - clip.start} length={song.duration} />
+                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} secs={end - clip.start} fades={fades} length={song.duration} />
                 )}
                 <VolumeLine
                   volume={clip.volume}
                   grab={selected && !locked("music")}
                   onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
+                />
+                <FadeRamps
+                  fades={fades}
+                  pps={pps}
+                  grab={selected && !locked("music")}
+                  onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, group)}
                 />
                 <Music aria-hidden size={12} className="relative shrink-0" />
                 <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
@@ -538,13 +548,26 @@ function SourceFilmstrip({
 
 /**
  * A Music Clip's Waveform: the part of its song it plays, across its body, as heard over the `secs`
- * it is heard for, at its volume through its fades (each, as the planner has it, half of that at
- * most). `length` is the song's.
+ * it is heard for, at its volume through its `fades` (as the planner has them over those). `length`
+ * is the song's.
  */
-function SongWaveform({ geometry, cache, clip, secs, length }: { geometry: TimeGeometry; cache: MediaCache; clip: MusicClip; secs: number; length: number }) {
+function SongWaveform({
+  geometry,
+  cache,
+  clip,
+  secs,
+  fades,
+  length,
+}: {
+  geometry: TimeGeometry;
+  cache: MediaCache;
+  clip: MusicClip;
+  secs: number;
+  fades: { fade_in: number; fade_out: number };
+  length: number;
+}) {
   const { pps } = geometry;
-  const most = secs / 2;
-  const heard = { volume: clip.volume, secs, fade_in: Math.min(clip.fade_in, most), fade_out: Math.min(clip.fade_out, most) };
+  const heard = { volume: clip.volume, secs, ...fades };
   return (
     <ItemCanvas
       view={geometry.view}
@@ -595,6 +618,68 @@ function VolumeLine({ volume, grab, onVolume }: { volume: number; grab: boolean;
           }}
         />
       )}
+    </span>
+  );
+}
+
+// A Fade Ramp's handle: a hit area this many pixels square, kept clear of the item's trim edges.
+const FADE_HIT_PX = 24;
+const TRIM_EDGE_PX = 12;
+
+/**
+ * A Music Clip's Fade Ramps: its fade in and fade out (`fades`, as heard), at `pps` pixels a second,
+ * as slopes at its ends that shade what they quieten. On a picked Music Clip of an unlocked Track
+ * (`grab`), a handle at the top of each slope drags that fade's length, with its seconds while it does;
+ * elsewhere on the item, a drag moves or trims it as ever.
+ */
+function FadeRamps({
+  fades,
+  pps,
+  grab,
+  onFade,
+}: {
+  fades: { fade_in: number; fade_out: number };
+  pps: number;
+  grab: boolean;
+  onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
+}) {
+  const ramp = (fade: "fade_in" | "fade_out") => {
+    const width = fades[fade] * pps;
+    // From the Clip's start for the fade in, from its end for the fade out.
+    const side = fade === "fade_in" ? "left" : "right";
+    return [
+      width > 0 && (
+        <svg key={`${fade}:ramp`} className={cx("absolute inset-y-0 h-full", side === "left" ? "left-0" : "right-0")} style={{ width }} viewBox="0 0 1 1" preserveAspectRatio="none">
+          <path d={side === "left" ? "M0 0 H1 L0 1 Z" : "M0 0 H1 V1 Z"} fill="rgb(0 0 0 / 0.35)" />
+          <path d={side === "left" ? "M0 1 L1 0" : "M0 0 L1 1"} stroke="oklch(0.88 0.16 90)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" fill="none" />
+        </svg>
+      ),
+      grab && (
+        <ItemHandle
+          key={`${fade}:handle`}
+          className="absolute top-0 cursor-ew-resize"
+          style={{
+            width: FADE_HIT_PX,
+            height: FADE_HIT_PX,
+            [side]: `clamp(${TRIM_EDGE_PX}px, ${width - FADE_HIT_PX / 2}px, calc(100% - ${TRIM_EDGE_PX + FADE_HIT_PX}px))`,
+          }}
+          label={`${fades[fade].toFixed(1)} s`}
+          labelBefore={side === "right"}
+          onGrab={() => {
+            // From where it was when grabbed, by the seconds dragged: inward lengthens it.
+            const from = fades[fade];
+            return ({ dx }, group) => onFade(fade, from + (side === "left" ? dx : -dx) / pps, group);
+          }}
+        >
+          <span className="absolute top-0.5 left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_1px_rgb(0_0_0/0.5)]" />
+        </ItemHandle>
+      ),
+    ];
+  };
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0">
+      {ramp("fade_in")}
+      {ramp("fade_out")}
     </span>
   );
 }

@@ -3,11 +3,8 @@ import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { Group } from "../editor/StyleFields";
-import { ITEM_MIN_SECS, newId, round } from "./edits";
+import { FADE_MAX_SECS, ITEM_MIN_SECS, newId, round } from "./edits";
 import { TimingFields } from "./TimingFields";
-
-// The longest fade (fade_in and fade_out in backend/app/candidates.py); half the clip's at most.
-const FADE_MAX_SECS = 10;
 
 /** A Music Clip of `item` at `at` (the playhead, or where it was dropped), as long as the song or what is left of the Clip. */
 export function newMusicClip(item: MediaItem, at: number, duration: number): MusicClip {
@@ -27,6 +24,7 @@ export function MusicFields({
   duration,
   onChange,
   onVolume,
+  onFade,
   onDuplicate,
   onDelete,
 }: {
@@ -36,12 +34,15 @@ export function MusicFields({
   duration: number;
   onChange: (clip: MusicClip, group: string) => void;
   onVolume: (volume: number, group: string) => void;
+  // A fade set, as its Fade Ramp's handle sets it.
+  onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const set = <K extends keyof MusicClip>(field: K, value: MusicClip[K]) => onChange({ ...clip, [field]: value }, `music:${clip.id}:${field}`);
   const length = item?.duration ?? clip.offset + clip.secs;
-  const fades = Math.max(0, Math.min(FADE_MAX_SECS, clip.secs / 2));
+  // Each fade as long as 10 s, or as what the other leaves of the clip.
+  const most = (other: number) => Math.max(0, Math.min(FADE_MAX_SECS, clip.secs - other));
+  const fade = (field: "fade_in" | "fade_out") => (secs: number) => onFade(field, secs, `music:${clip.id}:${field}`);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -60,8 +61,24 @@ export function MusicFields({
       </div>
       <Group title="Sound">
         <Slider label="Volume" value={clip.volume} min={0} max={2} step={0.05} format={percent} onChange={(volume) => onVolume(volume, `music:${clip.id}:volume`)} />
-        <Slider label="Fade in" value={Math.min(clip.fade_in, fades)} min={0} max={fades} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(v) => set("fade_in", v)} />
-        <Slider label="Fade out" value={Math.min(clip.fade_out, fades)} min={0} max={fades} step={0.1} format={(v) => `${v.toFixed(1)} s`} onChange={(v) => set("fade_out", v)} />
+        <Slider
+          label="Fade in"
+          value={Math.min(clip.fade_in, most(clip.fade_out))}
+          min={0}
+          max={most(clip.fade_out)}
+          step={0.1}
+          format={(v) => `${v.toFixed(1)} s`}
+          onChange={fade("fade_in")}
+        />
+        <Slider
+          label="Fade out"
+          value={Math.min(clip.fade_out, most(clip.fade_in))}
+          min={0}
+          max={most(clip.fade_in)}
+          step={0.1}
+          format={(v) => `${v.toFixed(1)} s`}
+          onChange={fade("fade_out")}
+        />
       </Group>
       <TimingFields
         item={clip}

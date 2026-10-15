@@ -1,6 +1,6 @@
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
-import { ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
+import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
@@ -38,7 +38,7 @@ export type TimedKind = "text" | "music" | "overlay";
  * How each kind of timed item behaves: its list in the edits; where a copy goes when there is no
  * room after it (a text a little lower, so that both show); and, split in two, what each part keeps
  * (a song's or video's second part goes on from where the first stops in its file; a song has no
- * fades at the cut).
+ * fades at the cut, nor a fade longer than its part).
  */
 const KINDS: {
   [K in TimedKind]: {
@@ -55,10 +55,13 @@ const KINDS: {
   music: {
     list: "music",
     aside: () => ({}),
-    cut: (item, at) => ({
-      first: { fade_out: 0 },
-      second: { offset: round((item as MusicClip).offset + at - item.start), fade_in: 0 },
-    }),
+    cut: (item, at) => {
+      const clip = item as MusicClip;
+      return {
+        first: { fade_in: Math.min(clip.fade_in, round(at - clip.start)), fade_out: 0 },
+        second: { offset: round(clip.offset + at - clip.start), fade_in: 0, fade_out: Math.min(clip.fade_out, round(clip.start + clip.secs - at)) },
+      };
+    },
   },
   overlay: {
     list: "overlays",
@@ -430,6 +433,31 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
   const set = <T extends { id: string }>(items: T[]) => items.map((other) => (other.id === item.id ? { ...other, volume: level } : other));
   if (item.kind === "music") return edits.music.some((clip) => clip.id === item.id) ? { edits: { ...edits, music: set(edits.music) }, pick } : null;
   return edits.segments.some((segment) => segment.id === item.id && segment.media) ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
+}
+
+/**
+ * Music Clip `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle or the
+ * inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins, so
+ * that the two together are never longer than the Music Clip. Null for one that isn't there.
+ */
+export function setFade(scene: { edits: AdvancedEdits; pick: Pick }, id: string, fade: "fade_in" | "fade_out", secs: number): Outcome | null {
+  const { edits, pick } = scene;
+  const clip = edits.music.find((other) => other.id === id);
+  if (!clip) return null;
+  const other = fade === "fade_in" ? clip.fade_out : clip.fade_in;
+  const most = Math.max(0, Math.min(FADE_MAX_SECS, clip.secs - other));
+  const set = { ...clip, [fade]: round(Math.min(Math.max(secs, 0), most)) };
+  return { edits: { ...edits, music: edits.music.map((each) => (each.id === id ? set : each)) }, pick };
+}
+
+/**
+ * Music Clip `clip` (moved, trimmed, or played from elsewhere in its song) put in place of the one
+ * with its id; trimmed shorter than its fades, they are shortened with it (see fadesWithin).
+ */
+export function changeMusic(scene: { edits: AdvancedEdits; pick: Pick }, clip: MusicClip): Outcome {
+  const { edits, pick } = scene;
+  const fitted = { ...clip, ...fadesWithin(clip, clip.secs) };
+  return { edits: { ...edits, music: edits.music.map((each) => (each.id === clip.id ? fitted : each)) }, pick };
 }
 
 /** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
