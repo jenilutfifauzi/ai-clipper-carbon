@@ -11,13 +11,17 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam E (vitest), worked examples:
-  - a gesture group merges across a 2-second pause;
-  - a slider group splits after 1500 ms;
-  - two different groups never merge;
-  - no group never merges.
+- [x] Seam E (vitest), worked examples:
+  - [x] a gesture group merges across a 2-second pause;
+  - [x] a slider group splits after 1500 ms;
+  - [x] two different groups never merge;
+  - [x] no group never merges.
 - [ ] Dragging a Segment's edge slowly, pausing for 2 s while holding, then releasing undoes with one Cmd+Z.
 - [ ] Inspector sliders and arrow-key moves undo as before.
-- [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
+- [x] `npm run typecheck`, `npm test` and `npm run build` pass.
+
+## Comments
+
+**2026-10-15: done.** Built as specified. The rule is `merges` beside the edit history (`useEditHistory.ts`, tested in `useEditHistory.test.ts`): a group starting `drag:` names one gesture and merges with no time limit; any other group keeps the 1500 ms window. The Timeline's drags were already `drag:<n>`; the preview's stage drags and Overlay drags, also one per gesture, are now `drag:stage-<kind>:<n>` and `drag:overlay:<n>`, so a pause while holding them is one step too. Arrow-key moves and nudges (`key:…`, `stage-nudge:…`) and the inspector's sliders keep the window. Not tried in the browser: the slow trim with a 2 s pause, and sliders and arrow keys undoing as before, are left for the walkthrough (09).
