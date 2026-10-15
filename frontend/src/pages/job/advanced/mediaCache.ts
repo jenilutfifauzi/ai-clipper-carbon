@@ -1,3 +1,5 @@
+import { peaksPyramid, type Peaks } from "./timelineView";
+
 // How many chunks are fetched at once, and how many decoded Filmstrip chunks are kept.
 const MAX_LOADS = 2;
 const MAX_BITMAPS = 12;
@@ -12,16 +14,24 @@ export interface StripChunk {
   arrived: number;
 }
 
+/** A Peaks chunk, as its pyramid (finest first), and when it arrived (to fade in). */
+export interface PeaksChunk {
+  levels: Peaks[];
+  arrived: number;
+}
+
 type Load = { run: () => Promise<void>; wanted: (() => boolean)[] };
 
 /**
  * The Timeline's derived media for the Advanced Edit's session (.scratch/timeline-visuals/spec.md,
  * "Drawing"): chunks fetched at most MAX_LOADS at a time, in the order asked for, and dropped from the
  * queue when no canvas wants them any more by the time a load is free. Filmstrip chunks are decoded
- * at the height they are drawn, and the last MAX_BITMAPS used are kept, released when evicted.
+ * at the height they are drawn, and the last MAX_BITMAPS used are kept, released when evicted. Peaks
+ * chunks are small: they are kept for the session, with their pyramids built once.
  */
 export class MediaCache {
   private strips = new Map<string, StripChunk>();
+  private peaksChunks = new Map<string, PeaksChunk>();
   private evicted = new Map<string, number>();
   // Chunks with no answer to show: off the grid, made in error, or gone.
   private failed = new Set<string>();
@@ -53,16 +63,33 @@ export class MediaCache {
     return null;
   }
 
+  /**
+   * The Peaks chunk at `url`, or null while it isn't here; it is then asked for, and fetched when a
+   * load is free if `wanted()` still says so.
+   */
+  peaks(url: string, wanted: () => boolean): PeaksChunk | null {
+    const chunk = this.peaksChunks.get(url);
+    if (chunk) return chunk;
+    if (this.failed.has(url)) return null;
+    this.ask(url, wanted, async () => {
+      const answer = await fetch(url);
+      if (!answer.ok) throw new Error(`${answer.status}`);
+      this.peaksChunks.set(url, { levels: peaksPyramid(readPeaks(await answer.arrayBuffer())), arrived: performance.now() });
+    });
+    return null;
+  }
+
   /** Calls `listener` whenever a chunk arrives; returns what stops it. */
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  /** Releases every decoded chunk. */
+  /** Releases every chunk. */
   clear() {
     for (const chunk of this.strips.values()) chunk.bitmap.close();
     this.strips.clear();
+    this.peaksChunks.clear();
     this.queue.clear();
   }
 
@@ -101,4 +128,12 @@ export class MediaCache {
         });
     }
   }
+}
+
+// A Peaks chunk as served (backend/app/derived.py), little-endian:
+// [buckets_per_second u16][count u32][min i8 × count][max i8 × count].
+function readPeaks(bytes: ArrayBuffer): Peaks {
+  const header = new DataView(bytes, 0, 6);
+  const count = header.getUint32(2, true);
+  return { perSecond: header.getUint16(0, true), min: new Int8Array(bytes, 6, count), max: new Int8Array(bytes, 6 + count, count) };
 }

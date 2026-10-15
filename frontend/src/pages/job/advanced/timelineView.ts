@@ -160,3 +160,107 @@ export function canvasWindow(item: { left: number; width: number }, view: Span, 
   }
   return { left: left - item.left, right: right - item.left };
 }
+
+// --- Waveforms ---
+
+// The Peaks pyramid halves until a level has this many buckets or fewer (Concat's Pyramid::of).
+const COARSEST_BUCKETS = 64;
+
+/**
+ * A chunk's Peaks, or a coarser level of them: the lowest and highest of the sound in each bucket,
+ * `perSecond` buckets a second, in 127ths of full scale (int8, as served).
+ */
+export interface Peaks {
+  perSecond: number;
+  min: Int8Array;
+  max: Int8Array;
+}
+
+/**
+ * The starts of the chunks an item needs across `span` (pixels from its left edge), within its
+ * `width`: of its media from `mediaStart` at its left edge (a Music Clip's offset into its song, a
+ * Segment's start in its media), at `pps` pixels a second, within the media's `duration`.
+ */
+export function chunksAcross({
+  mediaStart,
+  pps,
+  width,
+  span,
+  duration,
+}: {
+  mediaStart: number;
+  pps: number;
+  width: number;
+  span: Span;
+  duration: number;
+}): number[] {
+  const from = mediaStart + Math.max(span.left, 0) / pps;
+  const to = Math.min(mediaStart + Math.min(span.right, width) / pps, duration);
+  if (to <= from) return [];
+  // The chunk the end falls on the start of isn't needed.
+  return chunksOf(from, to).filter((start) => start < to);
+}
+
+/** `peaks`, then each level folded two buckets to one, down to COARSEST_BUCKETS or fewer: finest first. */
+export function peaksPyramid(peaks: Peaks): Peaks[] {
+  const levels = [peaks];
+  for (let level = peaks; level.min.length > COARSEST_BUCKETS; levels.push(level)) {
+    const count = Math.ceil(level.min.length / 2);
+    const min = new Int8Array(count);
+    const max = new Int8Array(count);
+    for (let i = 0; i < count; i++) {
+      // A trailing bucket on its own still counts.
+      const pair = Math.min(2 * i + 1, level.min.length - 1);
+      min[i] = Math.min(level.min[2 * i], level.min[pair]);
+      max[i] = Math.max(level.max[2 * i], level.max[pair]);
+    }
+    level = { perSecond: level.perSecond / 2, min, max };
+  }
+  return levels;
+}
+
+/**
+ * The level of `pyramid` to draw at `pps` pixels a second and `dpr` device pixels to a pixel: the
+ * coarsest with at least one bucket for each device-pixel column, or the finest when none has.
+ */
+export function peaksLevel(pyramid: Peaks[], pps: number, dpr: number): Peaks {
+  const columns = pps * dpr;
+  for (let i = pyramid.length - 1; i > 0; i--) if (pyramid[i].perSecond >= columns) return pyramid[i];
+  return pyramid[0];
+}
+
+/**
+ * The lowest and highest of `peaks` from `from` to `to` seconds into them, in [-1, 0] and [0, 1]: of
+ * the buckets that begin in that stretch, so that a bucket across two columns is read by one, or of
+ * the bucket it is in when it is narrower than one (Concat's Peaks::extremes). Silence past the end.
+ */
+export function peaksExtremes(peaks: Peaks, from: number, to: number): [number, number] {
+  const count = peaks.min.length;
+  if (!count || to <= from) return [0, 0];
+  // A hair of float noise at a boundary is forgiven.
+  const HAIR = 1e-3;
+  const start = from * peaks.perSecond;
+  let first = Math.min(Math.max(Math.ceil(start - HAIR), 0), count);
+  let last = Math.min(Math.max(Math.ceil(to * peaks.perSecond - HAIR), 0), count);
+  if (first >= last) {
+    if (start >= count) return [0, 0];
+    first = Math.min(Math.max(Math.floor(start), 0), count - 1);
+    last = first + 1;
+  }
+  let low = 0;
+  let high = 0;
+  for (let i = first; i < last; i++) {
+    low = Math.min(low, peaks.min[i]);
+    high = Math.max(high, peaks.max[i]);
+  }
+  return [low / 127, high / 127];
+}
+
+/**
+ * How loud an item `secs` long is `time` seconds into it: its volume through its fade in's and fade
+ * out's linear ramps (none for a fade of 0).
+ */
+export function gainAt(time: number, { volume, secs, fade_in, fade_out }: { volume: number; secs: number; fade_in: number; fade_out: number }): number {
+  const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
+  return volume * ramp(time, fade_in) * ramp(secs - time, fade_out);
+}

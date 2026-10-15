@@ -1,6 +1,6 @@
 import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
 import type { ReactNode } from "react";
-import { mediaFilmstripUrl, mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
+import { mediaFilmstripUrl, mediaPeaksUrl, mediaThumbnailUrl, type MediaItem, type MusicClip, type Overlay, type RenderPlan, type TextLayer, type TransitionKind } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
@@ -15,7 +15,9 @@ import { SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { HOOK_MIN_SECS } from "./ripple";
+import { gainAt } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
+import { waveformLayer } from "./waveform";
 
 // The hook's longest time (hook_secs in backend/app/api.py).
 const HOOK_MAX_SECS = 30;
@@ -40,6 +42,12 @@ export interface TrackHandlers {
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
 }
+
+// A Waveform's colour on a Music Clip (its lane's), and on a media Segment, where it takes the bottom
+// MEDIA_WAVE_BAND pixels of the frames.
+const SONG_WAVE = "oklch(0.68 0.14 160 / 0.75)";
+const MEDIA_WAVE = "rgb(255 255 255 / 0.8)";
+const MEDIA_WAVE_BAND = 14;
 
 // How far into a caption line a click on it seeks, so that the line shows.
 const CAPTION_SEEK_IN = 0.05;
@@ -75,7 +83,7 @@ export function Tracks({
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
   mediaById: Map<string, MediaItem>;
-  // The Filmstrips' chunks, as fetched and decoded.
+  // The Filmstrips' and Peaks' chunks, as fetched and decoded.
   mediaCache: MediaCache;
   handlers: TrackHandlers;
   // The items just changed in another editor, by id ("hook" for the hook).
@@ -250,7 +258,16 @@ export function Tracks({
               }}
               onDelete={selected ? onDelete : undefined}
             >
-              {segment.media && <MediaFilmstrip geometry={geometry} cache={mediaCache} shown={shown} media={segment.media} item={mediaById.get(segment.media)} />}
+              {segment.media && (
+                <MediaFilmstrip
+                  geometry={geometry}
+                  cache={mediaCache}
+                  shown={shown}
+                  media={segment.media}
+                  item={mediaById.get(segment.media)}
+                  volume={segment.volume ?? 1}
+                />
+              )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(shown.source_start)}
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
@@ -343,12 +360,13 @@ export function Tracks({
             const selected = isPicked(pick, "music", clip.id);
             const song = mediaById.get(clip.media);
             const length = song?.duration ?? clip.offset + clip.secs;
+            const end = Math.min(clip.start + clip.secs, duration);
             return (
               <TimelineItem
                 key={clip.id}
                 geometry={geometry}
                 start={clip.start}
-                end={Math.min(clip.start + clip.secs, duration)}
+                end={end}
                 max={duration}
                 minSecs={ITEM_MIN_SECS}
                 maxSecs={length - clip.offset}
@@ -375,9 +393,12 @@ export function Tracks({
                 }
                 onDelete={selected ? onDelete : undefined}
               >
-                <Music aria-hidden size={12} className="shrink-0" />
-                <span className="truncate font-medium">{song?.name ?? "Music"}</span>
-                {clip.volume !== 1 && <span className="shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>}
+                {song?.has_audio && !!song.duration && (
+                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} secs={end - clip.start} length={song.duration} />
+                )}
+                <Music aria-hidden size={12} className="relative shrink-0" />
+                <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
+                {clip.volume !== 1 && <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>}
               </TimelineItem>
             );
           })}
@@ -389,7 +410,8 @@ export function Tracks({
 
 /**
  * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
- * tiled, which shows until they arrive.
+ * tiled, which shows until they arrive. A video with sound has its Waveform along the bottom, at the
+ * Segment's `volume`.
  */
 function MediaFilmstrip({
   geometry,
@@ -397,12 +419,14 @@ function MediaFilmstrip({
   shown,
   media,
   item,
+  volume,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   shown: PlayedSegment;
   media: string;
   item?: MediaItem;
+  volume: number;
 }) {
   const { pps } = geometry;
   return (
@@ -425,10 +449,53 @@ function MediaFilmstrip({
               mediaStart: shown.source_start,
               media: { duration: item.duration, width: item.width, height: item.height },
             }),
+            ...(item.has_audio
+              ? [
+                  waveformLayer({
+                    cache,
+                    url: (start) => mediaPeaksUrl(media, start),
+                    mediaStart: shown.source_start,
+                    duration: item.duration,
+                    gain: () => volume,
+                    color: MEDIA_WAVE,
+                    band: MEDIA_WAVE_BAND,
+                  }),
+                ]
+              : []),
           ]}
         />
       )}
     </span>
+  );
+}
+
+/**
+ * A Music Clip's Waveform: the part of its song it plays, across its body, as heard over the `secs`
+ * it is heard for, at its volume through its fades (each, as the planner has it, half of that at
+ * most). `length` is the song's.
+ */
+function SongWaveform({ geometry, cache, clip, secs, length }: { geometry: TimeGeometry; cache: MediaCache; clip: MusicClip; secs: number; length: number }) {
+  const { pps } = geometry;
+  const most = secs / 2;
+  const heard = { volume: clip.volume, secs, fade_in: Math.min(clip.fade_in, most), fade_out: Math.min(clip.fade_out, most) };
+  return (
+    <ItemCanvas
+      view={geometry.view}
+      cache={cache}
+      left={clip.start * pps}
+      width={secs * pps}
+      pps={pps}
+      layers={[
+        waveformLayer({
+          cache,
+          url: (start) => mediaPeaksUrl(clip.media, start),
+          mediaStart: clip.offset,
+          duration: length,
+          gain: (time) => gainAt(time, heard),
+          color: SONG_WAVE,
+        }),
+      ]}
+    />
   );
 }
 

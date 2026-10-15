@@ -21,16 +21,28 @@
 
 **Blocked by:** 03 (Filmstrip on media Segments).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A (real ffmpeg):
+- [x] Seam A (real ffmpeg):
   - uploading a 2-second video with a tone gives a Peaks chunk of count 2000;
   - every min is ≤ 0 and every max ≥ 0, and the peaks are near the tone's amplitude;
   - a silent video and an image give 404;
   - a missing chunk is made on request.
-- [ ] Seam E (vitest):
+- [x] Seam E (vitest):
   - chunks for a Music Clip with an offset;
   - the level at 1× on a phone width (coarse) and at 40× on a desktop width (finest), never below one bucket per column;
   - the gain at the middle of a fade in, at both ends, and with fades meeting.
 - [ ] In the browser, a Music Clip's Waveform follows a change of volume or fade made in the inspector.
-- [ ] `npm run typecheck`, `npm test`, `npm run build` and the backend's tests pass.
+- [x] `npm run typecheck`, `npm test`, `npm run build` and the backend's tests pass.
+
+## Comments
+
+**2026-10-15: done.** Built as specified, beside ticket 03's Filmstrip: in `backend/app/derived.py` (`fold_peaks`, the upload's `peaks_outputs`, and `make_peaks` under the on-demand lock, for the Source's Peaks in 06 to reuse) and, on the Timeline, `timelineView.ts` (Seam E: `chunksAcross`, `peaksPyramid`, `peaksLevel`, `peaksExtremes`, `gainAt`), `mediaCache.ts` (`peaks()`) and `waveform.ts` (the Waveform's layer). Choices made on the way:
+- The upload's one ffmpeg pass also decodes the sound to mono 16-bit PCM at 48 kHz in a temporary file, folded into every chunk once ffmpeg has succeeded (with numpy) and then removed. A video without sound writes no Peaks.
+- A bucket's min and max are quantized as 127ths of full scale.
+- A chunk made on request reads the item's file, seeking a second before the chunk and decoding up to it: ffmpeg's seek in an AAC lands 16 ms late, which would shift the Waveform by 16 buckets.
+- A chunk's count is what the sound holds (2 s of sound is 2000); a last chunk can be a little short of or past the item's length.
+- A Music Clip's Waveform is scaled by its fades as the planner hears them: each at most half the Clip's heard length. A media Segment's by its own volume, as the renderer has it.
+- Seam E also has `peaksExtremes` (Concat's `Peaks::extremes`: the buckets that begin in a column, or the one it is in), with worked examples.
+
+Not seen in a browser yet: left for the walkthrough (09).
