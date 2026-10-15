@@ -87,7 +87,8 @@ def test_media_is_deleted_with_its_files(client, settings, files):
     video = upload(client, files["video"], "intro.mov").json()
     folder = settings.data_dir / "media"
     assert sorted(path.name for path in folder.iterdir() if path.name != "media.json") == [
-        f"{video['id']}.jpg", f"{video['id']}.mp4", f"{video['id']}.proxy.mp4", f"{video['id']}.strips",
+        f"{video['id']}.jpg", f"{video['id']}.mp4", f"{video['id']}.peaks", f"{video['id']}.proxy.mp4",
+        f"{video['id']}.strips",
     ]
     assert client.delete(f"/api/media/{video['id']}").status_code == 204
     assert client.get("/api/media").json() == []

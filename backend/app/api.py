@@ -27,7 +27,7 @@ from app.candidates import (
 )
 from app.clips import Clip
 from app.config import Settings
-from app.derived import STRIP_VERSION
+from app.derived import PEAKS_VERSION, STRIP_VERSION
 from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import FONTS
@@ -776,6 +776,18 @@ def media_filmstrip(media_id: str, start: int, library: Media) -> FileResponse:
     return FileResponse(chunk, media_type="image/jpeg", headers={**_DERIVED, "X-Frames": str(frames)})
 
 
+@router.get(f"/media/{{media_id}}/peaks/{PEAKS_VERSION}/{{start}}.peaks")
+def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
+    """A video's or a song's Peaks chunk from `start` seconds (a multiple of 30): the min and max of
+    each millisecond of its sound, in the layout app/derived.py gives. Made now for an item uploaded
+    before Peaks. 404 for a `start` off the grid or past the end, an image, or a video without sound."""
+    try:
+        chunk = library.peaks(media_id, start)
+    except MediaNotFound:
+        raise HTTPException(404, f"No Peaks of {media_id} from {start} s") from None
+    return FileResponse(chunk, media_type="application/octet-stream", headers=_DERIVED)
+
+
 @router.delete("/media/{media_id}", status_code=204)
 def delete_media(media_id: str, library: Media, store: Store) -> None:
     """Delete an item and its files. 409 while a Candidate uses it, naming them."""
@@ -823,7 +835,7 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
 
 # Media Library files never change under their id.
 _KEEP = {"Cache-Control": "public, max-age=604800"}
-# Nor do Filmstrips, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
+# Nor do Filmstrips and Peaks, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
 _DERIVED = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 

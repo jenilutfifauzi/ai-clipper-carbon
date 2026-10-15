@@ -6,8 +6,9 @@ says: a video (a moving picture, with or without sound), audio (sound only; a so
 doesn't make it a video), or an image (one picture). Each is then normalized by ffmpeg into one known
 format that the browser plays and the Renderer reads alike:
 - a video into H.264 and AAC at 30 fps, no larger than MAX_SIDE, with a small proxy for the editor's
-  preview, a thumbnail and the chunks of its Filmstrip (app/derived.py), from one decode;
-- audio into AAC;
+  preview, a thumbnail and the chunks of its Filmstrip and (with sound) its Peaks (app/derived.py),
+  from one decode;
+- audio into AAC, with the chunks of its Peaks;
 - an image into an RGBA PNG no larger than MAX_SIDE, as the Logos are.
 A Candidate refers to an item by its id; an item in use can't be deleted (the API checks).
 """
@@ -24,7 +25,16 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from app.derived import STRIP_FORMAT, chunk_starts, frames_in, make_strip, strip_outputs
+from app.derived import (
+    PEAKS_FORMAT,
+    STRIP_FORMAT,
+    chunk_starts,
+    frames_in,
+    make_peaks,
+    make_strip,
+    peaks_outputs,
+    strip_outputs,
+)
 from app.library import Index, shrink
 from app.renderer import last_lines
 
@@ -90,7 +100,8 @@ MEDIA_TYPES = {MediaKind.VIDEO: "video/mp4", MediaKind.AUDIO: "audio/mp4", Media
 
 class MediaStore:
     """The Media Library, in `folder`: per item <id>.mp4 (and <id>.proxy.mp4, <id>.jpg and the
-    Filmstrip's chunks in <id>.strips), <id>.m4a or <id>.png, and their index."""
+    Filmstrip's chunks in <id>.strips), <id>.m4a or <id>.png, the Peaks' chunks of one with sound in
+    <id>.peaks, and their index."""
 
     def __init__(self, folder: Path, ffmpeg: Path, ffprobe: Path) -> None:
         self.folder = folder
@@ -141,6 +152,15 @@ class MediaStore:
         chunk = self._strips(media_id) / f"{start}.jpg"
         return make_strip(self.ffmpeg, self.proxy(media_id), start, item.duration or 0, chunk), frames
 
+    def peaks(self, media_id: str, start: int) -> Path:
+        """The chunk of a video's or a song's Peaks from `start` seconds. A chunk the upload didn't make
+        (an item uploaded before Peaks) is made now, from the item's file. MediaNotFound for an image,
+        a video without sound, or a `start` off the grid or past the end."""
+        item = self.get(media_id)
+        if item.kind is MediaKind.IMAGE or not item.has_audio or not frames_in(start, item.duration or 0):
+            raise MediaNotFound(media_id)
+        return make_peaks(self.ffmpeg, self.file(media_id), start, self._peaks(media_id) / f"{start}.peaks")
+
     def add(self, upload: BinaryIO, filename: str) -> MediaItem:
         """Keep what `upload` holds, uploaded as `filename`, as an item. BadMedia when it is too large
         or too long for its kind, or isn't a video, audio or image ffmpeg can read."""
@@ -153,13 +173,13 @@ class MediaStore:
                 copied = _copy(upload, out, MAX_UPLOAD_BYTES + 1)
             if copied > MAX_UPLOAD_BYTES:
                 raise BadMedia(f"A file can be {MAX_UPLOAD_BYTES // 10**6} MB at most")
-            kind, duration = self._kind(raw)
+            kind, duration, sound = self._kind(raw)
             if copied > MAX_BYTES[kind]:
                 raise BadMedia(f"{kind.value.capitalize()} can be {MAX_BYTES[kind] // 10**6} MB at most")
             longest = MAX_SECS.get(kind)
             if longest is not None and duration > longest:
                 raise BadMedia(f"{kind.value.capitalize()} can be {_minutes(longest)} long at most")
-            self._normalize(raw, media_id, kind, duration)
+            self._normalize(raw, media_id, kind, duration, sound)
             item = self._describe(media_id, kind, Path(filename).stem[:80] or kind.value.capitalize())
             if kind is MediaKind.VIDEO:
                 self._drop_uneven_chunks(media_id, duration, item.duration or 0)
@@ -167,6 +187,7 @@ class MediaStore:
             for path in made:
                 path.unlink(missing_ok=True)
             shutil.rmtree(self._strips(media_id).parent, ignore_errors=True)
+            shutil.rmtree(self._peaks(media_id).parent, ignore_errors=True)
             raise
         finally:
             raw.unlink(missing_ok=True)
@@ -185,6 +206,9 @@ class MediaStore:
     def _strips(self, media_id: str) -> Path:
         return self.folder / f"{media_id}.strips" / STRIP_FORMAT
 
+    def _peaks(self, media_id: str) -> Path:
+        return self.folder / f"{media_id}.peaks" / PEAKS_FORMAT
+
     def _drop_uneven_chunks(self, media_id: str, uploaded: float, normalized: float) -> None:
         """Remove the chunks the upload made by the uploaded file's length that the normalized one
         would hold a different number of frames in, as its last can, by a few milliseconds: they are
@@ -200,9 +224,9 @@ class MediaStore:
         )
         return json.loads(result.stdout or "{}") if not result.returncode else {}
 
-    def _kind(self, path: Path) -> tuple[MediaKind, float]:
-        """What the upload is, and how long (0 for an image). BadMedia for anything but the formats
-        taken (`_ALLOWED`), whatever its name says."""
+    def _kind(self, path: Path) -> tuple[MediaKind, float, bool]:
+        """What the upload is, how long (0 for an image), and whether it has sound. BadMedia for
+        anything but the formats taken (`_ALLOWED`), whatever its name says."""
         probe = self._probe(path)
         streams = probe.get("streams") or []
         format_name = probe.get("format", {}).get("format_name", "")
@@ -211,21 +235,22 @@ class MediaStore:
         sounds = [s for s in streams if s.get("codec_type") == "audio"]
         duration = float(probe.get("format", {}).get("duration") or 0)
         if pictures and format_name in _IMAGE_FORMATS:
-            return MediaKind.IMAGE, 0.0
+            return MediaKind.IMAGE, 0.0, False
         if pictures and format_name in _VIDEO_FORMATS:
             if format_name != _MP4 and pictures[0].get("codec_name") not in _WEBM_CODECS:
                 raise BadMedia(_ALLOWED)
-            return MediaKind.VIDEO, duration
+            return MediaKind.VIDEO, duration, bool(sounds)
         if sounds and not pictures and format_name in _AUDIO_FORMATS:
-            return MediaKind.AUDIO, duration
+            return MediaKind.AUDIO, duration, True
         raise BadMedia(_ALLOWED if streams else f"That file couldn't be read. {_ALLOWED}")
 
-    def _normalize(self, raw: Path, media_id: str, kind: MediaKind, duration: float) -> None:
+    def _normalize(self, raw: Path, media_id: str, kind: MediaKind, duration: float, sound: bool) -> None:
         base = [str(self.ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y", "-i", str(raw)]
         out = self.folder / media_id
         strips = None
+        peaks = peaks_outputs(self._peaks(media_id)) if sound else None
         if kind is MediaKind.VIDEO:
-            # One decode: the kept copy, the proxy, the thumbnail and the Filmstrip.
+            # One decode: the kept copy, the proxy, the thumbnail, the Filmstrip and the Peaks.
             strips = strip_outputs("s", duration, self._strips(media_id))
             graph = (
                 f"[0:v:0]fps={FPS},{shrink(MAX_SIDE, even=True)},setsar=1,format=yuv420p,split=4[v][p][t][s];"
@@ -239,10 +264,15 @@ class MediaStore:
                 "-map", "[proxy]", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
                 "-c:a", "aac", "-b:a", "96k", "-ar", "48000", "-movflags", "+faststart", f"{out}.proxy.mp4",
                 *strips.args,
+                *(peaks.args if peaks else []),
                 "-map", "[thumb]", "-frames:v", "1", "-q:v", "4", f"{out}.jpg",
             ]
         elif kind is MediaKind.AUDIO:
-            command = [*base, "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", f"{out}.m4a"]
+            # One decode: the Peaks, and the kept copy (last, as it is checked).
+            command = [
+                *base, *(peaks.args if peaks else []),
+                "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", f"{out}.m4a",
+            ]
         else:
             command = [*base, "-frames:v", "1", "-vf", f"{shrink(MAX_SIDE, even=True)},format=rgba", "-c:v", "png", f"{out}.png"]
         result = subprocess.run(command, capture_output=True, text=True)
@@ -250,6 +280,8 @@ class MediaStore:
             raise BadMedia(f"That file couldn't be converted: {last_lines(result.stderr, 1)}")
         if strips:
             strips.keep()
+        if peaks:
+            peaks.keep()
 
     def _describe(self, media_id: str, kind: MediaKind, name: str) -> MediaItem:
         path = self.folder / f"{media_id}{_SUFFIXES[kind]}"
