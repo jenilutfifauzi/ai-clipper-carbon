@@ -37,6 +37,7 @@ import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import {
+  changeMusic,
   dragSegment,
   insertSegment,
   itemActions,
@@ -46,6 +47,7 @@ import {
   pickAll,
   placeAfter,
   placeDropped,
+  setFade,
   setVolume,
   type ItemActions,
   type Outcome,
@@ -457,7 +459,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     />
   );
   const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
-  const updateMusic = (clip: MusicClip, group?: string) => change({ music: replaced(edits.music, clip) }, group);
+  // Moved or trimmed, on the Timeline or in the inspector: its fades kept within it.
+  const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
   // An action's outcome: its edits as one change, what it picks, and what it tells.
@@ -623,6 +626,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
               const outcome = setVolume(scene, item, volume);
+              if (outcome) history.set(outcome.edits, group);
+            },
+            onFade: (id, fade, secs, group) => {
+              const outcome = setFade(scene, id, fade, secs);
               if (outcome) history.set(outcome.edits, group);
             },
             onJoin: (after) => {

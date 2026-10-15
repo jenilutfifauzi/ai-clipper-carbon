@@ -6,7 +6,7 @@ import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { restyle, setVolume, type ItemActions } from "./actions";
+import { restyle, setFade, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { SegmentFields } from "./MainTrack";
 import { MusicFields } from "./Music";
@@ -117,6 +117,10 @@ export function Inspector({
         duration={duration}
         onChange={onMusic}
         onVolume={volumeOf({ kind: "music", id: clip.id })}
+        onFade={(fade, secs, group) => {
+          const outcome = setFade({ edits, pick }, clip.id, fade, secs);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
       />

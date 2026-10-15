@@ -79,6 +79,23 @@ export const round = (seconds: number) => Math.round(seconds * 100) / 100;
 
 export const newId = () => crypto.randomUUID().slice(0, 8);
 
+// A Music Clip's longest fade (fade_in and fade_out in backend/app/candidates.py).
+export const FADE_MAX_SECS = 10;
+
+/**
+ * A Music Clip's fades within `secs` of it, as the planner hears them (audio_events in
+ * backend/app/planner.py): each 10 s at most, and when together they are longer than it, both
+ * shortened by the same share to fit.
+ */
+export function fadesWithin({ fade_in, fade_out }: { fade_in: number; fade_out: number }, secs: number): { fade_in: number; fade_out: number } {
+  const fadeIn = Math.min(Math.max(fade_in, 0), FADE_MAX_SECS);
+  const fadeOut = Math.min(Math.max(fade_out, 0), FADE_MAX_SECS);
+  const share = Math.min(1, Math.max(secs, 0) / (fadeIn + fadeOut || 1));
+  if (share === 1) return { fade_in: fadeIn, fade_out: fadeOut };
+  const shortIn = round(fadeIn * share);
+  return { fade_in: shortIn, fade_out: Math.min(round(fadeOut * share), round(secs - shortIn)) };
+}
+
 /**
  * Items of a track in lanes: each in the first lane where it overlaps none, so that each row of the
  * track holds items that follow one another.

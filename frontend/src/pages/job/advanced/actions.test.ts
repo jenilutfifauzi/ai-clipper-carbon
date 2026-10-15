@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
 import {
+  changeMusic,
   dragSegment,
   duplicate,
   insertSegment,
@@ -14,6 +15,7 @@ import {
   remove,
   restyle,
   rippleRemove,
+  setFade,
   setVolume,
   canSplitAt,
   clipTrimmed,
@@ -443,6 +445,58 @@ describe("setting an item's volume", () => {
 
     expect(setVolume(scene(before, null), { kind: "segment", id: "s1" }, 0.5)).toBeNull();
     expect(setVolume(scene(before, null), { kind: "music", id: "gone" }, 0.5)).toBeNull();
+  });
+});
+
+describe("setting a Music Clip's fades", () => {
+  test("a fade dragged past 10 s stops at 10, and below 0 at 0, rounded to a hundredth; the Pick stays", () => {
+    const before = edits({ music: [music("m1", 0, 30, { fade_in: 0, fade_out: 0 }), music("m2", 2, 5)] });
+    const pick = picked({ kind: "music", id: "m2" });
+
+    expect(setFade(scene(before, pick), "m1", "fade_in", 12.5)).toEqual({
+      edits: { ...before, music: [music("m1", 0, 30, { fade_in: 10, fade_out: 0 }), music("m2", 2, 5)] },
+      pick,
+    });
+    expect(setFade(scene(before, pick), "m1", "fade_out", 3.456)?.edits.music[0].fade_out).toBe(3.46);
+    expect(setFade(scene(before, pick), "m2", "fade_out", -1)?.edits.music[1]).toEqual(music("m2", 2, 5, { fade_out: 0 }));
+  });
+
+  test("a fade in that would cross the fade out is cut to what is left of the Clip, and the other way round", () => {
+    // 10 s long, fading out over the last 3 s.
+    const before = edits({ music: [music("m", 0, 10, { fade_in: 1, fade_out: 3 })] });
+
+    expect(setFade(scene(before, null), "m", "fade_in", 9)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 7, fade_out: 3 })]);
+    expect(setFade(scene(before, null), "m", "fade_out", 9.5)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 1, fade_out: 9 })]);
+  });
+
+  test("a Music Clip that isn't there has no fades to set", () => {
+    expect(setFade(scene(edits(), null), "gone", "fade_in", 2)).toBeNull();
+  });
+
+  test("trimming a Music Clip below the sum of its fades shortens them, keeping their shares", () => {
+    const before = edits({ music: [music("m", 0, 10, { fade_in: 6, fade_out: 2 })] });
+
+    // Trimmed to 4 s: the 8 s of fades become 3 s and 1 s.
+    expect(changeMusic(scene(before, null), music("m", 0, 4, { fade_in: 6, fade_out: 2 })).edits.music).toEqual([
+      music("m", 0, 4, { fade_in: 3, fade_out: 1 }),
+    ]);
+    // Moved, or trimmed with room for them, its fades stay.
+    expect(changeMusic(scene(before, null), music("m", 5, 8, { fade_in: 6, fade_out: 2 })).edits.music).toEqual([
+      music("m", 5, 8, { fade_in: 6, fade_out: 2 }),
+    ]);
+  });
+
+  test("a Music Clip cut short by the Main Track, or split, keeps its fades within it", () => {
+    // s1 plays 0–10 s, s2 10–15 s; the song from 6 to 14 s fades in over 3 s and out over 3 s.
+    const before = edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205)], music: [music("song", 6, 8, { fade_in: 3, fade_out: 3 })] });
+
+    // s2 removed: the song keeps 6–10 s, 4 s for the 6 s of fades.
+    expect(remove({ ...scene(before, picked(seg("s2"))), magnetic: true })?.edits.music).toEqual([music("song", 6, 4, { fade_in: 2, fade_out: 2 })]);
+    // Split at 7 s: its first second can't fade in for 3.
+    expect(split(scene(before, picked({ kind: "music", id: "song" })), 7)?.edits.music).toEqual([
+      music("song", 6, 1, { fade_in: 1, fade_out: 0 }),
+      music("n1", 7, 7, { offset: 1, fade_in: 0, fade_out: 3 }),
+    ]);
   });
 });
 

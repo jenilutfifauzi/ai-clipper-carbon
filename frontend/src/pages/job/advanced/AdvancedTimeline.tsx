@@ -712,24 +712,26 @@ let handleGestures = 0;
  * A handle on a Timeline item, such as its Volume Line: a hit area dragged on its own, by a mouse or
  * at once by a touch, instead of the item being moved or trimmed (or the Timeline scrolled). `onGrab`,
  * given the handle as a drag begins, gives what each move of it does; each drag is one `group` of
- * changes, undone as one. While it lasts, `label` shows beside where it was grabbed. `children` are
- * what it shows of itself.
+ * changes, undone as one. While it lasts, `label` shows beside where it was grabbed: after it, or
+ * before it (`labelBefore`, for a handle at an item's end). `children` are what it shows of itself.
  */
 export function ItemHandle({
   className,
   style,
   label,
+  labelBefore = false,
   onGrab,
   children,
 }: {
   className?: string;
   style?: CSSProperties;
   label?: ReactNode;
+  labelBefore?: boolean;
   onGrab: (handle: HTMLElement) => HandleMove;
   children?: ReactNode;
 }) {
   const drag = useRef<{ pointer: number; x: number; y: number; move: HandleMove; group: string } | null>(null);
-  // Where it was grabbed, in pixels from its left edge, while the drag lasts.
+  // Where it was grabbed, in pixels from its left edge (its right, with `labelBefore`), while the drag lasts.
   const [grabbed, setGrabbed] = useState<number | null>(null);
   const stop = () => {
     drag.current = null;
@@ -747,7 +749,8 @@ export function ItemHandle({
         const handle = event.currentTarget;
         handle.setPointerCapture(event.pointerId);
         drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, move: onGrab(handle), group: `drag:handle:${++handleGestures}` };
-        setGrabbed(event.clientX - handle.getBoundingClientRect().left);
+        const box = handle.getBoundingClientRect();
+        setGrabbed(labelBefore ? box.right - event.clientX : event.clientX - box.left);
       }}
       onPointerMove={(event) => {
         const gesture = drag.current;
@@ -766,7 +769,7 @@ export function ItemHandle({
       {grabbed !== null && label != null && (
         <span
           className="pointer-events-none absolute top-1/2 -translate-y-1/2 rounded bg-black/75 px-1 py-0.5 text-[11px] leading-none font-medium text-white tabular-nums"
-          style={{ left: grabbed + 12 }}
+          style={labelBefore ? { right: grabbed + 12 } : { left: grabbed + 12 }}
         >
           {label}
         </span>

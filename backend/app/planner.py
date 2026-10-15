@@ -712,8 +712,10 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
 
 def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
     """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
-    (whose length is in `items`) ends, its fades shortened to half of what is left each at most.
-    One whose song is gone, or that would start at or after either end, isn't heard."""
+    (whose length is in `items`) ends, its fades, when together they are longer than what is left,
+    both shortened by the same share to fit (as the Timeline draws them: fadesWithin in
+    frontend/src/pages/job/advanced/edits.ts). One whose song is gone, or that would start at or after
+    either end, isn't heard."""
     events = []
     for clip in music:
         item = items.get(clip.media)
@@ -722,9 +724,9 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         if length is None or start >= duration or clip.offset >= length:
             continue
         end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
-        most = (end - start) / 2
+        share = min(1.0, (end - start) / ((clip.fade_in + clip.fade_out) or 1.0))
         events.append(
-            AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, min(clip.fade_in, most), min(clip.fade_out, most))
+            AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3), round(clip.fade_out * share, 3))
         )
     return events
 
