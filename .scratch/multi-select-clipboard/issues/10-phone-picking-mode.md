@@ -22,7 +22,7 @@
   - [x] the bar's count is right;
   - [x] Delete, Duplicate, Copy and Paste act on the Pick;
   - [x] Done leaves the mode;
-  - [ ] a long press still drags (unchanged in code; left for a real phone in the walkthrough, 11).
+  - [x] a long press still drags (touch emulation, see 11; a real phone is still the owner's to try).
 - [x] Typecheck, test, build.
 
 ## Comments

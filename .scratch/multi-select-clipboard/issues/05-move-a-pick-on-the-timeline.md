@@ -19,7 +19,7 @@
 - [x] In the browser:
   - [x] dragging one of three picked layers moves all three, and one Cmd+Z undoes it;
   - [x] the arrows move the group;
-  - [ ] dragging a picked Segment reorders only it (in code; the test Candidate had one Segment, left for the walkthrough, 11).
+  - [x] dragging a picked Segment reorders only it (see 11).
 - [x] Typecheck, test, build.
 
 ## Comments

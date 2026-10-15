@@ -23,7 +23,7 @@
   - [x] pasting into the same Candidate adds none;
   - [x] pasting into another Job skips Source Segments and their Transitions with a notice, and keeps the rest.
 - [x] In the browser:
-  - [ ] a Segment with a corrected caption Word, copied from Candidate A and pasted into Candidate B, shows the correction in B's preview (covered at Seam D; the test Candidates had no Word Edits, left for the walkthrough, 11);
+  - [x] a Segment with a corrected caption Word, copied from Candidate A and pasted into Candidate B, shows the correction in B's preview (see 11);
   - [x] a Segment and its title copied from one Job paste into another Candidate of it, and into another Job (the Segment left out with a notice).
 - [x] Typecheck, test, build.
 

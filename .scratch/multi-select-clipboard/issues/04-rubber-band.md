@@ -20,7 +20,7 @@
   - [x] the box draws and picks on release;
   - [x] a click on empty lane space seeks and empties the Pick;
   - [x] the ruler still scrubs;
-  - [ ] a phone swipe still scrolls (left for the walkthrough, 11).
+  - [x] a phone swipe still scrolls (touch emulation, see 11).
 - [x] Typecheck, test, build.
 
 ## Comments
