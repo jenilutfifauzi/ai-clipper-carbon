@@ -13,8 +13,7 @@ import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
 
-// The track labels' column, in CSS pixels.
-// The labels' column, by default (a phone's): its Tracks' names.
+// The labels' column, by default (a phone's), in CSS pixels: its Tracks' names.
 const LABEL_WIDTH = 64;
 // How far the timeline zooms in from showing the whole Clip.
 const MAX_ZOOM = 40;

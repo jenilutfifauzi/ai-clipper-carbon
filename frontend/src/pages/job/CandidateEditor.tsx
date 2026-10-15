@@ -17,7 +17,7 @@ import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
 import { loadFonts } from "../../fonts";
 import { cx, formatPrecise } from "../../format";
-import { clipTrimmed } from "./advanced/actions";
+import { clipTrimmed, layersOf } from "./advanced/actions";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview, type StageId } from "./editor/ClipPreview";
@@ -198,9 +198,8 @@ export function CandidateEditor({
   // Overlays and hook move with it, in the same save (docs/adr/0004-layers-ripple-with-the-main-track.md).
   function trim(change: { start?: number; end?: number }): Promise<boolean> {
     if (!magnetic || cut) return onSave(change);
-    const { start, end, text_layers, music, overlays, hook_start, hook_secs } = candidate;
-    const to = { start: change.start ?? start, end: change.end ?? end };
-    const { layers, notice } = clipTrimmed({ text_layers, music, overlays, hook_start, hook_secs }, { start, end }, to);
+    const { start, end } = candidate;
+    const { layers, notice } = clipTrimmed(layersOf(candidate), { start, end }, { start: change.start ?? start, end: change.end ?? end });
     if (notice) setNotice(notice);
     return onSave({ ...change, ...layers });
   }

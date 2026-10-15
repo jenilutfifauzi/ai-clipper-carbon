@@ -11,10 +11,10 @@ import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
+import { HOOK_MIN_SECS } from "./ripple";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 
-// The hook's shortest and longest time (hook_secs in backend/app/api.py).
-const HOOK_MIN_SECS = 0.5;
+// The hook's longest time (hook_secs in backend/app/api.py).
 const HOOK_MAX_SECS = 30;
 
 // Where a Media Library item dropped on the timeline goes.
@@ -35,7 +35,7 @@ export interface TrackHandlers {
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
   onDropText: (look: string, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
-  onDelete?: ((rippled: boolean) => void) | null;
+  onDelete?: (rippled: boolean) => void;
 }
 
 // How far into a caption line a click on it seeks, so that the line shows.
@@ -145,7 +145,7 @@ export function Tracks({
                     handlers.onText({ ...layer, start: round(range.start), secs: round(range.end - range.start) }, group),
                   )
                 }
-                onDelete={selected ? (onDelete ?? undefined) : undefined}
+                onDelete={selected ? onDelete : undefined}
               >
                 <Type aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium">{layer.text.split("\n").join(" ") || "Empty text"}</span>
@@ -196,7 +196,7 @@ export function Tracks({
                     ),
                   )
                 }
-                onDelete={selected ? (onDelete ?? undefined) : undefined}
+                onDelete={selected ? onDelete : undefined}
               >
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
                 <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
@@ -242,7 +242,7 @@ export function Tracks({
                 alone({ kind: "segment", id: segment.id });
                 handlers.onSegment(segment.id, moved, group);
               }}
-              onDelete={selected ? (onDelete ?? undefined) : undefined}
+              onDelete={selected ? onDelete : undefined}
             >
               {segment.media && (
                 <span
@@ -373,7 +373,7 @@ export function Tracks({
                     ),
                   )
                 }
-                onDelete={selected ? (onDelete ?? undefined) : undefined}
+                onDelete={selected ? onDelete : undefined}
               >
                 <Music aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium">{song?.name ?? "Music"}</span>

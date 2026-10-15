@@ -914,3 +914,29 @@ describe("the clip editor's trim, on the Magnetic timeline", () => {
   });
 });
 
+describe("the magnetic timeline at the Clip's end", () => {
+  const three = (changes: Partial<AdvancedEdits> = {}) =>
+    edits({ segments: [segment("s1", 100, 110), segment("s2", 200, 205), segment("s3", 300, 310)], ...changes });
+
+  test("the hook inside a removed last Segment ends where the Clip now ends, rather than after it", () => {
+    const before = three({ hook_start: 18, hook_secs: 3 });
+
+    expect(remove({ ...scene(before, picked(seg("s3"))), magnetic: true })?.edits).toMatchObject({ hook_start: 12, hook_secs: 3 });
+  });
+
+  test("the hook inside an end trimmed off in the clip editor ends at the new end", () => {
+    const layers = { text_layers: [], music: [], overlays: [], hook_start: 15, hook_secs: 3 };
+
+    expect(clipTrimmed(layers, { start: 100, end: 120 }, { start: 100, end: 110 }).layers).toMatchObject({ hook_start: 7, hook_secs: 3 });
+  });
+
+  test("duplicating a Segment with a layer copies the layer right after the moved original", () => {
+    const before = three({ text_layers: [layer("title", 16, 2)] });
+
+    const outcome = duplicate({ ...scene(before, picked(seg("s2"), text("title"))), magnetic: true });
+
+    // s2's copy puts 5 s in at 15 s: the title moves to 21 s, its copy right after it.
+    expect(outcome?.edits.text_layers).toEqual([layer("title", 21, 2), layer("n2", 23, 2, { text: "title" })]);
+  });
+});
+

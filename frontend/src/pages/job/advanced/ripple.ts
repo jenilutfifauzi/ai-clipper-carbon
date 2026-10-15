@@ -1,5 +1,6 @@
 import type { MusicClip, Overlay, TextLayer } from "../../../api";
 import { ITEM_MIN_SECS, round, type AdvancedEdits } from "./edits";
+import { counted, listed, LISTS } from "./pick";
 
 // The Magnetic timeline (GLOSSARY.md, docs/adr/0004-layers-ripple-with-the-main-track.md): the Text
 // Layers, Music Clips, Overlays and the hook following the Main Track when it gets shorter or longer
@@ -13,8 +14,7 @@ export type TrackChange = { kind: "removed" | "inserted"; at: number; secs: numb
 
 type Layer = TextLayer | MusicClip | Overlay;
 type LayerKind = "text" | "music" | "overlay";
-const LAYER_LISTS = { text: "text_layers", music: "music", overlay: "overlays" } as const;
-const NAMES: Record<LayerKind, string> = { text: "Text Layer", music: "Music Clip", overlay: "Overlay" };
+const LAYER_KINDS: LayerKind[] = ["text", "music", "overlay"];
 
 /** What a ripple moves: the Text Layers, Music Clips, Overlays and the hook. */
 export type Layers = Pick<AdvancedEdits, "text_layers" | "music" | "overlays" | "hook_start" | "hook_secs">;
@@ -43,15 +43,18 @@ function cutOut(start: number, secs: number, a: number, b: number): { start: num
  * The layers and the hook after the Main Track `changes`, applied from the latest to the earliest so
  * that the earlier ones' times still hold. Cut out, a layer wholly inside the stretch, or left
  * shorter than the shortest a layer lasts, is removed; `removed` counts them by kind. The hook is
- * never removed: wholly inside, it moves to where the stretch was, as long as it was.
+ * never removed: wholly inside, it moves to where the stretch was, as long as it was, or (where that
+ * is the Clip's end, which `duration`, the Clip's length before, tells) to end there.
  */
-export function ripple<T extends Layers>(edits: T, changes: TrackChange[]): { edits: T; removed: Removed } {
+export function ripple<T extends Layers>(edits: T, changes: TrackChange[], duration = Infinity): { edits: T; removed: Removed } {
   const removed: Removed = { text: 0, music: 0, overlay: 0 };
   let next = edits;
+  // Whether the hook was wholly inside a stretch cut out, and moved to where it was.
+  let rehomed = false;
   for (const change of [...changes].sort((x, y) => y.at - x.at)) {
     const lists = {} as Partial<Layers>;
-    for (const kind of Object.keys(LAYER_LISTS) as LayerKind[]) {
-      const list = LAYER_LISTS[kind];
+    for (const kind of LAYER_KINDS) {
+      const list = LISTS[kind];
       const items = (next[list] as Layer[]).flatMap((item): Layer[] => {
         const moved = moveItem(item.start, item.secs, change);
         if (!moved || moved.secs < ITEM_MIN_SECS - 1e-6) {
@@ -64,9 +67,13 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[]): { ed
       });
       Object.assign(lists, { [list]: items });
     }
-    const hook = moveItem(next.hook_start, next.hook_secs, change) ?? { start: change.at, secs: next.hook_secs };
+    const moved = moveItem(next.hook_start, next.hook_secs, change);
+    if (!moved) rehomed = true;
+    const hook = moved ?? { start: change.at, secs: next.hook_secs };
     next = { ...next, ...lists, hook_start: round(hook.start), hook_secs: round(Math.max(hook.secs, HOOK_MIN_SECS)) };
   }
+  const end = changes.reduce((length, change) => length + (change.kind === "inserted" ? change.secs : -change.secs), duration);
+  if (rehomed && next.hook_start + next.hook_secs > end + 1e-6) next = { ...next, hook_start: round(Math.max(0, end - next.hook_secs)) };
   return { edits: next, removed };
 }
 
@@ -77,11 +84,8 @@ function moveItem(start: number, secs: number, change: TrackChange): { start: nu
 
 /** What to tell of the layers a ripple removed, if any: "2 Text Layers and 1 Overlay inside the cut were removed." */
 export function removedNotice(removed: Removed): string | undefined {
-  const parts = (Object.keys(removed) as LayerKind[])
-    .filter((kind) => removed[kind] > 0)
-    .map((kind) => `${removed[kind]} ${NAMES[kind]}${removed[kind] === 1 ? "" : "s"}`);
+  const parts = LAYER_KINDS.filter((kind) => removed[kind] > 0).map((kind) => counted(removed[kind], kind));
   if (!parts.length) return undefined;
   const total = Object.values(removed).reduce((sum, count) => sum + count, 0);
-  const listed = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
-  return `${listed} inside the cut ${total === 1 ? "was" : "were"} removed.`;
+  return `${listed(parts)} inside the cut ${total === 1 ? "was" : "were"} removed.`;
 }

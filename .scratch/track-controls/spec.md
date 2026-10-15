@@ -152,10 +152,9 @@ The Advanced Edit gets **Track controls**, a **Magnetic timeline**, **Ripple del
 - **The Magnetic preference** is a boolean in the browser's local storage, read once and written on change, true when absent or unreadable. Every read and write is guarded, so that a blocked storage still gives the default. The Advanced Edit and the clip editor read the same key.
 
 **Hide and mute reach the preview only.**
-- The preview layers already draw from the plan and the edits: Segments, Overlays, captions, the hook, Text Layers, music and the Clip's sound.
-- Each gets a "hidden" or "muted" input from the Track state.
-- Hidden stage items can't be picked on the preview.
-- The Render Plan request is unchanged, so the preview's layout and timings stay identical to the render.
+- **Hide** works on the plan the player draws: the hidden Track's Text Layers, Overlays, captions or hook are left out of it, and a hidden Video Track blacks out the Segments' pictures. The Timeline and the inspector keep the whole plan. Hidden stage items can't be picked on the preview.
+- **Mute** works on the draft the preview is planned from: no Music Clips, the Overlays' volumes at 0, or the Clip's own sound (`source_volume` and the Segments' volumes) at 0. The backend plans what is heard, as it plans the rest (ADR 0001). This is needed because an Overlay's sound reaches the plan as an audio event beside the music. Nothing but the sound changes in that plan, so the preview's layout and timings stay those of the render. Each mute is one more plan request.
+- Neither is ever saved: the saved Candidate, the render and the agent never see them.
 
 **Lock is enforced at the Pick and the gestures.**
 - **The Pick:** click, toggle, band and select all skip locked kinds. A Track locked while items of it are picked drops them from the Pick, as pruning does.
@@ -176,7 +175,11 @@ The Advanced Edit gets **Track controls**, a **Magnetic timeline**, **Ripple del
   - **Too short:** an item left shorter than the shortest item length is deleted, and counted.
   - **The hook:** the same, except that it is never deleted. Wholly inside, it moves to start at a. It is never shorter than its minimum.
 - **An insertion of L at t:** items with s ≥ t move back by L. Items across t stay as they are.
-- **Measuring the change.** A Main Track action measures its change from the Main Track as the editor plays it before and after (Segments snapped to Words, shortened at Transitions). The span's length is the difference in the played Clip's length, placed at the edited Segment's played start (a deletion or an insertion) or at the trimmed edge. So a Segment that takes its Transitions with it ripples by what the Clip actually lost.
+- **Measuring the change.**
+  - **A removal** cuts out the removed Segment's span as played (snapped to Words, shortened at a Transition into the next). So a Segment that takes its Transition with it ripples by what the Clip actually lost.
+  - **An insertion** (a drop, "add to clip", a duplicate) puts in the new Segments' lengths at the join, and a paste the Clip's growth.
+  - **A trim** is measured by the change of the Segment's planned length, at the trimmed edge.
+  - Near a Transition these can differ from the played Clip by up to its overlap.
 - **The notice** counts the layers removed, by kind.
 
 **Actions that ripple when the Magnetic preference is on, or when forced.** The actions module's context gains `magnetic` and `locked`. The Main Track actions in it ripple, each as one change and one undo step:
@@ -189,7 +192,7 @@ The Advanced Edit gets **Track controls**, a **Magnetic timeline**, **Ripple del
 Reorder (dragging a Segment to another place) and Transition edits never ripple.
 
 **Ripple delete.** It is an action in the module, bound to Shift+Delete and Shift+Backspace and to a button in the phone's picked items' bar. It is remove with the ripple forced:
-- **Picked layer items** first close their Track. For each kind, every item of that kind starting at or after a deleted item's end moves up by its length. Deleted spans are taken from the latest to the earliest, and items overlapping a deleted item stay.
+- **Picked layer items** first close their Track. For each kind, every item of that kind moves up by how long the deleted items that end before it lasted (where two of them overlap, that stretch counts once). Items overlapping a deleted item stay.
 - **Picked Segments** then ripple the layers.
 - **The hook, the captions or a join** alone: same as Delete.
 

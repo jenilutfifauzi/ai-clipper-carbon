@@ -12,14 +12,15 @@ export const TRACKS: Record<TrackKind, { label: string; hide: boolean; mute: boo
   video: { label: "Video", hide: true, mute: true },
   captions: { label: "Captions", hide: true, mute: false },
   hook: { label: "Hook", hide: true, mute: false },
-  music: { label: "Audio", hide: false, mute: true },
+  music: { label: "Music", hide: false, mute: true },
 };
 
 export type TrackControl = "hidden" | "muted" | "locked";
 
 export type TrackState = Record<TrackControl, TrackKind[]>;
 
-export const ALL_ON: TrackState = { hidden: [], muted: [], locked: [] };
+/** Nothing hidden, muted or locked: how the editor opens. */
+export const UNTOUCHED: TrackState = { hidden: [], muted: [], locked: [] };
 
 /** `state` with `kind`'s `control` turned on, or off when it was on. */
 export function toggledTrack(state: TrackState, control: TrackControl, kind: TrackKind): TrackState {

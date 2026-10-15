@@ -178,7 +178,7 @@ export function Timeline({
         <div className="flex items-start gap-2">
           <p className="flex-1 text-sm text-muted">
             Drag the clip's edges to trim it (they snap to words), or focus one and use the arrow keys. Drag the hook to move it, its right edge to
-            change how long it stays. With the magnet on, a trim moves the hook and the Advanced Edit's layers with it.
+            change how long it stays. With the Magnetic timeline on, a trim moves the hook and the Advanced Edit's layers with it.
           </p>
           <MagneticToggle />
         </div>

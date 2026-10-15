@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, round } from "./edits";
-import { LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
+import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
 
 // The Clipboard (GLOSSARY.md): the Advanced Edit's copied items, kept in memory while the browser tab
@@ -62,8 +62,6 @@ export function cut(scene: PickContext, from: Place): { clipboard: Clipboard; ou
 // backend/app/candidates.py): at most half the shorter.
 const overlap = (secs: number, before: number, after: number) => Math.min(secs, Math.min(before, after) / 2);
 
-const NAMES: Record<ItemKind, string> = { segment: "Segment", text: "Text Layer", music: "Music Clip", overlay: "Overlay" };
-
 const count = (n: number, one = "item", several = "items") => `${n} ${n === 1 ? one : several}`;
 
 // Which of `words` holds `at` (on the Source's timeline), if one does.
@@ -72,8 +70,9 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
 /**
  * `clipboard` pasted into the Candidate `to` as one change, every item new, the pasted items picked.
  * Its Segments go in at the join nearest the playhead (`at`), with the Transitions between them, and
- * the Segments after them play later (and, on the Magnetic timeline, the layers after them); its Text Layers, Music Clips and Overlays keep their times from
- * there (from the playhead when there are no Segments). Whatever would run past the Clip's end is cut
+ * the Segments after them play later (on the Magnetic timeline, the layers after them too); its Text
+ * Layers, Music Clips and Overlays keep their times from there (from the playhead when there are no
+ * Segments). Whatever would run past the Clip's end is cut
  * short there, or left out when it would start there or be too short, and the owner is told.
  *
  * Into another Candidate of the Job, Segments of the Source bring the Word Edits and Layout Overrides
@@ -164,8 +163,7 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   const fitted = [trimmed && `${count(trimmed)} cut short to fit`, skipped && `${count(skipped)} left out, falling outside the clip`];
   if (trimmed || skipped) told.push(`${fitted.filter(Boolean).join("; ")}.`);
   if (refused.size) {
-    const kinds = [...refused].map(([kind, n]) => count(n, NAMES[kind], `${NAMES[kind]}s`));
-    told.push(`${kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}` : kinds[0]} left out: their Tracks are locked.`);
+    told.push(`${listed([...refused].map(([kind, n]) => counted(n, kind)))} left out: their Tracks are locked.`);
   }
   const notice = told.join(" ");
   return { edits: next, pick: picked(...pasted), ...(notice ? { notice } : {}) };

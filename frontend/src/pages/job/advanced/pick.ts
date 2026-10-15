@@ -44,6 +44,15 @@ export function toggled(pick: Pick, item: ItemRef): Pick {
 /** The Pick after a click on `item`: it alone, or with Shift, Cmd or Ctrl (`toggle`) added or taken out. */
 export const clicked = (pick: Pick, item: ItemRef, toggle: boolean): Pick => (toggle ? toggled(pick, item) : picked(item));
 
+/** Each kind of item, by name: "Text Layer". */
+export const NAMES: Record<ItemKind, string> = { segment: "Segment", text: "Text Layer", music: "Music Clip", overlay: "Overlay" };
+
+/** `n` items of `kind`, by name: "1 Text Layer", "2 Overlays". */
+export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n === 1 ? "" : "s"}`;
+
+/** Parts of a sentence listed: "a", "a and b", "a, b and c". */
+export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? ""));
+
 /** The Track each kind of item is on. */
 export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", music: "music", overlay: "overlay" };
 

@@ -250,8 +250,9 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
 }
 
 /**
- * The timeline bar's buttons: for the picked items, split at the playhead, duplicate, copy and delete;
- * and paste what the Clipboard holds (`paste`).
+ * The timeline bar's buttons: split at the playhead (the picked items, or with nothing picked
+ * everything there); for the picked items, duplicate, copy and delete; and paste what the Clipboard
+ * holds (`paste`).
  */
 export function ItemTools({
   actions,

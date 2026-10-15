@@ -107,20 +107,20 @@ function rippledAfter(scene: PickContext, next: AdvancedEdits, rippled: boolean)
       ? [{ kind: "removed" as const, at: shown.start, secs: shown.end - shown.start }]
       : [];
   });
-  return following(next, changes, rippled);
+  return rippledIf(next, changes, rippled, scene.duration);
 }
 
 // `next` with its layers and hook following the Main Track's `changes` when they do (`on`), and what
 // to tell of the layers that a cut took.
-function following<T extends Layers>(next: T, changes: TrackChange[], on: boolean): { edits: T; notice?: string } {
+function rippledIf<T extends Layers>(next: T, changes: TrackChange[], on: boolean, duration?: number): { edits: T; notice?: string } {
   if (!on || !changes.length) return { edits: next };
-  const { edits, removed } = ripple(next, changes);
+  const { edits, removed } = ripple(next, changes, duration);
   const notice = removedNotice(removed);
   return notice ? { edits, notice } : { edits };
 }
 
-// The layers and the hook of `edits`: what a ripple changes.
-const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: AdvancedEdits) => ({
+/** The layers and the hook of `edits`: what a ripple changes. */
+export const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: Layers): Layers => ({
   text_layers,
   music,
   overlays,
@@ -178,7 +178,7 @@ export function clipTrimmed<T extends Layers>(
   if (to.start > from.start) changes.push({ kind: "removed", at: 0, secs: to.start - from.start });
   if (to.start < from.start) changes.push({ kind: "inserted", at: 0, secs: from.start - to.start });
   if (to.end < from.end) changes.push({ kind: "removed", at: to.end - from.start, secs: from.end - to.end });
-  const { edits, notice } = following(layers, changes, true);
+  const { edits, notice } = rippledIf(layers, changes, true, from.end - from.start);
   return notice ? { layers: edits, notice } : { layers: edits };
 }
 
@@ -197,7 +197,7 @@ export function insertSegment(scene: PickContext, segment: ClipSegment, place: n
   const next = { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] };
   const at = scene.played[place]?.start ?? scene.duration;
   return {
-    edits: following(next, [{ kind: "inserted", at, secs: segmentSecs(segment) }], scene.magnetic ?? false).edits,
+    edits: rippledIf(next, [{ kind: "inserted", at, secs: segmentSecs(segment) }], scene.magnetic ?? false).edits,
     pick: picked({ kind: "segment", id: segment.id }),
   };
 }
@@ -231,7 +231,12 @@ export function dragSegment(
   // Longer (or shorter) by `by` at the trimmed edge, as planned.
   const by = segments[index].end - segments[index].start - (whole.source_end - whole.source_start);
   const at = change.edge === "end" ? whole.end + Math.min(by, 0) : whole.start;
-  const { edits, notice } = following(origin.edits, [{ kind: by < 0 ? "removed" : "inserted", at, secs: Math.abs(by) }], Math.abs(by) > 1e-6);
+  const { edits, notice } = rippledIf(
+    origin.edits,
+    [{ kind: by < 0 ? "removed" : "inserted", at, secs: Math.abs(by) }],
+    Math.abs(by) > 1e-6,
+    origin.shown.at(-1)?.end,
+  );
   return { edits: { ...scene.edits, segments, ...layersOf(edits) }, pick: scene.pick, ...(notice ? { notice } : {}) };
 }
 
@@ -264,22 +269,25 @@ export function duplicate(scene: PickContext): Outcome | null {
   if (!segments.length && !layers.length) return null;
   const next = { ...edits };
   const copies: ItemRef[] = [];
+  // How much longer the copied Segments make the Clip.
+  let added = 0;
   if (segments.length) {
     const last = edits.segments.indexOf(segments.at(-1)!);
     const block = segments.map((segment) => ({ ...segment, id: idOf(scene) }));
     next.segments = [...edits.segments.slice(0, last + 1), ...block, ...edits.segments.slice(last + 1)];
+    added = block.reduce((sum, segment) => sum + segmentSecs(segment), 0);
     const at = scene.played[last + 1]?.start ?? duration;
-    Object.assign(
-      next,
-      following(next, [{ kind: "inserted", at, secs: block.reduce((sum, segment) => sum + segmentSecs(segment), 0) }], scene.magnetic ?? false).edits,
-    );
+    Object.assign(next, rippledIf(next, [{ kind: "inserted", at, secs: added }], scene.magnetic ?? false).edits);
     copies.push(...block.map((segment) => ({ kind: "segment" as const, id: segment.id })));
   }
   if (layers.length) {
-    const first = Math.min(...layers.map(({ item }) => item.start));
-    const end = Math.max(...layers.map(({ item }) => item.start + item.secs));
-    const room = end + (end - first) <= duration + 1e-6;
-    for (const { kind, item } of layers) {
+    // As they are once the copied Segments have moved them, in a Clip that much longer.
+    const moved = pickedItems({ ...scene, edits: next }).layers;
+    const length = duration + added;
+    const first = Math.min(...moved.map(({ item }) => item.start));
+    const end = Math.max(...moved.map(({ item }) => item.start + item.secs));
+    const room = end + (end - first) <= length + 1e-6;
+    for (const { kind, item } of moved) {
       const copy = { ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed;
       const list = KINDS[kind].list;
       Object.assign(next, { [list]: [...(next[list] as Timed[]), copy] });

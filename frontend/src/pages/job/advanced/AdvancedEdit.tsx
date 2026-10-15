@@ -75,7 +75,7 @@ import {
   type Pick,
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
-import { ALL_ON, heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
+import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory, type EditHistory } from "./useEditHistory";
@@ -154,7 +154,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [pickingMode, setPickingMode] = useState(false);
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
-  const [tracks, setTracks] = useState<TrackState>(ALL_ON);
+  const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
 
@@ -618,7 +618,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               const look = TEXT_PRESETS.find((preset) => preset.name === name);
               if (look) addText(look.layer, time);
             },
-            onDelete: actions && ((rippled) => (rippled ? actions.rippleRemove() : actions.remove())),
+            onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
           }}
         />
       )}
@@ -787,8 +787,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 // Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
 // and Escape to pick none, Cmd/Ctrl+V to paste, Cmd/Ctrl+B to split (the picked items, or with nothing
 // picked everything at the playhead), and for the picked items Delete (with Shift, closing the gaps),
-// Cmd/Ctrl+D to duplicate them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the arrow keys (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no
-// item has the focus; except while typing, and Cmd/Ctrl+C while text on the page is selected.
+// Cmd/Ctrl+D to duplicate them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the arrow keys
+// (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no item has the
+// focus; except while typing, and Cmd/Ctrl+C while text on the page is selected.
 function useShortcuts(
   history: EditHistory<AdvancedEdits>,
   playback: Playback,
