@@ -26,16 +26,44 @@
 
 **Blocked by:** 01, 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A:
-  - [ ] saves from one source within 2 minutes form one entry;
-  - [ ] another source or tab starts a new one;
-  - [ ] the state before another source's save is always kept;
-  - [ ] the history caps at 50;
-  - [ ] Restore saves a new Revision with the entry's content and the current `selected`;
-  - [ ] a stale Restore gets 409;
-  - [ ] deleting the Job removes the histories.
-- [ ] Seam A (MCP): listing and restoring Revisions work; the tool list fits the budget.
-- [ ] Both editors show the History popover and restore with confirmation; the notice's Restore takes back an agent edit.
-- [ ] Typecheck and build; browser walkthrough.
+- [x] Seam A:
+  - [x] saves from one source within 2 minutes form one entry;
+  - [x] another source or tab starts a new one;
+  - [x] the state before another source's save is always kept;
+  - [x] the history caps at 50;
+  - [x] Restore saves a new Revision with the entry's content and the current `selected`;
+  - [x] a stale Restore gets 409;
+  - [x] deleting the Job removes the histories.
+- [x] Seam A (MCP): listing and restoring Revisions work; the tool list fits the budget.
+- [x] Both editors show the History popover and restore with confirmation; the notice's Restore takes back an agent edit.
+- [x] Typecheck and build; browser walkthrough.
+
+## Comments
+
+**2026-10-15: done.**
+
+**Checks:**
+- `tests/test_revisions.py`:
+  - saves from one editor and tab make one entry, and another editor or tab starts one;
+  - the Candidate as Selection made it is kept first, as `original`;
+  - after a pause a new entry starts, and only the newest `HISTORY_MAX` are kept (both set with `monkeypatch`);
+  - Restore saves the entry as the next Revision with source `restore`, keeps `selected`, and keeps the restored entry;
+  - a stale Restore gets 409 with the Candidate; an unknown Revision gets 404; deleting the Job takes the histories with it;
+  - MCP: `list_candidate_revisions` and `restore_candidate_revision`, including a stale one; the tool list fits its budget.
+- `npm run build`.
+- **Browser** (scratch copy):
+  - the agent changes the hook, and the notice's Restore brings the hook back while keeping the Text Layer just added;
+  - the History dialog lists Restore, Agent, Advanced Edit and Original with their parts;
+  - in the clip editor, History → Restore of the Original brings back Revision 1's content as Revision 5.
+
+**Changes from the plan:**
+- **Entries are kept in `revisions/<candidate id>.json`** in the Job's directory, by the store, inside the same lock as the save. The grouping is the pure `recorded()` in `app/revisions.py`.
+- **The first entry is the state before the first save,** with source `original` ("Original"), whatever made it (Selection, or the owner for a manual one).
+- **Restore is `POST …/revisions/{revision}/restore`.** It builds an update from the entry's content (its Main Track, and every other field an edit changes but `selected`) and runs it through the PATCH route, so it gets every check an edit gets.
+- **The History is a dialog, not a popover,** so it works the same on a phone.
+  - It opens from a History button in the Advanced Edit's top bar and beside "Edit Advanced" in the clip editor.
+  - Restore asks inline ("Restore this version?").
+  - The Advanced Edit saves its waiting edits first. The clip editor waits for its saves under way, but not for a draft typed in the last 0.7 s.
+- **The notice's Restore restores the entry of the Revision the editor had before the change came in.**

@@ -647,14 +647,25 @@ export interface CandidateChange {
 
 // Which editor saves an edit, so that other editors can say who changed a Candidate.
 export type EditSource = "advanced-edit" | "clip-editor";
-// Who saved a Revision: an editor, the agent (MCP), a Restore, or unknown (a CLI run, an older caller).
-export type SavedBy = EditSource | "agent" | "restore" | "unknown";
+// Who saved a Revision: an editor, the agent (MCP), a Restore, or unknown (a CLI run, an older caller);
+// "original" for a Candidate as Selection (or the owner, for a manual one) made it.
+export type SavedBy = EditSource | "agent" | "restore" | "unknown" | "original";
 
 // This tab's id, sent with its edits: its own saves are then told apart from another tab's.
 export const TAB_ID = crypto.randomUUID();
 
 // A new Revision of one of a Job's Candidates, from its Candidate events: who saved it (`tab` for an
 // editor's), and the parts it changed since the one before, as the editors name them.
+// An entry of a Candidate's Revision History: the last of a stretch of saves from one editor (in one
+// tab), with the parts it changed since the entry before.
+export interface RevisionEntry {
+  revision: number;
+  at: string;
+  source: SavedBy;
+  tab: string | null;
+  parts: string[];
+}
+
 export interface CandidateEvent {
   candidate: Candidate;
   source: SavedBy;
@@ -804,6 +815,17 @@ export const api = {
     request<Candidate>(`/jobs/${jobId}/candidates/${id}`, {
       method: "PATCH",
       body: JSON.stringify(change),
+      headers: { "X-Edit-Source": source, "X-Edit-Tab": TAB_ID },
+    }),
+  // The Candidate's Revision History, newest first.
+  listRevisions: (jobId: string, id: string) =>
+    request<{ revisions: RevisionEntry[] }>(`/jobs/${jobId}/candidates/${id}/revisions`).then((answer) => answer.revisions),
+  // Saves the Candidate as it was at Revision `restore`, as its next Revision; refused (409) when it
+  // has moved past `revision`.
+  restoreRevision: (jobId: string, id: string, restore: number, revision: number, source: EditSource) =>
+    request<Candidate>(`/jobs/${jobId}/candidates/${id}/revisions/${restore}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ revision }),
       headers: { "X-Edit-Source": source, "X-Edit-Tab": TAB_ID },
     }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>

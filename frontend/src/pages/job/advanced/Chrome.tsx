@@ -47,11 +47,14 @@ export function TopBar({
   title,
   status,
   history,
+  actions,
   onClose,
 }: {
   title: string;
   status: ReactNode;
   history: EditHistory<AdvancedEdits>;
+  // Beside undo and redo, such as the Revision History.
+  actions?: ReactNode;
   onClose: () => void;
 }) {
   return (
@@ -63,6 +66,7 @@ export function TopBar({
         <h1 className="truncate text-sm font-semibold sm:text-base">{title}</h1>
         <div className="truncate text-xs text-muted">{status}</div>
       </div>
+      {actions}
       <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo">
         <Undo2 aria-hidden size={18} />
       </Button>

@@ -345,6 +345,21 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
         return await save_from_current(job_id, candidate_id, removed)
 
+    @tool(read_only=True)
+    async def list_candidate_revisions(job_id: str, candidate_id: str) -> dict:
+        """A Candidate's Revision History, newest first: its last 50 saved states, one per stretch of
+        saves from one editor (source: advanced-edit, clip-editor, agent, restore, original, unknown),
+        with when and the parts each changed. restore_candidate_revision brings one back."""
+        return await api("GET", f"/jobs/{job_id}/candidates/{candidate_id}/revisions")
+
+    @tool()
+    async def restore_candidate_revision(job_id: str, candidate_id: str, restore: int, revision: int | None = None) -> dict:
+        """Save the Candidate as it was at Revision `restore` (from list_candidate_revisions) as its
+        next Revision, keeping whether it is selected; nothing is lost, the newer ones stay in the
+        history. With `revision` (the one you read), refused if the Candidate changed since."""
+        body = {} if revision is None else {"revision": revision}
+        return await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/revisions/{restore}/restore", json=body)
+
     # Render
 
     @tool()

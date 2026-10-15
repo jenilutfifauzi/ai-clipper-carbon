@@ -78,10 +78,42 @@ export function Review({
       return;
     }
     if (next.revision <= known || (inFlight.current.get(next.id) ?? 0) > 0) return;
+    taken(next);
+    if (next.id === active?.id) {
+      // The state this replaces is kept in the Revision History: the notice's Restore brings it back.
+      setNotice({ id: Date.now(), text: changedText(source, parts, "clip-editor"), action: restoreButton(next.id, known) });
+    }
+  }
+
+  // Shows the Candidate as saved, and starts its editor's drafts again from it.
+  function taken(next: Candidate) {
     revisions.current.set(next.id, next.revision);
     replaceCandidate(next.id, () => next);
     setSynced((old) => ({ ...old, [next.id]: (old[next.id] ?? 0) + 1 }));
-    if (next.id === active?.id) setNotice({ id: Date.now(), text: changedText(source, parts, "clip-editor") });
+  }
+
+  // Saves the Candidate as it was at Revision `entry` of its Revision History, once its saves under
+  // way are answered; answers why it couldn't, or null.
+  async function restore(id: string, entry: number): Promise<string | null> {
+    await sending.current.get(id);
+    try {
+      taken(await api.restoreRevision(job.id, id, entry, revisions.current.get(id) ?? 1, "clip-editor"));
+      setError(null);
+      return null;
+    } catch (reason) {
+      return staleCandidate(reason) ? "This clip changed meanwhile (another tab or the agent): look again, then restore." : (reason as Error).message;
+    }
+  }
+
+  function restoreButton(id: string, entry: number) {
+    return (
+      <Button
+        size="xs"
+        onClick={() => void restore(id, entry).then((failed) => setNotice({ id: Date.now(), text: failed ?? "Restored the clip as it was" }))}
+      >
+        Restore
+      </Button>
+    );
   }
 
   function removed(id: string) {
@@ -273,6 +305,7 @@ export function Review({
               transcript={job.transcript}
               candidate={active}
               synced={synced[active.id] ?? 0}
+              onRestore={(entry) => restore(active.id, entry)}
               index={index}
               progress={progress}
               onSave={(change) => save(active.id, change)}

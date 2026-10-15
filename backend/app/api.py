@@ -38,7 +38,7 @@ from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
-from app.revisions import Edit
+from app.revisions import Edit, HistoryEntry
 from app.storage import DiskUsage, disk_usage
 from app.styles import (
     BuiltinPreset,
@@ -78,6 +78,7 @@ OVERLAYS_MAX = 50
 
 _OPTIONS = TypeAdapter(JobOptions)
 _CANDIDATE = TypeAdapter(Candidate)
+_HISTORY_ENTRY = TypeAdapter(HistoryEntry)
 
 
 def _settings(request: Request) -> Settings:
@@ -172,6 +173,15 @@ class CandidateUpdate(BaseModel):
     transitions: Annotated[list[Transition], Field(max_length=SEGMENTS_MAX)] | None = None
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
     # is the Candidate's. Left out, the edit is saved over whatever is there.
+    revision: Annotated[int, Field(ge=1)] | None = None
+
+
+class RestoreBody(BaseModel):
+    """A Restore of a Revision History entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The Revision the Restore was asked from: refused (409) unless it is the Candidate's.
     revision: Annotated[int, Field(ge=1)] | None = None
 
 
@@ -421,6 +431,51 @@ def update_candidate(
     return _review(store, settings, job_id, update, edit)
 
 
+@router.get("/jobs/{job_id}/candidates/{candidate_id}/revisions")
+def list_revisions(candidate_id: str, job: ExistingJob, store: Store) -> dict:
+    """The Candidate's Revision History, newest first, without each entry's Candidate: its Revision,
+    when it was saved, by which editor (source, and tab for a browser's), and the parts it changed."""
+    history = _history(store, job, candidate_id)
+    return {"revisions": [_HISTORY_ENTRY.dump_python(entry, mode="json", exclude={"candidate"}) for entry in reversed(history)]}
+
+
+@router.get("/jobs/{job_id}/candidates/{candidate_id}/revisions/{revision}")
+def get_revision(candidate_id: str, revision: int, job: ExistingJob, store: Store) -> HistoryEntry:
+    """One entry of the Candidate's Revision History, with the Candidate as it was then."""
+    return _entry(store, job, candidate_id, revision)
+
+
+# What a Restore brings back besides the Main Track (which holds the range): everything an edit
+# changes but being chosen for rendering.
+RESTORED = tuple(CandidateUpdate.model_fields.keys() - {"start", "end", "segments", "selected", "revision"})
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/revisions/{revision}/restore")
+def restore_revision(
+    job_id: str,
+    candidate_id: str,
+    revision: int,
+    job: ExistingJob,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    edit: EditBy,
+    body: RestoreBody | None = None,
+) -> Candidate:
+    """Save the Candidate as it was in an entry of its Revision History, as its next Revision (source
+    Restore), keeping whether it is chosen for rendering. It goes through an edit's checks: with
+    `revision`, 409 when the Candidate has moved past it."""
+    was = _entry(store, job, candidate_id, revision).candidate
+    update = CandidateUpdate(
+        segments=was.main_track(),
+        **{name: getattr(was, name) for name in RESTORED},
+        revision=body.revision if body else None,
+    )
+    return update_candidate(job_id, candidate_id, update, store, settings, presets, logos, library, Edit("restore", edit.tab))
+
+
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/preview-plan")
 def candidate_preview_plan(
     job_id: str,
@@ -483,6 +538,19 @@ def add_candidate(job_id: str, body: ManualCandidate, store: Store, settings: Ap
     return _review(
         store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode), edit
     )
+
+
+def _history(store: JobStore, job: Job, candidate_id: str) -> list[HistoryEntry]:
+    if not any(candidate.id == candidate_id for candidate in store.load_candidates(job.id) or []):
+        raise HTTPException(404, f"Job {job.id} has no Candidate {candidate_id}")
+    return store.revision_history(job.id, candidate_id)
+
+
+def _entry(store: JobStore, job: Job, candidate_id: str, revision: int) -> HistoryEntry:
+    entry = next((entry for entry in _history(store, job, candidate_id) if entry.revision == revision), None)
+    if entry is None:
+        raise HTTPException(404, f"Candidate {candidate_id} has no Revision {revision} in its Revision History")
+    return entry
 
 
 def _review(

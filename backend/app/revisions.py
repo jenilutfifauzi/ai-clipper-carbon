@@ -1,6 +1,8 @@
-"""Who saved a Candidate's Revisions, and which of its parts each changed (ADR 0003)."""
+"""Who saved a Candidate's Revisions, which of its parts each changed, and its Revision History
+(ADR 0003)."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.candidates import Candidate
 
@@ -8,6 +10,13 @@ from app.candidates import Candidate
 # older caller).
 SOURCES = frozenset({"advanced-edit", "clip-editor", "agent", "restore"})
 UNKNOWN = "unknown"
+# The source of a Candidate's first state in its Revision History: as Selection (or the owner, for a
+# manual one) made it.
+ORIGINAL = "original"
+# The most entries a Revision History keeps, and how long after one save from an editor its next
+# still goes into the same entry.
+HISTORY_MAX = 50
+GROUP_SECS = 120.0
 
 # A Candidate's parts as the editors name them, each with the fields it is made of. Choosing it for
 # rendering, its Revision and its edited flag aren't parts: they aren't edits.
@@ -42,3 +51,43 @@ class Edit:
 def changed_parts(old: Candidate, new: Candidate) -> list[str]:
     """The parts `new` has changed from `old`, in the order of PARTS."""
     return [part for part, names in PARTS.items() if any(getattr(old, name) != getattr(new, name) for name in names)]
+
+
+@dataclass(frozen=True)
+class HistoryEntry:
+    """A state of a Candidate in its Revision History: the last of a stretch of saves from one editor
+    (in one tab), with when it was saved and the parts changed since the entry before."""
+
+    revision: int
+    at: datetime
+    source: str
+    tab: str | None
+    parts: list[str]
+    candidate: Candidate
+
+
+def recorded(
+    history: list[HistoryEntry], before: Candidate, after: Candidate, edit: Edit, before_edit: Edit, now: datetime
+) -> list[HistoryEntry]:
+    """The Revision History (oldest first) once `edit` has saved `after` over `before`, whose own
+    save was `before_edit`. A save from the editor and tab of the newest entry, soon after it, goes
+    into it; any other starts an entry, and `before` is kept as one first if it isn't the newest."""
+    entries = list(history)
+    newest = entries[-1] if entries else None
+    if newest is not None and newest.revision == before.revision:
+        same_editor = (newest.source, newest.tab) == (edit.source, edit.tab)
+        if same_editor and (now - newest.at).total_seconds() < GROUP_SECS:
+            since = entries[-2].candidate if len(entries) > 1 else None
+            parts = changed_parts(since, after) if since else _union(newest.parts, changed_parts(before, after))
+            entries[-1] = HistoryEntry(after.revision, now, edit.source, edit.tab, parts, after)
+            return entries[-HISTORY_MAX:]
+    else:
+        source = ORIGINAL if before.revision == 1 else before_edit.source
+        tab = None if before.revision == 1 else before_edit.tab
+        entries.append(HistoryEntry(before.revision, now, source, tab, [], before))
+    entries.append(HistoryEntry(after.revision, now, edit.source, edit.tab, changed_parts(before, after), after))
+    return entries[-HISTORY_MAX:]
+
+
+def _union(first: list[str], second: list[str]) -> list[str]:
+    return [part for part in PARTS if part in first or part in second]

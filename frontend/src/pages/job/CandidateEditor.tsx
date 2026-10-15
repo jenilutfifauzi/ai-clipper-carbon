@@ -28,6 +28,7 @@ import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel
 import { PresetBar } from "./editor/PresetBar";
 import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
+import { RevisionHistory } from "./editor/RevisionHistory";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { placedFields } from "./editor/placing";
@@ -91,6 +92,7 @@ export function CandidateEditor({
   transcript,
   candidate,
   synced,
+  onRestore,
   index,
   progress,
   onSave,
@@ -102,6 +104,8 @@ export function CandidateEditor({
   candidate: Candidate;
   // How many times the Candidate was taken as saved in another editor: its drafts start again from it.
   synced: number;
+  // Restores an entry of its Revision History; answers why it couldn't, or null.
+  onRestore: (revision: number) => Promise<string | null>;
   index: number;
   progress: JobProgress;
   onSave: (change: CandidateChange) => Promise<boolean>;
@@ -239,6 +243,14 @@ export function CandidateEditor({
               <SlidersHorizontal aria-hidden size={16} />
               Edit Advanced
             </Link>
+            <RevisionHistory
+              jobId={job.id}
+              candidateId={candidate.id}
+              revision={candidate.revision}
+              here="clip-editor"
+              onRestore={onRestore}
+              size="sm"
+            />
             <Switch checked={candidate.selected} onChange={(selected) => void onSave({ selected })}>
               <span className="text-sm">Render this clip</span>
             </Switch>

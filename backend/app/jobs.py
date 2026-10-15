@@ -21,7 +21,7 @@ from app.candidates import Candidate
 from app.clips import Clip
 from app.llm import ScoreResponse
 from app.profile import ChannelProfile
-from app.revisions import Edit
+from app.revisions import Edit, HistoryEntry, recorded
 from app.selection import Selection
 from app.storage import write_atomic
 from app.transcript import Transcript
@@ -34,6 +34,8 @@ DEFAULT_LANGUAGE = "id"
 STATE_FILE = "job.json"
 TRANSCRIPT_FILE = "transcript.json"
 CANDIDATES_FILE = "candidates.json"
+# Each Candidate's Revision History, as <candidate id>.json.
+REVISIONS_DIR = "revisions"
 # The run of Selection that produced the Candidates, for inspection and evaluation.
 SELECTION_FILE = "selection.json"
 # The Score pass's answers so far, while the analyzing stage runs (see Pipeline._analyze).
@@ -178,6 +180,7 @@ _CANDIDATES = TypeAdapter(list[Candidate])
 _SELECTION = TypeAdapter(Selection)
 _SCORES = TypeAdapter(dict[str, ScoreResponse])
 _CLIPS = TypeAdapter(list[Clip])
+_HISTORY = TypeAdapter(list[HistoryEntry])
 
 
 class JobStore:
@@ -347,12 +350,29 @@ class JobStore:
             before = self.load_candidates(job_id) or []
             candidates, result = change(job, before)
             self.save_candidates(job_id, candidates)
-            revisions = {candidate.id: candidate.revision for candidate in before}
+            previous = {candidate.id: candidate for candidate in before}
+            now = datetime.now(UTC)
             for candidate in candidates:
-                if revisions.get(candidate.id) != candidate.revision:
-                    self._edits[(job_id, candidate.id)] = (candidate.revision, edit)
+                old = previous.get(candidate.id)
+                if old is not None and old.revision == candidate.revision:
+                    continue
+                if old is not None:
+                    old_edit = self.edit_of(job_id, old.id, old.revision)
+                    history = recorded(self.revision_history(job_id, old.id), old, candidate, edit, old_edit, now)
+                    self._save_history(job_id, old.id, history)
+                self._edits[(job_id, candidate.id)] = (candidate.revision, edit)
             self._save(replace(job, updated_at=datetime.now(UTC)))
             return result
+
+    def revision_history(self, job_id: str, candidate_id: str) -> list[HistoryEntry]:
+        """The Candidate's Revision History, oldest first; empty until it is first changed."""
+        path = self.job_dir(job_id) / REVISIONS_DIR / f"{candidate_id}.json"
+        return _HISTORY.validate_json(path.read_bytes()) if path.is_file() else []
+
+    def _save_history(self, job_id: str, candidate_id: str, history: list[HistoryEntry]) -> None:
+        directory = self.job_dir(job_id) / REVISIONS_DIR
+        directory.mkdir(exist_ok=True)
+        write_atomic(directory / f"{candidate_id}.json", _HISTORY.dump_json(history, indent=2))
 
     def edit_of(self, job_id: str, candidate_id: str, revision: int) -> Edit:
         """Who saved this Revision of the Candidate: unknown when it wasn't saved by this process."""

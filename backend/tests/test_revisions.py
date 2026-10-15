@@ -5,6 +5,7 @@ import json
 import anyio
 import pytest
 
+from app import revisions
 from app.jobs import CANDIDATES_FILE
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from test_review import candidate_url, candidates, patch
@@ -118,3 +119,102 @@ async def test_merges_made_at_the_same_time_keep_both(mcp):
             group.start_soon(add, layer_id)
     layers = (await call(mcp, "get_candidate", **ids))["text_layers"]
     assert sorted(layer["id"] for layer in layers) == ["first", "second", "third"]
+
+
+# Revision History (edit-sync 04)
+
+
+def saved_by(source: str, tab: str | None = None) -> dict:
+    return {"X-Edit-Source": source} | ({"X-Edit-Tab": tab} if tab else {})
+
+
+def entries(client, job: dict, candidate: dict) -> list[dict]:
+    response = client.get(f"{candidate_url(job, candidate)}/revisions")
+    assert response.status_code == 200, response.text
+    return [{k: v for k, v in entry.items() if k != "at"} for entry in response.json()["revisions"]]
+
+
+def save(client, job: dict, candidate: dict, headers: dict, **change) -> dict:
+    response = client.patch(candidate_url(job, candidate), json=change, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_saves_from_one_editor_make_one_entry_and_the_state_before_another_editors_is_kept(
+    client, from_episode, llm, wait_for_status
+):
+    llm.clips = [clip("10:00", "10:44")]
+    job = analyzed(client, wait_for_status)
+    [candidate] = job["candidates"]
+    assert entries(client, job, candidate) == []
+
+    save(client, job, candidate, saved_by("advanced-edit", "tab-a"), hook_text="One")
+    save(client, job, candidate, saved_by("advanced-edit", "tab-a"), hook_text="Two", source_volume=0.5)
+    save(client, job, candidate, saved_by("agent"), hook_kicker="AGENT")
+    save(client, job, candidate, saved_by("advanced-edit", "tab-b"), layout="split")
+
+    # Newest first. The Candidate as Selection made it is kept before the first save.
+    assert entries(client, job, candidate) == [
+        {"revision": 5, "source": "advanced-edit", "tab": "tab-b", "parts": ["Layout"]},
+        {"revision": 4, "source": "agent", "tab": None, "parts": ["Hook"]},
+        {"revision": 3, "source": "advanced-edit", "tab": "tab-a", "parts": ["Hook", "Source volume"]},
+        {"revision": 1, "source": "original", "tab": None, "parts": []},
+    ]
+
+
+def test_after_a_pause_one_editors_saves_start_a_new_entry_and_the_oldest_go_beyond_the_most_kept(
+    client, from_episode, llm, wait_for_status, monkeypatch
+):
+    llm.clips = [clip("10:00", "10:44")]
+    job = analyzed(client, wait_for_status)
+    [candidate] = job["candidates"]
+    # Every save comes after a pause; three entries are kept.
+    monkeypatch.setattr(revisions, "GROUP_SECS", 0)
+    monkeypatch.setattr(revisions, "HISTORY_MAX", 3)
+
+    for n in range(4):
+        save(client, job, candidate, saved_by("clip-editor", "tab-a"), hook_secs=4 + n)
+    assert [entry["revision"] for entry in entries(client, job, candidate)] == [5, 4, 3]
+
+
+def test_restoring_an_entry_saves_it_again_as_the_next_revision(client, from_episode, llm, wait_for_status):
+    llm.clips = [clip("10:00", "10:44")]
+    job = analyzed(client, wait_for_status)
+    [candidate] = job["candidates"]
+    url = candidate_url(job, candidate)
+    save(client, job, candidate, saved_by("clip-editor"), selected=True)
+    save(client, job, candidate, saved_by("agent"), hook_text="The agent's hook", text_layers=[{"id": "t", "text": "T", "start": 0, "secs": 1}])
+
+    response = client.post(f"{url}/revisions/1/restore", json={"revision": 2}, headers=saved_by("clip-editor", "tab-a"))
+    assert response.status_code == 200, response.text
+    restored = response.json()
+    # As Selection made it, but still chosen for rendering.
+    assert (restored["revision"], restored["hook_text"], restored["text_layers"], restored["selected"]) == (
+        3, candidate["hook_text"], [], True,
+    )
+    assert entries(client, job, candidate)[0] == {"revision": 3, "source": "restore", "tab": "tab-a", "parts": ["Text Layers", "Hook"]}
+    # The entry restored is still there: a Restore takes nothing away.
+    assert client.get(f"{url}/revisions/2").json()["candidate"]["hook_text"] == "The agent's hook"
+
+    stale = client.post(f"{url}/revisions/2/restore", json={"revision": 2})
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["candidate"] == restored
+    assert client.post(f"{url}/revisions/99/restore", json={}).status_code == 404
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+    assert client.get(f"{url}/revisions").status_code == 404
+
+
+@pytest.mark.anyio
+async def test_the_agent_lists_and_restores_revisions(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    await call(mcp, "edit_candidate", **ids, changes={"hook_text": "A mistake"})
+
+    listed = await call(mcp, "list_candidate_revisions", **ids)
+    assert [(entry["revision"], entry["source"], entry["parts"]) for entry in listed["revisions"]] == [
+        (2, "agent", ["Hook"]), (1, "original", []),
+    ]
+    restored = await call(mcp, "restore_candidate_revision", **ids, restore=1, revision=2)
+    assert (restored["revision"], restored["hook_text"]) == (3, candidate["hook_text"])
+    assert "Revision 3" in await fails(mcp, "restore_candidate_revision", **ids, restore=1, revision=2)

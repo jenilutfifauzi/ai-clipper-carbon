@@ -46,15 +46,16 @@ const SAVED_BY: Record<SavedBy, string> = {
   agent: "Agent",
   restore: "Restore",
   unknown: "Unknown",
+  original: "Original",
 };
 
-// Who saved a change, as an editor shows it: the same editor as this one is another tab of it.
-export function savedByLabel(source: SavedBy, here: EditSource): string {
-  return source === here ? "Another tab" : SAVED_BY[source];
+// Who saved a change, as an editor shows it: the same editor as this one, in another tab, is that tab.
+export function savedByLabel(source: SavedBy, tab: string | null, here: EditSource): string {
+  return source === here && tab !== TAB_ID ? "Another tab" : SAVED_BY[source];
 }
 
 // What a notice of a change from elsewhere says.
 export function changedText(source: SavedBy, parts: string[], here: EditSource): string {
-  const who = savedByLabel(source, here);
+  const who = savedByLabel(source, null, here);
   return parts.length ? `${who} changed ${parts.join(", ")}` : `${who} changed this clip`;
 }

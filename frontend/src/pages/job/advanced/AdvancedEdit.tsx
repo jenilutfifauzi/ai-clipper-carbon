@@ -18,6 +18,7 @@ import {
   type Transition,
   type TransitionKind,
 } from "../../../api";
+import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Panel } from "../../../components/Panel";
 import { loadFonts } from "../../../fonts";
@@ -25,6 +26,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ClipPreview } from "../editor/ClipPreview";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
+import { RevisionHistory } from "../editor/RevisionHistory";
 import { candidateDraft } from "../editor/draft";
 import { placedOverrides } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
@@ -169,12 +171,45 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (next.revision <= revision.current || unanswered.current > 0) return;
     const nextEdits = editsOf(next);
     if (!history.adopt(nextEdits)) return;
+    // The state this replaces, kept in the Revision History: the notice's Restore brings it back.
+    const before = revision.current;
     revision.current = next.revision;
     // In step again: saves are made from this Revision.
     stale.current = false;
     setCandidate(next);
     setChanged(changedItems(edits, nextEdits));
-    setNotice({ id: Date.now(), text: changedText(source, parts, "advanced-edit") });
+    setNotice({ id: Date.now(), text: changedText(source, parts, "advanced-edit"), action: restoreButton(before) });
+  }
+
+  // Saves the clip as it was at Revision `entry` of its Revision History, once the edits waiting
+  // here are saved; answers why it couldn't, or null.
+  async function restore(entry: number): Promise<string | null> {
+    await history.flush();
+    await sending.current;
+    try {
+      const answer = await api.restoreRevision(job.id, initial.id, entry, revision.current, "advanced-edit");
+      revision.current = answer.revision;
+      stale.current = false;
+      setSaveError(null);
+      setCandidate(answer);
+      history.adopt(editsOf(answer));
+      return null;
+    } catch (reason) {
+      return staleCandidate(reason) ? "This clip changed meanwhile (another tab or the agent): look again, then restore." : (reason as Error).message;
+    }
+  }
+
+  function restoreButton(entry: number) {
+    return (
+      <Button
+        size="xs"
+        onClick={() =>
+          void restore(entry).then((failed) => setNotice({ id: Date.now(), text: failed ?? "Restored the clip as it was" }))
+        }
+      >
+        Restore
+      </Button>
+    );
   }
   useEffect(() => {
     if (!changed.size) return;
@@ -436,6 +471,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           />
         }
         history={history}
+        actions={
+          <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
+        }
         onClose={() => void close()}
       />
       <ConfirmDialog
