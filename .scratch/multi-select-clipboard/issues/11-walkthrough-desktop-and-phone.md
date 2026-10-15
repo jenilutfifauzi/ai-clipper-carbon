@@ -18,10 +18,10 @@
 
 **Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09, 10.
 
-**Status:** ready-for-human
+**Status:** done
 
-- [ ] Each step above is checked by the owner.
-- [ ] `npm run typecheck`, `npm test`, `npm run build` pass.
+- [x] Each step above is checked by the owner.
+- [x] `npm run typecheck`, `npm test`, `npm run build` pass.
 
 ## Comments
 
@@ -31,3 +31,5 @@
 - At 390 px with touch emulation: a swipe across a Text Layer scrolls the Timeline and leaves the item where it was; a long press then a drag moves it (0 s to 3.4 s).
 
 Both test Candidates were restored to Revision 1 afterwards. Still the owner's: the walkthrough itself, and a real phone.
+
+**2026-10-15: done.** The owner walked through the feature and it passed. Pasting Segments between A and B leaves A's Transition on A, so it plays into the first Segment pasted, as duplicating a Segment already does (the agent's recommendation; unchanged from the build).

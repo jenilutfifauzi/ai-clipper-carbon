@@ -46,7 +46,7 @@ Daftar gap Advanced Edit terhadap editor referensi `docs/referensi/concat`, urut
 | # | Slug `.scratch/` | Fitur | Bergantung pada | Prioritas |
 |---|---|---|---|---|
 | 0 | `edit-sync` | Live sync dan deteksi konflik (browser ↔ MCP ↔ tab lain) — **selesai 2026-10-15** | — | P0 (fondasi) |
-| 1 | `multi-select-clipboard` | Multi-select, marquee, select all, copy/paste, operasi massal | — | P1 |
+| 1 | `multi-select-clipboard` | Multi-select, marquee, select all, copy/paste, operasi massal — **selesai 2026-10-15** | — | P1 |
 | 2 | `track-controls` | Track mute/hide/lock, magnetic toggle, ripple delete layer, split semua track | 1 | P1 |
 | 3 | `timeline-visuals` | Filmstrip, waveform, garis volume dan fade di clip, zoom-to-fit | — | P1 |
 | 4 | `navigation-playback` | Frame step, Home/End, zoom keys, hover scrub, sheet shortcut, loop/fullscreen, join mulus | — | P1 |

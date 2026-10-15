@@ -1,6 +1,6 @@
 # Multi-select and clipboard in the Advanced Edit
 
-Status: ready-for-agent
+Status: done
 Created: 2026-10-15
 
 ## Problem Statement
