@@ -183,6 +183,24 @@ export function split(scene: Scene, at: number): Outcome | null {
   return tails.length ? { edits: next, pick: picked(...tails) } : null;
 }
 
+/**
+ * The picked Text Layers, Music Clips and Overlays moved `delta` seconds later (earlier when it is
+ * negative), as a group: no further than keeps them all inside the Clip. Picked Segments stay.
+ */
+export function move(scene: Scene, delta: number): Outcome | null {
+  const { layers } = pickedItems(scene);
+  if (!layers.length) return null;
+  const first = Math.min(...layers.map(({ item }) => item.start));
+  const end = Math.max(...layers.map(({ item }) => Math.min(item.start + item.secs, scene.duration)));
+  const by = Math.min(Math.max(delta, -first), scene.duration - end);
+  const next = { ...scene.edits };
+  for (const { kind, item } of layers) {
+    const list = KINDS[kind].list;
+    Object.assign(next, { [list]: (next[list] as Timed[]).map((other) => (other.id === item.id ? { ...other, start: round(other.start + by) } : other)) });
+  }
+  return { edits: next, pick: scene.pick };
+}
+
 /** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
 export interface ItemActions {
   remove: () => void;

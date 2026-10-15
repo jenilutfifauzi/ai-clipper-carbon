@@ -33,7 +33,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { itemActions, selectAll, type ItemActions, type Outcome } from "./actions";
+import { itemActions, move, selectAll, type ItemActions, type Outcome } from "./actions";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
@@ -43,7 +43,7 @@ import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { bandPick, onlyItem, picked, prunedPick, samePick, stageIdsOf, stageItem, type Pick } from "./pick";
+import { bandPick, isPicked, itemsOf, onlyItem, picked, prunedPick, samePick, stageIdsOf, stageItem, type ItemKind, type Pick } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -465,7 +465,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <AdvancedTimeline
       duration={duration}
       playback={playback}
-      snapPoints={snapPoints(edits, played)}
+      snapPoints={snapPoints(edits, played, pick)}
       tools={<ItemTools actions={actions} playback={playback} />}
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
       onClear={() => select(null)}
@@ -488,6 +488,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onMusic: updateMusic,
             onOverlay: updateOverlay,
             onSegment: moveSegment,
+            onMove: (delta, group) => {
+              const moved = move(scene, delta);
+              if (moved) history.set(moved.edits, group);
+            },
             onJoin: (after) => {
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");
@@ -716,11 +720,18 @@ function wordGap(words: { start: number; end: number }[], time: number): number 
     : (word.end + (after?.start ?? word.end)) / 2;
 }
 
-// The edges items snap to, besides the playhead and the Clip's ends: the hook's, the items', and
-// where each Segment gives way to the next, as played.
-function snapPoints(edits: AdvancedEdits, played: PlayedSegment[]): number[] {
+// The edges items snap to, besides the playhead and the Clip's ends: the hook's, the items' (but
+// those of a Pick of several, which move together), and where each Segment gives way to the next,
+// as played.
+function snapPoints(edits: AdvancedEdits, played: PlayedSegment[], pick: Pick): number[] {
   const points = [edits.hook_start, edits.hook_start + edits.hook_secs];
-  for (const item of [...edits.text_layers, ...edits.music, ...edits.overlays]) points.push(item.start, item.start + item.secs);
+  const moving = (kind: ItemKind, id: string) => itemsOf(pick).length > 1 && isPicked(pick, kind, id);
+  const items = [
+    ...edits.text_layers.filter((item) => !moving("text", item.id)),
+    ...edits.music.filter((item) => !moving("music", item.id)),
+    ...edits.overlays.filter((item) => !moving("overlay", item.id)),
+  ];
+  for (const item of items) points.push(item.start, item.start + item.secs);
   for (const shown of played) points.push(shown.end);
   return points;
 }

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
-import { duplicate, remove, selectAll, split, type Scene } from "./actions";
+import { duplicate, move, remove, selectAll, split, type Scene } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { bandPick, picked, prunedPick, type Pick } from "./pick";
 
@@ -303,5 +303,39 @@ describe("the rubber band", () => {
 
     expect(bandPick(picked(text("a")), drawn, band, false)).toBeNull();
     expect(bandPick(picked(text("a")), drawn, band, true)).toEqual(picked(text("a")));
+  });
+});
+
+describe("moving a Pick", () => {
+  test("moves its Text Layers, Music Clips and Overlays by the same time, and not its Segments", () => {
+    const before = edits({ text_layers: [layer("a", 1, 2)], music: [music("m", 2, 2)], overlays: [overlay("o", 0.5, 1)] });
+    const pick = picked(text("a"), { kind: "music", id: "m" }, { kind: "overlay", id: "o" }, seg("s1"));
+
+    expect(move(scene(before, pick), 2)).toEqual({
+      edits: { ...before, text_layers: [layer("a", 3, 2)], music: [music("m", 4, 2)], overlays: [overlay("o", 2.5, 1)] },
+      pick,
+    });
+  });
+
+  test("stops at the Clip's end, keeping the group's shape", () => {
+    const before = edits({ text_layers: [layer("a", 1, 2), layer("b", 6, 3)] });
+
+    expect(move(scene(before, picked(text("a"), text("b"))), 3)?.edits.text_layers).toEqual([layer("a", 2, 2), layer("b", 7, 3)]);
+  });
+
+  test("stops at the Clip's start", () => {
+    const before = edits({ text_layers: [layer("a", 1, 2), layer("b", 6, 3)] });
+
+    expect(move(scene(before, picked(text("a"), text("b"))), -5)?.edits.text_layers).toEqual([layer("a", 0, 2), layer("b", 5, 3)]);
+  });
+
+  test("leaves the items that aren't picked", () => {
+    const before = edits({ text_layers: [layer("a", 1, 2), layer("b", 6, 2)] });
+
+    expect(move(scene(before, picked(text("a"))), 1)?.edits.text_layers).toEqual([layer("a", 2, 2), layer("b", 6, 2)]);
+  });
+
+  test("does nothing without Text Layers, Music Clips or Overlays picked", () => {
+    expect(move(scene(edits(), picked(seg("s1"))), 1)).toBeNull();
   });
 });
