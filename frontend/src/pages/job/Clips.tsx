@@ -79,11 +79,13 @@ export function Clips({
 }
 
 /**
- * Whether the Candidate would render differently from its Clip: a different range, hook, layout or
- * edit, or (with the Presets at hand) styles its Preset now resolves differently. A Clip rendered
- * before the editor is compared by range, hook and layout only.
+ * Whether the Candidate would render differently from its Clip: another Revision of it (any edit),
+ * or (with the Presets at hand) styles its Preset now resolves differently. A Clip rendered before
+ * Revisions is compared field by field instead, and one rendered before the editor by range, hook
+ * and layout only.
  */
 function changedSince(candidate: Candidate, output: RenderedClip, presets: StylePreset[] | null): boolean {
+  if (output.revision != null) return candidate.revision !== output.revision || restyled(candidate, output, presets);
   if (
     candidate.start !== output.start ||
     candidate.end !== output.end ||
@@ -95,6 +97,11 @@ function changedSince(candidate: Candidate, output: RenderedClip, presets: Style
   if (output.preset_id === null) return false;
   const edits = ["preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides", "text_layers", "music", "source_volume", "segments", "overlays", "transitions"] as const;
   if (edits.some((field) => !same(candidate[field], output[field]))) return true;
+  return restyled(candidate, output, presets);
+}
+
+// Whether the Candidate's Preset (edited since, say) now resolves to other styles than its Clip's.
+function restyled(candidate: Candidate, output: RenderedClip, presets: StylePreset[] | null): boolean {
   const preset = presets?.find((p) => p.id === candidate.preset_id) ?? presets?.[0];
   if (!preset || !output.caption_style || !output.hook_style) return false;
   // A Clip rendered before Watermarks had none.

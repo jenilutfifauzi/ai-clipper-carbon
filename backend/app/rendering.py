@@ -474,6 +474,7 @@ class Renders:
                 segments=candidate.segments,
                 overlays=candidate.overlays,
                 transitions=candidate.transitions,
+                revision=candidate.revision,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

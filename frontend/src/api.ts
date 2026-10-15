@@ -708,6 +708,8 @@ export interface RenderedClip {
   segments: ClipSegment[];
   overlays: Overlay[];
   transitions: Transition[];
+  // The Candidate's Revision it was rendered from; null in a Clip rendered before Revisions.
+  revision: number | null;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";

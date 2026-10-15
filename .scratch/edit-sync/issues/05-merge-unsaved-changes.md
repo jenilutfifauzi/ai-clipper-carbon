@@ -62,4 +62,10 @@
   - A second refusal, or a 422, shows the clip as it is now with a message.
 - **Collisions are named by part** (`collidedParts`). The notice's Restore restores the other editor's Revision.
 
+**Not walked through in the browser:**
+- The disjoint case was walked with the Kicker in place of a Music Clip, because the scratch Media Library has no song.
+- The collision notice's Restore was not clicked here. It is the same restore as ticket 04's notice Restore, which was.
+- The 422 path is in the code, but no merge in the walkthrough made an invalid edit.
+- Ticket 07 covers these with a real agent.
+
 **Known limit:** in the clip editor, a style or hook-timing draft typed less than 0.7 s before a change from elsewhere arrives is saved as a whole when its editor starts again. On the fields of that draft, it wins over the other change.

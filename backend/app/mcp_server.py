@@ -544,6 +544,7 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
             "duration": output["duration"],
             "size_bytes": output["size_bytes"],
             "rendered_at": output["at"],
+            "revision": output.get("revision"),
         }
     return _compact(view)
 

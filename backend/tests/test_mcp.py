@@ -226,6 +226,8 @@ async def test_selected_candidates_render_into_clips_with_their_paths(mcp):
     assert clip["status"] == "done", clip
     assert Path(clip["video_path"]).is_file() and Path(clip["poster_path"]).is_file()
     assert clip["duration"] == pytest.approx(candidate["end"] - candidate["start"], abs=0.05)
+    # Rendered from this Revision: a Clip is stale once its Candidate's is another.
+    assert clip["revision"] == candidate["revision"]
 
 
 # 06: Style Presets, assets and the Channel Profile

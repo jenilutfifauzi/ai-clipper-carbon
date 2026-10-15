@@ -249,6 +249,20 @@ def test_rendering_again_after_an_edit_replaces_the_clip(client, settings):
     assert statuses(after)[-5:] == ["review", "rendering", "review", "rendering", "review"]
 
 
+def test_a_clip_records_the_revision_it_was_rendered_from(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "Podcast")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["output"]["revision"] == candidate["revision"]
+
+    # An Advanced Edit change alone leaves the Clip behind its Candidate: it is stale.
+    edited = patch(client, job, candidate, text_layers=[{"id": "t", "text": "Judul", "start": 0, "secs": 1}])
+    assert edited["revision"] == candidate["revision"] + 1
+    [clip] = client.get(f"/api/jobs/{job['id']}").json()["clips"]
+    assert clip["output"]["revision"] == candidate["revision"]
+
+
 def test_review_goes_on_while_clips_wait_to_render(client, video_source, settings):
     job = reviewed(client)
     candidate = add(client, job, "halo", "Podcast")

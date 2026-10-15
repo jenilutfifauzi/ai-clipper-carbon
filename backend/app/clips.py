@@ -59,6 +59,9 @@ class RenderedClip:
     segments: list[Segment] = field(default_factory=list)
     overlays: list[Overlay] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
+    # The Candidate's Revision it was rendered from: stale once the Candidate's differs (ADR 0003).
+    # None in a Clip rendered before Revisions, which is compared by the fields above.
+    revision: int | None = None
 
 
 @dataclass(frozen=True)
