@@ -6,7 +6,7 @@ import { TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, picked, toggled, type ItemRef, type Pick } from "./pick";
+import { isPicked, keyOf, picked, toggled, type ItemRef, type Pick } from "./pick";
 
 // The hook's shortest and longest time (hook_secs in backend/app/api.py).
 const HOOK_MIN_SECS = 0.5;
@@ -104,6 +104,7 @@ export function Tracks({
                 selected={selected}
                 changed={changed.has(layer.id)}
                 label={`Text "${layer.text}", from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s`}
+                pickKey={keyOf({ kind: "text", id: layer.id })}
                 onSelect={choose({ kind: "text", id: layer.id })}
                 onChange={({ start, end }, group) => handlers.onText({ ...layer, start: round(start), secs: round(end - start) }, group)}
                 onDelete={selected ? onDelete : undefined}
@@ -135,6 +136,7 @@ export function Tracks({
                 selected={selected}
                 changed={changed.has(overlay.id)}
                 label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
+                pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
                   handlers.onOverlay(
@@ -188,6 +190,7 @@ export function Tracks({
               selected={selected}
               changed={changed.has(segment.id)}
               label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}`}
+              pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => handlers.onSegment(segment.id, moved, group)}
               onDelete={selected ? onDelete : undefined}
@@ -305,6 +308,7 @@ export function Tracks({
                 selected={selected}
                 changed={changed.has(clip.id)}
                 label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
+                pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>
                   handlers.onMusic(

@@ -38,17 +38,26 @@ export interface TimeGeometry {
   timeAt: (clientX: number) => number;
 }
 
+// An area on screen, in CSS pixels.
+export type Area = { left: number; right: number; top: number; bottom: number };
+
 /**
  * The Advanced Edit's multi-track Timeline, in Timeline time (seconds into the output): a ruler, the
  * tracks `children` draws, and the playhead over them. A click anywhere off the items (on the ruler
- * or the tracks) moves the playhead there, and dragging scrubs, as in CapCut or Premiere Pro. Zoomed by its buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by
- * Ctrl or Cmd with the scroll wheel, about the pointer.
+ * or the tracks) moves the playhead there, and dragging on the ruler scrubs, as in CapCut or Premiere
+ * Pro. With a mouse, dragging on the tracks off the items draws a rubber band instead: on release,
+ * `onBand` is given the items drawn (each by its `pickKey`) and the band (with Shift, `add`), and a
+ * click there also calls `onClear`. On a touch screen a swipe on the tracks scrolls. Zoomed by its
+ * buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by Ctrl or Cmd with the
+ * scroll wheel, about the pointer.
  */
 export function AdvancedTimeline({
   duration,
   playback,
   snapPoints,
   tools,
+  onBand,
+  onClear,
   children,
 }: {
   duration: number;
@@ -57,12 +66,18 @@ export function AdvancedTimeline({
   snapPoints: number[];
   // Buttons for the bar above the tracks (split, delete, ...).
   tools?: ReactNode;
+  onBand?: (items: (Area & { key: string })[], band: Area, add: boolean) => void;
+  onClear?: () => void;
   children: (geometry: TimeGeometry) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   // A press on the tracks or the ruler that moves the playhead: at once and while dragged (`now`), or
   // when it lifts where it went down (a tap, which may yet turn into a scroll).
   const scrub = useRef<{ pointer: number; x: number; y: number; now: boolean } | null>(null);
+  // A mouse's press on the tracks off the items: a click, or a rubber band once it moves.
+  const banding = useRef<{ pointer: number; x: number; y: number; add: boolean; moved: boolean } | null>(null);
+  // The rubber band as drawn, over the tracks.
+  const [band, setBand] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [width, setWidth] = useState(600);
   const [zoom, setZoom] = useState(1);
   // A zoom about a point: the time under it and where it is in the view, kept there after the zoom.
@@ -186,9 +201,15 @@ export function AdvancedTimeline({
             if (event.button !== 0 || target.closest("button, a, input, [role=button]")) return;
             const left = scroller.current!.getBoundingClientRect().left + LABEL_WIDTH;
             if (event.clientX < left) return;
+            const ruler = !!target.closest("[data-scrub]");
+            if (event.pointerType !== "touch" && !ruler && onBand) {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              banding.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, add: event.shiftKey, moved: false };
+              return;
+            }
             // A touch on the tracks may be a swipe that scrolls: it moves the playhead when it ends
             // where it started. A mouse, or a touch on the ruler, moves it at once and scrubs.
-            const now = event.pointerType !== "touch" || !!target.closest("[data-scrub]");
+            const now = event.pointerType !== "touch" || ruler;
             scrub.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, now };
             if (now) {
               event.currentTarget.setPointerCapture(event.pointerId);
@@ -196,18 +217,55 @@ export function AdvancedTimeline({
             }
           }}
           onPointerMove={(event) => {
+            const pressed = banding.current;
+            if (pressed?.pointer === event.pointerId) {
+              if (!pressed.moved && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) <= TAP_SLOP_PX) return;
+              pressed.moved = true;
+              const rect = event.currentTarget.getBoundingClientRect();
+              setBand({
+                left: Math.min(pressed.x, event.clientX) - rect.left,
+                top: Math.min(pressed.y, event.clientY) - rect.top,
+                width: Math.abs(event.clientX - pressed.x),
+                height: Math.abs(event.clientY - pressed.y),
+              });
+              return;
+            }
             const current = scrub.current;
             if (!current || current.pointer !== event.pointerId) return;
             if (current.now) playback.seek(timeAt(event.clientX));
             else if (Math.hypot(event.clientX - current.x, event.clientY - current.y) > TAP_SLOP_PX) scrub.current = null;
           }}
           onPointerUp={(event) => {
+            const pressed = banding.current;
+            if (pressed?.pointer === event.pointerId) {
+              banding.current = null;
+              setBand(null);
+              if (!pressed.moved) {
+                playback.seek(timeAt(event.clientX));
+                onClear?.();
+                return;
+              }
+              const drawn = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-pick]")].map((node) => {
+                const { left, right, top, bottom } = node.getBoundingClientRect();
+                return { key: node.dataset.pick!, left, right, top, bottom };
+              });
+              const area = {
+                left: Math.min(pressed.x, event.clientX),
+                right: Math.max(pressed.x, event.clientX),
+                top: Math.min(pressed.y, event.clientY),
+                bottom: Math.max(pressed.y, event.clientY),
+              };
+              onBand?.(drawn, area, pressed.add);
+              return;
+            }
             const current = scrub.current;
             if (current?.pointer === event.pointerId && !current.now) playback.seek(timeAt(event.clientX));
             scrub.current = null;
           }}
           onPointerCancel={() => {
             scrub.current = null;
+            banding.current = null;
+            setBand(null);
           }}
         >
           <TrackRow label="" height="h-7">
@@ -215,6 +273,13 @@ export function AdvancedTimeline({
           </TrackRow>
           {children(geometry)}
           <Playhead playback={playback} pps={pps} />
+          {band && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute z-30 rounded-sm border border-accent bg-accent/15"
+              style={{ left: band.left, top: band.top, width: band.width, height: band.height }}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -338,6 +403,7 @@ export function TimelineItem({
   trim = true,
   tone,
   selected,
+  pickKey,
   changed = false,
   label,
   onSelect,
@@ -359,6 +425,8 @@ export function TimelineItem({
   trim?: boolean;
   tone: ItemTone;
   selected: boolean;
+  // How a rubber band names it, when it can pick it.
+  pickKey?: string;
   // Just changed in another editor (another tab, the agent): shown for a moment.
   changed?: boolean;
   // What a screen reader calls it.
@@ -520,6 +588,7 @@ export function TimelineItem({
       tabIndex={0}
       aria-label={label}
       aria-pressed={selected}
+      data-pick={pickKey}
       {...handlers}
       className={cx(
         "group absolute inset-y-1 overflow-hidden rounded-md text-left text-xs leading-none ring-1",

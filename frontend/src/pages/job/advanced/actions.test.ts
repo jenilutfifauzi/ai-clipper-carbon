@@ -5,7 +5,7 @@ import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
 import { duplicate, remove, selectAll, split, type Scene } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { picked, prunedPick, type Pick } from "./pick";
+import { bandPick, picked, prunedPick, type Pick } from "./pick";
 
 function layer(id: string, start: number, secs: number, changes: Partial<TextLayer> = {}): TextLayer {
   return {
@@ -270,5 +270,38 @@ describe("splitting a Pick", () => {
       },
       pick: picked(seg("n1"), text("n2")),
     });
+  });
+});
+
+describe("the rubber band", () => {
+  // Items as drawn on the Timeline, in screen pixels: a row of texts over the video's row.
+  const drawn = [
+    { key: "text:a", left: 0, right: 100, top: 0, bottom: 40 },
+    { key: "text:b", left: 150, right: 250, top: 0, bottom: 40 },
+    { key: "segment:s1", left: 0, right: 300, top: 50, bottom: 100 },
+    { key: "hook", left: 0, right: 80, top: 110, bottom: 140 },
+  ];
+
+  test("picks every item it touches, even partly, across rows", () => {
+    expect(bandPick(null, drawn, { left: 90, right: 160, top: 20, bottom: 60 }, false)).toEqual(picked(text("a"), text("b"), seg("s1")));
+  });
+
+  test("leaves out items it doesn't reach, and the hook", () => {
+    expect(bandPick(null, drawn, { left: 10, right: 60, top: 60, bottom: 130 }, false)).toEqual(picked(seg("s1")));
+  });
+
+  test("replaces the Pick, or adds to it with Shift", () => {
+    const band = { left: 160, right: 200, top: 10, bottom: 30 };
+
+    expect(bandPick(picked(text("a")), drawn, band, false)).toEqual(picked(text("b")));
+    expect(bandPick(picked(text("a"), text("b")), drawn, band, true)).toEqual(picked(text("a"), text("b")));
+    expect(bandPick(picked(seg("s1")), drawn, band, true)).toEqual(picked(seg("s1"), text("b")));
+  });
+
+  test("touching nothing picks nothing, or keeps the Pick with Shift", () => {
+    const band = { left: 400, right: 450, top: 0, bottom: 100 };
+
+    expect(bandPick(picked(text("a")), drawn, band, false)).toBeNull();
+    expect(bandPick(picked(text("a")), drawn, band, true)).toEqual(picked(text("a")));
   });
 });

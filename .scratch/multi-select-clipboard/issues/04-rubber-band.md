@@ -13,12 +13,16 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam D: the rubber band picks by overlap. It spans rows, skips the hook, captions and joins, and adds with Shift.
-- [ ] In the browser:
-  - [ ] the box draws and picks on release;
-  - [ ] a click on empty lane space seeks and empties the Pick;
-  - [ ] the ruler still scrubs;
-  - [ ] a phone swipe still scrolls.
-- [ ] Typecheck, test, build.
+- [x] Seam D: the rubber band picks by overlap. It spans rows, skips the hook, captions and joins, and adds with Shift.
+- [x] In the browser:
+  - [x] the box draws and picks on release;
+  - [x] a click on empty lane space seeks and empties the Pick;
+  - [x] the ruler still scrubs;
+  - [ ] a phone swipe still scrolls (left for the walkthrough, 11).
+- [x] Typecheck, test, build.
+
+## Comments
+
+**2026-10-15: done.** The Timeline reads each pickable item's drawn area from its `data-pick` key on release and hands them to the Pick's `bandPick` rule. Checked in the browser with a mouse: the band draws while dragging from empty text-lane space and picks the Text Layer and the Segment it crosses; a click there seeks and empties the Pick. The ruler and touch paths are unchanged in code; a phone swipe is left for the walkthrough (11).

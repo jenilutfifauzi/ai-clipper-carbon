@@ -64,3 +64,30 @@ export function stageItem(stageId: StageId): { kind: "hook" } | { kind: "caption
   if (stageId === "hook" || stageId === "captions") return { kind: stageId };
   return { kind: "text", id: stageId.slice("text:".length) };
 }
+
+/** An item's key on the Timeline: its kind and id. */
+export const keyOf = (item: ItemRef) => `${item.kind}:${item.id}`;
+
+const KINDS = new Set<string>(Object.keys(LISTS));
+
+// The item a key names, if it is one that is picked with others.
+function refOf(key: string): ItemRef | null {
+  const [kind, id] = key.split(":");
+  return KINDS.has(kind) && id ? { kind: kind as ItemKind, id } : null;
+}
+
+type Area = { left: number; right: number; top: number; bottom: number };
+
+/**
+ * The Pick after a rubber band over `band`: each item drawn (`items`, by key, in the same pixels) that
+ * it touches, even partly; added to `pick` with `add` (Shift), else in its place. The hook, the
+ * captions and joins aren't picked by it.
+ */
+export function bandPick(pick: Pick, items: (Area & { key: string })[], band: Area, add: boolean): Pick {
+  const touched = items
+    .filter((item) => item.left < band.right && band.left < item.right && item.top < band.bottom && band.top < item.bottom)
+    .map((item) => refOf(item.key))
+    .filter((item): item is ItemRef => item !== null);
+  if (!add) return picked(...touched);
+  return picked(...itemsOf(pick), ...touched.filter((item) => !isPicked(pick, item.kind, item.id)));
+}

@@ -43,7 +43,7 @@ import { draggedSegments, newMediaSegment } from "./MainTrack";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { onlyItem, picked, prunedPick, samePick, stageIdsOf, stageItem, type Pick } from "./pick";
+import { bandPick, onlyItem, picked, prunedPick, samePick, stageIdsOf, stageItem, type Pick } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { Tracks, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -462,7 +462,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     />
   );
   const timeline = (
-    <AdvancedTimeline duration={duration} playback={playback} snapPoints={snapPoints(edits, played)} tools={<ItemTools actions={actions} playback={playback} />}>
+    <AdvancedTimeline
+      duration={duration}
+      playback={playback}
+      snapPoints={snapPoints(edits, played)}
+      tools={<ItemTools actions={actions} playback={playback} />}
+      onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
+      onClear={() => select(null)}
+    >
       {(geometry) => (
         <Tracks
           geometry={geometry}
