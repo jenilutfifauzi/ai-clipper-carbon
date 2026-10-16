@@ -97,6 +97,7 @@ import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { edgesOf, editPoints, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
+import { TransformPanel } from "./TransformPanel";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory } from "./useEditHistory";
 
@@ -163,9 +164,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [pickState, setPickState] = useState<Pick>(null);
-  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the Tracks
-  // or of Playback.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | "playback" | null>(null);
+  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
+  // picture's Transform, of the Tracks or of Playback.
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The player's room, which goes full screen with the stage and the player bar.
   const fullscreenRoom = useRef<HTMLDivElement>(null);
@@ -626,7 +627,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           };
         };
   // The inspector's Crop for a Segment's or an Overlay's picture: the playhead put on it if it isn't,
-  // the inspector's sheet closed, and Crop mode opened on the stage. None where the stage can't
+  // the inspector's or the Transform sheet closed, and Crop mode opened on the stage. None where the stage can't
   // crop it (its Track locked, full screen).
   const cropMode = (kind: "segment" | "overlay", id: string): (() => void) | undefined => {
     if (fullscreen.way || !plan || tracks.locked.includes(kind === "overlay" ? "overlay" : "video")) return undefined;
@@ -635,7 +636,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       const index = edits.segments.findIndex((segment) => segment.id === id);
       const range = overlay ? { start: overlay.start, end: overlay.start + overlay.secs } : (plan.segments[index] ?? (index === 0 ? { start: 0, end: duration } : null));
       if (range && (playback.time < range.start || playback.time >= range.end)) playback.seek((range.start + range.end) / 2);
-      setSheet((open) => (open === "inspector" ? null : open));
+      setSheet((open) => (open === "inspector" || open === "transform" ? null : open));
       setCropAsked((count) => count + 1);
     };
   };
@@ -939,6 +940,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         picking={picking}
         paste={pasteHere}
         onInspect={() => setSheet("inspector")}
+        onTransform={() => setSheet("transform")}
         onTracks={() => setSheet("tracks")}
         onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
@@ -953,7 +955,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           title={
             sheet === "inspector"
               ? "Edit"
-              : sheet === "tracks"
+              : sheet === "transform"
+                ? "Transform"
+                : sheet === "tracks"
                 ? "Tracks"
                 : sheet === "playback"
                   ? "Playback"
@@ -963,6 +967,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         >
           {sheet === "inspector" ? (
             inspector
+          ) : sheet === "transform" ? (
+            <TransformPanel
+              pick={pick}
+              edits={edits}
+              preview={preview}
+              mediaById={mediaById}
+              playback={playback}
+              onEdits={history.set}
+              onOverlay={updateOverlay}
+              onSegment={updateSegment}
+              cropMode={cropMode}
+            />
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
           ) : sheet === "playback" ? (

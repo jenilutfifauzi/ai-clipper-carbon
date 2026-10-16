@@ -173,6 +173,9 @@ export function ClipPreview({
       className={cx(
         "relative mx-auto overflow-hidden rounded-control bg-black outline-1 -outline-offset-1 outline-white/10",
         fit ? "shrink-0" : "aspect-[9/16] w-full max-w-[22rem]",
+        // The Advanced Edit's stage takes every finger: a pinch or a drag there neither zooms nor
+        // scrolls the page (in the clip editor, a swipe over the preview still scrolls it).
+        fit && controls && "touch-none",
       )}
       style={{ "--scale": scale, ...(fit ? { width: fitted.width, height: fitted.height } : {}) } as CSSProperties}
     >

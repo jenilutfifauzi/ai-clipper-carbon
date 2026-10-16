@@ -16,6 +16,7 @@ import {
   ListChecks,
   Loader2,
   Redo2,
+  Scaling,
   Scissors,
   Shuffle,
   SlidersHorizontal,
@@ -36,7 +37,7 @@ import type { ItemActions, Splitter } from "./actions";
 import type { Commands } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { keyNames, shortcutSheet } from "./keymap";
-import { itemsOf, type Pick } from "./pick";
+import { itemsOf, onlyItem, type Pick } from "./pick";
 import { lastFrame, onFrame } from "./playhead";
 import { nextEditPoint, previousEditPoint } from "./timelineView";
 import type { EditHistory } from "./useEditHistory";
@@ -166,7 +167,8 @@ export function SaveStatus({
 }
 
 /**
- * The phone's bottom bar: the asset tabs and Pick, or what can be done to the picked items. In picking
+ * The phone's bottom bar: the asset tabs and Pick, or what can be done to the picked items (with
+ * Transform, for an Overlay or a Segment picked alone, opening the Transform sheet). In picking
  * mode (`picking`, started by Pick), a tap adds an item to the Pick or takes it out, and the bar counts
  * them and offers what can be done to them all, Paste while the Clipboard holds something
  * (`paste`), and Done.
@@ -180,6 +182,7 @@ export function Toolbar({
   paste,
   onAsset,
   onInspect,
+  onTransform,
   onTracks,
   onPlayback,
   onPicking,
@@ -193,6 +196,8 @@ export function Toolbar({
   paste: (() => void) | null;
   onAsset: (tab: AssetTab) => void;
   onInspect: () => void;
+  // Opens the Transform sheet: the picked picture's Transform, Crop and Background or decoration.
+  onTransform: () => void;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;
   // Opens the Playback sheet: the rate, the Loop Region and the Edit Point jumps.
@@ -201,6 +206,8 @@ export function Toolbar({
   onDeselect: () => void;
 }) {
   const count = itemsOf(pick).length;
+  const only = onlyItem(pick);
+  const picture = only?.kind === "overlay" || only?.kind === "segment";
   return (
     <nav
       aria-label="Tools"
@@ -223,6 +230,7 @@ export function Toolbar({
         <>
           <ToolButton icon={X} label="Done" onClick={onDeselect} />
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
+          {picture && <ToolButton icon={Scaling} label="Transform" onClick={onTransform} />}
           {actions && (
             <>
               <SplitButton splitter={splitter} playback={playback} />

@@ -169,7 +169,7 @@ export function SegmentFields({
 }
 
 /** A video's Segment's Framing: its Transform and Crop, and its Background, each field one group of the history. */
-function FramingFields({
+export function FramingFields({
   segment,
   framing,
   item,

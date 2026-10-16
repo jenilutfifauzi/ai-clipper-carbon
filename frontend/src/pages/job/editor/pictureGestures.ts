@@ -231,3 +231,58 @@ export function pinched(grab: Grabbed, from: [Point, Point], to: [Point, Point],
     rotation: turnedBy(transform.rotation, turn(angle(from), angle(to)), keys),
   };
 }
+
+/**
+ * A gesture on a picture under one finger or two (a pointer each, by id): with one, its Grip (or the
+ * body) dragged from where the finger was; with two, a pinch from where both were (`pinched`). Each
+ * finger's `from` is where it was when this part of the gesture began, and `grab` the picture then.
+ */
+export interface Fingers {
+  grip: Grip | "body";
+  grab: Grabbed;
+  down: { id: number; from: Point; at: Point }[];
+}
+
+/** A gesture begun by finger `id` going down at `at` on `grip` (or the body) of the picture `grab`. */
+export function fingersOn(grab: Grabbed, grip: Grip | "body", id: number, at: Point): Fingers {
+  return { grip, grab, down: [{ id, from: at, at }] };
+}
+
+// The fingers `down` each starting again where it is, from the picture as `held` now.
+const again = (fingers: Fingers, held: PictureTransform, down: Fingers["down"], grip: Fingers["grip"]): Fingers => ({
+  grip,
+  grab: { ...fingers.grab, transform: held },
+  down: down.map(({ id, at }) => ({ id, from: at, at })),
+});
+
+/**
+ * A second finger `id` down at `at`: a pinch from here, of the picture as `held` now (the first
+ * finger's move so far, as the stage shows it). A third finger is left out.
+ */
+export function fingerDown(fingers: Fingers, id: number, at: Point, held: PictureTransform): Fingers {
+  if (fingers.down.length !== 1 || fingers.down[0].id === id) return fingers;
+  return again(fingers, held, [...fingers.down, { id, from: at, at }], fingers.grip);
+}
+
+/** Finger `id` now at `at`. */
+export function fingerMoved(fingers: Fingers, id: number, at: Point): Fingers {
+  if (!fingers.down.some((finger) => finger.id === id)) return fingers;
+  return { ...fingers, down: fingers.down.map((finger) => (finger.id === id ? { ...finger, at } : finger)) };
+}
+
+/**
+ * Finger `id` lifted, the picture as `held` now: the other of two moves its body on from here, and
+ * the last ends the gesture (null).
+ */
+export function fingerUp(fingers: Fingers, id: number, held: PictureTransform): Fingers | null {
+  if (!fingers.down.some((finger) => finger.id === id)) return fingers;
+  const left = fingers.down.filter((finger) => finger.id !== id);
+  return left.length ? again(fingers, held, left, "body") : null;
+}
+
+/** The picture as the fingers put it now. */
+export function fingersHeld({ grip, grab, down }: Fingers, keys: GestureKeys): PictureTransform {
+  const [first, second] = down;
+  if (second) return pinched(grab, [first.from, second.from], [first.at, second.at], keys);
+  return dragged(grab, grip, first.from, first.at, keys);
+}

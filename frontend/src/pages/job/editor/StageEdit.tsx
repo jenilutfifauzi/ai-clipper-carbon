@@ -2,14 +2,19 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, ty
 import type { Box, Crop, Picture, RenderPlan, Transform } from "../../../api";
 import { cx } from "../../../format";
 import { cropDragged, keptPart, wholePicture, type CropEntry } from "./cropGestures";
+import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
   cornersOf,
-  dragged,
+  fingerDown,
+  fingerMoved,
+  fingersHeld,
+  fingersOn,
+  fingerUp,
   moved as movedPicture,
   offsetOnPicture,
   type Corner,
   type Edge,
-  type Grabbed,
+  type Fingers,
   type Grip,
   type Placed,
   type Point,
@@ -108,7 +113,10 @@ const typing = (target: EventTarget | null) =>
 export type Drift = { lead: string; dx: number; dy: number };
 type Gesture = {
   id: string;
+  // The pointer it began with, a finger's (`touch`) or not, and the element that holds it.
   pointer: number;
+  touch: boolean;
+  target: HTMLElement;
   kind: "move" | "size";
   // The area as drawn when it was grabbed (a picture's bounds), and where the pointer was.
   from: Box;
@@ -117,8 +125,9 @@ type Gesture = {
   moved: boolean;
   // Grabbed as one of several picked, which move with it.
   together: boolean;
-  // A picture's: by its body or a Grip, from its Transform when grabbed, and where it is now.
-  picture?: { grip: Grip | "body"; grabbed: Grabbed; now: Transform };
+  // A picture's: the fingers (or the one pointer) on its body or a Grip, from its Transform then, and
+  // where it is now.
+  picture?: { fingers: Fingers; now: Transform };
 };
 
 let gestures = 0;
@@ -140,6 +149,10 @@ const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.heigh
  * A text snaps to the fixed guides. A picture moved, or scaled from a corner, snaps to its Smart
  * Guides (GLOSSARY.md): the frame, the fixed guides and the pictures `atPlayhead` (`picturesAt`)
  * but those moving with it. Alt turns snapping off; `guides` are the lines of a snap.
+ *
+ * On a phone, a second finger on a picture picked alone pinches it to scale and twists it to turn
+ * (`fingersHeld`), without Smart Guides; with one of the two lifted, the other moves it on. However
+ * many fingers it took, a gesture is saved once, when the last is lifted: one step of undo.
  *
  * A picture with a Crop opens Crop mode on a double-click or double-tap, or when `crop.asked` (a
  * count) goes up while it is picked alone (`crop.onOpen` then, to pause the playback): it is drawn
@@ -202,7 +215,7 @@ export function useStageEdit(
   }
 
   // Where the pointer is, in output pixels, and how many of them a CSS pixel is.
-  function at(pointer: PointerEvent): { x: number; y: number; unit: number } | null {
+  function at(pointer: { clientX: number; clientY: number }): { x: number; y: number; unit: number } | null {
     const rect = stage.current?.getBoundingClientRect();
     if (!rect || !plan || !rect.width) return null;
     return {
@@ -275,6 +288,8 @@ export function useStageEdit(
       gesture.current = {
         id: item.id,
         pointer: pointer.pointerId,
+        touch: pointer.pointerType === "touch",
+        target: pointer.currentTarget,
         kind,
         from: shown(item.id, planned),
         grab: point,
@@ -407,47 +422,64 @@ export function useStageEdit(
       // Only picked: an automatic Scene's picture, or the frame around the picture behind.
       if (!item.transform || !item.picture || (grip === "body" && !onPicture(point))) return;
       pointer.currentTarget.setPointerCapture(pointer.pointerId);
+      const grabbed = { transform: item.transform, fitted: fittedOf(item.picture, plan), frame: plan };
       gesture.current = {
         id: item.id,
         pointer: pointer.pointerId,
+        touch: pointer.pointerType === "touch",
+        target: pointer.currentTarget,
         kind: grip === "body" ? "move" : "size",
         from: item.picture.bounds,
         grab: point,
         group: `drag:stage-picture:${++gestures}`,
         moved: false,
         together,
-        picture: { grip, grabbed: { transform: item.transform, fitted: fittedOf(item.picture, plan), frame: plan }, now: item.transform },
+        picture: { fingers: fingersOn(grabbed, grip, pointer.pointerId, point), now: item.transform },
       };
     };
     const move = (pointer: PointerEvent<HTMLElement>) => {
       const current = gesture.current;
       const point = at(pointer);
-      if (!current?.picture || current.id !== item.id || pointer.pointerId !== current.pointer || !point) return;
+      if (!current?.picture || current.id !== item.id || !point) return;
+      const fingers = fingerMoved(current.picture.fingers, pointer.pointerId, point);
+      if (fingers === current.picture.fingers) return;
+      current.picture.fingers = fingers;
       const { grab } = current;
       // A tap's jitter leaves it where it is.
       if (!current.moved && Math.hypot(point.x - grab.x, point.y - grab.y) < DRAG_CSS_PX * point.unit) return;
       current.moved = true;
-      const { grabbed, grip } = current.picture;
-      const next = dragged(grabbed, grip, grab, point, { shift: pointer.shiftKey, alt: pointer.altKey });
-      // Moved or scaled from a corner, it snaps to the pictures that stay where they are; stretched
-      // or turned, it doesn't.
-      const snap = grip === "body" ? snapMoved : grip.includes("-") ? snapScaled : null;
+      const held = fingersHeld(fingers, { shift: pointer.shiftKey, alt: pointer.altKey });
+      // One without a rotate handle (the clip editor's) isn't turned by a twist either.
+      const next = item.grips === "corners" ? { ...held, rotation: fingers.grab.transform.rotation } : held;
+      // Moved or scaled from a corner by one pointer, it snaps to the pictures that stay where they
+      // are; stretched, turned or pinched, it doesn't.
+      const { grip } = fingers;
+      const snap = fingers.down.length > 1 ? null : grip === "body" ? snapMoved : grip.includes("-") ? snapScaled : null;
       if (snap && plan) {
         const moving = new Set(current.together ? picked.filter((id) => !alone.has(id)) : []);
         const others = atPlayhead()
           .filter(({ id }) => !moving.has(id))
           .map(({ id, picture }) => ({ id, bounds: shownPicture(id, picture).bounds }));
-        const snapped = snap(next, grabbed.fitted, guideTargets(plan, others, item.id), { unit: point.unit, alt: pointer.altKey });
+        const snapped = snap(next, fingers.grab.fitted, guideTargets(plan, others, item.id), { unit: point.unit, alt: pointer.altKey });
         current.picture.now = snapped.transform;
         setGuides(snapped.guides);
       } else {
         current.picture.now = next;
+        setGuides(null);
       }
       hold(item, current.picture.now, current.kind);
     };
     const end = (pointer: PointerEvent<HTMLElement>) => {
       const current = gesture.current;
-      if (current?.pointer !== pointer.pointerId) return;
+      if (!current?.picture) return;
+      const fingers = fingerUp(current.picture.fingers, pointer.pointerId, current.picture.now);
+      if (fingers === current.picture.fingers) return;
+      // One of two lifted: the other moves it on from where it is, and the gesture (one step of
+      // undo) goes on until that one is lifted too.
+      if (fingers) {
+        current.picture.fingers = fingers;
+        return;
+      }
       gesture.current = null;
       setGuides(null);
       // Let go over another picture than it took hold of (the next Scene's, played into): dropped.
@@ -456,7 +488,7 @@ export function useStageEdit(
       // A click on one of several picked picks it alone.
       else if (current.together) onSelect(item.id, false);
       // Two taps on its body open Crop mode.
-      else if (current.picture?.grip === "body") {
+      else if (current.picture.fingers.grip === "body") {
         const now = performance.now();
         if (lastTap.current?.id === item.id && now - lastTap.current.at < DOUBLE_TAP_MS) {
           lastTap.current = null;
@@ -500,8 +532,45 @@ export function useStageEdit(
   }
 
   // What the window's listeners and the asking read: this render's.
-  const latest = useRef({ cropping, pictures, picked });
-  latest.current = { cropping, pictures, picked };
+  const latest = useRef({ cropping, pictures, picked, at });
+  latest.current = { cropping, pictures, picked, at };
+
+  // A second finger down while a finger holds something, wherever it lands, is the gesture's: on a
+  // picture picked alone it pinches and twists it (held by the element the first finger is, so its
+  // moves and lift come there too); on anything else it is left out, so it picks nothing else. And
+  // while a finger holds something, the page under the stage neither scrolls nor zooms.
+  useEffect(() => {
+    const onDown = (event: globalThis.PointerEvent) => {
+      const current = gesture.current;
+      if (!current?.touch || event.pointerType !== "touch" || event.pointerId === current.pointer) return;
+      // Its element gone (the item with it), the gesture is over without its lift.
+      if (!current.target.isConnected) {
+        gesture.current = null;
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const point = latest.current.at(event);
+      const { picture } = current;
+      if (!picture || current.together || !point) return;
+      const fingers = fingerDown(picture.fingers, event.pointerId, point, picture.now);
+      if (fingers === picture.fingers) return;
+      current.target.setPointerCapture(event.pointerId);
+      picture.fingers = fingers;
+      current.moved = true;
+      setGuides(null);
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (gesture.current?.touch && event.cancelable) event.preventDefault();
+    };
+    const element = stage.current;
+    window.addEventListener("pointerdown", onDown, true);
+    element?.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      element?.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [stage]);
 
   // Crop mode closed, its Crop kept (with the Transform that keeps the kept part where it was, as
   // one group, drawn so until the next plan) or dropped.
@@ -549,6 +618,12 @@ export function useStageEdit(
       closeCrop(event.key === "Enter");
     };
     const onDown = (event: globalThis.PointerEvent) => {
+      // A second finger while a handle is held is left out: it neither keeps the Crop nor takes another handle.
+      if (cropGrab.current && cropGrab.current.pointer !== event.pointerId) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (event.target instanceof Element && event.target.closest("[data-crop-mode]")) return;
       closeCrop(true);
     };
@@ -745,23 +820,28 @@ function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: Stage
   );
 }
 
-// The Grips, the edges' drawn as bars along them.
+// The Grips, the edges' drawn as bars along them; larger under a finger.
+const CORNER_LOOK = "size-3 rounded-full pointer-coarse:size-4";
+const ACROSS_LOOK = "h-2 w-4 rounded-full pointer-coarse:h-2.5 pointer-coarse:w-5";
+const DOWN_LOOK = "h-4 w-2 rounded-full pointer-coarse:h-5 pointer-coarse:w-2.5";
 const GRIPS: { grip: Exclude<Grip, "rotate">; look: string }[] = [
-  { grip: "top-left", look: "size-3 rounded-full" },
-  { grip: "top", look: "h-2 w-4 rounded-full" },
-  { grip: "top-right", look: "size-3 rounded-full" },
-  { grip: "right", look: "h-4 w-2 rounded-full" },
-  { grip: "bottom-right", look: "size-3 rounded-full" },
-  { grip: "bottom", look: "h-2 w-4 rounded-full" },
-  { grip: "bottom-left", look: "size-3 rounded-full" },
-  { grip: "left", look: "h-4 w-2 rounded-full" },
+  { grip: "top-left", look: CORNER_LOOK },
+  { grip: "top", look: ACROSS_LOOK },
+  { grip: "top-right", look: CORNER_LOOK },
+  { grip: "right", look: DOWN_LOOK },
+  { grip: "bottom-right", look: CORNER_LOOK },
+  { grip: "bottom", look: ACROSS_LOOK },
+  { grip: "bottom-left", look: CORNER_LOOK },
+  { grip: "left", look: DOWN_LOOK },
 ];
 
 // A Grip's dot, with a hit area larger than it, larger still under a finger.
 const GRIP_DOT =
   "pointer-events-auto absolute touch-none border-2 border-white bg-accent shadow-sm before:absolute before:-inset-2 before:content-[''] pointer-coarse:before:-inset-3.5";
-// How far above the picture the rotate handle is, and how far inside the stage a Grip is kept, in CSS pixels.
+// How far above the picture the rotate handle is (further under a finger, so that its hit area and
+// the top edge's stay apart), and how far inside the stage a Grip is kept, in CSS pixels.
 const ROTATE_REACH_CSS_PX = 24;
+const ROTATE_REACH_FINGER_CSS_PX = 40;
 const GRIP_INSET_CSS_PX = 10;
 
 /**
@@ -775,9 +855,11 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
   const picture = edit.shownPicture(item.id, item.picture!);
   const { grip } = edit.pictureHandlers(item);
   const has = new Set(gripsIn(item.grips ?? "all"));
+  const finger = useMediaQuery("(pointer: coarse)");
   const [x, y] = picture.centre;
   const unit = 1 / scale;
-  const on = gripsOnFrame({ x, y, width: picture.width, height: picture.height, rotation: picture.rotation }, plan, ROTATE_REACH_CSS_PX * unit, GRIP_INSET_CSS_PX * unit);
+  const reach = (finger ? ROTATE_REACH_FINGER_CSS_PX : ROTATE_REACH_CSS_PX) * unit;
+  const on = gripsOnFrame({ x, y, width: picture.width, height: picture.height, rotation: picture.rotation }, plan, reach, GRIP_INSET_CSS_PX * unit);
   const place = (point: Point): CSSProperties => ({
     left: percent(point.x / plan.width),
     top: percent(point.y / plan.height),
@@ -794,7 +876,7 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
         <span key={at} {...grip(at)} className={cx(GRIP_DOT, look)} style={{ ...place(on[at]), cursor: gripCursor(at, picture.rotation) }} />
       ))}
       {has.has("rotate") && (
-        <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
+        <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white pointer-coarse:size-5")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
       )}
     </div>
   );

@@ -5,6 +5,11 @@ import {
   boundsOf,
   cornersOf,
   dragged,
+  fingerDown,
+  fingerMoved,
+  fingersHeld,
+  fingersOn,
+  fingerUp,
   fittedSize,
   gripsOf,
   moved,
@@ -212,5 +217,72 @@ describe("two fingers pinch and twist it", () => {
     const from: [Point, Point] = [{ x: 500, y: 900 }, { x: 600, y: 900 }];
     const to: [Point, Point] = [{ x: 900, y: 1000 }, { x: 1900, y: 1000 }];
     expect(tidy(pinched(grabbed({ scale: 2 }), from, to, {}))).toEqual(transform({ x: 1080, y: 1060, scale: 8 }));
+  });
+});
+
+describe("a gesture under one finger or two", () => {
+  const keys = {};
+
+  test("one finger drags its Grip, or the body, from where it went down", () => {
+    const fingers = fingerMoved(fingersOn(grabbed(), "body", 1, { x: 540, y: 960 }), 1, { x: 640, y: 1000 });
+    expect(fingersHeld(fingers, keys)).toEqual(transform({ x: 640, y: 1000 }));
+    const corner = fingerMoved(fingersOn(grabbed(), "top-right", 1, around(0)), 1, around(0, 600));
+    expect(fingersHeld(corner, keys).scale).toBe(2);
+  });
+
+  test("a second finger pinches and twists from where both were when it went down", () => {
+    let fingers = fingersOn(grabbed({ scale: 0.5 }), "body", 1, around(-90, 100));
+    fingers = fingerDown(fingers, 2, around(90, 100), fingersHeld(fingers, keys));
+    fingers = fingerMoved(fingerMoved(fingers, 1, around(-60, 200)), 2, around(120, 200));
+    expect(tidy(fingersHeld(fingers, keys))).toEqual(transform({ scale: 1, rotation: 30 }));
+  });
+
+  test("the first finger's move before the second went down is kept, and the pinch starts from it", () => {
+    let fingers = fingersOn(grabbed(), "body", 1, { x: 440, y: 960 });
+    fingers = fingerMoved(fingers, 1, { x: 540, y: 960 });
+    // What the stage held then (snapped, say) is what the pinch starts from.
+    const held = transform({ x: 645, y: 960 });
+    fingers = fingerDown(fingers, 2, { x: 740, y: 960 }, held);
+    expect(fingersHeld(fingers, keys)).toEqual(held);
+    fingers = fingerMoved(fingers, 2, { x: 940, y: 960 });
+    // Twice as far apart, their middle 100 px right.
+    expect(tidy(fingersHeld(fingers, keys))).toEqual(transform({ x: 745, y: 960, scale: 2 }));
+  });
+
+  test("a pinch from a Grip pinches too", () => {
+    let fingers = fingersOn(grabbed(), "rotate", 1, { x: 440, y: 960 });
+    fingers = fingerDown(fingers, 2, { x: 640, y: 960 }, transform());
+    fingers = fingerMoved(fingers, 2, { x: 840, y: 960 });
+    expect(tidy(fingersHeld(fingers, keys))).toEqual(transform({ x: 640, y: 960, scale: 2 }));
+  });
+
+  test("with one of two lifted, the other moves it on from where it was", () => {
+    let fingers = fingersOn(grabbed(), "top-left", 1, { x: 440, y: 960 });
+    fingers = fingerDown(fingers, 2, { x: 640, y: 960 }, transform());
+    fingers = fingerMoved(fingers, 2, { x: 840, y: 960 });
+    const pinched = fingersHeld(fingers, keys);
+    fingers = fingerUp(fingers, 2, pinched)!;
+    expect(fingersHeld(fingers, keys)).toEqual(pinched);
+    // The finger left moves the body, not the corner it went down on.
+    fingers = fingerMoved(fingers, 1, { x: 440, y: 1060 });
+    expect(tidy(fingersHeld(fingers, keys))).toEqual(tidy({ ...pinched, y: 1060 }));
+  });
+
+  test("the first lifted leaves the second, which moves it", () => {
+    let fingers = fingersOn(grabbed(), "body", 1, { x: 440, y: 960 });
+    fingers = fingerDown(fingers, 2, { x: 640, y: 960 }, transform());
+    fingers = fingerUp(fingers, 1, transform())!;
+    fingers = fingerMoved(fingers, 2, { x: 600, y: 900 });
+    expect(fingersHeld(fingers, keys)).toEqual(transform({ x: 500, y: 900 }));
+  });
+
+  test("the last finger lifted ends it; a third finger and strangers are left out", () => {
+    expect(fingerUp(fingersOn(grabbed(), "body", 1, { x: 0, y: 0 }), 1, transform())).toBeNull();
+    let fingers = fingersOn(grabbed(), "body", 1, { x: 440, y: 960 });
+    fingers = fingerDown(fingers, 2, { x: 640, y: 960 }, transform());
+    expect(fingerDown(fingers, 3, { x: 0, y: 0 }, transform({ x: 0 }))).toBe(fingers);
+    expect(fingerMoved(fingers, 3, { x: 0, y: 0 })).toBe(fingers);
+    expect(fingerUp(fingers, 3, transform({ x: 0 }))).toBe(fingers);
+    expect(fingersHeld(fingers, keys)).toEqual(transform());
   });
 });
