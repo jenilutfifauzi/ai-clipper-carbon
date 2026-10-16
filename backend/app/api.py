@@ -163,6 +163,13 @@ def no_old_segments(segments: Any) -> Any:
     return segments
 
 
+def no_framing_keys(framing: Any) -> Any:
+    """The Candidate's own Framing, refused with Keyframes: only a Scene's Manual Layout Override has them."""
+    if isinstance(framing, dict) and "keys" in framing:
+        raise ValueError("The Candidate's own framing has no Keyframes: key a Scene's Manual Layout Override instead")
+    return framing
+
+
 class CandidateUpdate(BaseModel):
     """A review edit; a field left out stays as it is. `start` and `end` are snapped to Words."""
 
@@ -173,7 +180,7 @@ class CandidateUpdate(BaseModel):
     hook_text: Annotated[str, StringConstraints(max_length=HOOK_MAX_CHARS)] | None = None
     layout: Layout | None = None
     # The Manual Layout's, which only it has; dropped when the Layout becomes another.
-    framing: Framing | None = None
+    framing: Annotated[Framing | None, BeforeValidator(no_framing_keys)] = None
     selected: bool | None = None
     preset_id: str | None = None
     # Replaces the Candidate's overrides as a whole.

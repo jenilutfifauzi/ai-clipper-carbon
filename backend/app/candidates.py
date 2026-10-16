@@ -427,11 +427,25 @@ class LayoutOverride:
     """The Layout of the one Scene (as planned, short ones merged) that holds `at`, seconds on the
     Source's timeline, in place of the Candidate's Layout there. Auto chooses that Scene's by its
     faces even where the Candidate's Layout is forced. A Manual one frames it by its `framing`,
-    which only a Manual one has (app/review.py)."""
+    which only a Manual one has (app/review.py).
+
+    A Manual one may have `keys` (docs/adr/0008): they move its Framing's centre, scale, rotation and
+    opacity, each `at` in seconds from its Scene's start on the Source's timeline, so that a piece
+    of the Source shown twice moves alike both times. Its Scene's length comes from the analysis, so
+    an `at` need only be ≥ 0: the planner ignores those past its Scene's end."""
 
     at: FiniteFloat
     layout: Layout
     framing: Framing | None = None
+    keys: Keys = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.layout is not Layout.MANUAL and any(self.keys.values()):
+            raise ValueError(
+                f"The {self.layout} Layout Override at {self.at:g} s has no Keyframes: only a Manual one's framing can be keyed"
+            )
+        item = f"The Layout Override at {self.at:g} s"
+        object.__setattr__(self, "keys", checked_keys(self.keys, item, PICTURE_KEYS, math.inf))
 
 
 @dataclass(frozen=True)

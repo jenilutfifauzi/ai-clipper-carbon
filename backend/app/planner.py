@@ -73,7 +73,9 @@ drawn as a Picture placed by its Framing, over its Background (a blurred copy of
 covering the frame, or a colour) (`framed_scene`). A keyed one's Picture carries its motion in
 seconds into the Clip, as a keyed Overlay's does, and its sound its gain track in seconds from its
 start; its Background is left out when the moving picture covers the frame at every one of its
-frames (`keyed_scene`). A Transition overlaps
+frames (`keyed_scene`). A Manual Scene whose Layout Override is keyed moves so too, its
+Keyframes counted from its Scene's start on the Source's timeline in every Segment that shows it
+(`_keyed_manual`). A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
 is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
 Everything else is planned over the whole Clip, in seconds into it.
@@ -350,6 +352,11 @@ class ScenePlan:
     colour: str | None = None
     # The Framing that draws its first frame (`_first_framing`): what a switch to Manual starts from.
     framing: Framing | None = None
+    # A Manual Scene of a Layout Override's: where its Keyframes count from (`_keyed_manual`), in
+    # seconds into the Clip (before the Scene, where it is shown from part way into its shot), and
+    # those of them past its shot's end, which it never reaches, in seconds into the Clip too.
+    keys_from: float | None = None
+    ignored: Keys = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -623,7 +630,7 @@ def plan_render(
     the Clip is one Scene; without `faces` (not analysed) an Auto Scene is tracked with its crop in
     the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. A
     Manual Scene is the Source placed by its override's Framing, or by `framing` (the Candidate's)
-    without one (`framed_scene`), and needs no faces. The
+    without one (`framed_scene`), and needs no faces; its override's Keyframes move it (`_keyed_manual`). The
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
     `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
     `music` is heard as `audio_events` places it, given what `media_info` says of its songs.
@@ -640,10 +647,10 @@ def plan_render(
     segments: list[SegmentPlan] = []
     transitions: list[TransitionEvent] = []
     cuts: list[float] = []
+    # The frames a keyed picture is drawn at, as the renderer draws them.
+    rate = source.fps if source.fps > 0 else 30.0
     if main_track:
-        plans, at = [], 0.0
-        # The frames a keyed picture is drawn at, as the renderer draws them.
-        rate = source.fps if source.fps > 0 else 30.0
+        plans, at, showings = [], 0.0, []
         for i, given in enumerate(main_track):
             length = round(given.end - given.start, 3)
             if i and given.join is not None:
@@ -659,6 +666,7 @@ def plan_render(
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             else:
                 framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
+                showings += _showings(framed, given.layout_overrides, length, given.start, len(plans))
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
@@ -672,9 +680,11 @@ def plan_render(
             at = round(at + length, 3)
         duration = at
         words, word_edits = _segment_words(main_track, segments, cuts, duration)
+        plans = _keyed_manual(plans, showings, rate)
     else:
         duration = round(end - start, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
+        plans = _keyed_manual(plans, _showings(plans, layout_overrides or [], duration, start, 0), rate)
     return RenderPlan(
         start=start,
         end=end,
@@ -738,8 +748,7 @@ def _framed(
     edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
     plans = []
     for a, b in _merge_short(edges):
-        held = [o for o in layout_overrides or [] if a <= o.at < b or (b == duration and o.at == b)]
-        override = held[-1] if held else None
+        override = _held(layout_overrides or [], a, b, duration)
         wanted = override.layout if override else layout
         if wanted is Layout.MANUAL:
             # Still: neither its faces nor a new run of the analysis move it.
@@ -759,6 +768,74 @@ def _framed(
         else:
             panels = _blur(a, source)
         plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source)))
+    return plans
+
+
+def _held(overrides: list[LayoutOverride], start: float, end: float, duration: float) -> LayoutOverride | None:
+    """The Layout Override of the Scene from `start` to `end` of a range lasting `duration`: the last
+    one whose time is in it (the range's end being in its last Scene)."""
+    held = [o for o in overrides if start <= o.at < end or (end == duration and o.at == end)]
+    return held[-1] if held else None
+
+
+@dataclass(frozen=True)
+class _Showing:
+    """A Manual Scene of the plan framed by a Layout Override: its place among the plan's
+    Scenes, the override, and where the Scene starts and ends and the override is, on the Source's
+    timeline."""
+
+    index: int
+    override: LayoutOverride
+    start: float
+    end: float
+    at: float
+
+    def of_same(self, other: "_Showing") -> bool:
+        """Whether `other` shows the same override's Scene (in another Segment, or the same piece
+        again): its time, to rounding, and its Framing and Keyframes."""
+        same = (self.override.framing, self.override.keys) == (other.override.framing, other.override.keys)
+        return same and abs(self.at - other.at) < _SAME_OVERRIDE_SECS
+
+
+# Two Layout Overrides this close on the Source's timeline, alike, are one (shown again): their
+# times reach the planner rounded from each Segment's start.
+_SAME_OVERRIDE_SECS = 0.002
+
+
+def _showings(framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, start: float, first: int) -> list[_Showing]:
+    """The Manual Scenes among `framed` (a range lasting `duration`, `start` seconds into the Source,
+    its Scenes `first` onwards among the plan's) framed by one of `overrides` (in seconds into the
+    range)."""
+    found = []
+    for i, scene in enumerate(framed):
+        override = _held(overrides, scene.start, scene.end, duration) if scene.layout is SceneLayout.MANUAL else None
+        if override is not None and override.layout is Layout.MANUAL:
+            found.append(_Showing(first + i, override, round(start + scene.start, 3), round(start + scene.end, 3), start + override.at))
+    return found
+
+
+def _keyed_manual(plans: list[ScenePlan], showings: list[_Showing], fps: float) -> list[ScenePlan]:
+    """`plans` with each Manual Scene of `showings` moved by its override's Keyframes (`keyed_scene`).
+    They are in seconds from its Scene's start on the Source's timeline: where the earliest of the
+    Segments showing that Scene starts it, so that a Segment starting part way into it (the tail of
+    a split) shows the motion from there on, and a piece of it shown twice moves alike both times.
+    Those past the latest end any of them shows are ignored."""
+    plans = list(plans)
+    for showing in showings:
+        alike = [other for other in showings if showing.of_same(other)]
+        start, end = min(other.start for other in alike), max(other.end for other in alike)
+        scene = plans[showing.index]
+        keys_from = round(scene.start - (showing.start - start), 3)
+        kept: Keys = {}
+        ignored: Keys = {}
+        for prop, given in showing.override.keys.items():
+            if within := [key for key in given if key.at <= end - start + 1e-3]:
+                kept[prop] = within
+            if past := [replace(key, at=round(keys_from + key.at, 4)) for key in given if key.at > end - start + 1e-3]:
+                ignored[prop] = past
+        assert showing.override.framing is not None
+        keyed = keyed_scene(scene, showing.override.framing.transform, kept, keys_from, fps)
+        plans[showing.index] = replace(keyed, keys_from=keys_from, ignored=ignored)
     return plans
 
 
@@ -824,8 +901,9 @@ def framed_scene(start: float, end: float, layout: SceneLayout, width: int, heig
 
 
 def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float) -> ScenePlan:
-    """`scene`, of one picture placed by `transform` (a media Segment's), moved by the `keys` of its
-    item, which starts `start` seconds into the Clip (`moving`): its Background is left out when the
+    """`scene`, of one picture placed by `transform` (a media Segment's or a Manual Scene's), moved by
+    the `keys` of its item, whose Keyframes count from `start` seconds into the Clip (`moving`; before
+    the Scene, for a Manual one shown from part way into it): its Background is left out when the
     picture covers the frame at every one of its frames at `fps` (`covers`), each at n / `fps`
     seconds into the Scene, as the renderer draws it. Unkeyed, as it is."""
     assert scene.picture is not None
