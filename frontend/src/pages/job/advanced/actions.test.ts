@@ -103,6 +103,9 @@ const overlay = (id: string, start: number, secs: number): Overlay => ({
   transform: { x: 540, y: 400, scale: 0.3, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1 },
   crop: { left: 0, top: 0, right: 0, bottom: 0 },
   volume: 0,
+  radius: 0,
+  border: null,
+  shadow: null,
 });
 
 const text = (id: string) => ({ kind: "text", id }) as const;

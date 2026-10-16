@@ -5,6 +5,7 @@ import { Slider } from "../../../components/Slider";
 import { NO_CROP } from "../editor/cropGestures";
 import { IDENTITY, scaleForWidth } from "../editor/picture";
 import { Group } from "../editor/StyleFields";
+import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
 import { TimingFields } from "./TimingFields";
 import { TransformFields } from "./TransformFields";
@@ -28,12 +29,15 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     transform: { ...IDENTITY, y: 760, scale: item.width && item.height ? Number(scaleForWidth(item.width, item.height, 540).toFixed(4)) : 0.5 },
     crop: NO_CROP,
     volume: 0,
+    radius: 0,
+    border: null,
+    shadow: null,
   };
 }
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
-/** The selected Overlay's Transform, sound and time. */
+/** The selected Overlay's Transform, corners, border and shadow, sound and time. */
 export function OverlayFields({
   overlay,
   item,
@@ -76,6 +80,7 @@ export function OverlayFields({
         onChange={(transform, field) => onChange({ ...overlay, transform }, `overlay:${overlay.id}:transform.${field}`)}
         onCrop={(crop, field) => onChange({ ...overlay, crop }, `overlay:${overlay.id}:crop.${field}`)}
       />
+      <DecorationFields overlay={overlay} onChange={onChange} />
       {video && (
         <Group title="Sound">
           {item?.has_audio ? (

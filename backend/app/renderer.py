@@ -40,9 +40,10 @@ xfade of the pictures (each Segment first brought to the Clip's frame rate and t
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
-drawn as its Picture (`_picture`: cropped, scaled, flipped, turned with a transparent fill, faded)
-and laid over the joined frames at its centre while it shows, before the Logo and the captions. A
-picture that is only scaled keeps the graph it had: a scale and an overlay.
+drawn as its Picture (`_picture`: cropped, scaled, flipped, rounded and bordered, turned with a
+transparent fill, shadowed, faded) and laid over the joined frames at its centre while it shows,
+before the Logo and the captions. A picture that is only scaled keeps the graph it had: a scale and
+an overlay.
 
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
@@ -81,7 +82,7 @@ from app.planner import (
     WatermarkEvent,
     font_metrics,
 )
-from app.candidates import TextLayer
+from app.candidates import Shadow, TextLayer
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -497,24 +498,86 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int)
 
 def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
-    order of docs/adr/0007: crop, scale, flip, rotate with a transparent fill, opacity, then laid
-    over at its centre. Steps that change nothing are left out. `after` is more filters of the
-    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`."""
+    order of docs/adr/0007: crop, scale, flip, corners and border (`_corners`), rotate with a
+    transparent fill, shadow (`_shadow`), opacity, then laid over at its centre. Steps that change
+    nothing are left out. `after` is more filters of the picture's own frames, `laid` more options of
+    the overlay; its own frames are labelled `name`."""
     crop = picture.crop
     steps = [] if (crop.width, crop.height) == picture.item_size else [f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1"]
     steps.append(f"scale={picture.width}:{picture.height}:flags=lanczos")
     steps += ["hflip"] * picture.flip_h + ["vflip"] * picture.flip_v
     turned = picture.rotation % 360 != 0
-    if turned or picture.opacity < 1:
+    decorated = picture.radius > 0 or picture.border is not None
+    if turned or picture.opacity < 1 or decorated or picture.shadow:
         steps.append("format=rgba")
+    if decorated:
+        steps[-1] += _corners(picture, name)
     if turned:
         angle = f"{picture.rotation:g}*PI/180"
         steps.append(f"rotate={angle}:ow=rotw({angle}):oh=roth({angle}):c=none")
+    if picture.shadow:
+        steps.append(_shadow(picture.shadow, name))
     if picture.opacity < 1:
         steps.append(f"colorchannelmixer=aa={picture.opacity:g}")
     x, y = picture.centre
     at = f"x={x:g}-overlay_w/2:y={y:g}-overlay_h/2"
     return f"{source}{','.join(steps)}{after}[{name}];{below}[{name}]overlay={at}{':' if laid else ''}{laid}{out}"
+
+
+def _corners(picture: Picture, name: str) -> str:
+    """Filters that take the frames before them (labelled `name`p) and round their corners and draw
+    the border along the inside of their edge, the chain going on after them. Each is a frame of the
+    picture's size made once, by a `geq` of a single frame, and held by the filter that takes it: the
+    border's colour within its width of the edge, laid over the picture; and a mask of the rounded
+    box, multiplied into the picture's alpha (so an image's own transparency stays). A `geq` of the
+    picture's every frame instead took 20 times as long as the rest of a 3-minute render. Both give
+    planar RGB, brought back to packed RGBA, which `rotate` turns far faster."""
+    size = f"s={picture.width}x{picture.height}:r=1:d=1"
+    edge = _edge_distance(picture.width, picture.height, picture.radius)
+    graph = chain = f"[{name}p]"
+    if picture.border:
+        red, green, blue = _rgb(picture.border.colour)
+        ring = f"255*clip({edge}+{picture.border.width}+0.5,0,1)"
+        graph += f";color=c=black:{size},format=rgba,geq=r={red}:g={green}:b={blue}:a='{ring}'[{name}ring];{chain}[{name}ring]overlay=format=rgb"
+        if picture.radius > 0:
+            graph += f"[{name}bordered]"
+            chain = f"[{name}bordered]"
+    if picture.radius > 0:
+        inside = f"255*clip(0.5-{edge},0,1)"
+        graph += f";color=c=white:{size},format=rgba,geq=r=255:g=255:b=255:a='{inside}'[{name}mask];{chain}[{name}mask]blend=c3_mode=multiply"
+    return graph + ",format=rgba"
+
+
+def _edge_distance(width: int, height: int, radius: float) -> str:
+    """A `geq` expression of how far each pixel's middle is outside the edge of a `width` x `height`
+    box with its corners rounded `radius` (negative inside): the box's signed distance."""
+    across = f"(abs(X+0.5-{width / 2:g})-{width / 2 - radius:g})"
+    down = f"(abs(Y+0.5-{height / 2:g})-{height / 2 - radius:g})"
+    return f"(hypot(max({across},0),max({down},0))+min(max({across},{down}),0)-{radius:g})"
+
+
+def _shadow(shadow: Shadow, name: str) -> str:
+    """Filters that lay a drop shadow under the frames before them, the chain going on after them:
+    their alpha at the shadow's opacity, padded with room for the blur and the offset on every side
+    (so the picture keeps its centre) and moved by the offset, blurred (sigma half the blur, as a
+    CSS shadow's), in the shadow's colour."""
+    room = math.ceil(1.5 * shadow.blur) + math.ceil(max(abs(shadow.x), abs(shadow.y)))
+    red, green, blue = _rgb(shadow.colour)
+    pad = f"pad=iw+{2 * room}:ih+{2 * room}:{room + round(shadow.x)}:{room + round(shadow.y)}"
+    alpha = f"[{name}cast]alphaextract" + (f",lut=c0=val*{shadow.opacity:g}" if shadow.opacity < 1 else "") + f",{pad}:color=black"
+    if shadow.blur:
+        alpha += f",gblur=sigma={shadow.blur / 2:g}"
+    return (
+        f"split[{name}lifted][{name}under];[{name}under]split[{name}tint][{name}cast]"
+        f";[{name}tint]lutrgb=r={red}:g={green}:b={blue},{pad}:color=0x{shadow.colour[1:]}@0[{name}tinted]"
+        f";{alpha}[{name}alpha];[{name}tinted][{name}alpha]alphamerge[{name}shadow]"
+        f";[{name}shadow][{name}lifted]overlay={room}:{room}:format=rgb"
+    )
+
+
+def _rgb(colour: str) -> tuple[int, int, int]:
+    """A #RRGGBB colour's red, green and blue."""
+    return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
 
 
 def _logo_overlay(watermark: WatermarkEvent, below: str, out: str, index: int = 1) -> str:

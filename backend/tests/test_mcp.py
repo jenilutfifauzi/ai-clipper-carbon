@@ -356,6 +356,32 @@ async def test_an_overlays_transform_and_crop_are_merged_field_by_field_and_the_
     assert plan["overlays"][0]["crop"] == {"x": 80, "y": 0, "width": 240, "height": 90}
 
 
+@pytest.mark.anyio
+async def test_an_overlays_border_and_shadow_are_merged_field_by_field_and_turned_off_with_null(mcp, tmp_path):
+    picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
+    item = await call(mcp, "add_asset", kind="media", path=str(picture))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "media": item["id"], "start": 0, "secs": 1, "radius": 0.25}])
+    # Turned on from a field or two, the rest at their defaults; then changed a field at a time.
+    await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "border": {"width": 6}, "shadow": {"y": 30}}])
+    merged = await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "border": {"colour": "#ff0000"}, "shadow": {"blur": 10}}])
+    [overlay] = merged["overlays"]
+    assert (overlay["radius"], overlay["border"]) == (0.25, {"width": 6, "colour": "#FF0000"})
+    assert overlay["shadow"] == {"blur": 10, "x": 0, "y": 30, "colour": "#000000", "opacity": 0.5}
+    assert "width" in await fails(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "border": {"width": 41}}])
+
+    # 540x304: a quarter of 304 is 76 px.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
+    [view] = plan["overlays"]
+    assert (view["radius"], view["border"], view["shadow"]) == (76, overlay["border"], overlay["shadow"])
+
+    merged = await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "border": None}])
+    assert (merged["overlays"][0]["border"], merged["overlays"][0]["shadow"]["y"]) == (None, 30)
+
+
 # 08: agent guidance
 
 

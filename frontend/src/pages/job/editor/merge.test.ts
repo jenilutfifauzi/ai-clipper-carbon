@@ -40,6 +40,9 @@ const overlay = (id: string, transform: Partial<Transform> = {}): Overlay => ({
   transform: { x: 540, y: 760, scale: 0.5, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1, ...transform },
   crop: { left: 0, top: 0, right: 0, bottom: 0 },
   volume: 0,
+  radius: 0,
+  border: null,
+  shadow: null,
 });
 
 describe("keyed lists", () => {

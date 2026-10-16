@@ -11,10 +11,11 @@ import asyncio
 import dataclasses
 import json
 import logging
+import types
 from collections.abc import Callable
 from contextlib import aclosing
 from pathlib import Path
-from typing import Any, Literal, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import httpx
 from anyio import to_thread
@@ -91,6 +92,9 @@ Edits:
   width or height cut off before it is fitted (a tenth is always kept). merge_candidate_items
   changes only the transform and crop fields given. The dry run lists each Overlay's drawn box once
   turned (bounds) and what its crop keeps, in its item's pixels.
+- An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
+  border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
+  output pixels, or null for none; merge_candidate_items changes only the fields given.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
@@ -580,6 +584,7 @@ def _plan_view(preview: dict) -> dict:
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
                 "bounds": event["picture"]["bounds"], "rotation": event["picture"]["rotation"], "crop": event["picture"]["crop"],
                 "opacity": event["picture"]["opacity"],
+                **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
             }
             for event in plan["overlays"]
         ],
@@ -626,12 +631,15 @@ def _merged_fields(item: dict, patch: dict) -> dict:
 
 def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
     """A model of `kind` whose fields are all optional but its key: the fields of an item to change.
-    A field that is itself a dataclass (an Overlay's `transform`) is such a patch too, merged into
-    the item's value field by field (`_merge`)."""
+    A field that is itself a dataclass, or one or None (an Overlay's `transform`, or its `border`),
+    is such a patch too, merged into the item's value field by field (`_merge`); null turns one that
+    may be None off."""
     hints = get_type_hints(kind, include_extras=True)
     fields: dict[str, Any] = {}
     for field in dataclasses.fields(kind):
         hint = hints[field.name]
+        if get_origin(hint) in (Union, types.UnionType):
+            hint = next((arg for arg in get_args(hint) if dataclasses.is_dataclass(arg)), hint)
         if dataclasses.is_dataclass(hint):
             hint = _patch_model(hint)
         fields[field.name] = (hint, ...) if field.name == key else (hint | None, None)

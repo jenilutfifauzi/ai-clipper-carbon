@@ -25,9 +25,20 @@ export interface PictureStyle {
   opacity: number;
   // The media inside the box: its whole item, sized and moved so that only the crop shows in it.
   inner: { left: string; top: string; width: string; height: string };
+  // An Overlay's rounded corners (a border-radius in shares of the box), border, and drop shadow
+  // (a filter for a box that isn't turned, so that it falls in screen space); undefined without.
+  radius?: string;
+  border?: string;
+  shadow?: string;
 }
 
 const percent = (share: number) => `${share * 100}%`;
+
+// Output pixels as stage pixels: `--scale` is the stage's pixels per output pixel (ClipPreview).
+const pixels = (value: number) => `calc(${value}px * var(--scale))`;
+
+const rgb = (colour: string, opacity: number) =>
+  `rgb(${[1, 3, 5].map((at) => parseInt(colour.slice(at, at + 2), 16)).join(" ")} / ${opacity})`;
 
 /**
  * The CSS of a box drawing `picture` on a stage of the `frame`'s shape: placed at its centre and as
@@ -35,7 +46,8 @@ const percent = (share: number) => `${share * 100}%`;
  * point, turned clockwise and flipped. CSS applies a transform's functions right to left, so the
  * flip comes first and the turn after it, in the renderer's order. Inside it, its media is as large
  * as its whole item would be and moved so that its crop fills the box (as `PanelView` shows a
- * Source crop), cut off by the box.
+ * Source crop), cut off by the box. Its corners are rounded as many output pixels across as down,
+ * and its border and shadow stay as many output pixels whatever its size, as the renderer draws them.
  */
 export function pictureStyle(picture: Picture, frame: { width: number; height: number }): PictureStyle {
   const [x, y] = picture.centre;
@@ -56,6 +68,11 @@ export function pictureStyle(picture: Picture, frame: { width: number; height: n
       width: percent(across / crop.width),
       height: percent(down / crop.height),
     },
+    radius: picture.radius ? `${percent(picture.radius / picture.width)} / ${percent(picture.radius / picture.height)}` : undefined,
+    border: picture.border ? `${pixels(picture.border.width)} solid ${picture.border.colour}` : undefined,
+    shadow: picture.shadow
+      ? `drop-shadow(${[picture.shadow.x, picture.shadow.y, picture.shadow.blur].map(pixels).join(" ")} ${rgb(picture.shadow.colour, picture.shadow.opacity)})`
+      : undefined,
   };
 }
 
