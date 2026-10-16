@@ -67,6 +67,8 @@ function Ghost({
         else veil.current.style.opacity = "0";
       }
       if (segment.media) return;
+      // The ghost plays at the main playback's rate.
+      ghost.setRate(playback.rate);
       const video = master.current;
       if (video) setVolume(video, inside ? (1 - share) * (plan.source_volume * segment.volume) : 0);
       if (!inside) {
@@ -80,6 +82,7 @@ function Ghost({
       if (!playback.playing && ghost.playing) ghost.pause();
       const other = follower.current;
       if (video && other) {
+        if (other.playbackRate !== video.playbackRate) other.playbackRate = video.playbackRate;
         if (Math.abs(other.currentTime - video.currentTime) > MAX_DRIFT_SECS) other.currentTime = video.currentTime;
         if (video.paused !== other.paused) {
           if (video.paused) other.pause();

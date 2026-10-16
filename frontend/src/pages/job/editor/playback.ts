@@ -51,6 +51,9 @@ const HANDOVER_SECS = 0.03;
 // A follower video further than this from its master is moved back in step.
 const MAX_DRIFT_SECS = 0.12;
 
+/** The rates the preview plays at: a viewing aid, not a Clip's speed. */
+export const RATES = [0.5, 1, 1.5, 2] as const;
+
 /** One of the preview's two decks. */
 export type DeckSlot = 0 | 1;
 
@@ -78,7 +81,9 @@ interface Deck {
  * the live deck seeks instead. Through a Segment of a Media Library video, the Source decks wait and
  * the time runs on a clock of its own, which that video's player follows. The preview, its other
  * media and the timeline all read and set the time through it. Playing stops at the Clip's end,
- * checked every frame; started outside the Clip (before its start), it plays freely.
+ * checked every frame; started outside the Clip (before its start), it plays freely. Everything plays
+ * at its `rate`: both decks, the clock, and (through `follow`) every element that follows it, each
+ * keeping its pitch as the browser does.
  */
 export class Playback {
   private decks: [Deck | null, Deck | null] = [null, null];
@@ -92,11 +97,26 @@ export class Playback {
   private index = 0;
   // While playing a video's Segment: when the clock read `from` seconds into the Clip.
   private clock: { at: number; from: number } | null = null;
+  // How fast it plays: 1 is the Clip's own speed.
+  private pace = 1;
   // The live deck paused here to hand over to a video's Segment: not a pause of the playback.
   private handing = false;
   // In seconds into the Clip, as last read: updated every frame while playing.
   time = 0;
   playing = false;
+
+  get rate(): number {
+    return this.pace;
+  }
+
+  // Plays at `rate` from now on, the time kept where it is.
+  setRate(rate: number) {
+    if (rate === this.pace) return;
+    if (this.clock) this.clock = { at: performance.now(), from: this.read() };
+    this.pace = rate;
+    for (const deck of this.decks) if (deck) this.paced(deck);
+    this.emit();
+  }
 
   get duration() {
     return this.segments[this.segments.length - 1].end;
@@ -168,6 +188,8 @@ export class Playback {
       this.emit();
     };
     const onLoaded = () => {
+      // A load sets the rate back to the default.
+      this.paced(deck);
       if (live()) return this.seek(this.time);
       deck.parked = null;
       this.park();
@@ -189,6 +211,7 @@ export class Playback {
       master.removeEventListener("pause", onPause);
     };
     this.decks[slot] = deck;
+    this.paced(deck);
     master.muted = !live();
     if (follower) follower.muted = true;
     if (!live()) this.park();
@@ -216,7 +239,7 @@ export class Playback {
 
   private read() {
     const segment = this.segment;
-    if (segment.media) return this.clock ? this.clock.from + (performance.now() - this.clock.at) / 1000 : this.time;
+    if (segment.media) return this.clock ? this.clock.from + ((performance.now() - this.clock.at) / 1000) * this.pace : this.time;
     const deck = this.decks[this.live];
     return deck ? segment.start + (deck.master.currentTime - segment.source_start) : this.time;
   }
@@ -229,7 +252,15 @@ export class Playback {
     }
   }
 
+  // A deck's videos set to play at the rate.
+  private paced(deck: Deck) {
+    for (const video of deck.follower ? [deck.master, deck.follower] : [deck.master]) {
+      if (video.playbackRate !== this.pace) video.playbackRate = this.pace;
+    }
+  }
+
   private run(deck: Deck) {
+    this.paced(deck);
     void deck.master.play().catch(() => {});
     if (deck.follower) void deck.follower.play().catch(() => {});
   }

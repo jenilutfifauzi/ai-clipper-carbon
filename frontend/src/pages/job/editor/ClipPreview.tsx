@@ -16,7 +16,7 @@ import {
 import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
-import { usePlayback, type Playback } from "./playback";
+import { RATES, usePlayback, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
 import { heldArea, PreviewOverlays, type OverlayControls, type OverlayHold } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -66,7 +66,8 @@ const percent = (value: number) => `${value * 100}%`;
  * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move together
  * with the picked Overlays), moved, resized and retyped on the frame (StageEdit.tsx,
  * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
- * Advanced Edit's player), and the transport is a single row.
+ * Advanced Edit's player), and the transport is a single row; with `rates` too, it offers the
+ * playback rate.
  */
 export function ClipPreview({
   src,
@@ -77,6 +78,7 @@ export function ClipPreview({
   stage: controls,
   overlays,
   fit = false,
+  rates = false,
   blank = false,
 }: {
   src: string;
@@ -87,6 +89,7 @@ export function ClipPreview({
   stage?: StageControls;
   overlays?: OverlayControls;
   fit?: boolean;
+  rates?: boolean;
   // Black where the Segments are (the Advanced Edit's Video Track hidden).
   blank?: boolean;
 }) {
@@ -242,7 +245,7 @@ export function ClipPreview({
         <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
           {frame}
         </div>
-        <Transport playback={playback} compact />
+        <Transport playback={playback} compact rates={rates} />
       </div>
     );
   }
@@ -988,8 +991,11 @@ function runs(line: string, spans: [number, number][]): [string, boolean][] {
   return parts;
 }
 
-/** Play and pause, a scrubber over the Clip, and "Play clip" and "Play ending" (not when `compact`). */
-function Transport({ playback, compact = false }: { playback: Playback; compact?: boolean }) {
+/**
+ * Play and pause, a scrubber over the Clip, with `rates` the playback rate, and "Play clip" and "Play
+ * ending" (not when `compact`).
+ */
+function Transport({ playback, compact = false, rates = false }: { playback: Playback; compact?: boolean; rates?: boolean }) {
   const playing = usePlayback(playback, (_, p) => p.playing);
   // Tenths of a second: enough for the label and the scrubber, and few re-renders.
   const tenths = usePlayback(playback, (time) => Math.round(time * 10));
@@ -1013,6 +1019,7 @@ function Transport({ playback, compact = false }: { playback: Playback; compact?
         <span className="shrink-0 text-sm text-muted tabular-nums">
           {formatPrecise(Math.max(0, tenths / 10))} / {formatPrecise(duration)}
         </span>
+        {rates && <RateMenu playback={playback} />}
       </div>
       {!compact && (
         <div className="flex flex-wrap gap-2">
@@ -1027,5 +1034,28 @@ function Transport({ playback, compact = false }: { playback: Playback; compact?
         </div>
       )}
     </div>
+  );
+}
+
+// The playback rate, picked from RATES; marked in the accent whenever it isn't 1×, so that a fast
+// preview isn't taken for a fast Clip.
+function RateMenu({ playback }: { playback: Playback }) {
+  const rate = usePlayback(playback, (_, p) => p.rate);
+  return (
+    <select
+      value={rate}
+      onChange={(event) => playback.setRate(Number(event.target.value))}
+      aria-label="Playback rate"
+      className={cx(
+        "min-h-9 shrink-0 cursor-pointer appearance-none rounded-[10px] px-2 text-center text-sm font-medium tabular-nums hover:bg-fill",
+        rate === 1 ? "text-muted hover:text-text" : "text-accent-text",
+      )}
+    >
+      {RATES.map((each) => (
+        <option key={each} value={each}>
+          {each}×
+        </option>
+      ))}
+    </select>
   );
 }
