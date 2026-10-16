@@ -16,6 +16,7 @@ import {
   gainAt,
   keyMarks,
   nextEditPoint,
+  segmentHeard,
   peaksExtremes,
   peaksLevel,
   peaksPyramid,
@@ -483,6 +484,23 @@ describe("the Volume Line", () => {
     for (const [time, gain] of [[0.5, 0.5], [1, 1], [3, 0.7635], [6, 0.25], [9, 0.125]]) {
       expect(drawn(time)).toBeCloseTo(volumeHeight(gain), 2);
     }
+  });
+
+  test("follows a video Segment's volume Keyframes, with no fades, over what is drawn of it from where it starts", () => {
+    const keys: Keyframe[] = [
+      { at: 1, value: 1, ease: LINEAR },
+      { at: 3, value: 0.25, ease: LINEAR },
+    ];
+    // 4 s of its video, its last half second under the Transition into the next one.
+    const heard = segmentHeard({ volume: 0.8, keys: { volume: keys, scale: [] } }, { start: 10, end: 13.5 });
+    expect(heard).toEqual({ volume: 0.8, secs: 3.5, fade_in: 0, fade_out: 0, keys });
+    const line = volumeLine(heard);
+    expect(line[0]).toEqual({ time: 0, height: volumeHeight(1) });
+    expect(line.at(-1)).toEqual({ time: 3.5, height: volumeHeight(0.25) });
+    expect(line.map((point) => point.time)).toContain(1);
+    expect(gainAt(2, heard)).toBeCloseTo(0.625);
+    // Unkeyed: its volume, 1 when it has none of its own.
+    expect(segmentHeard({}, { start: 0, end: 2 })).toEqual({ volume: 1, secs: 2, fade_in: 0, fade_out: 0, keys: undefined });
   });
 
   test("a volume's height gives the volume back", () => {

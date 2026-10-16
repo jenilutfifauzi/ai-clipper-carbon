@@ -1,9 +1,8 @@
-import { useId, useRef, useState, type PointerEvent } from "react";
+import { useRef, useState, type PointerEvent } from "react";
 import type { Ease, Keyframe, KeyProperty, MediaItem } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
 import {
-  EASE_PRESETS,
   easedKey,
   easeName,
   handleEase,
@@ -18,6 +17,7 @@ import {
 import { usePlayback } from "../editor/playback";
 import { curvePath, curveRange, easeHandles, handleShares, plotPoint, plotValue, type Plot, type PlotPoint } from "./curves";
 import { KeyCluster, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
+import { EaseSelect, KEY_FIELDS } from "./KeyEase";
 import { activeKey, clearItemKeys, keyedItem, keyRows, keyTime, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
 import { keyedGroup } from "./Overlays";
 import { onFrame } from "./playhead";
@@ -46,16 +46,6 @@ export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps:
   }
   return <Pane key={`${ref.kind}:${ref.id}`} keying={keying} fps={fps} item={ref} keyed={item} rows={keyRows(keying.edits, ref, mediaById)} />;
 }
-
-// Each property's row: its name, its unit, and how many of them make one of its value.
-const FIELDS: Record<KeyProperty, { label: string; unit: string; scale: number }> = {
-  x: { label: "X", unit: "px", scale: 1 },
-  y: { label: "Y", unit: "px", scale: 1 },
-  scale: { label: "Scale", unit: "%", scale: 100 },
-  rotation: { label: "Rotation", unit: "°", scale: 1 },
-  opacity: { label: "Opacity", unit: "%", scale: 100 },
-  volume: { label: "Volume", unit: "%", scale: 100 },
-};
 
 // A row's height, in CSS pixels: the rows' column and the Dopesheet's lanes line up by it.
 const ROW_PX = 32;
@@ -179,8 +169,8 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
           ))}
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-sm text-muted">{FIELDS[active].label}</span>
-          <KeyCluster item={ref} property={active} label={FIELDS[active].label} />
+          <span className="text-sm text-muted">{KEY_FIELDS[active].label}</span>
+          <KeyCluster item={ref} property={active} label={KEY_FIELDS[active].label} />
         </div>
         <EaseSelect
           value={easeShown}
@@ -235,7 +225,7 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
                     <button
                       key={index}
                       type="button"
-                      aria-label={`${FIELDS[prop].label} Keyframe at ${key.at.toFixed(2)} s`}
+                      aria-label={`${KEY_FIELDS[prop].label} Keyframe at ${key.at.toFixed(2)} s`}
                       title="Click to go to it, drag to move it"
                       className="absolute top-1/2 grid size-6 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize touch-none place-items-center text-accent-text"
                       style={{ left: `${(key.at / keyed.secs) * 100}%` }}
@@ -354,7 +344,7 @@ function Curves({
   const box = useRef<HTMLDivElement>(null);
   const list = listOf(active);
   const plot = plotOf(active);
-  const { label, unit, scale } = FIELDS[active];
+  const { label, unit, scale } = KEY_FIELDS[active];
   const shown = (value: number) => `${Math.round(value * scale * 10) / 10}${unit}`;
   const percent = (point: PlotPoint) => ({ left: `${point.x * 100}%`, top: `${point.y * 100}%` });
   const spans = list.map((_, index) => easeHandles(list, index, plot)).filter((span) => span !== null);
@@ -423,38 +413,6 @@ function Curves({
   );
 }
 
-// The Ease select's choices: the presets, and Custom, which a handle's drag makes (not picked here).
-const EASE_CHOICES: { value: EaseName; label: string }[] = [...EASE_PRESETS.map(({ name, label }) => ({ value: name, label })), { value: "custom", label: "Custom" }];
-
-function EaseSelect({ value, disabled, onChange }: { value: EaseName | null; disabled: boolean; onChange: (ease: Ease) => void }) {
-  const id = useId();
-  return (
-    <div className="flex items-center gap-1.5">
-      <label htmlFor={id} className="text-sm text-muted">
-        Ease
-      </label>
-      <select
-        id={id}
-        value={value ?? ""}
-        disabled={disabled}
-        title={value === null ? "No Keyframe at the playhead or after it eases in" : "How the Keyframe at the playhead, or the next one, is eased into"}
-        onChange={(event) => {
-          const preset = EASE_PRESETS.find((choice) => choice.name === event.target.value);
-          if (preset) onChange(preset.ease);
-        }}
-        className="min-h-8 cursor-pointer rounded-lg border border-border bg-fill px-2 text-sm disabled:cursor-default disabled:opacity-50"
-      >
-        {value === null && <option value="">None</option>}
-        {EASE_CHOICES.map((choice) => (
-          <option key={choice.value} value={choice.value} disabled={choice.value === "custom"}>
-            {choice.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
 /**
  * A row of the pane: its property's value at the playhead, typed in (auto-keyed as in the inspector:
  * a Keyframe at the playhead once it has some, else its constant), and its own ‹ ◆ ›. Clicking it
@@ -481,7 +439,7 @@ function Row({
   at: number | null;
   time: number;
 }) {
-  const { label, unit, scale } = FIELDS[prop];
+  const { label, unit, scale } = KEY_FIELDS[prop];
   const isKeyed = !!keyed.keys[prop]?.length;
   // A keyed turn may go further than the Transform's own ±360°.
   const [low, high] = prop === "rotation" && !isKeyed ? [-360, 360] : KEY_RANGES[prop];

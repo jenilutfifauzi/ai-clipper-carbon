@@ -296,6 +296,8 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   return (
     <section
       aria-label={title}
+      // What sizes its controls for a finger (KeyCluster's buttons).
+      data-sheet=""
       className="glass fixed inset-x-0 bottom-0 z-40 flex max-h-[min(60dvh,32rem)] flex-col rounded-t-panel border-b-0 pb-[env(safe-area-inset-bottom)] motion-safe:animate-[sheet-in_220ms_var(--ease-out)]"
     >
       <div className="flex min-h-12 items-center justify-between gap-2 px-4 pt-1">

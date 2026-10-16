@@ -83,10 +83,11 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
     const outcome = toggleItemKey(keying, item, property, time);
     if (outcome) keying.onEdits(outcome.edits);
   };
-  const button = "grid size-7 place-items-center rounded-full hover:bg-fill disabled:pointer-events-none disabled:opacity-35";
+  // In a phone's sheet, as tall as its other buttons (44 px), and narrow enough for three beside "Rotation".
+  const button = "grid size-7 place-items-center rounded-full hover:bg-fill disabled:pointer-events-none disabled:opacity-35 in-data-sheet:h-11 in-data-sheet:w-8";
   const chevron = cx(button, "text-muted hover:text-text");
   return (
-    <div role="group" aria-label={`${label} Keyframes`} className="-my-1 flex shrink-0 items-center">
+    <div role="group" aria-label={`${label} Keyframes`} className="-my-1 flex shrink-0 items-center in-data-sheet:my-0">
       <button type="button" className={chevron} disabled={before === null} onClick={() => seek(before)} aria-label={`${label}: previous Keyframe`} title="Previous Keyframe">
         <ChevronLeft aria-hidden size={14} />
       </button>

@@ -107,6 +107,17 @@ describe("a Keyframe edit on a video Segment", () => {
     expect(written?.edits.segments[1].keys?.volume).toEqual([...dip.slice(0, 1), key(1.5, 1.5), ...dip.slice(1)]);
   });
 
+  test("its Volume Line drag sets its volume, and once its sound is keyed writes a Keyframe at the playhead", () => {
+    const unkeyed = edits([episode, video({ scale: push })]);
+    const set = writeItemKey({ edits: unkeyed, pick: picked(V) }, V, "volume", 0.5, 12);
+    expect(set?.edits.segments[1]).toMatchObject({ volume: 0.5, keys: { scale: push } });
+    // Keyed: a Keyframe at the playhead, from where a Transition into it starts it, and none outside it.
+    const track = [{ start: 0, end: 10, source_start: 100, source_end: 110 }, { start: 9.5, end: 13.5, source_start: 2, source_end: 6 }];
+    const written = writeItemKey({ edits: edits(), pick: picked(V), track }, V, "volume", 0.6, 12);
+    expect(written?.edits.segments[1]).toMatchObject({ volume: 0.8, keys: { volume: [key(1, 1), key(2, 0.3), key(2.5, 0.6)] } });
+    expect(writeItemKey({ edits: edits(), pick: picked(V), track }, V, "volume", 0.6, 14)).toBeNull();
+  });
+
   test("a Segment of the episode has none, and a locked Video Track refuses them", () => {
     expect(keyedItem(edits(), { kind: "segment", id: "e" })).toBeNull();
     expect(toggleItemKey({ edits: edits(), pick: picked(V), locked: ["video"] }, V, "x", 11)).toBeNull();
