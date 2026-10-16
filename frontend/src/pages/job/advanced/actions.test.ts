@@ -29,7 +29,7 @@ import {
 } from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import { fadesWithin, type AdvancedEdits } from "./edits";
-import { bandPick, picked, prunedPick, unlockedPick, type Pick } from "./pick";
+import { bandPick, picked, prunedPick, stageIdsOf, stageItem, unlockedPick, type Pick } from "./pick";
 
 function layer(id: string, start: number, secs: number, changes: Partial<TextLayer> = {}): TextLayer {
   return {
@@ -936,6 +936,16 @@ describe("split all", () => {
     expect(canSplitAt(scene(before, null), 5)).toBe(true);
     expect(canSplitAt(scene(edits({ segments: [segment("s1", 100, 110)] }), null), 10)).toBe(false);
     expect(canSplitAt(scene(before, { kind: "hook" }), 5)).toBe(false);
+  });
+});
+
+describe("the Pick on the stage", () => {
+  test("names the picked Text Layers and Overlays by their stage ids, and back", () => {
+    const pick = picked({ kind: "text", id: "title" }, { kind: "overlay", id: "o1" }, { kind: "segment", id: "s1" });
+    expect(stageIdsOf(pick)).toEqual(["text:title", "overlay:o1"]);
+    expect(stageItem("overlay:o1")).toEqual({ kind: "overlay", id: "o1" });
+    expect(stageItem("text:title")).toEqual({ kind: "text", id: "title" });
+    expect(stageIdsOf({ kind: "hook" })).toEqual(["hook"]);
   });
 });
 

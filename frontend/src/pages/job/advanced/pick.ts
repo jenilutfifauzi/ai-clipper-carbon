@@ -1,4 +1,4 @@
-import type { StageId } from "../editor/ClipPreview";
+import type { PickedOnStage } from "../editor/ClipPreview";
 import type { AdvancedEdits } from "./edits";
 import type { TrackKind } from "./trackState";
 
@@ -76,18 +76,17 @@ export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {
   return kept.length === pick.items.length ? pick : picked(...kept);
 }
 
-/** The ids on the preview's stage (StageControls) of what is picked there. */
-export function stageIdsOf(pick: Pick): StageId[] {
+/** The ids on the preview's stage (StageControls) of what is picked there: the hook, the captions, Text Layers and Overlays. */
+export function stageIdsOf(pick: Pick): PickedOnStage[] {
   if (pick?.kind === "hook" || pick?.kind === "captions") return [pick.kind];
-  return itemsOf(pick)
-    .filter((item) => item.kind === "text")
-    .map((item): StageId => `text:${item.id}`);
+  return itemsOf(pick).flatMap((item): PickedOnStage[] => (item.kind === "text" || item.kind === "overlay" ? [`${item.kind}:${item.id}`] : []));
 }
 
-/** What a stage id names: the hook, the captions or a Text Layer. */
-export function stageItem(stageId: StageId): { kind: "hook" } | { kind: "captions" } | ItemRef {
+/** What a stage id names: the hook, the captions, a Text Layer or an Overlay. */
+export function stageItem(stageId: PickedOnStage): { kind: "hook" } | { kind: "captions" } | ItemRef {
   if (stageId === "hook" || stageId === "captions") return { kind: stageId };
-  return { kind: "text", id: stageId.slice("text:".length) };
+  const [kind, ...id] = stageId.split(":");
+  return { kind: kind as "text" | "overlay", id: id.join(":") };
 }
 
 /** An item's key on the Timeline: its kind and id. */

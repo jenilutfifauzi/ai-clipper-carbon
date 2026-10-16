@@ -1,7 +1,9 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import type { Box, RenderPlan } from "../../../api";
+import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import type { Box, Picture, RenderPlan, Transform } from "../../../api";
 import { cx } from "../../../format";
+import { dragged, moved as movedPicture, offsetOnPicture, type Grabbed, type Grip, type Point } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
+import { fittedOf, gripCursor, gripsOnFrame, heldPicture, tidyTransform } from "./stagePicture";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -43,24 +45,51 @@ export interface StageItem {
   onEdit?: (point?: { x: number; y: number }) => void;
 }
 
-type Held = { id: string; kind: "move" | "size"; dx: number; dy: number; scale: number; plan: RenderPlan | null };
+/**
+ * A picture drawn on the stage (ADR 0007): an Overlay ("overlay:<id>"), or the picture behind every
+ * Overlay ("picture:<n>": the Segment under the playhead, at the plan's Scene n). It is picked, moved and nudged as the other
+ * items are and, picked alone, scaled from its corners, stretched from its edges and turned by the
+ * handle above it: its Grips (GLOSSARY.md), on the picture as turned.
+ */
+export interface StagePicture {
+  id: string;
+  label: string;
+  // When it shows, in seconds into the Clip, and as planned: null for an automatic Scene's, which is
+  // only outlined, as the frame.
+  start: number;
+  end: number;
+  picture: Picture | null;
+  // Its Transform as saved, what a gesture starts from: null where it has none to set here.
+  transform: Transform | null;
+  // The picture behind: the whole frame picks it, and it moves by itself, never with the others picked.
+  behind?: boolean;
+  // Put where a gesture leaves it, once, at its end: one `group` of changes.
+  onTransform: (transform: Transform, group: string) => void;
+}
+
+// Held where a gesture put it: a text's area moved by (dx, dy) and scaled by `scale` about its
+// middle, or a picture drawn by `transform` (its centre (dx, dy) from the plan's); until `plan` is
+// no longer the plan, once the gesture is over.
+type Held = { id: string; kind: "move" | "size"; dx: number; dy: number; scale: number; transform: Transform | null; plan: RenderPlan | null };
 
 /**
  * How far the picked items that follow a moved one are drawn from where the plan has them, in output
- * pixels, and the one they follow (null: none here, an Overlay).
+ * pixels, and the one they follow.
  */
-export type Drift = { lead: string | null; dx: number; dy: number };
+export type Drift = { lead: string; dx: number; dy: number };
 type Gesture = {
   id: string;
   pointer: number;
   kind: "move" | "size";
-  // The area as drawn when it was grabbed, and where the pointer was.
+  // The area as drawn when it was grabbed (a picture's bounds), and where the pointer was.
   from: Box;
   grab: { x: number; y: number };
   group: string;
   moved: boolean;
   // Grabbed as one of several picked, which move with it.
   together: boolean;
+  // A picture's: by its body or a Grip, from its Transform when grabbed, and where it is now.
+  picture?: { grip: Grip | "body"; grabbed: Grabbed; now: Transform };
 };
 
 let gestures = 0;
@@ -68,22 +97,24 @@ let gestures = 0;
 const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
 
 /**
- * The gestures that move, resize and edit `items` on the stage. While one is under way, and until a
- * plan comes back after its last change, the item is drawn where it is being put: the plan comes from
- * the backend only once the draft changes (docs/adr/0001-backend-plans-frontend-draws.md).
+ * The gestures that move, resize and edit `items`, and move and transform `pictures`, on the stage.
+ * While one is under way, and until a plan comes back after its last change, the item is drawn where
+ * it is being put: the plan comes from the backend only once the draft changes
+ * (docs/adr/0001-backend-plans-frontend-draws.md). A text's gesture saves as it goes, each change in
+ * one group; a picture's saves once, when it is let go.
  *
- * `picked` are the ids picked (with "overlay:<id>" for Overlays, drawn elsewhere): a click picks an
- * item alone, or with Shift, Cmd or Ctrl (`toggle`) adds it or takes it out. When several are picked,
- * moving one draws the others moved as far (`drift`), as `outside` (an Overlay moved) does; only one
- * picked alone can be resized.
+ * `picked` are the ids picked: a click picks an item alone, or with Shift, Cmd or Ctrl (`toggle`)
+ * adds it or takes it out. When several are picked, moving one draws the others moved as far
+ * (`drift`), but for the picture behind, which moves alone; only one picked alone can be resized or
+ * transformed by its Grips.
  */
 export function useStageEdit(
   plan: RenderPlan | null,
   stage: React.RefObject<HTMLDivElement | null>,
   items: StageItem[],
+  pictures: StagePicture[],
   picked: string[],
   onSelect: (id: string, toggle: boolean) => void,
-  outside: Drift | null = null,
 ) {
   const [held, setHeld] = useState<Held | null>(null);
   const [guides, setGuides] = useState<{ x: number | null; y: number | null } | null>(null);
@@ -91,9 +122,12 @@ export function useStageEdit(
   const lastTap = useRef<{ id: string; at: number } | null>(null);
   // Held while it is moved, and until a plan made after its last change comes.
   const holding = held && (gesture.current?.id === held.id || held.plan === plan) ? held : null;
+  const alone = new Set(pictures.filter((picture) => picture.behind).map((picture) => picture.id));
   const drift: Drift | null =
-    holding?.kind === "move" && picked.length > 1 && picked.includes(holding.id) ? { lead: holding.id, dx: holding.dx, dy: holding.dy } : outside;
-  const follows = (id: string) => !!drift && drift.lead !== id && picked.includes(id);
+    holding?.kind === "move" && picked.length > 1 && picked.includes(holding.id) && !alone.has(holding.id)
+      ? { lead: holding.id, dx: holding.dx, dy: holding.dy }
+      : null;
+  const follows = (id: string) => !!drift && drift.lead !== id && picked.includes(id) && !alone.has(id);
 
   // The area as drawn: moved and scaled about its middle while held, or moved with the one held.
   function shown(id: string, area: Box): Box {
@@ -103,6 +137,17 @@ export function useStageEdit(
     const width = area.width * scale;
     const height = area.height * scale;
     return { x: area.x + dx + (area.width - width) / 2, y: area.y + dy + (area.height - height) / 2, width, height };
+  }
+
+  // Picture `id` of the plan as drawn: from the Transform it is held at, or moved with the one held.
+  function shownPicture(id: string, picture: Picture): Picture {
+    if (follows(id)) {
+      const { dx, dy } = drift!;
+      const bounds = { ...picture.bounds, x: picture.bounds.x + dx, y: picture.bounds.y + dy };
+      return { ...picture, centre: [picture.centre[0] + dx, picture.centre[1] + dy], bounds };
+    }
+    if (holding?.id !== id || !holding.transform || !plan) return picture;
+    return heldPicture(picture, holding.transform, plan);
   }
 
   // An SVG transform for what is drawn in `area` of item `id`, while it is held.
@@ -129,7 +174,7 @@ export function useStageEdit(
     const dx = area.x + area.width / 2 - (planned.x + planned.width / 2);
     const dy = area.y + area.height / 2 - (planned.y + planned.height / 2);
     const scale = area.width / planned.width;
-    setHeld({ id: item.id, kind: size === null ? "move" : "size", dx, dy, scale, plan });
+    setHeld({ id: item.id, kind: size === null ? "move" : "size", dx, dy, scale, transform: null, plan });
     item.onPlace(
       { x: Math.round(area.x), y: Math.round(area.y), width: Math.round(area.width), height: Math.round(area.height) },
       size,
@@ -278,7 +323,102 @@ export function useStageEdit(
     };
   }
 
-  return { items, picked, drift, guides, shown, transform, handlers };
+  // `item` drawn by `transform` (moved, or resized: `kind`), until the next plan once it is let go.
+  function hold(item: StagePicture, transform: Transform, kind: Held["kind"]) {
+    const [x, y] = item.picture?.centre ?? [transform.x, transform.y];
+    setHeld({ id: item.id, kind, dx: transform.x - x, dy: transform.y - y, scale: 1, transform, plan });
+  }
+
+  // `item` put at `transform` and saved, as `group`: nothing when it is there already.
+  function commit(item: StagePicture, transform: Transform, kind: Held["kind"], group: string) {
+    const next = tidyTransform(transform);
+    if (item.transform && JSON.stringify(next) === JSON.stringify(item.transform)) {
+      setHeld(null);
+      return;
+    }
+    hold(item, next, kind);
+    item.onTransform(next, group);
+  }
+
+  function pictureHandlers(item: StagePicture) {
+    // Whether `point` is on the picture as drawn, not on the frame around it.
+    const onPicture = (point: { x: number; y: number }) => {
+      if (!item.picture) return false;
+      const drawn = shownPicture(item.id, item.picture);
+      const [x, y] = drawn.centre;
+      const { along, down } = offsetOnPicture({ x, y, rotation: drawn.rotation }, point);
+      return Math.abs(along) <= drawn.width / 2 && Math.abs(down) <= drawn.height / 2;
+    };
+    const start = (pointer: PointerEvent<HTMLElement>, grip: Grip | "body") => {
+      const point = at(pointer);
+      if (!point || !plan || pointer.button !== 0) return;
+      pointer.preventDefault();
+      pointer.stopPropagation();
+      if (pointer.shiftKey || pointer.metaKey || pointer.ctrlKey) {
+        onSelect(item.id, true);
+        return;
+      }
+      const together = !item.behind && picked.length > 1 && picked.includes(item.id);
+      if (!together) onSelect(item.id, false);
+      // Only picked: an automatic Scene's picture, or the frame around the picture behind.
+      if (!item.transform || !item.picture || (grip === "body" && !onPicture(point))) return;
+      pointer.currentTarget.setPointerCapture(pointer.pointerId);
+      gesture.current = {
+        id: item.id,
+        pointer: pointer.pointerId,
+        kind: grip === "body" ? "move" : "size",
+        from: item.picture.bounds,
+        grab: point,
+        group: `drag:stage-picture:${++gestures}`,
+        moved: false,
+        together,
+        picture: { grip, grabbed: { transform: item.transform, fitted: fittedOf(item.picture, plan), frame: plan }, now: item.transform },
+      };
+    };
+    const move = (pointer: PointerEvent<HTMLElement>) => {
+      const current = gesture.current;
+      const point = at(pointer);
+      if (!current?.picture || current.id !== item.id || pointer.pointerId !== current.pointer || !point) return;
+      const { grab } = current;
+      // A tap's jitter leaves it where it is.
+      if (!current.moved && Math.hypot(point.x - grab.x, point.y - grab.y) < DRAG_CSS_PX * point.unit) return;
+      current.moved = true;
+      current.picture.now = dragged(current.picture.grabbed, current.picture.grip, grab, point, { shift: pointer.shiftKey, alt: pointer.altKey });
+      hold(item, current.picture.now, current.kind);
+    };
+    const end = (pointer: PointerEvent<HTMLElement>) => {
+      const current = gesture.current;
+      if (current?.pointer !== pointer.pointerId) return;
+      gesture.current = null;
+      // Let go over another picture than it took hold of (the next Scene's, played into): dropped.
+      if (current.id !== item.id) setHeld(null);
+      else if (current.moved && current.picture) commit(item, current.picture.now, current.kind, current.group);
+      // A click on one of several picked picks it alone.
+      else if (current.together) onSelect(item.id, false);
+    };
+    const cancel = () => {
+      gesture.current = null;
+      setHeld(null);
+    };
+    const pointers = { onPointerMove: move, onPointerUp: end, onPointerCancel: cancel };
+    return {
+      body: {
+        onPointerDown: (pointer: PointerEvent<HTMLElement>) => start(pointer, "body"),
+        ...pointers,
+        onKeyDown: (key: KeyboardEvent<HTMLElement>) => {
+          const step = key.shiftKey ? NUDGE_PX * 5 : NUDGE_PX;
+          const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[key.key];
+          if (!delta || !item.transform || !item.picture || !plan) return;
+          key.preventDefault();
+          const grabbed = { transform: item.transform, fitted: fittedOf(item.picture, plan), frame: plan };
+          commit(item, movedPicture(grabbed, { x: 0, y: 0 }, { x: delta[0], y: delta[1] }), "move", `stage-nudge:${item.id}`);
+        },
+      },
+      grip: (grip: Grip) => ({ onPointerDown: (pointer: PointerEvent<HTMLElement>) => start(pointer, grip), ...pointers }),
+    };
+  }
+
+  return { items, pictures, picked, drift, guides, moving: !!holding || !!drift, shown, shownPicture, transform, handlers, pictureHandlers };
 }
 
 export type StageEdit = ReturnType<typeof useStageEdit>;
@@ -286,15 +426,27 @@ export type StageEdit = ReturnType<typeof useStageEdit>;
 /**
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
  * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
- * with a corner to resize it by when it has a size. The guides it snaps to, while it does.
+ * with a corner to resize it by when it has a size. Under them, the pictures' handles (each on its
+ * picture as turned), and over everything the Grips of one picked alone. The guides it snaps to,
+ * while it does. `scale` is the stage's CSS pixels per output pixel.
  */
-export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playback: Playback; edit: StageEdit }) {
+export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan; playback: Playback; edit: StageEdit; scale: number }) {
   const on = useShown(playback, (time) =>
-    edit.items.map((item) => item.shows.findIndex((show) => show.start <= time && time < show.end)).join(","),
+    [
+      ...edit.pictures.map((picture) => (picture.behind || (picture.start <= time && time < picture.end) ? 0 : -1)),
+      ...edit.items.map((item) => item.shows.findIndex((show) => show.start <= time && time < show.end)),
+    ].join(","),
   );
   const shownAt = on.split(",").map(Number);
+  const picturesOn = shownAt.splice(0, edit.pictures.length);
+  // The one picture picked alone, with a Transform to set: its Grips.
+  const gripped = edit.picked.length === 1 ? edit.pictures.find((picture) => picture.id === edit.picked[0] && picture.transform && picture.picture) : undefined;
   return (
     <>
+      {edit.pictures.map((picture, i) => (
+        // The picture behind keeps its handle from one Scene to the next, and so the pointer it holds.
+        <PictureHandle key={picture.behind ? "behind" : picture.id} plan={plan} edit={edit} item={picture} on={picturesOn[i] === 0} />
+      ))}
       {edit.items.map((item, i) => {
         const selected = edit.picked.includes(item.id);
         const index = shownAt[i] ?? -1;
@@ -346,6 +498,7 @@ export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playb
           </div>
         );
       })}
+      {gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
       {edit.guides?.x != null && (
         <div aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(edit.guides.x / plan.width) }} />
       )}
@@ -353,5 +506,102 @@ export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playb
         <div aria-hidden className="pointer-events-none absolute inset-x-0 h-px bg-accent" style={{ top: percent(edit.guides.y / plan.height) }} />
       )}
     </>
+  );
+}
+
+// The box of `picture` on the stage as turned (not flipped: its Grips are of its own box), in shares of the frame.
+function turnedBox(picture: Picture, plan: RenderPlan): CSSProperties {
+  return {
+    left: percent(picture.centre[0] / plan.width),
+    top: percent(picture.centre[1] / plan.height),
+    width: percent(picture.width / plan.width),
+    height: percent(picture.height / plan.height),
+    transform: `translate(-50%, -50%) rotate(${picture.rotation}deg)`,
+  };
+}
+
+/**
+ * A picture's handle: an Overlay's box as turned, to pick, move and nudge it; for the picture behind,
+ * the whole frame, which picks it (and moves it where the picture is), with its box, or for an
+ * automatic Scene the frame, outlined while picked. Shown while `on` screen, or faded while picked.
+ */
+function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; on: boolean }) {
+  const selected = edit.picked.includes(item.id);
+  if (!on && !selected) return null;
+  const { body } = edit.pictureHandlers(item);
+  const picture = item.picture && edit.shownPicture(item.id, item.picture);
+  const outline = selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed";
+  const box = picture && item.transform && (!item.behind || selected) && (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-roledescription="movable picture"
+      aria-label={`${item.label}: drag to move it, or use the arrow keys${selected ? "; its corners scale it, its edges stretch it, the handle above turns it" : ""}`}
+      aria-pressed={selected}
+      {...body}
+      className={cx(
+        "absolute cursor-move touch-none focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-solid",
+        outline,
+        !on && "opacity-40",
+      )}
+      style={turnedBox(picture, plan)}
+    />
+  );
+  if (!item.behind) return box || null;
+  return (
+    <>
+      {/* The frame: what of the Segment under the playhead isn't under anything else picks it. */}
+      <div aria-hidden onPointerDown={body.onPointerDown} onPointerMove={body.onPointerMove} onPointerUp={body.onPointerUp} onPointerCancel={body.onPointerCancel} className="absolute inset-0 touch-none" />
+      {box || (selected && <div aria-hidden className="pointer-events-none absolute inset-0 rounded-control outline-2 -outline-offset-2 outline-white outline-dashed" />)}
+    </>
+  );
+}
+
+// The Grips, the edges' drawn as bars along them.
+const GRIPS: { grip: Exclude<Grip, "rotate">; look: string }[] = [
+  { grip: "top-left", look: "size-3 rounded-full" },
+  { grip: "top", look: "h-2 w-4 rounded-full" },
+  { grip: "top-right", look: "size-3 rounded-full" },
+  { grip: "right", look: "h-4 w-2 rounded-full" },
+  { grip: "bottom-right", look: "size-3 rounded-full" },
+  { grip: "bottom", look: "h-2 w-4 rounded-full" },
+  { grip: "bottom-left", look: "size-3 rounded-full" },
+  { grip: "left", look: "h-4 w-2 rounded-full" },
+];
+
+// A Grip's dot, with a hit area larger than it, larger still under a finger.
+const GRIP_DOT =
+  "pointer-events-auto absolute touch-none border-2 border-white bg-accent shadow-sm before:absolute before:-inset-2 before:content-[''] pointer-coarse:before:-inset-3.5";
+// How far above the picture the rotate handle is, and how far inside the stage a Grip is kept, in CSS pixels.
+const ROTATE_REACH_CSS_PX = 24;
+const GRIP_INSET_CSS_PX = 10;
+
+/**
+ * The Grips of the picture picked alone, over everything else on the stage, on the picture as turned
+ * (or, off the stage, pulled in towards its centre: `gripsOnFrame`): its corners scale it about its
+ * centre, its edges stretch it, and the handle above it turns it (Shift: in 15° steps; Alt: without
+ * snapping to a quarter turn). `scale` is the stage's CSS pixels per output pixel.
+ */
+function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; scale: number }) {
+  const picture = edit.shownPicture(item.id, item.picture!);
+  const { grip } = edit.pictureHandlers(item);
+  const [x, y] = picture.centre;
+  const unit = 1 / scale;
+  const on = gripsOnFrame({ x, y, width: picture.width, height: picture.height, rotation: picture.rotation }, plan, ROTATE_REACH_CSS_PX * unit, GRIP_INSET_CSS_PX * unit);
+  const place = (point: Point): CSSProperties => ({
+    left: percent(point.x / plan.width),
+    top: percent(point.y / plan.height),
+    transform: `translate(-50%, -50%) rotate(${picture.rotation}deg)`,
+  });
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0">
+      <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="absolute inset-0 size-full">
+        <line x1={on.top.x} y1={on.top.y} x2={on.rotate.x} y2={on.rotate.y} stroke="white" strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
+      </svg>
+      {GRIPS.map(({ grip: at, look }) => (
+        <span key={at} {...grip(at)} className={cx(GRIP_DOT, look)} style={{ ...place(on[at]), cursor: gripCursor(at, picture.rotation) }} />
+      ))}
+      <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
+    </div>
   );
 }

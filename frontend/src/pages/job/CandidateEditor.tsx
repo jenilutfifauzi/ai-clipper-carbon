@@ -20,7 +20,7 @@ import { cx, formatPrecise } from "../../format";
 import { clipTrimmed, layersOf } from "./advanced/actions";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
-import { ClipPreview, type StageId } from "./editor/ClipPreview";
+import { ClipPreview, type PickedOnStage } from "./editor/ClipPreview";
 import { candidateDraft } from "./editor/draft";
 import { useMagnetic } from "./editor/magnetic";
 import { Playback, playedFrom, playable } from "./editor/playback";
@@ -131,7 +131,7 @@ export function CandidateEditor({
   const [captionFocus, setCaptionFocus] = useState<{ at: number } | null>(null);
   const [scene, setScene] = useState<number | null>(null);
   // The hook or the captions, selected on the preview.
-  const [onStage, setOnStage] = useState<StageId | null>(null);
+  const [onStage, setOnStage] = useState<PickedOnStage | null>(null);
   // How many times the hook or the Kicker was retyped on the preview: its fields start again from it.
   const [retyped, setRetyped] = useState(0);
   const [timing, setTiming] = useDraftSave<HookTiming>(

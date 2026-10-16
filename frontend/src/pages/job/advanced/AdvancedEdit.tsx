@@ -26,8 +26,8 @@ import { cx } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
-import { ClipPreview } from "../editor/ClipPreview";
-import type { OverlayControls } from "../editor/PreviewOverlays";
+import { ClipPreview, type StageControls } from "../editor/ClipPreview";
+import { pictureSource, withPictureTransform } from "../editor/stagePicture";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
@@ -586,23 +586,36 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (moved) history.set(moved.edits, group);
   }
 
-  // The Overlays on the preview, picked and moved there; on a locked Track, only drawn.
-  const overlayControls: OverlayControls | undefined = tracks.locked.includes("overlay")
+  // The Overlays on the preview, picked and transformed there; on a locked Track, only drawn. One
+  // of several picked moves them all.
+  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay")
     ? undefined
     : {
-        selected: itemsOf(pick)
-          .filter((item) => item.kind === "overlay")
-          .map((item) => item.id),
         transformOf: (id) => edits.overlays.find((overlay) => overlay.id === id)?.transform,
-        onSelect: (id, toggle) => select(clicked(pick, { kind: "overlay", id }, toggle || picking)),
-        onPlace: (id, place, group) => {
+        onTransform: (id, transform, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
-          const { transform } = overlay;
-          if (place.scale === undefined && placedTogether("overlay", id)) moveOnFrame(place.x - transform.x, place.y - transform.y, group);
-          else updateOverlay({ ...overlay, transform: { ...transform, ...place } }, group);
+          const old = overlay.transform;
+          if (placedTogether("overlay", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
+          else updateOverlay({ ...overlay, transform }, group);
         },
       };
+  // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
+  // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
+  const plan = preview?.plan ?? null;
+  const pictureAt: StageControls["pictureAt"] =
+    tracks.locked.includes("video") || !plan
+      ? undefined
+      : (segment, at) => {
+          const source = pictureSource(edits, plan, segment, at);
+          if (!source) return null;
+          return {
+            picked: isPicked(pick, "segment", source.segment),
+            onPick: (toggle) => select(clicked(pick, { kind: "segment", id: source.segment }, toggle || picking)),
+            transform: source.kind === "auto" ? null : source.transform,
+            onTransform: (transform, group) => history.set(withPictureTransform(edits, plan, source, transform), group),
+          };
+        };
   const source = job.source!;
   const fullscreenButton = (
     <Button
@@ -653,8 +666,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         },
         texts: !tracks.locked.includes("text"),
         fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
+        overlays: overlayControls,
+        pictureAt,
       }}
-      overlays={fullscreen.way ? undefined : overlayControls}
       fit
       rates={wide}
       tools={

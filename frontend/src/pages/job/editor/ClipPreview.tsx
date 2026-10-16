@@ -12,6 +12,7 @@ import {
   type PreviewPlan,
   type RenderPlan,
   type TextEvent,
+  type Transform,
   type WatermarkEvent,
 } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -20,13 +21,14 @@ import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { pictureStyle, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
-import { heldArea, PreviewOverlays, type OverlayControls, type OverlayHold } from "./PreviewOverlays";
+import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt } from "./ScenesTrack";
-import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type Drift, type StageEdit, type StageItem } from "./StageEdit";
+import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { segmentOfScene } from "./stagePicture";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -66,9 +68,10 @@ const percent = (value: number) => `${value * 100}%`;
  * the live deck; the other waits, hidden, for the next join.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
  * centre, in output pixels. With `stage`, the hook, the captions and (in the Advanced Edit) the Text
- * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move together
- * with the picked Overlays), moved, resized and retyped on the frame (StageEdit.tsx,
- * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
+ * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move
+ * together), moved, resized and retyped on the frame (StageEdit.tsx, InlineText.tsx); and in the
+ * Advanced Edit the Overlays and the picture behind them are picked and transformed by their Grips.
+ * While a picture is held, it is drawn from the drag until the plan has it. With `fit`, the frame is as large as fits the space its parent gives it (the
  * Advanced Edit's player), and the transport is a single row, ending with `tools`; with `rates` too,
  * it offers the playback rate, and with `loop` a button that turns Loop on and off; with `hideBar`,
  * that row fades out (full screen, while the pointer is still).
@@ -80,7 +83,6 @@ export function ClipPreview({
   playback,
   onWatermarkMove,
   stage: controls,
-  overlays,
   fit = false,
   rates = false,
   loop,
@@ -94,7 +96,6 @@ export function ClipPreview({
   playback: Playback;
   onWatermarkMove?: (x: number, y: number) => void;
   stage?: StageControls;
-  overlays?: OverlayControls;
   fit?: boolean;
   rates?: boolean;
   // Loop on or off, and what turns it over (the Advanced Edit's Loop Region).
@@ -131,7 +132,6 @@ export function ClipPreview({
   }, []);
 
   const sceneIndex = useShown(playback, (time, p) => (plan ? sceneAt(plan, time, p.shownSegmentIndex) : 0));
-  const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
   // What is being retyped, the playback paused while it is.
@@ -144,24 +144,17 @@ export function ClipPreview({
       }
     : undefined;
   const items = plan && fonts && controls ? stageItems(plan, fontById, controls, startEditing, () => playback.time) : [];
-  // What is picked on the stage, Overlays as "overlay:<id>": moving one of several moves them all.
-  const picked = [...(controls?.selected ?? []), ...(overlays?.selected ?? []).map((id) => `overlay:${id}`)];
-  const [overlayHold, setOverlayHold] = useState<OverlayHold | null>(null);
-  // Let go once a plan has the dropped Overlay elsewhere: an undo bringing it back where it was
-  // grabbed mustn't hold it again.
-  useEffect(() => {
-    if (!plan || !overlays || !overlayHold || overlayHold.dragging) return;
-    const event = plan.overlays.find((other) => other.id === overlayHold.id);
-    if (!event || !heldArea(overlayHold, overlayHold.id, event)) setOverlayHold(null);
-  }, [plan, overlays, overlayHold]);
-  const edit = useStageEdit(
-    plan,
-    stage,
-    items,
-    picked,
-    (id, toggle) => controls?.onSelect(id as StageId, toggle),
-    overlayDrift(plan, overlays, overlayHold, picked),
+  // The picture under the playhead, unless the Video Track is hidden.
+  const behind = plan && !blank && controls?.pictureAt ? controls.pictureAt(segmentOfScene(plan, sceneIndex), sceneIndex) : null;
+  const pictures = plan && controls ? stagePictures(plan, controls, behind, sceneIndex) : [];
+  // What is picked on the stage: moving one of several moves them all.
+  const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
+  const edit = useStageEdit(plan, stage, items, pictures, picked, (id, toggle) =>
+    id.startsWith("picture:") ? behind?.onPick(toggle) : controls?.onSelect(id as PickedOnStage, toggle),
   );
+  // The plan as drawn: a picture held or moved with one is drawn where it is being put.
+  const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex) : plan;
+  const scene = drawn?.scenes[sceneIndex];
 
   const frame = (
     <div
@@ -180,7 +173,7 @@ export function ClipPreview({
               key={`${deck}:${slot}`}
               videoRef={ref}
               src={src}
-              plan={plan}
+              plan={drawn}
               {...slotView(scene, slot)}
               playback={playback}
               muted={deck > 0 || slot > 0}
@@ -188,10 +181,14 @@ export function ClipPreview({
             />
           )),
         )}
-        <PreviewSegments plan={plan} playback={playback} />
-        <PreviewTransitions plan={plan} playback={playback} src={src} />
+        <PreviewSegments plan={drawn} playback={playback} />
+        <PreviewTransitions plan={drawn} playback={playback} src={src} />
       </div>
-      <PreviewOverlays plan={plan} playback={playback} stage={stage} controls={overlays} picked={picked} hold={overlayHold} onHold={setOverlayHold} drift={edit.drift} />
+      <PreviewOverlays
+        plan={drawn}
+        playback={playback}
+        selected={(controls?.selected ?? []).flatMap((id) => (id.startsWith("overlay:") ? [id.slice("overlay:".length)] : []))}
+      />
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
@@ -243,7 +240,7 @@ export function ClipPreview({
           }}
         />
       )}
-      {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} />}
+      {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} scale={scale} />}
       {preview && editing && retype && (
         <InlineText preview={preview} fontById={fontById} editing={editing} retype={retype} onClose={() => setEditing(null)} />
       )}
@@ -268,13 +265,58 @@ export function ClipPreview({
   );
 }
 
-// How far the picked items follow an Overlay of several picked that is being moved (not resized).
-function overlayDrift(plan: RenderPlan | null, overlays: OverlayControls | undefined, hold: OverlayHold | null, picked: string[]): Drift | null {
-  if (!plan || !overlays || !hold || picked.length < 2 || !overlays.selected.includes(hold.id)) return null;
-  const event = plan.overlays.find((other) => other.id === hold.id);
-  const held = event && heldArea(hold, hold.id, event);
-  if (!held || held.width !== event.picture.width) return null;
-  return { lead: `overlay:${hold.id}`, dx: held.x - event.picture.centre[0], dy: held.y - event.picture.centre[1] };
+// The picture behind the Overlays, at the plan's Scene `scene`: another Scene's is another picture,
+// so that one held isn't drawn in the next Scene, nor saved to it.
+const behindId = (scene: number): StageId => `picture:${scene}`;
+
+/**
+ * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
+ * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays.
+ */
+function stagePictures(plan: RenderPlan, controls: StageControls, behind: PictureTarget | null, scene: number): StagePicture[] {
+  const pictures: StagePicture[] = [];
+  const shown = plan.scenes[scene];
+  if (behind && shown) {
+    const picture = behind.transform ? shown.picture : null;
+    pictures.push({
+      id: behindId(scene),
+      label: shown.layout === "media" ? "Video" : shown.layout === "manual" ? "Scene, framed by hand" : "Scene",
+      start: shown.start,
+      end: shown.end,
+      picture,
+      transform: picture && behind.transform,
+      behind: true,
+      onTransform: behind.onTransform,
+    });
+  }
+  const overlays = controls.overlays;
+  for (const event of overlays ? plan.overlays : []) {
+    const transform = overlays!.transformOf(event.id);
+    if (!transform) continue;
+    pictures.push({
+      id: `overlay:${event.id}`,
+      label: "Overlay",
+      start: event.start,
+      end: event.end,
+      picture: event.picture,
+      transform,
+      onTransform: (next, group) => overlays!.onTransform(event.id, next, group),
+    });
+  }
+  return pictures;
+}
+
+// The plan with its Overlays and the Scene `scene`'s picture drawn where the stage holds them.
+function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number): RenderPlan {
+  const overlays = plan.overlays.map((event) => {
+    const picture = edit.shownPicture(`overlay:${event.id}`, event.picture);
+    return picture === event.picture ? event : { ...event, picture };
+  });
+  const scenes = plan.scenes.map((each, index) => {
+    const picture = index === scene && each.picture ? edit.shownPicture(behindId(scene), each.picture) : each.picture;
+    return picture === each.picture ? each : { ...each, picture };
+  });
+  return { ...plan, overlays, scenes };
 }
 
 // The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
@@ -379,14 +421,31 @@ function useWatermarkDrag(
 
 /**
  * The hold of an editor on what can be moved on the preview: the hook ("hook"), the captions
- * ("captions") and, with `texts`, each Text Layer ("text:<id>"). Which are picked, what a click picks
- * (with Shift, Cmd or Ctrl, `toggle`), where a move or resize puts one, and what retyping one saves.
+ * ("captions"), with `texts` each Text Layer ("text:<id>"), with `overlays` each Overlay
+ * ("overlay:<id>"), and with `pictureAt` the picture behind them all ("picture:<n>": the Segment
+ * under the playhead, at the plan's Scene n). Which are picked, what a click picks (with Shift, Cmd or Ctrl, `toggle`), where a
+ * move or resize puts one, and what retyping one saves.
  */
-export type StageId = "hook" | "captions" | `text:${string}`;
+export type StageId = "hook" | "captions" | `text:${string}` | `overlay:${string}` | `picture:${number}`;
+
+// What is picked on the stage by its id: all but the picture behind, which says itself (PictureTarget).
+export type PickedOnStage = Exclude<StageId, `picture:${number}`>;
+
+/**
+ * The picture under the playhead as an editor holds it: whether its Segment is picked, what picks it
+ * (with `toggle`, added to the Pick or taken out), its Transform as saved (null: none to set on the
+ * stage, an automatic Scene's, only outlined), and where a gesture puts it, once, as one `group`.
+ */
+export interface PictureTarget {
+  picked: boolean;
+  onPick: (toggle: boolean) => void;
+  transform: Transform | null;
+  onTransform: (transform: Transform, group: string) => void;
+}
 
 export interface StageControls {
-  selected: StageId[];
-  onSelect: (id: StageId, toggle: boolean) => void;
+  selected: PickedOnStage[];
+  onSelect: (id: PickedOnStage, toggle: boolean) => void;
   // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
   // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
   onPlace: (id: StageId, place: Place, group: string) => void;
@@ -395,6 +454,11 @@ export interface StageControls {
   texts?: boolean;
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];
+  // The Overlays (their Track unlocked): each one's Transform as saved, and where a gesture puts it.
+  overlays?: { transformOf: (id: string) => Transform | undefined; onTransform: (id: string, transform: Transform, group: string) => void };
+  // The picture of the plan's Segment `segment`, Scene `scene` (those under the playhead): null when
+  // it can't be picked on the stage (its Track locked, or the plan not yet of the edits).
+  pictureAt?: (segment: number, scene: number) => PictureTarget | null;
 }
 
 // The sizes the hook, the captions and a Text Layer can be set to (styles.py, candidates.py).
