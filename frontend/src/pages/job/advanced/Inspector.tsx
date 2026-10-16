@@ -8,11 +8,13 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
 import { restyle, setFade, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
+import { useKeyTime } from "./KeyCluster";
+import { writeItemKey } from "./keying";
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
-import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { isPicked, itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
@@ -57,10 +59,13 @@ export function Inspector({
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
-  // An item's volume set from its slider, as its Volume Line sets it.
+  const keyTime = useKeyTime(playback);
+  // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's, as a
+  // Keyframe at the playhead.
   const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
-    const outcome = setVolume({ edits, pick }, item, volume);
-    if (outcome) onEdits(outcome.edits, group);
+    const keyed = item.kind === "music" && !!edits.music.find((clip) => clip.id === item.id)?.keys.volume?.length;
+    const outcome = keyed ? writeItemKey({ edits, pick }, { kind: "music", id: item.id }, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
+    if (outcome) onEdits(outcome.edits, keyed ? `${group}@${keyTime}` : group);
   };
 
   const items = itemsOf(pick);
@@ -77,7 +82,7 @@ export function Inspector({
         />
       );
     }
-    return <PickSummary pick={pick} actions={actions} />;
+    return <PickSummary pick={pick} edits={edits} actions={actions} />;
   }
   if (pick?.kind === "join") {
     return (
@@ -131,6 +136,7 @@ export function Inspector({
         clip={clip}
         item={mediaById.get(clip.media)}
         duration={duration}
+        playback={playback}
         onChange={onMusic}
         onVolume={volumeOf({ kind: "music", id: clip.id })}
         onFade={(fade, secs, group) => {
@@ -150,6 +156,7 @@ export function Inspector({
         overlay={overlay}
         item={mediaById.get(overlay.media)}
         duration={duration}
+        playback={playback}
         onChange={onOverlay}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
@@ -229,9 +236,15 @@ const NAMES: Record<ItemKind, [string, string]> = {
   overlay: ["Overlay", "Overlays"],
 };
 
-/** Several items picked: how many of each kind, and what can be done to them all. */
-function PickSummary({ pick, actions }: { pick: Pick; actions: ItemActions }) {
+/**
+ * Several items picked: how many of each kind, and what can be done to them all. Keyframes are edited
+ * with one item picked: a note says so when some picked item has them.
+ */
+function PickSummary({ pick, edits, actions }: { pick: Pick; edits: AdvancedEdits; actions: ItemActions }) {
   const items = itemsOf(pick);
+  const keyed = [...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)), ...edits.music.filter((clip) => isPicked(pick, "music", clip.id))].some(
+    (item) => Object.keys(item.keys).length > 0,
+  );
   const counts = (Object.keys(NAMES) as ItemKind[])
     .map((kind) => [kind, items.filter((item) => item.kind === kind).length] as const)
     .filter(([, count]) => count > 0)
@@ -253,6 +266,7 @@ function PickSummary({ pick, actions }: { pick: Pick; actions: ItemActions }) {
         </div>
       </div>
       <p className="text-sm text-pretty text-muted">{counts.join(", ")}</p>
+      {keyed && <p className="text-sm text-pretty text-muted">Some of them have Keyframes: pick one alone to change its keyed fields.</p>}
     </div>
   );
 }

@@ -104,12 +104,13 @@ export const fittedOf = (picture: Picture, frame: Size): Size => fittedSize({ wi
 /**
  * A Picture of the plan as drawn by `transform` instead, while a Grip holds it: at its centre, as
  * large as its crop's fitted size makes it, turned and flipped as it says, its bounds turned with it.
- * Its crop and decoration are the plan's.
+ * Its crop and decoration are the plan's. A keyed one is held still, without its motion.
  */
 export function heldPicture(picture: Picture, transform: Transform, frame: Size): Picture {
   const drawn = placed(transform, fittedOf(picture, frame));
+  const { motion: _, ...still } = picture;
   return {
-    ...picture,
+    ...still,
     centre: [transform.x, transform.y],
     width: drawn.width,
     height: drawn.height,

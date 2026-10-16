@@ -1,13 +1,12 @@
 import type { ClipSegment, MediaItem, Overlay, PreviewPlan } from "../../../api";
 import { Hint } from "../../../components/InfoTip";
-import { mediaSize, overlayPlacement } from "../editor/picture";
 import type { Playback } from "../editor/playback";
 import { DecorationFields } from "./DecorationFields";
 import type { AdvancedEdits } from "./edits";
 import { FramingFields } from "./MainTrack";
+import { OverlayTransform } from "./Overlays";
 import { onlyItem, type Pick } from "./pick";
 import { SceneFields } from "./SceneFields";
-import { TransformFields } from "./TransformFields";
 
 /**
  * The phone's Transform sheet: of the picture picked alone, the inspector's fields that place it and
@@ -42,19 +41,10 @@ export function TransformPanel({
   const overlay = only?.kind === "overlay" ? edits.overlays.find((other) => other.id === only.id) : undefined;
   const segment = only?.kind === "segment" ? edits.segments.find((other) => other.id === only.id) : undefined;
   if (overlay) {
-    const size = mediaSize(mediaById.get(overlay.media));
     return (
       <div className="flex flex-col gap-4">
         <Hint more="Pinch it to scale it, and twist two fingers to turn it.">Drag it on the video with a finger to place it.</Hint>
-        <TransformFields
-          transform={overlay.transform}
-          crop={overlay.crop}
-          size={size}
-          defaults={overlayPlacement(size)}
-          onChange={(transform, field) => onOverlay({ ...overlay, transform }, `overlay:${overlay.id}:transform.${field}`)}
-          onCrop={(crop, field, transform) => onOverlay({ ...overlay, crop, transform: transform ?? overlay.transform }, `overlay:${overlay.id}:crop.${field}`)}
-          onCropMode={cropMode("overlay", overlay.id)}
-        />
+        <OverlayTransform overlay={overlay} item={mediaById.get(overlay.media)} playback={playback} onChange={onOverlay} onCropMode={cropMode("overlay", overlay.id)} />
         <DecorationFields overlay={overlay} onChange={onOverlay} />
       </div>
     );

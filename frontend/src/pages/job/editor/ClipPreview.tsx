@@ -151,7 +151,8 @@ export function ClipPreview({
   // Keyed pictures' handles and Grips go by their bounds at the playhead: drawn again at each new
   // time while paused, and left where they were while playing, which doesn't draw the stage again.
   const keyedAt = useKeyedTime(plan, playback);
-  const pictures = plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt) }, controls, behind, sceneIndex) : [];
+  const pictures =
+    plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt) }, controls, behind, sceneIndex, keyedAt ?? playback.time) : [];
   // What is picked on the stage: moving one of several moves them all.
   const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
   const edit = useStageEdit(
@@ -300,9 +301,9 @@ const behindId = (scene: number): StageId => `picture:${scene}`;
 
 /**
  * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
- * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays.
+ * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at `time`.
  */
-function stagePictures(plan: RenderPlan, controls: StageControls, behind: PictureTarget | null, scene: number): StagePicture[] {
+function stagePictures(plan: RenderPlan, controls: StageControls, behind: PictureTarget | null, scene: number, time: number): StagePicture[] {
   const pictures: StagePicture[] = [];
   const shown = plan.scenes[scene];
   if (behind && shown) {
@@ -323,7 +324,7 @@ function stagePictures(plan: RenderPlan, controls: StageControls, behind: Pictur
   }
   const overlays = controls.overlays;
   for (const event of overlays ? plan.overlays : []) {
-    const transform = overlays!.transformOf(event.id);
+    const transform = overlays!.transformOf(event.id, time);
     if (!transform) continue;
     pictures.push({
       id: `overlay:${event.id}`,
@@ -332,7 +333,7 @@ function stagePictures(plan: RenderPlan, controls: StageControls, behind: Pictur
       end: event.end,
       picture: event.picture,
       transform,
-      onTransform: (next, group) => overlays!.onTransform(event.id, next, group),
+      onTransform: (next, group) => overlays!.onTransform(event.id, next, group, time),
       crop: overlays!.cropOf?.(event.id) ?? null,
       onCrop: overlays!.onCrop && ((crop, next, group) => overlays!.onCrop!(event.id, crop, next, group)),
     });
@@ -494,11 +495,12 @@ export interface StageControls {
   texts?: boolean;
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];
-  // The Overlays (their Track unlocked): each one's Transform as saved, and where a gesture puts it;
-  // with `cropOf` and `onCrop`, its Crop and where Crop mode leaves it (with its Transform).
+  // The Overlays (their Track unlocked): each one's Transform as shown at `time` (a keyed one's at
+  // the playhead), and where a gesture made from it there puts it; with `cropOf` and `onCrop`, its
+  // Crop and where Crop mode leaves it (with its Transform).
   overlays?: {
-    transformOf: (id: string) => Transform | undefined;
-    onTransform: (id: string, transform: Transform, group: string) => void;
+    transformOf: (id: string, time: number) => Transform | undefined;
+    onTransform: (id: string, transform: Transform, group: string, time: number) => void;
     cropOf?: (id: string) => Crop | undefined;
     onCrop?: (id: string, crop: Crop, transform: Transform, group: string) => void;
   };
