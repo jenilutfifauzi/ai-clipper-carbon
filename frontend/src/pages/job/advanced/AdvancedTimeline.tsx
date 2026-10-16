@@ -15,7 +15,7 @@ import {
 import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
-import { onFrame, revealScroll } from "./playhead";
+import { onFrame, revealScroll, type LoopMarks, type LoopRegion } from "./playhead";
 import { setSkim, setSkimSound, useSkim, useSkimSound } from "./skim";
 import { MAX_ZOOM, zoomAboutPlayhead, type ZoomedView } from "./timelineView";
 
@@ -75,7 +75,7 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * while paused, a playhead moved out of view (a frame step, a jump) is scrolled back into it. With
  * `skimmable` (a desktop), its Skim button turns the Skim on: then a mouse over the ruler or the
  * tracks, pressing nothing, has the paused preview show the time under it, marked by a thin line,
- * until it leaves or presses.
+ * until it leaves or presses. With `loop`, the ruler shows the Loop Region as a band, lit while Loop is on, whose ends are dragged.
  */
 export function AdvancedTimeline({
   duration,
@@ -90,6 +90,7 @@ export function AdvancedTimeline({
   zoomStepRef,
   skimmable = false,
   labelWidth = LABEL_WIDTH,
+  loop,
   children,
 }: {
   duration: number;
@@ -112,6 +113,8 @@ export function AdvancedTimeline({
   skimmable?: boolean;
   // The labels' column's width, in pixels: wider on a desktop, where it holds the Tracks' buttons.
   labelWidth?: number;
+  // The Loop Region (none without marks), whether Loop is on, and the marks its ends are dragged to.
+  loop?: { region: LoopRegion | null; on: boolean; onMarks: (marks: LoopMarks) => void };
   children: (geometry: TimeGeometry) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -434,6 +437,7 @@ export function AdvancedTimeline({
         >
           <TrackRow label="" height="h-7">
             <Ruler duration={duration} pps={pps} />
+            {loop?.region && <LoopBand region={loop.region} on={loop.on} pps={pps} fps={fps} timeAt={timeAt} onMarks={loop.onMarks} />}
           </TrackRow>
           {children(geometry)}
           <Playhead playback={playback} fps={fps} pps={pps} labelWidth={labelWidth} />
@@ -529,6 +533,66 @@ function Ruler({ duration, pps }: { duration: number; pps: number }) {
           {step < 1 && t % 1 ? `${t.toFixed(1)}` : formatClock(t)}
         </span>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The Loop Region on the ruler: a band from In to Out, lit while Loop is on. Its ends are dragged,
+ * on the Clip's frames, to move In or Out (past the other, they swap); the band itself lets the
+ * ruler scrub through it, and a drag of an end isn't a scrub.
+ */
+function LoopBand({
+  region,
+  on,
+  pps,
+  fps,
+  timeAt,
+  onMarks,
+}: {
+  region: LoopRegion;
+  on: boolean;
+  pps: number;
+  fps: number;
+  timeAt: (clientX: number) => number;
+  onMarks: (marks: LoopMarks) => void;
+}) {
+  // The end being dragged, and where the other one stays.
+  const drag = useRef<{ pointer: number; end: keyof LoopMarks; fixed: number } | null>(null);
+  const end = (which: keyof LoopMarks) => (
+    <span
+      className="pointer-events-auto absolute top-0 bottom-0 w-3 -translate-x-1/2 cursor-ew-resize touch-none"
+      style={{ left: region[which] * pps }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { pointer: event.pointerId, end: which, fixed: which === "in" ? region.out : region.in };
+      }}
+      onPointerMove={(event) => {
+        const gesture = drag.current;
+        if (!gesture || gesture.pointer !== event.pointerId) return;
+        event.stopPropagation();
+        const time = onFrame(timeAt(event.clientX), fps);
+        onMarks(gesture.end === "in" ? { in: time, out: gesture.fixed } : { in: gesture.fixed, out: time });
+      }}
+      onPointerUp={(event) => {
+        if (drag.current?.pointer !== event.pointerId) return;
+        event.stopPropagation();
+        drag.current = null;
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+    >
+      <span className={cx("absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2", on ? "bg-accent" : "bg-muted")} />
+    </span>
+  );
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0">
+      <div className={cx("absolute top-0 bottom-0", on ? "bg-accent/25" : "bg-fill")} style={{ left: region.in * pps, width: (region.out - region.in) * pps }} />
+      {end("in")}
+      {end("out")}
     </div>
   );
 }

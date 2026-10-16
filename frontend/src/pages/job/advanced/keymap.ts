@@ -4,6 +4,10 @@
 
 export type ShortcutId =
   | "play"
+  | "mark-in"
+  | "mark-out"
+  | "loop"
+  | "clear-marks"
   | "undo"
   | "redo"
   | "pick-all"
@@ -80,6 +84,10 @@ const alt = true;
 
 export const SHORTCUTS: Shortcut[] = [
   { id: "play", keys: [{ key: " " }], group: "playback", label: "Play or pause" },
+  { id: "mark-in", keys: [{ key: "i" }], group: "playback", label: "Mark In at the playhead" },
+  { id: "mark-out", keys: [{ key: "o" }], group: "playback", label: "Mark Out at the playhead" },
+  { id: "loop", keys: [{ key: "l" }], group: "playback", label: "Loop the Region on or off (with no marks, the whole Clip)" },
+  { id: "clear-marks", keys: [{ key: "x", alt }], group: "playback", label: "Clear the marks and stop looping" },
   { id: "step-back", keys: [{ key: "ArrowLeft" }], group: "navigation", label: "Playhead one frame back" },
   { id: "step-forward", keys: [{ key: "ArrowRight" }], group: "navigation", label: "Playhead one frame forward" },
   { id: "step-back-10", keys: [{ key: "ArrowLeft", shift }], group: "navigation", label: "Playhead ten frames back" },
@@ -138,6 +146,20 @@ function normal({ key, command = false, shift = false, alt = false }: Keys): Req
 function same(a: Keys, b: Keys): boolean {
   const [x, y] = [normal(a), normal(b)];
   return x.key === y.key && x.command === y.command && x.shift === y.shift && x.alt === y.alt;
+}
+
+/**
+ * The keys a key event gives. On a Mac, Alt (⌥) with a letter types another character (⌥X is ≈, ⌥E
+ * a dead key), so with Alt held the letter is read from the key's place on the keyboard instead.
+ */
+export function keysOf(event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">): Keys {
+  const placed = event.altKey && !/^[a-z]$/i.test(event.key) && /^Key[A-Z]$/.test(event.code);
+  return {
+    key: placed ? event.code.slice(3).toLowerCase() : event.key,
+    command: event.metaKey || event.ctrlKey,
+    shift: event.shiftKey,
+    alt: event.altKey,
+  };
 }
 
 /** Whether `shortcut` is given by `keys` pressed in `context`. */

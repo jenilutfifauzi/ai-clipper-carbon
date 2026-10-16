@@ -61,13 +61,13 @@ import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, ShortcutsSheet, To
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
-import { resolveShortcut, type ShortcutId } from "./keymap";
+import { keysOf, resolveShortcut, type ShortcutId } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { DEFAULT_FPS, lastFrame, onFrame, stepFrames } from "./playhead";
+import { DEFAULT_FPS, lastFrame, loopRegion, onFrame, stepFrames, type LoopMarks } from "./playhead";
 import {
   bandPick,
   clicked,
@@ -172,6 +172,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
+  // The In and Out marks, in Timeline time, and Loop on or off: in this editor only, never saved or undone.
+  const [marks, setMarks] = useState<LoopMarks>(NO_MARKS);
+  const [looping, setLooping] = useState(false);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
   // The Timeline's Filmstrips, fetched and decoded for as long as this editor is open.
@@ -374,6 +377,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const duration = playback.duration;
   // The Clip's frame rate, the Source's, which the playhead steps by.
   const fps = preview?.plan.fps || DEFAULT_FPS;
+  // The Loop Region the marks make, clamped inside the Clip as it is now; played while Loop is on.
+  const region = useMemo(() => loopRegion(marks, { fps, duration }), [marks, fps, duration]);
+  useEffect(() => playback.setLoop(looping ? region : null), [playback, looping, region]);
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   // The Main Track when the drag under way began, by its gesture.
   const dragOrigin = useRef<(SegmentDrag & { group: string }) | null>(null);
@@ -516,6 +522,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (on) fullscreen.enter();
     else fullscreen.exit();
   }
+  // Loop on or off; turned on with no marks, it marks the whole Clip.
+  function toggleLoop() {
+    if (!looping && !region) setMarks({ in: 0, out: duration });
+    setLooping(!looping);
+  }
+  // In or Out marked at the playhead, on its frame.
+  function mark(end: keyof LoopMarks) {
+    setMarks(ordered({ ...marks, [end]: onFrame(playback.time, fps) }));
+  }
   useShortcuts(history, playback, actions, {
     pickAll: () => select(pickAll(edits)),
     pickNone: () => select(null),
@@ -526,6 +541,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     zoom: (direction) => zoomTimeline.current?.(direction),
     shortcuts: () => setShortcuts(true),
     editPoints: editPoints(edits, played, { duration, hidden: tracks.hidden }),
+    markIn: () => mark("in"),
+    markOut: () => mark("out"),
+    loop: toggleLoop,
+    clearMarks: () => {
+      setMarks(NO_MARKS);
+      setLooping(false);
+    },
     fps,
     fullscreen: fullscreen.way !== null,
     setFullscreen,
@@ -626,6 +648,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       rates={wide}
       tools={fullscreenButton}
       hideBar={!fullscreenBar.shown}
+      loop={wide ? { on: looping, onToggle: toggleLoop } : undefined}
     />
   );
   // The player, or full screen (over the whole window where the browser can't put it full screen),
@@ -665,6 +688,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       fitRef={fitTimeline}
       zoomStepRef={zoomTimeline}
       skimmable={wide}
+      loop={{ region, on: looping, onMarks: (next) => setMarks(ordered(next)) }}
     >
       {(geometry) => (
         <Tracks
@@ -876,6 +900,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
 }
 
+// No In or Out mark.
+const NO_MARKS: LoopMarks = { in: null, out: null };
+
+// The marks with In before Out: crossed marks swap.
+function ordered(marks: LoopMarks): LoopMarks {
+  return marks.in !== null && marks.out !== null && marks.in > marks.out ? { in: marks.out, out: marks.in } : marks;
+}
+
 // Where the focus takes every key but Escape: a field, or text being typed on the stage.
 const FIELD = "input, textarea, select, [contenteditable='true']";
 // What keeps its own arrows, Enter, Space and Delete when it has the focus: an item reached by Tab, or a button.
@@ -903,6 +935,11 @@ function useShortcuts(
     shortcuts: () => void;
     // Where ↑ and ↓ take the playhead, sorted.
     editPoints: number[];
+    // Mark In or Out at the playhead; Loop on or off; the marks cleared and Loop off.
+    markIn: () => void;
+    markOut: () => void;
+    loop: () => void;
+    clearMarks: () => void;
     // The Clip's frame rate: a frame step's, and an arrow move's.
     fps: number;
     // The preview is full screen, and is put full screen or back.
@@ -960,13 +997,19 @@ function useShortcuts(
       "fullscreen-exit": () => more.setFullscreen(false),
       skim: () => toggleSkim(),
       shortcuts: () => more.shortcuts(),
+      "mark-in": () => more.markIn(),
+      "mark-out": () => more.markOut(),
+      loop: () => more.loop(),
+      "clear-marks": () => more.clearMarks(),
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      const id = resolveShortcut(
-        { key: event.key, command: event.metaKey || event.ctrlKey, shift: event.shiftKey, alt: event.altKey },
-        { typing: !!target.closest(FIELD), item: !!target.closest(ITEM), fullscreen: more.fullscreen, phone: more.phone },
-      );
+      const id = resolveShortcut(keysOf(event), {
+        typing: !!target.closest(FIELD),
+        item: !!target.closest(ITEM),
+        fullscreen: more.fullscreen,
+        phone: more.phone,
+      });
       if (!id || run[id]() === false) return;
       // Escape is the browser's too (it closes a dialog), and still does that.
       if (id !== "pick-none") event.preventDefault();

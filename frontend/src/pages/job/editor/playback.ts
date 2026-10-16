@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { loopStart, wrapTarget, type LoopRegion } from "../advanced/playhead";
 
 type Listener = () => void;
 
@@ -83,10 +84,12 @@ interface Deck {
  * the live deck seeks instead. Through a Segment of a Media Library video, the Source decks wait and
  * the time runs on a clock of its own, which that video's player follows. The preview, its other
  * media and the timeline all read and set the time through it. Playing stops at the Clip's end,
- * checked every frame; started outside the Clip (before its start), it plays freely. Everything plays
- * at its `rate`: both decks, the clock, and (through `follow`) every element that follows it, each
- * keeping its pitch as the browser does. While paused, a skim borrows the parked deck to show another
- * time, its `shownTime`, which the preview draws and its followers follow, the time staying put.
+ * checked every frame; started outside the Clip (before its start), it plays freely. With a Loop
+ * Region set (`setLoop`), it plays from In when started outside the Region, and at Out goes back to
+ * In without stopping, on the parked deck waiting there. Everything plays at its `rate`: both decks,
+ * the clock, and (through `follow`) every element that follows it, each keeping its pitch as the
+ * browser does. While paused, a skim borrows the parked deck to show another time, its `shownTime`,
+ * which the preview draws and its followers follow, the time staying put.
  */
 export class Playback {
   private decks: [Deck | null, Deck | null] = [null, null];
@@ -108,6 +111,8 @@ export class Playback {
   private skimmed: { time: number; index: number } | null = null;
   // While a skim's snippet of sound plays: the frame that checks for its end.
   private snippet: { frame: number } | null = null;
+  // The Loop Region while Loop is on, in seconds into the Clip.
+  private region: LoopRegion | null = null;
   // In seconds into the Clip, as last read: updated every frame while playing.
   time = 0;
   playing = false;
@@ -127,6 +132,27 @@ export class Playback {
 
   get duration() {
     return this.segments[this.segments.length - 1].end;
+  }
+
+  // The Loop Region while Loop is on, else null.
+  get loop(): LoopRegion | null {
+    return this.region;
+  }
+
+  // Loop on, repeating `region`, or off with null; the parked deck waits again where it will be needed.
+  setLoop(region: LoopRegion | null) {
+    const old = this.region;
+    if (old === region || (old && region && old.in === region.in && old.out === region.out)) return;
+    this.region = region;
+    this.park();
+  }
+
+  // The Loop Region, when Loop is on, the time is before Out, and Out is in the time's Segment (before
+  // the next join, or at it): playing goes back to In there.
+  private wrapping(): LoopRegion | null {
+    const region = this.region;
+    const segment = this.segment;
+    return region && this.time < region.out && region.out > segment.start && region.out <= segment.end ? region : null;
   }
 
   private get segment() {
@@ -299,9 +325,12 @@ export class Playback {
     deck.follower?.pause();
   }
 
-  // Where the parked deck waits, in the Source: the start of the next Source Segment after the time's,
-  // or nowhere when none is left.
+  // Where the parked deck waits, in the Source: In when the Loop Region wraps before the next join
+  // (nowhere when In is in a media Segment, whose video waits by itself); otherwise the start of the
+  // next Source Segment after the time's, or nowhere when none is left.
   private parkTarget(): number | null {
+    const region = this.wrapping();
+    if (region) return wrapTarget(region, this.segments).source;
     const next = this.segments.slice(this.index + 1).find((segment) => !segment.media);
     return next ? next.source_start : null;
   }
@@ -332,25 +361,26 @@ export class Playback {
     }
   }
 
-  // Into the Segment at `index`, from its start, still playing.
-  private enter(index: number) {
+  // Into the Segment at `index`, at `time` (its start unless said), still playing.
+  private enter(index: number, time = this.segments[index].start) {
     const from = this.segment;
     this.index = index;
     const next = this.segment;
-    this.time = next.start;
+    this.time = time;
     const deck = this.decks[this.live];
     if (next.media) {
-      this.clock = { at: performance.now(), from: next.start };
+      this.clock = { at: performance.now(), from: time };
       if (!from.media && deck && !deck.master.paused) {
         this.handing = true;
         this.halt(deck);
       }
     } else {
       this.clock = null;
+      const source = next.source_start + (time - next.start);
       const parked = this.decks[1 - this.live];
-      if (parked && this.ready(parked, next.source_start)) this.swap();
+      if (parked && this.ready(parked, source)) this.swap();
       else if (deck) {
-        this.cue(deck, next.source_start);
+        this.cue(deck, source);
         if (from.media) this.run(deck);
       }
     }
@@ -378,9 +408,15 @@ export class Playback {
   }
 
   private tick = () => {
+    // Out still ahead before this frame: at Out (or the handover, when Out is at the Segment's end)
+    // the wrap to In.
+    const region = this.wrapping();
     this.time = this.read();
     const last = this.index === this.segments.length - 1;
-    if (this.armed && !last && this.time >= this.segment.end - HANDOVER_SECS) {
+    if (this.armed && region && this.time >= Math.min(region.out, this.segment.end - HANDOVER_SECS)) {
+      const { index, time } = wrapTarget(region, this.segments);
+      this.enter(index, time);
+    } else if (this.armed && !last && this.time >= this.segment.end - HANDOVER_SECS) {
       this.enter(this.index + 1);
     } else if (this.armed && last && this.time >= this.duration) {
       this.pause();
@@ -424,9 +460,11 @@ export class Playback {
     this.emit();
   }
 
+  // From `from`, else from the time; with Loop on, from In when the time is outside the Region.
   play(from?: number) {
     this.unskim();
     if (from !== undefined) this.seek(from);
+    else if (this.region && loopStart(this.time, this.region) !== this.time) this.seek(this.region.in);
     const deck = this.decks[this.live];
     if (this.segment.media) {
       this.armed = this.time >= -0.05 && this.time < this.duration;
@@ -443,7 +481,7 @@ export class Playback {
 
   toggle() {
     if (this.playing) this.pause();
-    else this.play(this.time >= this.duration - 0.05 ? 0 : undefined);
+    else this.play(!this.region && this.time >= this.duration - 0.05 ? 0 : undefined);
   }
 
   /**

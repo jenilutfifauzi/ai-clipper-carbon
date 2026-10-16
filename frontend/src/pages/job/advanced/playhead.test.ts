@@ -1,7 +1,8 @@
 // Seam E (.scratch/navigation-playback/spec.md): where the playhead goes on the Clip's frame grid,
-// and how far the Timeline scrolls to show it, as worked examples of times in and times out.
+// how far the Timeline scrolls to show it, and the Loop Region, as worked examples of times in and
+// times out.
 import { describe, expect, test } from "vitest";
-import { lastFrame, onFrame, revealScroll, stepFrames } from "./playhead";
+import { lastFrame, loopRegion, loopStart, onFrame, revealScroll, stepFrames, wrapTarget } from "./playhead";
 
 describe("the frame grid", () => {
   // A 10 s Clip, the playhead at 1.23 s: between frames at 25, 30 and 60 fps.
@@ -79,5 +80,78 @@ describe("keeping the playhead in view", () => {
   test("a narrow Timeline keeps it a quarter of its width inside", () => {
     // 100 px wide: 25 px inside.
     expect(revealScroll(600, { scroll: 400, width: 100 })).toBe(525);
+  });
+});
+
+describe("the Loop Region", () => {
+  // A 10 s Clip at 30 fps: a frame is 1/30 s.
+  const clip = { fps: 30, duration: 10 };
+
+  test("marks in order make the Region between them", () => {
+    expect(loopRegion({ in: 2, out: 4 }, clip)).toEqual({ in: 2, out: 4 });
+  });
+
+  test("crossed marks swap", () => {
+    expect(loopRegion({ in: 4, out: 2 }, clip)).toEqual({ in: 2, out: 4 });
+  });
+
+  test("marks past the Clip clamp inside it", () => {
+    expect(loopRegion({ in: -1, out: 12 }, clip)).toEqual({ in: 0, out: 10 });
+    expect(loopRegion({ in: 8, out: 15 }, clip)).toEqual({ in: 8, out: 10 });
+  });
+
+  test("marks closer than a frame are a frame apart, still inside the Clip", () => {
+    const at = loopRegion({ in: 3, out: 3 }, clip)!;
+    expect(at.in).toBe(3);
+    expect(at.out).toBeCloseTo(3 + 1 / 30, 9);
+    // Both at the end: the Region is the last frame.
+    const end = loopRegion({ in: 10, out: 10 }, clip)!;
+    expect(end.in).toBeCloseTo(10 - 1 / 30, 9);
+    expect(end.out).toBe(10);
+  });
+
+  test("a Clip edited shorter clamps the marks again", () => {
+    // Marked 8–12 s on a Clip now 6 s long: both past it, so the Region is its last frame.
+    const shorter = loopRegion({ in: 8, out: 12 }, { fps: 30, duration: 6 })!;
+    expect(shorter.in).toBeCloseTo(6 - 1 / 30, 9);
+    expect(shorter.out).toBe(6);
+    expect(loopRegion({ in: 2, out: 12 }, { fps: 30, duration: 6 })).toEqual({ in: 2, out: 6 });
+  });
+
+  test("a missing mark is the Clip's start (In) or its end (Out); with none, there is no Region", () => {
+    expect(loopRegion({ in: 2, out: null }, clip)).toEqual({ in: 2, out: 10 });
+    expect(loopRegion({ in: null, out: 4 }, clip)).toEqual({ in: 0, out: 4 });
+    expect(loopRegion({ in: null, out: null }, clip)).toBeNull();
+  });
+
+  test("Play starts at the playhead inside the Region, and at In outside it", () => {
+    const region = { in: 2, out: 4 };
+    expect(loopStart(3, region)).toBe(3);
+    expect(loopStart(2, region)).toBe(2);
+    // At Out it would wrap at once: from In.
+    expect(loopStart(4, region)).toBe(2);
+    expect(loopStart(6, region)).toBe(2);
+    expect(loopStart(1, region)).toBe(2);
+  });
+
+  // Two Source Segments: 0–5 s of the Clip from 100 s of the Source, 5–9 s from 200 s; then 9–12 s
+  // of a media video from 10 s into it.
+  const segments = [
+    { start: 0, end: 5, source_start: 100 },
+    { start: 5, end: 9, source_start: 200 },
+    { start: 9, end: 12, source_start: 10, media: "intro" },
+  ];
+
+  test("the wrap goes to In: its Segment and its time in the Source", () => {
+    expect(wrapTarget({ in: 2, out: 4 }, segments)).toEqual({ index: 0, time: 2, source: 102 });
+    expect(wrapTarget({ in: 6, out: 8 }, segments)).toEqual({ index: 1, time: 6, source: 201 });
+  });
+
+  test("In at a join wraps to the start of the Segment after it", () => {
+    expect(wrapTarget({ in: 5, out: 7 }, segments)).toEqual({ index: 1, time: 5, source: 200 });
+  });
+
+  test("In in a media Segment has no time in the Source: the decks don't wait there", () => {
+    expect(wrapTarget({ in: 10, out: 11 }, segments)).toEqual({ index: 2, time: 10, source: null });
   });
 });
