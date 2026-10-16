@@ -424,7 +424,9 @@ def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out
         chains.append(f"[{name}b]{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]")
     else:
         colour = (scene.colour or "#000000").removeprefix("#")
-        chains.append(f"[{name}b]crop=2:2:0:0,scale={plan.width}:{plan.height},setsar=1,drawbox=c=0x{colour}:t=fill[{name}l]")
+        # Drawn in RGB: drawbox writes a YUV colour as limited range whatever the frames' range,
+        # and a Clip's frames are full range (its poster is a JPEG), so black would show as grey.
+        chains.append(f"[{name}b]crop=2:2:0:0,format=rgb24,drawbox=c=0x{colour}:t=fill,scale={plan.width}:{plan.height},setsar=1[{name}l]")
     chains.append(_picture(picture, f"[{name}f]", f"[{name}l]", out, f"{name}q"))
     return ";".join(chains)
 

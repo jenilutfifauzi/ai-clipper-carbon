@@ -171,6 +171,18 @@ def test_a_manual_scene_at_scale_1_over_a_colour_shows_the_colour_above_and_belo
     assert colour_share(slice(700, 1220)) < 0.5  # the test pattern has some green of its own
 
 
+def test_a_colour_background_is_rendered_as_that_colour_exactly(client, settings):
+    # Black stays black: the colour is drawn whatever the range the frames are in (a Clip is full range).
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    patch(client, job, candidate, layout="manual", framing={"background": {"kind": "colour", "colour": "#000000"}})
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    frame = full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 0.5)
+    assert int(frame[0:640].max()) <= 6 and int(frame[1510:1920].max()) <= 6
+
+
 def test_a_portrait_source_framed_by_hand_is_rendered_so(client, settings, video_source, tmp_path):
     video_source.video = tmp_path / "portrait.mp4"
     command = [

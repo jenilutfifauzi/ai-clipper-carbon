@@ -76,7 +76,9 @@ export function OverlayFields({
           </Button>
         </div>
       </div>
-      <p className="text-sm text-pretty text-muted">Drag it on the video to place it, and its corner to resize it.</p>
+      <p className="text-sm text-pretty text-muted">
+        Drag it on the video to place it: its corners scale it, its edges stretch it and the handle above turns it. Double-click it to crop it.
+      </p>
       <TransformFields
         transform={overlay.transform}
         crop={overlay.crop}

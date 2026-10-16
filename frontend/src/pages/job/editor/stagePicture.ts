@@ -167,16 +167,17 @@ export function cropKept(entry: CropEntry, crop: Crop): { crop: Crop; transform:
 /**
  * Where `picture`'s Grips are drawn on a `frame`: each where it sits on the picture as turned
  * (`gripsOf`, the rotate handle `reach` above it), but one that isn't `inset` frame pixels inside the
- * frame (the rotate handle's, `inset` + `reach` the others') is pulled in towards the centre, along
- * the line to it. What a Grip does goes by the pointer's distance and angle from the centre, and on
+ * frame is pulled in towards the centre, along the line to it: the rotate handle to `inset` inside,
+ * the others to `inset` + `reach`, so that they stay apart. What a Grip does goes by the pointer's distance and angle from the centre, and on
  * the picture's own axis for an edge, the same anywhere on that line, so a picture larger than the
  * frame (a Manual Scene's cover) still scales, stretches and turns from Grips that can be reached.
  */
 export function gripsOnFrame(picture: Placed, frame: Size, reach: number, inset: number): Record<Grip, Point> {
   const grips = gripsOf(picture, reach);
+  const inside = (point: Point) => point.x >= inset && point.x <= frame.width - inset && point.y >= inset && point.y <= frame.height - inset;
   const pulled = (point: Point, margin: number): Point => {
+    if (inside(point)) return point;
     const [left, right, top, bottom] = [margin, frame.width - margin, margin, frame.height - margin];
-    if (point.x >= left && point.x <= right && point.y >= top && point.y <= bottom) return point;
     const from = { x: clamp(picture.x, [left, right]), y: clamp(picture.y, [top, bottom]) };
     const [dx, dy] = [point.x - from.x, point.y - from.y];
     // The share of the way to the Grip that stays inside on both axes.

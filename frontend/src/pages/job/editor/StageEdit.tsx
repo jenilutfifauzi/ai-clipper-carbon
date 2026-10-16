@@ -883,7 +883,7 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
 }
 
 // A button of Crop mode's bar: a 36 px pill, larger under a finger.
-const CROP_BAR_BUTTON = "min-h-9 rounded-full px-3 font-medium pointer-coarse:min-h-11";
+const CROP_BAR_BUTTON = "min-h-9 shrink-0 rounded-full px-3 font-medium pointer-coarse:min-h-11";
 
 // A path around `picture` as turned, in frame pixels.
 const outlineOf = (picture: Placed) => `M${cornersOf(picture).map(({ x, y }) => `${x} ${y}`).join("L")}Z`;
@@ -929,9 +929,11 @@ function CropHandles({ plan, edit, scale }: { plan: RenderPlan; edit: StageEdit;
         role="group"
         aria-label="Crop"
         data-crop-mode
-        className="pointer-events-auto absolute inset-x-0 top-2 mx-auto flex w-max items-center gap-1 rounded-full bg-black/70 py-1 pr-1 pl-3 text-xs text-white shadow-sm"
+        className="pointer-events-auto absolute inset-x-0 top-2 mx-auto flex w-fit max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-black/70 py-1 pr-1 pl-3 text-xs text-white shadow-sm"
       >
-        <span aria-live="polite">Crop: drag the handles</span>
+        <span aria-live="polite" className="min-w-0 truncate">
+          Crop: drag the handles
+        </span>
         <button type="button" onClick={() => edit.closeCrop(false)} title="Drop the crop (Escape)" className={cx(CROP_BAR_BUTTON, "hover:bg-white/15")}>
           Cancel
         </button>

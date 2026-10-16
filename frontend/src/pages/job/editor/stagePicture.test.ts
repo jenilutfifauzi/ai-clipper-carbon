@@ -180,6 +180,12 @@ describe("the Grips as drawn", () => {
     expect(gripsOnFrame(small, FRAME, 20, 10)).toEqual(gripsOf(small, 20));
   });
 
+  test("stay on a picture near the frame's edge while they are inside it", () => {
+    // Its left edge 15 px in: more than the inset (10), less than the inset and the reach (30).
+    const near = { x: 105, y: 960, width: 180, height: 120, rotation: 0 };
+    expect(gripsOnFrame(near, FRAME, 20, 10)).toEqual(gripsOf(near, 20));
+  });
+
   test("of a picture larger than the frame are pulled in towards its centre, the rotate handle beyond the rest", () => {
     // Three frames wide and high: its corners and edges are far off the frame.
     const large = { x: 540, y: 960, width: 3240, height: 5760, rotation: 0 };
