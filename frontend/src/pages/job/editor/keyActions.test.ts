@@ -1,5 +1,5 @@
 // Seam D (.scratch/keyframes/spec.md): the editor's pure Keyframe actions in ./keyframes.ts (set,
-// remove and toggle at a time, auto-key, clear), as worked examples of the Keyframes before and after.
+// remove and toggle at a time, auto-key, clear, move every one at an instant), as worked examples of the Keyframes before and after.
 import { describe, expect, test } from "vitest";
 import type { Keyframe, Keys, Transform } from "../../../api";
 import {
@@ -11,6 +11,7 @@ import {
   keyState,
   LINEAR,
   MAX_KEYS,
+  moveKeysAt,
   PICTURE_KEYS,
   removeKey,
   setKey,
@@ -151,5 +152,52 @@ describe("clearing Keyframes", () => {
 
   test("Reset clears the Transform's Keyframes and keeps the sound's", () => {
     expect(clearKeys(keys, PICTURE_KEYS)).toEqual({ volume: [key(0, 1)] });
+  });
+});
+
+describe("moving every Keyframe at an instant (a ruler diamond dragged)", () => {
+  // An item 6 s long from the Clip's start, at 30 fps.
+  const item = { secs: 6, fps: 30 };
+  const keys: Keys = {
+    x: [key(0, 200), key(2, 500, EASE_IN), key(4, 800)],
+    scale: [key(2, 1.5, EASE_OUT), key(5, 1)],
+    opacity: [key(1, 1)],
+  };
+
+  test("moves every property's Keyframe there together, keeping their values and Eases", () => {
+    expect(moveKeysAt(keys, 2, 3, item)).toEqual({
+      at: 3,
+      keys: { x: [key(0, 200), key(3, 500, EASE_IN), key(4, 800)], scale: [key(3, 1.5, EASE_OUT), key(5, 1)], opacity: [key(1, 1)] },
+    });
+  });
+
+  test("takes those within half a frame of the instant, and leaves the rest", () => {
+    const near: Keys = { x: [key(2, 500)], y: [key(2.01, 900)], scale: [key(2.5, 2)] };
+    expect(moveKeysAt(near, 2, 1, item)).toEqual({ at: 1, keys: { x: [key(1, 500)], y: [key(1, 900)], scale: [key(2.5, 2)] } });
+  });
+
+  test("lands on a frame of the Clip", () => {
+    expect(moveKeysAt(keys, 2, 2.51, item)?.at).toBe(2.5);
+    expect(moveKeysAt(keys, 2, 2.52, item)?.at).toBe(2.533);
+    // An item that starts between frames lands where the Clip's frames are, in its own seconds.
+    expect(moveKeysAt({ scale: [key(1, 2)] }, 1, 2, { ...item, start: 0.01 })?.at).toBe(1.99);
+  });
+
+  test("goes no nearer than a frame to a neighbour of any of them, so never past one", () => {
+    // x has one at 4 s and scale one at 5 s: the instant at 2 s stops a frame before 4 s.
+    expect(moveKeysAt(keys, 2, 4.5, item)?.at).toBe(3.967);
+    // And a frame after x's at 0 s.
+    expect(moveKeysAt(keys, 2, -1, item)?.at).toBe(0.033);
+  });
+
+  test("stays within the item", () => {
+    expect(moveKeysAt(keys, 5, 9, item)?.at).toBe(6);
+    expect(moveKeysAt(keys, 1, -2, item)?.at).toBe(0);
+  });
+
+  test("with none at the instant there is nothing to move; to where they are, they stay as they are", () => {
+    expect(moveKeysAt(keys, 3, 4, item)).toBeNull();
+    expect(moveKeysAt(keys, 2, 2.004, item)).toEqual({ at: 2, keys });
+    expect(moveKeysAt(keys, 2, 2.004, item)!.keys).toBe(keys);
   });
 });

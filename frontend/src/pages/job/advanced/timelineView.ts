@@ -1,9 +1,10 @@
 // Seam E (.scratch/timeline-visuals/spec.md): what the Advanced Edit's Timeline shows, worked out
 // from numbers and edits alone, without React or a canvas: Zoom to fit, the Filmstrip and Peaks
 // chunks an item needs, the frame each tile shows, the Peaks level for a zoom, the gain along an
-// item, and the Volume Line's curve; and for .scratch/navigation-playback/spec.md, the Edit Points.
-import type { Keyframe } from "../../../api";
-import { valueAt } from "../editor/keyframes";
+// item, and the Volume Line's curve; for .scratch/navigation-playback/spec.md, the Edit Points; and
+// for .scratch/keyframes/spec.md, the ruler's diamonds.
+import type { Keyframe, Keys } from "../../../api";
+import { KEY_GAP_SECS, valueAt } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
 import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
@@ -153,6 +154,23 @@ export function nextEditPoint(points: number[], time: number, fps: number): numb
 /** The last of the sorted `points` before `time`, or null when there is none; as `nextEditPoint`. */
 export function previousEditPoint(points: number[], time: number, fps: number): number | null {
   return points.findLast((point) => point < time - 0.5 / fps) ?? null;
+}
+
+// --- The ruler's diamonds (.scratch/keyframes/spec.md) ---
+
+/**
+ * The diamonds on the ruler of the one item picked, `start` seconds into the Clip with its Keyframes
+ * `keys`: one per instant, every property together, at Timeline times, in order. Keyframes within
+ * half a frame of an instant's first one are of that instant, as a drag of its diamond takes them.
+ */
+export function keyMarks({ start, keys }: { start: number; keys: Keys }): number[] {
+  const ats = Object.values(keys)
+    .flat()
+    .map((key) => key.at)
+    .sort((a, b) => a - b);
+  const instants: number[] = [];
+  for (const at of ats) if (!instants.length || at - instants[instants.length - 1] > KEY_GAP_SECS / 2 + 1e-9) instants.push(at);
+  return instants.map((at) => Math.round((start + at) * 1e6) / 1e6);
 }
 
 // --- Filmstrips, and the canvas they are drawn on ---

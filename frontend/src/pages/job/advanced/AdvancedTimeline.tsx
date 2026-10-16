@@ -77,7 +77,8 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * `skimmable` (a desktop), its Skim button turns the Skim on: then a mouse over the ruler or the
  * tracks, pressing nothing, has the paused preview show the time under it, marked by a thin line,
  * until it leaves or presses. With `loop`, the ruler shows the Loop Region as a band, lit while
- * Loop is on, whose ends are dragged.
+ * Loop is on, whose ends are dragged. With `keyMarks`, the picked item's Keyframes are diamonds on
+ * the ruler's floor (KeyMarks).
  */
 export function AdvancedTimeline({
   duration,
@@ -93,6 +94,7 @@ export function AdvancedTimeline({
   skimmable = false,
   labelWidth = LABEL_WIDTH,
   loop,
+  keyMarks,
   children,
 }: {
   duration: number;
@@ -117,6 +119,8 @@ export function AdvancedTimeline({
   labelWidth?: number;
   // The Loop Region (none without marks), whether Loop is on, and the marks its ends are dragged to.
   loop?: { region: LoopRegion | null; on: boolean; onMarks: (marks: LoopMarks) => void };
+  // While the Pick is one item with Keyframes: its diamonds on the ruler (`keyMarks`), and what a drag of one does.
+  keyMarks?: KeyMarksOf;
   children: (geometry: TimeGeometry) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -440,6 +444,7 @@ export function AdvancedTimeline({
           <TrackRow label="" height="h-7">
             <Ruler duration={duration} pps={pps} />
             {loop?.region && <LoopBand region={loop.region} on={loop.on} pps={pps} fps={fps} timeAt={timeAt} onMarks={loop.onMarks} />}
+            {keyMarks && <KeyMarks {...keyMarks} duration={duration} pps={pps} playback={playback} />}
           </TrackRow>
           {children(geometry)}
           <Playhead playback={playback} fps={fps} pps={pps} labelWidth={labelWidth} />
@@ -595,6 +600,74 @@ function LoopBand({
       <div className={cx("absolute top-0 bottom-0", on ? "bg-accent/25" : "bg-fill")} style={{ left: region.in * pps, width: (region.out - region.in) * pps }} />
       {end("in")}
       {end("out")}
+    </div>
+  );
+}
+
+/**
+ * The picked item's Keyframes on the ruler: its diamonds (`marks`, Timeline times, from keyMarks in
+ * ./timelineView.ts), and `onMove`, which moves every Keyframe at the instant `from` to `to` as one
+ * `group` of changes.
+ */
+export interface KeyMarksOf {
+  marks: number[];
+  onMove: (from: number, to: number, group: string) => void;
+}
+
+// A press on a diamond that moves less than this is a click.
+const KEY_MARK_SLOP_PX = 3;
+let keyMarkGestures = 0;
+
+/**
+ * The picked item's diamonds on the ruler's floor, those within the Clip: a click moves the playhead
+ * to one; a drag moves every Keyframe at its instant (`onMove`, from the edits as they were when it
+ * was grabbed), as one step of undo. The press is held by the diamonds' row, which stays while the
+ * diamonds are drawn again as they move.
+ */
+function KeyMarks({ marks, onMove, duration, pps, playback }: KeyMarksOf & { duration: number; pps: number; playback: Playback }) {
+  const drag = useRef<{ pointer: number; mark: number; x: number; moved: boolean; move: KeyMarksOf["onMove"]; group: string } | null>(null);
+  const end = (event: PointerEvent) => {
+    const gesture = drag.current;
+    if (gesture?.pointer !== event.pointerId) return;
+    event.stopPropagation();
+    drag.current = null;
+    if (!gesture.moved && event.type === "pointerup") playback.seek(gesture.mark);
+  };
+  return (
+    // No height of its own, so that it takes no press but those on its diamonds.
+    <div
+      className="absolute inset-x-0 bottom-0 z-10 h-0"
+      onPointerMove={(event) => {
+        const gesture = drag.current;
+        if (gesture?.pointer !== event.pointerId) return;
+        event.stopPropagation();
+        const dx = event.clientX - gesture.x;
+        if (!gesture.moved && Math.abs(dx) < KEY_MARK_SLOP_PX) return;
+        gesture.moved = true;
+        gesture.move(gesture.mark, gesture.mark + dx / pps, gesture.group);
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+    >
+      {marks
+        .filter((mark) => mark <= duration + 1e-6)
+        .map((mark, i) => (
+          <span
+            key={i}
+            title="Keyframe: click to go to it, drag to move every Keyframe here"
+            className="absolute bottom-0 grid h-4 w-5 -translate-x-1/2 cursor-pointer touch-none place-items-center"
+            style={{ left: mark * pps }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              // Not the ruler's scrub.
+              event.stopPropagation();
+              event.currentTarget.parentElement!.setPointerCapture(event.pointerId);
+              drag.current = { pointer: event.pointerId, mark, x: event.clientX, moved: false, move: onMove, group: `drag:keys:${++keyMarkGestures}` };
+            }}
+          >
+            <span className="size-2.5 rotate-45 rounded-[1px] bg-accent ring-1 ring-bg" />
+          </span>
+        ))}
     </div>
   );
 }

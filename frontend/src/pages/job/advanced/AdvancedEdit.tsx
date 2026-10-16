@@ -74,7 +74,18 @@ import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, type Keying } from "./KeyCluster";
-import { stageTransform, writeItemTransform } from "./keying";
+import {
+  activeRow,
+  keyAround,
+  keyedItem,
+  moveItemKeys,
+  pickedKeyed,
+  stageTransform,
+  toggleItemKey,
+  writeItemKey,
+  writeItemTransform,
+  type TouchedRow,
+} from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
@@ -96,7 +107,7 @@ import {
   type Pick,
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
-import { edgesOf, editPoints, zoomToFit } from "./timelineView";
+import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { TransformPanel } from "./TransformPanel";
@@ -192,6 +203,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // The In and Out marks, in Timeline time, and Loop on or off: in this editor only, never saved or undone.
   const [marks, setMarks] = useState<LoopMarks>(NO_MARKS);
   const [looping, setLooping] = useState(false);
+  // The keyable property last touched: K's active row (activeRow), and the Keyframes pane's.
+  const [touched, setTouched] = useState<TouchedRow | null>(null);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
   // The Timeline's Filmstrips, fetched and decoded for as long as this editor is open.
@@ -549,6 +562,30 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     setMarks(ordered({ ...marks, [end]: onFrame(playback.time, fps) }));
   }
   const points = editPoints(edits, played, { duration, hidden: tracks.hidden });
+  // The one item picked that can have Keyframes: K, [ and ] and the ruler's diamonds work on it.
+  const keyedRef = pickedKeyed(pick);
+  const keyed = keyedRef && keyedItem(edits, keyedRef);
+  const keyframes =
+    keyedRef && keyed
+      ? {
+          toggle: () => {
+            const outcome = toggleItemKey(scene, keyedRef, activeRow(keyedRef, keyed, touched), playback.time);
+            if (!outcome) return false;
+            history.set(outcome.edits);
+          },
+          around: (time: number, direction: -1 | 1) => keyAround(keyed, time, direction),
+        }
+      : null;
+  // A ruler diamond's drag, which holds this `moveKeys` from when it was grabbed: each move from the
+  // edits as they were then, one change of its gesture once it has moved a Keyframe (so that a drag
+  // back to where it began puts them back, and a drag that moves none leaves no step of undo).
+  let keysMoved = false;
+  const moveKeys = (from: number, to: number, group: string) => {
+    const moved = keyedRef && moveItemKeys(scene, keyedRef, from, to, fps);
+    if (!moved || (!keysMoved && moved.edits === edits)) return;
+    keysMoved = true;
+    history.set(moved.edits, group);
+  };
   // What the keys and the buttons that do the same do (./commands.ts).
   const commands = commandsOf(history, playback, actions, {
     pickAll: () => select(pickAll(edits)),
@@ -569,6 +606,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     },
     fps,
     setFullscreen,
+    keyframes,
   });
   useShortcuts(commands, { fullscreen: fullscreen.way !== null, phone: !wide });
 
@@ -621,7 +659,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         },
       };
   // What the inspector's ‹ ◆ › edit in: each Keyframe edit one change.
-  const keying: Keying = { edits, pick, locked: tracks.locked, playback, onEdits: (next) => history.set(next) };
+  const keying: Keying = { edits, pick, locked: tracks.locked, playback, onEdits: (next) => history.set(next), touched, onTouch: setTouched };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
   const plan = preview?.plan ?? null;
@@ -762,6 +800,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       zoomStepRef={zoomTimeline}
       skimmable={wide}
       loop={{ region, on: looping, onMarks: (next) => setMarks(ordered(next)) }}
+      keyMarks={
+        keyedRef && keyed
+          ? {
+              marks: keyMarks(keyed),
+              onMove: moveKeys,
+            }
+          : undefined
+      }
     >
       {(geometry) => (
         <Tracks
@@ -788,7 +834,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              const outcome = setVolume(scene, item, volume);
+              // A Music Clip with volume Keyframes gets one at the playhead (auto-key).
+              const outcome =
+                item.kind === "music" ? writeItemKey(scene, { kind: "music", id: item.id }, "volume", volume, playback.time) : setVolume(scene, item, volume);
               if (outcome) history.set(outcome.edits, group);
             },
             onFade: (id, fade, secs, heard, group) => {

@@ -9,7 +9,7 @@ import type { Playback } from "../editor/playback";
 import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
-import { KeyCluster, useKeyTime } from "./KeyCluster";
+import { KeyCluster, useKeyTime, useTouch } from "./KeyCluster";
 import { keyTime, resetOverlay } from "./keying";
 import { TimingFields } from "./TimingFields";
 import { TransformFields } from "./TransformFields";
@@ -122,7 +122,9 @@ export function OverlayFields({
   const at = keyTime(overlay, time);
   const volumeKeys = overlay.keys.volume ?? [];
   const volume = valueAt(volumeKeys, at ?? heldAt(overlay, time), overlay.volume);
+  const touch = useTouch();
   const setVolume = (value: number) => {
+    touch({ kind: "overlay", id: overlay.id }, "volume");
     const { keys, constant } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume);
     onChange({ ...overlay, keys, volume: constant }, keyedGroup(`overlay:${overlay.id}:volume`, keys !== overlay.keys, at));
   };

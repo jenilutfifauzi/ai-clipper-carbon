@@ -5,19 +5,31 @@ import { cx } from "../../../format";
 import { keysAround, keyState } from "../editor/keyframes";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
-import { keyedItem, keyTime, toggleItemKey, type KeyedRef, type KeyScene } from "./keying";
+import { keyedItem, keyTime, toggleItemKey, type KeyedRef, type KeyScene, type TouchedRow } from "./keying";
 
 /**
  * What the ‹ ◆ › clusters of the inspector edit in: the edits and the Pick, the locked Tracks, the
  * playback, and where a Keyframe edit goes, as one change. Without it (outside the Advanced Edit)
- * there are no clusters.
+ * there are no clusters. It keeps the property last touched too (`touched`, set by `onTouch`): K's
+ * active row (`activeRow`).
  */
 export interface Keying extends KeyScene {
   playback: Playback;
   onEdits: (edits: AdvancedEdits) => void;
+  touched: TouchedRow | null;
+  onTouch: (row: TouchedRow) => void;
 }
 
 export const KeyingContext = createContext<Keying | null>(null);
+
+/** What a keyable field calls as it changes: its property of `item` touched, K's active row. Nothing outside the Advanced Edit. */
+export function useTouch(): (item: KeyedRef, property: KeyProperty) => void {
+  const keying = useContext(KeyingContext);
+  return (item, property) => {
+    const touched = keying?.touched;
+    if (keying && !(touched?.property === property && touched.item.kind === item.kind && touched.item.id === item.id)) keying.onTouch({ item, property });
+  };
+}
 
 /**
  * The time Keyframes are shown and set at: the playhead's while paused, and the last one paused at
@@ -35,6 +47,7 @@ export function useKeyTime(playback: Playback): number {
  * property's Keyframe before it, › to the one after, and the diamond adds a Keyframe at the playhead
  * with the value shown there, or removes the one there. The diamond is filled on a Keyframe,
  * outlined between them, and grey on a constant property. Off with the playhead outside the item.
+ * Pressing any of them touches the property (K's active row).
  */
 export function KeyCluster(props: { item: KeyedRef; property: KeyProperty; label: string }) {
   const keying = useContext(KeyingContext);
@@ -43,6 +56,7 @@ export function KeyCluster(props: { item: KeyedRef; property: KeyProperty; label
 
 function Cluster({ keying, item, property, label }: { keying: Keying; item: KeyedRef; property: KeyProperty; label: string }) {
   const time = useKeyTime(keying.playback);
+  const touch = useTouch();
   const keyed = keyedItem(keying.edits, item);
   const at = keyed && keyTime(keyed, time);
   const keys = keyed?.keys[property] ?? [];
@@ -57,7 +71,7 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
   const button = "grid size-7 place-items-center rounded-full hover:bg-fill disabled:pointer-events-none disabled:opacity-35";
   const chevron = cx(button, "text-muted hover:text-text");
   return (
-    <div role="group" aria-label={`${label} Keyframes`} className="-my-1 flex shrink-0 items-center">
+    <div role="group" aria-label={`${label} Keyframes`} className="-my-1 flex shrink-0 items-center" onClickCapture={() => touch(item, property)}>
       <button type="button" className={chevron} disabled={before === null} onClick={() => seek(before)} aria-label={`${label}: previous Keyframe`} title="Previous Keyframe">
         <ChevronLeft aria-hidden size={14} />
       </button>

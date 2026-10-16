@@ -181,6 +181,45 @@ export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: numbe
   return list.length ? { keys: withList(keys, prop, setKey(list, prop, at, value)), constant } : { keys, constant: value };
 }
 
+/**
+ * A ruler diamond dragged: every Keyframe of `keys` at `from` (within half a frame, of any property)
+ * moved together to `to`, with its value and Ease, in the seconds of an item `secs` long that starts
+ * `start` seconds into the Clip. Where they go is on the Clip's frames at `fps`, within the item, and
+ * no nearer than a frame to the neighbours of any of them, so never past one. Gives the Keyframes and
+ * the time they went to (to the millisecond); `keys` themselves when that is where they are, and null
+ * when none is at `from`.
+ */
+export function moveKeysAt(
+  keys: Keys,
+  from: number,
+  to: number,
+  { secs, fps, start = 0 }: { secs: number; fps: number; start?: number },
+): { keys: Keys; at: number } | null {
+  const moving = (Object.entries(keys) as [KeyProperty, Keyframe[]][])
+    .map(([prop, list]) => ({ prop, list, index: keyAt(list, from) }))
+    .filter(({ index }) => index >= 0);
+  if (!moving.length) return null;
+  // Where all of them may go: a frame clear of each one's neighbours.
+  let [low, high] = [0, secs];
+  for (const { list, index } of moving) {
+    if (index > 0) low = Math.max(low, list[index - 1].at + KEY_GAP_SECS);
+    if (index < list.length - 1) high = Math.min(high, list[index + 1].at - KEY_GAP_SECS);
+  }
+  const held = Math.min(Math.max(to, low), high);
+  // The nearest of the Clip's frames, or the nearest within reach when it is beyond one; as held
+  // when there's no frame between the neighbours.
+  const frame = (round: (frames: number) => number) => round((start + held) * fps) / fps - start;
+  const reach = (time: number) => time >= low - 1e-9 && time <= high + 1e-9;
+  const snapped = [frame(Math.round), frame(Math.ceil), frame(Math.floor)].find(reach) ?? held;
+  const at = toMillisecond(snapped);
+  if (moving.every(({ list, index }) => list[index].at === at)) return { keys, at };
+  const moved = { ...keys };
+  for (const { prop, list, index } of moving) {
+    moved[prop] = list.map((key, other) => (other === index ? { ...key, at } : key)).sort((a, b) => a.at - b.at);
+  }
+  return { keys: moved, at };
+}
+
 /** `keys` without the Keyframes of `props`: of every property when none are named. */
 export function clearKeys(keys: Keys, props?: readonly KeyProperty[]): Keys {
   if (!props) return {};

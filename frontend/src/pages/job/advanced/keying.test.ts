@@ -6,7 +6,19 @@ import { NO_CROP } from "../editor/cropGestures";
 import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import type { AdvancedEdits } from "./edits";
-import { keyedItem, keyTime, resetOverlay, stageTransform, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
+import {
+  activeRow,
+  keyAround,
+  keyedItem,
+  keyTime,
+  moveItemKeys,
+  pickedKeyed,
+  resetOverlay,
+  stageTransform,
+  toggleItemKey,
+  writeItemKey,
+  writeItemTransform,
+} from "./keying";
 import { picked } from "./pick";
 
 const overlay = (changes: Partial<Overlay> = {}): Overlay => ({
@@ -140,10 +152,53 @@ describe("a Keyframe edit on an item", () => {
     expect(stageTransform(still, 3)).toBe(still.transform);
   });
 
+  test("a ruler diamond dragged moves every Keyframe at its instant, in Timeline time, as one change", () => {
+    const keyed = edits({ overlays: [overlay({ keys: { x: [{ at: 1, value: 100, ease: LINEAR }], scale: [{ at: 1, value: 2, ease: EASE_IN }] } })] });
+    const moved = moveItemKeys(scene(keyed), O, 3, 4.51, 30);
+    expect(moved?.at).toBe(4.5);
+    expect(moved?.edits.overlays[0].keys).toEqual({ x: [{ at: 2.5, value: 100, ease: LINEAR }], scale: [{ at: 2.5, value: 2, ease: EASE_IN }] });
+    expect(moveItemKeys(scene(keyed), O, 4, 5, 30)).toBeNull();
+    expect(moveItemKeys(scene(keyed, ["overlay"]), O, 3, 4, 30)).toBeNull();
+  });
+
   test("names what an item can key and its constants", () => {
     const item = keyedItem(edits(), O)!;
     expect([item.start, item.secs, item.constant("x"), item.constant("volume")]).toEqual([2, 4, 300, 0]);
     expect(keyedItem(edits(), M)?.constant("volume")).toBe(0.8);
     expect(keyedItem(edits(), { kind: "overlay", id: "gone" })).toBeNull();
+  });
+});
+
+describe("the shortcuts' item and row", () => {
+  test("the item is the Pick when it is one Overlay or Music Clip", () => {
+    expect(pickedKeyed(picked(O))).toEqual(O);
+    expect(pickedKeyed(picked(M))).toEqual(M);
+    expect(pickedKeyed(picked(O, M))).toBeNull();
+    expect(pickedKeyed(picked({ kind: "text", id: "t" }))).toBeNull();
+    expect(pickedKeyed({ kind: "hook" })).toBeNull();
+    expect(pickedKeyed(null)).toBeNull();
+  });
+
+  test("K's row is the item's property last touched, else its first keyed one, else Scale (Volume for a Music Clip)", () => {
+    const keyed = keyedItem(edits({ overlays: [overlay({ keys: { opacity: [{ at: 0, value: 1, ease: LINEAR }], volume: [{ at: 0, value: 1, ease: LINEAR }] } })] }), O)!;
+    expect(activeRow(O, keyed, { item: O, property: "rotation" })).toBe("rotation");
+    expect(activeRow(O, keyed, null)).toBe("opacity");
+    // Touched on another item, it isn't this one's.
+    expect(activeRow(O, keyed, { item: { kind: "overlay", id: "other" }, property: "rotation" })).toBe("opacity");
+    expect(activeRow(O, keyedItem(edits(), O)!, null)).toBe("scale");
+    expect(activeRow(M, keyedItem(edits(), M)!, null)).toBe("volume");
+  });
+
+  test("[ and ] go to the item's previous and next Keyframe of any property, in Timeline time", () => {
+    const item = keyedItem(edits({ overlays: [overlay({ keys: { x: [{ at: 0, value: 1, ease: LINEAR }, { at: 3, value: 2, ease: LINEAR }], scale: [{ at: 1.5, value: 1, ease: LINEAR }] } })] }), O)!;
+    expect(keyAround(item, 3, -1)).toBe(2);
+    expect(keyAround(item, 3, 1)).toBe(3.5);
+    // On a Keyframe (within half a frame), the one before or after it.
+    expect(keyAround(item, 3.5, -1)).toBe(2);
+    expect(keyAround(item, 3.51, 1)).toBe(5);
+    expect(keyAround(item, 5.01, 1)).toBeNull();
+    // From before the item, its first.
+    expect(keyAround(item, 0, 1)).toBe(2);
+    expect(keyAround(item, 2, -1)).toBeNull();
   });
 });
