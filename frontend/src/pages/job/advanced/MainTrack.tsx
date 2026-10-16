@@ -6,7 +6,8 @@ import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
-import { filledFraming } from "../editor/picture";
+import { NO_CROP } from "../editor/cropGestures";
+import { BLURRED, IDENTITY } from "../editor/picture";
 import type { PlayedSegment } from "../editor/playback";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
@@ -52,9 +53,9 @@ const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 // The longest video Segment: the longest video the Media Library takes (MAX_SECS in backend/app/media.py).
 const VIDEO_MAX_SECS = 180;
 
-/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), filling the frame. */
+/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), fitted over its blur. */
 export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
-  const framing = filledFraming(item.width ?? 1920, item.height ?? 1080);
+  const framing = { transform: IDENTITY, crop: NO_CROP, background: BLURRED };
   return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, framing, volume: 1 };
 }
 

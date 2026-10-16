@@ -2,7 +2,7 @@
 // Fit and Fill and a new Overlay go by (backend/app/pictures.py's, on the same worked examples).
 import { describe, expect, test } from "vitest";
 import type { Panel, Picture } from "../../../api";
-import { coverScale, filledFraming, fillScale, fittedSize, IDENTITY, panelStyle, pictureStyle, scaleForWidth } from "./picture";
+import { coverScale, fillScale, fittedSize, panelStyle, pictureStyle, scaleForWidth } from "./picture";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -90,15 +90,6 @@ describe("a Background panel as CSS", () => {
 });
 
 describe("a media Segment's Framing", () => {
-  test("is filled when it is new: the scale that covers the frame, centred, over its blur", () => {
-    expect(filledFraming(1920, 1080)).toEqual({
-      transform: { ...IDENTITY, scale: 1920 / 607.5 },
-      crop: { left: 0, top: 0, right: 0, bottom: 0 },
-      background: { kind: "blur", colour: "#000000" },
-    });
-    expect(filledFraming(1080, 1920).transform.scale).toBe(1);
-  });
-
   test("is filled once turned a quarter: a sideways phone video stands up to cover the frame", () => {
     // 1920x1080 fits as 1080x607.5; turned 90°, it is 607.5 wide and 1080 tall at scale 1.
     expect(fillScale(1920, 1080, 0)).toBeCloseTo(1920 / 607.5);

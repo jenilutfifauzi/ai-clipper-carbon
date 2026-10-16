@@ -1,4 +1,4 @@
-import type { Background, Framing, Panel, Picture, Transform } from "../../../api";
+import type { Background, Panel, Picture, Transform } from "../../../api";
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -98,15 +98,6 @@ export function panelStyle(panel: Panel, [across, down]: [number, number], frame
       height: percent(area.height / frame.height),
     },
     inner: { left: percent(-point.x / width), top: percent(-point.y / height), width: percent(across / width), height: percent(down / height) },
-  };
-}
-
-/** A new media Segment's Framing for a `width` x `height` video: filled (the scale that covers the frame, centred), over its blur. */
-export function filledFraming(width: number, height: number): Framing {
-  return {
-    transform: { ...IDENTITY, scale: clamp(coverScale(width, height), SCALE_RANGE) },
-    crop: { left: 0, top: 0, right: 0, bottom: 0 },
-    background: BLURRED,
   };
 }
 

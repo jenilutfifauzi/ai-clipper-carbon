@@ -9,7 +9,7 @@
 - **Planner.** A media Segment's Scene is a Background panel (today's blurred cover, or a colour) plus a `Picture`.
 - **Renderer.** Draw the Background (today's blur panel, or a `color` source), then `_picture` over it.
 - **Preview.** `PreviewSegments` draws the plan's Background panel and `PicturePanel`.
-- **Inspector.** The Transform section on a picked media Segment, plus Background (Blur or a colour). Fill is the default for a newly inserted media Segment, as today.
+- **Inspector.** The Transform section on a picked media Segment, plus Background (Blur or a colour). A newly inserted media Segment is fitted over its blur (scale 1), as today.
 - **Transitions** between media Segments render and preview as before.
 
 **Blocked by:** 02
@@ -42,3 +42,4 @@ Choices: a newly inserted video's Segment is now filled (the ticket's "Fill is t
 
 Not tried: no browser walkthrough (a sideways phone video turned 90° and filled against its render, the Background control, a Transition between two framed videos in the preview).
 
+**2026-10-16: orchestrator fix.** The ticket wrongly said a new media Segment is filled "as today"; today's `newMediaSegment` fits it over its blur. `newMediaSegment` now gives scale 1 over a blurred Background again, and the unused `filledFraming` is gone.
