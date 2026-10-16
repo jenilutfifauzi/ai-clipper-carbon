@@ -27,8 +27,22 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "v", command: true })).toBe("paste");
     expect(resolveShortcut({ key: "d", command: true })).toBe("duplicate");
     expect(resolveShortcut({ key: "b", command: true })).toBe("split");
-    expect(resolveShortcut({ key: "ArrowRight" })).toBe("move-forward");
-    expect(resolveShortcut({ key: "ArrowLeft", alt: true })).toBe("move-back-10");
+  });
+
+  test("→ steps the playhead a frame, Shift+→ ten; Alt+→ moves the Pick a frame, Alt+Shift+→ ten", () => {
+    expect(resolveShortcut({ key: "ArrowRight" })).toBe("step-forward");
+    expect(resolveShortcut({ key: "ArrowRight", shift: true })).toBe("step-forward-10");
+    expect(resolveShortcut({ key: "ArrowRight", alt: true })).toBe("move-forward");
+    expect(resolveShortcut({ key: "ArrowRight", alt: true, shift: true })).toBe("move-forward-10");
+    expect(resolveShortcut({ key: "ArrowLeft" })).toBe("step-back");
+    expect(resolveShortcut({ key: "ArrowLeft", shift: true })).toBe("step-back-10");
+    expect(resolveShortcut({ key: "ArrowLeft", alt: true })).toBe("move-back");
+    expect(resolveShortcut({ key: "ArrowLeft", alt: true, shift: true })).toBe("move-back-10");
+  });
+
+  test("Home goes to the Clip's start, End to its last frame", () => {
+    expect(resolveShortcut({ key: "Home" })).toBe("start");
+    expect(resolveShortcut({ key: "End" })).toBe("end");
   });
 
   test("a letter is the same in capitals, as with Caps Lock on", () => {
@@ -41,9 +55,9 @@ describe("resolving a key", () => {
   });
 
   test("modifiers a shortcut doesn't have give nothing", () => {
-    // Shift+→ and Cmd+→ move nothing, and Alt+Cmd+Z undoes nothing.
-    expect(resolveShortcut({ key: "ArrowRight", shift: true })).toBeNull();
+    // Cmd+→ and Cmd+Home are the browser's, and Alt+Cmd+Z undoes nothing.
     expect(resolveShortcut({ key: "ArrowRight", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "Home", command: true })).toBeNull();
     expect(resolveShortcut({ key: "z", command: true, alt: true })).toBeNull();
   });
 
@@ -55,6 +69,8 @@ describe("resolving a key", () => {
   test("with a field or stage text focused, nothing but Escape", () => {
     const typing = { typing: true };
     expect(resolveShortcut({ key: "z", command: true }, typing)).toBeNull();
+    expect(resolveShortcut({ key: "ArrowRight" }, typing)).toBeNull();
+    expect(resolveShortcut({ key: "Home" }, typing)).toBeNull();
     expect(resolveShortcut({ key: " " }, typing)).toBeNull();
     expect(resolveShortcut({ key: "Backspace" }, typing)).toBeNull();
     expect(resolveShortcut({ key: "?", shift: true }, typing)).toBeNull();
@@ -64,12 +80,15 @@ describe("resolving a key", () => {
   test("an item with the focus keeps its own arrows, Space and Delete", () => {
     const item = { item: true };
     expect(resolveShortcut({ key: "ArrowLeft" }, item)).toBeNull();
+    expect(resolveShortcut({ key: "ArrowRight" }, item)).toBeNull();
+    expect(resolveShortcut({ key: "ArrowRight", shift: true }, item)).toBeNull();
     expect(resolveShortcut({ key: "ArrowRight", alt: true }, item)).toBeNull();
     expect(resolveShortcut({ key: " " }, item)).toBeNull();
     expect(resolveShortcut({ key: "Delete", shift: true }, item)).toBeNull();
     // The rest still go to the table.
     expect(resolveShortcut({ key: "z", command: true }, item)).toBe("undo");
     expect(resolveShortcut({ key: "Escape" }, item)).toBe("pick-none");
+    expect(resolveShortcut({ key: "End" }, item)).toBe("end");
   });
 
   test("on a phone, ? gives nothing: there is no sheet", () => {
@@ -148,5 +167,24 @@ describe("the shortcuts sheet", () => {
     expect(keyNames(row("play"), false)).toEqual(["Space"]);
     expect(keyNames(row("pick-none"), true)).toEqual(["Esc"]);
     expect(keyNames(row("shortcuts"), true)).toEqual(["?"]);
+    expect(keyNames(row("start"), true)).toEqual(["Home"]);
+  });
+
+  test("Alt+Shift+→ moves the Pick ten frames: ⌥⇧→ on a Mac, Alt+Shift+→ elsewhere", () => {
+    expect(keyNames(row("move-forward-10"), true)).toEqual(["⌥⇧→"]);
+    expect(keyNames(row("move-forward-10"), false)).toEqual(["Alt+Shift+→"]);
+    expect(keyNames(row("step-back-10"), true)).toEqual(["⇧←"]);
+  });
+
+  test("frame steps and Home/End are listed under navigation", () => {
+    const navigation = shortcutSheet().find((group) => group.group === "navigation")!;
+    expect(navigation.shortcuts.map((shortcut) => shortcut.id)).toEqual([
+      "step-back",
+      "step-forward",
+      "step-back-10",
+      "step-forward-10",
+      "start",
+      "end",
+    ]);
   });
 });

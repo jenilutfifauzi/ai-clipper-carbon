@@ -65,6 +65,7 @@ import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
+import { DEFAULT_FPS, lastFrame, stepFrames } from "./playhead";
 import {
   bandPick,
   clicked,
@@ -94,9 +95,6 @@ const WIDE = "(min-width: 64rem)";
 const TRACK_LABEL_WIDTH = 140;
 // How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
 type Taken = "elsewhere" | "refused" | "restored";
-
-// How far the arrow keys move the picked items (with Alt, ten times as far), as on the Timeline.
-const ARROW_SECS = 0.1;
 
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
@@ -363,6 +361,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const played = playable(track);
   playback.setSegments(played);
   const duration = playback.duration;
+  // The Clip's frame rate, the Source's, which the playhead steps by.
+  const fps = preview?.plan.fps || DEFAULT_FPS;
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   // The Main Track when the drag under way began, by its gesture.
   const dragOrigin = useRef<(SegmentDrag & { group: string }) | null>(null);
@@ -504,6 +504,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     split: splits.split,
     fit: () => fitTimeline.current?.(),
     shortcuts: () => setShortcuts(true),
+    fps,
     phone: !wide,
   });
 
@@ -593,6 +594,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       duration={duration}
       labelWidth={wide ? TRACK_LABEL_WIDTH : undefined}
       playback={playback}
+      fps={fps}
       snapPoints={snapPoints(edits, played, pick)}
       tools={
         <>
@@ -838,13 +840,20 @@ function useShortcuts(
     fit: () => void;
     // Open the shortcuts sheet.
     shortcuts: () => void;
+    // The Clip's frame rate: a frame step's, and an arrow move's.
+    fps: number;
     // The phone's layout, without the desktop's shortcuts.
     phone: boolean;
   },
 ) {
   useEffect(() => {
-    // The picked Text Layers, Music Clips and Overlays moved `steps` arrow steps; a run of presses is undone as one.
-    const move = (steps: number) => (more.move ? more.move(steps * ARROW_SECS, "key:move") : false);
+    // The picked Text Layers, Music Clips and Overlays moved `frames` frames; a run of presses is undone as one.
+    const move = (frames: number) => (more.move ? more.move(frames / more.fps, "key:move") : false);
+    // The playhead `frames` frames on, on the frame grid, paused to show the frame stepped to.
+    const step = (frames: number) => {
+      if (playback.playing) playback.pause();
+      playback.seek(stepFrames(playback.time, frames, { fps: more.fps, duration: playback.duration }));
+    };
     // What each shortcut does; false when it can't be done now.
     const run: Record<ShortcutId, () => boolean | void> = {
       play: () => playback.toggle(),
@@ -859,6 +868,12 @@ function useShortcuts(
       duplicate: () => (actions ? actions.duplicate() : false),
       delete: () => (actions ? actions.remove() : false),
       "ripple-delete": () => (actions ? actions.rippleRemove() : false),
+      "step-back": () => step(-1),
+      "step-forward": () => step(1),
+      "step-back-10": () => step(-10),
+      "step-forward-10": () => step(10),
+      start: () => playback.seek(0),
+      end: () => playback.seek(lastFrame(playback.duration, more.fps)),
       "move-back": () => move(-1),
       "move-forward": () => move(1),
       "move-back-10": () => move(-10),

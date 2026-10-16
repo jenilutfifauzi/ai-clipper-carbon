@@ -15,6 +15,7 @@ import {
 import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
+import { onFrame, revealScroll } from "./playhead";
 import { MAX_ZOOM, type ZoomedView } from "./timelineView";
 
 // The labels' column, by default (a phone's), in CSS pixels: its Tracks' names.
@@ -65,11 +66,14 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * click there also calls `onClear`. On a touch screen a swipe on the tracks scrolls. Zoomed by its
  * buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by Ctrl or Cmd with the
  * scroll wheel, about the pointer; its Fit button (or `fitRef`, called) zooms and scrolls to what
- * `toFit` gives for its width and zoom (Zoom to fit).
+ * `toFit` gives for its width and zoom (Zoom to fit). A press on it never gives the keyboard focus to
+ * what it is on, so that the arrow keys stay the playhead's (an item reached by Tab keeps its own);
+ * and while paused, a playhead moved out of view (a frame step, a jump) is scrolled back into it.
  */
 export function AdvancedTimeline({
   duration,
   playback,
+  fps,
   snapPoints,
   tools,
   onBand,
@@ -81,6 +85,8 @@ export function AdvancedTimeline({
 }: {
   duration: number;
   playback: Playback;
+  // The Clip's frame rate: the playhead is drawn on its frames.
+  fps: number;
   // Edges items snap to, besides the playhead and the Clip's ends.
   snapPoints: number[];
   // Buttons for the bar above the tracks (split, delete, ...).
@@ -160,6 +166,22 @@ export function AdvancedTimeline({
   const zoomToRef = useRef(zoomTo);
   zoomToRef.current = zoomTo;
 
+  // While paused, a playhead that moved out of view is brought back into it. A time that stays (an
+  // edit re-seeking it) leaves the view where the owner scrolled it.
+  const ppsRef = useRef(pps);
+  ppsRef.current = pps;
+  useEffect(() => {
+    let shown = playback.time;
+    return playback.subscribe(() => {
+      const element = scroller.current;
+      if (playback.playing || !element || Math.abs(playback.time - shown) < 1e-3) return;
+      shown = playback.time;
+      const { left, right } = view.visible();
+      const scroll = revealScroll(shown * ppsRef.current, { scroll: left, width: right - left });
+      if (scroll !== left) element.scrollLeft = scroll;
+    });
+  }, [playback, view]);
+
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element || !anchor.current) return;
@@ -236,7 +258,16 @@ export function AdvancedTimeline({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onMouseDown={(event) => {
+        // A press doesn't give an item or a button here the keyboard focus, so that ←/→ stay the
+        // playhead's (Tab still reaches them); what had the focus loses it, as a press elsewhere does.
+        if (!(event.target as HTMLElement).closest("button, [role=button]")) return;
+        event.preventDefault();
+        (document.activeElement as HTMLElement | null)?.blur();
+      }}
+    >
       <div className="flex min-h-11 items-center justify-between gap-2 px-2">
         {/* On a phone the tools scroll sideways, so that the zoom's buttons always show. */}
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">{tools}</div>
@@ -333,7 +364,7 @@ export function AdvancedTimeline({
             <Ruler duration={duration} pps={pps} />
           </TrackRow>
           {children(geometry)}
-          <Playhead playback={playback} pps={pps} labelWidth={labelWidth} />
+          <Playhead playback={playback} fps={fps} pps={pps} labelWidth={labelWidth} />
           {band && (
             <div
               aria-hidden
@@ -429,8 +460,8 @@ function Ruler({ duration, pps }: { duration: number; pps: number }) {
   );
 }
 
-function Playhead({ playback, pps, labelWidth }: { playback: Playback; pps: number; labelWidth: number }) {
-  const time = usePlayback(playback, (t) => Math.round(t * 30) / 30);
+function Playhead({ playback, fps, pps, labelWidth }: { playback: Playback; fps: number; pps: number; labelWidth: number }) {
+  const time = usePlayback(playback, (t) => onFrame(t, fps));
   return (
     <div
       aria-hidden
@@ -461,8 +492,8 @@ let gestures = 0;
  * An item on a track from `start` to `end`: dragged to move it, its edges to trim it (both snap),
  * picked by a click or tap (with Shift, Cmd or Ctrl, added to the Pick or taken out of it; dragging a
  * picked item keeps the Pick). On a touch screen it is lifted by a long press, so that a swipe still
- * scrolls the timeline. The arrow keys move it (with Alt, further), with Shift they change its end;
- * Delete removes it. Each drag is one `group` of changes, undone as one.
+ * scrolls the timeline. Reached by Tab (a press doesn't focus it), the arrow keys move it (with Alt,
+ * further), with Shift they change its end; Delete removes it. Each drag is one `group` of changes, undone as one.
  */
 export function TimelineItem({
   geometry,
