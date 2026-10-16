@@ -21,3 +21,23 @@
 - [ ] Each step's preview matches a frame rendered at the same time.
 
 ## Comments
+
+**2026-10-16: walkthrough in Chrome (ego-browser), with two renders compared.** Passed:
+- **An Overlay:** rotated by its handle (88° snaps to 90°), flipped, rounded, bordered, with a shadow. Its render matches the preview, and the shadow is there, if faint at its default.
+- **Crop mode:** opens with a double-click, shows the cut part dimmed, and the kept part stays in place. Escape drops it, and one undo takes back the crop and its Transform.
+- **Smart Guides:** an Overlay snaps to another's edge, and the line shows.
+- **A Source Scene reframed by hand:** it starts from the cover scale with no jump. Panning, Fit over a colour and Use for all Scenes work, and its render matches.
+- **A vertical video Segment:** turned 90° and filled at 177.8%.
+- **The clip editor:** shows Manual chosen, has corner Grips only, and saves a pan.
+- **Phone emulation (390×844, touch):** the toolbar has Transform, and a pinch with a twist gives 2× and +30° as one edit. The Transform sheet opens.
+
+Found and fixed in 8f0426d:
+- **Grips:** they were pulled in within 34 px of the stage's edge, so a small picture's edge Grips covered its middle and a drag there stretched it tenfold.
+- **A colour Background:** it rendered black as #101010.
+- **Crop mode's bar:** it was cut off on the desktop stage.
+- **The Overlay hint:** it was out of date.
+
+Not tried:
+- a portrait Source (no portrait Job);
+- a Transition between transformed Segments;
+- Safari and a real iPhone.
