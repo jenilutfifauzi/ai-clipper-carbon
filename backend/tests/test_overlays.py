@@ -1,7 +1,8 @@
 """Overlays: videos and images laid over the Clip, picture in picture
 (.scratch/advanced-edit/issues/07-overlays.md), each placed by its Transform
-(.scratch/transform-crop/issues/01-overlay-transform.md) and cut by its Crop
-(.scratch/transform-crop/issues/02-crop.md).
+(.scratch/transform-crop/issues/01-overlay-transform.md), cut by its Crop
+(.scratch/transform-crop/issues/02-crop.md) and decorated with corners, a border and a shadow
+(.scratch/transform-crop/issues/08-overlay-decoration.md).
 
 Seam B on the planner, the fitted size and the migration of old Overlays, then Seam A through the
 API and the real ffmpeg.
@@ -12,7 +13,7 @@ import json
 import numpy as np
 import pytest
 
-from app.candidates import Crop, Overlay, Transform
+from app.candidates import Border, Crop, Overlay, Shadow, Transform
 from app.migration import migrated_candidate, migrated_overlay
 from app.pictures import cover_scale, drawn_size
 from app.planner import FRAME, OUTPUT_WIDTH, MediaInfo, overlay_events
@@ -112,6 +113,24 @@ def test_a_crop_that_would_leave_less_than_a_tenth_is_pulled_back_by_its_second_
     assert Crop(top=0.9, bottom=0.5) == Crop(top=0.9, bottom=0)
     assert Crop(left=0.2, right=0.7) == Crop(left=0.2, right=0.7)
     assert box(drawn(Transform(), SQUARE, Crop(left=0.6, right=0.6)).crop) == (600, 0, 100, 1000)
+
+
+def test_corners_are_a_share_of_the_drawn_pictures_shorter_side_and_border_and_shadow_keep_their_pixels():
+    # 540x304 at 0.5: a quarter of its shorter side is 76 px.
+    [event] = overlay_events([overlay(radius=0.25)], 10, ITEMS)
+    assert event.picture.radius == 76
+    # It scales with the picture: twice as large, twice the radius. A tall 100x200 one at 0.5 is round.
+    [large] = overlay_events([overlay(radius=0.25, transform=Transform(scale=1))], 10, ITEMS)
+    assert large.picture.radius == 152
+    [tall] = overlay_events([overlay(media=TALL, radius=0.5, transform=Transform(scale=100 / 960))], 10, ITEMS)
+    assert tall.picture.radius == 50
+    # The border and shadow are in output pixels, the same at any scale.
+    border, shadow = Border(width=10, colour="#ff0000"), Shadow(blur=30, x=20, y=20, opacity=0.6)
+    for scale in (0.2, 2):
+        [decorated] = overlay_events([overlay(border=border, shadow=shadow, transform=Transform(scale=scale))], 10, ITEMS)
+        assert (decorated.picture.border, decorated.picture.shadow) == (border, shadow)
+    # Undecorated by default.
+    assert (event.picture.border, event.picture.shadow, drawn(Transform()).radius) == (None, None, 0)
 
 
 def test_an_old_overlay_becomes_the_transform_that_draws_the_same_box():
@@ -288,6 +307,52 @@ def test_a_cropped_overlay_renders_only_what_it_keeps_and_its_crop_turns_with_it
     assert near(540 + 96, 1000, GREEN) and near(540 - 96, 1000, YELLOW)
     for event in planned:
         assert none_of(RED, event["picture"]["bounds"]) and none_of(BLUE, event["picture"]["bounds"])
+
+
+def test_rounded_corners_a_border_and_a_shadow_render_as_they_are_planned(client, settings, video_source, plain_video, pictures):
+    video_source.video = plain_video
+    quadrants = upload(client, pictures["quadrants"], "quadrants.png").json()
+    green = upload(client, pictures["green"], "green.mp4").json()
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    # 200x200 at 0.3 is 324x324, from 162 px left of its centre to 162 px right; 320x180 at 0.3 is 324x182.
+    shown = {"start": 0.0, "secs": 2.0}
+    candidate = patch(client, job, candidate, overlays=[
+        {"id": "round", "media": quadrants["id"], **shown, "transform": {"x": 540, "y": 400, "scale": 0.3}, "radius": 0.5},
+        # Turned a quarter: the shadow still falls right and down on the frame.
+        {"id": "lifted", "media": quadrants["id"], **shown, "transform": {"x": 540, "y": 780, "scale": 0.3, "rotation": 90},
+         "shadow": {"blur": 4, "x": 20, "y": 20, "opacity": 0.8}},
+        {"id": "framed", "media": green["id"], **shown, "transform": {"x": 540, "y": 1150, "scale": 0.3}, "border": {"width": 10, "colour": "#ffffff"}},
+    ])
+    planned = preview(client, job, candidate)["plan"]["overlays"]
+    assert planned[0]["picture"]["radius"] == 162
+    assert planned[1]["picture"]["shadow"] == {"blur": 4, "x": 20, "y": 20, "colour": "#000000", "opacity": 0.8}
+    assert planned[2]["picture"]["border"] == {"width": 10, "colour": "#FFFFFF"}
+
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    frame = full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 1.0)
+
+    def near(x: int, y: int, colour: np.ndarray, tolerance: int = 40) -> bool:
+        return bool(np.abs(frame[y, x] - colour).max() <= tolerance)
+
+    # What the Segment shows on row `y`, left of every Overlay (Blur's background, or its picture).
+    def under(y: int) -> np.ndarray:
+        return frame[y, 100]
+
+    # A circle: the box's corners show the Segment, while its quadrants' middles are still the picture.
+    for x, y in ((540 - 158, 400 - 158), (540 + 158, 400 - 158), (540 - 158, 400 + 158), (540 + 158, 400 + 158)):
+        assert near(x, y, under(y), tolerance=12), (x, y)
+    assert near(540 - 81, 400 - 81, RED) and near(540 + 81, 400 + 81, YELLOW)
+    # The shadow darkens the Segment just right of and below the box, not left of it or above.
+    darker = lambda x, y: frame[y, x].sum() < under(y).sum() - 60
+    assert darker(540 + 172, 780) and darker(540, 780 + 172) and darker(540 + 172, 780 + 172)
+    assert not darker(540 - 172, 780) and not darker(540, 780 - 172)
+    # A 10 px white line runs along the inside of the video's edge, and the video is inside it.
+    assert near(540 - 162 + 4, 1150, np.array([255, 255, 255])) and near(540 + 162 - 5, 1150 + 40, np.array([255, 255, 255]))
+    assert near(540 - 162 + 20, 1150, GREEN) and near(540, 1150 - 91 + 4, np.array([255, 255, 255]))
+    assert near(540 - 162 - 6, 1150, under(1150), tolerance=12)
 
 
 def test_an_old_shape_overlay_is_refused_with_its_new_shape_named(client, pictures):

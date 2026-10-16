@@ -17,6 +17,9 @@ const picture = (fields: Partial<Picture> = {}): Picture => ({
   flip_v: false,
   opacity: 1,
   bounds: { x: 0, y: 328, width: 540, height: 304 },
+  radius: 0,
+  border: null,
+  shadow: null,
   ...fields,
 });
 
@@ -55,6 +58,19 @@ describe("a Picture as CSS", () => {
     expect(pictureStyle(picture({ rotation: 90, opacity: 0.5 }), FRAME)).toMatchObject({ transform: "translate(-50%, -50%) rotate(90deg)", opacity: 0.5 });
     expect(pictureStyle(picture({ flip_h: true }), FRAME).transform).toBe("translate(-50%, -50%) scale(-1, 1)");
     expect(pictureStyle(picture({ rotation: -30, flip_h: true, flip_v: true }), FRAME).transform).toBe("translate(-50%, -50%) rotate(-30deg) scale(-1, -1)");
+  });
+
+  test("rounds its corners in shares of its own size, and keeps its border and shadow in output pixels on the stage", () => {
+    // 76 px is a seventh of its 540 px width and a quarter of its 304 px height.
+    expect(pictureStyle(picture({ radius: 76 }), FRAME).radius).toBe(`${(76 / 540) * 100}% / 25%`);
+    expect(pictureStyle(picture({ radius: 152 }), FRAME).radius).toBe(`${(152 / 540) * 100}% / 50%`);
+    // `--scale` is the stage's pixels per output pixel.
+    const decorated = pictureStyle(picture({ border: { width: 10, colour: "#FF0000" }, shadow: { blur: 30, x: 20, y: -8, colour: "#000000", opacity: 0.6 } }), FRAME);
+    expect(decorated.border).toBe("calc(10px * var(--scale)) solid #FF0000");
+    expect(decorated.shadow).toBe(
+      "drop-shadow(calc(20px * var(--scale)) calc(-8px * var(--scale)) calc(30px * var(--scale)) rgb(0 0 0 / 0.6))",
+    );
+    expect(pictureStyle(picture(), FRAME)).toMatchObject({ radius: undefined, border: undefined, shadow: undefined });
   });
 
   test("may go past the frame's edges", () => {

@@ -192,10 +192,34 @@ def _cut(value: float, most: float) -> float:
 
 
 @dataclass(frozen=True)
+class Border:
+    """A line `width` output pixels wide, of `colour`, along the inside of a picture's edge (its
+    rounded corners too). The same width however large the picture is drawn."""
+
+    width: Annotated[int, Field(ge=1, le=40)] = 8
+    colour: Colour = "#FFFFFF"
+
+
+@dataclass(frozen=True)
+class Shadow:
+    """A drop shadow under a picture: its shape in `colour` at `opacity`, blurred `blur` output
+    pixels (as a CSS shadow's blur radius) and moved `x` right and `y` down on the frame, whichever
+    way the picture is turned. The same size however large the picture is drawn."""
+
+    blur: Annotated[FiniteFloat, Field(ge=0, le=100)] = 24.0
+    x: Annotated[FiniteFloat, Field(ge=-100, le=100)] = 0.0
+    y: Annotated[FiniteFloat, Field(ge=-100, le=100)] = 12.0
+    colour: Colour = "#000000"
+    opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 0.5
+
+
+@dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
     for `secs`, in Timeline time, a video from `offset` seconds into it; cut by its `crop` and placed
-    by its `transform`, a video's sound at `volume` (none by default)."""
+    by its `transform`, a video's sound at `volume` (none by default). Its corners are rounded
+    `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
+    `border` and a `shadow`."""
 
     id: ItemId
     media: MediaId
@@ -205,6 +229,9 @@ class Overlay:
     transform: Transform = OVERLAY_TRANSFORM
     crop: Crop = Crop()
     volume: Volume = 0.0
+    radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
+    border: Border | None = None
+    shadow: Shadow | None = None
 
 
 class BackgroundKind(StrEnum):

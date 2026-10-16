@@ -52,7 +52,8 @@ Clip's own sound at its `source_volume`.
 
 Overlays (videos and images laid over the Clip) are each drawn as a Picture, cut by its Crop (in its
 item's pixels: what is kept is what is fitted) and placed by its Transform: its centre kept on the
-frame and the picture free to go past the frame's edges; cut where the Clip or their video ends,
+frame and the picture free to go past the frame's edges; its corners rounded by a share of its drawn
+shorter side, and its border and shadow in output pixels; cut where the Clip or their video ends,
 drawn over the Segments and under the Watermark. A video's sound, when turned up, is heard as a
 Music Clip is.
 
@@ -75,12 +76,14 @@ from functools import cache
 
 from app.candidates import (
     BackgroundKind,
+    Border,
     Crop,
     Framing,
     Layout,
     LayoutOverride,
     MusicClip,
     Overlay,
+    Shadow,
     TextAlign,
     TextLayer,
     Transform,
@@ -465,7 +468,9 @@ class Picture:
     `crop` of its item, which is `item_size` (width, height) large, scaled to `width` x `height`
     (even pixels), mirrored as `flip_h` and `flip_v` say, turned `rotation` degrees clockwise about
     `centre` (in output pixels, on the frame), at `opacity`. `bounds` holds it once turned, and may
-    go past the frame's edges: what the Smart Guides and the agent's dry run go by."""
+    go past the frame's edges: what the Smart Guides and the agent's dry run go by. An Overlay's
+    corners are rounded `radius` output pixels before it is turned, and it may have a `border` and a
+    `shadow`, in output pixels too."""
 
     crop: Box
     item_size: tuple[int, int]
@@ -477,6 +482,9 @@ class Picture:
     flip_v: bool
     opacity: float
     bounds: Box
+    radius: float = 0.0
+    border: Border | None = None
+    shadow: Shadow | None = None
 
 
 @dataclass(frozen=True)
@@ -784,8 +792,9 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
 
 
 def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo]) -> OverlayEvent | None:
-    """The Overlay as drawn: its item placed by its Transform (`picture_of`), cut where the Clip or
-    its video ends. None when its item is gone or it would start at or after either end."""
+    """The Overlay as drawn: its item placed by its Transform (`picture_of`) with its corners, border
+    and shadow, cut where the Clip or its video ends. None when its item is gone or it would start at
+    or after either end."""
     item = items.get(overlay.media)
     start = round(overlay.start, 3)
     if item is None or not item.width or not item.height or start >= duration:
@@ -798,6 +807,10 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     end = round(min(end, duration), 3)
     offset = round(overlay.offset, 3) if item.duration is not None else 0.0
     picture = picture_of(item.width, item.height, overlay.transform, overlay.crop)
+    # The radius is a share of the shorter side as drawn, so it scales with the picture; the border
+    # and shadow are in output pixels, so they don't.
+    radius = round(overlay.radius * min(picture.width, picture.height), 2)
+    picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
     return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id)
 
 

@@ -458,9 +458,26 @@ export interface Framing {
   background: Background;
 }
 
+// A line `width` output pixels wide (1 to 40) of `colour` along the inside of a picture's edge.
+export interface Border {
+  width: number;
+  colour: string;
+}
+
+// A drop shadow: the picture's shape in `colour` at `opacity`, blurred `blur` output pixels (0 to
+// 100, as a CSS shadow's) and moved `x` right and `y` down on the frame (-100 to 100).
+export interface Shadow {
+  blur: number;
+  x: number;
+  y: number;
+  colour: string;
+  opacity: number;
+}
+
 // A video or image from the Media Library laid over the Clip: from `start` for `secs` in Timeline
 // time (a video from `offset` into it), cut by its Crop and placed by its Transform, a video's
-// sound at `volume` (0, muted, by default).
+// sound at `volume` (0, muted, by default); its corners rounded `radius` times its drawn shorter
+// side (0 to 0.5), with a Border and a Shadow or none.
 export interface Overlay {
   id: string;
   media: string;
@@ -470,11 +487,15 @@ export interface Overlay {
   transform: Transform;
   crop: Crop;
   volume: number;
+  radius: number;
+  border: Border | null;
+  shadow: Shadow | null;
 }
 
 // A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
 // large) scaled to `width` x `height`, flipped, turned `rotation` degrees clockwise about `centre`,
-// at `opacity`; `bounds` holds it once turned, and may go past the frame's edges.
+// at `opacity`; `bounds` holds it once turned, and may go past the frame's edges. An Overlay's
+// corners are rounded `radius` output pixels, and it may have a Border and a Shadow.
 export interface Picture {
   crop: Box;
   item_size: [number, number];
@@ -486,6 +507,9 @@ export interface Picture {
   flip_v: boolean;
   opacity: number;
   bounds: Box;
+  radius: number;
+  border: Border | null;
+  shadow: Shadow | null;
 }
 
 // An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still.
