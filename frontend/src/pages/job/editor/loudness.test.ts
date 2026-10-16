@@ -23,7 +23,7 @@ const dipped: AudioEvent = {
 };
 
 describe("a keyed sound", () => {
-  test("is as loud as its gain track, in its own seconds, times its fades", () => {
+  test("is as loud as its volume Keyframes, in its own seconds, times its fades", () => {
     expect(loudness(dipped, 3.25)).toBeCloseTo(0.5);
     expect(loudness(dipped, 4)).toBe(1);
     // Half way, eased in: 1 - 0.75 · 0.3153.

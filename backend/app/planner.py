@@ -54,8 +54,8 @@ frame, each in its own look; one wider than the frame less TEXT_MARGIN either si
 They are drawn over the captions and under the hook, in their order.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
-Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes as its
-gain track, in seconds from its start, which its fades multiply (`gain_at`).
+Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes
+(`gain`), in seconds from its start, which its fades multiply (`gain_at`).
 
 Overlays (videos and images laid over the Clip) are each drawn as a Picture, cut by its Crop (in its
 item's pixels: what is kept is what is fitted) and placed by its Transform: its centre kept on the
@@ -71,7 +71,7 @@ by Segment: each framed on its own, from its own Scenes and faces, its Scenes mo
 plays in the Clip. A Segment of a Media Library video is one Scene, with no captions: the video
 drawn as a Picture placed by its Framing, over its Background (a blurred copy of what its Crop keeps,
 covering the frame, or a colour) (`framed_scene`). A keyed one's Picture carries its motion in
-seconds into the Clip, as a keyed Overlay's does, and its sound its gain track in seconds from its
+seconds into the Clip, as a keyed Overlay's does, and its sound its volume Keyframes, from its
 start; its Background is left out when the moving picture covers the frame at every one of its
 frames (`keyed_scene`). A Manual Scene whose Layout Override is keyed moves so too, its
 Keyframes counted from its Scene's start on the Source's timeline in every Segment that shows it
@@ -1008,7 +1008,7 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
 
 
 def gain_at(event: AudioEvent, time: float) -> float:
-    """How loud `event` is heard `time` seconds into the Clip: its volume, or its gain track sampled
+    """How loud `event` is heard `time` seconds into the Clip: its volume, or its Keyframes sampled
     there (app/keyframes.py), through its fades' linear ramps; silent outside it. The same rule as
     the preview's (loudness in frontend/src/pages/job/editor/PreviewMusic.tsx)."""
     into = time - event.start

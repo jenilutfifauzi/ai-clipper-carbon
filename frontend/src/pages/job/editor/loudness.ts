@@ -6,7 +6,7 @@ export const CURVE_RATE = 100;
 
 /**
  * How loud a Music Clip (or an Overlay video's sound) is heard `time` seconds into the Clip: its
- * volume, or its gain track sampled there, through its fades' linear ramps, as the renderer has it
+ * volume, or its Keyframes sampled there, through its fades' linear ramps, as the renderer has it
  * (gain_at in backend/app/planner.py).
  */
 export function loudness(event: AudioEvent, time: number): number {

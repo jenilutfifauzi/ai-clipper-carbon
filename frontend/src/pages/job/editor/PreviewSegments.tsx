@@ -39,7 +39,7 @@ export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undef
  * own; its sound faded out over `fade` (the Transition taking it away), if any. It is drawn from its
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
- * with the playback (PicturePanel), and a keyed sound follows its gain track (followCurve).
+ * with the playback (PicturePanel), and a keyed sound follows its volume Keyframes (followCurve).
  */
 export function MediaSegment({
   segment,
@@ -60,7 +60,7 @@ export function MediaSegment({
 
   useEffect(() => {
     const span = { start: segment.start, end, from: segment.source_start };
-    // Its sound as heard: its gain track, when keyed, faded out by the Transition taking it away.
+    // Its sound: its volume Keyframes when keyed, faded out by the Transition taking it away.
     const sound: AudioEvent = {
       media: segment.media!,
       start: segment.start,

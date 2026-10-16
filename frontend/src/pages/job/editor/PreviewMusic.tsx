@@ -75,7 +75,7 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
 
 /**
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip, playing its
- * part of its song while the Clip's time is in it, at its volume (a keyed one's gain track, as a
+ * part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
  * curve) through its fades. The Clip's own sound (each deck's master video, heard while its deck is
  * live) is set to the plan's `source_volume`, times the Segment's own volume. Nothing is routed
  * through Web Audio until the plan has music or another volume.
