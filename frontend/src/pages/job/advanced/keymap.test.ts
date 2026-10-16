@@ -47,6 +47,19 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "z", command: true, alt: true })).toBeNull();
   });
 
+  test("= zooms the Timeline in and - zooms it out, and with Cmd or Ctrl they stay the browser's page zoom", () => {
+    expect(resolveShortcut({ key: "=" })).toBe("zoom-in");
+    // + is = with Shift on many keyboards, and a key of its own on others.
+    expect(resolveShortcut({ key: "+", shift: true })).toBe("zoom-in");
+    expect(resolveShortcut({ key: "+" })).toBe("zoom-in");
+    expect(resolveShortcut({ key: "-" })).toBe("zoom-out");
+    expect(resolveShortcut({ key: "=", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "+", command: true, shift: true })).toBeNull();
+    expect(resolveShortcut({ key: "-", command: true })).toBeNull();
+    // Shift+Z still zooms to fit.
+    expect(resolveShortcut({ key: "Z", shift: true })).toBe("fit");
+  });
+
   test("? opens the sheet, with Shift or without (as the keyboard's layout needs)", () => {
     expect(resolveShortcut({ key: "?", shift: true })).toBe("shortcuts");
     expect(resolveShortcut({ key: "?" })).toBe("shortcuts");

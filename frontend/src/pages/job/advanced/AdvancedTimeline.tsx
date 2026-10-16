@@ -15,7 +15,7 @@ import {
 import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
-import { MAX_ZOOM, type ZoomedView } from "./timelineView";
+import { MAX_ZOOM, zoomAboutPlayhead, type ZoomedView } from "./timelineView";
 
 // The labels' column, by default (a phone's), in CSS pixels: its Tracks' names.
 const LABEL_WIDTH = 64;
@@ -29,6 +29,8 @@ const SLOP_PX = 8;
 const TAP_SLOP_PX = 8;
 // The arrow keys move an item this far (with Alt, ten times as far).
 const STEP_SECS = 0.1;
+// The zoom buttons and keys zoom in or out by this much.
+const ZOOM_STEP = 1.5;
 
 /** How the tracks are drawn: pixels per second, and how a time snaps. All times are Timeline time. */
 export interface TimeGeometry {
@@ -65,7 +67,8 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * click there also calls `onClear`. On a touch screen a swipe on the tracks scrolls. Zoomed by its
  * buttons, by pinching (a trackpad's, or two fingers on a touch screen), or by Ctrl or Cmd with the
  * scroll wheel, about the pointer; its Fit button (or `fitRef`, called) zooms and scrolls to what
- * `toFit` gives for its width and zoom (Zoom to fit).
+ * `toFit` gives for its width and zoom (Zoom to fit); and `zoomStepRef`, called, zooms in (1) or
+ * out (-1) a button's step about the playhead.
  */
 export function AdvancedTimeline({
   duration,
@@ -76,6 +79,7 @@ export function AdvancedTimeline({
   onClear,
   toFit,
   fitRef,
+  zoomStepRef,
   labelWidth = LABEL_WIDTH,
   children,
 }: {
@@ -91,6 +95,8 @@ export function AdvancedTimeline({
   // and, set to Zoom to fit, a ref for its shortcut.
   toFit: (timeline: { width: number; zoom: number }) => ZoomedView;
   fitRef: Ref<() => void>;
+  // Set to zoom in (1) or out (-1) about the playhead, for the zoom keys.
+  zoomStepRef: Ref<(direction: 1 | -1) => void>;
   // The labels' column's width, in pixels: wider on a desktop, where it holds the Tracks' buttons.
   labelWidth?: number;
   children: (geometry: TimeGeometry) => ReactNode;
@@ -179,6 +185,17 @@ export function AdvancedTimeline({
   }
   useImperativeHandle(fitRef, () => fitView);
 
+  // A zoom key's: about the playhead, the scroll kept for once it is drawn.
+  function zoomAbout(direction: 1 | -1) {
+    const scroll = scroller.current?.scrollLeft ?? 0;
+    const factor = direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+    const view = zoomAboutPlayhead({ zoom, scroll, width: usable, duration, playhead: playback.time, factor });
+    if (view.zoom === zoom) return;
+    anchor.current = { time: view.scroll / (fit * view.zoom), offset: 0 };
+    setZoom(view.zoom);
+  }
+  useImperativeHandle(zoomStepRef, () => zoomAbout);
+
   // Pinching: Ctrl or Cmd with the wheel (a trackpad's pinch comes so), or two fingers.
   useEffect(() => {
     const element = scroller.current;
@@ -241,10 +258,10 @@ export function AdvancedTimeline({
         {/* On a phone the tools scroll sideways, so that the zoom's buttons always show. */}
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">{tools}</div>
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Zoom">
-          <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom / 1.5)} disabled={zoom <= 1} aria-label="Zoom out">
+          <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom / ZOOM_STEP)} disabled={zoom <= 1} aria-label="Zoom out" aria-keyshortcuts="-" title="Zoom out (-)">
             <Minus aria-hidden size={16} />
           </Button>
-          <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom * 1.5)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in">
+          <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom * ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in" aria-keyshortcuts="=" title="Zoom in (=)">
             <Plus aria-hidden size={16} />
           </Button>
           <Button size="icon" variant="ghost" onClick={fitView} aria-label="Zoom to fit" aria-keyshortcuts="Shift+Z" title="Zoom to fit (Shift+Z): what is picked, or with nothing picked, the whole Clip">

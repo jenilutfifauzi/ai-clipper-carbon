@@ -368,6 +368,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const dragOrigin = useRef<(SegmentDrag & { group: string }) | null>(null);
   // The Timeline's Zoom to fit, for its shortcut.
   const fitTimeline = useRef<() => void>(null);
+  // The Timeline's zoom in (1) or out (-1) about the playhead, for its keys.
+  const zoomTimeline = useRef<(direction: 1 | -1) => void>(null);
 
   useEffect(() => {
     loadFonts().then(setFonts, () => setFonts([]));
@@ -503,6 +505,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
     fit: () => fitTimeline.current?.(),
+    zoom: (direction) => zoomTimeline.current?.(direction),
     shortcuts: () => setShortcuts(true),
     phone: !wide,
   });
@@ -604,6 +607,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onClear={() => select(null)}
       toFit={(timeline) => zoomToFit({ pick, edits, played, duration }, timeline)}
       fitRef={fitTimeline}
+      zoomStepRef={zoomTimeline}
     >
       {(geometry) => (
         <Tracks
@@ -836,6 +840,8 @@ function useShortcuts(
     split: () => void;
     // Zoom the Timeline to fit: what is picked, or with nothing picked, the whole Clip.
     fit: () => void;
+    // Zoom the Timeline in (1) or out (-1) about the playhead.
+    zoom: (direction: 1 | -1) => void;
     // Open the shortcuts sheet.
     shortcuts: () => void;
     // The phone's layout, without the desktop's shortcuts.
@@ -863,6 +869,8 @@ function useShortcuts(
       "move-forward": () => move(1),
       "move-back-10": () => move(-10),
       "move-forward-10": () => move(10),
+      "zoom-in": () => more.zoom(1),
+      "zoom-out": () => more.zoom(-1),
       fit: () => more.fit(),
       shortcuts: () => more.shortcuts(),
     };

@@ -19,6 +19,7 @@ import {
   volumeDragged,
   volumeHeight,
   volumeOfHeight,
+  zoomAboutPlayhead,
   zoomToFit,
   type Peaks,
 } from "./timelineView";
@@ -86,6 +87,50 @@ describe("zoom to fit", () => {
     const view = fitted(picked({ kind: "segment", id: "s3" }));
     expect(view.zoom).toBeCloseTo(110 / 66);
     expect(view.scroll).toBeCloseTo(110 * 1100 / 66 - 1100);
+  });
+});
+
+describe("zoom about the playhead (.scratch/navigation-playback/spec.md)", () => {
+  // A Clip of 110 s on a Timeline 1100 px wide: 10 px a second at 1×.
+  const zoomed = (zoom: number, scroll: number, playhead: number, factor: number) =>
+    zoomAboutPlayhead({ zoom, scroll, width: 1100, duration: 110, playhead, factor });
+
+  test("the playhead in view keeps its place on screen", () => {
+    // At 2× (20 px a second) scrolled 400 px, the playhead at 30 s is 600 px in: 200 px across the view.
+    // At 3× it is 900 px in, so the view scrolls 700 px; at 4/3× it is 400 px in, so 200 px.
+    expect(zoomed(2, 400, 30, 1.5)).toEqual({ zoom: 3, scroll: 700 });
+    const out = zoomed(2, 400, 30, 1 / 1.5);
+    expect(out.zoom).toBeCloseTo(4 / 3);
+    expect(out.scroll).toBeCloseTo(200);
+  });
+
+  test("the playhead out of view is centred", () => {
+    // At 2× scrolled 400 px (20–75 s), the playhead at 80 s is past the right edge: at 3× it is
+    // 2400 px in, and centred the view scrolls 2400 − 550 px.
+    expect(zoomed(2, 400, 80, 1.5)).toEqual({ zoom: 3, scroll: 1850 });
+    // At 4× scrolled 2000 px (50–77.5 s), the playhead at 20 s is before the left edge: at 6× it is 1200 px in.
+    expect(zoomed(4, 2000, 20, 1.5)).toEqual({ zoom: 6, scroll: 650 });
+  });
+
+  test("the zoom stays between 1× and 40×", () => {
+    // At 30× (300 px a second) scrolled 9000 px, the playhead at 31 s is 300 px across the view;
+    // ×1.5 stops at 40×, 400 px a second, where 31 s is 12400 px in.
+    expect(zoomed(30, 9000, 31, 1.5)).toEqual({ zoom: 40, scroll: 12100 });
+    // At 1.2×, ÷1.5 stops at 1×, where the whole Clip fits and nothing scrolls.
+    expect(zoomed(1.2, 100, 50, 1 / 1.5)).toEqual({ zoom: 1, scroll: 0 });
+  });
+
+  test("at 1× or 40× already, the view stays as it is", () => {
+    expect(zoomed(40, 12100, 31, 1.5)).toEqual({ zoom: 40, scroll: 12100 });
+    expect(zoomed(1, 0, 50, 1 / 1.5)).toEqual({ zoom: 1, scroll: 0 });
+  });
+
+  test("the view never scrolls past the Clip's ends", () => {
+    // At 3× scrolled to the end (2200 px), the playhead at 100 s is 800 px across the view. At 2× it
+    // would keep that place 1200 px in, but the Clip ends 1100 px in.
+    expect(zoomed(3, 2200, 100, 1 / 1.5)).toEqual({ zoom: 2, scroll: 1100 });
+    // At 2× scrolled 400 px, the playhead at 2 s is before the view: centred at 3× it would be at −490 px.
+    expect(zoomed(2, 400, 2, 1.5)).toEqual({ zoom: 3, scroll: 0 });
   });
 });
 

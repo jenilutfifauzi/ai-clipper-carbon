@@ -19,6 +19,8 @@ export type ShortcutId =
   | "move-forward"
   | "move-back-10"
   | "move-forward-10"
+  | "zoom-in"
+  | "zoom-out"
   | "fit"
   | "shortcuts";
 
@@ -92,6 +94,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "move-forward", keys: [{ key: "ArrowRight" }], group: "editing", label: "Move them 0.1 s later" },
   { id: "move-back-10", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move them 1 s earlier" },
   { id: "move-forward-10", keys: [{ key: "ArrowRight", alt }], group: "editing", label: "Move them 1 s later" },
+  { id: "zoom-in", keys: [{ key: "=" }, { key: "+" }], group: "view", label: "Zoom the Timeline in about the playhead" },
+  { id: "zoom-out", keys: [{ key: "-" }], group: "view", label: "Zoom the Timeline out about the playhead" },
   { id: "fit", keys: [{ key: "z", shift }], group: "view", label: "Zoom the Timeline to fit the picked items, or the whole Clip" },
   { id: "shortcuts", keys: [{ key: "?" }], group: "view", label: "Show these shortcuts", desktop: true },
 ];

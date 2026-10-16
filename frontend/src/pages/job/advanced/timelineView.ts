@@ -66,6 +66,38 @@ function spanOf(pick: Pick, edits: AdvancedEdits, played: PlayedSegment[], durat
   return { start: within(Math.min(...spans.map((span) => span.start))), end: within(Math.max(...spans.map((span) => span.end))) };
 }
 
+/**
+ * The view after zooming by `factor` (the zoom buttons' ×1.5 or ÷1.5) about the playhead, at
+ * `playhead` seconds, on a Timeline `width` CSS pixels wide for its times (the whole Clip's width at
+ * 1×), now at `zoom` and scrolled `scroll` pixels: the playhead in view keeps its place on screen,
+ * and one out of view is centred. The zoom stays between 1× and 40×, and at either already the view
+ * stays as it is. The view never scrolls past either end of the Clip.
+ */
+export function zoomAboutPlayhead({
+  zoom,
+  scroll,
+  width,
+  duration,
+  playhead,
+  factor,
+}: {
+  zoom: number;
+  scroll: number;
+  width: number;
+  duration: number;
+  playhead: number;
+  factor: number;
+}): ZoomedView {
+  const next = Math.min(Math.max(zoom * factor, 1), MAX_ZOOM);
+  if (next === zoom) return { zoom, scroll };
+  // Pixels a second at 1×, as the Timeline draws them.
+  const fit = width / Math.max(duration, 1);
+  const at = playhead * fit * zoom - scroll;
+  const kept = at >= 0 && at <= width ? at : width / 2;
+  const pps = fit * next;
+  return { zoom: next, scroll: Math.min(Math.max(playhead * pps - kept, 0), Math.max(duration * pps - width, 0)) };
+}
+
 // --- Filmstrips, and the canvas they are drawn on ---
 
 // A Filmstrip or Peaks chunk holds this many seconds of its media, from a multiple of it
