@@ -1,10 +1,11 @@
 // Seam E (.scratch/timeline-visuals/spec.md): what the Advanced Edit's Timeline shows, worked out
 // from numbers and edits alone, without React or a canvas: Zoom to fit, the Filmstrip and Peaks
 // chunks an item needs, the frame each tile shows, the Peaks level for a zoom, the gain along an
-// item, and the Volume Line's curve.
+// item, and the Volume Line's curve; and for .scratch/navigation-playback/spec.md, the Edit Points.
 import type { PlayedSegment } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
-import { LISTS, type Pick } from "./pick";
+import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
+import type { TrackKind } from "./trackState";
 
 // Zoom to fit (GLOSSARY.md).
 
@@ -96,6 +97,60 @@ export function zoomAboutPlayhead({
   const kept = at >= 0 && at <= width ? at : width / 2;
   const pps = fit * next;
   return { zoom: next, scroll: Math.min(Math.max(playhead * pps - kept, 0), Math.max(duration * pps - width, 0)) };
+}
+
+// --- Edit Points (GLOSSARY.md), and the edges items snap to ---
+
+// Edges this close together are one Edit Point.
+const SAME_EDGE = 1e-6;
+
+/**
+ * The edges items snap to, besides the playhead and the Clip's ends; the Edit Points are made of
+ * them too, so that the two agree. They are the hook's (while it has text), the Text Layers', Music
+ * Clips' and Overlays', and where each Segment gives way to the next, as `played`. Those on a
+ * `hidden` Track are left out, and so are those of `moving` when it is a Pick of several, which move
+ * together. Unsorted, and as they are, even past the Clip's end.
+ */
+export function edgesOf(
+  edits: AdvancedEdits,
+  played: PlayedSegment[],
+  { hidden = [], moving = null }: { hidden?: TrackKind[]; moving?: Pick } = {},
+): number[] {
+  const edges: number[] = [];
+  if (edits.hook_text.trim() && !hidden.includes("hook")) edges.push(edits.hook_start, edits.hook_start + edits.hook_secs);
+  const left = (kind: ItemKind, id: string) => hidden.includes(TRACK_OF[kind]) || (itemsOf(moving).length > 1 && isPicked(moving, kind, id));
+  for (const kind of ["text", "music", "overlay"] as const) {
+    for (const item of edits[LISTS[kind]]) if (!left(kind, item.id)) edges.push(item.start, item.start + item.secs);
+  }
+  if (!hidden.includes("video")) for (const shown of played) edges.push(shown.end);
+  return edges;
+}
+
+/**
+ * The Edit Points of a Clip `duration` seconds long, which ↑ and ↓ go between: its start and end,
+ * and the edges of `edits` within it (`edgesOf`) but those on a `hidden` Track. Sorted, each once.
+ */
+export function editPoints(
+  edits: AdvancedEdits,
+  played: PlayedSegment[],
+  { duration, hidden = [] }: { duration: number; hidden?: TrackKind[] },
+): number[] {
+  const within = edgesOf(edits, played, { hidden }).filter((edge) => edge > 0 && edge < duration);
+  const sorted = [0, ...within, duration].sort((a, b) => a - b);
+  return sorted.filter((point, i) => i === 0 || point - sorted[i - 1] > SAME_EDGE);
+}
+
+/**
+ * The first of the sorted `points` after `time`, or null when there is none. A point within half a
+ * frame of `time`, at `fps`, is where the playhead already is.
+ */
+export function nextEditPoint(points: number[], time: number, fps: number): number | null {
+  return points.find((point) => point > time + 0.5 / fps) ?? null;
+}
+
+/** The last of the sorted `points` before `time`, or null when there is none; as `nextEditPoint`. */
+export function previousEditPoint(points: number[], time: number, fps: number): number | null {
+  return points.findLast((point) => point < time - 0.5 / fps) ?? null;
 }
 
 // --- Filmstrips, and the canvas they are drawn on ---

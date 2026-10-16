@@ -1,7 +1,7 @@
 // Seam E (.scratch/timeline-visuals/spec.md): what the Advanced Edit's Timeline shows, as worked
 // examples of numbers and edits in and the view out.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, MusicClip, TextLayer } from "../../../api";
+import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
 import { playedFrom } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
 import { picked, type Pick } from "./pick";
@@ -9,11 +9,15 @@ import {
   canvasWindow,
   chunksAcross,
   chunksOf,
+  edgesOf,
+  editPoints,
   filmstripTiles,
   gainAt,
+  nextEditPoint,
   peaksExtremes,
   peaksLevel,
   peaksPyramid,
+  previousEditPoint,
   sourceGain,
   tileWidth,
   volumeDragged,
@@ -23,6 +27,7 @@ import {
   zoomToFit,
   type Peaks,
 } from "./timelineView";
+import type { TrackKind } from "./trackState";
 
 describe("zoom to fit", () => {
   // A Clip of 110 s on a Timeline 1100 px wide: 10 px a second at 1×. Segments of 30, 20 and 60 s
@@ -131,6 +136,90 @@ describe("zoom about the playhead (.scratch/navigation-playback/spec.md)", () =>
     expect(zoomed(3, 2200, 100, 1 / 1.5)).toEqual({ zoom: 2, scroll: 1100 });
     // At 2× scrolled 400 px, the playhead at 2 s is before the view: centred at 3× it would be at −490 px.
     expect(zoomed(2, 400, 2, 1.5)).toEqual({ zoom: 3, scroll: 0 });
+  });
+});
+
+describe("Edit Points (.scratch/navigation-playback/spec.md)", () => {
+  // A Clip of 10 s: Segments of 4, 3 and 3 s played back to back (joins at 4 and 7 s), the hook
+  // from 1 to 3 s, a Text Layer from 2 to 4 s (ending on the first join), a Music Clip from 0 to 7 s
+  // (from the Clip's start to the second join), and an Overlay from 5.5 s that runs past the end.
+  const text = (id: string, start: number, secs: number) => ({ id, start, secs }) as TextLayer;
+  const song = (id: string, start: number, secs: number) => ({ id, start, secs }) as MusicClip;
+  const overlay = (id: string, start: number, secs: number) => ({ id, start, secs }) as Overlay;
+  const segment = (id: string, start: number, end: number): ClipSegment => ({ id, start, end });
+  const edits = {
+    hook_text: "Wait for it",
+    hook_start: 1,
+    hook_secs: 2,
+    segments: [segment("s1", 10, 14), segment("s2", 20, 23), segment("s3", 30, 33)],
+    text_layers: [text("t1", 2, 2)],
+    music: [song("m1", 0, 7)],
+    overlays: [overlay("o1", 5.5, 6)],
+  } as unknown as AdvancedEdits;
+  const played = playedFrom(edits.segments);
+  const points = (hidden: TrackKind[] = [], changed: Partial<AdvancedEdits> = {}) =>
+    editPoints({ ...edits, ...changed }, played, { duration: 10, hidden });
+
+  test("the joins, the items' and the hook's edges and the Clip's ends, sorted, each once", () => {
+    // 0 (the Clip and the Music Clip), 1 and 3 (the hook), 2 (the Text Layer), 4 (a join and the
+    // Text Layer), 5.5 (the Overlay; its end is past the Clip), 7 (a join and the Music Clip), 10
+    // (the Clip's end and the last Segment's).
+    expect(points()).toEqual([0, 1, 2, 3, 4, 5.5, 7, 10]);
+  });
+
+  test("a hidden Text Track drops its Text Layers' edges", () => {
+    // 2 goes; 4 stays, a join.
+    expect(points(["text"])).toEqual([0, 1, 3, 4, 5.5, 7, 10]);
+  });
+
+  test("a hidden Hook, Overlay or Video Track drops the hook's, the Overlays' or the joins' edges", () => {
+    expect(points(["hook"])).toEqual([0, 2, 4, 5.5, 7, 10]);
+    expect(points(["overlay"])).toEqual([0, 1, 2, 3, 4, 7, 10]);
+    // 4 stays (the Text Layer ends there), and so do 7 (the Music Clip) and 10 (the Clip's end).
+    expect(points(["video"])).toEqual([0, 1, 2, 3, 4, 5.5, 7, 10]);
+    expect(points(["video", "text"])).toEqual([0, 1, 3, 5.5, 7, 10]);
+  });
+
+  test("a hook without text has no edges", () => {
+    expect(points([], { hook_text: " " })).toEqual([0, 2, 4, 5.5, 7, 10]);
+  });
+
+  test("items snap to the same edges, but those of a Pick of several, which move together", () => {
+    // The Music Clip and the Overlay picked together: their edges go, and the rest stay.
+    const pick = picked({ kind: "music", id: "m1" }, { kind: "overlay", id: "o1" });
+    expect([...edgesOf(edits, played, { moving: pick })].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 4, 7, 10]);
+    // A Pick of one moves alone, and its edges stay.
+    expect(edgesOf(edits, played, { moving: picked({ kind: "music", id: "m1" }) })).toContain(0);
+    expect(edgesOf(edits, played, { hidden: ["text"] })).not.toContain(2);
+  });
+
+  // At 30 fps, half a frame is 1/60 s, about 0.0167 s.
+  const all = [0, 1, 2, 3, 4, 5.5, 7, 10];
+
+  test("from a point, the next and the previous", () => {
+    expect(nextEditPoint(all, 4, 30)).toBe(5.5);
+    expect(previousEditPoint(all, 4, 30)).toBe(3);
+  });
+
+  test("within half a frame of a point is at it", () => {
+    // 3.99 s is 0.01 s before 4: 4 is here, so the next is 5.5 and the previous 3.
+    expect(nextEditPoint(all, 3.99, 30)).toBe(5.5);
+    expect(previousEditPoint(all, 3.99, 30)).toBe(3);
+    // 3.98 s is 0.02 s before 4, more than half a frame: 4 is next. And 4.02 s is past it.
+    expect(nextEditPoint(all, 3.98, 30)).toBe(4);
+    expect(previousEditPoint(all, 4.02, 30)).toBe(4);
+  });
+
+  test("between points, the nearest each way", () => {
+    expect(nextEditPoint(all, 6, 30)).toBe(7);
+    expect(previousEditPoint(all, 6, 30)).toBe(5.5);
+  });
+
+  test("at either end, nothing: the jump doesn't wrap", () => {
+    expect(nextEditPoint(all, 10, 30)).toBeNull();
+    expect(nextEditPoint(all, 9.995, 30)).toBeNull();
+    expect(previousEditPoint(all, 0, 30)).toBeNull();
+    expect(previousEditPoint(all, 0.01, 30)).toBeNull();
   });
 });
 
