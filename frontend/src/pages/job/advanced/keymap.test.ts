@@ -45,6 +45,14 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "End" })).toBe("end");
   });
 
+  test("↑ goes to the previous Edit Point and ↓ to the next", () => {
+    expect(resolveShortcut({ key: "ArrowUp" })).toBe("edit-point-previous");
+    expect(resolveShortcut({ key: "ArrowDown" })).toBe("edit-point-next");
+    // With modifiers they are the browser's.
+    expect(resolveShortcut({ key: "ArrowDown", shift: true })).toBeNull();
+    expect(resolveShortcut({ key: "ArrowUp", command: true })).toBeNull();
+  });
+
   test("a letter is the same in capitals, as with Caps Lock on", () => {
     expect(resolveShortcut({ key: "Z", command: true })).toBe("undo");
   });
@@ -96,6 +104,9 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "ArrowRight" }, item)).toBeNull();
     expect(resolveShortcut({ key: "ArrowRight", shift: true }, item)).toBeNull();
     expect(resolveShortcut({ key: "ArrowRight", alt: true }, item)).toBeNull();
+    // A Text Layer or the Watermark on the stage moves up and down by its arrows.
+    expect(resolveShortcut({ key: "ArrowUp" }, item)).toBeNull();
+    expect(resolveShortcut({ key: "ArrowDown" }, item)).toBeNull();
     expect(resolveShortcut({ key: " " }, item)).toBeNull();
     expect(resolveShortcut({ key: "Delete", shift: true }, item)).toBeNull();
     // The rest still go to the table.
@@ -212,7 +223,7 @@ describe("the shortcuts sheet", () => {
     expect(keyNames(row("step-back-10"), true)).toEqual(["⇧←"]);
   });
 
-  test("frame steps and Home/End are listed under navigation", () => {
+  test("frame steps, Home/End and the Edit Points are listed under navigation", () => {
     const navigation = shortcutSheet().find((group) => group.group === "navigation")!;
     expect(navigation.shortcuts.map((shortcut) => shortcut.id)).toEqual([
       "step-back",
@@ -221,6 +232,10 @@ describe("the shortcuts sheet", () => {
       "step-forward-10",
       "start",
       "end",
+      "edit-point-previous",
+      "edit-point-next",
     ]);
+    expect(keyNames(row("edit-point-previous"), true)).toEqual(["↑"]);
+    expect(keyNames(row("edit-point-next"), false)).toEqual(["↓"]);
   });
 });

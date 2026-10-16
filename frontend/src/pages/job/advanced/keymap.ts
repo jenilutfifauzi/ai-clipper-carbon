@@ -21,6 +21,8 @@ export type ShortcutId =
   | "step-forward-10"
   | "start"
   | "end"
+  | "edit-point-previous"
+  | "edit-point-next"
   | "move-back"
   | "move-forward"
   | "move-back-10"
@@ -83,6 +85,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "step-forward-10", keys: [{ key: "ArrowRight", shift }], group: "navigation", label: "Playhead ten frames forward" },
   { id: "start", keys: [{ key: "Home" }], group: "navigation", label: "Playhead to the Clip's start" },
   { id: "end", keys: [{ key: "End" }], group: "navigation", label: "Playhead to the Clip's last frame" },
+  { id: "edit-point-previous", keys: [{ key: "ArrowUp" }], group: "navigation", label: "Playhead to the previous Edit Point" },
+  { id: "edit-point-next", keys: [{ key: "ArrowDown" }], group: "navigation", label: "Playhead to the next Edit Point" },
   { id: "undo", keys: [{ key: "z", command }], group: "editing", label: "Undo" },
   { id: "redo", keys: [{ key: "z", command, shift }, { key: "y", command }], group: "editing", label: "Redo" },
   { id: "pick-all", keys: [{ key: "a", command }], group: "editing", label: "Pick every item" },

@@ -67,7 +67,7 @@ import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { DEFAULT_FPS, lastFrame, stepFrames } from "./playhead";
+import { DEFAULT_FPS, lastFrame, onFrame, stepFrames } from "./playhead";
 import {
   bandPick,
   clicked,
@@ -79,11 +79,10 @@ import {
   stageIdsOf,
   stageItem,
   unlockedPick,
-  type ItemKind,
   type Pick,
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
-import { zoomToFit } from "./timelineView";
+import { edgesOf, editPoints, nextEditPoint, previousEditPoint, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
@@ -525,6 +524,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     fit: () => fitTimeline.current?.(),
     zoom: (direction) => zoomTimeline.current?.(direction),
     shortcuts: () => setShortcuts(true),
+    editPoints: editPoints(edits, played, { duration, hidden: tracks.hidden }),
     fps,
     fullscreen: fullscreen.way !== null,
     setFullscreen,
@@ -651,7 +651,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       labelWidth={wide ? TRACK_LABEL_WIDTH : undefined}
       playback={playback}
       fps={fps}
-      snapPoints={snapPoints(edits, played, pick)}
+      snapPoints={edgesOf(edits, played, { hidden: tracks.hidden, moving: pick })}
       tools={
         <>
           <MagneticToggle />
@@ -899,6 +899,8 @@ function useShortcuts(
     zoom: (direction: 1 | -1) => void;
     // Open the shortcuts sheet.
     shortcuts: () => void;
+    // Where ↑ and ↓ take the playhead, sorted.
+    editPoints: number[];
     // The Clip's frame rate: a frame step's, and an arrow move's.
     fps: number;
     // The preview is full screen, and is put full screen or back.
@@ -915,6 +917,13 @@ function useShortcuts(
     const step = (frames: number) => {
       if (playback.playing) playback.pause();
       playback.seek(stepFrames(playback.time, frames, { fps: more.fps, duration: playback.duration }));
+    };
+    // The playhead to the Edit Point `to` gives from it, paused, on the frame grid; none past either end.
+    const jump = (to: (points: number[], time: number, fps: number) => number | null) => {
+      const point = to(more.editPoints, playback.time, more.fps);
+      if (point === null) return;
+      if (playback.playing) playback.pause();
+      playback.seek(Math.min(onFrame(point, more.fps), lastFrame(playback.duration, more.fps)));
     };
     // What each shortcut does; false when it can't be done now.
     const run: Record<ShortcutId, () => boolean | void> = {
@@ -936,6 +945,8 @@ function useShortcuts(
       "step-forward-10": () => step(10),
       start: () => playback.seek(0),
       end: () => playback.seek(lastFrame(playback.duration, more.fps)),
+      "edit-point-previous": () => jump(previousEditPoint),
+      "edit-point-next": () => jump(nextEditPoint),
       "move-back": () => move(-1),
       "move-forward": () => move(1),
       "move-back-10": () => move(-10),
@@ -975,20 +986,4 @@ function wordGap(words: { start: number; end: number }[], time: number): number 
   return time - word.start < word.end - time
     ? ((before?.end ?? word.start) + word.start) / 2
     : (word.end + (after?.start ?? word.end)) / 2;
-}
-
-// The edges items snap to, besides the playhead and the Clip's ends: the hook's, the items' (but
-// those of a Pick of several, which move together), and where each Segment gives way to the next,
-// as played.
-function snapPoints(edits: AdvancedEdits, played: PlayedSegment[], pick: Pick): number[] {
-  const points = [edits.hook_start, edits.hook_start + edits.hook_secs];
-  const moving = (kind: ItemKind, id: string) => itemsOf(pick).length > 1 && isPicked(pick, kind, id);
-  const items = [
-    ...edits.text_layers.filter((item) => !moving("text", item.id)),
-    ...edits.music.filter((item) => !moving("music", item.id)),
-    ...edits.overlays.filter((item) => !moving("overlay", item.id)),
-  ];
-  for (const item of items) points.push(item.start, item.start + item.secs);
-  for (const shown of played) points.push(shown.end);
-  return points;
 }
