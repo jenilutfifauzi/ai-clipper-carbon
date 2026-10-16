@@ -356,6 +356,26 @@ async def test_an_overlays_transform_and_crop_are_merged_field_by_field_and_the_
     assert plan["overlays"][0]["crop"] == {"x": 80, "y": 0, "width": 240, "height": 90}
 
 
+@pytest.mark.anyio
+async def test_a_video_segments_framing_is_merged_field_by_field(mcp, tmp_path):
+    video = make(tmp_path / "broll.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-c:v", "libx264")
+    item = await call(mcp, "add_asset", kind="media", path=str(video))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    await call(mcp, "merge_candidate_items", **ids, segments=[
+        {"id": "e", "start": candidate["start"], "end": candidate["end"]},
+        {"id": "v", "media": item["id"], "start": 0, "end": 1, "framing": {"transform": {"scale": 0.5}}},
+    ])
+    await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "framing": {"transform": {"rotation": 90}}}])
+    merged = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "framing": {"background": {"kind": "colour", "colour": "#112233"}}}])
+    framing = merged["segments"][1]["framing"]
+    assert (framing["transform"]["scale"], framing["transform"]["rotation"]) == (0.5, 90)
+    assert framing["background"] == {"kind": "colour", "colour": "#112233"}
+    assert "framing" in await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "framing": {"transform": {"scale": 2}}}])
+
+
 # 08: agent guidance
 
 

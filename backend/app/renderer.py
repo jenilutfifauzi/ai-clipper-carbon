@@ -33,7 +33,9 @@ area at its opacity and laid over the joined frames before the captions are burn
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) reads each Segment
 as its own input, cut from the Source like a one-range Clip (or from its Media Library video); each
 is drawn as above, in its own Scenes, and the Segments' frames and sounds are joined back to back
-(concat). With videos among them (or a Segment's own volume), each Segment's sound is set to its
+(concat). A video's Segment is one Scene of one picture: its Background (the blurred cover panel, or
+its colour) and then its Picture over it, as Overlays are drawn, only the part on the frame of it
+scaled (so a video zoomed in is never scaled past the frame). With videos among them (or a Segment's own volume), each Segment's sound is set to its
 volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
 silence. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
@@ -69,6 +71,7 @@ from app.fonts import font
 from app.planner import (
     HOOK_LEADING,
     HOOK_PAD_Y,
+    Box,
     CaptionEvent,
     TEXT_RADIUS,
     HookEvent,
@@ -80,6 +83,7 @@ from app.planner import (
     Picture,
     WatermarkEvent,
     font_metrics,
+    on_frame,
 )
 from app.candidates import TextLayer
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
@@ -268,8 +272,8 @@ class Renderer:
 
 def _check(plan: RenderPlan) -> None:
     """Refuse a Render Plan with nothing to draw."""
-    if not plan.scenes or not all(scene.panels for scene in plan.scenes):
-        raise ValueError("A Render Plan needs at least one scene, each with at least one panel")
+    if not plan.scenes or not all(scene.panels or scene.picture for scene in plan.scenes):
+        raise ValueError("A Render Plan needs at least one scene, each with at least one panel or a picture")
 
 
 # How many arguments read one input: -ss, its start, -t, its length, -i, the file.
@@ -384,7 +388,9 @@ def _scenes(
 def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning) -> str:
     """Filters that draw `scene` from the frames `given` (a link label, then any filters to start
     with) into the link `out`: its first panel, padded to the frame unless it fills it, then each
-    other panel laid over it in its area."""
+    other panel laid over it in its area; or, for a Scene of one picture, as `_framed_scene` draws it."""
+    if scene.picture is not None:
+        return _framed_scene(plan, scene, name, given, out, tuning)
     panels = scene.panels
     if len(panels) == 1:
         chains = [f"{given}{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{out}"]
@@ -398,6 +404,25 @@ def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, 
             above = out if j == len(panels) - 1 else f"[{name}l{j}]"
             chains.append(f"{below}[{name}d{j}]overlay={panel.area.x}:{panel.area.y}{above}")
             below = above
+    return ";".join(chains)
+
+
+def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning) -> str:
+    """Filters that draw a Scene of one picture (a media Segment's) from the frames `given` into
+    `out`: its Background, the blurred cover panel or a frame of its colour (made from the frames
+    themselves, so that it has their times), then the part of its Picture on the frame over it. A
+    picture that covers the frame hides its Background, which is then not blurred."""
+    assert scene.picture is not None
+    picture = on_frame(scene.picture)
+    covers = picture.opacity >= 1 and not picture.rotation % 360 and picture.bounds == Box(0, 0, plan.width, plan.height)
+    chains = [f"{given}split=2[{name}b][{name}f]"]
+    if scene.panels and not covers:
+        panel = scene.panels[0]
+        chains.append(f"[{name}b]{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]")
+    else:
+        colour = (scene.colour or "#000000").removeprefix("#")
+        chains.append(f"[{name}b]crop=2:2:0:0,scale={plan.width}:{plan.height},setsar=1,drawbox=c=0x{colour}:t=fill[{name}l]")
+    chains.append(_picture(picture, f"[{name}f]", f"[{name}l]", out, f"{name}q"))
     return ";".join(chains)
 
 

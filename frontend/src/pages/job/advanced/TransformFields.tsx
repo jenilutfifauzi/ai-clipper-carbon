@@ -1,17 +1,19 @@
 import { FlipHorizontal2, FlipVertical2 } from "lucide-react";
 import { useId, useState } from "react";
-import type { Crop, Transform } from "../../../api";
+import type { Background, Crop, Transform } from "../../../api";
 import { Button } from "../../../components/Button";
+import { ColorField } from "../../../components/ColorField";
+import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { croppedSize, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
-import { clamp, coverScale, FRAME, IDENTITY, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
+import { clamp, FRAME, fillScale, IDENTITY, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
 
 /**
  * A picture's Transform as numbers (ADR 0007): its centre, its scale and stretch in percent of its
  * fitted size, its rotation, flips and opacity; and Fit (scale 1, no stretch, centred), Fill (the
- * scale that covers the frame with what its Crop keeps of its item's `size`) and Reset (every field
+ * scale that covers the frame with what its Crop keeps of its item's `size`, as turned: `fillScale`) and Reset (every field
  * of the Transform at its identity). Its Crop's four edges in percent of its width and height,
  * tidied as they change (a tenth kept). Each field's changes are one `group` of the history, named
  * after it.
@@ -79,7 +81,7 @@ export function TransformFields({
         <Button
           size="sm"
           disabled={!kept}
-          onClick={() => kept && onChange({ ...transform, ...centred, scale: clamp(coverScale(kept.width, kept.height), SCALE_RANGE) }, "fill")}
+          onClick={() => kept && onChange({ ...transform, ...centred, scale: clamp(fillScale(kept.width, kept.height, transform.rotation), SCALE_RANGE) }, "fill")}
         >
           Fill
         </Button>
@@ -87,6 +89,29 @@ export function TransformFields({
           Reset
         </Button>
       </div>
+    </Group>
+  );
+}
+
+const BACKGROUNDS = [
+  { value: "blur", label: "Blur" },
+  { value: "colour", label: "Colour" },
+] as const;
+
+/**
+ * A Framing's Background (ADR 0007): the picture itself blurred, or a colour, which shows wherever
+ * the picture doesn't cover the frame. Each change is one `group` of the history, named after its field.
+ */
+export function BackgroundFields({ background, onChange }: { background: Background; onChange: (background: Background, field: string) => void }) {
+  return (
+    <Group title="Background">
+      <Segmented
+        legend="Behind the picture"
+        options={BACKGROUNDS}
+        value={background.kind}
+        onChange={(kind: Background["kind"]) => onChange({ ...background, kind }, "kind")}
+      />
+      {background.kind === "colour" && <ColorField label="Colour" value={background.colour} onChange={(colour) => onChange({ ...background, colour }, "colour")} />}
     </Group>
   );
 }

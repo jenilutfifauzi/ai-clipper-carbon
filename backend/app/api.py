@@ -150,6 +150,17 @@ def _no_old_overlays(overlays: Any) -> Any:
     return overlays
 
 
+def _no_old_segments(segments: Any) -> Any:
+    """Segments in the shape before Framings (docs/adr/0007), refused with what replaced it."""
+    for segment in segments if isinstance(segments, list) else []:
+        if isinstance(segment, dict) and "fit" in segment:
+            raise ValueError(
+                "fit of a Segment is now its framing: a transform (scale 1 fits the frame; Fill is the scale "
+                "that covers it), a crop and a background (blur, or a colour)"
+            )
+    return segments
+
+
 class CandidateUpdate(BaseModel):
     """A review edit; a field left out stays as it is. `start` and `end` are snapped to Words."""
 
@@ -178,7 +189,7 @@ class CandidateUpdate(BaseModel):
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
-    segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX)] | None = None
+    segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX), BeforeValidator(_no_old_segments)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.
     overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX), BeforeValidator(_no_old_overlays)] | None = None
     # Replaces the Candidate's Transitions as a whole; those without a join are left out.

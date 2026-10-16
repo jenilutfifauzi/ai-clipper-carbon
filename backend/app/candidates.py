@@ -207,26 +207,46 @@ class Overlay:
     volume: Volume = 0.0
 
 
-class Fit(StrEnum):
-    """How a video from the Media Library fills the vertical frame: cropped to fill it, or whole over
-    a blurred copy of itself (as the Blur Layout shows a wide shot)."""
+class BackgroundKind(StrEnum):
+    """What shows behind a Framing's picture: the picture itself, covering the frame, blurred and
+    darkened (as the Blur Layout's background is), or a colour."""
 
-    FILL = "fill"
     BLUR = "blur"
+    COLOUR = "colour"
+
+
+@dataclass(frozen=True)
+class Background:
+    """What shows wherever a Framing's picture doesn't cover the frame, and behind it below its full
+    opacity: its `kind`, and its `colour` when that is a colour."""
+
+    kind: BackgroundKind = BackgroundKind.BLUR
+    colour: Colour = "#000000"
+
+
+@dataclass(frozen=True)
+class Framing:
+    """How a picture fills the frame on its own (docs/adr/0007): a media Segment's video, or the
+    Source in a Manual Scene, cut by its `crop`, placed by its `transform`, over its `background`."""
+
+    transform: Transform = Transform()
+    crop: Crop = Crop()
+    background: Background = Background()
 
 
 @dataclass(frozen=True)
 class Segment:
     """A piece of the Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source from `start`
     to `end` on its timeline, snapped to Words as a Clip's edges are; or, with `media`, a video from
-    the Media Library from `start` to `end` seconds into it, filling the frame as `fit` says, its own
-    sound at `volume`. A Clip's Segments play in order, back to back. `id` names it in the editor."""
+    the Media Library from `start` to `end` seconds into it, placed by its `framing` (which only it
+    has: the Source is framed by its Layouts), its own sound at `volume`. A Clip's Segments play in
+    order, back to back. `id` names it in the editor."""
 
     id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
     end: Annotated[FiniteFloat, Field(ge=0)]
     media: MediaId | None = None
-    fit: Fit = Fit.BLUR
+    framing: Framing | None = None
     volume: Volume = 1.0
 
 

@@ -31,7 +31,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
-from app.candidates import Candidate
+from app.candidates import Candidate, Framing
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
@@ -178,7 +178,7 @@ def candidate_plan(
                 continue
             inputs.append(SegmentInput(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
-                fit=segment.fit, volume=segment.volume, silent=not item.has_audio,
+                framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else [], join=join,
             ))
             continue

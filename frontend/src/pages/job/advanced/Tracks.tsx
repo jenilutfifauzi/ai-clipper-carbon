@@ -303,7 +303,7 @@ export function Tracks({
               className="absolute inset-y-0 border-l border-border px-1.5 pt-5 text-[10px] font-medium capitalize first:border-l-0"
               style={{ left: scene.start * pps, width: (scene.end - scene.start) * pps }}
             >
-              {(scene.end - scene.start) * pps > 48 && (
+              {(scene.end - scene.start) * pps > 48 && scene.layout !== "media" && (
                 <span className="rounded bg-black/50 px-1 py-px text-white/90">{scene.layout === "passthrough" ? "As shot" : scene.layout}</span>
               )}
             </span>

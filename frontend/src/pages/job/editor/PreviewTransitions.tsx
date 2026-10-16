@@ -4,7 +4,7 @@ import { PanelView, sceneAt } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
 import { Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
-import { MediaSegment, sceneLayout } from "./PreviewSegments";
+import { MediaSegment, segmentScene } from "./PreviewSegments";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
 const READY_SECS = 2;
@@ -98,7 +98,7 @@ function Ghost({
     <>
       <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
         {segment.media ? (
-          <MediaSegment segment={segment} end={segment.end} fill={sceneLayout(plan, index) === "fill"} playback={playback} fade={transition} />
+          <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
         ) : (
           [master, follower].map((ref, slot) => (
             <PanelView key={slot} videoRef={ref} src={src} plan={plan} panel={scene?.panels[slot] ?? null} playback={ghost} muted={slot > 0} />

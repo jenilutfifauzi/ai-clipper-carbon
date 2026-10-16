@@ -1,7 +1,7 @@
 """The geometry of a picture cut by its Crop and placed by its Transform: the pixels it keeps, its
 fitted size (that of what it keeps), the scale that covers the frame, its drawn size and the box it
 fills once turned
-(docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md). Pure, so that the planner (Overlays, and later media Segments and Manual Scenes) and the migration
+(docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md). Pure, so that the planner (Overlays, media Segments, and later Manual Scenes) and the migration
 of old Candidates share one rule. Sizes are in pixels; `frame` is the output's (width, height).
 """
 

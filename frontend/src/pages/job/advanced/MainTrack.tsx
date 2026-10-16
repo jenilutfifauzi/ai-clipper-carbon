@@ -1,13 +1,14 @@
 import { Clapperboard, Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { ClipSegment, Fit, MediaItem, Transcript } from "../../../api";
+import type { ClipSegment, Framing, MediaItem, Transcript } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
-import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
+import { filledFraming } from "../editor/picture";
 import type { PlayedSegment } from "../editor/playback";
+import { BackgroundFields, TransformFields } from "./TransformFields";
 
 // The shortest Segment the editor makes; the backend snaps each to Words.
 export const SEGMENT_MIN_SECS = 0.3;
@@ -51,19 +52,15 @@ const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 // The longest video Segment: the longest video the Media Library takes (MAX_SECS in backend/app/media.py).
 const VIDEO_MAX_SECS = 180;
 
-const FITS = [
-  { value: "blur", label: "Fit over blur" },
-  { value: "fill", label: "Fill" },
-] as const;
-
-/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits). */
+/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), filling the frame. */
 export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
-  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, fit: "blur", volume: 1 };
+  const framing = filledFraming(item.width ?? 1920, item.height ?? 1080);
+  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, framing, volume: 1 };
 }
 
 /**
- * The selected Segment: what it shows (of the episode, or of a video, with how it fills the frame
- * and its sound), and what can be done to it.
+ * The selected Segment: what it shows (of the episode, or of a video, with its Framing and its
+ * sound), and what can be done to it.
  */
 export function SegmentFields({
   segment,
@@ -119,12 +116,7 @@ export function SegmentFields({
           <Hint more="Drag its edges to trim it, or drag it to another place.">
             {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s
           </Hint>
-          <Segmented
-            legend="In the frame"
-            options={FITS}
-            value={segment.fit ?? "blur"}
-            onChange={(fit: Fit) => onChange({ ...segment, fit }, `segment:${segment.id}:fit`)}
-          />
+          {segment.framing && <FramingFields segment={segment} framing={segment.framing} item={item} onChange={onChange} />}
           {item?.has_audio === false ? (
             <p className="text-sm text-muted">This video has no sound.</p>
           ) : (
@@ -165,6 +157,34 @@ export function SegmentFields({
         </>
       )}
     </div>
+  );
+}
+
+/** A video's Segment's Framing: its Transform and Crop, and its Background, each field one group of the history. */
+function FramingFields({
+  segment,
+  framing,
+  item,
+  onChange,
+}: {
+  segment: ClipSegment;
+  framing: Framing;
+  item: MediaItem | undefined;
+  onChange: (segment: ClipSegment, group: string) => void;
+}) {
+  const set = <K extends keyof Framing>(part: K, value: Framing[K], field: string) =>
+    onChange({ ...segment, framing: { ...framing, [part]: value } }, `segment:${segment.id}:${part}.${field}`);
+  return (
+    <>
+      <TransformFields
+        transform={framing.transform}
+        crop={framing.crop}
+        size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
+        onChange={(transform, field) => set("transform", transform, field)}
+        onCrop={(crop, field) => set("crop", crop, field)}
+      />
+      <BackgroundFields background={framing.background} onChange={(background, field) => set("background", background, field)} />
+    </>
   );
 }
 

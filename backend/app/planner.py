@@ -58,8 +58,9 @@ Music Clip is.
 
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned Segment
 by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
-plays in the Clip. A Segment of a Media Library video is one Scene: the video cropped to fill the
-frame (Fill), or whole over a blurred copy of itself (Blur), with no captions. A Transition overlaps
+plays in the Clip. A Segment of a Media Library video is one Scene, with no captions: the video
+drawn as a Picture placed by its Framing, over its Background (a blurred copy of what its Crop keeps,
+covering the frame, or a colour) (`framed_scene`). A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
 is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
 Everything else is planned over the whole Clip, in seconds into it.
@@ -73,8 +74,9 @@ from enum import StrEnum
 from functools import cache
 
 from app.candidates import (
+    BackgroundKind,
     Crop,
-    Fit,
+    Framing,
     Layout,
     LayoutOverride,
     MusicClip,
@@ -203,7 +205,7 @@ class SegmentInput:
     """A Segment of a Clip cut into several, as the planner frames it: the Source from `start` to
     `end`, its shots `scenes` and sampled `faces` (None: unanalysed), and the Layout Overrides that
     fall in it, all in seconds into the given. With `media`, a Media Library video `width` x `height`
-    instead, from `start` to `end` seconds into it, filled as `fit` says, its own sound at `volume`
+    instead, from `start` to `end` seconds into it, placed by its `framing`, its own sound at `volume`
     (none when `silent`)."""
 
     start: float
@@ -214,7 +216,7 @@ class SegmentInput:
     media: str | None = None
     width: int = 0
     height: int = 0
-    fit: Fit = Fit.BLUR
+    framing: Framing = Framing()
     volume: float = 1.0
     silent: bool = False
     # Its Words and the Word Edits that fall in it, in seconds into it (None: no captions), and the
@@ -242,8 +244,8 @@ class SceneLayout(StrEnum):
     SPLIT = "split"
     BLUR = "blur"
     PASSTHROUGH = "passthrough"
-    # A Media Library video cropped to fill the frame.
-    FILL = "fill"
+    # A Media Library video placed by its Framing.
+    MEDIA = "media"
 
 
 @dataclass(frozen=True)
@@ -311,7 +313,12 @@ class ScenePlan:
     start: float
     end: float
     layout: SceneLayout
+    # Laid over one another in order. Under a picture, its Background's: the one blurred cover, or
+    # none for a colour.
     panels: list[Panel]
+    # A media Segment's Scene: its one picture, drawn over its panels, or over `colour` without any.
+    picture: "Picture | None" = None
+    colour: str | None = None
 
 
 @dataclass(frozen=True)
@@ -593,7 +600,7 @@ def plan_render(
             elif i:
                 cuts.append(at)
             if given.media is not None:
-                framed = [_media_scene(length, given)]
+                framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             else:
                 framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides)
             plans.extend(_moved(scene, at) for scene in framed)
@@ -680,13 +687,16 @@ def _framed(
     return plans
 
 
-def _media_scene(duration: float, given: SegmentInput) -> ScenePlan:
-    """A Media Library video's Segment as one Scene: cropped 9:16 to fill the frame, or whole over a
-    blurred copy of that crop."""
-    filled = _filled(given.width, given.height, 0.0)
-    if given.fit is Fit.FILL:
-        return ScenePlan(0.0, duration, SceneLayout.FILL, [filled])
-    return ScenePlan(0.0, duration, SceneLayout.BLUR, [replace(filled, blur=True), _fitted(given.width, given.height, 0.0)])
+def framed_scene(start: float, end: float, layout: SceneLayout, width: int, height: int, framing: Framing) -> ScenePlan:
+    """A Scene from `start` to `end` of a `width` x `height` picture placed by its `framing`: the
+    picture (`picture_of`) over its Background, which is the largest 9:16 crop from the middle of what
+    its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
+    picture = picture_of(width, height, framing.transform, framing.crop)
+    if framing.background.kind is BackgroundKind.COLOUR:
+        return ScenePlan(start, end, layout, [], picture, framing.background.colour)
+    kept, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
+    point = replace(cover.path[0], x=cover.path[0].x + kept.x, y=cover.path[0].y + kept.y)
+    return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture)
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:
@@ -694,7 +704,7 @@ def _moved(scene: ScenePlan, by: float) -> ScenePlan:
     if not by:
         return scene
     panels = [replace(panel, path=[replace(point, at=round(point.at + by, 3)) for point in panel.path]) for panel in scene.panels]
-    return ScenePlan(round(scene.start + by, 3), round(scene.end + by, 3), scene.layout, panels)
+    return replace(scene, start=round(scene.start + by, 3), end=round(scene.end + by, 3), panels=panels)
 
 
 def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None) -> WatermarkEvent | None:
@@ -804,6 +814,41 @@ def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(
         cut, (width, height), drawn_width, drawn_height, (x, y), transform.rotation,
         transform.flip_h, transform.flip_v, transform.opacity, bounds,
     )
+
+
+def on_frame(picture: Picture) -> Picture:
+    """The part of an unturned `picture` that is on the frame, as a Picture of its own: what it
+    draws there, without scaling what is off it (a picture zoomed in or covering the frame is
+    larger than the frame). A turned picture is given back whole."""
+    if picture.rotation % 360:
+        return picture
+    x, y = picture.centre
+    left, top = x - picture.width / 2, y - picture.height / 2
+    shown = (max(left, 0.0), max(top, 0.0), min(left + picture.width, OUTPUT_WIDTH), min(top + picture.height, OUTPUT_HEIGHT))
+    if shown[2] <= shown[0] or shown[3] <= shown[1]:
+        return picture
+    crop = picture.crop
+    # Shares of its drawn width and height, mirrored where it is flipped.
+    across = sorted(_mirrored((shown[0] - left) / picture.width, (shown[2] - left) / picture.width, picture.flip_h))
+    down = sorted(_mirrored((shown[1] - top) / picture.height, (shown[3] - top) / picture.height, picture.flip_v))
+    cut_x, cut_right = round(crop.x + across[0] * crop.width), round(crop.x + across[1] * crop.width)
+    cut_y, cut_bottom = round(crop.y + down[0] * crop.height), round(crop.y + down[1] * crop.height)
+    if (cut_x, cut_y, cut_right - cut_x, cut_bottom - cut_y) == (crop.x, crop.y, crop.width, crop.height):
+        return picture
+    width, height = max(2, _even(shown[2] - shown[0])), max(2, _even(shown[3] - shown[1]))
+    centre = (round((shown[0] + shown[2]) / 2, 2), round((shown[1] + shown[3]) / 2, 2))
+    return replace(
+        picture,
+        crop=Box(cut_x, cut_y, max(1, cut_right - cut_x), max(1, cut_bottom - cut_y)),
+        width=width,
+        height=height,
+        centre=centre,
+        bounds=Box(round(centre[0] - width / 2), round(centre[1] - height / 2), width, height),
+    )
+
+
+def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
+    return (1 - high, 1 - low) if flipped else (low, high)
 
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:

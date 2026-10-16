@@ -42,8 +42,8 @@ const QUOTE_DOTS = [
 const HIGHLIGHT_PAD_X = 0.12;
 const HIGHLIGHT_PAD_Y = 0.08;
 const HIGHLIGHT_RADIUS = 0.12;
-const BLUR_SIGMA = 40;
-const BLUR_BRIGHTNESS = 0.9;
+export const BLUR_SIGMA = 40;
+export const BLUR_BRIGHTNESS = 0.9;
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
 const NUDGE_PX = 8;
 // A Text Layer's box has corners this many of its sizes round (planner.py's TEXT_RADIUS).

@@ -103,12 +103,19 @@ class Episode:
     def segments(self, segments: list[Segment]) -> list[Segment]:
         """The Segments with the ends of those that show the Source snapped to Words (as `bounds`
         snaps a Clip's); InvalidEdit for none, for none of the Source, or for one that isn't a usable
-        Segment. (A Media Library video's are checked against it by the API; their Timeline's length
-        against the longest clip by `update`, once their Transitions are known.)"""
+        Segment. A video's is placed by its Framing, and the episode's has none: its Layouts frame it.
+        (A Media Library video's are checked against it by the API; their Timeline's length against
+        the longest clip by `update`, once their Transitions are known.)"""
         if not any(segment.media is None for segment in segments):
             raise InvalidEdit("A clip needs at least one Segment of the episode")
         snapped = []
         for segment in segments:
+            if (segment.media is None) is not (segment.framing is None):
+                raise InvalidEdit(
+                    "A video's Segment needs its framing (its transform, crop and background)"
+                    if segment.framing is None
+                    else "A Segment of the episode has no framing: its Layout frames it"
+                )
             if segment.media is None:
                 start, end = self.bounds(segment.start, segment.end)
                 snapped.append(replace(segment, start=start, end=end))

@@ -14,7 +14,8 @@ import logging
 from collections.abc import Callable
 from contextlib import aclosing
 from pathlib import Path
-from typing import Any, Literal, get_type_hints
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import httpx
 from anyio import to_thread
@@ -91,6 +92,10 @@ Edits:
   width or height cut off before it is fitted (a tenth is always kept). merge_candidate_items
   changes only the transform and crop fields given. The dry run lists each Overlay's drawn box once
   turned (bounds) and what its crop keeps, in its item's pixels.
+- A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
+  shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
+  "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
+  Segment of the episode has no framing.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
@@ -626,14 +631,15 @@ def _merged_fields(item: dict, patch: dict) -> dict:
 
 def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
     """A model of `kind` whose fields are all optional but its key: the fields of an item to change.
-    A field that is itself a dataclass (an Overlay's `transform`) is such a patch too, merged into
-    the item's value field by field (`_merge`)."""
+    A field that is itself a dataclass, or one or None (an Overlay's `transform`, a Segment's
+    `framing`), is such a patch too, merged into the item's value field by field (`_merge`)."""
     hints = get_type_hints(kind, include_extras=True)
     fields: dict[str, Any] = {}
     for field in dataclasses.fields(kind):
         hint = hints[field.name]
-        if dataclasses.is_dataclass(hint):
-            hint = _patch_model(hint)
+        inner = [arg for arg in get_args(hint) if arg is not type(None)] if get_origin(hint) in (Union, UnionType) else [hint]
+        if len(inner) == 1 and dataclasses.is_dataclass(inner[0]):
+            hint = _patch_model(inner[0])
         fields[field.name] = (hint, ...) if field.name == key else (hint | None, None)
     return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
 

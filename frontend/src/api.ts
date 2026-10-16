@@ -294,14 +294,18 @@ export interface Panel {
   blur: boolean;
 }
 
-// "fill": a Media Library video cropped to fill the frame.
-export type SceneLayout = "track" | "split" | "blur" | "passthrough" | "fill";
+// "media": a Media Library video placed by its Framing.
+export type SceneLayout = "track" | "split" | "blur" | "passthrough" | "media";
 
 export interface ScenePlan {
   start: number;
   end: number;
   layout: SceneLayout;
+  // Laid over one another. Under a picture, its Background's: one blurred cover, or none for a colour.
   panels: Panel[];
+  // A media Segment's Scene: its one picture, over its panels, or over `colour` without any.
+  picture: Picture | null;
+  colour: string | null;
 }
 
 export interface CaptionEvent {
@@ -437,6 +441,21 @@ export interface Crop {
   top: number;
   right: number;
   bottom: number;
+}
+
+// What shows where a Framing's picture doesn't cover the frame (backend/app/candidates.py): the
+// picture itself blurred, or `colour` (#RRGGBB).
+export interface Background {
+  kind: "blur" | "colour";
+  colour: string;
+}
+
+// How a picture fills the frame on its own (ADR 0007): a media Segment's video cut by its Crop and
+// placed by its Transform, over its Background.
+export interface Framing {
+  transform: Transform;
+  crop: Crop;
+  background: Background;
 }
 
 // A video or image from the Media Library laid over the Clip: from `start` for `secs` in Timeline
@@ -586,18 +605,15 @@ export interface FontInfo {
   descent: number;
 }
 
-// How a Media Library video fills the vertical frame: cropped to fill it, or whole over its blur.
-export type Fit = "fill" | "blur";
-
 // A piece of a Candidate's Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source
 // from `start` to `end`, snapped to Words; or, with `media`, a Media Library video from `start` to
-// `end` seconds into it, filled as `fit` says, its own sound at `volume`.
+// `end` seconds into it, placed by its `framing` (which only it has), its own sound at `volume`.
 export interface ClipSegment {
   id: string;
   start: number;
   end: number;
   media?: string | null;
-  fit?: Fit;
+  framing?: Framing | null;
   volume?: number;
 }
 

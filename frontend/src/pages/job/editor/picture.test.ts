@@ -1,8 +1,8 @@
 // Seam H: a Picture of the plan as the preview draws it, and the fitted-size rule the inspector's
 // Fit and Fill and a new Overlay go by (backend/app/pictures.py's, on the same worked examples).
 import { describe, expect, test } from "vitest";
-import type { Picture } from "../../../api";
-import { coverScale, fittedSize, pictureStyle, scaleForWidth } from "./picture";
+import type { Panel, Picture } from "../../../api";
+import { coverScale, filledFraming, fillScale, fittedSize, IDENTITY, panelStyle, pictureStyle, scaleForWidth } from "./picture";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -59,6 +59,36 @@ describe("a Picture as CSS", () => {
 
   test("may go past the frame's edges", () => {
     expect(pictureStyle(picture({ centre: [1080, 0], width: 2160, height: 1216 }), FRAME)).toMatchObject({ left: "100%", top: "0%", width: "200%" });
+  });
+});
+
+describe("a Background panel as CSS", () => {
+  test("is its area, with its item sized and moved inside it so that its crop fills it", () => {
+    // The blurred cover of a 1280x720 video: its middle 404x720 from (438, 0), filling the frame.
+    const panel: Panel = { area: { x: 0, y: 0, width: 1080, height: 1920 }, crop_width: 404, crop_height: 720, path: [{ at: 0, x: 438, y: 0 }], blur: true };
+    expect(panelStyle(panel, [1280, 720], FRAME)).toEqual({
+      box: { left: "0%", top: "0%", width: "100%", height: "100%" },
+      inner: { left: `${(-438 / 404) * 100}%`, top: "0%", width: `${(1280 / 404) * 100}%`, height: "100%" },
+    });
+  });
+});
+
+describe("a media Segment's Framing", () => {
+  test("is filled when it is new: the scale that covers the frame, centred, over its blur", () => {
+    expect(filledFraming(1920, 1080)).toEqual({
+      transform: { ...IDENTITY, scale: 1920 / 607.5 },
+      crop: { left: 0, top: 0, right: 0, bottom: 0 },
+      background: { kind: "blur", colour: "#000000" },
+    });
+    expect(filledFraming(1080, 1920).transform.scale).toBe(1);
+  });
+
+  test("is filled once turned a quarter: a sideways phone video stands up to cover the frame", () => {
+    // 1920x1080 fits as 1080x607.5; turned 90°, it is 607.5 wide and 1080 tall at scale 1.
+    expect(fillScale(1920, 1080, 0)).toBeCloseTo(1920 / 607.5);
+    expect(fillScale(1920, 1080, 90)).toBeCloseTo(1080 / 607.5);
+    expect(fillScale(1920, 1080, -270)).toBeCloseTo(1080 / 607.5);
+    expect(fillScale(1920, 1080, 180)).toBeCloseTo(1920 / 607.5);
   });
 });
 

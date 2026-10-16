@@ -1,4 +1,4 @@
-import type { Picture, Transform } from "../../../api";
+import type { Background, Framing, Panel, Picture, Transform } from "../../../api";
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -59,6 +59,43 @@ export function pictureStyle(picture: Picture, frame: { width: number; height: n
   };
 }
 
+export interface PanelStyle {
+  box: { left: string; top: string; width: string; height: string };
+  // Its item inside the box, sized and moved so that only the panel's crop shows in it.
+  inner: { left: string; top: string; width: string; height: string };
+}
+
+/**
+ * The CSS of a still panel of the plan (a Background's blurred cover) cropped from an item `item`
+ * pixels large, on a stage of the `frame`'s shape: its area, and its item as large as the crop
+ * makes it and moved to the crop's first point, as `PanelView` shows a Source crop.
+ */
+export function panelStyle(panel: Panel, [across, down]: [number, number], frame: { width: number; height: number }): PanelStyle {
+  const { area, crop_width: width, crop_height: height } = panel;
+  const point = panel.path[0] ?? { x: 0, y: 0 };
+  return {
+    box: {
+      left: percent(area.x / frame.width),
+      top: percent(area.y / frame.height),
+      width: percent(area.width / frame.width),
+      height: percent(area.height / frame.height),
+    },
+    inner: { left: percent(-point.x / width), top: percent(-point.y / height), width: percent(across / width), height: percent(down / height) },
+  };
+}
+
+/** A new media Segment's Framing for a `width` x `height` video: filled (the scale that covers the frame, centred), over its blur. */
+export function filledFraming(width: number, height: number): Framing {
+  return {
+    transform: { ...IDENTITY, scale: clamp(coverScale(width, height), SCALE_RANGE) },
+    crop: { left: 0, top: 0, right: 0, bottom: 0 },
+    background: BLURRED,
+  };
+}
+
+// The Background of the picture itself, blurred (the colour is kept for when it is switched to one).
+export const BLURRED: Background = { kind: "blur", colour: "#000000" };
+
 /** The largest size of a `width` x `height` picture that fits the frame keeping its aspect: its size at scale 1. */
 export function fittedSize(width: number, height: number): { width: number; height: number } {
   const fit = Math.min(FRAME.width / width, FRAME.height / height);
@@ -68,6 +105,17 @@ export function fittedSize(width: number, height: number): { width: number; heig
 /** The scale at which a `width` x `height` picture covers the frame. */
 export function coverScale(width: number, height: number): number {
   return Math.max(FRAME.width / width, FRAME.height / height) / Math.min(FRAME.width / width, FRAME.height / height);
+}
+
+/**
+ * The scale at which a `width` x `height` picture turned `rotation` degrees covers the frame: Fill.
+ * Turned a quarter (or three), its fitted width stands up the frame and its height across it; at
+ * any other angle it is the cover scale of the picture unturned.
+ */
+export function fillScale(width: number, height: number, rotation: number): number {
+  if (Math.abs(rotation % 180) !== 90) return coverScale(width, height);
+  const fitted = fittedSize(width, height);
+  return Math.max(FRAME.width / fitted.height, FRAME.height / fitted.width);
 }
 
 /** The scale that draws a `width` x `height` picture `pixels` wide, within the Transform's range. */
