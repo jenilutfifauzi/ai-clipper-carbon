@@ -1,6 +1,7 @@
 // Seam H (.scratch/transform-crop/spec.md): what the Grips do to a picture's Transform, as worked
 // examples of a Transform and a pointer in and the Transform out.
 import { describe, expect, test } from "vitest";
+import type { Transform } from "../../../api";
 import {
   boundsOf,
   cornersOf,
@@ -10,7 +11,6 @@ import {
   fingersHeld,
   fingersOn,
   fingerUp,
-  fittedSize,
   gripsOf,
   moved,
   pinched,
@@ -20,18 +20,17 @@ import {
   snapRotation,
   stretched,
   type Grabbed,
-  type PictureTransform,
   type Point,
 } from "./pictureGestures";
 
 const FRAME = { width: 1080, height: 1920 };
 
-function transform(changes: Partial<PictureTransform> = {}): PictureTransform {
+function transform(changes: Partial<Transform> = {}): Transform {
   return { x: 540, y: 960, scale: 1, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1, ...changes };
 }
 
 // A 16:9 picture (1080×607.5 fitted), grabbed with `changes` to its Transform.
-const grabbed = (changes: Partial<PictureTransform> = {}): Grabbed => ({
+const grabbed = (changes: Partial<Transform> = {}): Grabbed => ({
   transform: transform(changes),
   fitted: { width: 1080, height: 607.5 },
   frame: FRAME,
@@ -48,11 +47,6 @@ const tidy = <T extends object>(value: T): T =>
   JSON.parse(JSON.stringify(value, (_, v) => (typeof v === "number" ? Math.round(v * 1000) / 1000 + 0 : v)));
 
 describe("the picture's size and box", () => {
-  test("the fitted size is the largest that fits the frame keeping the aspect", () => {
-    expect(fittedSize({ width: 1920, height: 1080 }, FRAME)).toEqual({ width: 1080, height: 607.5 });
-    expect(fittedSize({ width: 1080, height: 2400 }, FRAME)).toEqual({ width: 864, height: 1920 });
-  });
-
   test("it is drawn at the fitted size times its scale and stretch", () => {
     const fitted = { width: 1080, height: 607.5 };
     expect(placed(transform({ scale: 0.5 }), fitted)).toEqual({ x: 540, y: 960, width: 540, height: 303.75, rotation: 0 });
@@ -147,7 +141,7 @@ describe("an edge stretches on the picture's own axis, about the centre", () => 
 });
 
 describe("the handle above rotates it", () => {
-  const turned = (to: number, changes: Partial<PictureTransform> = {}, keys = {}) =>
+  const turned = (to: number, changes: Partial<Transform> = {}, keys = {}) =>
     rotated(grabbed(changes), around(0), around(to), keys).rotation;
 
   test("by the pointer's angle about the centre from where it was grabbed", () => {

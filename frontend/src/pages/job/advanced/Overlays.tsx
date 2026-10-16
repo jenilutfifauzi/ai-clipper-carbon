@@ -3,7 +3,7 @@ import type { MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { NO_CROP } from "../editor/cropGestures";
-import { IDENTITY, scaleForWidth } from "../editor/picture";
+import { mediaSize, overlayPlacement } from "../editor/picture";
 import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
@@ -14,8 +14,8 @@ import { TransformFields } from "./TransformFields";
 const STILL_SECS = 3;
 
 /**
- * An Overlay of `item` at `at` (the playhead, or where it was dropped): half the frame wide (540 px,
- * at the scale its size gives that), in its upper middle; a video as long as it is (and fits).
+ * An Overlay of `item` at `at` (the playhead, or where it was dropped): placed as `overlayPlacement`
+ * says (half the frame wide, in its upper middle); a video as long as it is (and fits).
  */
 export function newOverlay(item: MediaItem, at: number, duration: number): Overlay {
   const length = item.duration ?? STILL_SECS;
@@ -26,7 +26,7 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     start: round(start),
     secs: round(Math.min(length, duration - start)),
     offset: 0,
-    transform: { ...IDENTITY, y: 760, scale: item.width && item.height ? Number(scaleForWidth(item.width, item.height, 540).toFixed(4)) : 0.5 },
+    transform: overlayPlacement(mediaSize(item)),
     crop: NO_CROP,
     volume: 0,
     radius: 0,
@@ -59,6 +59,7 @@ export function OverlayFields({
   const set = <K extends keyof Overlay>(field: K, value: Overlay[K]) => onChange({ ...overlay, [field]: value }, `overlay:${overlay.id}:${field}`);
   const video = item?.kind === "video";
   const length = item?.duration ?? Infinity;
+  const size = mediaSize(item);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -79,7 +80,8 @@ export function OverlayFields({
       <TransformFields
         transform={overlay.transform}
         crop={overlay.crop}
-        size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
+        size={size}
+        defaults={overlayPlacement(size)}
         onChange={(transform, field) => onChange({ ...overlay, transform }, `overlay:${overlay.id}:transform.${field}`)}
         onCrop={(crop, field, transform) => onChange({ ...overlay, crop, transform: transform ?? overlay.transform }, `overlay:${overlay.id}:crop.${field}`)}
         onCropMode={onCropMode}

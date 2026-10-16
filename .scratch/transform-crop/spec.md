@@ -94,7 +94,7 @@ A media Segment or Manual Scene first draws its Background, then its picture.
 - **Keys.** Arrow keys still move a Tab-focused item. The stage adds nothing new to the keymap.
 
 **The inspector.** A Transform section shows for a picked Overlay, media Segment or Manual Scene:
-- X, Y, Scale %, Width % and Height % (stretch), Rotation °;
+- X, Y, Scale %, Stretch ↔ % and Stretch ↕ %, Rotation °;
 - Flip ↔ and Flip ↕, and Opacity;
 - the Crop's four edges and a Crop button;
 - Fit (scale 1, no stretch, centred), Fill (the scale that covers the frame) and Reset (everything to its default).
@@ -219,7 +219,7 @@ Media Segments and Manual Scenes add their Background (Blur or a colour). Overla
   - The defaults are identity values: centre (540, 960), scale 1, no stretch, rotation 0, no flips, opacity 1, no crop, a blurred Background.
 - **Overlay** loses `x`, `y`, `size` and `opacity`. It gains:
   - `transform`, `crop`, `radius`, `border: Border | None` and `shadow: Shadow | None`.
-  - Its default `transform` places a new Overlay as today: its width is 540 px at the centre. The frontend's "add Overlay" computes that scale from the item's size.
+  - Its default `transform` places a new Overlay as today: its width is 540 px, centred across at y 760. The frontend's "add Overlay" computes that scale from the item's size.
 - **Segment** loses `fit` and gains `framing: Framing | None`. It is required on a media Segment and refused on a Source Segment.
 - **Layout** gains `MANUAL`.
   - `LayoutOverride` gains `framing: Framing | None`, required when its Layout is Manual and refused otherwise.
@@ -394,6 +394,16 @@ Good tests here check what is seen: geometry in pixels, the pixels of a rendered
 - **Rotating Text Layers, the hook or the captions** (the `text-advanced` feature).
 - **Group bounds, group scale and group rotation** of a multi-item Pick, which stay out as in `multi-select-clipboard`. A group still moves together.
 - **The canvas aspect,** which stays 9:16 at 1080×1920.
+
+## Accepted additions
+
+The code review of 2026-10-16 found behaviour that this spec didn't ask for. These additions are kept, as part of what the feature is:
+
+- **Smart Guides in the clip editor too.** A Manual Scene's pan and corner scale there snap as on the Advanced Edit's stage.
+- **"The clip's layout" in the Advanced Edit's inspector,** beside the Scene's, Manual included. Without it, a Candidate made Manual can't be turned back from the Advanced Edit. The Advanced Edit's edits carry `layout` and `framing`, so they undo and merge like the rest.
+- **"Use for all Scenes" also removes this Scene's override,** so that the Scene then follows the Candidate's Framing like the others.
+- **A Cancel/Done bar in Crop mode.** A phone has no Enter or Escape.
+- **A Track Scene's `framing` may carry a Crop.** The centre is kept on the frame, so a Transform alone can't reach a Track crop near the Source's edge. The far side is cropped just enough to keep its first frame within a pixel.
 
 ## Further Notes
 

@@ -2,7 +2,7 @@
 // Fit and Fill and a new Overlay go by (backend/app/pictures.py's, on the same worked examples).
 import { describe, expect, test } from "vitest";
 import type { Panel, Picture } from "../../../api";
-import { coverScale, fillScale, fittedSize, panelStyle, pictureStyle, scaleForWidth, slotView } from "./picture";
+import { coverScale, fillScale, fittedSize, IDENTITY, overlayPlacement, panelStyle, pictureStyle, scaleForWidth, slotView } from "./picture";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -118,8 +118,11 @@ describe("a media Segment's Framing", () => {
 
 describe("the fitted size", () => {
   test("is the largest that fits the frame, and the cover scale fills it", () => {
-    expect(fittedSize(1920, 1080)).toEqual({ width: 1080, height: 607.5 });
-    expect(fittedSize(540, 1080)).toEqual({ width: 960, height: 1920 });
+    expect(fittedSize({ width: 1920, height: 1080 })).toEqual({ width: 1080, height: 607.5 });
+    expect(fittedSize({ width: 540, height: 1080 })).toEqual({ width: 960, height: 1920 });
+    expect(fittedSize({ width: 1080, height: 2400 })).toEqual({ width: 864, height: 1920 });
+    // In another frame.
+    expect(fittedSize({ width: 200, height: 100 }, { width: 100, height: 100 })).toEqual({ width: 100, height: 50 });
     expect(coverScale(1920, 1080)).toBeCloseTo(1920 / 607.5);
     expect(coverScale(540, 960)).toBeCloseTo(1);
   });
@@ -130,5 +133,17 @@ describe("the fitted size", () => {
     expect(scaleForWidth(540, 1080, 540)).toBeCloseTo(540 / 960);
     // Kept within the Transform's range.
     expect(scaleForWidth(1920, 1080, 10)).toBe(0.05);
+  });
+});
+
+describe("a new Overlay's placement", () => {
+  test("is 540 px wide in the frame's upper middle, which Reset puts it back to", () => {
+    expect(overlayPlacement({ width: 1920, height: 1080 })).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
+    expect(overlayPlacement({ width: 540, height: 1080 })).toEqual({ ...IDENTITY, y: 760, scale: 0.5625 });
+    expect(overlayPlacement({ width: 1000, height: 3000 }).scale).toBe(Number((540 / 640).toFixed(4)));
+  });
+
+  test("is half the frame's scale while its item's size isn't known", () => {
+    expect(overlayPlacement(undefined)).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
   });
 });

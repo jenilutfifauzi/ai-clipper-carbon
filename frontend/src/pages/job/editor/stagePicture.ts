@@ -7,7 +7,8 @@
 import type { Candidate, Crop, Framing, Picture, RenderPlan, Transform } from "../../../api";
 import { cropCommitted, tidyCrop, wholePicture, type CropEntry } from "./cropGestures";
 import { framingSource, withSceneFraming } from "./manual";
-import { boundsOf, fittedSize, gripsOf, placed, type Grip, type Placed, type Point, type Size } from "./pictureGestures";
+import { clamp, fittedSize } from "./picture";
+import { boundsOf, gripsOf, placed, type Grip, type Placed, type Point, type Size } from "./pictureGestures";
 
 // What of a Candidate places the pictures of its Main Track.
 export type PictureEdits = Pick<Candidate, "segments" | "layout" | "framing" | "layout_overrides">;
@@ -163,8 +164,6 @@ export function cropKept(entry: CropEntry, crop: Crop): { crop: Crop; transform:
   return same ? null : { crop: kept, transform: tidyTransform(cropCommitted(entry, kept)) };
 }
 
-const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
-
 /**
  * Where `picture`'s Grips are drawn on a `frame`: each where it sits on the picture as turned
  * (`gripsOf`, the rotate handle `reach` above it), but one that isn't `inset` frame pixels inside the
@@ -178,7 +177,7 @@ export function gripsOnFrame(picture: Placed, frame: Size, reach: number, inset:
   const pulled = (point: Point, margin: number): Point => {
     const [left, right, top, bottom] = [margin, frame.width - margin, margin, frame.height - margin];
     if (point.x >= left && point.x <= right && point.y >= top && point.y <= bottom) return point;
-    const from = { x: clamp(picture.x, left, right), y: clamp(picture.y, top, bottom) };
+    const from = { x: clamp(picture.x, [left, right]), y: clamp(picture.y, [top, bottom]) };
     const [dx, dy] = [point.x - from.x, point.y - from.y];
     // The share of the way to the Grip that stays inside on both axes.
     const share = (to: number, start: number, by: number, low: number, high: number) =>
@@ -214,6 +213,15 @@ const OUTWARD: Record<Exclude<Grip, "rotate">, number> = {
   "top-right": 315,
 };
 const RESIZE = ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"] as const;
+
+/**
+ * Whether a press on a picture with these keys held toggles it in the Pick: Shift, Cmd or Ctrl on
+ * its body does. A press on a Grip always starts its gesture, whatever is held: the keys then only
+ * change its snaps (Shift turns in steps of 15°, Alt snaps to nothing).
+ */
+export function pressTogglesPick(grip: Grip | "body", keys: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }): boolean {
+  return grip === "body" && (keys.shiftKey || keys.metaKey || keys.ctrlKey);
+}
 
 /** The pointer over `grip` on a picture turned `rotation` degrees: the resize arrow nearest its way out. */
 export function gripCursor(grip: Grip, rotation: number): string {

@@ -15,6 +15,7 @@ import {
   heldPicture,
   pictureCrop,
   pictureSource,
+  pressTogglesPick,
   segmentOfScene,
   tidyTransform,
   wholeOnStage,
@@ -262,5 +263,18 @@ describe("the Grips a picture has", () => {
 
   test("are only its corners in the clip editor: scaled, never stretched or turned", () => {
     expect(gripsIn("corners")).toEqual(["top-left", "top-right", "bottom-right", "bottom-left"]);
+  });
+});
+
+describe("a press on a picture", () => {
+  test("with Shift, Cmd or Ctrl on its body toggles it in the Pick", () => {
+    expect(pressTogglesPick("body", { shiftKey: true, metaKey: false, ctrlKey: false })).toBe(true);
+    expect(pressTogglesPick("body", { shiftKey: false, metaKey: true, ctrlKey: false })).toBe(true);
+    expect(pressTogglesPick("body", { shiftKey: false, metaKey: false, ctrlKey: true })).toBe(true);
+    expect(pressTogglesPick("body", { shiftKey: false, metaKey: false, ctrlKey: false })).toBe(false);
+  });
+
+  test("on a Grip always starts its gesture, the keys held only changing its snaps (Shift turns in 15° steps)", () => {
+    for (const grip of gripsIn("all")) expect(pressTogglesPick(grip, { shiftKey: true, metaKey: true, ctrlKey: true })).toBe(false);
   });
 });

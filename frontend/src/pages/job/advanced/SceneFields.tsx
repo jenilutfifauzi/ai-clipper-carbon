@@ -4,6 +4,7 @@ import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { forAllScenes, framingSource, reframed, sceneLayoutOverrides, sourceSceneAt, withClipLayout, withSceneFraming, type LayoutEdits } from "../editor/manual";
+import { IDENTITY } from "../editor/picture";
 import { usePlayback, type Playback } from "../editor/playback";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { Group } from "../editor/StyleFields";
@@ -92,6 +93,7 @@ export function SceneFields<T extends LayoutEdits>({
             transform={source.framing.transform}
             crop={source.framing.crop}
             size={{ width: plan.source_width, height: plan.source_height }}
+            defaults={IDENTITY}
             onChange={(transform, field) => setFraming({ ...source.framing, transform }, `transform.${field}`)}
             onCrop={(crop, field, transform) => setFraming({ ...source.framing, crop, transform: transform ?? source.framing.transform }, `crop.${field}`)}
             onCropMode={onCropMode}
