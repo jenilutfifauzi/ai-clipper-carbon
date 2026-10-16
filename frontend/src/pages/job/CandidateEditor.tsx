@@ -2,6 +2,7 @@ import { AlertTriangle, Plus, ScanSearch, SlidersHorizontal, X } from "lucide-re
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router";
 import {
+  mainTrackOf,
   mediaUrl,
   type Candidate,
   type CandidateChange,
@@ -20,11 +21,14 @@ import { cx, formatPrecise } from "../../format";
 import { clipTrimmed, layersOf } from "./advanced/actions";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
-import { ClipPreview, type PickedOnStage } from "./editor/ClipPreview";
+import { ClipPreview, type PickedOnStage, type StageControls } from "./editor/ClipPreview";
+import { clipLayoutChange, pictureChange } from "./editor/clipManual";
 import { candidateDraft } from "./editor/draft";
 import { useMagnetic } from "./editor/magnetic";
+import { sceneLayoutOverrides } from "./editor/manual";
 import { Playback, playedFrom, playable } from "./editor/playback";
-import { SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
+import { sceneAt, SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
+import { pictureSource } from "./editor/stagePicture";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
 import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
 import { PresetBar } from "./editor/PresetBar";
@@ -74,6 +78,7 @@ const LAYOUTS = [
   { value: "track", label: "Track" },
   { value: "split", label: "Split" },
   { value: "blur", label: "Blur" },
+  { value: "manual", label: "Manual" },
 ] as const;
 
 const LAYOUT_HINTS: Record<Layout, string> = {
@@ -81,7 +86,7 @@ const LAYOUT_HINTS: Record<Layout, string> = {
   track: "A 9:16 crop following the speaker, in every scene.",
   split: "Two stacked panels, left person on top, in every scene.",
   blur: "The wide shot over a blurred background, in every scene.",
-  manual: "Framed by hand in the Advanced Edit, in every scene without its own layout.",
+  manual: "Framed by hand, in every scene: drag the picture on the preview to pan it, its corners to zoom.",
 };
 
 /**
@@ -132,6 +137,8 @@ export function CandidateEditor({
   const [scene, setScene] = useState<number | null>(null);
   // The hook or the captions, selected on the preview.
   const [onStage, setOnStage] = useState<PickedOnStage | null>(null);
+  // Or the picture of the Manual Scene under the playhead, to pan and scale.
+  const [pictureOn, setPictureOn] = useState(false);
   // How many times the hook or the Kicker was retyped on the preview: its fields start again from it.
   const [retyped, setRetyped] = useState(0);
   const [timing, setTiming] = useDraftSave<HookTiming>(
@@ -154,6 +161,7 @@ export function CandidateEditor({
     setCaptionFocus(null);
     setScene(null);
     setOnStage(null);
+    setPictureOn(false);
   }, [candidate.id]);
   // Drafts start again from another Candidate, and from one saved elsewhere.
   useEffect(() => {
@@ -194,6 +202,31 @@ export function CandidateEditor({
   const { min_secs, max_secs } = job.options;
   const name = candidateName(candidate, index);
   const magnetic = useMagnetic();
+  const plan = preview?.plan ?? null;
+  // What of the Candidate frames its pictures.
+  const framed = { segments: mainTrackOf(candidate), layout: candidate.layout, framing: candidate.framing, layout_overrides: candidate.layout_overrides };
+  // The picture of a Manual Scene under the playhead, panned and scaled on the preview from its
+  // corners, its Framing saved where it is kept (docs/adr/0007). Its turn, stretch, crop and
+  // Background, and a video's Framing, are set in the Advanced Edit.
+  const pictureAt: StageControls["pictureAt"] = plan
+    ? (segment, at) => {
+        const source = pictureSource(framed, plan, segment, at);
+        if (source?.kind !== "manual" || plan.scenes[at].layout !== "manual") return null;
+        return {
+          picked: pictureOn,
+          onPick: () => {
+            setPictureOn(true);
+            setOnStage(null);
+          },
+          transform: source.transform,
+          grips: "corners",
+          onTransform: (transform) => {
+            const change = pictureChange(framed, plan, source, transform);
+            if (change) void onSave(change);
+          },
+        };
+      }
+    : undefined;
 
   // The uncut Clip's start or end moved: on the Magnetic timeline its Text Layers, Music Clips,
   // Overlays and hook move with it, in the same save (docs/adr/0004-layers-ripple-with-the-main-track.md).
@@ -312,6 +345,7 @@ export function CandidateEditor({
                           selected: onStage ? [onStage] : [],
                           onSelect: (id) => {
                             setOnStage(id);
+                            setPictureOn(false);
                             if (id === "hook" || id === "captions") setTab(id);
                           },
                           onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place)),
@@ -325,6 +359,7 @@ export function CandidateEditor({
                             },
                             onWords: (update) => void onSave({ word_edits: update(candidate.word_edits) }),
                           },
+                          pictureAt,
                         }
                       : undefined
                   }
@@ -451,7 +486,10 @@ export function CandidateEditor({
                     legend="Layout"
                     options={LAYOUTS}
                     value={candidate.layout}
-                    onChange={(layout) => void onSave({ layout })}
+                    // Manual frames the clip as the Scene under the playhead shows now.
+                    onChange={(layout) =>
+                      void onSave(clipLayoutChange(candidate, plan, plan ? sceneAt(plan, playback.shownTime, playback.shownSegmentIndex) : 0, layout))
+                    }
                     className="max-w-md"
                   />
                   <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
@@ -562,7 +600,11 @@ export function CandidateEditor({
           index={scene}
           clipLayout={candidate.layout}
           overrides={candidate.layout_overrides}
-          onChange={(layout_overrides) => void onSave({ layout_overrides })}
+          // Manual copies the Framing that draws what the Scene shows; another Layout has none.
+          onChange={(layout) => {
+            const layout_overrides = sceneLayoutOverrides(candidate.layout_overrides, preview.plan, scene, layout);
+            if (layout_overrides) void onSave({ layout_overrides });
+          }}
         />
       )}
 

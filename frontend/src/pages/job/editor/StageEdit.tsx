@@ -4,7 +4,7 @@ import { cx } from "../../../format";
 import { dragged, moved as movedPicture, offsetOnPicture, type Grabbed, type Grip, type Point } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
-import { fittedOf, gripCursor, gripsOnFrame, heldPicture, tidyTransform } from "./stagePicture";
+import { fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, tidyTransform, type GripSet } from "./stagePicture";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -56,6 +56,8 @@ export interface StagePicture {
   transform: Transform | null;
   // The picture behind: the whole frame picks it, and it moves by itself, never with the others picked.
   behind?: boolean;
+  // Its Grips: all of them (by default), or only its corners (the clip editor's).
+  grips?: GripSet;
   // Put where a gesture leaves it, once, at its end: one `group` of changes.
   onTransform: (transform: Transform, group: string) => void;
 }
@@ -552,7 +554,7 @@ function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: Stage
       role="button"
       tabIndex={0}
       aria-roledescription="movable picture"
-      aria-label={`${item.label}: drag to move it, or use the arrow keys${selected ? "; its corners scale it, its edges stretch it, the handle above turns it" : ""}`}
+      aria-label={`${item.label}: drag to move it, or use the arrow keys${selected ? `; its corners scale it${item.grips === "corners" ? "" : ", its edges stretch it, the handle above turns it"}` : ""}`}
       aria-pressed={selected}
       {...body}
       className={cx(
@@ -596,11 +598,13 @@ const GRIP_INSET_CSS_PX = 10;
  * The Grips of the picture picked alone, over everything else on the stage, on the picture as turned
  * (or, off the stage, pulled in towards its centre: `gripsOnFrame`): its corners scale it about its
  * centre, its edges stretch it, and the handle above it turns it (Shift: in 15° steps; Alt: without
- * snapping to a quarter turn). `scale` is the stage's CSS pixels per output pixel.
+ * snapping to a quarter turn); only the corners, of one with `grips` "corners". `scale` is the
+ * stage's CSS pixels per output pixel.
  */
 function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; scale: number }) {
   const picture = edit.shownPicture(item.id, item.picture!);
   const { grip } = edit.pictureHandlers(item);
+  const has = new Set(gripsIn(item.grips ?? "all"));
   const [x, y] = picture.centre;
   const unit = 1 / scale;
   const on = gripsOnFrame({ x, y, width: picture.width, height: picture.height, rotation: picture.rotation }, plan, ROTATE_REACH_CSS_PX * unit, GRIP_INSET_CSS_PX * unit);
@@ -611,13 +615,17 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
   });
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0">
-      <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="absolute inset-0 size-full">
-        <line x1={on.top.x} y1={on.top.y} x2={on.rotate.x} y2={on.rotate.y} stroke="white" strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
-      </svg>
-      {GRIPS.map(({ grip: at, look }) => (
+      {has.has("rotate") && (
+        <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="absolute inset-0 size-full">
+          <line x1={on.top.x} y1={on.top.y} x2={on.rotate.x} y2={on.rotate.y} stroke="white" strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
+        </svg>
+      )}
+      {GRIPS.filter(({ grip: at }) => has.has(at)).map(({ grip: at, look }) => (
         <span key={at} {...grip(at)} className={cx(GRIP_DOT, look)} style={{ ...place(on[at]), cursor: gripCursor(at, picture.rotation) }} />
       ))}
-      <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
+      {has.has("rotate") && (
+        <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
+      )}
     </div>
   );
 }

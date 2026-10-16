@@ -123,9 +123,13 @@ const CHOICES = [
   { value: "track", label: "Track" },
   { value: "split", label: "Split" },
   { value: "blur", label: "Blur" },
+  { value: "manual", label: "Manual" },
 ] as const;
 
-/** The picked Scene's Layout: the clip's (no override), or its own. */
+/**
+ * The picked Scene's Layout: the clip's (no override), or its own. `onChange` gets the choice, for
+ * the editor to make the Layout Overrides of (`sceneLayoutOverrides`, which Manual's Framing needs).
+ */
 export function SceneLayoutPicker({
   plan,
   index,
@@ -137,7 +141,7 @@ export function SceneLayoutPicker({
   index: number;
   clipLayout: Layout;
   overrides: LayoutOverride[];
-  onChange: (overrides: LayoutOverride[]) => void;
+  onChange: (layout: Layout | "default") => void;
 }) {
   const scene = plan.scenes[index];
   if (!scene) return null;
@@ -146,23 +150,20 @@ export function SceneLayoutPicker({
     return <p className="rounded-control bg-fill p-3 text-sm text-muted">A video's Segment: how it fills the frame is set in the Advanced Edit.</p>;
   }
   const current = sceneOverride(overrides, plan, index);
-  const others = overrides.filter((o) => sceneOverride([o], plan, index) === null);
   return (
     <div className="flex flex-col gap-1.5 rounded-control bg-fill p-3">
       <Segmented
         legend={`Scene ${index + 1} of ${plan.scenes.length}, ${formatPrecise(scene.start)}–${formatPrecise(scene.end)} into the clip`}
         options={CHOICES}
         value={current?.layout ?? "default"}
-        onChange={(value) =>
-          onChange(
-            value === "default"
-              ? others
-              : [...others, { at: Math.round(middle * 1000) / 1000, layout: value }].sort((a, b) => a.at - b.at),
-          )
-        }
+        onChange={onChange}
       />
       <p className="text-sm text-muted">
-        {current ? "This scene has its own layout." : `This scene follows the clip's layout (${clipLayout === "auto" ? "chosen by its faces" : clipLayout}).`}
+        {current?.layout === "manual"
+          ? "This scene is framed by hand: drag its picture on the preview to pan it, its corners to zoom."
+          : current
+            ? "This scene has its own layout."
+            : `This scene follows the clip's layout (${clipLayout === "auto" ? "chosen by its faces" : clipLayout}).`}
       </p>
     </div>
   );

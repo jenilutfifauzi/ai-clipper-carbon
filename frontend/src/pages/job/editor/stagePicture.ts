@@ -126,6 +126,18 @@ export function gripsOnFrame(picture: Placed, frame: Size, reach: number, inset:
   return Object.fromEntries(entries.map(([grip, point]) => [grip, pulled(point, grip === "rotate" ? inset : inset + reach)])) as Record<Grip, Point>;
 }
 
+/**
+ * Which Grips a picture has: all of them (the Advanced Edit's), or only its corners (the clip
+ * editor's), which scale it about its centre with no edge stretch or turn.
+ */
+export type GripSet = "all" | "corners";
+
+const ALL_GRIPS: Grip[] = ["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left", "rotate"];
+const CORNERS = new Set<Grip>(["top-left", "top-right", "bottom-right", "bottom-left"]);
+
+/** The Grips of `set`, clockwise from the top left, the rotate handle last. */
+export const gripsIn = (set: GripSet): Grip[] => (set === "all" ? ALL_GRIPS : ALL_GRIPS.filter((grip) => CORNERS.has(grip)));
+
 // Each Grip's way out from the picture's centre, in degrees clockwise from across, unturned.
 const OUTWARD: Record<Exclude<Grip, "rotate">, number> = {
   right: 0,

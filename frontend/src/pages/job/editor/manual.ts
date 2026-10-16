@@ -14,7 +14,7 @@ import { sceneAt, sceneOverride, sourceTime } from "./ScenesTrack";
 export type LayoutEdits = Pick<Candidate, "layout" | "framing" | "layout_overrides">;
 
 // The Framing a Scene starts from when the plan has none for it: the Source fitted over its blur.
-const FITTED: Framing = { transform: IDENTITY, crop: NO_CROP, background: BLURRED };
+export const FITTED: Framing = { transform: IDENTITY, crop: NO_CROP, background: BLURRED };
 
 /**
  * The plan's Scene under `time` (Timeline time) when it is one of the Main Track's Segment `index`,

@@ -9,6 +9,7 @@ export function candidateDraft(candidate: Candidate): CandidateChange {
     hook_text: candidate.hook_text,
     hook_kicker: candidate.hook_kicker,
     layout: candidate.layout,
+    framing: candidate.framing,
     preset_id: candidate.preset_id,
     style_overrides: candidate.style_overrides,
     word_edits: candidate.word_edits,

@@ -29,7 +29,7 @@ import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt } from "./ScenesTrack";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
-import { segmentOfScene } from "./stagePicture";
+import { segmentOfScene, type GripSet } from "./stagePicture";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -294,6 +294,7 @@ function stagePictures(plan: RenderPlan, controls: StageControls, behind: Pictur
       picture,
       transform: picture && behind.transform,
       behind: true,
+      grips: behind.grips,
       onTransform: behind.onTransform,
     });
   }
@@ -442,12 +443,14 @@ export type PickedOnStage = Exclude<StageId, `picture:${number}`>;
 /**
  * The picture under the playhead as an editor holds it: whether its Segment is picked, what picks it
  * (with `toggle`, added to the Pick or taken out), its Transform as saved (null: none to set on the
- * stage, an automatic Scene's, only outlined), and where a gesture puts it, once, as one `group`.
+ * stage, an automatic Scene's, only outlined), its Grips (all, or only its corners), and where a
+ * gesture puts it, once, as one `group`.
  */
 export interface PictureTarget {
   picked: boolean;
   onPick: (toggle: boolean) => void;
   transform: Transform | null;
+  grips?: GripSet;
   onTransform: (transform: Transform, group: string) => void;
 }
 

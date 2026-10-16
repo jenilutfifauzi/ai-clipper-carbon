@@ -8,6 +8,7 @@ import { BLURRED, IDENTITY } from "./picture";
 import { gripsOf } from "./pictureGestures";
 import {
   gripCursor,
+  gripsIn,
   gripsOnFrame,
   heldPicture,
   pictureSource,
@@ -183,5 +184,15 @@ describe("the Grips as drawn", () => {
     expect(grips.top).toEqual({ x: 540, y: 30 });
     expect(grips.right).toEqual({ x: 1050, y: 960 });
     expect(grips.rotate).toEqual({ x: 540, y: 10 });
+  });
+});
+
+describe("the Grips a picture has", () => {
+  test("are all of them in the Advanced Edit: corners, edges and the rotate handle", () => {
+    expect(gripsIn("all")).toEqual(["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left", "rotate"]);
+  });
+
+  test("are only its corners in the clip editor: scaled, never stretched or turned", () => {
+    expect(gripsIn("corners")).toEqual(["top-left", "top-right", "bottom-right", "bottom-left"]);
   });
 });
