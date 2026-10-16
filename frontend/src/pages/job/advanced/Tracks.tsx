@@ -32,7 +32,7 @@ import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } fr
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
-import { gainAt, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
+import { gainAt, segmentHeard, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -259,6 +259,8 @@ export function Tracks({
           if (!segment) return null;
           const selected = isPicked(pick, "segment", segment.id);
           const volume = segment.media ? 1 : sourceGain(edits, segment);
+          // A video's sound, by its volume Keyframes once it has some.
+          const heard = segmentHeard(segment, shown);
           return (
             <TimelineItem
               key={segment.id}
@@ -287,7 +289,7 @@ export function Tracks({
                   shown={shown}
                   media={segment.media}
                   item={mediaById.get(segment.media)}
-                  volume={segment.volume ?? 1}
+                  heard={heard}
                 />
               ) : (
                 <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} gain={volume} />
@@ -295,6 +297,7 @@ export function Tracks({
               {segment.media && mediaById.get(segment.media)?.has_audio !== false && (
                 <VolumeLine
                   volume={segment.volume ?? 1}
+                  keyed={segment.keys?.volume?.length ? { heard, start: shown.start, playback } : undefined}
                   grab={selected && !locked("video")}
                   onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
                 />
@@ -477,8 +480,8 @@ export function Tracks({
 
 /**
  * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
- * tiled, which shows until they arrive. A video with sound has its Waveform along the bottom, at the
- * Segment's `volume`.
+ * tiled, which shows until they arrive. A video with sound has its Waveform along the bottom, as it
+ * is `heard` (at its volume or by its volume Keyframes).
  */
 function MediaFilmstrip({
   geometry,
@@ -486,14 +489,14 @@ function MediaFilmstrip({
   shown,
   media,
   item,
-  volume,
+  heard,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   shown: PlayedSegment;
   media: string;
   item?: MediaItem;
-  volume: number;
+  heard: Heard;
 }) {
   const { pps } = geometry;
   return (
@@ -523,7 +526,7 @@ function MediaFilmstrip({
                     url: (start) => mediaPeaksUrl(media, start),
                     mediaStart: shown.source_start,
                     duration: item.duration,
-                    gain: () => volume,
+                    gain: (time) => gainAt(time, heard),
                     color: MEDIA_WAVE,
                     band: MEDIA_WAVE_BAND,
                   }),

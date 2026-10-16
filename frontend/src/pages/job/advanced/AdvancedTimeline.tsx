@@ -614,7 +614,7 @@ export interface KeyMarksOf {
   onMove: (from: number, to: number, group: string) => void;
 }
 
-// A press on a diamond that moves less than this is a click.
+// A press on a diamond that moves less than this is a click; a finger's, less than the tracks' tap slop.
 const KEY_MARK_SLOP_PX = 3;
 let keyMarkGestures = 0;
 
@@ -622,10 +622,11 @@ let keyMarkGestures = 0;
  * The picked item's diamonds on the ruler's floor, those within the Clip: a click moves the playhead
  * to one; a drag moves every Keyframe at its instant (`onMove`, from the edits as they were when it
  * was grabbed), as one step of undo. The press is held by the diamonds' row, which stays while the
- * diamonds are drawn again as they move.
+ * diamonds are drawn again as they move. Under a finger, a diamond is pressed anywhere down the
+ * ruler, as wide as a Keyframe cluster's button in the phone's sheets.
  */
 function KeyMarks({ marks, onMove, duration, pps, playback }: KeyMarksOf & { duration: number; pps: number; playback: Playback }) {
-  const drag = useRef<{ pointer: number; mark: number; x: number; moved: boolean; move: KeyMarksOf["onMove"]; group: string } | null>(null);
+  const drag = useRef<{ pointer: number; mark: number; x: number; slop: number; moved: boolean; move: KeyMarksOf["onMove"]; group: string } | null>(null);
   const end = (event: PointerEvent) => {
     const gesture = drag.current;
     if (gesture?.pointer !== event.pointerId) return;
@@ -642,7 +643,7 @@ function KeyMarks({ marks, onMove, duration, pps, playback }: KeyMarksOf & { dur
         if (gesture?.pointer !== event.pointerId) return;
         event.stopPropagation();
         const dx = event.clientX - gesture.x;
-        if (!gesture.moved && Math.abs(dx) < KEY_MARK_SLOP_PX) return;
+        if (!gesture.moved && Math.abs(dx) < gesture.slop) return;
         gesture.moved = true;
         gesture.move(gesture.mark, gesture.mark + dx / pps, gesture.group);
       }}
@@ -655,14 +656,15 @@ function KeyMarks({ marks, onMove, duration, pps, playback }: KeyMarksOf & { dur
           <span
             key={i}
             title="Keyframe: click to go to it, drag to move every Keyframe here"
-            className="absolute bottom-0 grid h-4 w-5 -translate-x-1/2 cursor-pointer touch-none place-items-center"
+            className="absolute bottom-0 grid h-4 w-5 -translate-x-1/2 cursor-pointer touch-none place-items-center pointer-coarse:h-7 pointer-coarse:w-8 pointer-coarse:items-end pointer-coarse:pb-[3px]"
             style={{ left: mark * pps }}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               // Not the ruler's scrub.
               event.stopPropagation();
               event.currentTarget.parentElement!.setPointerCapture(event.pointerId);
-              drag.current = { pointer: event.pointerId, mark, x: event.clientX, moved: false, move: onMove, group: `drag:keys:${++keyMarkGestures}` };
+              const slop = event.pointerType === "touch" ? TAP_SLOP_PX : KEY_MARK_SLOP_PX;
+              drag.current = { pointer: event.pointerId, mark, x: event.clientX, slop, moved: false, move: onMove, group: `drag:keys:${++keyMarkGestures}` };
             }}
           >
             <span className="size-2.5 rotate-45 rounded-[1px] bg-accent ring-1 ring-bg" />

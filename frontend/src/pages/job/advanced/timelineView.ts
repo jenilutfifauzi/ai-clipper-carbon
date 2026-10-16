@@ -383,6 +383,14 @@ export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [
 }
 
 /**
+ * How a media Segment is heard along what is drawn of it (`shown`, from where it starts on the
+ * Timeline, as keyedItem's segmentSpan starts it): its volume, or its volume Keyframes, with no fades.
+ */
+export function segmentHeard(segment: { volume?: number; keys?: Keys }, shown: { start: number; end: number }): Heard {
+  return { volume: segment.volume ?? 1, secs: shown.end - shown.start, fade_in: 0, fade_out: 0, keys: segment.keys?.volume };
+}
+
+/**
  * How loud a Source Segment is all along it: the Clip's own sound's volume, with no fades, times a
  * volume of the Segment's own (1 unless set), as the renderer has it.
  */

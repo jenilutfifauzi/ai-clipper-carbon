@@ -52,7 +52,6 @@ import {
   placeAfter,
   placeDropped,
   setFade,
-  setVolume,
   type Outcome,
   type SegmentDrag,
 } from "./actions";
@@ -78,6 +77,7 @@ import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, type Keying } from "./KeyCluster";
+import { SheetEase } from "./KeyEase";
 import { KeyframesPane } from "./KeyframesPane";
 import {
   activeKey,
@@ -862,9 +862,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              // A Music Clip with volume Keyframes gets one at the playhead (auto-key).
-              const outcome =
-                item.kind === "music" ? writeItemKey(scene, { kind: "music", id: item.id }, "volume", volume, playback.time) : setVolume(scene, item, volume);
+              // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
+              const outcome = writeItemKey({ ...scene, track }, item, "volume", volume, playback.time);
               if (outcome) history.set(outcome.edits, group);
             },
             onFade: (id, fade, secs, heard, group) => {
@@ -1074,10 +1073,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           }
           onClose={() => setSheet(null)}
         >
+          {/* The Keyframes pane is the desktop's: here, the Ease of the Keyframe at the playhead heads the sheet. */}
           {sheet === "inspector" ? (
-            inspector
+            <>
+              <KeyingContext.Provider value={keying}>
+                <SheetEase mediaById={mediaById} />
+              </KeyingContext.Provider>
+              {inspector}
+            </>
           ) : sheet === "transform" ? (
             <KeyingContext.Provider value={keying}>
+              <SheetEase mediaById={mediaById} shown={PICTURE_KEYS} />
               <TransformPanel
                 pick={pick}
                 edits={edits}
