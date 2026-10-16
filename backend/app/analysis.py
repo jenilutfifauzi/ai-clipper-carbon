@@ -7,9 +7,10 @@ with the configured ffmpeg and MediaPipe before planning.
   time, so that a long Clip never sits in memory.
 
 The two are separate passes: decoding is fast (about 1.3 s for 27 s of 1080p), and keeping them apart
-keeps each simple. A Clip's analysis is saved with its Job and reused while the Clip's range, the
-AnalysisTuning and the face model stay the same (see `analysis_file`), so rendering again after a
-hook or layout edit doesn't analyse again.
+keeps each simple. A Clip whose every Scene is Manual needs no faces (docs/adr/0007): its analysis
+finds its Scenes only. A Clip's analysis is saved with its Job and reused while the Clip's range, the
+AnalysisTuning and the face model stay the same (see `analysis_file`), and while it has the faces it
+needs, so rendering again after a hook or layout edit doesn't analyse again.
 """
 
 import re
@@ -42,8 +43,10 @@ class ClipAnalysis:
     model: str
     # Back to back, covering the Clip from 0 to its duration.
     scenes: list[Scene]
-    # Every sampled frame in time order, with or without faces.
+    # Every sampled frame in time order, with or without faces; none when they weren't looked for.
     frames: list[FrameFaces]
+    # Whether faces were looked for.
+    faces: bool = True
 
 
 def analysis_file(start: float, end: float) -> str:
@@ -67,13 +70,19 @@ class Analyzer:
         start: float,
         end: float,
         progress: Callable[[float], None] = lambda done: None,
+        faces: bool = True,
     ) -> ClipAnalysis:
-        """The Scenes and faces of `source` from `start` to `end` seconds. `progress` is called with
-        the share of the face search done so far. Raises RenderStopped after `stop()`."""
+        """The Scenes and (with `faces`) the faces of `source` from `start` to `end` seconds.
+        `progress` is called with the share of the face search done so far. Raises RenderStopped
+        after `stop()`."""
         duration = round(end - start, 3)
         scenes = self.detect_scenes(source, start, duration)
-        frames = self.detect_faces(source, metadata, start, duration, progress)
-        return ClipAnalysis(start, end, self.tuning, self.model.name, scenes, frames)
+        if faces:
+            frames = self.detect_faces(source, metadata, start, duration, progress)
+        else:
+            frames = []
+            progress(1.0)
+        return ClipAnalysis(start, end, self.tuning, self.model.name, scenes, frames, faces)
 
     def stop(self) -> None:
         """Kill the running ffmpeg, if any; analyses from now on raise RenderStopped."""

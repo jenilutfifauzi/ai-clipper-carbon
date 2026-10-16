@@ -434,9 +434,10 @@ def test_split_puts_the_left_face_on_top_and_follows_each_face_with_its_own_came
         assert all(point.y == y for point in panel.path)
 
 
-def test_a_portrait_source_is_passed_through_whatever_its_faces_or_layout():
+def test_a_portrait_source_is_passed_through_whatever_its_faces_or_automatic_layout():
     faces = sampled((2, people(2)), (2, people(1)))
-    for layout in Layout:
+    # (Manual frames it by hand: test_manual_layout.py.)
+    for layout in (layout for layout in Layout if layout is not Layout.MANUAL):
         plan = plan_render(0, 4, source(1080, 1920), [Scene(0, 2), Scene(2, 4)], faces, layout)
         scene, panel = only_panel(plan)
         assert (scene.start, scene.end, scene.layout) == (0.0, 4.0, SceneLayout.PASSTHROUGH)

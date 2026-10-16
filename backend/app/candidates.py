@@ -132,8 +132,13 @@ class MusicClip:
     fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
 
 
-# The most a Transform scales a picture: eight times its fitted size.
+# The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
+MIN_SCALE = 0.05
 MAX_SCALE = 8.0
+
+
+def _cut(value: float, most: float) -> float:
+    return min(max(value, 0.0), max(most, 0.0))
 
 
 @dataclass(frozen=True)
@@ -142,17 +147,22 @@ class Transform:
     output pixels, which stays on the frame though the picture may go past its edges; `scale` times its fitted size (the largest that fits the frame keeping its aspect: 1
     fits), stretched `stretch_x` across and `stretch_y` down on top of that (1 keeps its aspect);
     turned `rotation` degrees clockwise about its centre, mirrored left to right (`flip_h`) or top to
-    bottom (`flip_v`), at `opacity`. The same for its item's whole length."""
+    bottom (`flip_v`), at `opacity`. The same for its item's whole length. A centre given off the
+    frame is brought onto it."""
 
-    x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
-    y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
-    scale: Annotated[FiniteFloat, Field(ge=0.05, le=MAX_SCALE)] = 1.0
+    x: FiniteFloat = 540
+    y: FiniteFloat = 960
+    scale: Annotated[FiniteFloat, Field(ge=MIN_SCALE, le=MAX_SCALE)] = 1.0
     stretch_x: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
     stretch_y: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
     rotation: Annotated[FiniteFloat, Field(ge=-360, le=360)] = 0.0
     flip_h: bool = False
     flip_v: bool = False
     opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "x", _cut(self.x, 1080))
+        object.__setattr__(self, "y", _cut(self.y, 1920))
 
 
 # A new Overlay's: half its fitted size at the frame's centre, 540 px wide for any item wider than
@@ -181,10 +191,6 @@ class Crop:
         object.__setattr__(self, "top", top)
         object.__setattr__(self, "right", _cut(self.right, MAX_CUT - left))
         object.__setattr__(self, "bottom", _cut(self.bottom, MAX_CUT - top))
-
-
-def _cut(value: float, most: float) -> float:
-    return min(max(value, 0.0), max(most, 0.0))
 
 
 @dataclass(frozen=True)

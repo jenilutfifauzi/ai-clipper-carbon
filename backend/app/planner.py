@@ -552,7 +552,7 @@ class RenderPlan:
 
 def reframes(source: SourceMetadata) -> bool:
     """Whether Clips of `source` are reframed, and so need their Scenes and faces: all but a portrait
-    Source, which is passed through."""
+    Source, which is passed through (but in a Manual Scene, framed by hand as any other)."""
     return source.height <= source.width
 
 
@@ -691,10 +691,11 @@ def _framed(
 ) -> list[ScenePlan]:
     """The Scenes of a range of `source` lasting `duration`, whose shots are `scenes` and whose
     sampled frames have `faces`, framed as plan_render says (a Manual one by its override's Framing,
-    or else by `framing`); in seconds into the range."""
-    if not reframes(source):
-        shown = Framing(background=Background(BackgroundKind.COLOUR, "#000000"))
-        return [ScenePlan(0.0, duration, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, 0.0)], framing=shown)]
+    or else by `framing`); in seconds into the range. A portrait Source is passed through, but in a
+    Manual Scene: as one Scene, unless one is Manual."""
+    held_here = [o for o in layout_overrides or [] if 0 <= o.at <= duration]
+    if not reframes(source) and layout is not Layout.MANUAL and all(o.layout is not Layout.MANUAL for o in held_here):
+        return [_passed_through(0.0, duration, source)]
     cuts = sorted({round(scene.start, 3) for scene in scenes or []} - {0.0})
     edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
     plans = []
@@ -707,6 +708,9 @@ def _framed(
             by_hand = (override.framing if override else framing) or Framing()
             plans.append(framed_scene(a, b, SceneLayout.MANUAL, source.width, source.height, by_hand))
             continue
+        if not reframes(source):
+            plans.append(_passed_through(a, b, source))
+            continue
         seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
         count = None if seen is None else _face_count(seen)
         chosen = _choose(wanted, count)
@@ -718,6 +722,13 @@ def _framed(
             panels = _blur(a, source)
         plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source)))
     return plans
+
+
+def _passed_through(start: float, end: float, source: SourceMetadata) -> ScenePlan:
+    """A Scene of a portrait `source` from `start` to `end`, whole and as large as fits, over black,
+    as its Framing (scale 1 over black) draws it too."""
+    shown = Framing(background=Background(BackgroundKind.COLOUR, "#000000"))
+    return ScenePlan(start, end, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, start)], framing=shown)
 
 
 def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetadata) -> Framing:
@@ -769,8 +780,8 @@ def framed_scene(start: float, end: float, layout: SceneLayout, width: int, heig
     picture = picture_of(width, height, framing.transform, framing.crop)
     if framing.background.kind is BackgroundKind.COLOUR:
         return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
-    kept, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
-    point = replace(cover.path[0], x=cover.path[0].x + kept.x, y=cover.path[0].y + kept.y)
+    cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
+    point = replace(cover.path[0], x=cover.path[0].x + cropped.x, y=cover.path[0].y + cropped.y)
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
 
 

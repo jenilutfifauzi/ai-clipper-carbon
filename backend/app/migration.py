@@ -16,6 +16,7 @@ gets the scale that covers the frame, and a fitted one (whole, over a blurred co
 from collections.abc import Mapping
 from typing import Any
 
+from app.candidates import MAX_SCALE, MIN_SCALE
 from app.pictures import cover_scale, fitted
 from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH
 
@@ -54,7 +55,7 @@ def migrated_segment(data: dict[str, Any], sizes: Sizes) -> dict[str, Any]:
     scale = 1.0
     if data["fit"] == "fill":
         width, height = sizes.get(segment["media"]) or FALLBACK_SIZE
-        scale = min(cover_scale(width, height, FRAME), 8)
+        scale = min(cover_scale(width, height, FRAME), MAX_SCALE)
     return segment | {"framing": {"transform": {"scale": scale}, "background": {"kind": "blur"}}}
 
 
@@ -72,6 +73,6 @@ def migrated_overlay(data: dict[str, Any], size: tuple[int, int] | None) -> dict
     width, height = 2 * round(width / 2), 2 * round(height / 2)
     left = min(max(round(x - width / 2), 0), OUTPUT_WIDTH - width)
     top = min(max(round(y - height / 2), 0), OUTPUT_HEIGHT - height)
-    scale = min(max(width / fitted(item_width, item_height, FRAME)[0], 0.05), 8)
+    scale = min(max(width / fitted(item_width, item_height, FRAME)[0], MIN_SCALE), MAX_SCALE)
     transform = {"x": left + width / 2, "y": top + height / 2, "scale": scale, "opacity": data.get("opacity", 1.0)}
     return {key: value for key, value in data.items() if key not in _OLD_OVERLAY} | {"transform": transform}

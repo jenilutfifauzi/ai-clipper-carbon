@@ -4,9 +4,13 @@ for the whole Candidate (.scratch/transform-crop/issues/04-manual-layout.md, ADR
 Seam B on the planner, then Seam A through the API, the real ffmpeg and MCP.
 """
 
+import json
+import subprocess
+
 import numpy as np
 import pytest
 
+from app.analysis import Analyzer
 from app.candidates import Background, BackgroundKind, Crop, Framing, Layout, LayoutOverride, Transform
 from app.pictures import cover_scale
 from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, Box, FrameFaces, Scene, SceneLayout, on_frame, picture_of, plan_render
@@ -18,10 +22,12 @@ from test_mcp import reviewed as mcp_reviewed
 from test_planner import face, people, sampled
 from test_render import add, full_frame, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
-from test_render import from_render_video, render_video  # noqa: F401
+from test_render import face_then_two, from_render_video, render_video  # noqa: F401
 from test_review import candidate_url, patch
 
 SOURCE = SourceMetadata(duration=600, fps=25.0, width=1920, height=1080, codec="h264")
+# 3:4: passed through, but where it is framed by hand.
+PORTRAIT = SourceMetadata(duration=600, fps=25.0, width=1080, height=1440, codec="h264")
 # By hand: half as large again as fitted, a little left of the middle, over a colour.
 BY_HAND = Framing(Transform(x=500, scale=1.5), background=Background(BackgroundKind.COLOUR, "#123456"))
 # Two Scenes: one face in the first (Track), two in the second (Split).
@@ -69,6 +75,24 @@ def test_a_candidate_layout_of_manual_applies_to_the_scenes_without_an_override(
     # Auto chooses by the faces, and never Manual.
     assert chosen.layout is SceneLayout.SPLIT
     assert [scene.layout for scene in plan_render(100, 106, SOURCE, SCENES, faces()).scenes] == ["track", "split"]
+
+
+def test_a_portrait_source_is_framed_by_hand_where_manual_and_passed_through_elsewhere():
+    # The Candidate's Layout of Manual: its Framing, over its colour.
+    [scene] = plan_render(100, 106, PORTRAIT, layout=Layout.MANUAL, framing=BY_HAND).scenes
+    assert (scene.layout, scene.framing, scene.colour) == (SceneLayout.MANUAL, BY_HAND, "#123456")
+    assert scene.picture == picture_of(1080, 1440, BY_HAND.transform)
+    # A Manual override frames its Scene; the other is passed through, as under an automatic Layout.
+    passed, by_hand = plan_render(100, 106, PORTRAIT, SCENES, layout_overrides=[LayoutOverride(4.0, Layout.MANUAL, BY_HAND)]).scenes
+    assert (passed.layout, passed.start, passed.end) == (SceneLayout.PASSTHROUGH, 0, 3)
+    assert [panel.area for panel in passed.panels] == [Box(0, 240, 1080, 1440)]
+    assert (by_hand.layout, by_hand.start, by_hand.end, by_hand.framing) == (SceneLayout.MANUAL, 3, 6, BY_HAND)
+    # Automatic Layouts pass it through whole, as one Scene, which starts Manual from scale 1 over black.
+    for layout in (Layout.AUTO, Layout.TRACK):
+        [scene] = plan_render(100, 106, PORTRAIT, SCENES, layout=layout, layout_overrides=[LayoutOverride(4.0, Layout.BLUR)]).scenes
+        assert (scene.layout, scene.start, scene.end) == (SceneLayout.PASSTHROUGH, 0, 6)
+        assert scene.framing == Framing(background=Background(BackgroundKind.COLOUR, "#000000"))
+        assert box(picture_of(1080, 1440, scene.framing.transform).bounds) == (0, 240, 1080, 1440)
 
 
 def test_a_track_scenes_framing_draws_its_first_crop():
@@ -147,6 +171,83 @@ def test_a_manual_scene_at_scale_1_over_a_colour_shows_the_colour_above_and_belo
     assert colour_share(slice(700, 1220)) < 0.5  # the test pattern has some green of its own
 
 
+def test_a_portrait_source_framed_by_hand_is_rendered_so(client, settings, video_source, tmp_path):
+    video_source.video = tmp_path / "portrait.mp4"
+    command = [
+        str(settings.ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "testsrc2=size=360x480:rate=30", "-f", "lavfi", "-i", "sine=frequency=220",
+        "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        str(video_source.video),
+    ]
+    subprocess.run(command, check=True)
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    # Half as large as it fits, over green.
+    framing = {"transform": {"scale": 0.5}, "background": {"kind": "colour", "colour": "#00FF00"}}
+    candidate = patch(client, job, candidate, layout="manual", framing=framing)
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    assert {scene["layout"] for scene in plan["scenes"]} == {"manual"}
+    assert plan["scenes"][0]["picture"]["bounds"] == {"x": 270, "y": 600, "width": 540, "height": 720}
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 0.5)
+    green = np.array([0, 255, 0])
+    # Green where it was passed through before: either side of the picture, and above it.
+    for rows, columns in ((slice(620, 1300), slice(0, 250)), (slice(620, 1300), slice(830, 1080)), (slice(0, 580), slice(None))):
+        assert (np.abs(frame[rows, columns] - green).max(axis=2) < 40).mean() > 0.99, (rows, columns)
+
+
+def test_an_all_manual_candidate_is_rendered_and_prepared_without_looking_for_faces(
+    client, settings, video_source, face_then_two, monkeypatch
+):
+    def no_faces(*args, **kwargs):
+        raise AssertionError("faces were looked for")
+
+    monkeypatch.setattr(Analyzer, "detect_faces", no_faces)
+    video_source.video = face_then_two
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    green = {"background": {"kind": "colour", "colour": "#00FF00"}}
+    halved = {"transform": {"scale": 0.5}, "background": {"kind": "colour", "colour": "#0000FF"}}
+    # The two people's Scene (from 3 s into the Source) has its own Framing.
+    candidate = patch(
+        client, job, candidate, layout="manual", framing=green, layout_overrides=[{"at": 4.5, "layout": "manual", "framing": halved}]
+    )
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    # Its Scenes are found, so that the override frames its own.
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    assert [(scene["layout"], scene["picture"]["width"]) for scene in plan["scenes"]] == [("manual", 1080), ("manual", 540)]
+    # The preview plans from what the render found, and nothing is left to prepare.
+    shown = preview(client, job, candidate)
+    assert shown["analysed"] is True and shown["plan"] == plan
+    assert client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/prepare").json()["status"] == "review"
+    # A Scene framed by its faces needs them.
+    candidate = patch(client, job, candidate, layout_overrides=[{"at": 4.5, "layout": "track"}])
+    assert preview(client, job, candidate)["analysed"] is False
+
+
+@pytest.mark.anyio
+async def test_the_candidates_framing_is_merged_field_by_field(mcp):
+    job = await mcp_reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    await call(mcp, "edit_candidate", **ids, changes={"layout": "manual", "framing": {"transform": {"scale": 2}}})
+    await call(mcp, "merge_candidate_items", **ids, framing={"transform": {"rotation": 90}})
+    merged = await call(mcp, "merge_candidate_items", **ids, framing={"background": {"kind": "colour", "colour": "#112233"}})
+    framing = merged["framing"]
+    assert (framing["transform"]["scale"], framing["transform"]["rotation"]) == (2, 90)
+    assert framing["background"] == {"kind": "colour", "colour": "#112233"}
+    # Only the Manual Layout has one.
+    await call(mcp, "edit_candidate", **ids, changes={"layout": "blur"})
+    assert "framing" in await fails(mcp, "merge_candidate_items", **ids, framing={"transform": {"scale": 2}})
+
+
 @pytest.mark.anyio
 async def test_the_dry_run_lists_each_scenes_layout_and_framing_and_an_overrides_framing_merges_field_by_field(mcp):
     job = await mcp_reviewed(mcp)
@@ -164,7 +265,12 @@ async def test_the_dry_run_lists_each_scenes_layout_and_framing_and_an_overrides
     [scene] = plan["scenes"]
     assert scene["layout"] == "manual"
     assert scene["framing"] == override["framing"]
+    # Its picture as resolved: the 640x360 Source twice as large as it fits, 2160x1216, turned a quarter.
+    assert (scene["bounds"], scene["rotation"], scene["opacity"]) == ({"x": -68, "y": -120, "width": 1216, "height": 2160}, 90, 1)
+    assert scene["crop"] == {"x": 0, "y": 0, "width": 640, "height": 360}
     # A Scene of another Layout lists the Framing that draws its first frame, to start Manual from.
     plan = await call(mcp, "edit_candidate", **ids, changes={"layout_overrides": [], "layout": "blur"}, dry_run=True)
     [scene] = plan["scenes"]
     assert scene["layout"] == "blur" and scene["framing"]["transform"]["scale"] == 1
+    # Panels, not a picture, draw a Scene of an automatic Layout.
+    assert "bounds" not in scene

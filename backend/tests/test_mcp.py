@@ -375,6 +375,31 @@ async def test_a_video_segments_framing_is_merged_field_by_field(mcp, tmp_path):
     assert framing["background"] == {"kind": "colour", "colour": "#112233"}
     assert "framing" in await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "framing": {"transform": {"scale": 2}}}])
 
+    # The dry run gives the video's Scene its picture as resolved, as an Overlay's: 540x304 turned a quarter.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
+    episode, video = plan["scenes"]
+    assert "bounds" not in episode
+    assert (video["layout"], video["bounds"], video["rotation"], video["opacity"]) == (
+        "media", {"x": 388, "y": 690, "width": 304, "height": 540}, 90, 1,
+    )
+    assert video["crop"] == {"x": 0, "y": 0, "width": 320, "height": 180}
+
+
+@pytest.mark.anyio
+async def test_old_shape_overlay_and_segment_fields_are_refused_by_merge_with_what_replaced_them(mcp, tmp_path):
+    picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
+    item = await call(mcp, "add_asset", kind="media", path=str(picture))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "media": item["id"], "start": 0, "secs": 1}])
+
+    for old in ({"size": 300}, {"x": 100, "y": 200}, {"opacity": 0.5}):
+        message = await fails(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", **old}])
+        assert "now in its transform" in message, (old, message)
+    message = await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "start": 0.1, "end": 1.6, "fit": "fill"}])
+    assert "fit of a Segment is now its framing" in message, message
+
 
 @pytest.mark.anyio
 async def test_an_overlays_border_and_shadow_are_merged_field_by_field_and_turned_off_with_null(mcp, tmp_path):

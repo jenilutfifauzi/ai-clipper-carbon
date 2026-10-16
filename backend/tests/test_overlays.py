@@ -12,6 +12,7 @@ import json
 
 import numpy as np
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Border, Crop, Overlay, Shadow, Transform
 from app.migration import migrated_candidate, migrated_overlay
@@ -97,6 +98,16 @@ def test_the_centre_is_kept_on_the_frame_and_the_picture_may_go_past_its_edges()
     assert picture.centre == (OUTPUT_WIDTH, 0)
     assert (picture.width, picture.height) == (2160, 1216)
     assert box(picture.bounds) == (0, -608, 2160, 1216)
+
+
+def test_a_centre_given_off_the_frame_is_clamped_onto_it_and_a_non_finite_one_is_refused():
+    given = TypeAdapter(Transform)
+    clamped = given.validate_python({"x": 1200, "y": -5, "scale": 2})
+    assert (clamped.x, clamped.y, clamped.scale) == (OUTPUT_WIDTH, 0, 2)
+    assert (given.validate_python({"y": 2500}).x, given.validate_python({"y": 2500}).y) == (540, 1920)
+    for bad in (float("inf"), float("nan"), "x"):
+        with pytest.raises(ValidationError):
+            given.validate_python({"x": bad})
 
 
 def test_the_crop_is_taken_in_item_pixels_before_the_picture_is_fitted():
@@ -191,9 +202,13 @@ def test_overlays_are_validated_and_burned_in_where_and_when_planned(client, set
         [on_video | {"media": "ef" * 16}],
         [on_video | {"transform": {"opacity": 2}}],
         [on_video | {"transform": {"scale": 9}}],
-        [on_video | {"transform": {"x": 1100}}],
+        [on_video | {"transform": {"x": "inf"}}],
     ):
         assert client.patch(candidate_url(job, candidate), json={"overlays": bad}).status_code == 422, bad
+    # A centre off the frame is brought onto it.
+    off = patch(client, job, candidate, overlays=[on_video | {"transform": {"x": 1100, "y": -20}}])
+    assert (off["overlays"][0]["transform"]["x"], off["overlays"][0]["transform"]["y"]) == (1080, 0)
+    candidate = off
     candidate = patch(client, job, candidate, overlays=[on_video, on_image])
     assert candidate["overlays"][0]["volume"] == 0
     assert candidate["overlays"][0]["transform"] | {"x": 0, "y": 0, "scale": 0} == {

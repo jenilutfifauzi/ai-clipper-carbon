@@ -22,6 +22,7 @@ never runs at the same time as the face detection or an encode: each Clip's step
 import logging
 import threading
 import time
+from enum import StrEnum
 from typing import Protocol
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -31,7 +32,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
-from app.candidates import Candidate, Framing
+from app.candidates import Candidate, Framing, Layout, Segment
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
@@ -92,10 +93,35 @@ def saved_words(job_dir: Path, start: float, end: float, language: str, model: s
     return saved.words if (saved.start, saved.end, saved.language, saved.model) == (start, end, language, model) else None
 
 
-def saved_analysis(job_dir: Path, start: float, end: float, tuning: AnalysisTuning, model: str) -> ClipAnalysis | None:
+class Analysis(StrEnum):
+    """What a Segment of a Candidate needs found of its range of the Source (`needed_analysis`)."""
+
+    # Nothing: a video's Segment, or a portrait Source passed through.
+    NONE = "none"
+    # Its Scenes only, which are all Manual: where its Layout Overrides apply.
+    SCENES = "scenes"
+    # Its Scenes and faces, for the Scenes framed by them.
+    FACES = "faces"
+
+
+def needed_analysis(candidate: Candidate, segment: Segment, source: SourceMetadata) -> Analysis:
+    """What the Candidate's `segment` of `source` needs found to be planned: the faces unless every
+    Scene of it is Manual (the Candidate's Layout, and every Layout Override in its range), which needs
+    none (docs/adr/0007); a portrait Source, passed through, needs its Scenes only where one is Manual."""
+    if segment.media is not None:
+        return Analysis.NONE
+    layouts = {candidate.layout, *(o.layout for o in candidate.layout_overrides if segment.start <= o.at <= segment.end)}
+    if not reframes(source):
+        return Analysis.SCENES if Layout.MANUAL in layouts else Analysis.NONE
+    return Analysis.SCENES if layouts == {Layout.MANUAL} else Analysis.FACES
+
+
+def saved_analysis(
+    job_dir: Path, start: float, end: float, tuning: AnalysisTuning, model: str, faces: bool = True
+) -> ClipAnalysis | None:
     """The analysis saved for the Clip from `start` to `end` of the Source with this `tuning` and face
-    `model` (its file name); None when there is none. (An analysis saved before the model was
-    recorded doesn't validate.)"""
+    `model` (its file name), with its faces when they are wanted; None when there is none. (An
+    analysis saved before the model was recorded doesn't validate.)"""
     path = job_dir / analysis_file(start, end)
     if not path.is_file():
         return None
@@ -103,7 +129,7 @@ def saved_analysis(job_dir: Path, start: float, end: float, tuning: AnalysisTuni
         saved = _ANALYSIS.validate_json(path.read_bytes())
     except ValidationError:
         return None
-    if (saved.start, saved.end, saved.tuning, saved.model) != (start, end, tuning, model):
+    if (saved.start, saved.end, saved.tuning, saved.model) != (start, end, tuning, model) or (faces and not saved.faces):
         return None
     return saved
 
@@ -287,8 +313,8 @@ class Renders:
         return self.store.change_clips(job_id, queue, expect=RENDERABLE)
 
     def prepared(self, job: Job, candidate: Candidate) -> bool:
-        """Whether the Candidate's Words (when its Job is captioned) and analysis (when its Source is
-        reframed) are saved for its range as it is."""
+        """Whether the Candidate's Words (when its Job is captioned) and the analysis it needs
+        (`needed_analysis`) are saved for its range as it is."""
         assert job.source is not None
         job_dir = self.store.job_dir(job.id)
         segments = candidate.source_segments()
@@ -296,9 +322,12 @@ class Renders:
             saved_words(job_dir, segment.start, segment.end, job.options.language, self.settings.whisper_model) is not None
             for segment in segments
         )
-        analysed = not reframes(job.source.metadata) or all(
-            saved_analysis(job_dir, segment.start, segment.end, self.analyzer.tuning, self.analyzer.model.name) is not None
-            for segment in segments
+        tuning, model = self.analyzer.tuning, self.analyzer.model.name
+        needed = [(segment, needed_analysis(candidate, segment, job.source.metadata)) for segment in segments]
+        analysed = all(
+            saved_analysis(job_dir, segment.start, segment.end, tuning, model, wanted is Analysis.FACES) is not None
+            for segment, wanted in needed
+            if wanted is not Analysis.NONE
         )
         return words and analysed
 
@@ -505,15 +534,23 @@ class Renders:
         return found
 
     def _all_analyses(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[ClipAnalysis | None]:
-        """Each of the Candidate's Segments' Scenes and faces (`_analysis`; none for a video's), the
-        progress shared out by their lengths."""
+        """Each of the Candidate's Segments' Scenes and faces, or Scenes only, as it needs
+        (`needed_analysis`, `_analysis`; none for a video's), the progress shared out by their lengths."""
+        assert job.source is not None
         total, done, found = sum(p.end - p.start for p in candidate.source_segments()), 0.0, []
         for segment in candidate.main_track():
             if segment.media is not None:
                 found.append(None)
                 continue
             share = (segment.end - segment.start) / total
-            found.append(self._analysis(job, candidate, segment.start, segment.end, lambda d, done=done, share=share: progress(done + share * d)))
+            wanted = needed_analysis(candidate, segment, job.source.metadata)
+            if wanted is Analysis.NONE:
+                found.append(None)
+            else:
+                found.append(self._analysis(
+                    job, candidate, segment.start, segment.end, lambda d, done=done, share=share: progress(done + share * d),
+                    faces=wanted is Analysis.FACES,
+                ))
             done += share
         return found
 
@@ -559,22 +596,20 @@ class Renders:
         return words
 
     def _analysis(
-        self, job: Job, candidate: Candidate, start: float, end: float, progress: Callable[[float], None]
-    ) -> ClipAnalysis | None:
-        """The Scenes and faces of the Candidate's range (or Segment) from `start` to `end` on the
-        Source, as saved by an earlier render of the same range with the same tuning and face model,
-        or found now and saved; None for a Source that isn't reframed. (An analysis saved before the
-        model was recorded doesn't validate, so it is done again.)"""
+        self, job: Job, candidate: Candidate, start: float, end: float, progress: Callable[[float], None], faces: bool
+    ) -> ClipAnalysis:
+        """The Scenes and (with `faces`) faces of the Candidate's range (or Segment) from `start` to
+        `end` on the Source, as saved by an earlier render of the same range with the same tuning and
+        face model, or found now and saved. (An analysis saved before the model was recorded doesn't
+        validate, so it is done again; one without faces is done again when they are wanted.)"""
         assert job.source is not None
-        if not reframes(job.source.metadata):
-            return None
         path = self.store.job_dir(job.id) / analysis_file(start, end)
-        saved = saved_analysis(self.store.job_dir(job.id), start, end, self.analyzer.tuning, self.analyzer.model.name)
+        saved = saved_analysis(self.store.job_dir(job.id), start, end, self.analyzer.tuning, self.analyzer.model.name, faces)
         if saved is not None:
             return saved
         began = time.monotonic()
         source = self.store.job_dir(job.id) / job.source.video
-        analysis = self.analyzer.analyze(source, job.source.metadata, start, end, progress)
+        analysis = self.analyzer.analyze(source, job.source.metadata, start, end, progress, faces)
         logger.info(
             "Job %s: analysed Candidate %s in %.1f s: %d scenes, faces in %d of %d sampled frames",
             job.id, candidate.id, time.monotonic() - began, len(analysis.scenes),

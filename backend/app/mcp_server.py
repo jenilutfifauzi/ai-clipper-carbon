@@ -15,7 +15,7 @@ import types
 from collections.abc import Callable
 from contextlib import aclosing
 from pathlib import Path
-from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import httpx
 from anyio import to_thread
@@ -23,10 +23,10 @@ from fastapi import FastAPI
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, create_model
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
 
-from app.api import CandidateUpdate, PresetBody
-from app.candidates import KICKER_MAX_CHARS, LayoutOverride, MusicClip, Overlay, Segment, TextLayer, Transition, WordEdit
+from app.api import CandidateUpdate, PresetBody, no_old_overlays, no_old_segments
+from app.candidates import KICKER_MAX_CHARS, Framing, LayoutOverride, MusicClip, Overlay, Segment, TextLayer, Transition, WordEdit
 from app.config import REPO_ROOT
 from app.events import SETTLED, JobProgress, job_events
 from app.jobs import Job, JobNotFound, JobOptions, JobStatus
@@ -84,8 +84,8 @@ Edits:
   with the cut while their Magnetic timeline is on; move them yourself when they should follow.
 - Music, Overlays and Segments of other videos name Media Library items: add_asset adds a song,
   video or image from a file on this Mac, list_assets lists them.
-- An Overlay is placed by its transform. x, y: its centre in output pixels (0..1080, 0..1920; the
-  picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
+- An Overlay is placed by its transform. x, y: its centre in output pixels (clamped to 0..1080,
+  0..1920; the picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
   1080x1920 frame keeping its aspect (1 fits; a 16:9 picture at 0.5 is 540 px wide). stretch_x,
   stretch_y: times its fitted width and height on top of scale. rotation: degrees clockwise. flip_h,
   flip_v, opacity 0..1. Its crop: left, top, right, bottom, each the fraction 0..0.9 of its
@@ -100,7 +100,8 @@ Edits:
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
   tracking. The dry run lists each Scene's layout and the framing that draws its first frame: copy
-  it to switch a Scene to Manual without a jump. merge_candidate_items changes only the fields given.
+  it to switch a Scene to Manual without a jump, and its picture's bounds, rotation and crop.
+  merge_candidate_items changes only the fields given, of an override's framing or the Candidate's.
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
@@ -315,18 +316,20 @@ def build_mcp(app: FastAPI) -> MCPServer:
         candidate_id: str,
         text_layers: list[_PATCHES["text_layers"]] | None = None,  # type: ignore[valid-type]
         music: list[_PATCHES["music"]] | None = None,  # type: ignore[valid-type]
-        overlays: list[_PATCHES["overlays"]] | None = None,  # type: ignore[valid-type]
-        segments: list[_PATCHES["segments"]] | None = None,  # type: ignore[valid-type]
+        overlays: Annotated[list[_PATCHES["overlays"]], BeforeValidator(no_old_overlays)] | None = None,  # type: ignore[valid-type]
+        segments: Annotated[list[_PATCHES["segments"]], BeforeValidator(no_old_segments)] | None = None,  # type: ignore[valid-type]
         transitions: list[_PATCHES["transitions"]] | None = None,  # type: ignore[valid-type]
         word_edits: list[_PATCHES["word_edits"]] | None = None,  # type: ignore[valid-type]
         layout_overrides: list[_PATCHES["layout_overrides"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
+        framing: _FRAMING_PATCH | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
         one the Candidate has (id; a Transition's `after`; a Word Edit's or Layout Override's `at`)
         changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
-        watermark). The Candidate is saved once, through the same checks as edit_candidate."""
+        watermark), and framing (the Candidate's, for Layout manual) field by field. The Candidate is
+        saved once, through the same checks as edit_candidate."""
         given = {
             "text_layers": text_layers, "music": music, "overlays": overlays, "segments": segments,
             "transitions": transitions, "word_edits": word_edits, "layout_overrides": layout_overrides,
@@ -340,6 +343,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
             if style_overrides is not None:
                 new = _dump(StyleOverrides, style_overrides)
                 body["style_overrides"] = {section: {**fields, **new[section]} for section, fields in current["style_overrides"].items()}
+            if framing is not None:
+                patch = framing.model_dump(mode="json", exclude_unset=True)
+                body["framing"] = _merged_fields(current["framing"], patch) if current["framing"] else patch
             return body
 
         return await save_from_current(job_id, candidate_id, merged)
@@ -573,16 +579,25 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
     return _compact(view)
 
 
+def _picture_view(picture: dict) -> dict:
+    """Where a picture is drawn: its box once turned, in output pixels, its rotation, what its crop
+    keeps, in its item's pixels, and its opacity."""
+    return {key: picture[key] for key in ("bounds", "rotation", "crop", "opacity")}
+
+
 def _plan_view(preview: dict) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time, each Scene's Layout and
-    the Framing that draws its first frame (a Manual Scene's own), where each Overlay is drawn (its
-    box once turned, in output pixels, and what its crop keeps, in its item's), and the Words."""
+    the Framing that draws its first frame (a Manual Scene's own), where the picture of a Manual
+    Scene, of a video's Scene and of each Overlay is drawn (`_picture_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else plan["end"] - plan["start"], 2),
         "words_source": preview["words_source"],
-        "scenes": [_times(scene, "start", "end", "layout", "framing") for scene in plan["scenes"]],
+        "scenes": [
+            {**_times(scene, "start", "end", "layout", "framing"), **(_picture_view(scene["picture"]) if scene["picture"] else {})}
+            for scene in plan["scenes"]
+        ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),
@@ -591,9 +606,7 @@ def _plan_view(preview: dict) -> dict:
         "text_layers": [{"id": text["layer"]["id"], **_times(text, "start", "end", "lines")} for text in plan["texts"]],
         "overlays": [
             {
-                "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
-                "bounds": event["picture"]["bounds"], "rotation": event["picture"]["rotation"], "crop": event["picture"]["crop"],
-                "opacity": event["picture"]["opacity"],
+                "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
             }
             for event in plan["overlays"]
@@ -656,6 +669,7 @@ def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
     return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
 
 
+_FRAMING_PATCH = _patch_model(Framing)
 _PATCHES = {
     kind: _patch_model(item, _KEYS[kind])
     for kind, item in {

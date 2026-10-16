@@ -15,8 +15,8 @@ from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
 from app.logos import LogoStore
 from app.media import MediaStore
-from app.planner import RenderPlan, match_edits, reframes
-from app.rendering import candidate_plan, saved_analysis, saved_words, transcript_words
+from app.planner import RenderPlan, match_edits
+from app.rendering import Analysis, candidate_plan, needed_analysis, saved_analysis, saved_words, transcript_words
 from app.styles import PresetStore
 from app.transcript import Transcript, Word
 
@@ -77,10 +77,11 @@ def preview_plan(
         for segment, found in zip(segments, saved)
     ]
     words_source = WordsSource.CLIP if all(found is not None for found in saved) else WordsSource.TRANSCRIPT
+    needed = [needed_analysis(candidate, segment, source) for segment in segments]
     analyses = [
-        saved_analysis(job_dir, segment.start, segment.end, settings.analysis, BLAZE_FACE_MODEL.name)
-        if reframes(source) and segment.media is None else None
-        for segment in segments
+        None if wanted is Analysis.NONE
+        else saved_analysis(job_dir, segment.start, segment.end, settings.analysis, BLAZE_FACE_MODEL.name, wanted is Analysis.FACES)
+        for segment, wanted in zip(segments, needed)
     ]
     plan = candidate_plan(
         candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
@@ -101,7 +102,5 @@ def preview_plan(
             if 0 <= (word.start + word.end) / 2 < length
         ]
         at += length
-    analysed = not reframes(source) or all(
-        analysis is not None for analysis, segment in zip(analyses, segments) if segment.media is None
-    )
+    analysed = all(analysis is not None for analysis, wanted in zip(analyses, needed) if wanted is not Analysis.NONE)
     return PreviewPlan(plan, shown, words_source, analysed=analysed)

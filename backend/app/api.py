@@ -140,7 +140,7 @@ class JobRequest(BaseModel):
     options: JobOptions = JobOptions()
 
 
-def _no_old_overlays(overlays: Any) -> Any:
+def no_old_overlays(overlays: Any) -> Any:
     """Overlays in the shape before Transforms (docs/adr/0007), refused with what replaced it."""
     for overlay in overlays if isinstance(overlays, list) else []:
         if isinstance(overlay, dict) and (old := [key for key in ("x", "y", "size", "opacity") if key in overlay]):
@@ -151,7 +151,7 @@ def _no_old_overlays(overlays: Any) -> Any:
     return overlays
 
 
-def _no_old_segments(segments: Any) -> Any:
+def no_old_segments(segments: Any) -> Any:
     """Segments in the shape before Framings (docs/adr/0007), refused with what replaced it."""
     for segment in segments if isinstance(segments, list) else []:
         if isinstance(segment, dict) and "fit" in segment:
@@ -192,9 +192,9 @@ class CandidateUpdate(BaseModel):
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
-    segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX), BeforeValidator(_no_old_segments)] | None = None
+    segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX), BeforeValidator(no_old_segments)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.
-    overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX), BeforeValidator(_no_old_overlays)] | None = None
+    overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX), BeforeValidator(no_old_overlays)] | None = None
     # Replaces the Candidate's Transitions as a whole; those without a join are left out.
     transitions: Annotated[list[Transition], Field(max_length=SEGMENTS_MAX)] | None = None
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
