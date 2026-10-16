@@ -26,3 +26,5 @@ A line marks each snap, and Alt turns snapping off.
 - [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
 
 ## Comments
+
+**2026-10-16: pure gesture modules ready.** `frontend/src/pages/job/editor/smartGuides.ts` (tests beside it) covers this ticket's Seam H list. `guideTargets(frame, pictures, dragged)` takes the pictures at the playhead as `{ id, bounds }` (the plan's `Picture.bounds`) and leaves out `dragged`. After `moved(...)` call `snapMoved(transform, fitted, targets, { unit, alt })`, and after a corner's `scaled(...)` call `snapScaled(...)`; `unit` is frame px per CSS px. Both return `{ transform, guides: { x: [], y: [] } }`, the lines to draw. `GUIDES_X`, `GUIDES_Y` and `SNAP_CSS_PX` are exported from `StageEdit.tsx`. Edge stretch doesn't snap.

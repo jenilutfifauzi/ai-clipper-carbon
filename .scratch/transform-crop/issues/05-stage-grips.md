@@ -39,3 +39,5 @@ The pictures are Overlays, media Segments and Manual Scenes. Overlays move into 
 - [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
 
 ## Comments
+
+**2026-10-16: pure gesture modules ready.** `frontend/src/pages/job/editor/pictureGestures.ts` (tests beside it) covers this ticket's Seam H list. Hold a `Grabbed` (`{ transform, fitted, frame }` at pointer down; `fitted` = `fittedSize(croppedSize(item, crop), frame)` from `cropGestures.ts`) and the grab point, then on each move call `dragged(grab, grip | "body", from, to, { shift, alt })`: it does `moved`, `scaled` (corners), `stretched` (edges) or `rotated` (with `snapRotation`). Draw the held picture and its Grips with `placed(transform, fitted)`, `gripsOf(placed, reach)` (`reach` = the rotate handle's CSS distance × frame px per CSS px), `cornersOf` and `boundsOf`. `PictureTransform` is shaped like the API's `Transform`, so the real type can replace it. Shift with Alt: Shift's 15° steps apply; Alt only drops the 3° snap to quarter turns. A turn is added the short way round and kept within −360..360.

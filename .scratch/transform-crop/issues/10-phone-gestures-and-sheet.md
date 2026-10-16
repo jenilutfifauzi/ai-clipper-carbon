@@ -19,3 +19,5 @@
 - [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
 
 ## Comments
+
+**2026-10-16: pure gesture modules ready.** `pinched(grab, [fromA, fromB], [toA, toB], keys)` in `frontend/src/pages/job/editor/pictureGestures.ts` covers this ticket's Seam H list. It scales by the ratio of the fingers' distance, turns by the turn of the line between them (snapped as the rotate handle by `snapRotation`), and moves the picture with the fingers' middle; scale is about the picture's centre. One finger is `moved`. `from` is the two pointers when the second went down, and `grab` the `Grabbed` at that moment. No Smart Guides while pinching.

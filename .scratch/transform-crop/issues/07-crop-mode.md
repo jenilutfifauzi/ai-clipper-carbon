@@ -23,3 +23,5 @@
 - [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
 
 ## Comments
+
+**2026-10-16: pure gesture modules ready.** `frontend/src/pages/job/editor/cropGestures.ts` (tests beside it) covers this ticket's Seam H list. When Crop mode opens, keep a `CropEntry` (`{ transform, crop, item, frame }`, `item` the media's size in pixels) and a working Crop. Draw the dimmed whole picture with `wholePicture(entry)` and the bright kept part with `keptPart(entry, crop)`; its handles are `gripsOf(keptPart(...), 0)` without `rotate`. A handle drag is `cropDragged(entry, cropAtGrab, handle, from, to)`, in the picture's own axes (on a `flip_h` picture the left handle moves `crop.right`). On Enter or a click outside, commit `tidyCrop(crop)` with `cropCommitted(entry, crop)`, which returns the Transform that keeps the kept part in place (clamped at scale 0.05–8 and the frame), as one edit. Escape drops the working Crop.
