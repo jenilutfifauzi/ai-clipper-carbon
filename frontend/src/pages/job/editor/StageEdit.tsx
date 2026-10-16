@@ -6,7 +6,7 @@ import { useShown, type Playback } from "./playback";
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
 // How near, in CSS pixels on screen, an edge or middle comes to a guide before it snaps to it.
-const SNAP_CSS_PX = 6;
+export const SNAP_CSS_PX = 6;
 // How far, in CSS pixels on screen, a pointer goes before a press is a drag, not a tap.
 const DRAG_CSS_PX = 4;
 // Two taps on one item this close together edit it.
@@ -15,8 +15,8 @@ const DOUBLE_TAP_MS = 350;
 export const SAFE_TOP = 232;
 export const SAFE_BOTTOM = 1536;
 // The guides: the frame's middle, and the safe area's top, bottom and right edges.
-const GUIDES_X = { middle: 540, end: 950 };
-const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
+export const GUIDES_X = { middle: 540, end: 950 };
+export const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
 
 const percent = (value: number) => `${value * 100}%`;
 
