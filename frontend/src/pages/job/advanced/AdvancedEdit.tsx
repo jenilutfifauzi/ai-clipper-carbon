@@ -586,6 +586,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       }}
       overlays={overlayControls}
       fit
+      rates={wide}
     />
   );
   const timeline = (

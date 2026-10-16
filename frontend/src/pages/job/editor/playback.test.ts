@@ -225,3 +225,83 @@ describe("two decks", () => {
     expect(playback.shownDeck).toBe(0);
   });
 });
+
+describe("rate", () => {
+  test("2× sets playbackRate on both decks, and a swap keeps it", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first, second] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.setRate(2);
+    expect(playback.rate).toBe(2);
+    for (const video of [first.master, first.follower, second.master, second.follower]) expect(video.playbackRate).toBe(2);
+    playback.play();
+    // 1 s to 4.96 s takes 1.98 s at 2×; the next frame is past the handover.
+    stage.advance(1.98);
+    expect(playback.shownDeck).toBe(0);
+    stage.advance(0.02);
+    expect(playback.shownDeck).toBe(1);
+    expect(second.master.playbackRate).toBe(2);
+    expect(second.follower.playbackRate).toBe(2);
+    // Half a second on at 2×: 201 s on the second deck, 6 s into the Clip.
+    stage.advance(0.5);
+    expect(playback.time).toBeCloseTo(6, 5);
+  });
+
+  test("a deck registered after the rate is set plays at it too", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    playback.setRate(0.5);
+    const [first, second] = stage.decks(playback);
+    expect(first.master.playbackRate).toBe(0.5);
+    expect(second.follower.playbackRate).toBe(0.5);
+  });
+
+  test("a media Segment's clock runs twice as fast, and its video plays at 2×", () => {
+    // 0–5 s from 100 s of the Source, 5–8 s of a video from 10 s into it, 8–12 s from 200 s.
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(
+      playedFrom([
+        { start: 100, end: 105 },
+        { start: 10, end: 13, media: "intro" },
+        { start: 200, end: 204 },
+      ]),
+    );
+    stage.decks(playback);
+    const media = stage.video();
+    playback.subscribe(() => follow(media.element, playback, { start: 5, end: 8, from: 10 }, true));
+    playback.setRate(2);
+    playback.seek(5);
+    stage.settle();
+    playback.play();
+    stage.advance(0.5);
+    expect(playback.time).toBeCloseTo(6, 5);
+    expect(media.playbackRate).toBe(2);
+    expect(media.currentTime).toBeCloseTo(11, 5);
+  });
+
+  test("changing the rate while a media Segment's clock runs keeps its time, then runs at the new rate", () => {
+    // 0–5 s from 100 s of the Source, 5–8 s of a video from 10 s into it.
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(
+      playedFrom([
+        { start: 100, end: 105 },
+        { start: 10, end: 13, media: "intro" },
+      ]),
+    );
+    stage.decks(playback);
+    playback.seek(5);
+    playback.play();
+    stage.advance(0.5);
+    expect(playback.time).toBeCloseTo(5.5, 5);
+    playback.setRate(2);
+    expect(playback.time).toBeCloseTo(5.5, 5);
+    stage.advance(0.5);
+    expect(playback.time).toBeCloseTo(6.5, 5);
+  });
+});
