@@ -159,6 +159,13 @@ describe("a picture held by a Grip", () => {
     const expected = { x: 300 - 607.5, y: 400 - 270, width: 1215, height: 540 };
     for (const key of ["x", "y", "width", "height"] as const) expect(bounds[key]).toBeCloseTo(expected[key]);
   });
+
+  test("of a keyed picture is held still where the drag puts it, without its motion", () => {
+    const keyed = { ...planned, motion: { x: [{ at: 0, value: 100, ease: [0, 0, 1, 1] as [number, number, number, number] }] } };
+    const held = heldPicture(keyed, { ...IDENTITY, x: 300 }, FRAME);
+    expect(held.motion).toBeUndefined();
+    expect(held.centre).toEqual([300, 960]);
+  });
 });
 
 describe("a Grip's cursor", () => {

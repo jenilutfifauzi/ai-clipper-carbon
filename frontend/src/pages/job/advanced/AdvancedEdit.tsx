@@ -73,6 +73,8 @@ import { commandsOf, type Commands } from "./commands";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
+import { KeyingContext, type Keying } from "./KeyCluster";
+import { stageTransform, writeItemTransform } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
@@ -590,24 +592,36 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
 
   // The Overlays on the preview, picked and transformed there; on a locked Track, only drawn. One
-  // of several picked moves them all.
+  // of several picked moves them all. A keyed one is held where it is at the playhead, and its
+  // keyed fields are written there as Keyframes (auto-key, ADR 0008).
   const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay")
     ? undefined
     : {
-        transformOf: (id) => edits.overlays.find((overlay) => overlay.id === id)?.transform,
-        onTransform: (id, transform, group) => {
+        transformOf: (id, time) => {
+          const overlay = edits.overlays.find((other) => other.id === id);
+          return overlay && stageTransform(overlay, time);
+        },
+        onTransform: (id, transform, group, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
-          const old = overlay.transform;
+          const old = stageTransform(overlay, time);
           if (placedTogether("overlay", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
-          else updateOverlay({ ...overlay, transform }, group);
+          else {
+            const outcome = writeItemTransform(scene, id, transform, time, old);
+            if (outcome) history.set(outcome.edits, group);
+          }
         },
         cropOf: (id) => edits.overlays.find((overlay) => overlay.id === id)?.crop,
         onCrop: (id, crop, transform, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
-          if (overlay) updateOverlay({ ...overlay, crop, transform }, group);
+          if (!overlay) return;
+          const cropped = { ...scene, edits: { ...edits, overlays: replaced(edits.overlays, { ...overlay, crop }) } };
+          const outcome = writeItemTransform(cropped, id, transform, playback.time, stageTransform(overlay, playback.time));
+          if (outcome) history.set(outcome.edits, group);
         },
       };
+  // What the inspector's ‹ ◆ › edit in: each Keyframe edit one change.
+  const keying: Keying = { edits, pick, locked: tracks.locked, playback, onEdits: (next) => history.set(next) };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
   const plan = preview?.plan ?? null;
@@ -798,23 +812,25 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     </AdvancedTimeline>
   );
   const inspector = (
-    <Inspector
-      pick={pick}
-      edits={edits}
-      duration={duration}
-      preview={preview}
-      fonts={fonts}
-      actions={actions}
-      mediaById={mediaById}
-      playback={playback}
-      transition={transitionPanel(!wide)}
-      onEdits={history.set}
-      onText={updateText}
-      onMusic={updateMusic}
-      onOverlay={updateOverlay}
-      onSegment={updateSegment}
-      cropMode={cropMode}
-    />
+    <KeyingContext.Provider value={keying}>
+      <Inspector
+        pick={pick}
+        edits={edits}
+        duration={duration}
+        preview={preview}
+        fonts={fonts}
+        actions={actions}
+        mediaById={mediaById}
+        playback={playback}
+        transition={transitionPanel(!wide)}
+        onEdits={history.set}
+        onText={updateText}
+        onMusic={updateMusic}
+        onOverlay={updateOverlay}
+        onSegment={updateSegment}
+        cropMode={cropMode}
+      />
+    </KeyingContext.Provider>
   );
   const assets = (tab: AssetTab) => (
     <AssetPanel
@@ -968,17 +984,19 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           {sheet === "inspector" ? (
             inspector
           ) : sheet === "transform" ? (
-            <TransformPanel
-              pick={pick}
-              edits={edits}
-              preview={preview}
-              mediaById={mediaById}
-              playback={playback}
-              onEdits={history.set}
-              onOverlay={updateOverlay}
-              onSegment={updateSegment}
-              cropMode={cropMode}
-            />
+            <KeyingContext.Provider value={keying}>
+              <TransformPanel
+                pick={pick}
+                edits={edits}
+                preview={preview}
+                mediaById={mediaById}
+                playback={playback}
+                onEdits={history.set}
+                onOverlay={updateOverlay}
+                onSegment={updateSegment}
+                cropMode={cropMode}
+              />
+            </KeyingContext.Provider>
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
           ) : sheet === "playback" ? (

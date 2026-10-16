@@ -2,7 +2,8 @@ import { useId, type ReactNode } from "react";
 import { cx } from "../format";
 
 // A labelled range input with its value shown beside the label. `marker` goes after the label
-// (such as a dot for a value that differs from a default).
+// (such as a dot for a value that differs from a default), and `after` after the value (such as a
+// Keyframe cluster).
 export function Slider({
   label,
   value,
@@ -12,6 +13,8 @@ export function Slider({
   format = String,
   onChange,
   marker,
+  after,
+  disabled,
   className,
 }: {
   label: string;
@@ -22,6 +25,8 @@ export function Slider({
   format?: (value: number) => string;
   onChange: (value: number) => void;
   marker?: ReactNode;
+  after?: ReactNode;
+  disabled?: boolean;
   className?: string;
 }) {
   const id = useId();
@@ -32,9 +37,10 @@ export function Slider({
           {label}
           {marker}
         </label>
-        <output htmlFor={id} className="text-muted tabular-nums">
+        <output htmlFor={id} className="ml-auto text-muted tabular-nums">
           {format(value)}
         </output>
+        {after}
       </div>
       <input
         id={id}
@@ -43,8 +49,9 @@ export function Slider({
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="h-7 w-full cursor-pointer accent-accent"
+        className="h-7 w-full cursor-pointer accent-accent disabled:cursor-default disabled:opacity-50"
       />
     </div>
   );
