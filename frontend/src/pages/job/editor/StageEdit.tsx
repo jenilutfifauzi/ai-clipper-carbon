@@ -1,10 +1,22 @@
-import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import type { Box, Picture, RenderPlan, Transform } from "../../../api";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import type { Box, Crop, Picture, RenderPlan, Transform } from "../../../api";
 import { cx } from "../../../format";
-import { dragged, moved as movedPicture, offsetOnPicture, type Grabbed, type Grip, type Point } from "./pictureGestures";
+import { cropDragged, keptPart, wholePicture, type CropEntry } from "./cropGestures";
+import {
+  cornersOf,
+  dragged,
+  moved as movedPicture,
+  offsetOnPicture,
+  type Corner,
+  type Edge,
+  type Grabbed,
+  type Grip,
+  type Placed,
+  type Point,
+} from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
-import { fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, tidyTransform, type GripSet } from "./stagePicture";
+import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -60,12 +72,34 @@ export interface StagePicture {
   grips?: GripSet;
   // Put where a gesture leaves it, once, at its end: one `group` of changes.
   onTransform: (transform: Transform, group: string) => void;
+  // Its Crop as saved, what Crop mode opens on, and where Crop mode leaves it, with the Transform
+  // that keeps the kept part in place, together: one `group`. Without them it has no Crop mode.
+  crop?: Crop | null;
+  onCrop?: (crop: Crop, transform: Transform, group: string) => void;
 }
 
 // Held where a gesture put it: a text's area moved by (dx, dy) and scaled by `scale` about its
-// middle, or a picture drawn by `transform` (its centre (dx, dy) from the plan's); until `plan` is
-// no longer the plan, once the gesture is over.
-type Held = { id: string; kind: "move" | "size"; dx: number; dy: number; scale: number; transform: Transform | null; plan: RenderPlan | null };
+// middle, or a picture drawn by `transform` (its centre (dx, dy) from the plan's), and cut by `crop`
+// when Crop mode set one; until `plan` is no longer the plan, once the gesture is over.
+type Held = {
+  id: string;
+  kind: "move" | "size";
+  dx: number;
+  dy: number;
+  scale: number;
+  transform: Transform | null;
+  crop?: Crop;
+  plan: RenderPlan | null;
+};
+
+// Crop mode (GLOSSARY.md) on picture `id`: as it opened, and the Crop it is at now.
+type Cropping = { id: string; entry: CropEntry; crop: Crop };
+// A crop handle held: by which pointer, from where, and the Crop then.
+type CropGrab = { pointer: number; handle: Corner | Edge; from: Point; grabbed: Crop };
+
+// Whether a key pressed in `target` is typed into it.
+const typing = (target: EventTarget | null) =>
+  target instanceof HTMLElement && (target.isContentEditable || target.matches("textarea, select, input:not([type=button], [type=checkbox], [type=radio])"));
 
 /**
  * How far the picked items that follow a moved one are drawn from where the plan has them, in output
@@ -106,6 +140,11 @@ const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.heigh
  * A text snaps to the fixed guides. A picture moved, or scaled from a corner, snaps to its Smart
  * Guides (GLOSSARY.md): the frame, the fixed guides and the pictures `atPlayhead` (`picturesAt`)
  * but those moving with it. Alt turns snapping off; `guides` are the lines of a snap.
+ *
+ * A picture with a Crop opens Crop mode on a double-click or double-tap, or when `crop.asked` (a
+ * count) goes up while it is picked alone (`crop.onOpen` then, to pause the playback): it is drawn
+ * whole, its handles move the Crop, and Enter or a press anywhere but on it keeps the Crop (with the
+ * Transform that keeps the kept part where it was, one step of undo), and Escape drops it.
  */
 export function useStageEdit(
   plan: RenderPlan | null,
@@ -115,8 +154,11 @@ export function useStageEdit(
   picked: string[],
   onSelect: (id: string, toggle: boolean) => void,
   atPlayhead: () => { id: string; picture: Picture }[] = () => [],
+  crop: { asked?: number; onOpen?: () => void } = {},
 ) {
   const [held, setHeld] = useState<Held | null>(null);
+  const [cropping, setCropping] = useState<Cropping | null>(null);
+  const cropGrab = useRef<CropGrab | null>(null);
   const [guides, setGuides] = useState<SmartGuides | null>(null);
   const gesture = useRef<Gesture | null>(null);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
@@ -146,8 +188,9 @@ export function useStageEdit(
       const bounds = { ...picture.bounds, x: picture.bounds.x + dx, y: picture.bounds.y + dy };
       return { ...picture, centre: [picture.centre[0] + dx, picture.centre[1] + dy], bounds };
     }
+    if (cropping?.id === id) return wholeOnStage(picture, cropping.entry);
     if (holding?.id !== id || !holding.transform || !plan) return picture;
-    return heldPicture(picture, holding.transform, plan);
+    return heldPicture(holding.crop ? croppedPicture(picture, holding.crop) : picture, holding.transform, plan);
   }
 
   // An SVG transform for what is drawn in `area` of item `id`, while it is held.
@@ -324,10 +367,10 @@ export function useStageEdit(
     };
   }
 
-  // `item` drawn by `transform` (moved, or resized: `kind`), until the next plan once it is let go.
-  function hold(item: StagePicture, transform: Transform, kind: Held["kind"]) {
+  // `item` drawn by `transform` (moved, or resized: `kind`), and cut by `crop`, until the next plan once it is let go.
+  function hold(item: StagePicture, transform: Transform, kind: Held["kind"], crop?: Crop) {
     const [x, y] = item.picture?.centre ?? [transform.x, transform.y];
-    setHeld({ id: item.id, kind, dx: transform.x - x, dy: transform.y - y, scale: 1, transform, plan });
+    setHeld({ id: item.id, kind, dx: transform.x - x, dy: transform.y - y, scale: 1, transform, crop, plan });
   }
 
   // `item` put at `transform` and saved, as `group`: nothing when it is there already.
@@ -412,6 +455,16 @@ export function useStageEdit(
       else if (current.moved && current.picture) commit(item, current.picture.now, current.kind, current.group);
       // A click on one of several picked picks it alone.
       else if (current.together) onSelect(item.id, false);
+      // Two taps on its body open Crop mode.
+      else if (current.picture?.grip === "body") {
+        const now = performance.now();
+        if (lastTap.current?.id === item.id && now - lastTap.current.at < DOUBLE_TAP_MS) {
+          lastTap.current = null;
+          openCrop(item);
+        } else {
+          lastTap.current = { id: item.id, at: now };
+        }
+      }
     };
     const cancel = () => {
       gesture.current = null;
@@ -436,7 +489,124 @@ export function useStageEdit(
     };
   }
 
-  return { items, pictures, picked, drift, guides, moving: !!holding || !!drift, shown, shownPicture, transform, handlers, pictureHandlers };
+  // Crop mode opened on `item`, the playback paused: when it has a Crop to set.
+  function openCrop(item: StagePicture) {
+    if (!plan || !item.transform || !item.picture || !item.crop || !item.onCrop || item.grips === "corners") return;
+    const [width, height] = item.picture.item_size;
+    gesture.current = null;
+    setHeld(null);
+    setCropping({ id: item.id, entry: { transform: item.transform, crop: item.crop, item: { width, height }, frame: { width: plan.width, height: plan.height } }, crop: item.crop });
+    crop.onOpen?.();
+  }
+
+  // What the window's listeners and the asking read: this render's.
+  const latest = useRef({ cropping, pictures, picked });
+  latest.current = { cropping, pictures, picked };
+
+  // Crop mode closed, its Crop kept (with the Transform that keeps the kept part where it was, as
+  // one group, drawn so until the next plan) or dropped.
+  function closeCrop(keep: boolean) {
+    const open = latest.current.cropping;
+    if (!open) return;
+    setCropping(null);
+    cropGrab.current = null;
+    const item = latest.current.pictures.find((picture) => picture.id === open.id);
+    const kept = keep && item?.onCrop ? cropKept(open.entry, open.crop) : null;
+    if (!item?.onCrop || !kept) return;
+    hold(item, kept.transform, "size", kept.crop);
+    item.onCrop(kept.crop, kept.transform, `stage-crop:${++gestures}`);
+  }
+
+  // Asked (the inspector's Crop): Crop mode on the picture picked alone.
+  const asked = useRef(crop.asked);
+  useEffect(() => {
+    if (crop.asked === asked.current) return;
+    asked.current = crop.asked;
+    const { pictures, picked } = latest.current;
+    const item = picked.length === 1 ? pictures.find((picture) => picture.id === picked[0]) : undefined;
+    if (item) openCrop(item);
+  });
+
+  // Closed by itself when its picture is gone (another Scene, deleted) or set elsewhere (an undo,
+  // another editor): what it opened on is no longer there.
+  const croppedItem = cropping && pictures.find((picture) => picture.id === cropping.id);
+  const stale =
+    !!cropping &&
+    (!croppedItem || JSON.stringify(croppedItem.transform) !== JSON.stringify(cropping.entry.transform) || JSON.stringify(croppedItem.crop) !== JSON.stringify(cropping.entry.crop));
+  useEffect(() => {
+    if (stale) setCropping(null);
+  }, [stale]);
+
+  // While it is open, Enter keeps it and Escape drops it (before the editor's keys), and a press
+  // anywhere but on its kept part, its handles or its bar keeps it.
+  const open = !!cropping;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if ((event.key !== "Enter" && event.key !== "Escape") || typing(event.target)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeCrop(event.key === "Enter");
+    };
+    const onDown = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-crop-mode]")) return;
+      closeCrop(true);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onDown, true);
+    };
+  }, [open]);
+
+  // A crop handle's pointer handlers: dragged, it moves the edge or edges it names in the picture's own axes.
+  function cropHandlers(handle: Corner | Edge) {
+    return {
+      onPointerDown: (pointer: PointerEvent<HTMLElement>) => {
+        const point = at(pointer);
+        if (!point || !cropping || pointer.button !== 0) return;
+        pointer.preventDefault();
+        pointer.stopPropagation();
+        pointer.currentTarget.setPointerCapture(pointer.pointerId);
+        cropGrab.current = { pointer: pointer.pointerId, handle, from: point, grabbed: cropping.crop };
+      },
+      onPointerMove: (pointer: PointerEvent<HTMLElement>) => {
+        const grab = cropGrab.current;
+        const point = at(pointer);
+        if (!grab || grab.pointer !== pointer.pointerId || !point) return;
+        setCropping((old) => old && { ...old, crop: cropDragged(old.entry, grab.grabbed, grab.handle, grab.from, point) });
+      },
+      onPointerUp: (pointer: PointerEvent<HTMLElement>) => {
+        if (cropGrab.current?.pointer === pointer.pointerId) cropGrab.current = null;
+      },
+      onPointerCancel: () => {
+        const grab = cropGrab.current;
+        cropGrab.current = null;
+        if (grab) setCropping((old) => old && { ...old, crop: grab.grabbed });
+      },
+    };
+  }
+
+  // Crop mode as drawn: the whole picture, and the part its Crop keeps now.
+  const cropMode = cropping && !stale ? { id: cropping.id, whole: wholePicture(cropping.entry), kept: keptPart(cropping.entry, cropping.crop) } : null;
+
+  return {
+    items,
+    pictures,
+    picked,
+    drift,
+    guides,
+    moving: !!holding || !!drift || !!cropping,
+    shown,
+    shownPicture,
+    transform,
+    handlers,
+    pictureHandlers,
+    cropMode,
+    cropHandlers,
+    closeCrop,
+  };
 }
 
 export type StageEdit = ReturnType<typeof useStageEdit>;
@@ -516,7 +686,7 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
           </div>
         );
       })}
-      {gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
+      {edit.cropMode ? <CropHandles plan={plan} edit={edit} scale={scale} /> : gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
       {edit.guides?.x.map((x) => (
         <div key={`x${x}`} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(x / plan.width) }} />
       ))}
@@ -547,7 +717,7 @@ function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: Stage
   const selected = edit.picked.includes(item.id);
   if (!on && !selected) return null;
   const { body } = edit.pictureHandlers(item);
-  const picture = item.picture && edit.shownPicture(item.id, item.picture);
+  const picture = item.picture && edit.cropMode?.id !== item.id && edit.shownPicture(item.id, item.picture);
   const outline = selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed";
   const box = picture && item.transform && (!item.behind || selected) && (
     <div
@@ -626,6 +796,67 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
       {has.has("rotate") && (
         <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
       )}
+    </div>
+  );
+}
+
+// A button of Crop mode's bar: a 36 px pill, larger under a finger.
+const CROP_BAR_BUTTON = "min-h-9 rounded-full px-3 font-medium pointer-coarse:min-h-11";
+
+// A path around `picture` as turned, in frame pixels.
+const outlineOf = (picture: Placed) => `M${cornersOf(picture).map(({ x, y }) => `${x} ${y}`).join("L")}Z`;
+
+/**
+ * Crop mode's handles, over everything else on the stage: the whole picture dimmed but for the part
+ * its Crop keeps, a handle on each edge and corner of that part (in its own axes, pulled in from off
+ * the stage as Grips are), and a bar that keeps or drops it. `scale` is the stage's CSS pixels per
+ * output pixel.
+ */
+function CropHandles({ plan, edit, scale }: { plan: RenderPlan; edit: StageEdit; scale: number }) {
+  const { whole, kept } = edit.cropMode!;
+  const on = gripsOnFrame(kept, plan, 0, GRIP_INSET_CSS_PX / scale);
+  const place = (point: Point): CSSProperties => ({
+    left: percent(point.x / plan.width),
+    top: percent(point.y / plan.height),
+    transform: `translate(-50%, -50%) rotate(${kept.rotation}deg)`,
+  });
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      <svg aria-hidden viewBox={`0 0 ${plan.width} ${plan.height}`} className="absolute inset-0 size-full">
+        <path d={outlineOf(whole) + outlineOf(kept)} fillRule="evenodd" fill="black" fillOpacity={0.6} />
+        <path d={outlineOf(kept)} fill="none" stroke="white" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      </svg>
+      {/* The kept part: a press on it leaves Crop mode open. */}
+      <div
+        aria-hidden
+        data-crop-mode
+        className="pointer-events-auto absolute"
+        style={{ ...place(kept), width: percent(kept.width / plan.width), height: percent(kept.height / plan.height) }}
+      />
+      {GRIPS.map(({ grip, look }) => (
+        <span
+          key={grip}
+          aria-hidden
+          data-crop-mode
+          {...edit.cropHandlers(grip)}
+          className={cx(GRIP_DOT, look, "bg-white")}
+          style={{ ...place(on[grip]), cursor: gripCursor(grip, kept.rotation) }}
+        />
+      ))}
+      <div
+        role="group"
+        aria-label="Crop"
+        data-crop-mode
+        className="pointer-events-auto absolute inset-x-0 top-2 mx-auto flex w-max items-center gap-1 rounded-full bg-black/70 py-1 pr-1 pl-3 text-xs text-white shadow-sm"
+      >
+        <span aria-live="polite">Crop: drag the handles</span>
+        <button type="button" onClick={() => edit.closeCrop(false)} title="Drop the crop (Escape)" className={cx(CROP_BAR_BUTTON, "hover:bg-white/15")}>
+          Cancel
+        </button>
+        <button type="button" onClick={() => edit.closeCrop(true)} title="Keep the crop (Enter)" className={cx(CROP_BAR_BUTTON, "bg-accent text-on-accent hover:brightness-105")}>
+          Done
+        </button>
+      </div>
     </div>
   );
 }

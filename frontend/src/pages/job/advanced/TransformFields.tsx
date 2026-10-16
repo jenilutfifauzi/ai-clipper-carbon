@@ -1,4 +1,4 @@
-import { FlipHorizontal2, FlipVertical2 } from "lucide-react";
+import { Crop as CropIcon, FlipHorizontal2, FlipVertical2 } from "lucide-react";
 import { useId, useState } from "react";
 import type { Background, Crop, Transform } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -6,7 +6,7 @@ import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
-import { croppedSize, tidyCrop } from "../editor/cropGestures";
+import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
 import { clamp, FRAME, fillScale, IDENTITY, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
 
@@ -14,8 +14,9 @@ import { clamp, FRAME, fillScale, IDENTITY, SCALE_RANGE, STRETCH_RANGE } from ".
  * A picture's Transform as numbers (ADR 0007): its centre, its scale and stretch in percent of its
  * fitted size, its rotation, flips and opacity; and Fit (scale 1, no stretch, centred), Fill (the
  * scale that covers the frame with what its Crop keeps of its item's `size`, as turned: `fillScale`) and Reset (every field
- * of the Transform at its identity). Its Crop's four edges in percent of its width and height,
- * tidied as they change (a tenth kept). Each field's changes are one `group` of the history, named
+ * of the Transform at its identity, and no Crop, as one change). Its Crop's four edges in percent of
+ * its width and height, tidied as they change (a tenth kept), and with `onCropMode` a Crop button
+ * that opens Crop mode on the stage. Each field's changes are one `group` of the history, named
  * after it.
  */
 export function TransformFields({
@@ -24,13 +25,16 @@ export function TransformFields({
   size,
   onChange,
   onCrop,
+  onCropMode,
 }: {
   transform: Transform;
   crop: Crop;
   // Its item's picture, in pixels; undefined while the Media Library loads.
   size: { width: number; height: number } | undefined;
   onChange: (transform: Transform, field: string) => void;
-  onCrop: (crop: Crop, field: string) => void;
+  // The Crop set, with the Transform too when it is given (Reset): one change.
+  onCrop: (crop: Crop, field: string, transform?: Transform) => void;
+  onCropMode?: () => void;
 }) {
   const set = (field: keyof Transform, value: Transform[keyof Transform]) => onChange({ ...transform, [field]: value }, field);
   const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);
@@ -67,6 +71,12 @@ export function TransformFields({
       />
       <fieldset className="flex min-w-0 flex-col gap-1.5">
         <legend className="mb-1.5 text-sm font-medium">Crop</legend>
+        {onCropMode && (
+          <Button size="sm" className="mb-1.5 self-start" onClick={onCropMode} title="Crop on the video: drag its edges and corners">
+            <CropIcon aria-hidden size={16} />
+            Crop
+          </Button>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <NumberField label="Left" unit="%" value={crop.left * 100} range={CUT_RANGE} onChange={cut("left")} />
           <NumberField label="Right" unit="%" value={crop.right * 100} range={CUT_RANGE} onChange={cut("right")} />
@@ -85,7 +95,7 @@ export function TransformFields({
         >
           Fill
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => onChange(IDENTITY, "reset")}>
+        <Button size="sm" variant="ghost" onClick={() => onCrop(NO_CROP, "reset", IDENTITY)}>
           Reset
         </Button>
       </div>

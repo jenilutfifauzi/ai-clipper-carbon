@@ -27,7 +27,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
-import { pictureSource, withPictureTransform } from "../editor/stagePicture";
+import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
@@ -181,6 +181,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [shortcuts, setShortcuts] = useState(false);
   // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
   const [pickingMode, setPickingMode] = useState(false);
+  // Counted up by the inspector's Crop, which opens Crop mode on the stage.
+  const [cropAsked, setCropAsked] = useState(0);
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
@@ -599,6 +601,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           if (placedTogether("overlay", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else updateOverlay({ ...overlay, transform }, group);
         },
+        cropOf: (id) => edits.overlays.find((overlay) => overlay.id === id)?.crop,
+        onCrop: (id, crop, transform, group) => {
+          const overlay = edits.overlays.find((other) => other.id === id);
+          if (overlay) updateOverlay({ ...overlay, crop, transform }, group);
+        },
       };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
@@ -614,8 +621,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onPick: (toggle) => select(clicked(pick, { kind: "segment", id: source.segment }, toggle || picking)),
             transform: source.kind === "auto" ? null : source.transform,
             onTransform: (transform, group) => history.set(withPictureTransform(edits, plan, source, transform), group),
+            crop: pictureCrop(edits, plan, source),
+            onCrop: (crop, transform, group) => history.set(withPictureCrop(edits, plan, source, crop, transform), group),
           };
         };
+  // The inspector's Crop for a Segment's or an Overlay's picture: the playhead put on it if it isn't,
+  // the inspector's sheet closed, and Crop mode opened on the stage. None where the stage can't
+  // crop it (its Track locked, full screen).
+  const cropMode = (kind: "segment" | "overlay", id: string): (() => void) | undefined => {
+    if (fullscreen.way || !plan || tracks.locked.includes(kind === "overlay" ? "overlay" : "video")) return undefined;
+    return () => {
+      const overlay = kind === "overlay" ? edits.overlays.find((other) => other.id === id) : undefined;
+      const index = edits.segments.findIndex((segment) => segment.id === id);
+      const range = overlay ? { start: overlay.start, end: overlay.start + overlay.secs } : (plan.segments[index] ?? (index === 0 ? { start: 0, end: duration } : null));
+      if (range && (playback.time < range.start || playback.time >= range.end)) playback.seek((range.start + range.end) / 2);
+      setSheet((open) => (open === "inspector" ? null : open));
+      setCropAsked((count) => count + 1);
+    };
+  };
   const source = job.source!;
   const fullscreenButton = (
     <Button
@@ -668,6 +691,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
         overlays: overlayControls,
         pictureAt,
+        cropAsked,
       }}
       fit
       rates={wide}
@@ -788,6 +812,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onMusic={updateMusic}
       onOverlay={updateOverlay}
       onSegment={updateSegment}
+      cropMode={cropMode}
     />
   );
   const assets = (tab: AssetTab) => (

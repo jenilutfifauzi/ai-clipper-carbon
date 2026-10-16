@@ -34,6 +34,7 @@ export function SceneFields<T extends LayoutEdits>({
   playback,
   edits,
   onEdits,
+  onCropMode,
 }: {
   plan: RenderPlan | null;
   index: number;
@@ -41,6 +42,8 @@ export function SceneFields<T extends LayoutEdits>({
   playback: Playback;
   edits: T;
   onEdits: (edits: T, group?: string) => void;
+  // A Manual Scene's Crop mode on the stage, when it can be opened there.
+  onCropMode?: () => void;
 }) {
   const at = usePlayback(playback, (time) => (plan ? sourceSceneAt(plan, index, count, time) : null));
   if (!plan) return null;
@@ -90,7 +93,8 @@ export function SceneFields<T extends LayoutEdits>({
             crop={source.framing.crop}
             size={{ width: plan.source_width, height: plan.source_height }}
             onChange={(transform, field) => setFraming({ ...source.framing, transform }, `transform.${field}`)}
-            onCrop={(crop, field) => setFraming({ ...source.framing, crop }, `crop.${field}`)}
+            onCrop={(crop, field, transform) => setFraming({ ...source.framing, crop, transform: transform ?? source.framing.transform }, `crop.${field}`)}
+            onCropMode={onCropMode}
           />
           <BackgroundFields background={source.framing.background} onChange={(background, field) => setFraming({ ...source.framing, background }, `background.${field}`)} />
         </>

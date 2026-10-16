@@ -34,6 +34,7 @@ export function Inspector({
   onMusic,
   onOverlay,
   onSegment,
+  cropMode,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -50,6 +51,8 @@ export function Inspector({
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
+  // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
+  cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -101,6 +104,7 @@ export function Inspector({
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
+        onCropMode={cropMode?.("segment", segment.id)}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}
@@ -109,6 +113,7 @@ export function Inspector({
             playback={playback}
             edits={edits}
             onEdits={onEdits}
+            onCropMode={cropMode?.("segment", segment.id)}
           />
         }
       />
@@ -148,6 +153,7 @@ export function Inspector({
         onChange={onOverlay}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
+        onCropMode={cropMode?.("overlay", overlay.id)}
       />
     );
   }

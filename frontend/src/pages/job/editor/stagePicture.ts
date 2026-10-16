@@ -4,7 +4,8 @@
 // is kept when the Scene is Manual, and which is only outlined when it is automatic. A gesture's
 // Transform goes back into the edits once, and until the plan comes the picture is drawn from it
 // (docs/adr/0001-backend-plans-frontend-draws.md, 0007).
-import type { Candidate, Picture, RenderPlan, Transform } from "../../../api";
+import type { Candidate, Crop, Framing, Picture, RenderPlan, Transform } from "../../../api";
+import { cropCommitted, tidyCrop, wholePicture, type CropEntry } from "./cropGestures";
 import { framingSource, withSceneFraming } from "./manual";
 import { boundsOf, fittedSize, gripsOf, placed, type Grip, type Placed, type Point, type Size } from "./pictureGestures";
 
@@ -47,18 +48,38 @@ export function pictureSource(edits: PictureEdits, plan: RenderPlan, segment: nu
   return kept ? { kind: "manual", segment: own.id, scene, transform: kept.framing.transform } : { kind: "auto", segment: own.id, scene };
 }
 
-/** The edits with `source`'s Transform set to `transform`: as they are for an automatic Scene's. */
-export function withPictureTransform<T extends PictureEdits>(edits: T, plan: RenderPlan, source: PictureSource, transform: Transform): T {
+// The edits with `source`'s Framing changed by `change`: as they are for an automatic Scene's.
+function withPictureFraming<T extends PictureEdits>(edits: T, plan: RenderPlan, source: PictureSource, change: Partial<Framing>): T {
   if (source.kind === "auto") return edits;
   if (source.kind === "media") {
     const segments = edits.segments.map((segment) =>
-      segment.id === source.segment && segment.framing ? { ...segment, framing: { ...segment.framing, transform } } : segment,
+      segment.id === source.segment && segment.framing ? { ...segment, framing: { ...segment.framing, ...change } } : segment,
     );
     return { ...edits, segments };
   }
   const kept = framingSource(edits, plan, source.scene);
-  const next = kept && withSceneFraming(edits, plan, source.scene, { ...kept.framing, transform });
+  const next = kept && withSceneFraming(edits, plan, source.scene, { ...kept.framing, ...change });
   return next ? { ...edits, ...next } : edits;
+}
+
+/** The edits with `source`'s Transform set to `transform`: as they are for an automatic Scene's. */
+export function withPictureTransform<T extends PictureEdits>(edits: T, plan: RenderPlan, source: PictureSource, transform: Transform): T {
+  return withPictureFraming(edits, plan, source, { transform });
+}
+
+/** The Crop of `source`, kept beside its Transform: null for an automatic Scene's, which has none. */
+export function pictureCrop(edits: PictureEdits, plan: RenderPlan, source: PictureSource): Crop | null {
+  if (source.kind === "auto") return null;
+  if (source.kind === "media") return edits.segments.find((segment) => segment.id === source.segment)?.framing?.crop ?? null;
+  return framingSource(edits, plan, source.scene)?.framing.crop ?? null;
+}
+
+/**
+ * The edits with `source`'s Crop set to `crop` and its Transform to `transform`, together (Crop
+ * mode's commit, one step of undo): as they are for an automatic Scene's.
+ */
+export function withPictureCrop<T extends PictureEdits>(edits: T, plan: RenderPlan, source: PictureSource, crop: Crop, transform: Transform): T {
+  return withPictureFraming(edits, plan, source, { crop, transform });
 }
 
 const places = (value: number, digits: number) => Number(value.toFixed(digits));
@@ -97,6 +118,49 @@ export function heldPicture(picture: Picture, transform: Transform, frame: Size)
     opacity: transform.opacity,
     bounds: boundsOf(drawn),
   };
+}
+
+/** A Picture of the plan as cut by `crop` instead, until its plan comes: each edge at the nearest pixel of its item, as the planner keeps it. */
+export function croppedPicture(picture: Picture, crop: Crop): Picture {
+  const [width, height] = picture.item_size;
+  const [left, right] = [Math.round(width * crop.left), Math.round(width * (1 - crop.right))];
+  const [top, bottom] = [Math.round(height * crop.top), Math.round(height * (1 - crop.bottom))];
+  return { ...picture, crop: { x: left, y: top, width: right - left, height: bottom - top } };
+}
+
+/**
+ * A Picture of the plan as Crop mode shows it: its whole item, uncropped, where `entry` lays it
+ * under the kept part (`wholePicture`), plain (no corners, border or shadow), to be dimmed but there.
+ */
+export function wholeOnStage(picture: Picture, entry: CropEntry): Picture {
+  const whole = wholePicture(entry);
+  const { transform, item } = entry;
+  return {
+    ...picture,
+    crop: { x: 0, y: 0, width: item.width, height: item.height },
+    centre: [whole.x, whole.y],
+    width: whole.width,
+    height: whole.height,
+    rotation: whole.rotation,
+    flip_h: transform.flip_h,
+    flip_v: transform.flip_v,
+    opacity: transform.opacity,
+    bounds: boundsOf(whole),
+    radius: 0,
+    border: null,
+    shadow: null,
+  };
+}
+
+/**
+ * What Crop mode opened as `entry` keeps when it closes on `crop`: the Crop, its edges to four places
+ * and tidied (a tenth kept), with the Transform that keeps the kept part where it was
+ * (`cropCommitted`, tidied as a gesture's); nothing when it is the Crop it opened with.
+ */
+export function cropKept(entry: CropEntry, crop: Crop): { crop: Crop; transform: Transform } | null {
+  const kept = tidyCrop({ left: places(crop.left, 4), top: places(crop.top, 4), right: places(crop.right, 4), bottom: places(crop.bottom, 4) });
+  const same = (Object.keys(kept) as (keyof Crop)[]).every((edge) => kept[edge] === entry.crop[edge]);
+  return same ? null : { crop: kept, transform: tidyTransform(cropCommitted(entry, kept)) };
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);

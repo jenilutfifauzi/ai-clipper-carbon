@@ -4,6 +4,7 @@ import {
   logoUrl,
   type Box,
   type CaptionEvent,
+  type Crop,
   type FontInfo,
   type HookEvent,
   type HookStyle,
@@ -159,6 +160,8 @@ export function ClipPreview({
     (id, toggle) => (id.startsWith("picture:") ? behind?.onPick(toggle) : controls?.onSelect(id as PickedOnStage, toggle)),
     // What a picture snaps to: the pictures shown now, the Segment's unless the Video Track is hidden.
     () => (plan ? picturesAt(plan, playback.time, blank ? null : sceneAt(plan, playback.time, playback.shownSegmentIndex)) : []),
+    // Crop mode, asked for by the editor's Crop, holds the playback still.
+    { asked: controls?.cropAsked, onOpen: () => playback.pause() },
   );
   // The plan as drawn: a picture held or moved with one is drawn where it is being put.
   const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex) : plan;
@@ -296,6 +299,8 @@ function stagePictures(plan: RenderPlan, controls: StageControls, behind: Pictur
       behind: true,
       grips: behind.grips,
       onTransform: behind.onTransform,
+      crop: picture && behind.crop,
+      onCrop: behind.onCrop,
     });
   }
   const overlays = controls.overlays;
@@ -310,6 +315,8 @@ function stagePictures(plan: RenderPlan, controls: StageControls, behind: Pictur
       picture: event.picture,
       transform,
       onTransform: (next, group) => overlays!.onTransform(event.id, next, group),
+      crop: overlays!.cropOf?.(event.id) ?? null,
+      onCrop: overlays!.onCrop && ((crop, next, group) => overlays!.onCrop!(event.id, crop, next, group)),
     });
   }
   return pictures;
@@ -444,7 +451,9 @@ export type PickedOnStage = Exclude<StageId, `picture:${number}`>;
  * The picture under the playhead as an editor holds it: whether its Segment is picked, what picks it
  * (with `toggle`, added to the Pick or taken out), its Transform as saved (null: none to set on the
  * stage, an automatic Scene's, only outlined), its Grips (all, or only its corners), and where a
- * gesture puts it, once, as one `group`.
+ * gesture puts it, once, as one `group`. With `crop` and `onCrop`, it has Crop mode: its Crop as
+ * saved, and where Crop mode leaves it with the Transform that keeps the kept part in place,
+ * together as one `group`.
  */
 export interface PictureTarget {
   picked: boolean;
@@ -452,6 +461,8 @@ export interface PictureTarget {
   transform: Transform | null;
   grips?: GripSet;
   onTransform: (transform: Transform, group: string) => void;
+  crop?: Crop | null;
+  onCrop?: (crop: Crop, transform: Transform, group: string) => void;
 }
 
 export interface StageControls {
@@ -465,11 +476,19 @@ export interface StageControls {
   texts?: boolean;
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];
-  // The Overlays (their Track unlocked): each one's Transform as saved, and where a gesture puts it.
-  overlays?: { transformOf: (id: string) => Transform | undefined; onTransform: (id: string, transform: Transform, group: string) => void };
+  // The Overlays (their Track unlocked): each one's Transform as saved, and where a gesture puts it;
+  // with `cropOf` and `onCrop`, its Crop and where Crop mode leaves it (with its Transform).
+  overlays?: {
+    transformOf: (id: string) => Transform | undefined;
+    onTransform: (id: string, transform: Transform, group: string) => void;
+    cropOf?: (id: string) => Crop | undefined;
+    onCrop?: (id: string, crop: Crop, transform: Transform, group: string) => void;
+  };
   // The picture of the plan's Segment `segment`, Scene `scene` (those under the playhead): null when
   // it can't be picked on the stage (its Track locked, or the plan not yet of the edits).
   pictureAt?: (segment: number, scene: number) => PictureTarget | null;
+  // Counted up to open Crop mode on the picture picked alone (the inspector's Crop).
+  cropAsked?: number;
 }
 
 // The sizes the hook, the captions and a Text Layer can be set to (styles.py, candidates.py).

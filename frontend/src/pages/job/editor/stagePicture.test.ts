@@ -3,17 +3,22 @@
 // from that Transform while a Grip is held.
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, Framing, LayoutOverride, Picture, RenderPlan, ScenePlan, SegmentPlan } from "../../../api";
-import { NO_CROP } from "./cropGestures";
+import { NO_CROP, wholePicture, type CropEntry } from "./cropGestures";
 import { BLURRED, IDENTITY } from "./picture";
 import { gripsOf } from "./pictureGestures";
 import {
+  croppedPicture,
+  cropKept,
   gripCursor,
   gripsIn,
   gripsOnFrame,
   heldPicture,
+  pictureCrop,
   pictureSource,
   segmentOfScene,
   tidyTransform,
+  wholeOnStage,
+  withPictureCrop,
   withPictureTransform,
   type PictureEdits,
 } from "./stagePicture";
@@ -184,6 +189,69 @@ describe("the Grips as drawn", () => {
     expect(grips.top).toEqual({ x: 540, y: 30 });
     expect(grips.right).toEqual({ x: 1050, y: 960 });
     expect(grips.rotate).toEqual({ x: 540, y: 10 });
+  });
+});
+
+describe("Crop mode on a picture", () => {
+  const cut = { left: 0.25, top: 0, right: 0, bottom: 0.1 };
+  const turned = { ...IDENTITY, x: 700, rotation: 90 };
+  const media = { kind: "media", segment: "v1", transform: VIDEO.transform } as const;
+  const manual = { kind: "manual", segment: "s1", scene: 1, transform: OWN.transform } as const;
+
+  test("starts from the Crop kept where its Transform is: a video's Framing, a Manual Scene's", () => {
+    const cropped = edits({ segments: [segments[0], { ...segments[1], framing: { ...VIDEO, crop: cut } }] });
+    expect(pictureCrop(cropped, plan, media)).toEqual(cut);
+    expect(pictureCrop(edits({ layout_overrides: [{ at: 104, layout: "manual", framing: { ...OWN, crop: cut } }] }), plan, manual)).toEqual(cut);
+    expect(pictureCrop(edits(), plan, { kind: "auto", segment: "s1", scene: 0 })).toBeNull();
+  });
+
+  test("puts its Crop and the Transform that keeps the kept part in place back together", () => {
+    expect(withPictureCrop(edits(), plan, media, cut, turned).segments[1]).toEqual({ ...segments[1], framing: { ...VIDEO, crop: cut, transform: turned } });
+    const own = withPictureCrop(edits(), plan, manual, cut, turned);
+    expect(own.layout_overrides).toEqual<LayoutOverride[]>([{ at: 104, layout: "manual", framing: { ...OWN, crop: cut, transform: turned } }]);
+    const clip = edits({ layout: "manual", framing: framing(600) });
+    const shared = withPictureCrop(clip, plan, { kind: "manual", segment: "s1", scene: 0, transform: IDENTITY }, cut, turned);
+    expect(shared).toEqual({ ...clip, framing: { ...framing(600), crop: cut, transform: turned } });
+    const before = edits();
+    expect(withPictureCrop(before, plan, { kind: "auto", segment: "s1", scene: 0 }, cut, turned)).toBe(before);
+  });
+
+  // A 1920x1080 video, whole, fitted 1080x608 on the frame.
+  const whole: Picture = {
+    crop: { x: 0, y: 0, width: 1920, height: 1080 },
+    item_size: [1920, 1080],
+    width: 1080,
+    height: 607.5,
+    centre: [540, 960],
+    rotation: 0,
+    flip_h: false,
+    flip_v: false,
+    opacity: 1,
+    bounds: { x: 0, y: 656.25, width: 1080, height: 607.5 },
+    radius: 40,
+    border: { width: 4, colour: "#FFFFFF" },
+    shadow: null,
+  };
+  const entry: CropEntry = { transform: { ...IDENTITY, x: 540, y: 960 }, crop: cut, item: { width: 1920, height: 1080 }, frame: FRAME };
+
+  test("draws the whole item where the kept part lies under it, without its corners, border or shadow", () => {
+    const shown = wholeOnStage(whole, entry);
+    const lies = wholePicture(entry);
+    expect(shown.crop).toEqual({ x: 0, y: 0, width: 1920, height: 1080 });
+    expect(shown.centre).toEqual([lies.x, lies.y]);
+    expect([shown.width, shown.height]).toEqual([lies.width, lies.height]);
+    expect([shown.radius, shown.border, shown.shadow]).toEqual([0, null, null]);
+  });
+
+  test("draws a picture by a new Crop until its plan comes: each edge at the nearest pixel of its item", () => {
+    expect(croppedPicture(whole, { left: 0.25, top: 0.1, right: 0.0001, bottom: 0.3333 }).crop).toEqual({ x: 480, y: 108, width: 1440, height: 612 });
+  });
+
+  test("keeps a Crop rounded to four places with the Transform that keeps the kept part where it was, or nothing when it is the same", () => {
+    const kept = cropKept(entry, { left: 0.4000004, top: 0, right: 0.123456, bottom: 0.1 });
+    expect(kept?.crop).toEqual({ left: 0.4, top: 0, right: 0.1235, bottom: 0.1 });
+    expect(kept?.transform).toEqual(tidyTransform(kept!.transform));
+    expect(cropKept(entry, { ...cut, left: 0.2500001 })).toBeNull();
   });
 });
 

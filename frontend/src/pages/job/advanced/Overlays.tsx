@@ -45,6 +45,7 @@ export function OverlayFields({
   onChange,
   onDuplicate,
   onDelete,
+  onCropMode,
 }: {
   overlay: Overlay;
   item: MediaItem | undefined;
@@ -52,6 +53,8 @@ export function OverlayFields({
   onChange: (overlay: Overlay, group: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  // Crop mode on the stage, when it can be opened there.
+  onCropMode?: () => void;
 }) {
   const set = <K extends keyof Overlay>(field: K, value: Overlay[K]) => onChange({ ...overlay, [field]: value }, `overlay:${overlay.id}:${field}`);
   const video = item?.kind === "video";
@@ -78,7 +81,8 @@ export function OverlayFields({
         crop={overlay.crop}
         size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
         onChange={(transform, field) => onChange({ ...overlay, transform }, `overlay:${overlay.id}:transform.${field}`)}
-        onCrop={(crop, field) => onChange({ ...overlay, crop }, `overlay:${overlay.id}:crop.${field}`)}
+        onCrop={(crop, field, transform) => onChange({ ...overlay, crop, transform: transform ?? overlay.transform }, `overlay:${overlay.id}:crop.${field}`)}
+        onCropMode={onCropMode}
       />
       <DecorationFields overlay={overlay} onChange={onChange} />
       {video && (

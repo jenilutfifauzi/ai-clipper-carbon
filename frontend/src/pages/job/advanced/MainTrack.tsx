@@ -76,6 +76,7 @@ export function SegmentFields({
   onSourceVolume,
   onVolume,
   onChange,
+  onCropMode,
   scene,
 }: {
   segment: ClipSegment;
@@ -92,6 +93,8 @@ export function SegmentFields({
   // A video's Segment's volume.
   onVolume: (volume: number, group: string) => void;
   onChange: (segment: ClipSegment, group: string) => void;
+  // A video's Segment's Crop mode on the stage, when it can be opened there.
+  onCropMode?: () => void;
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
 }) {
@@ -120,7 +123,7 @@ export function SegmentFields({
           <Hint more="Drag its edges to trim it, or drag it to another place.">
             {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s
           </Hint>
-          {segment.framing && <FramingFields segment={segment} framing={segment.framing} item={item} onChange={onChange} />}
+          {segment.framing && <FramingFields segment={segment} framing={segment.framing} item={item} onChange={onChange} onCropMode={onCropMode} />}
           {item?.has_audio === false ? (
             <p className="text-sm text-muted">This video has no sound.</p>
           ) : (
@@ -171,11 +174,13 @@ function FramingFields({
   framing,
   item,
   onChange,
+  onCropMode,
 }: {
   segment: ClipSegment;
   framing: Framing;
   item: MediaItem | undefined;
   onChange: (segment: ClipSegment, group: string) => void;
+  onCropMode?: () => void;
 }) {
   const set = <K extends keyof Framing>(part: K, value: Framing[K], field: string) =>
     onChange({ ...segment, framing: { ...framing, [part]: value } }, `segment:${segment.id}:${part}.${field}`);
@@ -186,7 +191,10 @@ function FramingFields({
         crop={framing.crop}
         size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
         onChange={(transform, field) => set("transform", transform, field)}
-        onCrop={(crop, field) => set("crop", crop, field)}
+        onCrop={(crop, field, transform) =>
+          onChange({ ...segment, framing: { ...framing, crop, transform: transform ?? framing.transform } }, `segment:${segment.id}:crop.${field}`)
+        }
+        onCropMode={onCropMode}
       />
       <BackgroundFields background={framing.background} onChange={(background, field) => set("background", background, field)} />
     </>
