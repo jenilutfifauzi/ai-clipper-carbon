@@ -14,7 +14,7 @@ __pycache__/
 .ruff_cache/
 
 # Frontend
-node_modules/
+node_modules
 frontend/dist/
 
 # macOS
