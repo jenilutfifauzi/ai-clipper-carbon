@@ -3,22 +3,15 @@ import type { Box, Picture, RenderPlan, Transform } from "../../../api";
 import { cx } from "../../../format";
 import { dragged, moved as movedPicture, offsetOnPicture, type Grabbed, type Grip, type Point } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
+import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
 import { fittedOf, gripCursor, gripsOnFrame, heldPicture, tidyTransform } from "./stagePicture";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
-// How near, in CSS pixels on screen, an edge or middle comes to a guide before it snaps to it.
-export const SNAP_CSS_PX = 6;
 // How far, in CSS pixels on screen, a pointer goes before a press is a drag, not a tap.
 const DRAG_CSS_PX = 4;
 // Two taps on one item this close together edit it.
 const DOUBLE_TAP_MS = 350;
-// The platforms' safe area's top and bottom (planner.py's SAFE_AREA, y 232–1536 and x 0–950).
-export const SAFE_TOP = 232;
-export const SAFE_BOTTOM = 1536;
-// The guides: the frame's middle, and the safe area's top, bottom and right edges.
-export const GUIDES_X = { middle: 540, end: 950 };
-export const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
 
 const percent = (value: number) => `${value * 100}%`;
 
@@ -107,6 +100,10 @@ const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.heigh
  * adds it or takes it out. When several are picked, moving one draws the others moved as far
  * (`drift`), but for the picture behind, which moves alone; only one picked alone can be resized or
  * transformed by its Grips.
+ *
+ * A text snaps to the fixed guides. A picture moved, or scaled from a corner, snaps to its Smart
+ * Guides (GLOSSARY.md): the frame, the fixed guides and the pictures `atPlayhead` (`picturesAt`)
+ * but those moving with it. Alt turns snapping off; `guides` are the lines of a snap.
  */
 export function useStageEdit(
   plan: RenderPlan | null,
@@ -115,9 +112,10 @@ export function useStageEdit(
   pictures: StagePicture[],
   picked: string[],
   onSelect: (id: string, toggle: boolean) => void,
+  atPlayhead: () => { id: string; picture: Picture }[] = () => [],
 ) {
   const [held, setHeld] = useState<Held | null>(null);
-  const [guides, setGuides] = useState<{ x: number | null; y: number | null } | null>(null);
+  const [guides, setGuides] = useState<SmartGuides | null>(null);
   const gesture = useRef<Gesture | null>(null);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
   // Held while it is moved, and until a plan made after its last change comes.
@@ -250,7 +248,8 @@ export function useStageEdit(
       current.moved = true;
       if (current.kind === "move") {
         const next = moved(from, point.x - grab.x, point.y - grab.y, pointer.altKey ? null : SNAP_CSS_PX * point.unit, item.centreY);
-        setGuides(next.snapped);
+        const { x, y } = next.snapped;
+        setGuides({ x: x === null ? [] : [x], y: y === null ? [] : [y] });
         place(item, planned, next.area, null, current.group);
         return;
       }
@@ -383,13 +382,29 @@ export function useStageEdit(
       // A tap's jitter leaves it where it is.
       if (!current.moved && Math.hypot(point.x - grab.x, point.y - grab.y) < DRAG_CSS_PX * point.unit) return;
       current.moved = true;
-      current.picture.now = dragged(current.picture.grabbed, current.picture.grip, grab, point, { shift: pointer.shiftKey, alt: pointer.altKey });
+      const { grabbed, grip } = current.picture;
+      const next = dragged(grabbed, grip, grab, point, { shift: pointer.shiftKey, alt: pointer.altKey });
+      // Moved or scaled from a corner, it snaps to the pictures that stay where they are; stretched
+      // or turned, it doesn't.
+      const snap = grip === "body" ? snapMoved : grip.includes("-") ? snapScaled : null;
+      if (snap && plan) {
+        const moving = new Set(current.together ? picked.filter((id) => !alone.has(id)) : []);
+        const others = atPlayhead()
+          .filter(({ id }) => !moving.has(id))
+          .map(({ id, picture }) => ({ id, bounds: shownPicture(id, picture).bounds }));
+        const snapped = snap(next, grabbed.fitted, guideTargets(plan, others, item.id), { unit: point.unit, alt: pointer.altKey });
+        current.picture.now = snapped.transform;
+        setGuides(snapped.guides);
+      } else {
+        current.picture.now = next;
+      }
       hold(item, current.picture.now, current.kind);
     };
     const end = (pointer: PointerEvent<HTMLElement>) => {
       const current = gesture.current;
       if (current?.pointer !== pointer.pointerId) return;
       gesture.current = null;
+      setGuides(null);
       // Let go over another picture than it took hold of (the next Scene's, played into): dropped.
       if (current.id !== item.id) setHeld(null);
       else if (current.moved && current.picture) commit(item, current.picture.now, current.kind, current.group);
@@ -398,6 +413,7 @@ export function useStageEdit(
     };
     const cancel = () => {
       gesture.current = null;
+      setGuides(null);
       setHeld(null);
     };
     const pointers = { onPointerMove: move, onPointerUp: end, onPointerCancel: cancel };
@@ -427,8 +443,8 @@ export type StageEdit = ReturnType<typeof useStageEdit>;
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
  * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
  * with a corner to resize it by when it has a size. Under them, the pictures' handles (each on its
- * picture as turned), and over everything the Grips of one picked alone. The guides it snaps to,
- * while it does. `scale` is the stage's CSS pixels per output pixel.
+ * picture as turned), and over everything the Grips of one picked alone. The guides it snaps to
+ * (a picture's Smart Guides), while it does. `scale` is the stage's CSS pixels per output pixel.
  */
 export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan; playback: Playback; edit: StageEdit; scale: number }) {
   const on = useShown(playback, (time) =>
@@ -499,12 +515,12 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
         );
       })}
       {gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
-      {edit.guides?.x != null && (
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(edit.guides.x / plan.width) }} />
-      )}
-      {edit.guides?.y != null && (
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 h-px bg-accent" style={{ top: percent(edit.guides.y / plan.height) }} />
-      )}
+      {edit.guides?.x.map((x) => (
+        <div key={`x${x}`} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(x / plan.width) }} />
+      ))}
+      {edit.guides?.y.map((y) => (
+        <div key={`y${y}`} aria-hidden className="pointer-events-none absolute inset-x-0 h-px bg-accent" style={{ top: percent(y / plan.height) }} />
+      ))}
     </>
   );
 }

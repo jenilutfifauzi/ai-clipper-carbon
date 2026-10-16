@@ -27,7 +27,8 @@ import { InlineText, type Editing, type Retype } from "./InlineText";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt } from "./ScenesTrack";
-import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
+import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { segmentOfScene } from "./stagePicture";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
@@ -149,8 +150,15 @@ export function ClipPreview({
   const pictures = plan && controls ? stagePictures(plan, controls, behind, sceneIndex) : [];
   // What is picked on the stage: moving one of several moves them all.
   const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
-  const edit = useStageEdit(plan, stage, items, pictures, picked, (id, toggle) =>
-    id.startsWith("picture:") ? behind?.onPick(toggle) : controls?.onSelect(id as PickedOnStage, toggle),
+  const edit = useStageEdit(
+    plan,
+    stage,
+    items,
+    pictures,
+    picked,
+    (id, toggle) => (id.startsWith("picture:") ? behind?.onPick(toggle) : controls?.onSelect(id as PickedOnStage, toggle)),
+    // What a picture snaps to: the pictures shown now, the Segment's unless the Video Track is hidden.
+    () => (plan ? picturesAt(plan, playback.time, blank ? null : sceneAt(plan, playback.time, playback.shownSegmentIndex)) : []),
   );
   // The plan as drawn: a picture held or moved with one is drawn where it is being put.
   const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex) : plan;

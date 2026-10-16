@@ -1,9 +1,17 @@
 // Seam H (.scratch/transform-crop/spec.md): the Smart Guides (GLOSSARY.md) a picture snaps to while
 // it is moved or scaled on the stage, worked out from numbers alone: the targets at the playhead,
 // and the snap of the picture's bounds (its box after rotation) with the lines that mark it.
-import type { Box } from "../../../api";
+import type { Box, Picture, RenderPlan } from "../../../api";
 import { boundsOf, placed, MAX_SCALE, MIN_SCALE, type PictureTransform, type Size } from "./pictureGestures";
-import { GUIDES_X, GUIDES_Y, SNAP_CSS_PX } from "./StageEdit";
+
+// How near, in CSS pixels on screen, an edge or middle comes to a guide before it snaps to it.
+export const SNAP_CSS_PX = 6;
+// The platforms' safe area's top and bottom (planner.py's SAFE_AREA, y 232–1536 and x 0–950).
+export const SAFE_TOP = 232;
+export const SAFE_BOTTOM = 1536;
+// The fixed guides: the frame's middle, and the safe area's top, bottom and right edges.
+export const GUIDES_X = { middle: 540, end: 950 };
+export const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
 
 /** The Smart Guides to draw for a snap: the x of each line down the frame and the y of each across. */
 export interface SmartGuides {
@@ -32,6 +40,20 @@ const ON = 1e-6;
 const lines = (values: number[]) => [...new Set(values)].sort((a, b) => a - b);
 const across = (box: Box) => [box.x, box.x + box.width / 2, box.x + box.width];
 const down = (box: Box) => [box.y, box.y + box.height / 2, box.y + box.height];
+
+/**
+ * The pictures shown at the playhead (`time`), by their ids on the stage: the picture of the plan's
+ * Scene `scene` ("picture:<n>"; none for an automatic Scene's, or with `scene` null, as while the
+ * Video Track is hidden), then the Overlays showing ("overlay:<id>").
+ */
+export function picturesAt(plan: RenderPlan, time: number, scene: number | null): { id: string; picture: Picture }[] {
+  const behind = scene === null ? null : plan.scenes[scene]?.picture;
+  const overlays = plan.overlays.filter((event) => event.start <= time && time < event.end);
+  return [
+    ...(behind ? [{ id: `picture:${scene}`, picture: behind }] : []),
+    ...overlays.map((event) => ({ id: `overlay:${event.id}`, picture: event.picture })),
+  ];
+}
 
 /**
  * What a picture dragged on the stage snaps to: the frame's edges and centre, the fixed guides, and

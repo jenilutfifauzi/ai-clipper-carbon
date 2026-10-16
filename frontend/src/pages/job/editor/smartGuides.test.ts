@@ -1,8 +1,9 @@
 // Seam H (.scratch/transform-crop/spec.md): the Smart Guides a dragged picture snaps to, as worked
 // examples of the pictures at the playhead and a Transform in, and the Transform and lines out.
 import { describe, expect, test } from "vitest";
+import type { OverlayEvent, Picture, RenderPlan, ScenePlan } from "../../../api";
 import type { PictureTransform } from "./pictureGestures";
-import { guideTargets, snapMoved, snapScaled } from "./smartGuides";
+import { guideTargets, picturesAt, snapMoved, snapScaled } from "./smartGuides";
 
 const FRAME = { width: 1080, height: 1920 };
 // A stage 540 CSS px wide: a CSS pixel is 2 frame pixels, and 6 of them, 12.
@@ -109,5 +110,72 @@ describe("a corner scale snaps the moving edges", () => {
     const next = snapScaled(transform({ scale: 2.18, rotation: 90 }), FITTED, near, { unit: UNIT });
     expect(next.transform.scale).toBeCloseTo(2.2);
     expect(next.guides.x).toEqual([650]);
+  });
+});
+
+describe("the pictures at the playhead", () => {
+  // A picture whose bounds start at `x` across.
+  const picture = (x: number): Picture => ({
+    crop: { x: 0, y: 0, width: 100, height: 100 },
+    item_size: [100, 100],
+    width: 100,
+    height: 100,
+    centre: [x + 50, 50],
+    rotation: 0,
+    flip_h: false,
+    flip_v: false,
+    opacity: 1,
+    bounds: { x, y: 0, width: 100, height: 100 },
+    radius: 0,
+    border: null,
+    shadow: null,
+  });
+  const scene = (start: number, end: number, shown: Picture | null): ScenePlan => ({
+    start,
+    end,
+    layout: shown ? "media" : "track",
+    panels: [],
+    picture: shown,
+    colour: null,
+    framing: null,
+  });
+  const overlay = (id: string, start: number, end: number, x: number): OverlayEvent => ({
+    id,
+    media: "m1",
+    picture: picture(x),
+    start,
+    end,
+    offset: 0,
+    image: true,
+  });
+  const plan = {
+    ...FRAME,
+    scenes: [scene(0, 4, null), scene(4, 8, picture(10))],
+    overlays: [overlay("o1", 0, 5, 20), overlay("o2", 3, 6, 30), overlay("o3", 6, 9, 40)],
+  } as RenderPlan;
+  const at = (time: number, shown: number | null) => picturesAt(plan, time, shown).map(({ id, picture }) => [id, picture.bounds.x]);
+
+  test("are the Scene's picture and the Overlays showing then, as the stage names them", () => {
+    expect(at(4.5, 1)).toEqual([
+      ["picture:1", 10],
+      ["overlay:o1", 20],
+      ["overlay:o2", 30],
+    ]);
+    // An Overlay ends where the next begins.
+    expect(at(6, 1)).toEqual([
+      ["picture:1", 10],
+      ["overlay:o3", 40],
+    ]);
+  });
+
+  test("leave out an automatic Scene, which has no picture, and the Scene's when it isn't shown", () => {
+    expect(at(3.5, 0)).toEqual([
+      ["overlay:o1", 20],
+      ["overlay:o2", 30],
+    ]);
+    expect(at(4.5, null)).toEqual([
+      ["overlay:o1", 20],
+      ["overlay:o2", 30],
+    ]);
   });
 });
