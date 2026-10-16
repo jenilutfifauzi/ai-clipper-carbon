@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, type ReactNode } from "react";
-import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
+import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -9,7 +9,7 @@ import { HookTimingFields } from "../HookEditor";
 import { restyle, setFade, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
-import { keyedGroup, keyedItem, segmentSpan, writeItemKey } from "./keying";
+import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
@@ -61,13 +61,15 @@ export function Inspector({
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
   const keyTime = useKeyTime(playback);
   // Where the Segments play on the Timeline, which a video's Keyframes are set in.
-  const track = useContext(KeyingContext)?.track;
+  const keying = useContext(KeyingContext);
+  const track = keying?.track;
   // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's or
   // video Segment's, as a Keyframe at the playhead.
   const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
     const keyed = !!keyedItem(edits, item, track)?.keys.volume?.length;
     const outcome = keyed ? writeItemKey({ edits, pick, track }, item, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
-    if (outcome) onEdits(outcome.edits, keyedGroup(group, keyed, keyTime));
+    if (outcome?.notice) keying?.onNotice?.(outcome.notice);
+    else if (outcome) onEdits(outcome.edits, keyedGroup(group, keyed, keyTime));
   };
 
   const items = itemsOf(pick);
@@ -84,7 +86,7 @@ export function Inspector({
         />
       );
     }
-    return <PickSummary pick={pick} edits={edits} actions={actions} />;
+    return <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
   }
   if (pick?.kind === "join") {
     return (
@@ -244,9 +246,9 @@ const NAMES: Record<ItemKind, [string, string]> = {
  * Several items picked: how many of each kind, and what can be done to them all. Keyframes are edited
  * with one item picked: a note says so when some picked item has them.
  */
-function PickSummary({ pick, edits, actions }: { pick: Pick; edits: AdvancedEdits; actions: ItemActions }) {
+function PickSummary({ pick, edits, plan, actions }: { pick: Pick; edits: AdvancedEdits; plan: RenderPlan | null; actions: ItemActions }) {
   const items = itemsOf(pick);
-  const keyed = items.some(({ kind, id }) => (kind === "overlay" || kind === "music") && Object.keys(keyedItem(edits, { kind, id })?.keys ?? {}).length > 0);
+  const keyed = keyedInPick(edits, pick, plan);
   const counts = (Object.keys(NAMES) as ItemKind[])
     .map((kind) => [kind, items.filter((item) => item.kind === kind).length] as const)
     .filter(([, count]) => count > 0)

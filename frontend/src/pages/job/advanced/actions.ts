@@ -1,7 +1,7 @@
-import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
+import type { ClipSegment, Keyframe, MusicClip, Overlay, TextLayer } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
-import { rekeyed } from "./keyActions";
+import { rekeyed, toMillionth } from "./keyActions";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
@@ -407,16 +407,21 @@ const middleOf = (item: TextLayer | Overlay) => ("transform" in item ? item.tran
 const middledAt = <T extends TextLayer | Overlay>(item: T, x: number, y: number): T =>
   "transform" in item ? { ...item, transform: { ...item.transform, x, y } } : { ...item, x, y };
 
+// Where a keyed Overlay's middle goes along `axis`: its Keyframes' values (none for a Text Layer).
+const keyedMiddles = (item: TextLayer | Overlay, axis: "x" | "y") => ("keys" in item ? (item.keys[axis] ?? []).map((key) => key.value) : []);
+
 /**
  * The picked Text Layers and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
- * further than keeps each one's middle in the frame.
+ * further than keeps each one's middle in the frame. A keyed Overlay's motion moves with it: each of
+ * its x and y Keyframes by as much, kept in the frame as its middle is.
  */
 export function nudge(scene: PickContext, dx: number, dy: number): Outcome | null {
   const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "overlay"; item: TextLayer | Overlay }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
-  const byX = within(dx, placed.map(({ item }) => middleOf(item).x), FRAME.width);
-  const byY = within(dy, placed.map(({ item }) => middleOf(item).y), FRAME.height);
+  const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), FRAME.width);
+  const byY = within(dy, placed.flatMap(({ item }) => [middleOf(item).y, ...keyedMiddles(item, "y")]), FRAME.height);
+  const shifted = (keys: Keyframe[], by: number) => keys.map((key) => ({ ...key, value: toMillionth(key.value + by) }));
   const next = { ...scene.edits };
   for (const { kind, item } of placed) {
     const list = KINDS[kind].list;
@@ -424,7 +429,10 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
       [list]: (next[list] as (TextLayer | Overlay)[]).map((other) => {
         if (other.id !== item.id) return other;
         const { x, y } = middleOf(other);
-        return middledAt(other, Math.round(x + byX), Math.round(y + byY));
+        const moved = middledAt(other, Math.round(x + byX), Math.round(y + byY));
+        if (!("keys" in moved) || !(moved.keys.x || moved.keys.y)) return moved;
+        const { x: xs, y: ys } = moved.keys;
+        return { ...moved, keys: { ...moved.keys, ...(xs && { x: shifted(xs, byX) }), ...(ys && { y: shifted(ys, byY) }) } };
       }),
     });
   }

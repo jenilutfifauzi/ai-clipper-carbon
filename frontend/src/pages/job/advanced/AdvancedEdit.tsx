@@ -511,6 +511,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
+  // A notice told once while the change that makes it keeps coming (a drag), not at every step.
+  const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
+  // A Keyframe edit's outcome: its edits as one change (of `group`), or, refused (a 101st Keyframe), why.
+  function applyKeyed(outcome: Outcome | null, group?: string) {
+    if (outcome?.notice) tellOnce(outcome.notice);
+    else if (outcome) history.set(outcome.edits, group);
+  }
   // An action's outcome: its edits as one change, what it picks, and what it tells.
   function apply(outcome: Outcome) {
     if (outcome.edits !== edits) history.set(outcome.edits);
@@ -568,7 +575,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           toggle: () => {
             const outcome = toggleItemKey({ ...scene, track, plan }, keyedRef, activeKey(keyRows(edits, keyedRef, mediaById), keyed.keys, touched), playback.time);
             if (!outcome) return false;
-            history.set(outcome.edits);
+            applyKeyed(outcome);
           },
           around: (time: number, direction: -1 | 1) => keyAround(keyed, time, direction),
         }
@@ -642,8 +649,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const old = heldTransform(overlay.transform, overlay.keys, overlay, time);
           if (placedTogether("overlay", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else {
-            const outcome = writeItemTransform(scene, { kind: "overlay", id }, transform, time, old);
-            if (outcome) history.set(outcome.edits, group);
+            applyKeyed(writeItemTransform(scene, { kind: "overlay", id }, transform, time, old), group);
           }
         },
         cropOf: (id) => edits.overlays.find((overlay) => overlay.id === id)?.crop,
@@ -652,13 +658,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           if (!overlay) return;
           const cropped = { ...scene, edits: { ...edits, overlays: replaced(edits.overlays, { ...overlay, crop }) } };
           const held = heldTransform(overlay.transform, overlay.keys, overlay, playback.time);
-          const outcome = writeItemTransform(cropped, { kind: "overlay", id }, transform, playback.time, held);
-          if (outcome) history.set(outcome.edits, group);
+          applyKeyed(writeItemTransform(cropped, { kind: "overlay", id }, transform, playback.time, held), group);
         },
       };
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.
   const keying: Keying = {
-    edits, pick, locked: tracks.locked, track, plan, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched,
+    edits, pick, locked: tracks.locked, track, plan, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched, onNotice: tellOnce,
   };
   // A video Segment keyed in its Framing's Transform, or a Manual Scene in its override's: held on
   // the stage where it is at the playhead, and its keyed fields written there as Keyframes, as a
@@ -680,8 +685,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const ref: KeyedRef | null = source.kind === "media" ? { kind: "segment", id: source.segment } : source.kind === "manual" ? sceneRef(source.scene) : null;
           const keyed = ref && keyedPicture(ref);
           const written = (next: AdvancedEdits, transform: Transform, group: string) => {
-            const outcome = keyed && writeItemTransform({ ...scene, edits: next, track, plan }, keyed.ref, transform, playback.time, keyed.held(playback.time));
-            if (outcome) history.set(outcome.edits, group);
+            if (keyed) applyKeyed(writeItemTransform({ ...scene, edits: next, track, plan }, keyed.ref, transform, playback.time, keyed.held(playback.time)), group);
           };
           return {
             picked: isPicked(pick, "segment", source.segment),
@@ -853,8 +857,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
               // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
-              const outcome = writeItemKey({ ...scene, track }, item, "volume", volume, playback.time);
-              if (outcome) history.set(outcome.edits, group);
+              applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
             },
             onFade: (id, fade, secs, heard, group) => {
               const outcome = setFade(scene, id, fade, secs, heard);

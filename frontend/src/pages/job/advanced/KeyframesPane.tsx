@@ -2,11 +2,11 @@ import { useRef, useState, type PointerEvent } from "react";
 import type { Ease, Keyframe, KeyProperty, MediaItem } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
-import { KEY_RANGES, valueAt } from "../editor/keyframes";
+import { valueAt } from "../editor/keyframes";
 import { usePlayback } from "../editor/playback";
 import { curvePath, curveRange, easeHandles, handleShares, plotPoint, plotValue, type Plot, type PlotPoint } from "./curves";
-import { easedKey, easeName, handleEase, keyAt, moveKey, setEase, type EaseName, type KeyGrid } from "./keyActions";
-import { KeyCluster, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
+import { easedKey, easeName, handleEase, keyAt, keyedRange, moveKey, setEase, type EaseName, type KeyGrid } from "./keyActions";
+import { applyKeyed, KeyCluster, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
 import { EaseSelect, KEY_FIELDS } from "./KeyEase";
 import { activeKey, clearItemKeys, heldKeyTime, keyedGroup, keyedItem, keyRows, keyTime, refName, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
 import { onFrame } from "./playhead";
@@ -431,10 +431,10 @@ function Row({
   const { label, unit, scale } = KEY_FIELDS[prop];
   const isKeyed = !!keyed.keys[prop]?.length;
   // A keyed turn may go further than the Transform's own ±360°.
-  const [low, high] = prop === "rotation" && !isKeyed ? [-360, 360] : KEY_RANGES[prop];
+  const [low, high] = keyedRange(prop, isKeyed);
   const write = (shown: number) => {
     const outcome = writeItemKey(keying, item, prop, Math.min(Math.max(shown / scale, low), high), time);
-    if (outcome) keying.onEdits(outcome.edits, keyedGroup(`keyframes:${refName(item)}:${prop}`, isKeyed, at));
+    applyKeyed(keying, outcome, keyedGroup(`keyframes:${refName(item)}:${prop}`, isKeyed, at));
   };
   return (
     <div

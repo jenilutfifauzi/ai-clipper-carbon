@@ -18,6 +18,18 @@ const HALF_FRAME = KEY_GAP_SECS / 2 + 1e-9;
 
 const toMillisecond = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
+// Each property's name, as the editor shows it.
+export const KEY_LABELS: Record<KeyProperty, string> = { x: "X", y: "Y", scale: "Scale", rotation: "Rotation", opacity: "Opacity", volume: "Volume" };
+
+/** What the owner is told of an edit refused because it would put a 101st Keyframe on `prop`. */
+export const tooManyKeys = (prop: KeyProperty) => `At most ${MAX_KEYS} Keyframes on ${KEY_LABELS[prop]}`;
+
+// A turn's constant is kept within this, as the Transform's is; a Keyframe may hold more.
+const TURN_RANGE = [-360, 360] as const;
+
+/** The range a field of `prop` takes: a Keyframe's (KEY_RANGES) once it is `keyed`, but a constant turn's within ±360°. */
+export const keyedRange = (prop: KeyProperty, keyed: boolean): readonly [number, number] => (prop === "rotation" && !keyed ? TURN_RANGE : KEY_RANGES[prop]);
+
 /** `value` to a millionth: re-anchored and Timeline times to a microsecond, so that sums leave no float dust in them. */
 export const toMillionth = (value: number) => Math.round(value * 1e6) / 1e6;
 
@@ -49,18 +61,28 @@ export function keyState(keys: readonly Keyframe[], at: number): "here" | "elsew
  * replaces those closer than a frame, which the Candidate would refuse, so the one within half a
  * frame, and keeps the nearest one's Ease; else it takes the Ease of the one before it, or Linear as
  * the first, so that a run of Keyframes laid down keeps one shape. A 101st isn't added: `keys` come
- * back as they are.
+ * back as they are (the edits that set one refuse it first: see isFull).
  */
 export function setKey(keys: readonly Keyframe[], prop: KeyProperty, at: number, value: number): Keyframe[] {
   const time = toMillisecond(Math.max(at, 0));
-  const crowded = (key: Keyframe) => Math.abs(key.at - time) < KEY_GAP_SECS - GAP_REACH;
+  if (isFull(keys, at)) return keys as Keyframe[];
+  const crowded = crowdedAt(time);
   const kept = keys.filter((key) => !crowded(key));
-  if (kept.length >= MAX_KEYS) return keys as Keyframe[];
   const replaced = keys.filter(crowded).sort((a, b) => Math.abs(a.at - time) - Math.abs(b.at - time))[0];
   const ease = replaced?.ease ?? kept.filter((key) => key.at < time).at(-1)?.ease ?? LINEAR;
   const [low, high] = KEY_RANGES[prop];
   const key = { at: time, value: Math.min(Math.max(value, low), high), ease };
   return [...kept, key].sort((a, b) => a.at - b.at);
+}
+
+// Whether a Keyframe is closer than a frame to `time` (in its item's seconds, to the millisecond), so
+// that one set there replaces it.
+const crowdedAt = (time: number) => (key: Keyframe) => Math.abs(key.at - time) < KEY_GAP_SECS - GAP_REACH;
+
+// Whether a Keyframe set at `at` would be a 101st: `keys` have the most already, and none to replace there.
+function isFull(keys: readonly Keyframe[], at: number): boolean {
+  const crowded = crowdedAt(toMillisecond(Math.max(at, 0)));
+  return keys.filter((key) => !crowded(key)).length >= MAX_KEYS;
 }
 
 /** `keys` without the Keyframe at `at` (see keyAt); as they are when there is none. */
@@ -78,10 +100,12 @@ function withList(keys: Keys, prop: KeyProperty, list: Keyframe[]): Keys {
 /**
  * The diamond clicked: `prop` of an item (its Keyframes `keys` and its `constant`) with a Keyframe
  * at `at`, of the value shown there, so that nothing moves; or, when there is one there, without it.
- * Removing the last one leaves the constant at the value there, so that nothing jumps.
+ * Removing the last one leaves the constant at the value there, so that nothing jumps. Adding a
+ * 101st is refused: everything as it was, and `full` the property.
  */
-export function toggleKey(keys: Keys, prop: KeyProperty, at: number, constant: number): { keys: Keys; constant: number } {
+export function toggleKey(keys: Keys, prop: KeyProperty, at: number, constant: number): Written {
   const list = keys[prop] ?? [];
+  if (keyAt(list, at) < 0 && isFull(list, at)) return { keys, constant, full: prop };
   if (keyAt(list, at) < 0) return { keys: withList(keys, prop, setKey(list, prop, at, valueAt(list, at, constant))), constant };
   const left = removeKey(list, at);
   return { keys: withList(keys, prop, left), constant: left.length ? constant : valueAt(list, at, constant) };
@@ -89,11 +113,20 @@ export function toggleKey(keys: Keys, prop: KeyProperty, at: number, constant: n
 
 /**
  * `prop` of an item changed to `value` with the playhead at `at` (auto-key): a Keyframe written there
- * once the property has Keyframes, else its constant.
+ * once the property has Keyframes, else its constant. A 101st is refused, as toggleKey refuses it.
  */
-export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: number, constant: number): { keys: Keys; constant: number } {
+export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: number, constant: number): Written {
   const list = keys[prop] ?? [];
-  return list.length ? { keys: withList(keys, prop, setKey(list, prop, at, value)), constant } : { keys, constant: value };
+  if (!list.length) return { keys, constant: value };
+  if (isFull(list, at)) return { keys, constant, full: prop };
+  return { keys: withList(keys, prop, setKey(list, prop, at, value)), constant };
+}
+
+/** A property's Keyframes and constant after an edit; `full`, the property, when the edit was refused for a 101st Keyframe. */
+export interface Written {
+  keys: Keys;
+  constant: number;
+  full?: KeyProperty;
 }
 
 /**
@@ -232,7 +265,8 @@ export function shownTransform(transform: Transform, keys: Keys, at: number): Tr
  * An item's `transform` and `keys` after a change to `next` with the playhead at `at` (auto-key: a
  * field, a Grips drag, Fit and Fill): each keyed field that differs from what was `shown` writes a
  * Keyframe there, and each other field is its constant. With the playhead outside the item (`at`
- * null), a keyed field's change is dropped.
+ * null), a keyed field's change is dropped. A change that would write a 101st Keyframe is refused
+ * whole: `transform` and `keys` as they were, and `full` that property.
  */
 export function writtenTransform(
   transform: Transform,
@@ -240,13 +274,16 @@ export function writtenTransform(
   next: Transform,
   at: number | null,
   shown: Transform = shownTransform(transform, keys, at ?? 0),
-): { transform: Transform; keys: Keys } {
+): { transform: Transform; keys: Keys; full?: KeyProperty } {
   let written = keys;
   const constants = { ...next };
   for (const prop of PICTURE_KEYS) {
     if (!keys[prop]?.length) continue;
     constants[prop] = transform[prop];
-    if (at !== null && next[prop] !== shown[prop]) written = writeKey(written, prop, at, next[prop], transform[prop]).keys;
+    if (at === null || next[prop] === shown[prop]) continue;
+    const { keys: after, full } = writeKey(written, prop, at, next[prop], transform[prop]);
+    if (full) return { transform, keys, full };
+    written = after;
   }
   return { transform: constants, keys: written };
 }

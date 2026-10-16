@@ -10,7 +10,7 @@ import { playedFrom } from "../editor/playback";
 import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { rewindow } from "./keyActions";
-import { keyedItem, resetFraming, segmentSpan, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
+import { keyedInPick, keyedItem, resetFraming, segmentSpan, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
 import { picked } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -130,6 +130,11 @@ describe("a Keyframe edit on a video Segment", () => {
     expect(moved.framing?.transform.x).toBe(300);
     expect(moved.framing?.transform.scale).toBe(1);
     expect(moved.keys?.scale).toContainEqual({ ...key(2, 2), ease: expect.any(Array) });
+  });
+
+  test("picked with others, it is one with Keyframes", () => {
+    expect(keyedInPick(edits(), picked(V, { kind: "segment", id: "e" }))).toBe(true);
+    expect(keyedInPick(edits([episode, video({})]), picked(V, { kind: "segment", id: "e" }))).toBe(false);
   });
 
   test("Reset of its Transform drops the Transform's Keyframes and keeps its sound's", () => {

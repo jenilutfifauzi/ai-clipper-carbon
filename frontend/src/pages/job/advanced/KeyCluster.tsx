@@ -5,6 +5,7 @@ import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { valueAt } from "../editor/keyframes";
 import { usePlayback, type Playback } from "../editor/playback";
+import type { Outcome } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { keysAround, keyState } from "./keyActions";
 import { heldKeyTime, keyedItem, keyTime, manualSceneAt, pickedKeyed, toggleItemKey, type KeyedRef, type KeyScene, type KeySpan } from "./keying";
@@ -16,16 +17,30 @@ import { onlyItem } from "./pick";
  * drag or a field's typing). Without it (outside the Advanced Edit) there are no clusters.
  *
  * `touched` is the property last touched (a cluster used, a row of the Keyframes pane clicked), which
- * the active row is made of (see activeKey): what K and the pane's own ‹ ◆ › act on.
+ * the active row is made of (see activeKey): what K and the pane's own ‹ ◆ › act on. `onNotice`
+ * tells the owner why an edit was refused (a 101st Keyframe).
  */
 export interface Keying extends KeyScene {
   playback: Playback;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   touched?: KeyProperty | null;
   onTouch?: (property: KeyProperty) => void;
+  onNotice?: (text: string) => void;
 }
 
 export const KeyingContext = createContext<Keying | null>(null);
+
+/** A Keyframe edit's outcome in `keying`: its edits as one change (of `group`), or, refused, its notice told. */
+export function applyKeyed(keying: Keying, outcome: Outcome | null, group?: string) {
+  if (outcome?.notice) keying.onNotice?.(outcome.notice);
+  else if (outcome) keying.onEdits(outcome.edits, group);
+}
+
+/** What a keyable field tells the owner with when its edit is refused (a 101st Keyframe). Nothing outside the Advanced Edit. */
+export function useKeyNotice(): (text: string) => void {
+  const keying = useContext(KeyingContext);
+  return (text) => keying?.onNotice?.(text);
+}
 
 /**
  * The one item picked that can have Keyframes (`pickedKeyed`): for a Segment of the Source, its
@@ -82,8 +97,7 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
   };
   const toggle = () => {
     keying.onTouch?.(property);
-    const outcome = toggleItemKey(keying, item, property, time);
-    if (outcome) keying.onEdits(outcome.edits);
+    applyKeyed(keying, toggleItemKey(keying, item, property, time));
   };
   // In a phone's sheet, as tall as its other buttons (44 px), and narrow enough for three beside "Rotation".
   const button = "grid size-7 place-items-center rounded-full hover:bg-fill disabled:pointer-events-none disabled:opacity-35 in-data-sheet:h-11 in-data-sheet:w-8";

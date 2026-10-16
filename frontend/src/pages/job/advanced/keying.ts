@@ -7,8 +7,8 @@ import { sceneOverride } from "../editor/ScenesTrack";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { clearKeys, keysAround, moveKeysAt, shownTransform, toggleKey, toMillionth, writeKey, writtenTransform } from "./keyActions";
-import { onlyItem, type Pick } from "./pick";
+import { clearKeys, keysAround, moveKeysAt, shownTransform, toggleKey, tooManyKeys, toMillionth, writeKey, writtenTransform } from "./keyActions";
+import { itemsOf, onlyItem, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
 
 /**
@@ -17,8 +17,9 @@ import type { TrackKind } from "./trackState";
  * the playhead, each one change of the edits, so one step of undo. A Keyframe is set at the playhead
  * minus the item's start on the Timeline (a Manual Scene's: the playhead's Source time minus its
  * Scene's start, which the plan gives as `keys_from`), and only with the playhead inside the item;
- * a locked Track refuses them. What each kind of item is, and where its Keyframes and constants are
- * kept, is its row of KINDS.
+ * a locked Track refuses them, and so does an edit that would put a 101st Keyframe on a property:
+ * its outcome is the edits as they were, with a notice. What each kind of item is, and where its
+ * Keyframes and constants are kept, is its row of KINDS.
  */
 
 /**
@@ -246,12 +247,16 @@ function editableItem(scene: KeyScene, ref: KeyedRef): KeyedItem | null {
   return keyedItem(scene.edits, ref, scene.track, scene.plan);
 }
 
+// The edits as they were, told why: a 101st Keyframe on `prop`.
+const refused = (scene: KeyScene, prop: KeyProperty): Outcome => ({ edits: scene.edits, pick: scene.pick, notice: tooManyKeys(prop) });
+
 /** The diamond of `prop` of item `ref` clicked with the playhead at `time`: see toggleKey. Null outside the item. */
 export function toggleItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, time: number): Outcome | null {
   const item = editableItem(scene, ref);
   const at = item && keyTime(item, time);
   if (!item || at === null) return null;
-  const { keys, constant } = toggleKey(item.keys, prop, at, item.constant(prop));
+  const { keys, constant, full } = toggleKey(item.keys, prop, at, item.constant(prop));
+  if (full) return refused(scene, full);
   return { edits: withKeyed(scene, ref, item, keys, prop, constant), pick: scene.pick };
 }
 
@@ -264,7 +269,8 @@ export function writeItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, 
   if (!item) return null;
   const at = keyTime(item, time);
   if (item.keys[prop]?.length && at === null) return null;
-  const { keys, constant } = writeKey(item.keys, prop, at ?? item.first ?? 0, value, item.constant(prop));
+  const { keys, constant, full } = writeKey(item.keys, prop, at ?? item.first ?? 0, value, item.constant(prop));
+  if (full) return refused(scene, full);
   return { edits: withKeyed(scene, ref, item, keys, prop, constant), pick: scene.pick };
 }
 
@@ -277,19 +283,29 @@ export function writeItemTransform(scene: KeyScene, ref: KeyedRef, next: Transfo
   const item = editableItem(scene, ref);
   if (!item?.transform) return null;
   const written = writtenTransform(item.transform, item.keys, next, keyTime(item, time), shown);
+  if (written.full) return refused(scene, written.full);
   return { edits: kindOf(ref).write(scene.edits, ref, written.keys, { transform: written.transform }, scene.plan), pick: scene.pick };
 }
 
 /**
  * Manual Scene `index`'s Framing's Transform (of `plan`, its own override's) changed to `next` with
  * the playhead at `time`, from what was `shown` there (see writtenTransform): by its inspector's
- * fields, whatever the editor's edits. Null for a Scene without its own Manual override.
+ * fields, whatever the editor's edits; refused with a notice (the edits as they were) where it
+ * would write a 101st Keyframe. Null for a Scene without its own Manual override.
  */
-export function withSceneTransform<T extends LayoutEdits>(edits: T, plan: RenderPlan, index: number, next: Transform, time: number, shown?: Transform): T | null {
+export function withSceneTransform<T extends LayoutEdits>(
+  edits: T,
+  plan: RenderPlan,
+  index: number,
+  next: Transform,
+  time: number,
+  shown?: Transform,
+): { edits: T; notice?: string } | null {
   const found = manualScene(edits.layout_overrides, plan, index);
   if (!found) return null;
   const written = writtenTransform(found.framing.transform, found.keys, next, keyTime(found, time), shown);
-  return withSceneKeys(edits, plan, index, written.keys, written.transform);
+  if (written.full) return { edits, notice: tooManyKeys(written.full) };
+  return { edits: withSceneKeys(edits, plan, index, written.keys, written.transform) };
 }
 
 /**
@@ -306,6 +322,30 @@ export function moveItemKeys(scene: KeyScene, ref: KeyedRef, from: number, to: n
   if (moved.keys === item.keys) return { edits: scene.edits, pick: scene.pick, at };
   // Its constants stay as they are.
   return { edits: kindOf(ref).write(scene.edits, ref, moved.keys, {}, scene.plan), pick: scene.pick, at };
+}
+
+/**
+ * Whether some item of the Pick has Keyframes: an Overlay, a Music Clip, a video's Segment, or a
+ * Segment of the Source one of whose Scenes (of `plan`; none without it) is a Manual Scene with them.
+ * Keyframes are edited with one item picked.
+ */
+export function keyedInPick(edits: AdvancedEdits, pick: Pick, plan?: RenderPlan | null): boolean {
+  const keyed = (ref: KeyedRef) => Object.keys(keyedItem(edits, ref, undefined, plan)?.keys ?? {}).length > 0;
+  return itemsOf(pick).some(({ kind, id }) => {
+    if (kind === "text") return false;
+    if (keyed({ kind, id })) return true;
+    return kind === "segment" && !!plan && scenesOf(edits, plan, id).some((index) => keyed(sceneRef(index)));
+  });
+}
+
+// The places among `plan`'s Scenes of those of Segment `id` of the Main Track: all of them in a Clip
+// of one range; none while the plan isn't of these Segments.
+function scenesOf(edits: AdvancedEdits, plan: RenderPlan, id: string): number[] {
+  const index = edits.segments.findIndex((segment) => segment.id === id);
+  if (!plan.segments.length) return index === 0 && edits.segments.length === 1 ? plan.scenes.map((_, i) => i) : [];
+  if (index === -1 || plan.segments.length !== edits.segments.length) return [];
+  const first = plan.segments.slice(0, index).reduce((count, segment) => count + segment.scenes, 0);
+  return Array.from({ length: plan.segments[index].scenes }, (_, i) => first + i);
 }
 
 // The shortcuts (K, [ and ]) work on the one item picked, as the ruler's diamonds do.

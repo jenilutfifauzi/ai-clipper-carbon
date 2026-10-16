@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, LayoutOverride, MusicClip, Overlay, TextLayer } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
+import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import {
@@ -399,6 +400,32 @@ describe("moving a Pick on the preview", () => {
       layer("a", 0, 2, { x: 1080 }),
       layer("b", 0, 2, { x: 580 }),
     ]);
+  });
+
+  test("moves a keyed Overlay's whole motion with them: every x and y Keyframe by the same offset, each kept in the frame", () => {
+    const slide = [
+      { at: 0, value: 100, ease: LINEAR },
+      { at: 1, value: 1000, ease: EASE_IN },
+    ];
+    const grow = [{ at: 0, value: 2, ease: LINEAR }];
+    const keyed = { ...overlay("o", 0, 2), keys: { x: slide, y: [{ at: 1, value: 500, ease: LINEAR }], scale: grow } };
+    const before = edits({ text_layers: [layer("a", 0, 2)], overlays: [keyed] });
+
+    // 200 px across is as far as keeps its Keyframe at 1000 in the frame: 80.
+    const moved = nudge(scene(before, picked(text("a"), { kind: "overlay", id: "o" })), 200, 30)?.edits;
+    expect(moved?.text_layers[0]).toEqual(layer("a", 0, 2, { x: 620, y: 990 }));
+    expect(moved?.overlays[0]).toEqual({
+      ...keyed,
+      transform: { ...keyed.transform, x: 620, y: 430 },
+      keys: {
+        x: [
+          { at: 0, value: 180, ease: LINEAR },
+          { at: 1, value: 1080, ease: EASE_IN },
+        ],
+        y: [{ at: 1, value: 530, ease: LINEAR }],
+        scale: grow,
+      },
+    });
   });
 });
 

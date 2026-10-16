@@ -5,6 +5,7 @@ import type { MediaItem, MusicClip, Overlay } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
+import { MAX_KEYS } from "./keyActions";
 import type { AdvancedEdits } from "./edits";
 import {
   activeKey,
@@ -12,6 +13,7 @@ import {
   heldTransform,
   keyableOf,
   keyAround,
+  keyedInPick,
   keyedItem,
   keyRows,
   keyTime,
@@ -165,11 +167,29 @@ describe("a Keyframe edit on an item", () => {
     expect(moveItemKeys(scene(keyed, ["overlay"]), O, 3, 4, 30)).toBeNull();
   });
 
+  test("a 101st Keyframe is refused, with a notice, and the edits stay as they were", () => {
+    const full = Array.from({ length: MAX_KEYS }, (_, i) => ({ at: i / 30, value: 100 + i, ease: LINEAR }));
+    const keyed = edits({ overlays: [overlay({ keys: { x: full } })] });
+    const refused = { edits: keyed, pick: picked(O), notice: "At most 100 Keyframes on X" };
+    expect(toggleItemKey(scene(keyed), O, "x", 6)).toEqual(refused);
+    expect(writeItemKey(scene(keyed), O, "x", 500, 6)).toEqual(refused);
+    expect(writeItemTransform(scene(keyed), O, { ...IDENTITY, x: 500, scale: 2 }, 6)).toEqual(refused);
+  });
+
   test("names what an item can key and its constants", () => {
     const item = keyedItem(edits(), O)!;
     expect([item.start, item.secs, item.constant("x"), item.constant("volume")]).toEqual([2, 4, 300, 0]);
     expect(keyedItem(edits(), M)?.constant("volume")).toBe(0.8);
     expect(keyedItem(edits(), { kind: "overlay", id: "gone" })).toBeNull();
+  });
+});
+
+describe("a Pick of several", () => {
+  test("has Keyframes when one of its Overlays or Music Clips has some", () => {
+    const keyedSong = edits({ music: [song({ keys: { volume: [{ at: 0, value: 1, ease: LINEAR }] } })] });
+    expect(keyedInPick(edits(), picked(O, M))).toBe(false);
+    expect(keyedInPick(keyedSong, picked(O, M))).toBe(true);
+    expect(keyedInPick(keyedSong, picked(O))).toBe(false);
   });
 });
 

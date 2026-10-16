@@ -9,7 +9,7 @@ import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { heldTransform, keyableOf, keyedItem, manualSceneAt, pickedKeyed, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeItemTransform } from "./keying";
+import { heldTransform, keyableOf, keyedInPick, keyedItem, manualSceneAt, pickedKeyed, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeItemTransform } from "./keying";
 import { picked } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -75,6 +75,15 @@ describe("a Keyframe edit on a Manual Scene", () => {
     expect(keyableOf(FIRST)).toEqual(PICTURE_KEYS);
   });
 
+  test("a Segment of the Source picked with others has Keyframes when one of its Manual Scenes has some", () => {
+    const both = picked({ kind: "segment", id: "a" }, { kind: "segment", id: "b" });
+    expect(keyedInPick(edits(), both, plan)).toBe(true);
+    expect(keyedInPick(edits(), picked({ kind: "segment", id: "a" }), plan)).toBe(true);
+    expect(keyedInPick(edits([{ ...override, keys: {} }]), both, plan)).toBe(false);
+    // Without the plan, its Scenes aren't known.
+    expect(keyedInPick(edits(), both)).toBe(false);
+  });
+
   test("its Grips hold it where it is at the playhead and write a keyed field there", () => {
     const item = keyedItem(edits(), AGAIN, undefined, plan)!;
     // 2 s into the later Segment: 4 s into the shot, where it has reached 800.
@@ -85,7 +94,7 @@ describe("a Keyframe edit on a Manual Scene", () => {
     expect(moved.keys?.x).toEqual([key(0, 300), key(1, 100), key(4, 800)]);
     expect(moved.framing?.transform).toEqual({ ...framing.transform, scale: 2 });
     // The inspector's, for the editors' edits whatever they are.
-    expect(withSceneTransform(edits(), plan, 1, { ...framing.transform, x: 100 }, 3)?.layout_overrides[0].keys?.x).toEqual(moved.keys?.x);
+    expect(withSceneTransform(edits(), plan, 1, { ...framing.transform, x: 100 }, 3)?.edits.layout_overrides[0].keys?.x).toEqual(moved.keys?.x);
   });
 });
 

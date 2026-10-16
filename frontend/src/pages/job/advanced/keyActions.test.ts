@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { Keyframe, Keys, Transform } from "../../../api";
 import { EASE_IN, EASE_IN_OUT, EASE_OUT, LINEAR, PICTURE_KEYS } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
-import { clearKeys, easedKey, easeName, handleEase, keyAt, keysAround, keyState, MAX_KEYS, moveKey, moveKeysAt, removeKey, setEase, setKey, shownTransform, toggleKey, writeKey, writtenTransform } from "./keyActions";
+import { clearKeys, easedKey, easeName, handleEase, keyAt, keyedRange, keysAround, keyState, MAX_KEYS, moveKey, moveKeysAt, removeKey, setEase, setKey, shownTransform, toggleKey, tooManyKeys, writeKey, writtenTransform } from "./keyActions";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
 
@@ -123,6 +123,34 @@ describe("auto-key", () => {
   test("with the playhead outside the item, a keyed field's change is dropped", () => {
     const shown = shownTransform(transform, keys, 0);
     expect(writtenTransform(transform, keys, { ...shown, x: 540, scale: 2 }, null)).toEqual({ transform: { ...transform, scale: 2 }, keys });
+  });
+});
+
+describe("a 101st Keyframe", () => {
+  const full = Array.from({ length: MAX_KEYS }, (_, i) => key(i / 10, 100 + i));
+  const transform: Transform = { ...IDENTITY, x: 300 };
+  const keys: Keys = { x: full };
+
+  test("refuses the edit that would add it, naming the property, and leaves everything as it was", () => {
+    expect(toggleKey(keys, "x", 20, 300)).toEqual({ keys, constant: 300, full: "x" });
+    expect(writeKey(keys, "x", 20, 500, 300)).toEqual({ keys, constant: 300, full: "x" });
+    // The unkeyed scale isn't changed either: the whole edit is refused.
+    expect(writtenTransform(transform, keys, { ...shownTransform(transform, keys, 20), x: 500, scale: 2 }, 20)).toEqual({ transform, keys, full: "x" });
+    expect(tooManyKeys("x")).toBe("At most 100 Keyframes on X");
+  });
+
+  test("replacing one, or removing one, is no 101st", () => {
+    expect(writeKey(keys, "x", 0.5, 7, 300).full).toBeUndefined();
+    expect(toggleKey(keys, "x", 0.5, 300).full).toBeUndefined();
+  });
+});
+
+describe("a keyable field's range", () => {
+  test("a turn's is ±360° as a constant and ±3600° once keyed; the others' are their Keyframes'", () => {
+    expect(keyedRange("rotation", false)).toEqual([-360, 360]);
+    expect(keyedRange("rotation", true)).toEqual([-3600, 3600]);
+    expect(keyedRange("x", false)).toEqual([0, 1080]);
+    expect(keyedRange("scale", true)).toEqual([0.05, 8]);
   });
 });
 

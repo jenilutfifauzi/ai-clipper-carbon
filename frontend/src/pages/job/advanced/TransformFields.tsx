@@ -10,6 +10,7 @@ import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
 import { PICTURE_KEYS, type PictureKey } from "../editor/keyframes";
 import { clamp, FRAME, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
+import { keyedRange } from "./keyActions";
 import { KeyCluster, useTouch } from "./KeyCluster";
 import type { KeyedRef } from "./keying";
 
@@ -24,7 +25,8 @@ import type { KeyedRef } from "./keying";
  *
  * With `keyed`, the item's X, Y, Scale, Rotation and Opacity have a ‹ ◆ › each (KeyCluster), and
  * `transform` is what is shown at the playhead (ADR 0008); a keyed field, and Fit and Fill when they
- * would change one, are off while the playhead is outside the item, with a note.
+ * would change one, are off while the playhead is outside the item, with a note. A keyed Rotation
+ * takes ±3600°, as its Keyframes may; its constant, ±360°.
  */
 export function TransformFields({
   transform,
@@ -79,7 +81,7 @@ export function TransformFields({
           label="Rotation"
           unit="°"
           value={transform.rotation}
-          range={[-360, 360]}
+          range={keyedRange("rotation", !!keyed?.keys.rotation?.length)}
           onChange={(rotation) => set("rotation", rotation)}
           cluster={cluster("rotation", "Rotation")}
           disabled={off("rotation")}

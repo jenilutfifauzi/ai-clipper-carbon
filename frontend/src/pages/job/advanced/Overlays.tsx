@@ -7,8 +7,8 @@ import type { Playback } from "../editor/playback";
 import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
-import { shownTransform, writeKey, writtenTransform } from "./keyActions";
-import { KeyedVolume, useKeyTime, useTouch } from "./KeyCluster";
+import { shownTransform, tooManyKeys, writeKey, writtenTransform } from "./keyActions";
+import { KeyedVolume, useKeyNotice, useKeyTime, useTouch } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, resetOverlay } from "./keying";
 import { TimingFields } from "./TimingFields";
 import { TransformFields } from "./TransformFields";
@@ -65,6 +65,7 @@ export function OverlayTransform({
   const shown = shownTransform(overlay.transform, overlay.keys, at ?? heldKeyTime(overlay, time));
   const size = mediaSize(item);
   const defaults = overlayPlacement(size);
+  const notify = useKeyNotice();
   return (
     <TransformFields
       transform={shown}
@@ -73,6 +74,7 @@ export function OverlayTransform({
       defaults={defaults}
       onChange={(next, field) => {
         const written = writtenTransform(overlay.transform, overlay.keys, next, at, shown);
+        if (written.full) return notify(tooManyKeys(written.full));
         onChange({ ...overlay, ...written }, keyedGroup(`overlay:${overlay.id}:transform.${field}`, written.keys !== overlay.keys, at));
       }}
       onCrop={(crop, field, transform) =>
@@ -109,9 +111,11 @@ export function OverlayFields({
   const length = item?.duration ?? Infinity;
   // Its sound at the playhead, and set there once it is keyed.
   const touch = useTouch();
+  const notify = useKeyNotice();
   const setVolume = (value: number, at: number | null) => {
     touch("volume");
-    const { keys, constant } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume);
+    const { keys, constant, full } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume);
+    if (full) return notify(tooManyKeys(full));
     onChange({ ...overlay, keys, volume: constant }, keyedGroup(`overlay:${overlay.id}:volume`, keys !== overlay.keys, at));
   };
   return (

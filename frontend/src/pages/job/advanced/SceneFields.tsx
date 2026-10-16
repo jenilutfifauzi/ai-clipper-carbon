@@ -11,7 +11,7 @@ import { usePlayback, type Playback } from "../editor/playback";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { Group } from "../editor/StyleFields";
 import { shownTransform } from "./keyActions";
-import { useKeyTime } from "./KeyCluster";
+import { useKeyNotice, useKeyTime } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, manualScene, sceneRef, withSceneTransform } from "./keying";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
@@ -59,6 +59,7 @@ export function SceneFields<T extends LayoutEdits>({
 }) {
   const at = usePlayback(playback, (time) => (plan ? sourceSceneAt(plan, index, count, time) : null));
   const time = useKeyTime(playback);
+  const notify = useKeyNotice();
   if (!plan) return null;
   const scene = at === null ? undefined : plan.scenes[at];
   if (at === null || !scene) {
@@ -86,7 +87,9 @@ export function SceneFields<T extends LayoutEdits>({
   const setTransform = (transform: Transform, field: string) => {
     if (!keyed || !source?.own) return setFraming({ ...source!.framing, transform }, `transform.${field}`);
     const written = !!keyed.keys[field as keyof typeof keyed.keys]?.length;
-    apply(withSceneTransform(edits, plan, at, transform, time, shown), keyedGroup(`${owner}:transform.${field}`, written, keyAt));
+    const done = withSceneTransform(edits, plan, at, transform, time, shown);
+    if (done?.notice) notify(done.notice);
+    else if (done) apply(done.edits, keyedGroup(`${owner}:transform.${field}`, written, keyAt));
   };
   // Reset (a Crop with a Transform) drops its Transform's Keyframes as well.
   const setCrop = (crop: Crop, field: string, transform?: Transform) => {
