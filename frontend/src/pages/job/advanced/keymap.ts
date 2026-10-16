@@ -15,6 +15,12 @@ export type ShortcutId =
   | "duplicate"
   | "delete"
   | "ripple-delete"
+  | "step-back"
+  | "step-forward"
+  | "step-back-10"
+  | "step-forward-10"
+  | "start"
+  | "end"
   | "move-back"
   | "move-forward"
   | "move-back-10"
@@ -69,6 +75,12 @@ const alt = true;
 
 export const SHORTCUTS: Shortcut[] = [
   { id: "play", keys: [{ key: " " }], group: "playback", label: "Play or pause" },
+  { id: "step-back", keys: [{ key: "ArrowLeft" }], group: "navigation", label: "Playhead one frame back" },
+  { id: "step-forward", keys: [{ key: "ArrowRight" }], group: "navigation", label: "Playhead one frame forward" },
+  { id: "step-back-10", keys: [{ key: "ArrowLeft", shift }], group: "navigation", label: "Playhead ten frames back" },
+  { id: "step-forward-10", keys: [{ key: "ArrowRight", shift }], group: "navigation", label: "Playhead ten frames forward" },
+  { id: "start", keys: [{ key: "Home" }], group: "navigation", label: "Playhead to the Clip's start" },
+  { id: "end", keys: [{ key: "End" }], group: "navigation", label: "Playhead to the Clip's last frame" },
   { id: "undo", keys: [{ key: "z", command }], group: "editing", label: "Undo" },
   { id: "redo", keys: [{ key: "z", command, shift }, { key: "y", command }], group: "editing", label: "Redo" },
   { id: "pick-all", keys: [{ key: "a", command }], group: "editing", label: "Pick every item" },
@@ -90,10 +102,10 @@ export const SHORTCUTS: Shortcut[] = [
     group: "editing",
     label: "Ripple delete: delete them and close the gap",
   },
-  { id: "move-back", keys: [{ key: "ArrowLeft" }], group: "editing", label: "Move the picked Text Layers, Music Clips and Overlays 0.1 s earlier" },
-  { id: "move-forward", keys: [{ key: "ArrowRight" }], group: "editing", label: "Move them 0.1 s later" },
-  { id: "move-back-10", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move them 1 s earlier" },
-  { id: "move-forward-10", keys: [{ key: "ArrowRight", alt }], group: "editing", label: "Move them 1 s later" },
+  { id: "move-back", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move the picked Text Layers, Music Clips and Overlays a frame earlier" },
+  { id: "move-forward", keys: [{ key: "ArrowRight", alt }], group: "editing", label: "Move them a frame later" },
+  { id: "move-back-10", keys: [{ key: "ArrowLeft", alt, shift }], group: "editing", label: "Move them ten frames earlier" },
+  { id: "move-forward-10", keys: [{ key: "ArrowRight", alt, shift }], group: "editing", label: "Move them ten frames later" },
   { id: "zoom-in", keys: [{ key: "=" }, { key: "+" }], group: "view", label: "Zoom the Timeline in about the playhead" },
   { id: "zoom-out", keys: [{ key: "-" }], group: "view", label: "Zoom the Timeline out about the playhead" },
   { id: "fit", keys: [{ key: "z", shift }], group: "view", label: "Zoom the Timeline to fit the picked items, or the whole Clip" },
