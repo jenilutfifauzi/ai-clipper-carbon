@@ -87,8 +87,10 @@ Edits:
   picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
   1080x1920 frame keeping its aspect (1 fits; a 16:9 picture at 0.5 is 540 px wide). stretch_x,
   stretch_y: times its fitted width and height on top of scale. rotation: degrees clockwise. flip_h,
-  flip_v, opacity 0..1. merge_candidate_items changes only the transform fields given. The dry run
-  lists each Overlay's drawn box once turned (bounds).
+  flip_v, opacity 0..1. Its crop: left, top, right, bottom, each the fraction 0..0.9 of its
+  width or height cut off before it is fitted (a tenth is always kept). merge_candidate_items
+  changes only the transform and crop fields given. The dry run lists each Overlay's drawn box once
+  turned (bounds) and what its crop keeps, in its item's pixels.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
@@ -560,7 +562,7 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
 
 def _plan_view(preview: dict) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time, where each Overlay is
-    drawn (its box once turned, in output pixels), and the Words."""
+    drawn (its box once turned, in output pixels, and what its crop keeps, in its item's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -576,7 +578,8 @@ def _plan_view(preview: dict) -> dict:
         "overlays": [
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
-                "bounds": event["picture"]["bounds"], "rotation": event["picture"]["rotation"], "opacity": event["picture"]["opacity"],
+                "bounds": event["picture"]["bounds"], "rotation": event["picture"]["rotation"], "crop": event["picture"]["crop"],
+                "opacity": event["picture"]["opacity"],
             }
             for event in plan["overlays"]
         ],

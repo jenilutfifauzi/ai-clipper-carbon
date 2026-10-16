@@ -323,7 +323,7 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
 
 
 @pytest.mark.anyio
-async def test_an_overlays_transform_is_merged_field_by_field_and_the_dry_run_lists_its_box(mcp, tmp_path):
+async def test_an_overlays_transform_and_crop_are_merged_field_by_field_and_the_dry_run_lists_its_box(mcp, tmp_path):
     # 320x180 fits as 1080x607.5: at 0.5, 540x304.
     picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
     item = await call(mcp, "add_asset", kind="media", path=str(picture))
@@ -341,9 +341,19 @@ async def test_an_overlays_transform_is_merged_field_by_field_and_the_dry_run_li
 
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
     # Turned a quarter, its 540x304 box stands 304x540 about its centre.
+    whole = {"x": 0, "y": 0, "width": 320, "height": 180}
     assert plan["overlays"] == [
-        {"id": "o1", "media": item["id"], "start": 0, "end": 1, "bounds": {"x": 148, "y": 230, "width": 304, "height": 540}, "rotation": 90, "opacity": 0.8},
+        {"id": "o1", "media": item["id"], "start": 0, "end": 1, "bounds": {"x": 148, "y": 230, "width": 304, "height": 540}, "rotation": 90,
+         "crop": whole, "opacity": 0.8},
     ]
+
+    # The Crop is merged field by field too, and the dry run gives what it keeps in the item's pixels.
+    await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "crop": {"left": 0.25}}])
+    merged = await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "crop": {"bottom": 0.5}}])
+    assert merged["overlays"][0]["crop"] == {"left": 0.25, "top": 0, "right": 0, "bottom": 0.5}
+    assert merged["overlays"][0]["transform"]["rotation"] == 90
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
+    assert plan["overlays"][0]["crop"] == {"x": 80, "y": 0, "width": 240, "height": 90}
 
 
 # 08: agent guidance

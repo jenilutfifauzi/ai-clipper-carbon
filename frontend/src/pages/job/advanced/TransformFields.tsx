@@ -1,29 +1,38 @@
 import { FlipHorizontal2, FlipVertical2 } from "lucide-react";
 import { useId, useState } from "react";
-import type { Transform } from "../../../api";
+import type { Crop, Transform } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
+import { croppedSize, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
 import { clamp, coverScale, FRAME, IDENTITY, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
 
 /**
  * A picture's Transform as numbers (ADR 0007): its centre, its scale and stretch in percent of its
  * fitted size, its rotation, flips and opacity; and Fit (scale 1, no stretch, centred), Fill (the
- * scale that covers the frame, given its item's `size`) and Reset (every field at its identity).
- * Each field's changes are one `group` of the history, named after it.
+ * scale that covers the frame with what its Crop keeps of its item's `size`) and Reset (every field
+ * of the Transform at its identity). Its Crop's four edges in percent of its width and height,
+ * tidied as they change (a tenth kept). Each field's changes are one `group` of the history, named
+ * after it.
  */
 export function TransformFields({
   transform,
+  crop,
   size,
   onChange,
+  onCrop,
 }: {
   transform: Transform;
+  crop: Crop;
   // Its item's picture, in pixels; undefined while the Media Library loads.
   size: { width: number; height: number } | undefined;
   onChange: (transform: Transform, field: string) => void;
+  onCrop: (crop: Crop, field: string) => void;
 }) {
   const set = (field: keyof Transform, value: Transform[keyof Transform]) => onChange({ ...transform, [field]: value }, field);
+  const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);
+  const kept = size && croppedSize(size, crop);
   const centred = { x: FRAME.width / 2, y: FRAME.height / 2, stretch_x: 1, stretch_y: 1 };
   return (
     <Group title="Transform">
@@ -54,14 +63,23 @@ export function TransformFields({
         format={(v) => `${Math.round(v * 100)}%`}
         onChange={(opacity) => set("opacity", opacity)}
       />
+      <fieldset className="flex min-w-0 flex-col gap-1.5">
+        <legend className="mb-1.5 text-sm font-medium">Crop</legend>
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField label="Left" unit="%" value={crop.left * 100} range={CUT_RANGE} onChange={cut("left")} />
+          <NumberField label="Right" unit="%" value={crop.right * 100} range={CUT_RANGE} onChange={cut("right")} />
+          <NumberField label="Top" unit="%" value={crop.top * 100} range={CUT_RANGE} onChange={cut("top")} />
+          <NumberField label="Bottom" unit="%" value={crop.bottom * 100} range={CUT_RANGE} onChange={cut("bottom")} />
+        </div>
+      </fieldset>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={() => onChange({ ...transform, ...centred, scale: 1 }, "fit")}>
           Fit
         </Button>
         <Button
           size="sm"
-          disabled={!size}
-          onClick={() => size && onChange({ ...transform, ...centred, scale: clamp(coverScale(size.width, size.height), SCALE_RANGE) }, "fill")}
+          disabled={!kept}
+          onClick={() => kept && onChange({ ...transform, ...centred, scale: clamp(coverScale(kept.width, kept.height), SCALE_RANGE) }, "fill")}
         >
           Fill
         </Button>
@@ -74,6 +92,9 @@ export function TransformFields({
 }
 
 const percents = ([low, high]: readonly [number, number]) => [low * 100, high * 100] as const;
+
+// An edge of the Crop cuts off at most 90% (backend/app/candidates.py).
+const CUT_RANGE = [0, 90] as const;
 
 /**
  * A number typed in, kept within `range`, shown to a tenth. What is typed stays as it is while the

@@ -1,6 +1,7 @@
 """Overlays: videos and images laid over the Clip, picture in picture
 (.scratch/advanced-edit/issues/07-overlays.md), each placed by its Transform
-(.scratch/transform-crop/issues/01-overlay-transform.md).
+(.scratch/transform-crop/issues/01-overlay-transform.md) and cut by its Crop
+(.scratch/transform-crop/issues/02-crop.md).
 
 Seam B on the planner, the fitted size and the migration of old Overlays, then Seam A through the
 API and the real ffmpeg.
@@ -11,7 +12,7 @@ import json
 import numpy as np
 import pytest
 
-from app.candidates import Overlay, Transform
+from app.candidates import Crop, Overlay, Transform
 from app.migration import migrated_candidate, migrated_overlay
 from app.pictures import cover_scale, drawn_size
 from app.planner import FRAME, OUTPUT_WIDTH, MediaInfo, overlay_events
@@ -25,11 +26,13 @@ CLIP = "ab" * 16
 STILL = "cd" * 16
 TALL = "ef" * 16
 WIDE = "12" * 16
+SQUARE = "34" * 16
 ITEMS = {
     CLIP: MediaInfo(640, 360, 4.0, True),
     STILL: MediaInfo(200, 100, None, False),
     TALL: MediaInfo(540, 1080, None, False),
     WIDE: MediaInfo(1920, 1080, None, False),
+    SQUARE: MediaInfo(1000, 1000, None, False),
 }
 
 
@@ -37,8 +40,8 @@ def overlay(**fields) -> Overlay:
     return Overlay(**{"id": "o1", "media": CLIP, "start": 1.0, "secs": 2.0, **fields})
 
 
-def drawn(transform: Transform, media: str = CLIP):
-    [event] = overlay_events([overlay(media=media, transform=transform)], 10, ITEMS)
+def drawn(transform: Transform, media: str = CLIP, crop: Crop = Crop()):
+    [event] = overlay_events([overlay(media=media, transform=transform, crop=crop)], 10, ITEMS)
     return event.picture
 
 
@@ -93,6 +96,22 @@ def test_the_centre_is_kept_on_the_frame_and_the_picture_may_go_past_its_edges()
     assert picture.centre == (OUTPUT_WIDTH, 0)
     assert (picture.width, picture.height) == (2160, 1216)
     assert box(picture.bounds) == (0, -608, 2160, 1216)
+
+
+def test_the_crop_is_taken_in_item_pixels_before_the_picture_is_fitted():
+    picture = drawn(Transform(), SQUARE, Crop(left=0.25))
+    assert box(picture.crop) == (250, 0, 750, 1000) and picture.item_size == (1000, 1000)
+    # What is fitted is the 750x1000 that is kept: 1080x1440, not the whole item's 1080x1080.
+    assert (picture.width, picture.height) == (1080, 1440)
+    assert box(drawn(Transform(), SQUARE, Crop(top=0.1, right=0.2, bottom=0.3)).crop) == (0, 100, 800, 600)
+
+
+def test_a_crop_that_would_leave_less_than_a_tenth_is_pulled_back_by_its_second_edge():
+    tidied = Crop(left=0.6, right=0.6)
+    assert (tidied.left, tidied.right) == (0.6, pytest.approx(0.3))
+    assert Crop(top=0.9, bottom=0.5) == Crop(top=0.9, bottom=0)
+    assert Crop(left=0.2, right=0.7) == Crop(left=0.2, right=0.7)
+    assert box(drawn(Transform(), SQUARE, Crop(left=0.6, right=0.6)).crop) == (600, 0, 100, 1000)
 
 
 def test_an_old_overlay_becomes_the_transform_that_draws_the_same_box():
@@ -223,6 +242,52 @@ def test_a_turned_a_flipped_and_a_faded_overlay_render_as_they_are_planned(clien
     # At half opacity, red is mixed half and half with the picture under it.
     under = frame[1150, 100]
     assert near(540 - 81, 1150 - 81, (RED + under) / 2, tolerance=25) and not near(540 - 81, 1150 - 81, RED)
+
+
+YELLOW = np.array([255, 255, 0])
+
+
+def test_a_cropped_overlay_renders_only_what_it_keeps_and_its_crop_turns_with_it(client, settings, video_source, plain_video, pictures):
+    video_source.video = plain_video
+    quadrants = upload(client, pictures["quadrants"], "quadrants.png").json()
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    shown = {"media": quadrants["id"], "start": 0.0, "secs": 2.0}
+    for bad in ({"left": 0.95}, {"top": -0.1}, {"right": "half"}):
+        assert client.patch(candidate_url(job, candidate), json={"overlays": [{"id": "o", **shown, "crop": bad}]}).status_code == 422, bad
+    tidied = patch(client, job, candidate, overlays=[{"id": "o", **shown, "crop": {"left": 0.6, "right": 0.6}}])["overlays"][0]["crop"]
+    assert tidied == {"left": 0.6, "top": 0, "right": pytest.approx(0.3), "bottom": 0}
+    # Its right half is kept, 100x200 (green over yellow), which fits as 960x1920: at 0.2, 192x384,
+    # each quadrant 192 px, its middle 96 px from the centre.
+    half = {"left": 0.5}
+    candidate = patch(client, job, candidate, overlays=[
+        {"id": "cropped", **shown, "crop": half, "transform": {"x": 540, "y": 500, "scale": 0.2}},
+        {"id": "turned", **shown, "crop": half, "transform": {"x": 540, "y": 1000, "scale": 0.2, "rotation": 90}},
+    ])
+    planned = preview(client, job, candidate)["plan"]["overlays"]
+    assert [event["picture"]["crop"] for event in planned] == [{"x": 100, "y": 0, "width": 100, "height": 200}] * 2
+    assert [event["picture"]["bounds"] for event in planned] == [
+        {"x": 444, "y": 308, "width": 192, "height": 384}, {"x": 348, "y": 904, "width": 384, "height": 192},
+    ]
+
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    frame = full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 1.0)
+
+    def near(x: int, y: int, colour: np.ndarray) -> bool:
+        return bool(np.abs(frame[y, x] - colour).max() <= 60)
+
+    def none_of(colour: np.ndarray, bounds: dict) -> bool:
+        inside = frame[bounds["y"]:bounds["y"] + bounds["height"], bounds["x"]:bounds["x"] + bounds["width"]]
+        return not (np.abs(inside - colour).max(axis=2) < 60).any()
+
+    # The left quadrants' colours (red and blue) are gone: green is over yellow.
+    assert near(540, 500 - 96, GREEN) and near(540, 500 + 96, YELLOW)
+    # Turned a quarter clockwise, the crop with it: its top (green) is at the right.
+    assert near(540 + 96, 1000, GREEN) and near(540 - 96, 1000, YELLOW)
+    for event in planned:
+        assert none_of(RED, event["picture"]["bounds"]) and none_of(BLUE, event["picture"]["bounds"])
 
 
 def test_an_old_shape_overlay_is_refused_with_its_new_shape_named(client, pictures):

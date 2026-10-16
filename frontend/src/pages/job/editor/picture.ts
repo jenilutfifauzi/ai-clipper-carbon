@@ -23,6 +23,8 @@ export interface PictureStyle {
   height: string;
   transform: string;
   opacity: number;
+  // The media inside the box: its whole item, sized and moved so that only the crop shows in it.
+  inner: { left: string; top: string; width: string; height: string };
 }
 
 const percent = (share: number) => `${share * 100}%`;
@@ -31,10 +33,13 @@ const percent = (share: number) => `${share * 100}%`;
  * The CSS of a box drawing `picture` on a stage of the `frame`'s shape: placed at its centre and as
  * large as it is drawn (in shares of the frame, so it may go past its edges), then centred on that
  * point, turned clockwise and flipped. CSS applies a transform's functions right to left, so the
- * flip comes first and the turn after it, in the renderer's order.
+ * flip comes first and the turn after it, in the renderer's order. Inside it, its media is as large
+ * as its whole item would be and moved so that its crop fills the box (as `PanelView` shows a
+ * Source crop), cut off by the box.
  */
 export function pictureStyle(picture: Picture, frame: { width: number; height: number }): PictureStyle {
   const [x, y] = picture.centre;
+  const { crop, item_size: [across, down] } = picture;
   const steps = ["translate(-50%, -50%)"];
   if (picture.rotation % 360) steps.push(`rotate(${picture.rotation}deg)`);
   if (picture.flip_h || picture.flip_v) steps.push(`scale(${picture.flip_h ? -1 : 1}, ${picture.flip_v ? -1 : 1})`);
@@ -45,6 +50,12 @@ export function pictureStyle(picture: Picture, frame: { width: number; height: n
     height: percent(picture.height / frame.height),
     transform: steps.join(" "),
     opacity: picture.opacity,
+    inner: {
+      left: percent(-crop.x / crop.width),
+      top: percent(-crop.y / crop.height),
+      width: percent(across / crop.width),
+      height: percent(down / crop.height),
+    },
   };
 }
 

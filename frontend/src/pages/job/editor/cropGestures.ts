@@ -4,6 +4,7 @@
 // taken first and the cropped picture is what is fitted, so a new Crop changes the fitted size: the
 // commit makes up for it with the Transform's scale and centre
 // (docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md).
+import type { Crop } from "../../../api";
 import {
   fittedSize,
   offsetOnPicture,
@@ -19,13 +20,7 @@ import {
   type Size,
 } from "./pictureGestures";
 
-/** What is cut off each edge of a picture before it is fitted, as fractions of its width and height. */
-export interface Crop {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
+export type { Crop };
 
 export const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 };
 

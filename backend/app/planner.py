@@ -50,10 +50,11 @@ They are drawn over the captions and under the hook, in their order.
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`.
 
-Overlays (videos and images laid over the Clip) are each drawn as a Picture, placed by its Transform:
-its centre kept on the frame and the picture free to go past the frame's edges; cut where the Clip
-or their video ends, drawn over the Segments and under the Watermark. A video's sound, when turned
-up, is heard as a Music Clip is.
+Overlays (videos and images laid over the Clip) are each drawn as a Picture, cut by its Crop (in its
+item's pixels: what is kept is what is fitted) and placed by its Transform: its centre kept on the
+frame and the picture free to go past the frame's edges; cut where the Clip or their video ends,
+drawn over the Segments and under the Watermark. A video's sound, when turned up, is heard as a
+Music Clip is.
 
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned Segment
 by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
@@ -72,6 +73,7 @@ from enum import StrEnum
 from functools import cache
 
 from app.candidates import (
+    Crop,
     Fit,
     Layout,
     LayoutOverride,
@@ -86,7 +88,7 @@ from app.candidates import (
 )
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
-from app.pictures import drawn_size, turned_size
+from app.pictures import drawn_size, kept, turned_size
 from app.styles import (
     CaptionPosition,
     CaptionStyle,
@@ -452,13 +454,14 @@ class MediaInfo:
 
 @dataclass(frozen=True)
 class Picture:
-    """A picture as drawn, the same in the renderer and the preview (docs/adr/0007): its item's
-    pixels in `crop` (for now the whole item), scaled to `width` x `height` (even pixels), mirrored
-    as `flip_h` and `flip_v` say, turned `rotation` degrees clockwise about `centre` (in output
-    pixels, on the frame), at `opacity`. `bounds` holds it once turned, and may go past the frame's
-    edges: what the Smart Guides and the agent's dry run go by."""
+    """A picture as drawn, the same in the renderer and the preview (docs/adr/0007): the pixels in
+    `crop` of its item, which is `item_size` (width, height) large, scaled to `width` x `height`
+    (even pixels), mirrored as `flip_h` and `flip_v` say, turned `rotation` degrees clockwise about
+    `centre` (in output pixels, on the frame), at `opacity`. `bounds` holds it once turned, and may
+    go past the frame's edges: what the Smart Guides and the agent's dry run go by."""
 
     crop: Box
+    item_size: tuple[int, int]
     width: int
     height: int
     centre: tuple[float, float]
@@ -784,20 +787,21 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
         end = min(end, start + item.duration - overlay.offset)
     end = round(min(end, duration), 3)
     offset = round(overlay.offset, 3) if item.duration is not None else 0.0
-    picture = picture_of(item.width, item.height, overlay.transform)
+    picture = picture_of(item.width, item.height, overlay.transform, overlay.crop)
     return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id)
 
 
-def picture_of(width: int, height: int, transform: Transform) -> Picture:
-    """A `width` x `height` item drawn whole as `transform` places it: at its drawn size
-    (app/pictures.py), its centre kept on the frame, the picture not."""
-    drawn_width, drawn_height = drawn_size(width, height, transform, FRAME)
+def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop()) -> Picture:
+    """A `width` x `height` item cut by `crop` and drawn as `transform` places it: what it keeps at
+    its drawn size (app/pictures.py), its centre kept on the frame, the picture not."""
+    cut = Box(*kept(width, height, crop))
+    drawn_width, drawn_height = drawn_size(cut.width, cut.height, transform, FRAME)
     x = round(min(max(transform.x, 0.0), OUTPUT_WIDTH), 2)
     y = round(min(max(transform.y, 0.0), OUTPUT_HEIGHT), 2)
     across, down = turned_size(drawn_width, drawn_height, transform.rotation)
     bounds = Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
     return Picture(
-        Box(0, 0, width, height), drawn_width, drawn_height, (x, y), transform.rotation,
+        cut, (width, height), drawn_width, drawn_height, (x, y), transform.rotation,
         transform.flip_h, transform.flip_v, transform.opacity, bounds,
     )
 

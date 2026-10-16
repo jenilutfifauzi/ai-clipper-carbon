@@ -2,6 +2,7 @@ import { Copy, Layers, Trash2 } from "lucide-react";
 import type { MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
+import { NO_CROP } from "../editor/cropGestures";
 import { IDENTITY, scaleForWidth } from "../editor/picture";
 import { Group } from "../editor/StyleFields";
 import { newId, round } from "./edits";
@@ -25,6 +26,7 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     secs: round(Math.min(length, duration - start)),
     offset: 0,
     transform: { ...IDENTITY, y: 760, scale: item.width && item.height ? Number(scaleForWidth(item.width, item.height, 540).toFixed(4)) : 0.5 },
+    crop: NO_CROP,
     volume: 0,
   };
 }
@@ -69,8 +71,10 @@ export function OverlayFields({
       <p className="text-sm text-pretty text-muted">Drag it on the video to place it, and its corner to resize it.</p>
       <TransformFields
         transform={overlay.transform}
+        crop={overlay.crop}
         size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
         onChange={(transform, field) => onChange({ ...overlay, transform }, `overlay:${overlay.id}:transform.${field}`)}
+        onCrop={(crop, field) => onChange({ ...overlay, crop }, `overlay:${overlay.id}:crop.${field}`)}
       />
       {video && (
         <Group title="Sound">

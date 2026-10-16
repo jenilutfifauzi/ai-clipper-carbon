@@ -8,6 +8,7 @@ const FRAME = { width: 1080, height: 1920 };
 
 const picture = (fields: Partial<Picture> = {}): Picture => ({
   crop: { x: 0, y: 0, width: 640, height: 360 },
+  item_size: [640, 360],
   width: 540,
   height: 304,
   centre: [270, 480],
@@ -28,6 +29,25 @@ describe("a Picture as CSS", () => {
       height: `${(304 / 1920) * 100}%`,
       transform: "translate(-50%, -50%)",
       opacity: 1,
+      inner: { left: "0%", top: "0%", width: "100%", height: "100%" },
+    });
+  });
+
+  test("shows only its crop: its whole item sized and moved inside the box so that the crop fills it", () => {
+    // A 1000x1000 item with its left quarter and its bottom half cut off keeps 750x500 from (250, 0).
+    const cropped = picture({ crop: { x: 250, y: 0, width: 750, height: 500 }, item_size: [1000, 1000] });
+    expect(pictureStyle(cropped, FRAME).inner).toEqual({
+      left: `${(-250 / 750) * 100}%`,
+      top: "0%",
+      width: `${(1000 / 750) * 100}%`,
+      height: "200%",
+    });
+    // The middle of it, from (100, 300): the item moved up and left by its share of the crop.
+    expect(pictureStyle(picture({ crop: { x: 100, y: 300, width: 400, height: 200 }, item_size: [800, 800] }), FRAME).inner).toEqual({
+      left: "-25%",
+      top: "-150%",
+      width: "200%",
+      height: "400%",
     });
   });
 

@@ -163,12 +163,39 @@ class Transform:
 # 9:16 (the editor works out the scale that makes any item 540 px wide).
 OVERLAY_TRANSFORM = Transform(scale=0.5)
 
+# The most a Crop cuts off one edge, and off a pair of opposite edges: a tenth is always kept.
+MAX_CUT = 0.9
+CropEdge = Annotated[FiniteFloat, Field(ge=0, le=MAX_CUT)]
+
+
+@dataclass(frozen=True)
+class Crop:
+    """What is cut off each edge of a picture before it is fitted (docs/adr/0007), as fractions of
+    its width (`left`, `right`) and height (`top`, `bottom`). Tidied as Concat's is: each edge held
+    to 0..0.9, and a pair that would leave less than a tenth pulled back by its second edge."""
+
+    left: CropEdge = 0.0
+    top: CropEdge = 0.0
+    right: CropEdge = 0.0
+    bottom: CropEdge = 0.0
+
+    def __post_init__(self) -> None:
+        left, top = _cut(self.left, MAX_CUT), _cut(self.top, MAX_CUT)
+        object.__setattr__(self, "left", left)
+        object.__setattr__(self, "top", top)
+        object.__setattr__(self, "right", _cut(self.right, MAX_CUT - left))
+        object.__setattr__(self, "bottom", _cut(self.bottom, MAX_CUT - top))
+
+
+def _cut(value: float, most: float) -> float:
+    return min(max(value, 0.0), max(most, 0.0))
+
 
 @dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
-    for `secs`, in Timeline time, a video from `offset` seconds into it; placed by its `transform`,
-    a video's sound at `volume` (none by default)."""
+    for `secs`, in Timeline time, a video from `offset` seconds into it; cut by its `crop` and placed
+    by its `transform`, a video's sound at `volume` (none by default)."""
 
     id: ItemId
     media: MediaId
@@ -176,6 +203,7 @@ class Overlay:
     secs: TimelineSecs
     offset: FileOffset = 0.0
     transform: Transform = OVERLAY_TRANSFORM
+    crop: Crop = Crop()
     volume: Volume = 0.0
 
 

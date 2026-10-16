@@ -40,9 +40,9 @@ xfade of the pictures (each Segment first brought to the Clip's frame rate and t
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
-drawn as its Picture (`_picture`: scaled, flipped, turned with a transparent fill, faded) and laid
-over the joined frames at its centre while it shows, before the Logo and the captions. A picture
-that is only scaled keeps the graph it had: a scale and an overlay.
+drawn as its Picture (`_picture`: cropped, scaled, flipped, turned with a transparent fill, faded)
+and laid over the joined frames at its centre while it shows, before the Logo and the captions. A
+picture that is only scaled keeps the graph it had: a scale and an overlay.
 
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
@@ -497,11 +497,12 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int)
 
 def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
-    order of docs/adr/0007: scale (its crop being the whole picture for now), flip, rotate with a
-    transparent fill, opacity, then laid over at its centre. Steps that change nothing are left out.
-    `after` is more filters of the picture's own frames, `laid` more options of the overlay; its own
-    frames are labelled `name`."""
-    steps = [f"scale={picture.width}:{picture.height}:flags=lanczos"]
+    order of docs/adr/0007: crop, scale, flip, rotate with a transparent fill, opacity, then laid
+    over at its centre. Steps that change nothing are left out. `after` is more filters of the
+    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`."""
+    crop = picture.crop
+    steps = [] if (crop.width, crop.height) == picture.item_size else [f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1"]
+    steps.append(f"scale={picture.width}:{picture.height}:flags=lanczos")
     steps += ["hflip"] * picture.flip_h + ["vflip"] * picture.flip_v
     turned = picture.rotation % 360 != 0
     if turned or picture.opacity < 1:

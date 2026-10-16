@@ -1,12 +1,22 @@
-"""The geometry of a picture placed by its Transform: its fitted size, the scale that covers the
-frame, its drawn size and the box it fills once turned
+"""The geometry of a picture cut by its Crop and placed by its Transform: the pixels it keeps, its
+fitted size (that of what it keeps), the scale that covers the frame, its drawn size and the box it
+fills once turned
 (docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md). Pure, so that the planner (Overlays, and later media Segments and Manual Scenes) and the migration
 of old Candidates share one rule. Sizes are in pixels; `frame` is the output's (width, height).
 """
 
 import math
 
-from app.candidates import Transform
+from app.candidates import Crop, Transform
+
+
+def kept(width: int, height: int, crop: Crop) -> tuple[int, int, int, int]:
+    """The pixels of a `width` x `height` picture that `crop` keeps, as (x, y, width, height) from its
+    top-left corner: each edge at the nearest pixel, so that what is kept stays inside the picture.
+    This is what is fitted."""
+    left, right = round(width * crop.left), round(width * (1 - crop.right))
+    top, bottom = round(height * crop.top), round(height * (1 - crop.bottom))
+    return left, top, right - left, bottom - top
 
 
 def fitted(width: float, height: float, frame: tuple[int, int]) -> tuple[float, float]:

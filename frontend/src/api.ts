@@ -430,9 +430,18 @@ export interface Transform {
   opacity: number;
 }
 
+// What is cut off each edge of a picture before it is fitted (backend/app/candidates.py), as
+// fractions of its width and height: each 0 to 0.9, a pair leaving a tenth at least (tidyCrop).
+export interface Crop {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 // A video or image from the Media Library laid over the Clip: from `start` for `secs` in Timeline
-// time (a video from `offset` into it), placed by its Transform, a video's sound at `volume` (0,
-// muted, by default).
+// time (a video from `offset` into it), cut by its Crop and placed by its Transform, a video's
+// sound at `volume` (0, muted, by default).
 export interface Overlay {
   id: string;
   media: string;
@@ -440,14 +449,16 @@ export interface Overlay {
   secs: number;
   offset: number;
   transform: Transform;
+  crop: Crop;
   volume: number;
 }
 
-// A picture as drawn (backend/app/planner.py): its item's pixels in `crop` (for now the whole item)
-// scaled to `width` x `height`, flipped, turned `rotation` degrees clockwise about `centre`, at
-// `opacity`; `bounds` holds it once turned, and may go past the frame's edges.
+// A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
+// large) scaled to `width` x `height`, flipped, turned `rotation` degrees clockwise about `centre`,
+// at `opacity`; `bounds` holds it once turned, and may go past the frame's edges.
 export interface Picture {
   crop: Box;
+  item_size: [number, number];
   width: number;
   height: number;
   centre: [number, number];
