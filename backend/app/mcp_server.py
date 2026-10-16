@@ -636,15 +636,18 @@ def _plan_view(preview: dict) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time, each Scene's Layout and
     the Framing that draws its first frame (a Manual Scene's own), where the picture of a Manual
     Scene, of a video's Scene and of each Overlay is drawn (`_picture_view`), a keyed one's
-    Keyframes and its bounds at each (`_motion_view`), the keyed sounds' volume Keyframes, and the
-    Words."""
+    Keyframes and its bounds at each (`_motion_view`), the keyed sounds' volume Keyframes (a video
+    Segment's, a Music Clip's, an Overlay's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else plan["end"] - plan["start"], 2),
         "words_source": preview["words_source"],
         "scenes": [
-            {**_times(scene, "start", "end", "layout", "framing"), **(_picture_view(scene["picture"]) if scene["picture"] else {})}
+            {
+                **_times(scene, "start", "end", "layout", "framing"),
+                **(_picture_view(scene["picture"]) | _motion_view(scene["picture"]) if scene["picture"] else {}),
+            }
             for scene in plan["scenes"]
         ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
@@ -663,7 +666,7 @@ def _plan_view(preview: dict) -> dict:
         ],
         **_compact({"sounds": [
             {"id": event["id"], "media": event["media"], **_times(event, "start", "end"), "keys": _keys_view({"volume": event["gain"]}, event["start"])}
-            for event in plan["audio"]
+            for event in plan["segments"] + plan["audio"]
             if event["gain"]
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
