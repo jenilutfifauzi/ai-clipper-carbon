@@ -65,7 +65,8 @@ Three questions had to be settled:
 
 - **Overturns the Out of Scope line on keyframes** in `.scratch/advanced-edit/spec.md`, `.scratch/preview-direct-edit/spec.md` and `.scratch/transform-crop/spec.md`, and ADR 0007's "Keyframes stay out" for the properties above. Masks, keyed crops and keyed text stay out.
 - **A Transform and a volume are "constant unless keyed".** Every stored Candidate reads as having no Keyframes, and plans, renders and previews as before.
-- **The renderer gains a second kind of process.** That brings pipes, a decode process per keyed video, and OpenCV as a declared dependency. A Clip with keyed pictures renders slower, by the cost of each keyed picture. An unkeyed Clip's ffmpeg command is unchanged.
+- **A Clip with a keyed picture brings its joined frames to one frame rate (`fps`) before the Overlays,** so that frame n is at n/fps, the time the frames are sampled at. Without it, a Source's own frame times put a keyed picture up to a frame off; with it, the picture may sit up to half a frame off the sound. An unkeyed Clip gets no such filter.
+- **The renderer gains a second kind of process.** That brings pipes fed by a writer thread per keyed picture in the render, a decode process per keyed video, and OpenCV as a declared dependency (the contrib build mediapipe already needs, so that two builds don't install over one `cv2`). A Clip with keyed pictures renders slower, by the cost of each keyed picture. An unkeyed Clip's ffmpeg command is unchanged.
 - **The frontend gains a bezier solver** that must agree with the backend's. The shared vectors are the guard.
 - **The preview draws keyed pictures outside React's render,** on `Playback`'s frame, writing styles directly.
 - **The Advanced Edit gets a Timeline | Keyframes tab bar** before `workspace-layout` (roadmap #22), which will absorb it.

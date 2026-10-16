@@ -377,6 +377,26 @@ They don't check how an expression or a filter string is spelled, or which funct
 - **Speed ramps and time remapping** (`speed`, roadmap #7).
 - **A resizable, dockable workspace** (`workspace-layout`, roadmap #22). Here there are only the two tabs.
 
+## Accepted additions
+
+The code review of 2026-10-16 found behaviour that this spec didn't ask for, or asked for differently. These are kept, as part of what the feature is:
+
+- **A Keyframe set within a frame of another replaces it,** not only within half a frame: the server refuses two closer than 1/30 s, and at 50 fps the next frame is 0.02 s away. The replaced Keyframe keeps its Ease.
+- **A cut eased span keeps its curve.** Re-anchoring gives the new end Keyframe (and the first kept one after a cut start) the part of the cut Ease that remains, so a split's pieces play the whole's motion to within a thousandth of a pixel. Splitting an Ease in-out leaves two Custom Eases. A Linear span stays Linear.
+- **No Keyframe is added within a frame of a kept one** when re-anchoring.
+- **Extending an item's start earlier moves its Keyframes later by as much,** so the motion stays on the same moments.
+- **A layer over a whole deleted Segment loses its last seconds, not its middle,** as ripple already shortens it, so its picture and its Keyframes go on without a jump.
+- **A Manual Scene's start** is where the earliest Segment showing the override's time starts that Scene (Scenes are found per Segment). Trimming the start of the only Segment that shows it moves the motion with it on the Source. ADR 0008 records it.
+- **A Clip with a keyed picture brings its joined frames to one frame rate** before the Overlays (ADR 0008).
+- **The ruler diamonds and the pane's drags work with the playhead outside the item,** since they are how the playhead gets there. The Ease picker, Clear all and keyed fields are off there.
+- **Clear all Keyframes leaves each constant at its value at the playhead,** as removing the last Keyframe does.
+- **A rotation constant is kept within ±360°** when the last rotation Keyframe goes.
+- **`at` is at most 3600 s.**
+- **The bottom area grows while the Keyframes tab is open,** and the Timeline stays mounted under it.
+- **The Volume Line of a picked keyed item has a knob at the playhead,** which is what is dragged.
+- **A keyed video is decoded at the largest size it is drawn at,** and its shadow blurred at a reduced size, for speed.
+- **OpenCV is the contrib build** that mediapipe already depends on.
+
 ## Further Notes
 
 - **Overturns the Out of Scope line on keyframes.** ADR 0008 records it.
