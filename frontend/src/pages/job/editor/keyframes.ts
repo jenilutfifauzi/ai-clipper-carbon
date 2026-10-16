@@ -40,11 +40,16 @@ export function eased([x1, y1, x2, y2]: Ease, x: number): number {
 
 /** y of the cubic-bezier from (0, 0) to (1, 1) through (x1, y1) and (x2, y2) where its x is `x`. */
 export function bezierYAtX(x1: number, y1: number, x2: number, y2: number, x: number): number {
+  return axis(y1, y2, parameterAt(x1, x2, x));
+}
+
+// The parameter t where the curve's x is `x` (held to 0..1).
+function parameterAt(x1: number, x2: number, x: number): number {
   x = Math.min(Math.max(x, 0), 1);
   let t = x;
   for (let step = 0; step < 8; step++) {
     const error = axis(x1, x2, t) - x;
-    if (Math.abs(error) < 1e-7) return axis(y1, y2, t);
+    if (Math.abs(error) < 1e-7) return t;
     const slope = slopeOf(x1, x2, t);
     if (Math.abs(slope) < 1e-9) break;
     t -= error / slope;
@@ -58,7 +63,7 @@ export function bezierYAtX(x1: number, y1: number, x2: number, y2: number, x: nu
     else low = t;
     t = (low + high) / 2;
   }
-  return axis(y1, y2, t);
+  return t;
 }
 
 // One coordinate of the curve at parameter `t`, its ends at 0 and 1.
@@ -216,4 +221,94 @@ export function writtenTransform(
     if (at !== null && next[prop] !== shown[prop]) written = writeKey(written, prop, at, next[prop], transform[prop]).keys;
   }
   return { transform: constants, keys: written };
+}
+
+// Re-anchoring (Concat's `rewindow`): an item trimmed, split or rippled keeps the Keyframes of the
+// part it still plays, so that it plays what it did at the moments it keeps.
+
+// How far outside the kept window a Keyframe can be and still be in it, for times rounded on the way.
+const WINDOW_REACH = 1e-6;
+// Re-anchored times are kept to a microsecond, so that the sums leave no float dust in them.
+const microseconds = (seconds: number) => Math.round(seconds * 1e6) / 1e6;
+
+/**
+ * `keys` (sorted, in seconds from their item's start) for the item once it plays only from `from` to
+ * `to` of itself as it was: each kept one moved `from` earlier, each outside removed. When some were
+ * removed before `from`, one is added at 0 with the value there, Linear; when some were removed after
+ * `to`, one at the new end with the value there and the Ease of the first one removed. A span cut
+ * short eases over the part of its Ease it kept (easePart), so that the piece plays exactly what the
+ * whole did; a Linear one stays Linear, and so is the rule's Ease where a span is whole. An added one
+ * isn't wanted closer than a frame to a kept one (nor allowed: they are a frame apart at least). A
+ * window past the item's ends (it got longer) removes none: a later end leaves them as they are (the
+ * same list), an earlier start keeps them on the same moments.
+ */
+export function rewindow(keys: readonly Keyframe[], from: number, to: number): Keyframe[] {
+  const kept = keys.filter((key) => key.at >= from - WINDOW_REACH && key.at <= to + WINDOW_REACH);
+  if (Math.abs(from) <= WINDOW_REACH && kept.length === keys.length) return keys as Keyframe[];
+  // In the item's old seconds first.
+  const out = kept.map((key) => ({ ...key }));
+  const cutBefore = keys.some((key) => key.at < from - WINDOW_REACH);
+  const firstAfter = keys.find((key) => key.at > to + WINDOW_REACH);
+  if (cutBefore && !(out.length && out[0].at - from < KEY_GAP_SECS)) out.unshift({ at: from, value: valueAt(keys, from, 0), ease: LINEAR });
+  if (firstAfter && !(out.length && to - out[out.length - 1].at < KEY_GAP_SECS)) out.push({ at: to, value: valueAt(keys, to, 0), ease: firstAfter.ease });
+  const length = microseconds(to - from);
+  return out.map((key, i) => ({
+    at: Math.min(Math.max(microseconds(key.at - from), 0), length),
+    value: key.value,
+    ease: i ? easeOver(keys, out[i - 1].at, key.at) : key.ease,
+  }));
+}
+
+// The Ease the span of `keys` from `a` to `b` (both within one span of them) has: the Ease of the
+// Keyframe that ends that span, or the part of it from `a` to `b` where it is cut short.
+function easeOver(keys: readonly Keyframe[], a: number, b: number): Ease {
+  const end = keys.findIndex((key) => key.at >= b - WINDOW_REACH);
+  const [before, key] = [keys[end - 1], keys[end]];
+  if (!before || !key || key.at <= before.at) return key?.ease ?? LINEAR;
+  if (a <= before.at + WINDOW_REACH && b >= key.at - WINDOW_REACH) return key.ease;
+  const span = key.at - before.at;
+  return easePart(key.ease, (a - before.at) / span, (b - before.at) / span);
+}
+
+/**
+ * The part of `ease` from `x0` to `x1` (shares of its span, 0 ≤ x0 < x1 ≤ 1) as an Ease of its own:
+ * the cubic-bezier between those points, scaled to the unit square, so that a span cut there eases
+ * as the whole span did between them. `ease` itself when it is linear, or where the part can't be an
+ * Ease (it ends at the height it began, or its handles go past an Ease's bounds: y within −2..3).
+ */
+export function easePart(ease: Ease, x0: number, x1: number): Ease {
+  const [x1h, y1h, x2h, y2h] = ease;
+  if (Math.abs(x1h - y1h) < 1e-6 && Math.abs(x2h - y2h) < 1e-6) return ease;
+  const [t0, t1] = [parameterAt(x1h, x2h, x0), parameterAt(x1h, x2h, x1)];
+  // The part's ends, and its handles a third of the way along each end's tangent (exact for a cubic).
+  const third = (t1 - t0) / 3;
+  const [ax, ay, bx, by] = [axis(x1h, x2h, t0), axis(y1h, y2h, t0), axis(x1h, x2h, t1), axis(y1h, y2h, t1)];
+  if (bx - ax < 1e-9 || Math.abs(by - ay) < 1e-9) return ease;
+  const handles = [
+    (ax + third * slopeOf(x1h, x2h, t0) - ax) / (bx - ax),
+    (ay + third * slopeOf(y1h, y2h, t0) - ay) / (by - ay),
+    (bx - third * slopeOf(x1h, x2h, t1) - ax) / (bx - ax),
+    (by - third * slopeOf(y1h, y2h, t1) - ay) / (by - ay),
+  ].map((value) => Math.round(value * 1e6) / 1e6);
+  const [px1, py1, px2, py2] = handles;
+  if ([py1, py2].some((y) => y < -2 || y > 3)) return ease;
+  return [Math.min(Math.max(px1, 0), 1), py1, Math.min(Math.max(px2, 0), 1), py2];
+}
+
+/** Every keyed property of `keys` re-anchored to the window from `from` to `to` (see rewindow); `keys` itself when none changes. */
+export function rewindowKeys(keys: Keys, from: number, to: number): Keys {
+  const moved = (Object.entries(keys) as [keyof Keys, Keyframe[]][]).map(([property, list]) => [property, rewindow(list, from, to)] as const);
+  return moved.every(([property, list]) => list === keys[property]) ? keys : Object.fromEntries(moved);
+}
+
+/**
+ * `item` once it plays only from `from` to `to` seconds of itself as it was, its Keyframes
+ * re-anchored to that window; an item without Keyframes (a Text Layer) as it is, and so is one whose
+ * Keyframes all stay. Every trim, split and ripple of an item goes through this, whatever its kind.
+ */
+export function rekeyed<T extends object>(item: T, from: number, to: number): T {
+  if (!("keys" in item)) return item;
+  const keys = item.keys as Keys;
+  const next = rewindowKeys(keys, from, to);
+  return next === keys ? item : { ...item, keys: next };
 }

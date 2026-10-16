@@ -9,11 +9,19 @@ by the rule the preview samples them by (`picture_at`, app/keyframes.py), and `P
   far past the frame costs no more than one on it;
 - gives it 2 px of transparent margin, its colour copied from its edge, so that the turn's
   interpolation fades its edge out rather than into black;
+- rounds its corners at their sampled radius and draws its border along the inside of its edge, as
+  many output pixels wide whatever its size, as the still chain does (renderer.py's `_corners`);
 - turns it about its sampled centre, placed in fractions of a pixel, into only the box that holds
   it on the frame, the rest of the reused frame cleared where it was drawn the frame before;
+- lays it over its shadow, cast from its turned shape, so that it falls in the frame's own
+  directions, as the still chain's (`_shadow`);
 - multiplies its alpha by the sampled opacity.
 
 The alpha is straight: ffmpeg's overlay of a premultiplied picture over yuv420p darkens it.
+
+An image is read once. A video is decoded by an ffmpeg process of its own (`VideoDecode`), which
+crops and flips it, brings it down to the largest size it is drawn at, and sends a frame for each
+of the Clip's, timed as the still chain times a video Overlay.
 
 `FrameFeed` writes one picture's frames to its pipe from a thread of its own, so that ffmpeg, reading
 every input as it needs it, never waits on another. A feed whose ffmpeg has gone (failed or stopped)
@@ -22,16 +30,22 @@ stops at its next write.
 
 import math
 import os
+import subprocess
+import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+from app.candidates import Border, Shadow
 from app.planner import FRAME, Picture, picture_at
 
 # The transparent margin round a picture before it is turned, in output pixels.
 MARGIN = 2
+# A shadow's blur is made at a size where its sigma is about this many pixels.
+BLUR_SIGMA = 3
 
 
 def frame_numbers(start: float, end: float, fps: float) -> range:
@@ -39,24 +53,40 @@ def frame_numbers(start: float, end: float, fps: float) -> range:
     return range(math.ceil(start * fps - 1e-6), math.ceil(end * fps - 1e-6))
 
 
-class PictureFrames:
-    """The frames of one keyed `picture` of an item whose pixels are `image` (RGBA, its whole size),
-    each drawn into one reused frame of the output's size."""
+def shadow_room(shadow: Shadow) -> int:
+    """How far round a picture its `shadow` can fall, in output pixels: its blur's reach (three
+    sigmas, the sigma half the blur, as a CSS shadow's) and its offset."""
+    return math.ceil(1.5 * shadow.blur) + math.ceil(max(abs(shadow.x), abs(shadow.y)))
 
-    def __init__(self, picture: Picture, image: np.ndarray, frame: tuple[int, int] = FRAME) -> None:
+
+class PictureFrames:
+    """The frames of one keyed `picture`, each drawn into one reused frame of the output's size, of
+    an item whose pixels are `image` (RGBA, its whole size), or of a video's frames, each cropped
+    and flipped already (and maybe scaled), `show`n before it is drawn."""
+
+    def __init__(self, picture: Picture, image: np.ndarray | None = None, frame: tuple[int, int] = FRAME) -> None:
         self.picture = picture
-        crop = picture.crop
-        cut = image[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width]
-        if picture.flip_h:
-            cut = cut[:, ::-1]
-        if picture.flip_v:
-            cut = cut[::-1]
-        self.source = np.ascontiguousarray(cut)
         self.canvas = np.zeros((frame[1], frame[0], 4), np.uint8)
         # Where the frame before drew, cleared before the next is drawn.
         self.drawn: tuple[int, int, int, int] | None = None
-        # The last part scaled, and what it was scaled from and to.
+        # The last part scaled and decorated, and what it was made from.
         self.scaled: tuple[tuple[int, ...], np.ndarray] | None = None
+        self.decorated: tuple[tuple[float, ...], np.ndarray] | None = None
+        self.source = np.zeros((1, 1, 4), np.uint8)
+        if image is not None:
+            crop = picture.crop
+            cut = image[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width]
+            if picture.flip_h:
+                cut = cut[:, ::-1]
+            if picture.flip_v:
+                cut = cut[::-1]
+            self.show(np.ascontiguousarray(cut))
+
+    def show(self, cut: np.ndarray) -> None:
+        """Draw `cut` from now on: the item's pixels in the picture's crop, at any size, flipped as the
+        picture is (RGBA)."""
+        self.source = cut
+        self.scaled = self.decorated = None
 
     def draw(self, time: float) -> np.ndarray:
         """The frame at `time` seconds into the Clip: the picture as sampled there, over transparency."""
@@ -68,13 +98,16 @@ class PictureFrames:
         if at.opacity <= 0 or at.width < 0.5 or at.height < 0.5:
             return self.canvas
         frame_width, frame_height = self.canvas.shape[1], self.canvas.shape[0]
+        # A shadow falls on the frame from as far off it as it reaches.
+        room = shadow_room(at.shadow) if at.shadow else 0
         angle = math.radians(at.rotation)
         cos, sin = math.cos(angle), math.sin(angle)
         cx, cy = at.centre
         width, height = float(at.width), float(at.height)
 
-        # What of the picture (in its drawn pixels, from its top-left corner) is on the frame.
-        corners = [(0, 0), (frame_width, 0), (0, frame_height), (frame_width, frame_height)]
+        # What of the picture (in its drawn pixels, from its top-left corner) is on the frame, or
+        # near enough to cast its shadow onto it.
+        corners = [(-room, -room), (frame_width + room, -room), (-room, frame_height + room), (frame_width + room, frame_height + room)]
         local = [((px - cx) * cos + (py - cy) * sin + width / 2, -(px - cx) * sin + (py - cy) * cos + height / 2) for px, py in corners]
         u0 = max(min(u for u, _ in local) - MARGIN, 0.0)
         u1 = min(max(u for u, _ in local) + MARGIN, width)
@@ -93,6 +126,8 @@ class PictureFrames:
         size = (max(1, round(across)), max(1, round(down)))
         padded = self._scaled((sx0, sx1, sy0, sy1, *size))
         step_x, step_y = across / size[0], down / size[1]
+        if at.radius > 0 or at.border is not None:
+            padded = self._decorated(padded, (left, top, step_x, step_y, width, height, at.radius), at.border)
 
         # From the padded part's pixels to the frame's: scaled, moved to the picture's centre, turned
         # about it; a pixel's middle at its index plus a half on both.
@@ -105,12 +140,19 @@ class PictureFrames:
         rows, columns = padded.shape[:2]
         edges = np.array([[-0.5, -0.5, 1], [columns - 0.5, -0.5, 1], [-0.5, rows - 0.5, 1], [columns - 0.5, rows - 0.5, 1]])
         placed = edges @ matrix.T + 0.5
-        x0, y0 = max(math.floor(placed[:, 0].min()), 0), max(math.floor(placed[:, 1].min()), 0)
-        x1, y1 = min(math.ceil(placed[:, 0].max()), frame_width), min(math.ceil(placed[:, 1].max()), frame_height)
-        if x1 <= x0 or y1 <= y0:
+        # The box it is turned into, with room for its shadow, as far as that can reach the frame.
+        x0, y0 = max(math.floor(placed[:, 0].min()) - room, -room), max(math.floor(placed[:, 1].min()) - room, -room)
+        x1 = min(math.ceil(placed[:, 0].max()) + room, frame_width + room)
+        y1 = min(math.ceil(placed[:, 1].max()) + room, frame_height + room)
+        if min(x1, frame_width) <= max(x0, 0) or min(y1, frame_height) <= max(y0, 0):
             return self.canvas
         matrix[:, 2] -= (x0, y0)
         box = cv2.warpAffine(padded, matrix, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+        if at.shadow is not None:
+            box = _over_shadow(box, at.shadow)
+        # Only what is on the frame.
+        box = box[max(-y0, 0) : box.shape[0] - max(y1 - frame_height, 0), max(-x0, 0) : box.shape[1] - max(x1 - frame_width, 0)]
+        x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, frame_width), min(y1, frame_height)
         if at.opacity < 1:
             box[..., 3] = cv2.convertScaleAbs(box[..., 3], alpha=at.opacity)
         self.canvas[y0:y1, x0:x1] = box
@@ -133,6 +175,87 @@ class PictureFrames:
         self.scaled = (key, padded)
         return padded
 
+    def _decorated(self, padded: np.ndarray, geometry: tuple[float, ...], border: Border | None) -> np.ndarray:
+        """`padded`, a part of the picture `width` x `height` large whose first pixel inside its margin
+        is at `left`, `top` of it and whose pixels are `step_x` x `step_y` of it, its corners rounded
+        `radius` and its `border` drawn (`_decorate`): kept for the next frame, which often needs the
+        same."""
+        assert self.scaled is not None
+        key = (*self.scaled[0], *geometry)
+        if self.decorated is not None and self.decorated[0] == key:
+            return self.decorated[1]
+        left, top, step_x, step_y, width, height, radius = geometry
+        rows, columns = padded.shape[:2]
+        # Each pixel's middle, in the picture's drawn pixels from its top-left corner.
+        us = left + (np.arange(columns, dtype=np.float32) - MARGIN + 0.5) * step_x
+        vs = top + (np.arange(rows, dtype=np.float32) - MARGIN + 0.5) * step_y
+        # Nothing changes farther inside than the radius and the border's width: only the bands
+        # along the edges are drawn.
+        reach = max(radius, border.width if border is not None else 0) + 1
+        top_rows, bottom_rows = int(np.searchsorted(vs, reach)), int(np.searchsorted(vs, height - reach))
+        left_columns, right_columns = int(np.searchsorted(us, reach)), int(np.searchsorted(us, width - reach))
+        bottom_rows, right_columns = max(bottom_rows, top_rows), max(right_columns, left_columns)
+        out = padded.copy()
+        for down, across in (
+            (slice(0, top_rows), slice(0, columns)),
+            (slice(bottom_rows, rows), slice(0, columns)),
+            (slice(top_rows, bottom_rows), slice(0, left_columns)),
+            (slice(top_rows, bottom_rows), slice(right_columns, columns)),
+        ):
+            if down.stop > down.start and across.stop > across.start:
+                out[down, across] = _decorate(out[down, across], us[across], vs[down], width, height, radius, border)
+        self.decorated = (key, out)
+        return out
+
+
+def _decorate(pixels: np.ndarray, us: np.ndarray, vs: np.ndarray, width: float, height: float, radius: float, border: Border | None) -> np.ndarray:
+    """`pixels` (RGBA, their middles at `us` across and `vs` down a `width` x `height` picture) with
+    the picture's `border` laid over them within its width of the edge, and their alpha cut to the
+    box with its corners rounded `radius`, each anti-aliased over a pixel by the box's signed
+    distance, as `_corners` in renderer.py does."""
+    across = np.abs(us - width / 2) - (width / 2 - radius)
+    down = np.abs(vs - height / 2) - (height / 2 - radius)
+    outside = np.hypot(np.maximum(across, 0)[None, :], np.maximum(down, 0)[:, None])
+    distance = outside + np.minimum(np.maximum(across[None, :], down[:, None]), 0) - radius
+    colour = pixels[..., :3].astype(np.float32)
+    alpha = pixels[..., 3].astype(np.float32) / 255
+    if border is not None:
+        ring = np.clip(distance + border.width + 0.5, 0, 1)
+        shade = np.array([int(border.colour[i : i + 2], 16) for i in (1, 3, 5)], np.float32)
+        colour = colour * (1 - ring[..., None]) + shade * ring[..., None]
+        alpha = ring + alpha * (1 - ring)
+    alpha *= np.clip(0.5 - distance, 0, 1)
+    return np.dstack([colour, alpha * 255]).round().astype(np.uint8)
+
+
+def _over_shadow(box: np.ndarray, shadow: Shadow) -> np.ndarray:
+    """`box` (RGBA, a turned picture with room round it) laid over its `shadow`: its alpha at the
+    shadow's opacity, moved by its offset and blurred, in its colour. A wide blur is made at a
+    smaller size and brought back, which a shadow's smoothness hides and which costs a fraction."""
+    alpha = box[..., 3]
+    dx, dy = round(shadow.x), round(shadow.y)
+    cast = np.zeros_like(alpha)
+    rows, columns = alpha.shape
+    cast[max(dy, 0) : rows + min(dy, 0), max(dx, 0) : columns + min(dx, 0)] = alpha[max(-dy, 0) : rows - max(dy, 0), max(-dx, 0) : columns - max(dx, 0)]
+    sigma = shadow.blur / 2
+    if sigma:
+        shrink = max(1, math.floor(sigma / BLUR_SIGMA))
+        if shrink > 1:
+            small = cv2.resize(cast, (math.ceil(columns / shrink), math.ceil(rows / shrink)), interpolation=cv2.INTER_LINEAR)
+            small = cv2.GaussianBlur(small, (0, 0), sigma / shrink)
+            cast = cv2.resize(small, (columns, rows), interpolation=cv2.INTER_LINEAR)
+        else:
+            cast = cv2.GaussianBlur(cast, (0, 0), sigma)
+    # Straight alpha's "over": each colour weighted by its share of what shows.
+    over = alpha.astype(np.float32) * (1 / 255)
+    under = cast.astype(np.float32) * (shadow.opacity / 255)
+    under *= 1 - over
+    shade = np.empty_like(box)
+    shade[...] = (*(int(shadow.colour[i : i + 2], 16) for i in (1, 3, 5)), 255)
+    out = cv2.blendLinear(box, shade, over, under)
+    out[..., 3] = cv2.convertScaleAbs(over + under, alpha=255)
+    return out
+
 
 def read_image(path: os.PathLike | str) -> np.ndarray:
     """An image's pixels as RGBA, opaque where it has no alpha of its own."""
@@ -146,15 +269,98 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
     return cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGBA)
 
 
+class VideoDecode:
+    """The frames of a keyed video Overlay's `picture`, from `video` (by `ffmpeg`), one for each of
+    the Clip's frames at `fps` (`numbers`) while the Overlay shows, from `start` to `end` seconds
+    into the Clip, `offset` seconds into the video: each cropped and flipped as the picture is, no
+    larger than it is drawn at its largest over its span (`size`), RGBA. Each is the video's last
+    frame at or before the Clip's frame's time, the video's first frame from its offset at the
+    Overlay's start, as the still chain lays a video Overlay over the frames (renderer.py's
+    `_overlay`). When the video ends early, its last frame is held."""
+
+    def __init__(self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, offset: float, fps: float) -> None:
+        self.ffmpeg, self.video, self.picture = ffmpeg, video, picture
+        self.start, self.end, self.offset, self.fps = start, end, offset, fps
+        self.numbers = frame_numbers(start, end, fps)
+        # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
+        # what is sent is no more than what is drawn.
+        drawn = [picture_at(picture, number / fps) for number in self.numbers] or [picture]
+        crop = picture.crop
+        self.size = (min(crop.width, math.ceil(max(at.width for at in drawn))), min(crop.height, math.ceil(max(at.height for at in drawn))))
+        self._process: subprocess.Popen[bytes] | None = None
+
+    def frames(self) -> Iterator[np.ndarray]:
+        """Each of its frames in turn, in one of two reused arrays: the one after next overwrites it."""
+        crop = self.picture.crop
+        width, height = self.size
+        steps = [
+            f"setpts=PTS-STARTPTS+{self.start:.3f}/TB",
+            f"fps={self.fps:.6g}:start_time={self.numbers.start / self.fps:.6f}:round=up",
+            f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1",
+            *([] if (width, height) == (crop.width, crop.height) else [f"scale={width}:{height}:flags=lanczos"]),
+            *["hflip"] * self.picture.flip_h, *["vflip"] * self.picture.flip_v,
+            "format=rgba",
+        ]
+        command = [
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
+            "-ss", f"{self.offset:.3f}", "-t", f"{self.end - self.start:.3f}", "-i", str(self.video),
+            "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(len(self.numbers)),
+            "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
+        ]
+        frames = [np.zeros((height, width, 4), np.uint8) for _ in range(2)]
+        with tempfile.TemporaryFile() as errors:
+            self._process = process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors)
+            assert process.stdout is not None
+            read = 0
+            held = None
+            for _ in self.numbers:
+                if held is None:
+                    frame = frames[read % 2]
+                    if _fill(process.stdout, memoryview(frame).cast("B")):
+                        read += 1
+                        yield frame
+                        continue
+                    if not read:
+                        process.wait()
+                        errors.seek(0)
+                        # Its last line: the error the render reports is a few lines long at most.
+                        said = (errors.read().decode(errors="replace").strip() or "no frames").splitlines()[-1]
+                        raise RuntimeError(f"The video {self.video.name} couldn't be decoded: {said}")
+                    # It ended early: its last whole frame is held.
+                    held = frames[(read - 1) % 2]
+                yield held
+
+    def close(self) -> None:
+        """End its ffmpeg, if it runs."""
+        if self._process is not None:
+            if self._process.poll() is None:
+                self._process.kill()
+            self._process.wait()
+            if self._process.stdout is not None:
+                self._process.stdout.close()
+
+
+def _fill(stream, data: memoryview) -> bool:
+    """Read `stream` into all of `data`; False when it ends first."""
+    while data:
+        count = stream.readinto(data)
+        if not count:
+            return False
+        data = data[count:]
+    return True
+
+
 class FrameFeed:
     """One keyed picture's frames from `start` to `end` seconds into the Clip (`frame_numbers` at
-    `fps`), drawn by `frames` and written to a pipe, whose reading end (`fd`) ffmpeg is given. Its
-    thread is started once ffmpeg runs; `error` is what stopped it, if anything did but ffmpeg going."""
+    `fps`), drawn by `frames` (each of a video's frames shown to it first, from `video`) and written
+    to a pipe, whose reading end (`fd`) ffmpeg is given. Its thread is started once ffmpeg runs;
+    `error` is what stopped it, if anything did but ffmpeg going."""
 
-    def __init__(self, frames: PictureFrames, start: float, end: float, fps: float) -> None:
+    def __init__(self, frames: PictureFrames, start: float, end: float, fps: float, video: VideoDecode | None = None) -> None:
         self.frames = frames
         self.numbers = frame_numbers(start, end, fps)
         self.fps = fps
+        self.video = video
         self.fd, self._write = os.pipe()
         self.error: BaseException | None = None
         self._thread: threading.Thread | None = None
@@ -173,7 +379,10 @@ class FrameFeed:
 
     def _feed(self, failed: Callable[[], None]) -> None:
         try:
+            shown = iter(self.video.frames()) if self.video is not None else None
             for number in self.numbers:
+                if shown is not None:
+                    self.frames.show(next(shown))
                 data = memoryview(self.frames.draw(number / self.fps)).cast("B")
                 while data:
                     data = data[os.write(self._write, data) :]
@@ -185,6 +394,8 @@ class FrameFeed:
             failed()
         finally:
             os.close(self._write)
+            if self.video is not None:
+                self.video.close()
 
     def close(self) -> None:
         """Wait for its thread, or let go of both ends when it never started."""

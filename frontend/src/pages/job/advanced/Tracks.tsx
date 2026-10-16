@@ -1,5 +1,5 @@
 import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
   jobPeaksUrl,
@@ -19,6 +19,7 @@ import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
+import { retimer } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
@@ -117,6 +118,8 @@ export function Tracks({
 }) {
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
+  // A Music Clip or Overlay trimmed: its Keyframes re-anchored from where they were as the drag began.
+  const [retime] = useState(retimer);
   // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
   const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
   // A picked item of several dragged or trimmed (or a Segment moved): picked alone.
@@ -220,13 +223,18 @@ export function Tracks({
                 onChange={({ start, end, edge }, group) =>
                   layerChanged({ kind: "overlay", id: overlay.id }, overlay.start, { start, edge }, group, () =>
                     handlers.onOverlay(
-                      {
-                        ...overlay,
-                        start: round(start),
-                        secs: round(end - start),
-                        // Trimming a video's start starts it later in the video.
-                        offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
-                      },
+                      retime(
+                        overlay,
+                        {
+                          ...overlay,
+                          start: round(start),
+                          secs: round(end - start),
+                          // Trimming a video's start starts it later in the video.
+                          offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
+                        },
+                        edge,
+                        group,
+                      ),
                       group,
                     ),
                   )
@@ -417,13 +425,18 @@ export function Tracks({
                 onChange={({ start, end, edge }, group) =>
                   layerChanged({ kind: "music", id: clip.id }, clip.start, { start, edge }, group, () =>
                     handlers.onMusic(
-                      {
-                        ...clip,
-                        start: round(start),
-                        secs: round(end - start),
-                        // Trimming its start starts it later in the song.
-                        offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
-                      },
+                      retime(
+                        clip,
+                        {
+                          ...clip,
+                          start: round(start),
+                          secs: round(end - start),
+                          // Trimming its start starts it later in the song.
+                          offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
+                        },
+                        edge,
+                        group,
+                      ),
                       group,
                     ),
                   )

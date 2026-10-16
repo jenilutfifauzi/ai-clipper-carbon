@@ -14,7 +14,6 @@ from app import review
 from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
-    PICTURE_KEYS,
     Candidate,
     Framing,
     KeyProperty,
@@ -902,12 +901,6 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s)")
         if KeyProperty.VOLUME in overlay.keys and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
-        # The frame process draws a still picture, undecorated, for now (.scratch/keyframes/issues/02).
-        moved = any(prop in PICTURE_KEYS for prop in overlay.keys)
-        if moved and item.kind is not MediaKind.IMAGE:
-            raise HTTPException(422, f"Overlay {overlay.id}: only an image Overlay can have Keyframes for now, not a video")
-        if moved and (overlay.radius or overlay.border or overlay.shadow):
-            raise HTTPException(422, f"Overlay {overlay.id}: an Overlay with Keyframes can't have rounded corners, a border or a shadow for now")
 
 
 # Media Library files never change under their id.
