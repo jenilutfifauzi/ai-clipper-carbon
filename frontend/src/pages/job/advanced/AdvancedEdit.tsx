@@ -10,6 +10,7 @@ import {
   type ClipSegment,
   type FontInfo,
   type JobDetail,
+  type KeyProperty,
   type SavedBy,
   type MediaItem,
   type MusicClip,
@@ -58,6 +59,7 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
+import { bottomPanelId, BottomTabs, useBottomTab } from "./BottomTabs";
 import {
   ASSET_TABS,
   AssetTabs,
@@ -76,6 +78,7 @@ import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, type Keying } from "./KeyCluster";
+import { KeyframesPane } from "./KeyframesPane";
 import { heldTransform, segmentSpan, stageTransform, writeItemTransform, writeSegmentTransform } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
@@ -188,6 +191,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [pickingMode, setPickingMode] = useState(false);
   // Counted up by the inspector's Crop, which opens Crop mode on the stage.
   const [cropAsked, setCropAsked] = useState(0);
+  // The property last touched, which the active row of the Keyframes pane (and K) is made of.
+  const [touched, setTouched] = useState<KeyProperty | null>(null);
+  // On a desktop: the Timeline or the Keyframes pane at the bottom, as the browser remembers.
+  const [bottomTab, setBottomTab] = useBottomTab();
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
@@ -622,8 +629,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           if (outcome) history.set(outcome.edits, group);
         },
       };
-  // What the inspector's ‹ ◆ › edit in: each Keyframe edit one change.
-  const keying: Keying = { edits, pick, locked: tracks.locked, track, playback, onEdits: (next) => history.set(next) };
+  // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.
+  const keying: Keying = { edits, pick, locked: tracks.locked, track, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched };
   // A video Segment keyed in its Framing's Transform: held on the stage where it is at the playhead,
   // and its keyed fields written there as Keyframes, as a keyed Overlay's are.
   const keyedFraming = (id: string) => {
@@ -947,8 +954,25 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             {inspector}
           </aside>
         </div>
-        <section aria-label="Timeline" className="glass mx-3 flex h-[36dvh] min-h-60 flex-col overflow-hidden rounded-panel">
-          {timeline}
+        <section
+          aria-label="Timeline and Keyframes"
+          // The Keyframes pane takes a little more room than the Timeline: a row per property, and the Curves.
+          className={cx("glass mx-3 flex flex-col overflow-hidden rounded-panel", bottomTab === "keyframes" ? "h-[44dvh] min-h-72" : "h-[36dvh] min-h-60")}
+        >
+          <BottomTabs value={bottomTab} onChange={setBottomTab} />
+          {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}
+          <div id={bottomPanelId("timeline")} role="tabpanel" aria-label="Timeline" hidden={bottomTab !== "timeline"}
+            className={cx("min-h-0 flex-1 flex-col", bottomTab === "timeline" ? "flex" : "hidden")}
+          >
+            {timeline}
+          </div>
+          {bottomTab === "keyframes" && (
+            <div id={bottomPanelId("keyframes")} role="tabpanel" aria-label="Keyframes" className="flex min-h-0 flex-1 flex-col">
+              <KeyingContext.Provider value={keying}>
+                <KeyframesPane keying={keying} fps={fps} mediaById={mediaById} />
+              </KeyingContext.Provider>
+            </div>
+          )}
         </section>
       </div>
     );
