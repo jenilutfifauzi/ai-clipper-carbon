@@ -40,8 +40,9 @@ xfade of the pictures (each Segment first brought to the Clip's frame rate and t
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
-scaled into its area at its opacity and laid over the joined frames while it shows, before the Logo
-and the captions.
+drawn as its Picture (`_picture`: scaled, flipped, turned with a transparent fill, faded) and laid
+over the joined frames at its centre while it shows, before the Logo and the captions. A picture
+that is only scaled keeps the graph it had: a scale and an overlay.
 
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
@@ -76,6 +77,7 @@ from app.planner import (
     ScenePlan,
     TextEvent,
     OverlayEvent,
+    Picture,
     WatermarkEvent,
     font_metrics,
 )
@@ -485,16 +487,33 @@ def _overlay_inputs(plan: RenderPlan, files: dict[str, Path], first: int) -> tup
 
 
 def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int) -> str:
-    """Filters that scale an Overlay (input `index`) into its area at its opacity and lay it over the
-    frames `below` while it shows, into `out`: a video's frames moved to start when it does, an
-    image's one picture held."""
-    area = event.area
-    picture = f"[{index}:v]scale={area.width}:{area.height}:flags=lanczos,format=rgba,colorchannelmixer=aa={event.opacity:g}"
-    if not event.image:
-        picture += f",setpts=PTS-STARTPTS+{event.start:.3f}/TB"
+    """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
+    shows, into `out`: a video's frames moved to start when it does, an image's one picture held."""
+    timed = "" if event.image else f",setpts=PTS-STARTPTS+{event.start:.3f}/TB"
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
     ends = "repeat" if event.image else "pass"
-    return f"{picture}[layer{number}];{below}[layer{number}]overlay={area.x}:{area.y}:{shows}:eof_action={ends}{out}"
+    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}")
+
+
+def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:
+    """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
+    order of docs/adr/0007: scale (its crop being the whole picture for now), flip, rotate with a
+    transparent fill, opacity, then laid over at its centre. Steps that change nothing are left out.
+    `after` is more filters of the picture's own frames, `laid` more options of the overlay; its own
+    frames are labelled `name`."""
+    steps = [f"scale={picture.width}:{picture.height}:flags=lanczos"]
+    steps += ["hflip"] * picture.flip_h + ["vflip"] * picture.flip_v
+    turned = picture.rotation % 360 != 0
+    if turned or picture.opacity < 1:
+        steps.append("format=rgba")
+    if turned:
+        angle = f"{picture.rotation:g}*PI/180"
+        steps.append(f"rotate={angle}:ow=rotw({angle}):oh=roth({angle}):c=none")
+    if picture.opacity < 1:
+        steps.append(f"colorchannelmixer=aa={picture.opacity:g}")
+    x, y = picture.centre
+    at = f"x={x:g}-overlay_w/2:y={y:g}-overlay_h/2"
+    return f"{source}{','.join(steps)}{after}[{name}];{below}[{name}]overlay={at}{':' if laid else ''}{laid}{out}"
 
 
 def _logo_overlay(watermark: WatermarkEvent, below: str, out: str, index: int = 1) -> str:

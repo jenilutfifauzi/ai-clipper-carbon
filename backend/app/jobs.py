@@ -6,11 +6,12 @@ import logging
 import re
 import shutil
 import threading
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -20,6 +21,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from app.candidates import Candidate
 from app.clips import Clip
 from app.llm import ScoreResponse
+from app.migration import Sizes, migrated_candidate, migrated_clip
 from app.profile import ChannelProfile
 from app.revisions import Edit, HistoryEntry, recorded
 from app.selection import Selection
@@ -184,8 +186,11 @@ _HISTORY = TypeAdapter(list[HistoryEntry])
 
 
 class JobStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, media_sizes: Callable[[], Sizes] = dict) -> None:
+        """The Jobs in `root`. `media_sizes` gives the Media Library items' picture sizes, by which
+        Candidates saved in an older shape are read in today's (app/migration.py)."""
         self.root = root
+        self._media_sizes = media_sizes
         self._lock = threading.Lock()
         self._listeners: tuple[JobListener, ...] = ()
         self._listeners_lock = threading.Lock()
@@ -329,7 +334,10 @@ class JobStore:
 
     def load_candidates(self, job_id: str) -> list[Candidate] | None:
         path = self.job_dir(job_id) / CANDIDATES_FILE
-        return _CANDIDATES.validate_json(path.read_bytes()) if path.is_file() else None
+        if not path.is_file():
+            return None
+        sizes = self._sizes()
+        return _CANDIDATES.validate_python([migrated_candidate(c, sizes) for c in json.loads(path.read_bytes())])
 
     def change_candidates[R](
         self,
@@ -367,7 +375,10 @@ class JobStore:
     def revision_history(self, job_id: str, candidate_id: str) -> list[HistoryEntry]:
         """The Candidate's Revision History, oldest first; empty until it is first changed."""
         path = self.job_dir(job_id) / REVISIONS_DIR / f"{candidate_id}.json"
-        return _HISTORY.validate_json(path.read_bytes()) if path.is_file() else []
+        if not path.is_file():
+            return []
+        entries, sizes = json.loads(path.read_bytes()), self._sizes()
+        return _HISTORY.validate_python([entry | {"candidate": migrated_candidate(entry["candidate"], sizes)} for entry in entries])
 
     def _save_history(self, job_id: str, candidate_id: str, history: list[HistoryEntry]) -> None:
         directory = self.job_dir(job_id) / REVISIONS_DIR
@@ -386,7 +397,10 @@ class JobStore:
 
     def load_clips(self, job_id: str) -> list[Clip]:
         path = self.job_dir(job_id) / CLIPS_FILE
-        return _CLIPS.validate_json(path.read_bytes()) if path.is_file() else []
+        if not path.is_file():
+            return []
+        sizes = self._sizes()
+        return _CLIPS.validate_python([migrated_clip(clip, sizes) for clip in json.loads(path.read_bytes())])
 
     def change_clips[R](
         self,
@@ -428,9 +442,33 @@ class JobStore:
     def discard_scores(self, job_id: str) -> None:
         (self.job_dir(job_id) / SCORES_FILE).unlink(missing_ok=True)
 
+    def _sizes(self) -> Sizes:
+        """The Media Library's sizes for one read, read only if it holds a Candidate of an older shape."""
+        return _MediaSizes(self._media_sizes)
+
     def _save(self, job: Job) -> None:
         write_atomic(self.job_dir(job.id) / STATE_FILE, _JOB.dump_json(job, indent=2))
         self._notify(job.id, job)
+
+
+class _MediaSizes(Mapping[str, tuple[int, int]]):
+    """The Media Library's picture sizes, read only when a Candidate in an older shape needs one."""
+
+    def __init__(self, load: Callable[[], Sizes]) -> None:
+        self._load = load
+
+    @cached_property
+    def _sizes(self) -> Sizes:
+        return self._load()
+
+    def __getitem__(self, media_id: str) -> tuple[int, int]:
+        return self._sizes[media_id]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._sizes)
+
+    def __len__(self) -> int:
+        return len(self._sizes)
 
 
 def _changed(job: Job, changes: dict[str, Any]) -> Job:

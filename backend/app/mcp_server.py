@@ -83,6 +83,12 @@ Edits:
   with the cut while their Magnetic timeline is on; move them yourself when they should follow.
 - Music, Overlays and Segments of other videos name Media Library items: add_asset adds a song,
   video or image from a file on this Mac, list_assets lists them.
+- An Overlay is placed by its transform. x, y: its centre in output pixels (0..1080, 0..1920; the
+  picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
+  1080x1920 frame keeping its aspect (1 fits; a 16:9 picture at 0.5 is 540 px wide). stretch_x,
+  stretch_y: times its fitted width and height on top of scale. rotation: degrees clockwise. flip_h,
+  flip_v, opacity 0..1. merge_candidate_items changes only the transform fields given. The dry run
+  lists each Overlay's drawn box once turned (bounds).
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
@@ -553,7 +559,8 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
 
 
 def _plan_view(preview: dict) -> dict:
-    """A Preview Plan as an agent reads it: what shows when, in Timeline time, and the Words."""
+    """A Preview Plan as an agent reads it: what shows when, in Timeline time, where each Overlay is
+    drawn (its box once turned, in output pixels), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -566,6 +573,13 @@ def _plan_view(preview: dict) -> dict:
             "kicker": hook["kicker"] and hook["kicker"]["text"],
         },
         "text_layers": [{"id": text["layer"]["id"], **_times(text, "start", "end", "lines")} for text in plan["texts"]],
+        "overlays": [
+            {
+                "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
+                "bounds": event["picture"]["bounds"], "rotation": event["picture"]["rotation"], "opacity": event["picture"]["opacity"],
+            }
+            for event in plan["overlays"]
+        ],
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
 
@@ -593,19 +607,31 @@ def _merge(items: list[dict], patches: list[dict], key: str) -> list[dict]:
         if at is None:
             merged.append(patch)
         else:
-            merged[at] = {**merged[at], **patch}
+            merged[at] = _merged_fields(merged[at], patch)
     if key == "at":
         merged.sort(key=lambda item: item["at"])
     return merged
 
 
-def _patch_model(kind: type, key: str) -> type[BaseModel]:
-    """A model of `kind` whose fields are all optional but its key: the fields of an item to change."""
-    hints = get_type_hints(kind, include_extras=True)
-    fields: dict[str, Any] = {
-        field.name: (hints[field.name], ...) if field.name == key else (hints[field.name] | None, None)
-        for field in dataclasses.fields(kind)
+def _merged_fields(item: dict, patch: dict) -> dict:
+    """`item` with the fields of `patch`, a field that is an object (a Transform) merged field by field."""
+    return item | {
+        name: _merged_fields(item[name], value) if isinstance(value, dict) and isinstance(item.get(name), dict) else value
+        for name, value in patch.items()
     }
+
+
+def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
+    """A model of `kind` whose fields are all optional but its key: the fields of an item to change.
+    A field that is itself a dataclass (an Overlay's `transform`) is such a patch too, merged into
+    the item's value field by field (`_merge`)."""
+    hints = get_type_hints(kind, include_extras=True)
+    fields: dict[str, Any] = {}
+    for field in dataclasses.fields(kind):
+        hint = hints[field.name]
+        if dataclasses.is_dataclass(hint):
+            hint = _patch_model(hint)
+        fields[field.name] = (hint, ...) if field.name == key else (hint | None, None)
     return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
 
 

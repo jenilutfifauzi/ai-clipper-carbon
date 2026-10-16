@@ -113,6 +113,10 @@ class MediaStore:
         """In the order they were uploaded."""
         return self._index.all()
 
+    def sizes(self) -> dict[str, tuple[int, int]]:
+        """The pictures' sizes (a video's or an image's), by id."""
+        return {item.id: (item.width, item.height) for item in self.all() if item.width and item.height}
+
     def get(self, media_id: str) -> MediaItem:
         item = self._index.find(media_id)
         if item is None:

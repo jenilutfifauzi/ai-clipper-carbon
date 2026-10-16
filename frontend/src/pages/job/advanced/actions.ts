@@ -65,7 +65,10 @@ const KINDS: {
   },
   overlay: {
     list: "overlays",
-    aside: (item) => ({ y: Math.min((item as Overlay).y + 80, 1920) }),
+    aside: (item) => {
+      const { transform } = item as Overlay;
+      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+    },
     cut: (item, at) => ({ first: {}, second: { offset: round((item as Overlay).offset + at - item.start) } }),
   },
 };
@@ -390,6 +393,12 @@ export function move(scene: PickContext, delta: number): Outcome | null {
 // The output's size, in pixels: where the middles of Text Layers and Overlays can be.
 const FRAME = { width: 1080, height: 1920 };
 
+// Where a Text Layer's or an Overlay's middle is on the frame (an Overlay's Transform has it), and the
+// item with its middle at (x, y).
+const middleOf = (item: TextLayer | Overlay) => ("transform" in item ? item.transform : item);
+const middledAt = <T extends TextLayer | Overlay>(item: T, x: number, y: number): T =>
+  "transform" in item ? { ...item, transform: { ...item.transform, x, y } } : { ...item, x, y };
+
 /**
  * The picked Text Layers and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
  * further than keeps each one's middle in the frame.
@@ -398,13 +407,17 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "overlay"; item: TextLayer | Overlay }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
-  const byX = within(dx, placed.map(({ item }) => item.x), FRAME.width);
-  const byY = within(dy, placed.map(({ item }) => item.y), FRAME.height);
+  const byX = within(dx, placed.map(({ item }) => middleOf(item).x), FRAME.width);
+  const byY = within(dy, placed.map(({ item }) => middleOf(item).y), FRAME.height);
   const next = { ...scene.edits };
   for (const { kind, item } of placed) {
     const list = KINDS[kind].list;
     Object.assign(next, {
-      [list]: (next[list] as (TextLayer | Overlay)[]).map((other) => (other.id === item.id ? { ...other, x: Math.round(other.x + byX), y: Math.round(other.y + byY) } : other)),
+      [list]: (next[list] as (TextLayer | Overlay)[]).map((other) => {
+        if (other.id !== item.id) return other;
+        const { x, y } = middleOf(other);
+        return middledAt(other, Math.round(x + byX), Math.round(y + byY));
+      }),
     });
   }
   return { edits: next, pick: scene.pick };

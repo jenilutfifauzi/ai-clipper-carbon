@@ -2,7 +2,7 @@
 // rebasing its undo history, as worked examples of base (the edits the editor started from), mine
 // (its unsaved edits) and theirs (the newer Revision's).
 import { describe, expect, test } from "vitest";
-import type { Candidate, ClipSegment, TextLayer } from "../../../api";
+import type { Candidate, ClipSegment, Overlay, TextLayer, Transform } from "../../../api";
 import { collidedParts, fieldsOf, mergeEdits, rebaseHistory } from "./merge";
 
 function layer(id: string, changes: Partial<TextLayer> = {}): TextLayer {
@@ -31,6 +31,16 @@ function layer(id: string, changes: Partial<TextLayer> = {}): TextLayer {
 
 const segment = (id: string, start: number): ClipSegment => ({ id, start, end: start + 5 });
 
+const overlay = (id: string, transform: Partial<Transform> = {}): Overlay => ({
+  id,
+  media: "pip",
+  start: 0,
+  secs: 2,
+  offset: 0,
+  transform: { x: 540, y: 760, scale: 0.5, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1, ...transform },
+  volume: 0,
+});
+
 describe("keyed lists", () => {
   test("a change on each side to different items keeps both", () => {
     const base = { text_layers: [layer("a"), layer("b")] };
@@ -41,6 +51,19 @@ describe("keyed lists", () => {
       merged: { text_layers: [layer("a", { y: 300 }), layer("b", { text: "Theirs" })] },
       collisions: [],
     });
+  });
+
+  test("a change to one Overlay's Transform on each side keeps both; one Overlay changed on both: mine wins", () => {
+    const base = { overlays: [overlay("a"), overlay("b")] };
+    const mine = { overlays: [overlay("a", { scale: 0.8 }), overlay("b")] };
+    const theirs = { overlays: [overlay("a"), overlay("b", { rotation: 90 })] };
+
+    expect(mergeEdits(base, mine, theirs)).toEqual({
+      merged: { overlays: [overlay("a", { scale: 0.8 }), overlay("b", { rotation: 90 })] },
+      collisions: [],
+    });
+    const both = { overlays: [overlay("a"), overlay("b", { flip_h: true })] };
+    expect(mergeEdits(base, both, theirs)).toEqual({ merged: both, collisions: [{ field: "overlays", item: "b" }] });
   });
 
   test("an item added on each side keeps both, each after the item it followed", () => {

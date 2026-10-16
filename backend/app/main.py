@@ -27,7 +27,8 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     # What is there is left from uploads cut short when the app last stopped: none was complete.
     shutil.rmtree(settings.data_dir / UPLOADS_DIR, ignore_errors=True)
-    store = JobStore(settings.data_dir / "jobs")
+    media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
+    store = JobStore(settings.data_dir / "jobs", media.sizes)
     ports = ports or real_ports(settings)
     worker = Worker(store, Pipeline(store, ports, settings), Renders(store, settings, ports.transcriber))
 
@@ -46,7 +47,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
-    app.state.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
+    app.state.media = media
     app.include_router(api.router)
     app.include_router(api.media)
     # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its

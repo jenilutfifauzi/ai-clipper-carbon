@@ -141,21 +141,41 @@ class MusicClip:
 
 
 @dataclass(frozen=True)
+class Transform:
+    """Where and how a picture sits on the 1080×1920 frame (docs/adr/0007): centred on (x, y) in
+    output pixels, which stays on the frame though the picture may go past its edges; `scale` times its fitted size (the largest that fits the frame keeping its aspect: 1
+    fits), stretched `stretch_x` across and `stretch_y` down on top of that (1 keeps its aspect);
+    turned `rotation` degrees clockwise about its centre, mirrored left to right (`flip_h`) or top to
+    bottom (`flip_v`), at `opacity`. The same for its item's whole length."""
+
+    x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
+    y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
+    scale: Annotated[FiniteFloat, Field(ge=0.05, le=8)] = 1.0
+    stretch_x: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
+    stretch_y: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
+    rotation: Annotated[FiniteFloat, Field(ge=-360, le=360)] = 0.0
+    flip_h: bool = False
+    flip_v: bool = False
+    opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 1.0
+
+
+# A new Overlay's: half its fitted size at the frame's centre, 540 px wide for any item wider than
+# 9:16 (the editor works out the scale that makes any item 540 px wide).
+OVERLAY_TRANSFORM = Transform(scale=0.5)
+
+
+@dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
-    for `secs`, in Timeline time, a video from `offset` seconds into it; centred on (x, y) in output
-    pixels, `size` pixels wide (as tall as its shape makes it), at `opacity`, a video's sound at
-    `volume` (none by default)."""
+    for `secs`, in Timeline time, a video from `offset` seconds into it; placed by its `transform`,
+    a video's sound at `volume` (none by default)."""
 
     id: ItemId
     media: MediaId
     start: TimelineStart
     secs: TimelineSecs
     offset: FileOffset = 0.0
-    x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
-    y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
-    size: Annotated[int, Field(ge=16, le=2160)] = 540
-    opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 1.0
+    transform: Transform = OVERLAY_TRANSFORM
     volume: Volume = 0.0
 
 

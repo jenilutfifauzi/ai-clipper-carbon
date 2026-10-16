@@ -50,9 +50,10 @@ They are drawn over the captions and under the hook, in their order.
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`.
 
-Overlays (videos and images laid over the Clip) are centred where the owner put them at their size,
-kept inside the frame, cut where the Clip or their video ends, drawn over the Segments and under the
-Watermark; a video's sound, when turned up, is heard as a Music Clip is.
+Overlays (videos and images laid over the Clip) are each drawn as a Picture, placed by its Transform:
+its centre kept on the frame and the picture free to go past the frame's edges; cut where the Clip
+or their video ends, drawn over the Segments and under the Watermark. A video's sound, when turned
+up, is heard as a Music Clip is.
 
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned Segment
 by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
@@ -78,12 +79,14 @@ from app.candidates import (
     Overlay,
     TextAlign,
     TextLayer,
+    Transform,
     TransitionKind,
     WordEdit,
     transition_overlap,
 )
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
+from app.pictures import drawn_size, turned_size
 from app.styles import (
     CaptionPosition,
     CaptionStyle,
@@ -100,6 +103,7 @@ from app.video_source import SourceMetadata
 
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
+FRAME = (OUTPUT_WIDTH, OUTPUT_HEIGHT)
 # Split's panels are as wide as the output and half as tall.
 SPLIT_HEIGHT = OUTPUT_HEIGHT // 2
 # A Scene's Layout follows its number of faces in this many of its sampled frames, spread through it.
@@ -447,17 +451,36 @@ class MediaInfo:
 
 
 @dataclass(frozen=True)
+class Picture:
+    """A picture as drawn, the same in the renderer and the preview (docs/adr/0007): its item's
+    pixels in `crop` (for now the whole item), scaled to `width` x `height` (even pixels), mirrored
+    as `flip_h` and `flip_v` say, turned `rotation` degrees clockwise about `centre` (in output
+    pixels, on the frame), at `opacity`. `bounds` holds it once turned, and may go past the frame's
+    edges: what the Smart Guides and the agent's dry run go by."""
+
+    crop: Box
+    width: int
+    height: int
+    centre: tuple[float, float]
+    rotation: float
+    flip_h: bool
+    flip_v: bool
+    opacity: float
+    bounds: Box
+
+
+@dataclass(frozen=True)
 class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
-    into it) scaled into `area` at `opacity`, from `start` to `end` seconds into the Clip."""
+    into it) drawn as `picture` says, from `start` to `end` seconds into the Clip. `id` is the Overlay's."""
 
     media: str
-    area: Box
+    picture: Picture
     start: float
     end: float
     offset: float
-    opacity: float
     image: bool
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -748,9 +771,8 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
 
 
 def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo]) -> OverlayEvent | None:
-    """The Overlay as drawn: `size` pixels wide (its item's shape giving its height), centred on its
-    place and kept inside the frame, cut where the Clip or its video ends. None when its item is gone
-    or it would start at or after either end."""
+    """The Overlay as drawn: its item placed by its Transform (`picture_of`), cut where the Clip or
+    its video ends. None when its item is gone or it would start at or after either end."""
     item = items.get(overlay.media)
     start = round(overlay.start, 3)
     if item is None or not item.width or not item.height or start >= duration:
@@ -761,15 +783,23 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
             return None
         end = min(end, start + item.duration - overlay.offset)
     end = round(min(end, duration), 3)
-    width = min(overlay.size, OUTPUT_WIDTH)
-    height = max(2, round(width * item.height / item.width))
-    if height > OUTPUT_HEIGHT:
-        width, height = max(2, round(OUTPUT_HEIGHT * item.width / item.height)), OUTPUT_HEIGHT
-    width, height = _even(width), _even(height)
-    x = min(max(round(overlay.x - width / 2), 0), OUTPUT_WIDTH - width)
-    y = min(max(round(overlay.y - height / 2), 0), OUTPUT_HEIGHT - height)
     offset = round(overlay.offset, 3) if item.duration is not None else 0.0
-    return OverlayEvent(overlay.media, Box(x, y, width, height), start, end, offset, overlay.opacity, item.duration is None)
+    picture = picture_of(item.width, item.height, overlay.transform)
+    return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id)
+
+
+def picture_of(width: int, height: int, transform: Transform) -> Picture:
+    """A `width` x `height` item drawn whole as `transform` places it: at its drawn size
+    (app/pictures.py), its centre kept on the frame, the picture not."""
+    drawn_width, drawn_height = drawn_size(width, height, transform, FRAME)
+    x = round(min(max(transform.x, 0.0), OUTPUT_WIDTH), 2)
+    y = round(min(max(transform.y, 0.0), OUTPUT_HEIGHT), 2)
+    across, down = turned_size(drawn_width, drawn_height, transform.rotation)
+    bounds = Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
+    return Picture(
+        Box(0, 0, width, height), drawn_width, drawn_height, (x, y), transform.rotation,
+        transform.flip_h, transform.flip_v, transform.opacity, bounds,
+    )
 
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:

@@ -593,16 +593,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         selected: itemsOf(pick)
           .filter((item) => item.kind === "overlay")
           .map((item) => item.id),
-        // As the plan draws them: those whose items are there, starting in the Clip.
-        ids: tracks.hidden.includes("overlay")
-          ? []
-          : edits.overlays.filter((overlay) => mediaById.has(overlay.media) && overlay.start < duration).map((overlay) => overlay.id),
+        transformOf: (id) => edits.overlays.find((overlay) => overlay.id === id)?.transform,
         onSelect: (id, toggle) => select(clicked(pick, { kind: "overlay", id }, toggle || picking)),
         onPlace: (id, place, group) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
-          if (place.size === undefined && placedTogether("overlay", id)) moveOnFrame(place.x - overlay.x, place.y - overlay.y, group);
-          else updateOverlay({ ...overlay, ...place }, group);
+          const { transform } = overlay;
+          if (place.scale === undefined && placedTogether("overlay", id)) moveOnFrame(place.x - transform.x, place.y - transform.y, group);
+          else updateOverlay({ ...overlay, transform: { ...transform, ...place } }, group);
         },
       };
   const source = job.source!;

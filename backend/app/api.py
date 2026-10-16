@@ -2,13 +2,13 @@
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import review
 from app.candidates import (
@@ -139,6 +139,17 @@ class JobRequest(BaseModel):
     options: JobOptions = JobOptions()
 
 
+def _no_old_overlays(overlays: Any) -> Any:
+    """Overlays in the shape before Transforms (docs/adr/0007), refused with what replaced it."""
+    for overlay in overlays if isinstance(overlays, list) else []:
+        if isinstance(overlay, dict) and (old := [key for key in ("x", "y", "size", "opacity") if key in overlay]):
+            raise ValueError(
+                f"{', '.join(old)} of an Overlay are now in its transform: x and y its centre in output pixels, "
+                "scale times its fitted size (1 fits the frame), opacity"
+            )
+    return overlays
+
+
 class CandidateUpdate(BaseModel):
     """A review edit; a field left out stays as it is. `start` and `end` are snapped to Words."""
 
@@ -169,7 +180,7 @@ class CandidateUpdate(BaseModel):
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
     segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.
-    overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX)] | None = None
+    overlays: Annotated[list[Overlay], Field(max_length=OVERLAYS_MAX), BeforeValidator(_no_old_overlays)] | None = None
     # Replaces the Candidate's Transitions as a whole; those without a join are left out.
     transitions: Annotated[list[Transition], Field(max_length=SEGMENTS_MAX)] | None = None
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it

@@ -2,16 +2,18 @@ import { Copy, Layers, Trash2 } from "lucide-react";
 import type { MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
+import { IDENTITY, scaleForWidth } from "../editor/picture";
 import { Group } from "../editor/StyleFields";
 import { newId, round } from "./edits";
 import { TimingFields } from "./TimingFields";
+import { TransformFields } from "./TransformFields";
 
 // A new still shows this long, or to the Clip's end.
 const STILL_SECS = 3;
 
 /**
- * An Overlay of `item` at `at` (the playhead, or where it was dropped): half the frame wide, in its
- * upper middle; a video as long as it is (and fits).
+ * An Overlay of `item` at `at` (the playhead, or where it was dropped): half the frame wide (540 px,
+ * at the scale its size gives that), in its upper middle; a video as long as it is (and fits).
  */
 export function newOverlay(item: MediaItem, at: number, duration: number): Overlay {
   const length = item.duration ?? STILL_SECS;
@@ -22,17 +24,14 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     start: round(start),
     secs: round(Math.min(length, duration - start)),
     offset: 0,
-    x: 540,
-    y: 760,
-    size: 540,
-    opacity: 1,
+    transform: { ...IDENTITY, y: 760, scale: item.width && item.height ? Number(scaleForWidth(item.width, item.height, 540).toFixed(4)) : 0.5 },
     volume: 0,
   };
 }
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
-/** The selected Overlay's size, opacity, sound and time. */
+/** The selected Overlay's Transform, sound and time. */
 export function OverlayFields({
   overlay,
   item,
@@ -68,16 +67,20 @@ export function OverlayFields({
         </div>
       </div>
       <p className="text-sm text-pretty text-muted">Drag it on the video to place it, and its corner to resize it.</p>
-      <Group title="Look">
-        <Slider label="Width" value={overlay.size} min={32} max={1080} format={(v) => `${v} px`} onChange={(size) => set("size", size)} />
-        <Slider label="Opacity" value={overlay.opacity} min={0} max={1} step={0.05} format={percent} onChange={(opacity) => set("opacity", opacity)} />
-        {video &&
-          (item?.has_audio ? (
+      <TransformFields
+        transform={overlay.transform}
+        size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
+        onChange={(transform, field) => onChange({ ...overlay, transform }, `overlay:${overlay.id}:transform.${field}`)}
+      />
+      {video && (
+        <Group title="Sound">
+          {item?.has_audio ? (
             <Slider label="Its sound" value={overlay.volume} min={0} max={2} step={0.05} format={(v) => (v ? percent(v) : "Muted")} onChange={(volume) => set("volume", volume)} />
           ) : (
             <p className="text-sm text-muted">This video has no sound.</p>
-          ))}
-      </Group>
+          )}
+        </Group>
+      )}
       <TimingFields
         item={overlay}
         duration={duration}
