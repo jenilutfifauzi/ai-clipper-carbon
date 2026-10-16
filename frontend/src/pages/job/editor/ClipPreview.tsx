@@ -1,5 +1,5 @@
 import { Pause, Play, SkipForward } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { createRef, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import {
   logoUrl,
   type Box,
@@ -50,8 +50,6 @@ const NUDGE_PX = 8;
 const TEXT_RADIUS = 0.25;
 // How much of the ending "Play ending" plays.
 const ENDING_SECS = 3;
-// A follower video further than this from the master is moved back in step.
-const MAX_DRIFT_SECS = 0.12;
 
 const percent = (value: number) => `${value * 100}%`;
 
@@ -59,8 +57,10 @@ const percent = (value: number) => `${value * 100}%`;
  * The Candidate as its Clip will look: the Source framed by the Preview Plan's Scenes (each panel a
  * crop of the video, following its path), with the plan's caption lines and hook drawn over it
  * where, when and how large the render will draw them. Drawn in the output's 1080x1920 pixels and
- * scaled to fit. Two videos play the Source in step, one per panel (Split's two, or Blur's
- * background and shot); the first is the master, which `playback` drives and which is heard.
+ * scaled to fit. The Source plays on two decks (docs/adr/0006-the-preview-plays-the-source-on-two-decks.md),
+ * each two videos in step, one per panel (Split's two, or Blur's background and shot): the first is
+ * the master, which `playback` drives and which is heard while its deck is live. The panels show
+ * the live deck; the other waits, hidden, for the next join.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
  * centre, in output pixels. With `stage`, the hook, the captions and (in the Advanced Edit) the Text
  * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move together
@@ -92,31 +92,21 @@ export function ClipPreview({
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
-  const master = useRef<HTMLVideoElement>(null);
-  const follower = useRef<HTMLVideoElement>(null);
+  // Each deck's videos, its master then its follower; and the masters, whose sound PreviewMusic sets.
+  const decks = useMemo(() => [0, 1].map(() => [createRef<HTMLVideoElement>(), createRef<HTMLVideoElement>()]), []);
+  const masters = useMemo(() => decks.map(([master]) => master), [decks]);
   const [scale, setScale] = useState(1 / 3);
   const fitted = useFittedSize(room, fit);
   const plan = preview?.plan ?? null;
 
   useEffect(() => {
-    playback.attach(master.current);
-    return () => playback.attach(null);
-  }, [playback]);
-
-  // The follower video plays, pauses and seeks with the master.
-  useEffect(() => {
-    const lead = master.current;
-    const other = follower.current;
-    if (!lead || !other) return;
-    const follow = () => {
-      if (Math.abs(other.currentTime - lead.currentTime) > MAX_DRIFT_SECS) other.currentTime = lead.currentTime;
-      if (lead.paused !== other.paused) {
-        if (lead.paused) other.pause();
-        else void other.play().catch(() => {});
-      }
+    const slots = [0, 1] as const;
+    for (const slot of slots) playback.attachDeck(slot, decks[slot][0].current, decks[slot][1].current);
+    return () => {
+      for (const slot of slots) playback.attachDeck(slot, null);
     };
-    return playback.subscribe(follow);
-  }, [playback]);
+  }, [playback, decks]);
+  const shownDeck = usePlayback(playback, (_, p) => p.shownDeck);
 
   useEffect(() => {
     const element = stage.current;
@@ -170,9 +160,20 @@ export function ClipPreview({
     >
       {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
-        {[master, follower].map((ref, slot) => (
-          <PanelView key={slot} videoRef={ref} src={src} plan={plan} panel={scene?.panels[slot] ?? null} playback={playback} muted={slot > 0} />
-        ))}
+        {decks.map((refs, deck) =>
+          refs.map((ref, slot) => (
+            <PanelView
+              key={`${deck}:${slot}`}
+              videoRef={ref}
+              src={src}
+              plan={plan}
+              panel={scene?.panels[slot] ?? null}
+              playback={playback}
+              muted={deck > 0 || slot > 0}
+              hidden={deck !== shownDeck}
+            />
+          )),
+        )}
         <PreviewSegments plan={plan} playback={playback} />
         <PreviewTransitions plan={plan} playback={playback} src={src} />
       </div>
@@ -232,7 +233,7 @@ export function ClipPreview({
       {preview && editing && retype && (
         <InlineText preview={preview} fontById={fontById} editing={editing} retype={retype} onClose={() => setEditing(null)} />
       )}
-      <PreviewMusic plan={plan} playback={playback} master={master} />
+      <PreviewMusic plan={plan} playback={playback} masters={masters} />
     </div>
   );
   if (fit) {
@@ -598,6 +599,7 @@ export function sceneAt(plan: RenderPlan, time: number, segment = 0): number {
 /**
  * One panel slot: its <video>, always mounted (so that it keeps playing across Scenes), shown in the
  * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point.
+ * A `hidden` one (its deck parked) is still drawn, transparent, so that its frame is ready.
  */
 export function PanelView({
   videoRef,
@@ -606,6 +608,7 @@ export function PanelView({
   panel,
   playback,
   muted,
+  hidden = false,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   src: string;
@@ -613,6 +616,7 @@ export function PanelView({
   panel: Panel | null;
   playback: Playback;
   muted: boolean;
+  hidden?: boolean;
 }) {
   const pointIndex = usePlayback(playback, (time) => {
     if (!panel) return 0;
@@ -641,7 +645,7 @@ export function PanelView({
         }
       : { inset: 0, width: "100%", height: "100%" };
   return (
-    <div className="absolute overflow-hidden" style={box}>
+    <div className="absolute overflow-hidden" style={hidden ? { ...box, opacity: 0 } : box}>
       <video
         ref={videoRef}
         src={src}

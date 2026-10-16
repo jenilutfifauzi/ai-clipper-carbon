@@ -33,7 +33,8 @@ export function sceneLayout(plan: RenderPlan, index: number) {
 
 /**
  * A video's Segment, shown until `end` (where it gives way), or within a Transition when `end` is its
- * own; its sound faded out over `fade` (the Transition taking it away), if any.
+ * own; its sound faded out over `fade` (the Transition taking it away), if any. Outside its span its
+ * video waits at its start, so that its first frame is ready.
  */
 export function MediaSegment({
   segment,
@@ -55,8 +56,8 @@ export function MediaSegment({
   useEffect(() => {
     const span = { start: segment.start, end, from: segment.source_start };
     const sync = () => {
-      const inside = main.current ? follow(main.current, playback, span) : false;
-      if (back.current) follow(back.current, playback, span);
+      const inside = main.current ? follow(main.current, playback, span, true) : false;
+      if (back.current) follow(back.current, playback, span, true);
       const left = fade ? Math.min(1, Math.max(0, (fade.end - playback.time) / (fade.end - fade.start))) : 1;
       if (main.current) setVolume(main.current, segment.silent ? 0 : segment.volume * left);
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
