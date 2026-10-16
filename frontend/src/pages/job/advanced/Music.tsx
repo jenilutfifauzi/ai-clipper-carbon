@@ -12,7 +12,7 @@ export function newMusicClip(item: MediaItem, at: number, duration: number): Mus
   let start = Math.max(0, Math.min(at, duration - ITEM_MIN_SECS));
   // From the start, when the playhead is too near the end for much of it.
   if (duration - start < Math.min(length, 1)) start = 0;
-  return { id: newId(), media: item.id, start: round(start), secs: round(Math.min(length, duration - start)), offset: 0, volume: 1, fade_in: 0, fade_out: 0 };
+  return { id: newId(), media: item.id, start: round(start), secs: round(Math.min(length, duration - start)), offset: 0, volume: 1, fade_in: 0, fade_out: 0, keys: {} };
 }
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;

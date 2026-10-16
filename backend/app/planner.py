@@ -54,14 +54,15 @@ frame, each in its own look; one wider than the frame less TEXT_MARGIN either si
 They are drawn over the captions and under the hook, in their order.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
-Clip's own sound at its `source_volume`.
+Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes as its
+gain track, in seconds from its start, which its fades multiply (`gain_at`).
 
 Overlays (videos and images laid over the Clip) are each drawn as a Picture, cut by its Crop (in its
 item's pixels: what is kept is what is fitted) and placed by its Transform: its centre kept on the
 frame and the picture free to go past the frame's edges; its corners rounded by a share of its drawn
 shorter side, and its border and shadow in output pixels; cut where the Clip or their video ends,
-drawn over the Segments and under the Watermark. A video's sound, when turned up, is heard as a
-Music Clip is. A keyed Overlay's Picture carries its motion (docs/adr/0008): its Keyframes in
+drawn over the Segments and under the Watermark. A video's sound, when turned up or keyed, is heard
+as a Music Clip is. A keyed Overlay's Picture carries its motion (docs/adr/0008): its Keyframes in
 seconds into the Clip, sampled for each frame by the renderer and the preview alike (`picture_at`),
 and it is planned whole, never cut to what is on the frame.
 
@@ -84,11 +85,13 @@ from functools import cache
 
 from app.candidates import (
     KEY_RANGES,
+    PICTURE_KEYS,
     Background,
     BackgroundKind,
     Border,
     Crop,
     Framing,
+    Keyframe,
     KeyProperty,
     Keys,
     Layout,
@@ -431,8 +434,11 @@ class TextEvent:
 
 @dataclass(frozen=True)
 class AudioEvent:
-    """A Music Clip as heard: the Media Library item `media` from `offset` seconds into it, from
-    `start` to `end` seconds into the Clip, at `volume`, faded in over `fade_in` and out over `fade_out`."""
+    """A Music Clip (or an Overlay video's sound) as heard: the Media Library item `media` from
+    `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
+    `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
+    in seconds from its start, which set its volume in place of `volume`; its fades multiply them
+    (`gain_at`). `id` is its item's."""
 
     media: str
     start: float
@@ -441,6 +447,8 @@ class AudioEvent:
     volume: float
     fade_in: float
     fade_out: float
+    gain: list[Keyframe] = field(default_factory=list)
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -861,9 +869,27 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
         share = min(1.0, (end - start) / ((clip.fade_in + clip.fade_out) or 1.0))
         events.append(
-            AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3), round(clip.fade_out * share, 3))
+            AudioEvent(
+                clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3),
+                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id,
+            )
         )
     return events
+
+
+def gain_at(event: AudioEvent, time: float) -> float:
+    """How loud `event` is heard `time` seconds into the Clip: its volume, or its gain track sampled
+    there (app/keyframes.py), through its fades' linear ramps; silent outside it. The same rule as
+    the preview's (loudness in frontend/src/pages/job/editor/PreviewMusic.tsx)."""
+    into = time - event.start
+    if into < 0 or time > event.end:
+        return 0.0
+    share = 1.0
+    if event.fade_in > 0:
+        share = min(share, into / event.fade_in)
+    if event.fade_out > 0:
+        share = min(share, (event.end - time) / event.fade_out)
+    return value_at(event.gain, into, event.volume) * min(max(share, 0.0), 1.0)
 
 
 def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[OverlayEvent]:
@@ -872,13 +898,15 @@ def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, Me
 
 
 def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[AudioEvent]:
-    """The sound of the Overlays' videos that are turned up, heard as Music Clips are, while they show."""
+    """The sound of the Overlays' videos that are turned up, or keyed, heard as Music Clips are, while
+    they show."""
     sounds = []
     for overlay in overlays:
         event = _overlay_event(overlay, duration, items)
-        if event is None or event.image or overlay.volume <= 0 or not items[overlay.media].has_audio:
+        gain = overlay.keys.get(KeyProperty.VOLUME, [])
+        if event is None or event.image or (overlay.volume <= 0 and not gain) or not items[overlay.media].has_audio:
             continue
-        sounds.append(AudioEvent(overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0))
+        sounds.append(AudioEvent(overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id))
     return sounds
 
 
@@ -907,7 +935,9 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
 
 def moving(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:
     """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
-    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1. Unkeyed, as it is."""
+    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1. Unkeyed (a volume
+    isn't the picture's), as it is."""
+    keys = {prop: given for prop, given in keys.items() if prop in PICTURE_KEYS}
     if not keys:
         return picture
     motion = {prop: [replace(key, at=round(start + key.at, 4)) for key in given] for prop, given in keys.items()}

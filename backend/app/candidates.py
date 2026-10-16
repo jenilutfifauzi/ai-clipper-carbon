@@ -117,22 +117,6 @@ MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
 
 
-@dataclass(frozen=True)
-class MusicClip:
-    """A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
-    seconds into the file, heard from `start`, in Timeline time, at `volume`, faded in and out over
-    `fade_in` and `fade_out` seconds."""
-
-    id: ItemId
-    media: MediaId
-    start: TimelineStart
-    secs: TimelineSecs
-    offset: FileOffset = 0.0
-    volume: Volume = 1.0
-    fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
-    fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
-
-
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
 MIN_SCALE = 0.05
 MAX_SCALE = 8.0
@@ -256,8 +240,9 @@ class KeyProperty(StrEnum):
     VOLUME = "volume"
 
 
-# The properties of a picture that Keyframes can move.
+# The properties of a picture that Keyframes can move, and of a sound.
 PICTURE_KEYS = (KeyProperty.X, KeyProperty.Y, KeyProperty.SCALE, KeyProperty.ROTATION, KeyProperty.OPACITY)
+SOUND_KEYS = (KeyProperty.VOLUME,)
 # Each property's range, in its own units. A centre beyond the frame is brought onto it, as a
 # Transform's is; any other value outside its range is refused. A picture may turn several times.
 KEY_RANGES = {
@@ -362,13 +347,36 @@ class Shadow:
 
 
 @dataclass(frozen=True)
+class MusicClip:
+    """A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
+    seconds into the file, heard from `start`, in Timeline time, at `volume`, faded in and out over
+    `fade_in` and `fade_out` seconds. Its `keys` shape its volume over its length (docs/adr/0008):
+    with volume Keyframes, they set it, not `volume`, and the fades multiply them."""
+
+    id: ItemId
+    media: MediaId
+    start: TimelineStart
+    secs: TimelineSecs
+    offset: FileOffset = 0.0
+    volume: Volume = 1.0
+    fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
+    fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
+    keys: Keys = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
+
+
+@dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
     for `secs`, in Timeline time, a video from `offset` seconds into it; cut by its `crop` and placed
     by its `transform`, a video's sound at `volume` (none by default). Its corners are rounded
     `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
-    `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length
-    (docs/adr/0008): a property with Keyframes takes its value from them, not from its Transform."""
+    `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
+    and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
+    not from its Transform or `volume`. An image's volume Keyframes are refused with the Media
+    Library at hand (app/api.py)."""
 
     id: ItemId
     media: MediaId
@@ -384,7 +392,7 @@ class Overlay:
     keys: Keys = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS, self.secs))
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
 
 
 class BackgroundKind(StrEnum):

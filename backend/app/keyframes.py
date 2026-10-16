@@ -4,6 +4,8 @@ renderer draws a keyed picture by; the preview has a copy of it
 (frontend/src/pages/job/editor/keyframes.ts), and both are tested on the Ease vectors in
 tests/fixtures/ease_vectors.json, so that they can't drift (ADR 0001).
 
+A keyed volume is rendered as straight lines between points of its curve (`linear_steps`).
+
 The solver is Concat's (concat-core/src/animate.rs): up to 8 Newton steps from t = x, then 32 steps
 of bisection where the curve is too flat for Newton; a linear Ease needs none.
 """
@@ -29,11 +31,34 @@ def value_at(keys: Sequence[Keyframe], time: float, constant: float) -> float:
     return keys[-1].value
 
 
+# A keyed volume is rendered as straight lines between points of its curve (app/renderer.py): an
+# eased span is this many of them, within 0.6% of its change.
+EASED_STEPS = 24
+
+
+def linear_steps(keys: Sequence[Keyframe], steps: int = EASED_STEPS) -> list[tuple[float, float]]:
+    """The points, as (time, value) and in order, that straight lines between follow `keys` (sorted
+    by `at`, at least one): each Keyframe's, and in an eased span `steps` - 1 more, equally spaced in
+    time, on its curve. The value holds before the first and after the last, as the Keyframes' do."""
+    points = [(keys[0].at, keys[0].value)]
+    for before, key in zip(keys, keys[1:]):
+        linear = _is_linear(key.ease) or key.at <= before.at
+        for step in range(1, 1 if linear else steps):
+            time = before.at + (key.at - before.at) * step / steps
+            points.append((time, value_at((before, key), time, key.value)))
+        points.append((key.at, key.value))
+    return points
+
+
 def eased(ease: Ease, x: float) -> float:
     """How far along `ease` is at `x`, the share of the time between two Keyframes (held to 0..1)."""
-    if abs(ease.x1 - ease.y1) < 1e-6 and abs(ease.x2 - ease.y2) < 1e-6:
+    if _is_linear(ease):
         return min(max(x, 0.0), 1.0)
     return bezier_y_at_x(*ease, x)
+
+
+def _is_linear(ease: Ease) -> bool:
+    return abs(ease.x1 - ease.y1) < 1e-6 and abs(ease.x2 - ease.y2) < 1e-6
 
 
 def bezier_y_at_x(x1: float, y1: float, x2: float, y2: float, x: float) -> float:

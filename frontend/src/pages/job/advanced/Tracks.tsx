@@ -28,7 +28,7 @@ import { SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { HOOK_MIN_SECS } from "./ripple";
-import { gainAt, sourceGain, volumeDragged, volumeHeight } from "./timelineView";
+import { gainAt, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -397,6 +397,7 @@ export function Tracks({
             const end = Math.min(clip.start + clip.secs, duration);
             // Its fades over what is heard of it, as the planner has them.
             const fades = fadesWithin(clip, end - clip.start);
+            const heard: Heard = { volume: clip.volume, secs: end - clip.start, ...fades, keys: clip.keys.volume };
             return (
               <TimelineItem
                 key={clip.id}
@@ -430,10 +431,12 @@ export function Tracks({
                 onDelete={selected ? onDelete : undefined}
               >
                 {song?.has_audio && !!song.duration && (
-                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} secs={end - clip.start} fades={fades} length={song.duration} />
+                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} heard={heard} length={song.duration} />
                 )}
                 <VolumeLine
                   volume={clip.volume}
+                  line={clip.keys.volume?.length ? volumeLine(heard) : undefined}
+                  secs={heard.secs}
                   grab={selected && !locked("music")}
                   onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
                 />
@@ -445,7 +448,9 @@ export function Tracks({
                 />
                 <Music aria-hidden size={12} className="relative shrink-0" />
                 <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
-                {clip.volume !== 1 && <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>}
+                {clip.volume !== 1 && !clip.keys.volume?.length && (
+                  <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>
+                )}
               </TimelineItem>
             );
           })}
@@ -563,27 +568,25 @@ function SourceFilmstrip({
 }
 
 /**
- * A Music Clip's Waveform: the part of its song it plays, across its body, as heard over the `secs`
- * it is heard for, at its volume through its `fades` (as the planner has them over those). `length`
- * is the song's.
+ * A Music Clip's Waveform: the part of its song it plays, across its body, as `heard` over the secs
+ * it is heard for, at its volume or by its volume Keyframes, through its fades (as the planner has
+ * them over those). `length` is the song's.
  */
 function SongWaveform({
   geometry,
   cache,
   clip,
-  secs,
-  fades,
+  heard,
   length,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   clip: MusicClip;
-  secs: number;
-  fades: { fade_in: number; fade_out: number };
+  heard: Heard;
   length: number;
 }) {
   const { pps } = geometry;
-  const heard = { volume: clip.volume, secs, ...fades };
+  const { secs } = heard;
   return (
     <ItemCanvas
       view={geometry.view}
@@ -611,9 +614,30 @@ const VOLUME_HIT_PX = 24;
 /**
  * A Music Clip's or media Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
  * height. On a picked item of an unlocked Track (`grab`), it drags up and down to set the volume, with
- * a % label while it does; elsewhere on the item, a drag moves or trims it as ever.
+ * a % label while it does; elsewhere on the item, a drag moves or trims it as ever. With volume
+ * Keyframes, it is their `line` (`volumeLine`) over the item's `secs`, and doesn't drag.
  */
-function VolumeLine({ volume, grab, onVolume }: { volume: number; grab: boolean; onVolume: (volume: number, group: string) => void }) {
+function VolumeLine({
+  volume,
+  line,
+  secs = 1,
+  grab,
+  onVolume,
+}: {
+  volume: number;
+  line?: { time: number; height: number }[];
+  secs?: number;
+  grab: boolean;
+  onVolume: (volume: number, group: string) => void;
+}) {
+  if (line) {
+    const points = line.map(({ time, height }) => `${time / secs},${1 - height}`).join(" ");
+    return (
+      <svg aria-hidden className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 1 1" preserveAspectRatio="none">
+        <polyline points={points} fill="none" stroke="oklch(0.88 0.16 90)" strokeWidth={grab ? 2 : 1} vectorEffect="non-scaling-stroke" />
+      </svg>
+    );
+  }
   const top = `${(1 - volumeHeight(volume)) * 100}%`;
   return (
     <span aria-hidden className="pointer-events-none absolute inset-0">
