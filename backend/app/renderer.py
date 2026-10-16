@@ -57,6 +57,11 @@ frames are first brought to the Clip's frame rate (`fps`), so that frame n is at
 time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
 or is stopped ends its frame processes. Without keyed pictures the command is as it was.
 
+A keyed video Segment's picture is drawn by a frame process too, in seconds into its Segment, and
+laid over its Background inside its Segment's own chain (`_keyed_scene`, its frames first brought to
+the Clip's frame rate from 0 s), so that its Transitions see the picture move. Its keyed volume is
+an expression of its own time in its own sound's chain, as a Music Clip's is.
+
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume (a keyed one's by an expression of its own time, from its Keyframes), faded, and
 delayed to where it is heard, then mixed with the Clip's own sound (at its volume) before the

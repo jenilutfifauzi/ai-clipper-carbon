@@ -70,7 +70,10 @@ A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) i
 by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
 plays in the Clip. A Segment of a Media Library video is one Scene, with no captions: the video
 drawn as a Picture placed by its Framing, over its Background (a blurred copy of what its Crop keeps,
-covering the frame, or a colour) (`framed_scene`). A Transition overlaps
+covering the frame, or a colour) (`framed_scene`). A keyed one's Picture carries its motion in
+seconds into the Clip, as a keyed Overlay's does, and its sound its gain track in seconds from its
+start; its Background is left out when the moving picture covers the frame at every one of its
+frames (`keyed_scene`). A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
 is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
 Everything else is planned over the whole Clip, in seconds into it.

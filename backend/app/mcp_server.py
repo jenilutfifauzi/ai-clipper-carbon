@@ -118,17 +118,19 @@ Edits:
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
-- Keyframes move an Overlay over its length: its `keys` map a property (x, y, scale,
-  rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's and a video Overlay's `volume`
-  (0..2) can be keyed too: the fades multiply it. `at` is seconds from the Overlay's start, value
-  in the field's own units (rotation -3600..3600, to turn several times). A keyed property's
-  transform field is unused. The value holds before the first and after the last Keyframe; between
-  two it moves by the later one's ease: linear (the default), ease_in, ease_out, ease_in_out, or a
-  cubic-bezier [x1, y1, x2, y2] (x 0..1; y may overshoot). At most 100 per property, 1/30 s apart at
-  least. merge_candidate_items replaces the lists of the properties given ([] clears one) and keeps
-  the others. Moving an item moves its Keyframes; the server never re-times them, and refuses a
-  length that would leave one past its item's end: send its keys too. The dry run lists them in
-  Timeline time, with the Overlay's bounds at each; a keyed volume's under `sounds`.
+- Keyframes move an Overlay, or a video Segment's framing, over its length: its `keys` map a
+  property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
+  Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
+  of the episode has none. `at` is seconds from the item's start (a Segment's: where it starts in
+  the Clip, its `start` in the video), value in the field's own units (rotation -3600..3600, to
+  turn several times). A keyed property's transform field is unused. The value holds before the
+  first and after the last Keyframe; between two it moves by the later one's ease: linear (the
+  default), ease_in, ease_out, ease_in_out, or a cubic-bezier [x1, y1, x2, y2] (x 0..1; y may
+  overshoot). At most 100 per property, 1/30 s apart at least. merge_candidate_items replaces the
+  lists of the properties given ([] clears one) and keeps the others. Moving an item moves its
+  Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
+  leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
+  the picture's bounds at each (an Overlay's or a Scene's); a keyed volume's under `sounds`.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
