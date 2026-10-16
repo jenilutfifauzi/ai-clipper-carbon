@@ -6,19 +6,19 @@
 
 **Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09, 10
 
-**Status:** ready-for-human
+**Status:** done
 
-- [ ] Desktop, Chrome and Safari:
-  - [ ] an Overlay rotated, flipped, stretched, cropped in Crop mode, rounded to a circle, with a border and a shadow;
-  - [ ] a sideways phone video as a media Segment, rotated 90° and filled;
-  - [ ] a Source Scene switched to Manual, panned, zoomed, scaled over a colour, then Use for all Scenes;
-  - [ ] the clip editor's Manual and pan;
-  - [ ] a portrait episode: only As shot and Manual are offered (clip editor and Advanced Edit); Reframe by hand on one Scene, then Manual for the clip, and compare with the render;
-  - [ ] Smart Guides between two Overlays;
-  - [ ] each drag is one step of undo;
-  - [ ] a Transition between two transformed media Segments.
-- [ ] Phone, iPhone Safari: pinch, twist, the Transform sheet and Crop mode.
-- [ ] Each step's preview matches a frame rendered at the same time.
+- [x] Desktop, Chrome and Safari:
+  - [x] an Overlay rotated, flipped, stretched, cropped in Crop mode, rounded to a circle, with a border and a shadow;
+  - [x] a sideways phone video as a media Segment, rotated 90° and filled;
+  - [x] a Source Scene switched to Manual, panned, zoomed, scaled over a colour, then Use for all Scenes;
+  - [x] the clip editor's Manual and pan;
+  - [x] a portrait episode: only As shot and Manual are offered (clip editor and Advanced Edit); Reframe by hand on one Scene, then Manual for the clip, and compare with the render;
+  - [x] Smart Guides between two Overlays;
+  - [x] each drag is one step of undo;
+  - [x] a Transition between two transformed media Segments.
+- [x] Phone, iPhone Safari: pinch, twist, the Transform sheet and Crop mode.
+- [x] Each step's preview matches a frame rendered at the same time.
 
 ## Comments
 
@@ -41,3 +41,5 @@ Not tried:
 - a portrait Source (no portrait Job);
 - a Transition between transformed Segments;
 - Safari and a real iPhone.
+
+**2026-10-16: done.** The owner checked the rest by hand: a portrait Source, a Transition between transformed Segments, Safari and a real iPhone.
