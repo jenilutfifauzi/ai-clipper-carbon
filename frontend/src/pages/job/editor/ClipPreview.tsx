@@ -670,7 +670,10 @@ export function PanelView({
   );
 }
 
-/** The caption line on screen, with its spoken Word highlighted as the Caption Style says, moved while it is. */
+/**
+ * The caption line on screen, with its spoken Word highlighted as the Caption Style says, moved
+ * while it is.
+ */
 function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback; edit: StageEdit }) {
   const key = useShown(playback, (time) => {
     const event = plan.captions.findIndex((caption) => caption.start <= time && time < caption.end);
@@ -1036,7 +1039,7 @@ function Transport({
         hidden && "not-has-focus-visible:pointer-events-none not-has-focus-visible:opacity-0",
       )}
     >
-      {/* Compact on a phone, closer together and the time over the Clip's length, so that the row fits 375 px. */}
+      {/* Compact on a phone (closer together, the time over the Clip's length) to fit 375 px. */}
       <div className={cx("flex items-center gap-3", compact && "max-sm:gap-2")}>
         <Button variant="secondary" size="icon" onClick={() => playback.toggle()} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause aria-hidden size={18} /> : <Play aria-hidden size={18} />}
@@ -1049,6 +1052,8 @@ function Transport({
           value={Math.min(tenths / 10, duration)}
           onChange={(event) => playback.seek(Number(event.target.value))}
           aria-label="Position in the clip"
+          // The Advanced Edit's ← and → step frames here too, rather than its own 0.1 s steps.
+          data-shortcuts
           className="min-w-0 flex-1 accent-accent"
         />
         <span className={cx("shrink-0 text-sm text-muted tabular-nums", compact && "max-sm:flex max-sm:flex-col max-sm:items-end max-sm:text-xs")}>
@@ -1096,8 +1101,13 @@ function RateMenu({ playback }: { playback: Playback }) {
   return (
     <select
       value={rate}
-      onChange={(event) => playback.setRate(Number(event.target.value))}
+      // Let go once a rate is picked, so that Space plays; the Advanced Edit's keys go on meanwhile.
+      onChange={(event) => {
+        playback.setRate(Number(event.target.value));
+        event.currentTarget.blur();
+      }}
       aria-label="Playback rate"
+      data-shortcuts
       className={cx(
         "min-h-9 shrink-0 cursor-pointer appearance-none rounded-[10px] px-2 text-center text-sm font-medium tabular-nums hover:bg-fill",
         rate === 1 ? "text-muted hover:text-text" : "text-accent-text",

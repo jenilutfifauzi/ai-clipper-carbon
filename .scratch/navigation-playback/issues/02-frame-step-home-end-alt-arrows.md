@@ -43,3 +43,5 @@ Two choices the spec left open. The last frame is the last one wholly in the Cli
 Pressing on the Timeline (its items, its join diamonds, its caption lines, its buttons and the zoom buttons above it) no longer gives the focus: a `mousedown` there on a button or `role=button` is prevented, and whatever had the focus is blurred, as a press elsewhere would. Tab still reaches every item, which keeps its own arrows (0.1 s, Shift its end, Alt ×10) as before.
 
 Not tried in the browser: clicking a Text Layer then →, Alt+→ and its undo, and Tab then →, are left for the walkthrough (11). Also worth a look there: Alt+← with nothing picked is left to the browser, as every shortcut that can't run is, which on Windows and Linux is Back; and in Firefox a prevented `mousedown` drops the `:active` grabbing cursor on items.
+
+**2026-10-16: Review fixes.** Alt+← and → (and with Shift) are always taken now, even with nothing to move, so they are never the browser's Back and Forward (`commands.test.ts`). `LoopRegion`, `loopStart` and `wrapTarget` moved from `playhead.ts` to `editor/loop.ts` (07); the frame grid stays here.

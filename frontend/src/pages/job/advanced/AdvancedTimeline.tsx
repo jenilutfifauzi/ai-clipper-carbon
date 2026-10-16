@@ -14,8 +14,9 @@ import {
 } from "react";
 import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
+import type { LoopRegion } from "../editor/loop";
 import { usePlayback, type Playback } from "../editor/playback";
-import { onFrame, revealScroll, type LoopMarks, type LoopRegion } from "./playhead";
+import { onFrame, revealScroll, type LoopMarks } from "./playhead";
 import { setSkim, setSkimSound, useSkim, useSkimSound } from "./skim";
 import { MAX_ZOOM, zoomAboutPlayhead, type ZoomedView } from "./timelineView";
 
@@ -75,7 +76,8 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * while paused, a playhead moved out of view (a frame step, a jump) is scrolled back into it. With
  * `skimmable` (a desktop), its Skim button turns the Skim on: then a mouse over the ruler or the
  * tracks, pressing nothing, has the paused preview show the time under it, marked by a thin line,
- * until it leaves or presses. With `loop`, the ruler shows the Loop Region as a band, lit while Loop is on, whose ends are dragged.
+ * until it leaves or presses. With `loop`, the ruler shows the Loop Region as a band, lit while
+ * Loop is on, whose ends are dragged.
  */
 export function AdvancedTimeline({
   duration,
@@ -643,7 +645,8 @@ let gestures = 0;
  * picked by a click or tap (with Shift, Cmd or Ctrl, added to the Pick or taken out of it; dragging a
  * picked item keeps the Pick). On a touch screen it is lifted by a long press, so that a swipe still
  * scrolls the timeline. Reached by Tab (a press doesn't focus it), the arrow keys move it (with Alt,
- * further), with Shift they change its end; Delete removes it. Each drag is one `group` of changes, undone as one.
+ * further), with Shift they change its end; Delete removes it. Each drag is one `group` of changes,
+ * undone as one.
  */
 export function TimelineItem({
   geometry,
@@ -884,7 +887,10 @@ export function TimelineItem({
   );
 }
 
-/** What each move of a handle's drag does: given how far the pointer is from where it went down, in CSS pixels. */
+/**
+ * What each move of a handle's drag does: given how far the pointer is from where it went down, in
+ * CSS pixels.
+ */
 export type HandleMove = (moved: { dx: number; dy: number }, group: string) => void;
 
 let handleGestures = 0;

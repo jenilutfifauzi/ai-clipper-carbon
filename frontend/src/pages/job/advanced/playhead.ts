@@ -1,6 +1,7 @@
 // Seam E (.scratch/navigation-playback/spec.md): where the playhead goes on the Clip's frame grid
 // (a frame is 1/fps of the Clip, its rate the Source's), how far the Timeline scrolls to show it,
-// and the Loop Region (GLOSSARY.md), worked out from numbers alone.
+// and the Loop Region (GLOSSARY.md) its marks make, worked out from numbers alone.
+import type { LoopRegion } from "../editor/loop";
 
 // The Clip's frame rate until a Preview Plan says what it is.
 export const DEFAULT_FPS = 30;
@@ -14,7 +15,10 @@ export function onFrame(time: number, fps: number): number {
   return Math.round(time * fps) / fps;
 }
 
-/** The start of the Clip's last frame, the last one wholly in its `duration` at `fps`: End takes the playhead there. */
+/**
+ * The start of the Clip's last frame, the last one wholly in its `duration` at `fps`: End takes the
+ * playhead there.
+ */
 export function lastFrame(duration: number, fps: number): number {
   return Math.max(Math.floor(duration * fps + HAIR) - 1, 0) / fps;
 }
@@ -40,13 +44,7 @@ export function revealScroll(x: number, { scroll, width }: { scroll: number; wid
   return scroll;
 }
 
-// --- The Loop Region ---
-
-/** The stretch playback repeats while Loop is on, in Timeline time: from `in` to `out`. */
-export interface LoopRegion {
-  in: number;
-  out: number;
-}
+// --- The Loop Region's marks (the Region as played: ../editor/loop.ts) ---
 
 /** The In and Out marks as set at the playhead, in Timeline time: either may be unset. */
 export interface LoopMarks {
@@ -69,24 +67,4 @@ export function loopRegion(marks: LoopMarks, { fps, duration }: { fps: number; d
   if (end - start >= frame) return { in: start, out: end };
   // Closer than a frame: Out a frame after In, or at the Clip's end a frame before it.
   return start + frame <= duration ? { in: start, out: start + frame } : { in: duration - frame, out: duration };
-}
-
-/** Where Play starts with Loop on: at `time` inside the Region (Out is past it), otherwise at In. */
-export function loopStart(time: number, region: LoopRegion): number {
-  return time >= region.in && time < region.out ? time : region.in;
-}
-
-/**
- * Where playback goes from Out: In, in the Segment it is in (as played, back to back from 0 s; at a
- * join, the Segment after it), and In's time in the Source, or null in a media Segment, whose video
- * the preview plays itself.
- */
-export function wrapTarget(
-  region: LoopRegion,
-  segments: { start: number; end: number; source_start: number; media?: string | null }[],
-): { index: number; time: number; source: number | null } {
-  const found = segments.findIndex((segment) => region.in < segment.end);
-  const index = found === -1 ? segments.length - 1 : found;
-  const segment = segments[index];
-  return { index, time: region.in, source: segment.media ? null : segment.source_start + (region.in - segment.start) };
 }

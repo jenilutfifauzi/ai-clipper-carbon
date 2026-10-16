@@ -163,7 +163,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [pickState, setPickState] = useState<Pick>(null);
-  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the Tracks or of Playback.
+  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the Tracks
+  // or of Playback.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The player's room, which goes full screen with the stage and the player bar.
@@ -946,10 +947,12 @@ function ordered(marks: LoopMarks): LoopMarks {
   return marks.in !== null && marks.out !== null && marks.in > marks.out ? { in: marks.out, out: marks.in } : marks;
 }
 
-// Where the focus takes every key but Escape: a field, or text being typed on the stage.
-const FIELD = "input, textarea, select, [contenteditable='true']";
-// What keeps its own arrows, Enter, Space and Delete when it has the focus: an item reached by Tab, or a button.
-const ITEM = "[role=button], button";
+// Where the focus takes every key but Escape: a field, or text being typed on the stage. Not the
+// preview's scrubber and rate menu (`data-shortcuts`), which leave every key to the table.
+const FIELD = "input:not([data-shortcuts]), textarea, select:not([data-shortcuts]), [contenteditable='true']";
+// What keeps its own arrows, Enter, Space and Delete when it has the focus: a Timeline or stage item,
+// reached by Tab. A button keeps only Enter: Space plays, and isn't also a click.
+const ITEM = "[role=button]";
 
 // The shortcuts of the keymap table (./keymap.ts), each done by its command. One that can't be done
 // now leaves its key to the browser.

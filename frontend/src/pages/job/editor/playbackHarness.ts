@@ -9,7 +9,8 @@ const FRAME_SECS = 0.02;
 /**
  * A <video> as `Playback` uses it: its time, paused, muted and rate; `play` and `pause` that fire
  * their events as a browser does; and a seek that is in flight (`seeking`) until the test lands it
- * with `fireSeeked`. While playing, and not seeking, it plays on with the clock.
+ * with `fireSeeked`. While playing, and not seeking, it plays on with the clock. While it `refuse`s,
+ * `play` is refused as a browser refuses it (iOS, unbidden): rejected, and it stays paused.
  */
 export class FakeVideo extends EventTarget {
   paused = true;
@@ -17,6 +18,7 @@ export class FakeVideo extends EventTarget {
   playbackRate = 1;
   volume = 1;
   seeking = false;
+  refuse = false;
   private at = 0;
 
   get currentTime() {
@@ -29,6 +31,7 @@ export class FakeVideo extends EventTarget {
   }
 
   play() {
+    if (this.refuse) return Promise.reject(new Error("NotAllowedError"));
     if (this.paused) {
       this.paused = false;
       this.dispatchEvent(new Event("play"));

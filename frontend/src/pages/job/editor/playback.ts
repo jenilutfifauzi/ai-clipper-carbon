@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { loopStart, wrapTarget, type LoopRegion } from "../advanced/playhead";
+import { loopStart, wrapTarget, type LoopRegion } from "./loop";
 
 type Listener = () => void;
 
@@ -89,7 +89,8 @@ interface Deck {
  * In without stopping, on the parked deck waiting there. Everything plays at its `rate`: both decks,
  * the clock, and (through `follow`) every element that follows it, each keeping its pitch as the
  * browser does. While paused, a skim borrows the parked deck to show another time, its `shownTime`,
- * which the preview draws and its followers follow, the time staying put.
+ * which the preview draws and its followers follow, the time staying put; a seek or Play ends it.
+ * A live deck the browser refuses to play stops the playback.
  */
 export class Playback {
   private decks: [Deck | null, Deck | null] = [null, null];
@@ -204,7 +205,7 @@ export class Playback {
     // The time's Segment may be gone (one deleted): kept inside the new Segments before anything reads it.
     this.index = Math.min(this.index, segments.length - 1);
     // A moved start waits at the new start; otherwise the time is kept, inside the Clip.
-    if (!this.playing) this.seek(moved ? 0 : Math.min(this.time, this.duration));
+    if (!this.playing) this.moveTo(moved ? 0 : Math.min(this.time, this.duration));
     else this.park();
     // A skim shows its time as the Segments now play it.
     if (this.skimmed) this.show(this.skimmed.time);
@@ -227,7 +228,8 @@ export class Playback {
       this.start();
     };
     const onPause = () => {
-      if (!live()) return;
+      // Played again since (an unlock's pause heard after a swap): not a pause of the playback.
+      if (!live() || !master.paused) return;
       if (this.handing) {
         this.handing = false;
         return;
@@ -244,7 +246,7 @@ export class Playback {
     const onLoaded = () => {
       // A load sets the rate back to the default.
       this.paced(deck);
-      if (live()) return this.seek(this.time);
+      if (live()) return this.moveTo(this.time);
       deck.parked = null;
       this.park();
     };
@@ -316,8 +318,24 @@ export class Playback {
 
   private run(deck: Deck) {
     this.paced(deck);
-    void deck.master.play().catch(() => {});
+    // A browser may refuse to play (iOS, a deck swapped in): the live deck refused while playing
+    // stops the playback where it is, so that Play plays again.
+    void deck.master.play().catch(() => {
+      if (this.playing && !this.clock && this.decks[this.live] === deck && deck.master.paused) this.stop();
+    });
     if (deck.follower) void deck.follower.play().catch(() => {});
+  }
+
+  // The parked deck's videos played and paused at once, muted, inside the owner's own Play: iOS
+  // refuses to play a video that no press of the owner's has played, as at the swap it would be.
+  private unlock() {
+    const deck = this.decks[this.parkedSlot];
+    if (!deck) return;
+    for (const video of deck.follower ? [deck.master, deck.follower] : [deck.master]) {
+      if (!video.paused || !video.muted) continue;
+      void video.play().catch(() => {});
+      video.pause();
+    }
   }
 
   private halt(deck: Deck) {
@@ -433,8 +451,14 @@ export class Playback {
     return index === -1 ? this.segments.length - 1 : index;
   }
 
-  // To `time` seconds into the Clip.
+  // To `time` seconds into the Clip, ending a skim: the preview shows the time it went to.
   seek(time: number) {
+    this.unskim();
+    this.moveTo(time);
+  }
+
+  // To `time` seconds into the Clip, a skim kept showing its own time.
+  private moveTo(time: number) {
     const wasMedia = !!this.segment.media;
     this.index = this.indexAt(time);
     this.time = time;
@@ -463,6 +487,7 @@ export class Playback {
   // From `from`, else from the time; with Loop on, from In when the time is outside the Region.
   play(from?: number) {
     this.unskim();
+    this.unlock();
     if (from !== undefined) this.seek(from);
     else if (this.region && loopStart(this.time, this.region) !== this.time) this.seek(this.region.in);
     const deck = this.decks[this.live];
@@ -476,7 +501,12 @@ export class Playback {
   pause() {
     const deck = this.decks[this.live];
     if (this.clock) this.stop();
-    else if (deck) this.halt(deck);
+    else if (deck) {
+      // A live deck paused already (refused its play) fires no `pause`: the playback stops here.
+      const still = deck.master.paused;
+      this.halt(deck);
+      if (still && this.playing) this.stop();
+    }
   }
 
   toggle() {

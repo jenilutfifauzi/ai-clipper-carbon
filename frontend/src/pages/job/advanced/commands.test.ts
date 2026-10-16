@@ -97,9 +97,12 @@ describe("moving the Pick", () => {
     expect(move).toHaveBeenCalledWith(1 / 30, "key:move");
   });
 
-  test("with nothing to move, the key is left to the browser", () => {
+  test("with nothing to move, the key is still taken, so that Alt+← isn't the browser's Back", () => {
     const { commands } = setUp();
-    expect(commands["move-back"]()).toBe(false);
+    for (const id of ["move-back", "move-forward", "move-back-10", "move-forward-10"] as const) {
+      expect(commands[id]()).not.toBe(false);
+    }
+    // Copy with nothing picked is left to the browser.
     expect(commands.copy()).toBe(false);
   });
 });

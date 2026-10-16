@@ -113,7 +113,8 @@ describe("zoom about the playhead (.scratch/navigation-playback/spec.md)", () =>
     // At 2× scrolled 400 px (20–75 s), the playhead at 80 s is past the right edge: at 3× it is
     // 2400 px in, and centred the view scrolls 2400 − 550 px.
     expect(zoomed(2, 400, 80, 1.5)).toEqual({ zoom: 3, scroll: 1850 });
-    // At 4× scrolled 2000 px (50–77.5 s), the playhead at 20 s is before the left edge: at 6× it is 1200 px in.
+    // At 4× scrolled 2000 px (50–77.5 s), the playhead at 20 s is before the left edge: at 6× it is
+    // 1200 px in.
     expect(zoomed(4, 2000, 20, 1.5)).toEqual({ zoom: 6, scroll: 650 });
   });
 
@@ -134,7 +135,8 @@ describe("zoom about the playhead (.scratch/navigation-playback/spec.md)", () =>
     // At 3× scrolled to the end (2200 px), the playhead at 100 s is 800 px across the view. At 2× it
     // would keep that place 1200 px in, but the Clip ends 1100 px in.
     expect(zoomed(3, 2200, 100, 1 / 1.5)).toEqual({ zoom: 2, scroll: 1100 });
-    // At 2× scrolled 400 px, the playhead at 2 s is before the view: centred at 3× it would be at −490 px.
+    // At 2× scrolled 400 px, the playhead at 2 s is before the view: centred at 3× it would be at
+    // −490 px.
     expect(zoomed(2, 400, 2, 1.5)).toEqual({ zoom: 3, scroll: 0 });
   });
 });

@@ -9,6 +9,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// Every refused `play` heard of: its rejection handled.
+const refusals = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 // Two Source Segments: 0–5 s of the Clip from 100 s of the Source, 5–9 s from 200 s.
 const twoCuts = () =>
   playedFrom([
@@ -206,6 +209,64 @@ describe("two decks", () => {
     expect(playback.time).toBe(6);
   });
 
+  test("a deck refused its play at the swap stops the playback at the join, and Play plays again", async () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, second] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.play();
+    second.master.refuse = true;
+    stage.advance(3.98);
+    await refusals();
+    expect(playback.shownDeck).toBe(1);
+    expect(playback.playing).toBe(false);
+    expect(playback.time).toBe(5);
+    second.master.refuse = false;
+    playback.toggle();
+    expect(playback.playing).toBe(true);
+    stage.advance(1);
+    expect(playback.time).toBeCloseTo(6, 5);
+  });
+
+  test("Pause stops the playback even when the live deck is paused already", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, second] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.play();
+    // Refused at the swap; Pause before the refusal is heard of.
+    second.master.refuse = true;
+    stage.advance(3.98);
+    expect(second.master.paused).toBe(true);
+    playback.toggle();
+    expect(playback.playing).toBe(false);
+    expect(playback.time).toBe(5);
+  });
+
+  test("Play plays and pauses the parked deck at once, muted, so that a browser lets it play at the swap", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, parked] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    let plays = 0;
+    parked.master.addEventListener("play", () => {
+      plays += 1;
+      expect(parked.master.muted).toBe(true);
+    });
+    playback.play();
+    expect(plays).toBe(1);
+    expect(parked.master.paused).toBe(true);
+    expect(parked.follower.paused).toBe(true);
+    expect(parked.master.currentTime).toBe(200);
+    expect(playback.shownDeck).toBe(0);
+  });
+
   test("a one-Segment Clip plays and stops at its end, the other deck never moving", () => {
     const stage = harness();
     const playback = new Playback();
@@ -382,7 +443,7 @@ describe("skim", () => {
     expect(parked.master.currentTime).toBe(200);
   });
 
-  test("a seek while skimming moves the time, and leaves the borrowed deck where it shows", () => {
+  test("a seek while skimming ends the skim: the live deck shows the new time, the other parked again", () => {
     const stage = harness();
     const playback = new Playback();
     playback.setSegments(twoCuts());
@@ -391,8 +452,11 @@ describe("skim", () => {
     playback.skim(7);
     playback.seek(2);
     expect(live.master.currentTime).toBe(102);
-    expect(parked.master.currentTime).toBe(202);
-    expect(playback.shownTime).toBe(7);
+    expect(playback.shownDeck).toBe(0);
+    expect(playback.shownTime).toBe(2);
+    expect(playback.skimTime).toBeNull();
+    expect(parked.master.currentTime).toBe(200);
+    expect(parked.master.paused).toBe(true);
   });
 
   test("the same position again seeks nothing, and an edit of the Segments shows the skimmed time as they now play it", () => {

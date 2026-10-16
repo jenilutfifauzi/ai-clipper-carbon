@@ -47,8 +47,10 @@ export function commandsOf(
     setFullscreen: (on: boolean) => void;
   },
 ): Commands {
-  // The picked Text Layers, Music Clips and Overlays moved `frames` frames; a run of presses is undone as one.
-  const move = (frames: number) => (more.move ? more.move(frames / more.fps, "key:move") : false);
+  // The picked Text Layers, Music Clips and Overlays moved `frames` frames; a run of presses is
+  // undone as one. With nothing to move the key is still taken: Alt+← and → are the browser's Back
+  // and Forward, which would leave the edit.
+  const move = (frames: number) => more.move?.(frames / more.fps, "key:move");
   // The playhead `frames` frames on, on the frame grid, paused to show the frame stepped to.
   const step = (frames: number) => {
     if (playback.playing) playback.pause();

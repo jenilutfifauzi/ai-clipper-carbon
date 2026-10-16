@@ -368,7 +368,10 @@ const VOLUME_CURVE = Math.log(1 / 2) / Math.log(2 / 3);
 // The loudest volume, at the top of an item.
 const VOLUME_MAX = 2;
 
-/** The volume the Volume Line sets at `height` up an item (0 at the bottom, 1 at the top), rounded to 0.01. */
+/**
+ * The volume the Volume Line sets at `height` up an item (0 at the bottom, 1 at the top), rounded
+ * to 0.01.
+ */
 export function volumeOfHeight(height: number): number {
   const p = Math.min(Math.max(height, 0), 1);
   return Math.round(VOLUME_MAX * p ** VOLUME_CURVE * 100) / 100;
@@ -384,7 +387,10 @@ export function volumeHeight(volume: number): number {
 // phone's Music lane is 35 px) a small move is a small change.
 const VOLUME_TRAVEL_PX = 120;
 
-/** The volume a drag of the Volume Line by `dy` pixels (down is quieter) sets, from `volume`, on an item `height` pixels tall. */
+/**
+ * The volume a drag of the Volume Line by `dy` pixels (down is quieter) sets, from `volume`, on an
+ * item `height` pixels tall.
+ */
 export function volumeDragged(volume: number, dy: number, height: number): number {
   return volumeOfHeight(volumeHeight(volume) - dy / Math.max(height, VOLUME_TRAVEL_PX));
 }

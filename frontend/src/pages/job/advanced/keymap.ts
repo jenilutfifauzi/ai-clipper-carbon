@@ -71,7 +71,8 @@ export interface Shortcut {
 export interface KeyContext {
   // A field, or text being typed on the stage, has it.
   typing?: boolean;
-  // An item reached by Tab (or a button) has it, and keeps its own arrows, Enter, Space and Delete.
+  // An item reached by Tab (a Timeline or stage item) has it, and keeps its own arrows, Enter, Space
+  // and Delete.
   item?: boolean;
   fullscreen?: boolean;
   // The phone's layout, without the desktop's shortcuts.
@@ -171,7 +172,10 @@ export function matches(shortcut: Shortcut, keys: Keys, context: KeyContext = {}
   return shortcut.keys.some((own) => same(own, keys));
 }
 
-/** The shortcut `keys` give in `context`, or null when they are left to the browser or to what has the focus. */
+/**
+ * The shortcut `keys` give in `context`, or null when they are left to the browser or to what has
+ * the focus.
+ */
 export function resolveShortcut(keys: Keys, context: KeyContext = {}): ShortcutId | null {
   return SHORTCUTS.find((shortcut) => matches(shortcut, keys, context))?.id ?? null;
 }
@@ -185,7 +189,10 @@ const GROUPS: { group: ShortcutGroup; label: string }[] = [
   { group: "view", label: "View" },
 ];
 
-/** The sheet's groups in order, each with its shortcuts in the table's order; a group with none is left out. */
+/**
+ * The sheet's groups in order, each with its shortcuts in the table's order; a group with none is
+ * left out.
+ */
 export function shortcutSheet(): { group: ShortcutGroup; label: string; shortcuts: Shortcut[] }[] {
   return GROUPS.map(({ group, label }) => ({ group, label, shortcuts: SHORTCUTS.filter((shortcut) => shortcut.group === group) })).filter(
     (group) => group.shortcuts.length > 0,

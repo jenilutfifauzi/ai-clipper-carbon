@@ -30,13 +30,14 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
+import type { LoopRegion } from "../editor/loop";
 import { RATES, usePlayback, type Playback } from "../editor/playback";
 import type { ItemActions, Splitter } from "./actions";
 import type { Commands } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { keyNames, shortcutSheet } from "./keymap";
 import { itemsOf, type Pick } from "./pick";
-import { lastFrame, onFrame, type LoopRegion } from "./playhead";
+import { lastFrame, onFrame } from "./playhead";
 import { nextEditPoint, previousEditPoint } from "./timelineView";
 import type { EditHistory } from "./useEditHistory";
 
