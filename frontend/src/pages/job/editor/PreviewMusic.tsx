@@ -69,12 +69,14 @@ export function PreviewMusic({
 
   useEffect(() => {
     const sync = () => {
-      const volume = sourceVolume * (playback.current.media ? 1 : (playback.current.volume ?? 1));
+      // A skim's snippet is heard at the skimmed Segment's volume.
+      const shown = playback.segments[playback.shownSegmentIndex];
+      const volume = sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
       for (const { current: video } of masters) if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
         if (element && follow(element, playback, { start: event.start, end: event.end, from: event.offset })) {
-          setVolume(element, loudness(event, playback.time));
+          setVolume(element, loudness(event, playback.shownTime));
         }
       });
     };

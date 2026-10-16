@@ -22,6 +22,7 @@ export type ShortcutId =
   | "zoom-in"
   | "zoom-out"
   | "fit"
+  | "skim"
   | "shortcuts";
 
 export type ShortcutGroup = "playback" | "navigation" | "editing" | "view";
@@ -97,6 +98,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "zoom-in", keys: [{ key: "=" }, { key: "+" }], group: "view", label: "Zoom the Timeline in about the playhead" },
   { id: "zoom-out", keys: [{ key: "-" }], group: "view", label: "Zoom the Timeline out about the playhead" },
   { id: "fit", keys: [{ key: "z", shift }], group: "view", label: "Zoom the Timeline to fit the picked items, or the whole Clip" },
+  { id: "skim", keys: [{ key: "s" }], group: "view", label: "Skim on or off: the preview shows the frame under the pointer", desktop: true },
   { id: "shortcuts", keys: [{ key: "?" }], group: "view", label: "Show these shortcuts", desktop: true },
 ];
 

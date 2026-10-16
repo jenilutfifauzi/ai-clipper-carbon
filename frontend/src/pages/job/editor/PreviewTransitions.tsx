@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, TransitionEvent, TransitionKind } from "../../../api";
 import { PanelView, sceneAt } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
-import { Playback, usePlayback } from "./playback";
+import { Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
 import { MediaSegment, sceneLayout } from "./PreviewSegments";
 
@@ -18,7 +18,7 @@ const READY_SECS = 2;
  */
 export function PreviewTransitions({ plan, playback, src }: { plan: RenderPlan | null; playback: Playback; src: string }) {
   const transitions = plan?.transitions ?? [];
-  const near = usePlayback(playback, (time) => transitions.findIndex((t) => time >= t.start - READY_SECS && time < t.end));
+  const near = useShown(playback, (time) => transitions.findIndex((t) => time >= t.start - READY_SECS && time < t.end));
   if (!plan || near === -1) return null;
   const transition = transitions[near];
   // The Segment it takes away: the one it ends, which started before it.
@@ -58,7 +58,7 @@ function Ghost({
 
   useEffect(() => {
     const sync = () => {
-      const time = playback.time;
+      const time = playback.shownTime;
       const inside = time >= transition.start && time < transition.end;
       const share = (time - transition.start) / (transition.end - transition.start);
       if (layer.current && veil.current) {

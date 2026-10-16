@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import type { Box, RenderPlan } from "../../../api";
 import { cx } from "../../../format";
-import { usePlayback, type Playback } from "./playback";
+import { useShown, type Playback } from "./playback";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -289,7 +289,7 @@ export type StageEdit = ReturnType<typeof useStageEdit>;
  * with a corner to resize it by when it has a size. The guides it snaps to, while it does.
  */
 export function StageHandles({ plan, playback, edit }: { plan: RenderPlan; playback: Playback; edit: StageEdit }) {
-  const on = usePlayback(playback, (time) =>
+  const on = useShown(playback, (time) =>
     edit.items.map((item) => item.shows.findIndex((show) => show.start <= time && time < show.end)).join(","),
   );
   const shownAt = on.split(",").map(Number);

@@ -58,7 +58,7 @@ export function MediaSegment({
     const sync = () => {
       const inside = main.current ? follow(main.current, playback, span, true) : false;
       if (back.current) follow(back.current, playback, span, true);
-      const left = fade ? Math.min(1, Math.max(0, (fade.end - playback.time) / (fade.end - fade.start))) : 1;
+      const left = fade ? Math.min(1, Math.max(0, (fade.end - playback.shownTime) / (fade.end - fade.start))) : 1;
       if (main.current) setVolume(main.current, segment.silent ? 0 : segment.volume * left);
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };

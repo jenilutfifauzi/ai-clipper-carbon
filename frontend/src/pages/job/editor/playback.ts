@@ -50,6 +50,8 @@ export function playable(segments: PlayedSegment[]): PlayedSegment[] {
 const HANDOVER_SECS = 0.03;
 // A follower video further than this from its master is moved back in step.
 const MAX_DRIFT_SECS = 0.12;
+// A skim's snippet of sound lasts this long.
+const SNIPPET_SECS = 0.08;
 
 /** The rates the preview plays at: a viewing aid, not a Clip's speed. */
 export const RATES = [0.5, 1, 1.5, 2] as const;
@@ -83,7 +85,8 @@ interface Deck {
  * media and the timeline all read and set the time through it. Playing stops at the Clip's end,
  * checked every frame; started outside the Clip (before its start), it plays freely. Everything plays
  * at its `rate`: both decks, the clock, and (through `follow`) every element that follows it, each
- * keeping its pitch as the browser does.
+ * keeping its pitch as the browser does. While paused, a skim borrows the parked deck to show another
+ * time, its `shownTime`, which the preview draws and its followers follow, the time staying put.
  */
 export class Playback {
   private decks: [Deck | null, Deck | null] = [null, null];
@@ -101,6 +104,10 @@ export class Playback {
   private pace = 1;
   // The live deck paused here to hand over to a video's Segment: not a pause of the playback.
   private handing = false;
+  // While skimming: the time shown, and its Segment, on the parked deck.
+  private skimmed: { time: number; index: number } | null = null;
+  // While a skim's snippet of sound plays: the frame that checks for its end.
+  private snippet: { frame: number } | null = null;
   // In seconds into the Clip, as last read: updated every frame while playing.
   time = 0;
   playing = false;
@@ -135,9 +142,28 @@ export class Playback {
     return this.index;
   }
 
-  // The deck whose videos the panels show.
+  // The deck whose videos the panels show: the parked one while a skim borrows it.
   get shownDeck(): DeckSlot {
-    return this.live;
+    return this.skimmed && this.decks[this.parkedSlot] ? this.parkedSlot : this.live;
+  }
+
+  private get parkedSlot(): DeckSlot {
+    return this.live === 0 ? 1 : 0;
+  }
+
+  // The time the preview shows: the skimmed time while skimming, otherwise the time.
+  get shownTime(): number {
+    return this.skimmed?.time ?? this.time;
+  }
+
+  // The Segment the shown time is in, and which of them it is.
+  get shownSegmentIndex(): number {
+    return this.skimmed?.index ?? this.index;
+  }
+
+  // The skimmed time, or null when not skimming.
+  get skimTime(): number | null {
+    return this.skimmed?.time ?? null;
   }
 
   // The Clip as one range of the Source.
@@ -154,6 +180,8 @@ export class Playback {
     // A moved start waits at the new start; otherwise the time is kept, inside the Clip.
     if (!this.playing) this.seek(moved ? 0 : Math.min(this.time, this.duration));
     else this.park();
+    // A skim shows its time as the Segments now play it.
+    if (this.skimmed) this.show(this.skimmed.time);
   }
 
   /**
@@ -218,6 +246,7 @@ export class Playback {
   }
 
   private start() {
+    this.unskim();
     this.playing = true;
     this.schedule();
     this.emit();
@@ -277,8 +306,10 @@ export class Playback {
     return next ? next.source_start : null;
   }
 
-  // The parked deck, paused and muted, to where the playback will need it next, unless it is there.
+  // The parked deck, paused and muted, to where the playback will need it next, unless it is there
+  // (or a skim has borrowed it).
   private park() {
+    if (this.skimmed) return;
     const deck = this.decks[1 - this.live];
     const target = this.parkTarget();
     if (!deck || target === null || deck.parked === target) return;
@@ -360,11 +391,16 @@ export class Playback {
     this.schedule();
   };
 
+  // The Segment `time` is in, the last one past the end.
+  private indexAt(time: number) {
+    const index = this.segments.findIndex((segment) => time < segment.end);
+    return index === -1 ? this.segments.length - 1 : index;
+  }
+
   // To `time` seconds into the Clip.
   seek(time: number) {
-    const index = this.segments.findIndex((segment) => time < segment.end);
     const wasMedia = !!this.segment.media;
-    this.index = index === -1 ? this.segments.length - 1 : index;
+    this.index = this.indexAt(time);
     this.time = time;
     const segment = this.segment;
     const deck = this.decks[this.live];
@@ -389,6 +425,7 @@ export class Playback {
   }
 
   play(from?: number) {
+    this.unskim();
     if (from !== undefined) this.seek(from);
     const deck = this.decks[this.live];
     if (this.segment.media) {
@@ -409,6 +446,76 @@ export class Playback {
     else this.play(this.time >= this.duration - 0.05 ? 0 : undefined);
   }
 
+  /**
+   * While paused, shows `time` seconds into the Clip on the parked deck, the time and the live deck
+   * staying put; with `sound`, each new position is heard for a moment, one snippet at a time. With
+   * null, shows the live deck again and parks the other. Ignored while playing, which ends a skim.
+   */
+  skim(time: number | null, sound = false) {
+    if (this.playing || time === this.skimTime) return;
+    if (time === null) {
+      this.unskim();
+      this.emit();
+      return;
+    }
+    this.show(time, sound);
+  }
+
+  // The parked deck borrowed to show `time`.
+  private show(time: number, sound = false) {
+    this.skimmed = { time, index: this.indexAt(time) };
+    const deck = this.decks[this.parkedSlot];
+    const source = this.skimSource();
+    if (deck && source !== null) {
+      deck.parked = null;
+      this.cue(deck, source);
+      if (sound && !this.snippet) this.snip(deck);
+    }
+    this.emit();
+  }
+
+  // Where in the Source the skimmed time is, or null when it is in a video's Segment.
+  private skimSource(): number | null {
+    if (!this.skimmed) return null;
+    const segment = this.segments[this.skimmed.index];
+    return segment.media ? null : segment.source_start + (this.skimmed.time - segment.start);
+  }
+
+  // The skim's end: the parked deck silenced and parked again.
+  private unskim() {
+    if (!this.skimmed) return;
+    this.skimmed = null;
+    this.hush();
+    const deck = this.decks[this.parkedSlot];
+    if (deck) deck.parked = null;
+    this.park();
+  }
+
+  // A snippet of the borrowed deck's sound where it is, for SNIPPET_SECS.
+  private snip(deck: Deck) {
+    const until = performance.now() + SNIPPET_SECS * 1000;
+    const check = () => {
+      if (performance.now() < until) this.snippet = { frame: requestAnimationFrame(check) };
+      else this.hush();
+    };
+    deck.master.muted = false;
+    this.run(deck);
+    this.snippet = { frame: requestAnimationFrame(check) };
+  }
+
+  // The snippet stopped: the borrowed deck paused and muted, and back on the skimmed frame.
+  private hush() {
+    if (!this.snippet) return;
+    cancelAnimationFrame(this.snippet.frame);
+    this.snippet = null;
+    const deck = this.decks[this.parkedSlot];
+    if (!deck) return;
+    this.halt(deck);
+    deck.master.muted = true;
+    const source = this.skimSource();
+    if (source !== null) this.cue(deck, source);
+  }
+
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
     return () => {
@@ -423,12 +530,20 @@ export class Playback {
 }
 
 /**
- * What `select` makes of the playback's time and state, re-rendering only when that changes: select
- * a primitive (an index, a key, a rounded time), not a new object.
+ * What `select` makes of the playback's time (the playhead's, where edits go) and state, re-rendering
+ * only when that changes: select a primitive (an index, a key, a rounded time), not a new object.
  */
 export function usePlayback<T extends string | number | boolean | null>(
   playback: Playback,
   select: (time: number, playback: Playback) => T,
 ): T {
   return useSyncExternalStore(playback.subscribe, () => select(playback.time, playback));
+}
+
+/** As `usePlayback`, of the time shown (the skimmed time while skimming): for what the preview draws. */
+export function useShown<T extends string | number | boolean | null>(
+  playback: Playback,
+  select: (time: number, playback: Playback) => T,
+): T {
+  return useSyncExternalStore(playback.subscribe, () => select(playback.shownTime, playback));
 }
