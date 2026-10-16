@@ -2,7 +2,7 @@
 // of a key pressed (with its modifiers, Cmd or Ctrl being "command") where the focus is, and the
 // shortcut it gives; and the shortcuts sheet drawn from the same table.
 import { describe, expect, test } from "vitest";
-import { keyNames, matches, resolveShortcut, SHORTCUTS, shortcutSheet, type KeyContext, type Keys } from "./keymap";
+import { keyNames, keysOf, matches, resolveShortcut, SHORTCUTS, shortcutSheet, type KeyContext, type Keys } from "./keymap";
 
 describe("resolving a key", () => {
   test("Cmd+Z undoes, Shift+Cmd+Z and Ctrl+Y redo, and Shift+Z zooms to fit", () => {
@@ -104,9 +104,69 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "End" }, item)).toBe("end");
   });
 
+  test("I marks In and O marks Out, in either case; L loops; Alt+X clears the marks", () => {
+    expect(resolveShortcut({ key: "i" })).toBe("mark-in");
+    expect(resolveShortcut({ key: "I" })).toBe("mark-in");
+    expect(resolveShortcut({ key: "o" })).toBe("mark-out");
+    expect(resolveShortcut({ key: "l" })).toBe("loop");
+    expect(resolveShortcut({ key: "L", shift: false })).toBe("loop");
+    expect(resolveShortcut({ key: "x", alt: true })).toBe("clear-marks");
+    // Without Alt, X is nothing; with Cmd, it cuts.
+    expect(resolveShortcut({ key: "x" })).toBeNull();
+    expect(resolveShortcut({ key: "x", command: true })).toBe("cut");
+  });
+
+  test("Cmd+L stays the browser's, and Cmd+I and Cmd+O too", () => {
+    expect(resolveShortcut({ key: "l", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "i", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "o", command: true })).toBeNull();
+  });
+
+  test("with a field focused, I, O and L are typed", () => {
+    expect(resolveShortcut({ key: "i" }, { typing: true })).toBeNull();
+    expect(resolveShortcut({ key: "l" }, { typing: true })).toBeNull();
+  });
+
   test("on a phone, ? gives nothing: there is no sheet", () => {
     expect(resolveShortcut({ key: "?", shift: true }, { phone: true })).toBeNull();
     expect(resolveShortcut({ key: "z", command: true }, { phone: true })).toBe("undo");
+  });
+});
+
+describe("reading a key from its event", () => {
+  const event = (key: string, code: string, held: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean } = {}) => ({
+    key,
+    code,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    ...held,
+  });
+
+  test("a key is named as the event names it, Cmd or Ctrl being command", () => {
+    expect(keysOf(event("z", "KeyZ", { metaKey: true }))).toEqual({ key: "z", command: true, shift: false, alt: false });
+    expect(keysOf(event("y", "KeyY", { ctrlKey: true }))).toEqual({ key: "y", command: true, shift: false, alt: false });
+    expect(keysOf(event("ArrowRight", "ArrowRight", { altKey: true }))).toEqual({ key: "ArrowRight", command: false, shift: false, alt: true });
+  });
+
+  test("on a Mac, Alt+X types ≈: the letter is read from the key's place, and it clears the marks", () => {
+    const keys = keysOf(event("≈", "KeyX", { altKey: true }));
+    expect(keys).toEqual({ key: "x", command: false, shift: false, alt: true });
+    expect(resolveShortcut(keys)).toBe("clear-marks");
+    // Alt+Shift+X types ˛, Alt+E a dead key: still their letters.
+    expect(keysOf(event("˛", "KeyX", { altKey: true, shiftKey: true })).key).toBe("x");
+    expect(keysOf(event("Dead", "KeyE", { altKey: true })).key).toBe("e");
+  });
+
+  test("elsewhere, Alt+X is x already", () => {
+    expect(resolveShortcut(keysOf(event("x", "KeyX", { altKey: true })))).toBe("clear-marks");
+  });
+
+  test("without Alt, the key is the layout's, wherever it is on the keyboard", () => {
+    // On AZERTY, A is where QWERTY has Q.
+    expect(keysOf(event("a", "KeyQ")).key).toBe("a");
+    expect(keysOf(event("≈", "KeyX")).key).toBe("≈");
   });
 });
 
@@ -187,6 +247,14 @@ describe("the shortcuts sheet", () => {
     expect(keyNames(row("move-forward-10"), true)).toEqual(["⌥⇧→"]);
     expect(keyNames(row("move-forward-10"), false)).toEqual(["Alt+Shift+→"]);
     expect(keyNames(row("step-back-10"), true)).toEqual(["⇧←"]);
+  });
+
+  test("the marks and Loop are listed under playback; Alt+X is ⌥X on a Mac and Alt+X elsewhere", () => {
+    const playback = shortcutSheet().find((group) => group.group === "playback")!;
+    expect(playback.shortcuts.map((shortcut) => shortcut.id)).toEqual(["play", "mark-in", "mark-out", "loop", "clear-marks"]);
+    expect(keyNames(row("clear-marks"), true)).toEqual(["⌥X"]);
+    expect(keyNames(row("clear-marks"), false)).toEqual(["Alt+X"]);
+    expect(keyNames(row("mark-in"), true)).toEqual(["I"]);
   });
 
   test("frame steps and Home/End are listed under navigation", () => {

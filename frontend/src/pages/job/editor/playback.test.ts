@@ -305,3 +305,149 @@ describe("rate", () => {
     expect(playback.time).toBeCloseTo(6.5, 5);
   });
 });
+
+describe("loop", () => {
+  // With In at 2 s and Out at 4 s of `twoCuts`: both in the first Segment, from 100 s of the Source.
+  const region = { in: 2, out: 4 };
+
+  test("paused inside the Region, with Out before the next join, the parked deck waits at In", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, parked] = stage.decks(playback);
+    playback.seek(3);
+    expect(parked.master.currentTime).toBe(200);
+    playback.setLoop(region);
+    expect(parked.master.currentTime).toBe(102);
+    expect(parked.follower.currentTime).toBe(102);
+    expect(parked.master.paused).toBe(true);
+    expect(parked.master.muted).toBe(true);
+  });
+
+  test("playing from 3 s wraps to 2 s at 4 s on the parked deck, without stopping, and again", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first, second] = stage.decks(playback);
+    playback.setLoop(region);
+    playback.seek(3);
+    stage.settle();
+    playback.play();
+    // 3 s to 3.96 s: still before Out.
+    stage.advance(0.96);
+    expect(playback.shownDeck).toBe(0);
+    expect(playback.time).toBeCloseTo(3.96, 5);
+    // Past Out: the parked deck takes it from In.
+    stage.advance(0.06);
+    expect(playback.shownDeck).toBe(1);
+    expect(playback.playing).toBe(true);
+    expect(second.master.paused).toBe(false);
+    expect(second.master.muted).toBe(false);
+    expect(second.master.currentTime).toBeLessThan(102.1);
+    expect(playback.time).toBeGreaterThanOrEqual(2);
+    expect(playback.time).toBeLessThan(2.1);
+    // The old live deck is paused, muted, and waits at In again.
+    expect(first.master.paused).toBe(true);
+    expect(first.master.muted).toBe(true);
+    expect(first.master.currentTime).toBe(102);
+    stage.settle();
+    // Just over two seconds on, past Out again: back to the first deck, from In.
+    stage.advance(2.06);
+    expect(playback.shownDeck).toBe(0);
+    expect(playback.playing).toBe(true);
+    expect(playback.time).toBeLessThan(2.1);
+    expect(first.master.paused).toBe(false);
+  });
+
+  test("with the parked deck's seek not landed at Out, the live deck seeks to In, and playing goes on", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first, second] = stage.decks(playback);
+    playback.seek(3);
+    first.master.fireSeeked();
+    first.follower.fireSeeked();
+    playback.setLoop(region);
+    playback.play();
+    stage.advance(1.02);
+    expect(playback.shownDeck).toBe(0);
+    expect(first.master.currentTime).toBe(102);
+    expect(first.follower.currentTime).toBe(102);
+    expect(first.master.paused).toBe(false);
+    expect(second.master.paused).toBe(true);
+    expect(playback.playing).toBe(true);
+    expect(playback.time).toBe(2);
+  });
+
+  test("Play from 6 s, outside the Region, starts at 2 s", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first] = stage.decks(playback);
+    playback.seek(6);
+    playback.setLoop(region);
+    stage.settle();
+    playback.toggle();
+    expect(playback.time).toBe(2);
+    expect(playback.shownDeck).toBe(0);
+    expect(first.master.currentTime).toBe(102);
+    expect(first.master.paused).toBe(false);
+  });
+
+  test("Play inside the Region starts at the playhead", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first] = stage.decks(playback);
+    playback.seek(3);
+    playback.setLoop(region);
+    stage.settle();
+    playback.toggle();
+    expect(playback.time).toBe(3);
+    expect(first.master.currentTime).toBe(103);
+    expect(first.master.seeking).toBe(false);
+  });
+
+  test("a Region across a join swaps at the join, then back to In at Out", () => {
+    // In at 4 s (104 s of the Source), Out at 6 s (201 s).
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first, second] = stage.decks(playback);
+    playback.setLoop({ in: 4, out: 6 });
+    playback.seek(4);
+    stage.settle();
+    playback.play();
+    // Past the join's handover at 4.97 s: the second deck from 200 s, the first parked at In.
+    stage.advance(0.98);
+    expect(playback.shownDeck).toBe(1);
+    expect(second.master.currentTime).toBe(200);
+    expect(first.master.currentTime).toBe(104);
+    stage.settle();
+    // Past Out at 6 s: the first deck from In.
+    stage.advance(1.04);
+    expect(playback.shownDeck).toBe(0);
+    expect(playback.time).toBeLessThan(4.1);
+    expect(first.master.paused).toBe(false);
+    expect(second.master.paused).toBe(true);
+  });
+
+  test("Loop off stops at the end as today, the parked deck back at the next join", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first, second] = stage.decks(playback);
+    playback.setLoop(region);
+    playback.seek(3);
+    expect(second.master.currentTime).toBe(102);
+    playback.setLoop(null);
+    expect(second.master.currentTime).toBe(200);
+    playback.seek(8);
+    stage.settle();
+    playback.play();
+    stage.advance(1.5);
+    expect(playback.playing).toBe(false);
+    expect(playback.time).toBe(9);
+    expect(first.master.paused).toBe(true);
+  });
+});

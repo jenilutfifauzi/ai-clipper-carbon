@@ -1,4 +1,4 @@
-import { Pause, Play, SkipForward } from "lucide-react";
+import { Pause, Play, Repeat, SkipForward } from "lucide-react";
 import { createRef, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import {
   logoUrl,
@@ -67,7 +67,7 @@ const percent = (value: number) => `${value * 100}%`;
  * with the picked Overlays), moved, resized and retyped on the frame (StageEdit.tsx,
  * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
  * Advanced Edit's player), and the transport is a single row; with `rates` too, it offers the
- * playback rate.
+ * playback rate, and with `loop` a button that turns Loop on and off.
  */
 export function ClipPreview({
   src,
@@ -79,6 +79,7 @@ export function ClipPreview({
   overlays,
   fit = false,
   rates = false,
+  loop,
   blank = false,
 }: {
   src: string;
@@ -90,6 +91,8 @@ export function ClipPreview({
   overlays?: OverlayControls;
   fit?: boolean;
   rates?: boolean;
+  // Loop on or off, and what turns it over (the Advanced Edit's Loop Region).
+  loop?: LoopControl;
   // Black where the Segments are (the Advanced Edit's Video Track hidden).
   blank?: boolean;
 }) {
@@ -245,7 +248,7 @@ export function ClipPreview({
         <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
           {frame}
         </div>
-        <Transport playback={playback} compact rates={rates} />
+        <Transport playback={playback} compact rates={rates} loop={loop} />
       </div>
     );
   }
@@ -991,11 +994,27 @@ function runs(line: string, spans: [number, number][]): [string, boolean][] {
   return parts;
 }
 
+/** Loop on or off, and what turns it over. */
+export interface LoopControl {
+  on: boolean;
+  onToggle: () => void;
+}
+
 /**
- * Play and pause, a scrubber over the Clip, with `rates` the playback rate, and "Play clip" and "Play
- * ending" (not when `compact`).
+ * Play and pause, a scrubber over the Clip, with `rates` the playback rate, with `loop` the loop
+ * button, and "Play clip" and "Play ending" (not when `compact`).
  */
-function Transport({ playback, compact = false, rates = false }: { playback: Playback; compact?: boolean; rates?: boolean }) {
+function Transport({
+  playback,
+  compact = false,
+  rates = false,
+  loop,
+}: {
+  playback: Playback;
+  compact?: boolean;
+  rates?: boolean;
+  loop?: LoopControl;
+}) {
   const playing = usePlayback(playback, (_, p) => p.playing);
   // Tenths of a second: enough for the label and the scrubber, and few re-renders.
   const tenths = usePlayback(playback, (time) => Math.round(time * 10));
@@ -1019,6 +1038,20 @@ function Transport({ playback, compact = false, rates = false }: { playback: Pla
         <span className="shrink-0 text-sm text-muted tabular-nums">
           {formatPrecise(Math.max(0, tenths / 10))} / {formatPrecise(duration)}
         </span>
+        {loop && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={loop.onToggle}
+            aria-pressed={loop.on}
+            aria-label="Loop"
+            aria-keyshortcuts="L"
+            title={loop.on ? "Loop on (L): playing repeats from In to Out" : "Loop (L): repeat from In to Out, or with no marks, the whole Clip"}
+            className="aria-pressed:text-accent-text"
+          >
+            <Repeat aria-hidden size={18} />
+          </Button>
+        )}
         {rates && <RateMenu playback={playback} />}
       </div>
       {!compact && (
