@@ -58,8 +58,9 @@ time its picture is sampled at. A frame process that fails stops the encode, and
 or is stopped ends its frame processes. Without keyed pictures the command is as it was.
 
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
-set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
-its volume) before the loudness is measured and normalized, so that the mix lands at −14 LUFS.
+set to its volume (a keyed one's by an expression of its own time, from its Keyframes), faded, and
+delayed to where it is heard, then mixed with the Clip's own sound (at its volume) before the
+loudness is measured and normalized, so that the mix lands at −14 LUFS.
 Without music, and at its own volume, the Clip's sound goes as it did.
 
 Text Layers are drawn by the same script too, each in its own style and its own pair of ASS layers
@@ -82,6 +83,7 @@ import numpy as np
 from app.config import FONTS_DIR, RenderTuning
 from app.fonts import font
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
+from app.keyframes import linear_steps
 from app.planner import (
     FRAME,
     HOOK_LEADING,
@@ -100,7 +102,7 @@ from app.planner import (
     font_metrics,
     on_frame,
 )
-from app.candidates import Shadow, TextLayer
+from app.candidates import Keyframe, Shadow, TextLayer
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -526,7 +528,7 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
     for i, event in enumerate(heard, 1):
         length = round(event.end - event.start, 3)
         filters = [
-            f"atrim=start={event.offset:g}:end={event.offset + length:g}", "asetpts=PTS-STARTPTS", f"volume={event.volume:g}",
+            f"atrim=start={event.offset:g}:end={event.offset + length:g}", "asetpts=PTS-STARTPTS", *_volume(event.gain, event.volume),
         ]
         if event.fade_in:
             filters.append(f"afade=t=in:st=0:d={event.fade_in:g}")
@@ -538,6 +540,25 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
     # The Clip's length is its own sound's; nothing is turned down to make room (normalize=0).
     chains.append(f"{labels}amix=inputs={len(heard) + 1}:duration=first:normalize=0[mix]")
     return ";".join(chains)
+
+
+# A keyed volume is worked out afresh for every block of this many samples (10 ms at 48 kHz).
+_GAIN_BLOCK = 480
+
+
+def _volume(gain: Sequence[Keyframe], volume: float) -> list[str]:
+    """Filters that set a sound to `volume`, or to its `gain` track (its volume Keyframes, in its own
+    seconds, where its time starts at 0) when it has one: straight lines between points of the
+    curve (`linear_steps`, an eased span in 24), summed as one clipped ramp each, with no nesting,
+    evaluated per block of _GAIN_BLOCK samples."""
+    if not gain:
+        return [f"volume={volume:g}"]
+    points = linear_steps(gain)
+    terms = [f"{points[0][1]:.6g}"]
+    for (start, before), (end, after) in zip(points, points[1:]):
+        if after != before and end > start:
+            terms.append(f"{after - before:+.6g}*clip((t-{start:.6g})/{end - start:.6g},0,1)")
+    return [f"asetnsamples=n={_GAIN_BLOCK}:p=0", f"volume=volume='{''.join(terms)}':eval=frame"]
 
 
 def _overlay_inputs(

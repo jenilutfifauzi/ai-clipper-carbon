@@ -16,6 +16,7 @@ from app.candidates import (
     KICKER_MAX_CHARS,
     Candidate,
     Framing,
+    KeyProperty,
     Layout,
     LayoutOverride,
     MusicClip,
@@ -898,6 +899,8 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id}: no video or image {overlay.media} in the Media Library")
         if item.duration is not None and overlay.offset + overlay.secs > item.duration + 0.05:
             raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s)")
+        if KeyProperty.VOLUME in overlay.keys and item.kind is not MediaKind.VIDEO:
+            raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
 
 
 # Media Library files never change under their id.

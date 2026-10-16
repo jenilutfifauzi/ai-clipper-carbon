@@ -64,6 +64,7 @@ const music = (id: string, start: number, secs: number, changes: Partial<MusicCl
   volume: 1,
   fade_in: 1,
   fade_out: 1,
+  keys: {},
   ...changes,
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
-import { follow } from "./follow";
+import { follow, MAX_DRIFT_SECS } from "./follow";
+import { CURVE_RATE, loudness, loudnessCurve } from "./loudness";
 import type { Playback } from "./playback";
 
 let context: AudioContext | null = null;
@@ -35,24 +36,48 @@ function gainOf(element: HTMLMediaElement): GainNode | null {
 // it) as loud as the element can.
 export function setVolume(element: HTMLMediaElement, volume: number) {
   const gain = gainOf(element);
-  if (gain) gain.gain.value = volume;
-  else element.volume = Math.min(1, Math.max(0, volume));
+  if (gain) {
+    unschedule(gain);
+    gain.gain.value = volume;
+  } else element.volume = Math.min(1, Math.max(0, volume));
 }
 
-// A Music Clip's volume at `time`, through its fades, as the renderer's afade ramps it.
-function loudness(event: AudioEvent, time: number): number {
-  let share = 1;
-  if (event.fade_in > 0) share = Math.min(share, (time - event.start) / event.fade_in);
-  if (event.fade_out > 0) share = Math.min(share, (event.end - time) / event.fade_out);
-  return event.volume * Math.max(0, Math.min(1, share));
+// The curve each gain node follows, while it does: of `event`, scheduled when the Clip's time was
+// `from` and the AudioContext's `at`, at the playback's `rate`.
+const curves = new WeakMap<GainNode, { event: AudioEvent; from: number; at: number; rate: number }>();
+
+function unschedule(gain: GainNode) {
+  if (curves.delete(gain)) gain.gain.cancelScheduledValues(0);
+}
+
+/**
+ * Sets how loud a keyed sound's `element` plays at the playback's time: while playing, through Web
+ * Audio, as a curve sampled from the playhead to its end (loudnessCurve), set on play, on every seek
+ * (when the time is further than MAX_DRIFT_SECS from where the curve has got to), at a new rate and
+ * for a new plan; otherwise its loudness there.
+ */
+function followCurve(element: HTMLMediaElement, playback: Playback, event: AudioEvent) {
+  const time = playback.shownTime;
+  const gain = gainOf(element);
+  if (!gain || !context || context.state !== "running" || !playback.playing) {
+    setVolume(element, loudness(event, time));
+    return;
+  }
+  const now = context.currentTime;
+  const curve = curves.get(gain);
+  if (curve && curve.event === event && curve.rate === playback.rate && Math.abs(curve.from + (now - curve.at) * curve.rate - time) <= MAX_DRIFT_SECS) return;
+  const values = loudnessCurve(event, time);
+  gain.gain.cancelScheduledValues(0);
+  gain.gain.setValueCurveAtTime(values, now, (values.length - 1) / CURVE_RATE / playback.rate);
+  curves.set(gain, { event, from: time, at: now, rate: playback.rate });
 }
 
 /**
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip, playing its
- * part of its song while the Clip's time is in it, at its volume through its fades. The Clip's own
- * sound (each deck's master video, heard while its deck is live) is set to the plan's
- * `source_volume`, times the Segment's own volume. Nothing is routed through Web Audio until the
- * plan has music or another volume.
+ * part of its song while the Clip's time is in it, at its volume (a keyed one's gain track, as a
+ * curve) through its fades. The Clip's own sound (each deck's master video, heard while its deck is
+ * live) is set to the plan's `source_volume`, times the Segment's own volume. Nothing is routed
+ * through Web Audio until the plan has music or another volume.
  */
 export function PreviewMusic({
   plan,
@@ -76,7 +101,8 @@ export function PreviewMusic({
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
         if (element && follow(element, playback, { start: event.start, end: event.end, from: event.offset })) {
-          setVolume(element, loudness(event, playback.shownTime));
+          if (event.gain.length) followCurve(element, playback, event);
+          else setVolume(element, loudness(event, playback.shownTime));
         }
       });
     };

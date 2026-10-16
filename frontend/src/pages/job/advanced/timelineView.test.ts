@@ -1,7 +1,8 @@
 // Seam E (.scratch/timeline-visuals/spec.md): what the Advanced Edit's Timeline shows, as worked
 // examples of numbers and edits in and the view out.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
+import type { ClipSegment, Keyframe, MusicClip, Overlay, TextLayer } from "../../../api";
+import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { playedFrom } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
 import { picked, type Pick } from "./pick";
@@ -22,6 +23,7 @@ import {
   tileWidth,
   volumeDragged,
   volumeHeight,
+  volumeLine,
   volumeOfHeight,
   zoomAboutPlayhead,
   zoomToFit,
@@ -393,6 +395,24 @@ describe("the Waveform", () => {
     expect(gainAt(0, { volume: 0.8, secs: 10, fade_in: 0, fade_out: 0 })).toBe(0.8);
   });
 
+  test("volume Keyframes set the volume in its place, and the fades multiply them", () => {
+    // 10 s fading in over 1 s and out over 2 s, dipped from 100% at 2 s to 25% at 4 s, eased in.
+    const keys: Keyframe[] = [
+      { at: 2, value: 1, ease: LINEAR },
+      { at: 4, value: 0.25, ease: EASE_IN },
+    ];
+    const clip = { volume: 1.8, secs: 10, fade_in: 1, fade_out: 2, keys };
+    expect(gainAt(0.5, clip)).toBeCloseTo(0.5);
+    expect(gainAt(2, clip)).toBe(1);
+    // Half way, eased in: 1 - 0.75 · 0.3153.
+    expect(gainAt(3, clip)).toBeCloseTo(0.7635, 3);
+    expect(gainAt(6, clip)).toBe(0.25);
+    expect(gainAt(9, clip)).toBeCloseTo(0.125);
+    expect(gainAt(10, clip)).toBe(0);
+    // Without Keyframes, the volume.
+    expect(gainAt(6, { ...clip, keys: [] })).toBe(1.8);
+  });
+
   test("fades that meet peak where they meet", () => {
     // 4 s fading in over 3 s and out over 1 s.
     const clip = { volume: 1, secs: 4, fade_in: 3, fade_out: 1 };
@@ -439,6 +459,29 @@ describe("the Volume Line", () => {
     expect(volumeOfHeight(-0.2)).toBe(0);
     expect(volumeOfHeight(1.3)).toBe(2);
     expect(volumeHeight(3)).toBe(1);
+  });
+
+  test("follows a Music Clip's volume Keyframes through its fades", () => {
+    const keys: Keyframe[] = [
+      { at: 2, value: 1, ease: LINEAR },
+      { at: 4, value: 0.25, ease: EASE_IN },
+    ];
+    const heard = { volume: 1.8, secs: 10, fade_in: 1, fade_out: 2, keys };
+    const line = volumeLine(heard);
+    // From its start to its end, in order, with a point at each Keyframe and each fade's end.
+    expect(line[0]).toEqual({ time: 0, height: 0 });
+    expect(line[line.length - 1]).toEqual({ time: 10, height: 0 });
+    for (let i = 1; i < line.length; i++) expect(line[i].time).toBeGreaterThan(line[i - 1].time);
+    for (const time of [1, 2, 4, 8]) expect(line.map((point) => point.time)).toContain(time);
+    // Drawn straight between its points, it is the gain's height all along, within a hair.
+    const drawn = (time: number) => {
+      const after = line.findIndex((point) => point.time >= time);
+      const [a, b] = [line[Math.max(after - 1, 0)], line[after]];
+      return b.time === a.time ? b.height : a.height + ((b.height - a.height) * (time - a.time)) / (b.time - a.time);
+    };
+    for (const [time, gain] of [[0.5, 0.5], [1, 1], [3, 0.7635], [6, 0.25], [9, 0.125]]) {
+      expect(drawn(time)).toBeCloseTo(volumeHeight(gain), 2);
+    }
   });
 
   test("a volume's height gives the volume back", () => {

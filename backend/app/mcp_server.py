@@ -119,7 +119,8 @@ Edits:
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
 - Keyframes move an Overlay over its length: its `keys` map a property (x, y, scale,
-  rotation, opacity) to a list of {{at, value, ease}}. `at` is seconds from the Overlay's start, value
+  rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's and a video Overlay's `volume`
+  (0..2) can be keyed too: the fades multiply it. `at` is seconds from the Overlay's start, value
   in the field's own units (rotation -3600..3600, to turn several times). A keyed property's
   transform field is unused. The value holds before the first and after the last Keyframe; between
   two it moves by the later one's ease: linear (the default), ease_in, ease_out, ease_in_out, or a
@@ -127,7 +128,7 @@ Edits:
   least. merge_candidate_items replaces the lists of the properties given ([] clears one) and keeps
   the others. Moving an item moves its Keyframes; the server never re-times them, and refuses a
   length that would leave one past its item's end: send its keys too. The dry run lists them in
-  Timeline time, with the Overlay's bounds at each.
+  Timeline time, with the Overlay's bounds at each; a keyed volume's under `sounds`.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
@@ -609,15 +610,23 @@ def _picture_view(picture: dict) -> dict:
     return {key: picture[key] for key in ("bounds", "rotation", "crop", "opacity")}
 
 
+def _keys_view(keys: dict, start: float = 0.0) -> dict:
+    """Keyframes moved `start` seconds later (into Timeline time), a preset Ease by its name."""
+    return {
+        prop: [
+            {"at": round(start + key["at"], 3), "value": round(key["value"], 4), "ease": ease_name(Ease(*key["ease"])) or key["ease"]}
+            for key in given
+        ]
+        for prop, given in keys.items()
+    }
+
+
 def _motion_view(picture: dict) -> dict:
-    """A keyed picture's Keyframes in Timeline time, a preset Ease by its name, and its bounds at each
-    time any property has one (`picture_at`); nothing for an unkeyed one."""
+    """A keyed picture's Keyframes in Timeline time (`_keys_view`), and its bounds at each time any
+    property has one (`picture_at`); nothing for an unkeyed one."""
     if not picture["motion"]:
         return {}
-    keys = {
-        prop: [{"at": round(key["at"], 3), "value": round(key["value"], 4), "ease": ease_name(Ease(*key["ease"])) or key["ease"]} for key in given]
-        for prop, given in picture["motion"].items()
-    }
+    keys = _keys_view(picture["motion"])
     drawn = _PICTURE.validate_python(picture)
     bounds = [{"at": round(at, 3), "bounds": _dump(Box, picture_at(drawn, at).bounds)} for at in key_times(drawn)]
     return {"keys": keys, "bounds_at_keys": bounds}
@@ -627,7 +636,8 @@ def _plan_view(preview: dict) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time, each Scene's Layout and
     the Framing that draws its first frame (a Manual Scene's own), where the picture of a Manual
     Scene, of a video's Scene and of each Overlay is drawn (`_picture_view`), a keyed one's
-    Keyframes and its bounds at each (`_motion_view`), and the Words."""
+    Keyframes and its bounds at each (`_motion_view`), the keyed sounds' volume Keyframes, and the
+    Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -651,6 +661,11 @@ def _plan_view(preview: dict) -> dict:
             }
             for event in plan["overlays"]
         ],
+        **_compact({"sounds": [
+            {"id": event["id"], "media": event["media"], **_times(event, "start", "end"), "keys": _keys_view({"volume": event["gain"]}, event["start"])}
+            for event in plan["audio"]
+            if event["gain"]
+        ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
 

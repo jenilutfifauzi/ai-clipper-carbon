@@ -2,6 +2,8 @@
 // from numbers and edits alone, without React or a canvas: Zoom to fit, the Filmstrip and Peaks
 // chunks an item needs, the frame each tile shows, the Peaks level for a zoom, the gain along an
 // item, and the Volume Line's curve; and for .scratch/navigation-playback/spec.md, the Edit Points.
+import type { Keyframe } from "../../../api";
+import { valueAt } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
 import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
@@ -343,13 +345,23 @@ export function peaksExtremes(peaks: Peaks, from: number, to: number): [number, 
   return [low / 127, high / 127];
 }
 
+/** How an item `secs` long is heard: at `volume`, or by its volume Keyframes (`keys`), through its fades. */
+export interface Heard {
+  volume: number;
+  secs: number;
+  fade_in: number;
+  fade_out: number;
+  keys?: readonly Keyframe[];
+}
+
 /**
- * How loud an item `secs` long is `time` seconds into it: its volume through its fade in's and fade
- * out's linear ramps (none for a fade of 0).
+ * How loud an item `secs` long is `time` seconds into it: its volume, or its volume Keyframes
+ * sampled there (keyframes.ts), through its fade in's and fade out's linear ramps (none for a fade
+ * of 0), as the renderer has it.
  */
-export function gainAt(time: number, { volume, secs, fade_in, fade_out }: { volume: number; secs: number; fade_in: number; fade_out: number }): number {
+export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [] }: Heard): number {
   const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
-  return volume * ramp(time, fade_in) * ramp(secs - time, fade_out);
+  return valueAt(keys, time, volume) * ramp(time, fade_in) * ramp(secs - time, fade_out);
 }
 
 /**
@@ -381,6 +393,25 @@ export function volumeOfHeight(height: number): number {
 export function volumeHeight(volume: number): number {
   const gain = Math.min(Math.max(volume, 0), VOLUME_MAX);
   return (gain / VOLUME_MAX) ** (1 / VOLUME_CURVE);
+}
+
+// A keyed Volume Line is drawn straight between points this many to an item's length, and at its
+// Keyframes and its fades' ends.
+const VOLUME_LINE_POINTS = 120;
+
+/**
+ * The Volume Line of an item with volume Keyframes, which follows its gain through its fades
+ * (`gainAt`): points `time` seconds into it, from 0 to `secs`, at `height` up it (`volumeHeight`),
+ * to be drawn straight between.
+ */
+export function volumeLine(heard: Heard): { time: number; height: number }[] {
+  const { secs, fade_in, fade_out, keys = [] } = heard;
+  const times = new Set([fade_in, secs - fade_out, ...keys.map((key) => key.at)]);
+  for (let i = 0; i <= VOLUME_LINE_POINTS; i++) times.add((secs * i) / VOLUME_LINE_POINTS);
+  return [...times]
+    .filter((time) => time >= 0 && time <= secs)
+    .sort((a, b) => a - b)
+    .map((time) => ({ time, height: volumeHeight(gainAt(time, heard)) }));
 }
 
 // A drag of the Volume Line goes as if over at least this many pixels, so that in a short lane (a

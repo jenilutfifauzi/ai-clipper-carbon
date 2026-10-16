@@ -401,6 +401,7 @@ export interface TextEvent {
 
 // A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
 // seconds into the file, heard from `start` in Timeline time, at `volume` (0 to 2), faded in and out.
+// Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades multiply them.
 export interface MusicClip {
   id: string;
   media: string;
@@ -410,9 +411,12 @@ export interface MusicClip {
   volume: number;
   fade_in: number;
   fade_out: number;
+  keys: Keys;
 }
 
-// A Music Clip as heard, cut where the Clip or its song ends.
+// A Music Clip (or an Overlay video's sound, `id` its item's) as heard, cut where the Clip or its
+// song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
+// `volume`; its fades multiply them.
 export interface AudioEvent {
   media: string;
   start: number;
@@ -421,6 +425,8 @@ export interface AudioEvent {
   volume: number;
   fade_in: number;
   fade_out: number;
+  gain: Keyframe[];
+  id: string;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -501,7 +507,7 @@ export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
 // time (a video from `offset` into it), cut by its Crop and placed by its Transform, a video's
 // sound at `volume` (0, muted, by default); its corners rounded `radius` times its drawn shorter
 // side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
-// and opacity over its length, replacing those fields of its Transform.
+// and opacity over its length, replacing those fields of its Transform, and a video's volume.
 export interface Overlay {
   id: string;
   media: string;
