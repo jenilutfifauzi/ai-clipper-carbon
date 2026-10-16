@@ -1,15 +1,16 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, FoldHorizontal, Layers2, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, FoldHorizontal, Keyboard, Layers2, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { ItemActions, Splitter } from "./actions";
 import type { AdvancedEdits } from "./edits";
+import { keyNames, shortcutSheet } from "./keymap";
 import { itemsOf, type Pick } from "./pick";
 import type { EditHistory } from "./useEditHistory";
 
 // The Advanced Edit's frame around its player, inspector and timeline: its bar, the asset tabs, the
-// phone's toolbar and bottom sheet, and the timeline's buttons for the picked item.
+// phone's toolbar and bottom sheet, the timeline's buttons for the picked item, and the shortcuts sheet.
 
 export type AssetTab = "text" | "audio" | "media" | "transitions";
 
@@ -49,6 +50,7 @@ export function TopBar({
   status,
   history,
   actions,
+  onShortcuts,
   onClose,
 }: {
   title: string;
@@ -56,6 +58,8 @@ export function TopBar({
   history: EditHistory<AdvancedEdits>;
   // Beside undo and redo, such as the Revision History.
   actions?: ReactNode;
+  // Opens the shortcuts sheet: on a desktop only.
+  onShortcuts?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -68,6 +72,11 @@ export function TopBar({
         <div className="truncate text-xs text-muted">{status}</div>
       </div>
       {actions}
+      {onShortcuts && (
+        <Button variant="ghost" size="icon" onClick={onShortcuts} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+          <Keyboard aria-hidden size={18} />
+        </Button>
+      )}
       <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo">
         <Undo2 aria-hidden size={18} />
       </Button>
@@ -246,6 +255,74 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">{children}</div>
     </section>
+  );
+}
+
+/**
+ * The shortcuts sheet, on a desktop: every row of the keymap table by its group, its keys named as
+ * this computer's keyboard writes them. A modal on the native <dialog>, closed with Esc or a click
+ * beside it; while it is open, the keys pressed in it don't reach the editor's shortcuts.
+ */
+export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (open && !element.open) element.showModal();
+    if (!open && element.open) element.close();
+  }, [open]);
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  return (
+    <dialog
+      ref={dialog}
+      aria-labelledby="shortcuts-title"
+      // A click inside it focuses it, so that the keys pressed after stay in it.
+      tabIndex={-1}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.target === event.currentTarget && onClose()}
+      className={cx(
+        "glass m-auto max-h-[min(44rem,calc(100dvh-4rem))] w-[min(40rem,calc(100%-2rem))] overflow-y-auto overscroll-contain rounded-panel bg-bg/85! p-0 text-text outline-none backdrop:bg-black/50",
+        "scale-100 opacity-100 starting:open:scale-95 starting:open:opacity-0",
+        "motion-safe:transition-[opacity,scale] motion-safe:duration-200 motion-safe:ease-out",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2 px-6 pt-4 pb-2">
+        <h2 id="shortcuts-title" className="text-lg font-semibold">
+          Keyboard shortcuts
+        </h2>
+        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <X aria-hidden size={18} />
+        </Button>
+      </div>
+      <div className="flex flex-col gap-5 px-6 pb-6">
+        {shortcutSheet().map((group) => (
+          <section key={group.group} aria-labelledby={`shortcuts-${group.group}`}>
+            <h3 id={`shortcuts-${group.group}`} className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">
+              {group.label}
+            </h3>
+            <dl className="divide-y divide-border">
+              {group.shortcuts.map((shortcut) => (
+                <div key={shortcut.id} className="flex items-center justify-between gap-4 py-2 text-sm">
+                  <dt className="text-pretty">{shortcut.label}</dt>
+                  <dd className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
+                    {keyNames(shortcut, mac).map((name, i) => (
+                      <span key={name} className="contents">
+                        {i > 0 && "or"}
+                        <kbd className="raised min-w-7 rounded-md px-1.5 py-1 text-center font-sans font-medium text-text">{name}</kbd>
+                      </span>
+                    ))}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+    </dialog>
   );
 }
 

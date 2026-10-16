@@ -24,16 +24,24 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam G (vitest), worked examples:
-  - [ ] Cmd+Z gives `undo`, Shift+Cmd+Z and Ctrl+Y give `redo`, and Shift+Z gives `fit`;
-  - [ ] Space gives `play`, Escape gives `pick-none`, and Shift+Delete gives `ripple-delete`;
-  - [ ] Cmd+L and Cmd+F give nothing;
-  - [ ] with a field focused, nothing except Escape;
-  - [ ] no two rows share keys in the same context;
-  - [ ] every row appears once on the sheet;
-  - [ ] Mac naming gives ⇧⌘Z, and other platforms give Ctrl+Shift+Z.
+- [x] Seam G (vitest), worked examples:
+  - [x] Cmd+Z gives `undo`, Shift+Cmd+Z and Ctrl+Y give `redo`, and Shift+Z gives `fit`;
+  - [x] Space gives `play`, Escape gives `pick-none`, and Shift+Delete gives `ripple-delete`;
+  - [x] Cmd+L and Cmd+F give nothing;
+  - [x] with a field focused, nothing except Escape;
+  - [x] no two rows share keys in the same context;
+  - [x] every row appears once on the sheet;
+  - [x] Mac naming gives ⇧⌘Z, and other platforms give Ctrl+Shift+Z.
 - [ ] Every existing shortcut works as before in the Advanced Edit (undo/redo, Space, select all, Escape, copy/cut/paste, duplicate, delete, ripple delete, split, Shift+Z, arrow moves).
 - [ ] ? and the top bar's keyboard icon open the sheet, and Esc closes it.
-- [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
+- [x] `npm run typecheck`, `npm test` and `npm run build` pass.
+
+## Comments
+
+**2026-10-16: done.** Built as specified. The table is `SHORTCUTS` in `frontend/src/pages/job/advanced/keymap.ts` (tested in `keymap.test.ts`): each row has its id, its keys, its group, its label, and optionally `desktop` (left out on a phone), `typing` (also while a field has the focus) and `fullscreen` (only full screen, or only not; no row uses it yet). `resolveShortcut(keys, context)` gives the row's id: letters match in either case, any other character (? and Space) with Shift or without, and a focused item keeps arrows, Enter, Space, Delete and Backspace whatever the modifiers. `keyNames(row, mac)` names the keys, and `shortcutSheet()` groups the rows for the sheet. `useShortcuts` (in `AdvancedEdit.tsx`) builds the key and the context from the event and runs the id from a `Record<ShortcutId, …>`, so a row without a dispatch case doesn't compile; a case that can't run now (nothing picked, say) leaves the key to the browser. The sheet is `ShortcutsSheet` in `Chrome.tsx`, on the native `<dialog>` as the confirm dialog is, opened by ? and a keyboard button in the top bar on a desktop only; keys pressed in it don't reach the shortcuts behind it.
+
+Three small differences from before, by the table's exact matching. Escape in an inspector field now picks nothing, as the spec says (it used to do nothing there; text on the stage still keeps its own Escape). Space, Escape and Delete with Cmd, Ctrl or Alt held now do nothing (Shift+Space still plays). A focused element that is neither a button nor a field (a link, say) no longer keeps the arrows and Space from the table, as only buttons and `role=button` items do.
+
+Not tried in the browser: every shortcut working as before, and ? and the keyboard button opening the sheet and Esc closing it, are left for the walkthrough (11).

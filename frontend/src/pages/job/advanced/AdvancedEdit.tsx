@@ -56,9 +56,10 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
-import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
+import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, ShortcutsSheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { Inspector } from "./Inspector";
+import { resolveShortcut, type ShortcutId } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
@@ -155,6 +156,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   const wide = useMediaQuery(WIDE);
+  // On a desktop: the shortcuts sheet open.
+  const [shortcuts, setShortcuts] = useState(false);
   // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
   const [pickingMode, setPickingMode] = useState(false);
   const picking = pickingMode && !wide;
@@ -500,6 +503,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
     fit: () => fitTimeline.current?.(),
+    shortcuts: () => setShortcuts(true),
+    phone: !wide,
   });
 
   async function close() {
@@ -704,8 +709,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         actions={
           <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
         }
+        onShortcuts={wide ? () => setShortcuts(true) : undefined}
         onClose={() => void close()}
       />
+      <ShortcutsSheet open={shortcuts && wide} onClose={() => setShortcuts(false)} />
       <ConfirmDialog
         open={leaving}
         title="Leave without saving?"
@@ -808,13 +815,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
 }
 
-// Undo and redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y), Space to play, Cmd/Ctrl+A to pick every item
-// and Escape to pick none, Cmd/Ctrl+V to paste, Cmd/Ctrl+B to split (the picked items, or with nothing
-// picked everything at the playhead), and for the picked items Delete (with Shift, closing the gaps),
-// Cmd/Ctrl+D to duplicate them, Cmd/Ctrl+C to copy and Cmd/Ctrl+X to cut them, and the arrow keys
-// (with Alt, further) to move the picked Text Layers, Music Clips and Overlays when no item has the
-// focus, and Shift+Z to zoom the Timeline to fit; except while typing, and Cmd/Ctrl+C while text on
-// the page is selected.
+// Where the focus takes every key but Escape: a field, or text being typed on the stage.
+const FIELD = "input, textarea, select, [contenteditable='true']";
+// What keeps its own arrows, Enter, Space and Delete when it has the focus: an item reached by Tab, or a button.
+const ITEM = "[role=button], button";
+
+// The shortcuts of the keymap table (./keymap.ts), each done by its id: those for the picked items
+// only while something is picked, and Cmd/Ctrl+C only while no text on the page is selected. One that
+// can't be done now leaves its key to the browser.
 function useShortcuts(
   history: EditHistory<AdvancedEdits>,
   playback: Playback,
@@ -828,55 +836,45 @@ function useShortcuts(
     split: () => void;
     // Zoom the Timeline to fit: what is picked, or with nothing picked, the whole Clip.
     fit: () => void;
+    // Open the shortcuts sheet.
+    shortcuts: () => void;
+    // The phone's layout, without the desktop's shortcuts.
+    phone: boolean;
   },
 ) {
   useEffect(() => {
+    // The picked Text Layers, Music Clips and Overlays moved `steps` arrow steps; a run of presses is undone as one.
+    const move = (steps: number) => (more.move ? more.move(steps * ARROW_SECS, "key:move") : false);
+    // What each shortcut does; false when it can't be done now.
+    const run: Record<ShortcutId, () => boolean | void> = {
+      play: () => playback.toggle(),
+      undo: () => history.undo(),
+      redo: () => history.redo(),
+      "pick-all": () => more.pickAll(),
+      "pick-none": () => more.pickNone(),
+      split: () => more.split(),
+      copy: () => (actions && !window.getSelection()?.toString() ? actions.copy() : false),
+      cut: () => (actions ? actions.cut() : false),
+      paste: () => (more.paste ? more.paste() : false),
+      duplicate: () => (actions ? actions.duplicate() : false),
+      delete: () => (actions ? actions.remove() : false),
+      "ripple-delete": () => (actions ? actions.rippleRemove() : false),
+      "move-back": () => move(-1),
+      "move-forward": () => move(1),
+      "move-back-10": () => move(-10),
+      "move-forward-10": () => move(10),
+      fit: () => more.fit(),
+      shortcuts: () => more.shortcuts(),
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (target.closest("input, textarea, select, [contenteditable='true']")) return;
-      const command = event.metaKey || event.ctrlKey;
-      const key = event.key.toLowerCase();
-      if (command && key === "z") {
-        event.preventDefault();
-        if (event.shiftKey) history.redo();
-        else history.undo();
-      } else if (command && key === "y") {
-        event.preventDefault();
-        history.redo();
-      } else if (command && key === "a") {
-        event.preventDefault();
-        more.pickAll();
-      } else if (key === "escape") {
-        more.pickNone();
-      } else if (more.move && (key === "arrowleft" || key === "arrowright") && !command && !event.shiftKey && target === document.body) {
-        event.preventDefault();
-        more.move((key === "arrowright" ? 1 : -1) * ARROW_SECS * (event.altKey ? 10 : 1), "key:move");
-      } else if (key === " " && target === document.body) {
-        event.preventDefault();
-        playback.toggle();
-      } else if (actions && (key === "delete" || key === "backspace") && !target.closest("[role=button], button")) {
-        event.preventDefault();
-        if (event.shiftKey) actions.rippleRemove();
-        else actions.remove();
-      } else if (actions && command && key === "d") {
-        event.preventDefault();
-        actions.duplicate();
-      } else if (key === "z" && event.shiftKey && !command && !event.altKey) {
-        event.preventDefault();
-        more.fit();
-      } else if (command && key === "b") {
-        event.preventDefault();
-        more.split();
-      } else if (actions && command && key === "c" && !window.getSelection()?.toString()) {
-        event.preventDefault();
-        actions.copy();
-      } else if (actions && command && key === "x") {
-        event.preventDefault();
-        actions.cut();
-      } else if (more.paste && command && key === "v") {
-        event.preventDefault();
-        more.paste();
-      }
+      const id = resolveShortcut(
+        { key: event.key, command: event.metaKey || event.ctrlKey, shift: event.shiftKey, alt: event.altKey },
+        { typing: !!target.closest(FIELD), item: !!target.closest(ITEM), phone: more.phone },
+      );
+      if (!id || run[id]() === false) return;
+      // Escape is the browser's too (it closes a dialog), and still does that.
+      if (id !== "pick-none") event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
