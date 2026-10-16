@@ -1,16 +1,48 @@
-import { AlertCircle, ArrowLeft, AudioLines, Check, ClipboardCopy, ClipboardPaste, Copy, Film, FoldHorizontal, Keyboard, Layers2, ListChecks, Loader2, Redo2, Scissors, Shuffle, SlidersHorizontal, Trash2, Type, Undo2, X } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  AudioLines,
+  Check,
+  ClipboardCopy,
+  ClipboardPaste,
+  Copy,
+  Film,
+  FoldHorizontal,
+  Gauge,
+  Keyboard,
+  Layers2,
+  ListChecks,
+  Loader2,
+  Redo2,
+  Scissors,
+  Shuffle,
+  SlidersHorizontal,
+  StepBack,
+  StepForward,
+  Trash2,
+  Type,
+  Undo2,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
-import { cx } from "../../../format";
-import { usePlayback, type Playback } from "../editor/playback";
+import { Segmented } from "../../../components/Segmented";
+import { cx, formatPrecise } from "../../../format";
+import { RATES, usePlayback, type Playback } from "../editor/playback";
 import type { ItemActions, Splitter } from "./actions";
+import type { Commands } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { keyNames, shortcutSheet } from "./keymap";
 import { itemsOf, type Pick } from "./pick";
+import { lastFrame, onFrame, type LoopRegion } from "./playhead";
+import { nextEditPoint, previousEditPoint } from "./timelineView";
 import type { EditHistory } from "./useEditHistory";
 
 // The Advanced Edit's frame around its player, inspector and timeline: its bar, the asset tabs, the
-// phone's toolbar and bottom sheet, the timeline's buttons for the picked item, and the shortcuts sheet.
+// phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
+// picked item, and the shortcuts sheet.
 
 export type AssetTab = "text" | "audio" | "media" | "transitions";
 
@@ -148,6 +180,7 @@ export function Toolbar({
   onAsset,
   onInspect,
   onTracks,
+  onPlayback,
   onPicking,
   onDeselect,
 }: {
@@ -161,6 +194,8 @@ export function Toolbar({
   onInspect: () => void;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;
+  // Opens the Playback sheet: the rate, the Loop Region and the Edit Point jumps.
+  onPlayback: () => void;
   onPicking: () => void;
   onDeselect: () => void;
 }) {
@@ -203,6 +238,7 @@ export function Toolbar({
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
           <SplitButton splitter={splitter} playback={playback} />
+          <PlaybackButton playback={playback} onClick={onPlayback} />
           <ToolButton icon={Layers2} label="Tracks" onClick={onTracks} />
           <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
         </>
@@ -216,18 +252,24 @@ function ToolButton({
   label,
   onClick,
   disabled = false,
+  lit = false,
 }: {
   icon: typeof Type;
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  // In the accent: something set away from its default, such as the rate.
+  lit?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="flex min-h-14 min-w-16 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium text-muted hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-40"
+      className={cx(
+        "flex min-h-14 min-w-16 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium whitespace-nowrap hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-40",
+        lit ? "text-accent-text" : "text-muted",
+      )}
     >
       <Icon aria-hidden size={20} />
       {label}
@@ -377,4 +419,106 @@ export function ItemTools({
 function SplitButton({ splitter, playback }: { splitter: Splitter; playback: Playback }) {
   const splittable = usePlayback(playback, splitter.canSplit);
   return <ToolButton icon={Scissors} label="Split" onClick={splitter.split} disabled={!splittable} />;
+}
+
+// The phone toolbar's Playback, which says the rate whenever it isn't 1×, so that a fast preview
+// isn't taken for a fast Clip.
+function PlaybackButton({ playback, onClick }: { playback: Playback; onClick: () => void }) {
+  const rate = usePlayback(playback, (_, p) => p.rate);
+  return <ToolButton icon={Gauge} label={rate === 1 ? "Playback" : `Playback ${rate}×`} onClick={onClick} lit={rate !== 1} />;
+}
+
+/**
+ * The phone's frame buttons, in the player bar: the playhead a frame back or on, as ← and → do
+ * (./commands.ts). Each is off at its end of the Clip.
+ */
+export function FrameStep({ playback, fps, commands }: { playback: Playback; fps: number; commands: Commands }) {
+  const first = usePlayback(playback, (time) => onFrame(time, fps) <= 0);
+  const last = usePlayback(playback, (time, p) => onFrame(time, fps) >= lastFrame(p.duration, fps));
+  return (
+    <>
+      <Button variant="ghost" size="icon" onClick={commands["step-back"]} disabled={first} aria-label="One frame back">
+        <StepBack aria-hidden size={18} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={commands["step-forward"]} disabled={last} aria-label="One frame forward">
+        <StepForward aria-hidden size={18} />
+      </Button>
+    </>
+  );
+}
+
+const RATE_CHOICES = RATES.map((rate) => ({ value: String(rate), label: `${rate}×` }));
+
+/**
+ * The phone's Playback sheet: the preview's rate; In, Out, Loop and Clear of the Loop Region
+ * (`region`, played while `looping`); and the playhead to the previous or next of `editPoints`. Each
+ * button runs the command of its key (./commands.ts); a jump is off when there is no Edit Point past
+ * the playhead that way.
+ */
+export function PlaybackPanel({
+  playback,
+  commands,
+  region,
+  looping,
+  editPoints,
+  fps,
+}: {
+  playback: Playback;
+  commands: Commands;
+  region: LoopRegion | null;
+  looping: boolean;
+  editPoints: number[];
+  fps: number;
+}) {
+  const rate = usePlayback(playback, (_, p) => p.rate);
+  const before = usePlayback(playback, (time) => previousEditPoint(editPoints, time, fps) !== null);
+  // The Clip's end is jumped to on its last frame, so there is nothing after that.
+  const after = usePlayback(
+    playback,
+    (time, p) => nextEditPoint(editPoints, time, fps) !== null && onFrame(time, fps) < lastFrame(p.duration, fps),
+  );
+  return (
+    <div className="flex flex-col gap-5">
+      <Segmented legend="Rate" options={RATE_CHOICES} value={String(rate)} onChange={(value) => playback.setRate(Number(value))} />
+      <section aria-labelledby="playback-loop" className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <h3 id="playback-loop" className="text-sm font-medium">
+            Loop Region
+          </h3>
+          <p aria-live="polite" className="text-xs text-muted tabular-nums">
+            {region ? `${formatPrecise(region.in)} to ${formatPrecise(region.out)}${looping ? ", looping" : ""}` : "No marks"}
+          </p>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          <Button onClick={commands["mark-in"]} aria-label="Mark In at the playhead">
+            In
+          </Button>
+          <Button onClick={commands["mark-out"]} aria-label="Mark Out at the playhead">
+            Out
+          </Button>
+          <Button onClick={commands.loop} aria-pressed={looping} className="aria-pressed:text-accent-text">
+            Loop
+          </Button>
+          <Button onClick={commands["clear-marks"]} disabled={!region} aria-label="Clear the marks and stop looping">
+            Clear
+          </Button>
+        </div>
+      </section>
+      <section aria-labelledby="playback-edit-points" className="flex flex-col gap-2">
+        <h3 id="playback-edit-points" className="text-sm font-medium">
+          Edit Points
+        </h3>
+        <div className="grid grid-cols-2 gap-2">
+          <Button onClick={commands["edit-point-previous"]} disabled={!before}>
+            <ArrowLeftToLine aria-hidden size={16} />
+            Previous
+          </Button>
+          <Button onClick={commands["edit-point-next"]} disabled={!after}>
+            Next
+            <ArrowRightToLine aria-hidden size={16} />
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
 }

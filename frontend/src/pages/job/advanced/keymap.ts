@@ -1,6 +1,6 @@
 // Seam G (.scratch/navigation-playback/spec.md): every shortcut of the Advanced Edit in one table,
 // the shortcut a key gives where the focus is, and the shortcuts sheet drawn from the same table.
-// A new shortcut is a row here and what it does in `useShortcuts`.
+// A new shortcut is a row here and what it does in `commandsOf` (./commands.ts).
 
 export type ShortcutId =
   | "play"

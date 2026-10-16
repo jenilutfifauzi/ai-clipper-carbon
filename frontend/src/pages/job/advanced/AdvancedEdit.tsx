@@ -50,24 +50,36 @@ import {
   placeDropped,
   setFade,
   setVolume,
-  type ItemActions,
   type Outcome,
   type SegmentDrag,
 } from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
-import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, ShortcutsSheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
+import {
+  ASSET_TABS,
+  AssetTabs,
+  FrameStep,
+  ItemTools,
+  PlaybackPanel,
+  SaveStatus,
+  Sheet,
+  ShortcutsSheet,
+  Toolbar,
+  TopBar,
+  type AssetTab,
+} from "./Chrome";
+import { commandsOf, type Commands } from "./commands";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
-import { keysOf, resolveShortcut, type ShortcutId } from "./keymap";
+import { keysOf, resolveShortcut } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
-import { DEFAULT_FPS, lastFrame, loopRegion, onFrame, stepFrames, type LoopMarks } from "./playhead";
+import { DEFAULT_FPS, loopRegion, onFrame, type LoopMarks } from "./playhead";
 import {
   bandPick,
   clicked,
@@ -81,13 +93,12 @@ import {
   unlockedPick,
   type Pick,
 } from "./pick";
-import { toggleSkim } from "./skim";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
-import { edgesOf, editPoints, nextEditPoint, previousEditPoint, zoomToFit } from "./timelineView";
+import { edgesOf, editPoints, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
-import { useEditHistory, type EditHistory } from "./useEditHistory";
+import { useEditHistory } from "./useEditHistory";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
 const EDITABLE = new Set(["review", "rendering"]);
@@ -152,8 +163,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [pickState, setPickState] = useState<Pick>(null);
-  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector or of the Tracks.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | null>(null);
+  // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the Tracks or of Playback.
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The player's room, which goes full screen with the stage and the player bar.
   const fullscreenRoom = useRef<HTMLDivElement>(null);
@@ -531,7 +542,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function mark(end: keyof LoopMarks) {
     setMarks(ordered({ ...marks, [end]: onFrame(playback.time, fps) }));
   }
-  useShortcuts(history, playback, actions, {
+  const points = editPoints(edits, played, { duration, hidden: tracks.hidden });
+  // What the keys and the buttons that do the same do (./commands.ts).
+  const commands = commandsOf(history, playback, actions, {
     pickAll: () => select(pickAll(edits)),
     pickNone: () => select(null),
     paste: pasteHere,
@@ -540,7 +553,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     fit: () => fitTimeline.current?.(),
     zoom: (direction) => zoomTimeline.current?.(direction),
     shortcuts: () => setShortcuts(true),
-    editPoints: editPoints(edits, played, { duration, hidden: tracks.hidden }),
+    editPoints: points,
     markIn: () => mark("in"),
     markOut: () => mark("out"),
     loop: toggleLoop,
@@ -549,10 +562,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       setLooping(false);
     },
     fps,
-    fullscreen: fullscreen.way !== null,
     setFullscreen,
-    phone: !wide,
   });
+  useShortcuts(commands, { fullscreen: fullscreen.way !== null, phone: !wide });
 
   async function close() {
     await history.flush();
@@ -597,7 +609,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <Button
       variant="ghost"
       size="icon"
-      onClick={() => setFullscreen(!fullscreen.way)}
+      onClick={commands[fullscreen.way ? "fullscreen-exit" : "fullscreen"]}
       aria-label={fullscreen.way ? "Leave full screen" : "Full screen"}
       title={fullscreen.way ? "Leave full screen (F)" : "Full screen (F)"}
     >
@@ -646,9 +658,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       overlays={fullscreen.way ? undefined : overlayControls}
       fit
       rates={wide}
-      tools={fullscreenButton}
+      tools={
+        wide ? (
+          fullscreenButton
+        ) : (
+          <>
+            <FrameStep playback={playback} fps={fps} commands={commands} />
+            {fullscreenButton}
+          </>
+        )
+      }
       hideBar={!fullscreenBar.shown}
-      loop={wide ? { on: looping, onToggle: toggleLoop } : undefined}
+      loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
     />
   );
   // The player, or full screen (over the whole window where the browser can't put it full screen),
@@ -881,6 +902,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         paste={pasteHere}
         onInspect={() => setSheet("inspector")}
         onTracks={() => setSheet("tracks")}
+        onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
         onDeselect={() => {
           select(null);
@@ -890,10 +912,26 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       />
       {sheet && (
         <Sheet
-          title={sheet === "inspector" ? "Edit" : sheet === "tracks" ? "Tracks" : ASSET_TABS.find((tab) => tab.value === sheet)!.label}
+          title={
+            sheet === "inspector"
+              ? "Edit"
+              : sheet === "tracks"
+                ? "Tracks"
+                : sheet === "playback"
+                  ? "Playback"
+                  : ASSET_TABS.find((tab) => tab.value === sheet)!.label
+          }
           onClose={() => setSheet(null)}
         >
-          {sheet === "inspector" ? inspector : sheet === "tracks" ? <TracksPanel tracks={tracks} onTrack={toggleTrack} /> : assets(sheet)}
+          {sheet === "inspector" ? (
+            inspector
+          ) : sheet === "tracks" ? (
+            <TracksPanel tracks={tracks} onTrack={toggleTrack} />
+          ) : sheet === "playback" ? (
+            <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
+          ) : (
+            assets(sheet)
+          )}
         </Sheet>
       )}
     </div>
@@ -913,110 +951,26 @@ const FIELD = "input, textarea, select, [contenteditable='true']";
 // What keeps its own arrows, Enter, Space and Delete when it has the focus: an item reached by Tab, or a button.
 const ITEM = "[role=button], button";
 
-// The shortcuts of the keymap table (./keymap.ts), each done by its id: those for the picked items
-// only while something is picked, and Cmd/Ctrl+C only while no text on the page is selected. One that
-// can't be done now leaves its key to the browser.
-function useShortcuts(
-  history: EditHistory<AdvancedEdits>,
-  playback: Playback,
-  actions: ItemActions | null,
-  more: {
-    pickAll: () => void;
-    pickNone: () => void;
-    paste: (() => void) | null;
-    move: ((delta: number, group: string) => void) | null;
-    // Split at the playhead: the picked items, or with nothing picked, everything there.
-    split: () => void;
-    // Zoom the Timeline to fit: what is picked, or with nothing picked, the whole Clip.
-    fit: () => void;
-    // Zoom the Timeline in (1) or out (-1) about the playhead.
-    zoom: (direction: 1 | -1) => void;
-    // Open the shortcuts sheet.
-    shortcuts: () => void;
-    // Where ↑ and ↓ take the playhead, sorted.
-    editPoints: number[];
-    // Mark In or Out at the playhead; Loop on or off; the marks cleared and Loop off.
-    markIn: () => void;
-    markOut: () => void;
-    loop: () => void;
-    clearMarks: () => void;
-    // The Clip's frame rate: a frame step's, and an arrow move's.
-    fps: number;
-    // The preview is full screen, and is put full screen or back.
-    fullscreen: boolean;
-    setFullscreen: (on: boolean) => void;
-    // The phone's layout, without the desktop's shortcuts.
-    phone: boolean;
-  },
-) {
+// The shortcuts of the keymap table (./keymap.ts), each done by its command. One that can't be done
+// now leaves its key to the browser.
+function useShortcuts(commands: Commands, context: { fullscreen: boolean; phone: boolean }) {
+  const { fullscreen, phone } = context;
   useEffect(() => {
-    // The picked Text Layers, Music Clips and Overlays moved `frames` frames; a run of presses is undone as one.
-    const move = (frames: number) => (more.move ? more.move(frames / more.fps, "key:move") : false);
-    // The playhead `frames` frames on, on the frame grid, paused to show the frame stepped to.
-    const step = (frames: number) => {
-      if (playback.playing) playback.pause();
-      playback.seek(stepFrames(playback.time, frames, { fps: more.fps, duration: playback.duration }));
-    };
-    // The playhead to the Edit Point `to` gives from it, paused, on the frame grid; none past either end.
-    const jump = (to: (points: number[], time: number, fps: number) => number | null) => {
-      const point = to(more.editPoints, playback.time, more.fps);
-      if (point === null) return;
-      if (playback.playing) playback.pause();
-      playback.seek(Math.min(onFrame(point, more.fps), lastFrame(playback.duration, more.fps)));
-    };
-    // What each shortcut does; false when it can't be done now.
-    const run: Record<ShortcutId, () => boolean | void> = {
-      play: () => playback.toggle(),
-      undo: () => history.undo(),
-      redo: () => history.redo(),
-      "pick-all": () => more.pickAll(),
-      "pick-none": () => more.pickNone(),
-      split: () => more.split(),
-      copy: () => (actions && !window.getSelection()?.toString() ? actions.copy() : false),
-      cut: () => (actions ? actions.cut() : false),
-      paste: () => (more.paste ? more.paste() : false),
-      duplicate: () => (actions ? actions.duplicate() : false),
-      delete: () => (actions ? actions.remove() : false),
-      "ripple-delete": () => (actions ? actions.rippleRemove() : false),
-      "step-back": () => step(-1),
-      "step-forward": () => step(1),
-      "step-back-10": () => step(-10),
-      "step-forward-10": () => step(10),
-      start: () => playback.seek(0),
-      end: () => playback.seek(lastFrame(playback.duration, more.fps)),
-      "edit-point-previous": () => jump(previousEditPoint),
-      "edit-point-next": () => jump(nextEditPoint),
-      "move-back": () => move(-1),
-      "move-forward": () => move(1),
-      "move-back-10": () => move(-10),
-      "move-forward-10": () => move(10),
-      "zoom-in": () => more.zoom(1),
-      "zoom-out": () => more.zoom(-1),
-      fit: () => more.fit(),
-      fullscreen: () => more.setFullscreen(true),
-      "fullscreen-exit": () => more.setFullscreen(false),
-      skim: () => toggleSkim(),
-      shortcuts: () => more.shortcuts(),
-      "mark-in": () => more.markIn(),
-      "mark-out": () => more.markOut(),
-      loop: () => more.loop(),
-      "clear-marks": () => more.clearMarks(),
-    };
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       const id = resolveShortcut(keysOf(event), {
         typing: !!target.closest(FIELD),
         item: !!target.closest(ITEM),
-        fullscreen: more.fullscreen,
-        phone: more.phone,
+        fullscreen,
+        phone,
       });
-      if (!id || run[id]() === false) return;
+      if (!id || commands[id]() === false) return;
       // Escape is the browser's too (it closes a dialog), and still does that.
       if (id !== "pick-none") event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [history, playback, actions, more]);
+  }, [commands, fullscreen, phone]);
 }
 
 /**

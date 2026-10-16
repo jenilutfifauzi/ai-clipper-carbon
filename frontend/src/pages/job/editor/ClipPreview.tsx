@@ -1036,7 +1036,8 @@ function Transport({
         hidden && "not-has-focus-visible:pointer-events-none not-has-focus-visible:opacity-0",
       )}
     >
-      <div className="flex items-center gap-3">
+      {/* Compact on a phone, closer together and the time over the Clip's length, so that the row fits 375 px. */}
+      <div className={cx("flex items-center gap-3", compact && "max-sm:gap-2")}>
         <Button variant="secondary" size="icon" onClick={() => playback.toggle()} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause aria-hidden size={18} /> : <Play aria-hidden size={18} />}
         </Button>
@@ -1050,8 +1051,10 @@ function Transport({
           aria-label="Position in the clip"
           className="min-w-0 flex-1 accent-accent"
         />
-        <span className="shrink-0 text-sm text-muted tabular-nums">
-          {formatPrecise(Math.max(0, tenths / 10))} / {formatPrecise(duration)}
+        <span className={cx("shrink-0 text-sm text-muted tabular-nums", compact && "max-sm:flex max-sm:flex-col max-sm:items-end max-sm:text-xs")}>
+          {formatPrecise(Math.max(0, tenths / 10))}
+          <span className={cx(compact && "max-sm:sr-only")}> / </span>
+          {formatPrecise(duration)}
         </span>
         {loop && (
           <Button
