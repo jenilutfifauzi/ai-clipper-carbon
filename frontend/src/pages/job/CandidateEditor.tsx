@@ -25,6 +25,7 @@ import { ClipPreview, type PickedOnStage, type StageControls } from "./editor/Cl
 import { clipLayoutChange, pictureChange } from "./editor/clipManual";
 import { candidateDraft } from "./editor/draft";
 import { useMagnetic } from "./editor/magnetic";
+import { offeredLayouts, portraitSource, shownLayout } from "./editor/layouts";
 import { sceneLayoutOverrides } from "./editor/manual";
 import { Playback, playedFrom, playable } from "./editor/playback";
 import { sceneAt, SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
@@ -88,6 +89,9 @@ const LAYOUT_HINTS: Record<Layout, string> = {
   blur: "The wide shot over a blurred background, in every scene.",
   manual: "Framed by hand, in every scene: drag the picture on the preview to pan it, its corners to zoom.",
 };
+
+// A portrait episode is shown as it was shot, whatever the automatic Layout, unless framed by hand.
+const PORTRAIT_HINT = "A portrait episode is shown as it was shot. Choose Manual to frame it by hand.";
 
 /**
  * One Candidate under review: its preview (the Clip as it will look, or the Source), the Transcript
@@ -203,6 +207,7 @@ export function CandidateEditor({
   const name = candidateName(candidate, index);
   const magnetic = useMagnetic();
   const plan = preview?.plan ?? null;
+  const portrait = portraitSource(plan);
   // What of the Candidate frames its pictures.
   const framed = { segments: mainTrackOf(candidate), layout: candidate.layout, framing: candidate.framing, layout_overrides: candidate.layout_overrides };
   // The picture of a Manual Scene under the playhead, panned and scaled on the preview from its
@@ -484,15 +489,15 @@ export function CandidateEditor({
                 <div className="flex flex-col gap-1.5">
                   <Segmented
                     legend="Layout"
-                    options={LAYOUTS}
-                    value={candidate.layout}
+                    options={offeredLayouts(LAYOUTS, portrait)}
+                    value={shownLayout(candidate.layout, portrait)}
                     // Manual frames the clip as the Scene under the playhead shows now.
                     onChange={(layout) =>
                       void onSave(clipLayoutChange(candidate, plan, plan ? sceneAt(plan, playback.shownTime, playback.shownSegmentIndex) : 0, layout))
                     }
                     className="max-w-md"
                   />
-                  <p className="text-sm text-muted">{LAYOUT_HINTS[candidate.layout]}</p>
+                  <p className="text-sm text-muted">{portrait && candidate.layout !== "manual" ? PORTRAIT_HINT : LAYOUT_HINTS[candidate.layout]}</p>
                 </div>
                 {cut && <CutNote count={candidate.segments.length} to={advanced} />}
                 <section aria-labelledby="picker-heading" className="flex flex-col gap-3">

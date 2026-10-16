@@ -13,6 +13,7 @@
   - [ ] a sideways phone video as a media Segment, rotated 90° and filled;
   - [ ] a Source Scene switched to Manual, panned, zoomed, scaled over a colour, then Use for all Scenes;
   - [ ] the clip editor's Manual and pan;
+  - [ ] a portrait episode: only As shot and Manual are offered (clip editor and Advanced Edit); Reframe by hand on one Scene, then Manual for the clip, and compare with the render;
   - [ ] Smart Guides between two Overlays;
   - [ ] each drag is one step of undo;
   - [ ] a Transition between two transformed media Segments.

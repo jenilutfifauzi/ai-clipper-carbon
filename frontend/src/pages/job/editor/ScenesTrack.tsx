@@ -2,6 +2,7 @@ import { ScanSearch } from "lucide-react";
 import type { Layout, LayoutOverride, RenderPlan, SceneLayout } from "../../../api";
 import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
+import { offeredLayouts, portraitSource, shownLayout } from "./layouts";
 import type { Geometry } from "./Timeline";
 
 const LOOKS: Record<SceneLayout, string> = {
@@ -150,12 +151,13 @@ export function SceneLayoutPicker({
     return <p className="rounded-control bg-fill p-3 text-sm text-muted">A video's Segment: how it fills the frame is set in the Advanced Edit.</p>;
   }
   const current = sceneOverride(overrides, plan, index);
+  const portrait = portraitSource(plan);
   return (
     <div className="flex flex-col gap-1.5 rounded-control bg-fill p-3">
       <Segmented
         legend={`Scene ${index + 1} of ${plan.scenes.length}, ${formatPrecise(scene.start)}–${formatPrecise(scene.end)} into the clip`}
-        options={CHOICES}
-        value={current?.layout ?? "default"}
+        options={offeredLayouts(CHOICES, portrait)}
+        value={shownLayout(current?.layout ?? "default", portrait)}
         onChange={onChange}
       />
       <p className="text-sm text-muted">
@@ -163,7 +165,9 @@ export function SceneLayoutPicker({
           ? "This scene is framed by hand: drag its picture on the preview to pan it, its corners to zoom."
           : current
             ? "This scene has its own layout."
-            : `This scene follows the clip's layout (${clipLayout === "auto" ? "chosen by its faces" : clipLayout}).`}
+            : portrait && clipLayout !== "manual"
+              ? "A portrait episode is shown as it was shot. Choose Manual to frame this scene by hand."
+              : `This scene follows the clip's layout (${clipLayout === "auto" ? "chosen by its faces" : clipLayout}).`}
       </p>
     </div>
   );

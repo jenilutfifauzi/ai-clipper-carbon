@@ -4,6 +4,7 @@ import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { forAllScenes, framingSource, reframed, sceneLayoutOverrides, sourceSceneAt, withClipLayout, withSceneFraming, type LayoutEdits } from "../editor/manual";
+import { offeredLayouts, portraitSource, shownLayout } from "../editor/layouts";
 import { IDENTITY } from "../editor/picture";
 import { usePlayback, type Playback } from "../editor/playback";
 import { sceneOverride } from "../editor/ScenesTrack";
@@ -26,7 +27,8 @@ const NAMES: Record<Layout, string> = { auto: "Auto", track: "Track", split: "Sp
  * automatic Scene can be reframed by hand: Manual, from what it shows (docs/adr/0007). A Manual
  * Scene shows its Framing (its Transform, Crop and Background), its own ("This Scene", which can be
  * used for all Scenes) or the clip's ("All Scenes", which can be split off for this Scene only).
- * Each field is one group of the history, named after the Framing's owner and the field.
+ * Each field is one group of the history, named after the Framing's owner and the field. A portrait
+ * episode is shown as it was shot (Auto, "As shot") unless a Scene is framed by hand.
  */
 export function SceneFields<T extends LayoutEdits>({
   plan,
@@ -56,13 +58,9 @@ export function SceneFields<T extends LayoutEdits>({
       </Group>
     );
   }
-  if (scene.layout === "passthrough") {
-    return (
-      <Group title="Scene">
-        <p className="text-sm text-pretty text-muted">A portrait episode is shown as it was shot.</p>
-      </Group>
-    );
-  }
+  const portrait = portraitSource(plan);
+  const layouts = offeredLayouts(LAYOUTS, portrait);
+  const name = (layout: Layout) => (portrait && layout !== "manual" ? "As shot" : NAMES[layout]);
   const own = sceneOverride(edits.layout_overrides, plan, at);
   const source = framingSource(edits, plan, at);
   const apply = (next: LayoutEdits | null, group?: string) => next && onEdits({ ...edits, ...next }, group);
@@ -73,14 +71,14 @@ export function SceneFields<T extends LayoutEdits>({
     <Group title={`Scene ${at + 1} at the playhead`}>
       <Select
         label="This Scene's layout"
-        value={own?.layout ?? "default"}
-        options={[{ value: "default", label: `The clip's (${NAMES[edits.layout]})` }, ...LAYOUTS]}
+        value={shownLayout(own?.layout ?? "default", portrait)}
+        options={[{ value: "default", label: `The clip's (${name(edits.layout)})` }, ...layouts]}
         onChange={(layout: Layout | "default") => {
           const layout_overrides = sceneLayoutOverrides(edits.layout_overrides, plan, at, layout);
           if (layout_overrides) apply({ ...edits, layout_overrides });
         }}
       />
-      <Select label="The clip's layout" value={edits.layout} options={LAYOUTS} onChange={(layout: Layout) => apply(withClipLayout(edits, plan, at, layout))} />
+      <Select label="The clip's layout" value={shownLayout(edits.layout, portrait)} options={layouts} onChange={(layout: Layout) => apply(withClipLayout(edits, plan, at, layout))} />
       {source ? (
         <>
           <div className="flex items-center justify-between gap-2">
@@ -106,9 +104,13 @@ export function SceneFields<T extends LayoutEdits>({
             <CropIcon aria-hidden size={16} />
             Reframe by hand
           </Button>
-          <Hint more="It stays where you put it for the whole Scene: faces aren't followed there.">
-            Frames this Scene yourself, starting from what it shows now.
-          </Hint>
+          {portrait ? (
+            <Hint more="It stays where you put it for the whole Scene.">A portrait episode is shown as it was shot. Frames this Scene yourself, starting from that.</Hint>
+          ) : (
+            <Hint more="It stays where you put it for the whole Scene: faces aren't followed there.">
+              Frames this Scene yourself, starting from what it shows now.
+            </Hint>
+          )}
         </div>
       )}
     </Group>
