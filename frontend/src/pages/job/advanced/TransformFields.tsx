@@ -8,21 +8,22 @@ import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
-import { clamp, FRAME, fillScale, IDENTITY, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
+import { clamp, FRAME, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
 
 /**
- * A picture's Transform as numbers (ADR 0007): its centre, its scale and stretch in percent of its
- * fitted size, its rotation, flips and opacity; and Fit (scale 1, no stretch, centred), Fill (the
- * scale that covers the frame with what its Crop keeps of its item's `size`, as turned: `fillScale`) and Reset (every field
- * of the Transform at its identity, and no Crop, as one change). Its Crop's four edges in percent of
- * its width and height, tidied as they change (a tenth kept), and with `onCropMode` a Crop button
- * that opens Crop mode on the stage. Each field's changes are one `group` of the history, named
- * after it.
+ * A picture's Transform as numbers (ADR 0007): its centre, its scale in percent of its fitted size
+ * and its stretch across and down, its rotation, flips and opacity; and Fit (scale 1, no stretch,
+ * centred), Fill (the scale that covers the frame with what its Crop keeps of its item's `size`, as
+ * turned: `fillScale`) and Reset (the Transform at its `defaults`, and no Crop, as one change). Its
+ * Crop's four edges in percent of its width and height, tidied as they change (a tenth kept), and
+ * with `onCropMode` a Crop button that opens Crop mode on the stage. Each field's changes are one
+ * `group` of the history, named after it.
  */
 export function TransformFields({
   transform,
   crop,
   size,
+  defaults,
   onChange,
   onCrop,
   onCropMode,
@@ -31,6 +32,8 @@ export function TransformFields({
   crop: Crop;
   // Its item's picture, in pixels; undefined while the Media Library loads.
   size: { width: number; height: number } | undefined;
+  // What Reset puts the Transform back to: a new Overlay's placement, or a Framing's fit (the identity).
+  defaults: Transform;
   onChange: (transform: Transform, field: string) => void;
   // The Crop set, with the Transform too when it is given (Reset): one change.
   onCrop: (crop: Crop, field: string, transform?: Transform) => void;
@@ -47,8 +50,8 @@ export function TransformFields({
         <NumberField label="Y" unit="px" value={transform.y} range={[0, FRAME.height]} onChange={(y) => set("y", y)} />
         <NumberField label="Scale" unit="%" value={transform.scale * 100} range={percents(SCALE_RANGE)} onChange={(scale) => set("scale", scale / 100)} />
         <NumberField label="Rotation" unit="°" value={transform.rotation} range={[-360, 360]} onChange={(rotation) => set("rotation", rotation)} />
-        <NumberField label="Width" unit="%" value={transform.stretch_x * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_x", stretch / 100)} />
-        <NumberField label="Height" unit="%" value={transform.stretch_y * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_y", stretch / 100)} />
+        <NumberField label="Stretch ↔" unit="%" value={transform.stretch_x * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_x", stretch / 100)} />
+        <NumberField label="Stretch ↕" unit="%" value={transform.stretch_y * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_y", stretch / 100)} />
       </div>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" aria-pressed={transform.flip_h} className="aria-pressed:text-accent-text" onClick={() => set("flip_h", !transform.flip_h)}>
@@ -95,7 +98,7 @@ export function TransformFields({
         >
           Fill
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => onCrop(NO_CROP, "reset", IDENTITY)}>
+        <Button size="sm" variant="ghost" onClick={() => onCrop(NO_CROP, "reset", defaults)}>
           Reset
         </Button>
       </div>

@@ -6,8 +6,8 @@ import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
-import { NO_CROP } from "../editor/cropGestures";
-import { BLURRED, IDENTITY } from "../editor/picture";
+import { FITTED } from "../editor/manual";
+import { IDENTITY, mediaSize } from "../editor/picture";
 import type { PlayedSegment } from "../editor/playback";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
@@ -55,8 +55,7 @@ const VIDEO_MAX_SECS = 180;
 
 /** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), fitted over its blur. */
 export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
-  const framing = { transform: IDENTITY, crop: NO_CROP, background: BLURRED };
-  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, framing, volume: 1 };
+  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, framing: FITTED, volume: 1 };
 }
 
 /**
@@ -189,7 +188,8 @@ export function FramingFields({
       <TransformFields
         transform={framing.transform}
         crop={framing.crop}
-        size={item?.width && item.height ? { width: item.width, height: item.height } : undefined}
+        size={mediaSize(item)}
+        defaults={IDENTITY}
         onChange={(transform, field) => set("transform", transform, field)}
         onCrop={(crop, field, transform) =>
           onChange({ ...segment, framing: { ...framing, crop, transform: transform ?? framing.transform } }, `segment:${segment.id}:crop.${field}`)

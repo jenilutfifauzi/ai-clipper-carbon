@@ -1,21 +1,23 @@
 // Seam H (.scratch/transform-crop/spec.md): Crop mode's handles and its commit, as worked examples
 // of a Transform and Crop in and the Crop and Transform out.
 import { describe, expect, test } from "vitest";
+import type { Transform } from "../../../api";
 import { cropCommitted, cropDragged, croppedSize, keptPart, NO_CROP, tidyCrop, wholePicture, type Crop, type CropEntry } from "./cropGestures";
-import { boundsOf, cornersOf, fittedSize, placed, type PictureTransform } from "./pictureGestures";
+import { fittedSize } from "./picture";
+import { boundsOf, cornersOf, placed } from "./pictureGestures";
 
 const FRAME = { width: 1080, height: 1920 };
 // A 1920×1080 video: 1080×607.5 fitted.
 const ITEM = { width: 1920, height: 1080 };
 
-function transform(changes: Partial<PictureTransform> = {}): PictureTransform {
+function transform(changes: Partial<Transform> = {}): Transform {
   return { x: 540, y: 960, scale: 1, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1, ...changes };
 }
 
 const crop = (changes: Partial<Crop> = {}): Crop => ({ ...NO_CROP, ...changes });
 
 // Crop mode opened on the video with `changes` to its Transform and the Crop `from`.
-const entry = (changes: Partial<PictureTransform> = {}, from: Crop = NO_CROP): CropEntry => ({
+const entry = (changes: Partial<Transform> = {}, from: Crop = NO_CROP): CropEntry => ({
   transform: transform(changes),
   crop: from,
   item: ITEM,
@@ -23,7 +25,7 @@ const entry = (changes: Partial<PictureTransform> = {}, from: Crop = NO_CROP): C
 });
 
 // Where the picture `next` Transform and Crop draw is on the frame.
-const drawn = (next: PictureTransform, kept: Crop) => placed(next, fittedSize(croppedSize(ITEM, kept), FRAME));
+const drawn = (next: Transform, kept: Crop) => placed(next, fittedSize(croppedSize(ITEM, kept), FRAME));
 
 // Rounded to a thousandth, so cos 90° is 0.
 const tidy = <T extends object>(value: T): T =>

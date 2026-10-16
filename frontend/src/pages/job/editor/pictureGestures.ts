@@ -3,24 +3,8 @@
 // and where its Grips sit on it, then moving, corner scale, edge stretch, rotation with its snaps,
 // and a phone's pinch and twist. Points are in frame (output) pixels, y down; angles are degrees
 // clockwise (docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md).
-import type { Box } from "../../../api";
-
-/**
- * Where and how a picture sits on the frame (GLOSSARY.md's Transform): its centre in output pixels,
- * kept on the frame; its scale over its fitted size; its stretch across and down; its rotation; its
- * flips and opacity. Shaped as the API's Transform, so either can be passed for the other.
- */
-export interface PictureTransform {
-  x: number;
-  y: number;
-  scale: number;
-  stretch_x: number;
-  stretch_y: number;
-  rotation: number;
-  flip_h: boolean;
-  flip_v: boolean;
-  opacity: number;
-}
+import type { Box, Transform } from "../../../api";
+import { clamp, SCALE_RANGE, STRETCH_RANGE } from "./picture";
 
 export interface Point {
   x: number;
@@ -44,7 +28,7 @@ export interface Placed {
 /** A picture as it was when a gesture took hold of it: its Transform, its fitted size (at scale 1,
  * before stretch, in frame pixels) and the frame's size. */
 export interface Grabbed {
-  transform: PictureTransform;
+  transform: Transform;
   fitted: Size;
   frame: Size;
 }
@@ -60,27 +44,16 @@ export interface GestureKeys {
   alt?: boolean;
 }
 
-export const MIN_SCALE = 0.05;
-export const MAX_SCALE = 8;
-export const MIN_STRETCH = 0.1;
-export const MAX_STRETCH = 10;
 // Rotation snaps to a quarter turn this near it, in degrees, and turns in steps this large with Shift.
 const ROTATION_SNAP = 3;
 const ROTATION_STEP = 15;
 
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const radians = (degrees: number) => (degrees * Math.PI) / 180;
 // `-0` read as 0.
 const unsigned = (value: number) => value + 0;
 
-/** The largest size `size` fits in `frame` at, keeping its aspect: a picture's size at scale 1. */
-export function fittedSize(size: Size, frame: Size): Size {
-  const fit = Math.min(frame.width / size.width, frame.height / size.height);
-  return { width: size.width * fit, height: size.height * fit };
-}
-
 /** Where a picture is drawn by `transform`, given its fitted size. */
-export function placed(transform: PictureTransform, fitted: Size): Placed {
+export function placed(transform: Transform, fitted: Size): Placed {
   return {
     x: transform.x,
     y: transform.y,
@@ -138,14 +111,14 @@ export function gripsOf(picture: Placed, reach: number): Record<Grip, Point> {
 }
 
 // The centre at `point`, kept on the frame.
-const centredAt = (transform: PictureTransform, point: Point, frame: Size): PictureTransform => ({
+const centredAt = (transform: Transform, point: Point, frame: Size): Transform => ({
   ...transform,
-  x: clamp(point.x, 0, frame.width),
-  y: clamp(point.y, 0, frame.height),
+  x: clamp(point.x, [0, frame.width]),
+  y: clamp(point.y, [0, frame.height]),
 });
 
 /** The picture dragged by its body from `from` to `to`: its centre moved as far, kept on the frame. */
-export function moved({ transform, frame }: Grabbed, from: Point, to: Point): PictureTransform {
+export function moved({ transform, frame }: Grabbed, from: Point, to: Point): Transform {
   return centredAt(transform, { x: transform.x + to.x - from.x, y: transform.y + to.y - from.y }, frame);
 }
 
@@ -153,10 +126,10 @@ export function moved({ transform, frame }: Grabbed, from: Point, to: Point): Pi
  * The picture scaled about its centre by a corner dragged from `from` to `to`: by how much further
  * from the centre the pointer is than where it was grabbed. Its stretch is kept.
  */
-export function scaled({ transform }: Grabbed, from: Point, to: Point): PictureTransform {
+export function scaled({ transform }: Grabbed, from: Point, to: Point): Transform {
   const reach = Math.max(Math.hypot(from.x - transform.x, from.y - transform.y), 1);
   const ratio = Math.hypot(to.x - transform.x, to.y - transform.y) / reach;
-  return { ...transform, scale: clamp(transform.scale * ratio, MIN_SCALE, MAX_SCALE) };
+  return { ...transform, scale: clamp(transform.scale * ratio, SCALE_RANGE) };
 }
 
 /**
@@ -164,7 +137,7 @@ export function scaled({ transform }: Grabbed, from: Point, to: Point): PictureT
  * and right edges, down for the top and bottom, by how much further the pointer is from the centre
  * along the picture's own axis (so a turned picture stretches along its own sides).
  */
-export function stretched({ transform }: Grabbed, edge: Edge, from: Point, to: Point): PictureTransform {
+export function stretched({ transform }: Grabbed, edge: Edge, from: Point, to: Point): Transform {
   const across = edge === "left" || edge === "right";
   const reach = (point: Point) => {
     const off = offsetOnPicture(transform, point);
@@ -172,7 +145,7 @@ export function stretched({ transform }: Grabbed, edge: Edge, from: Point, to: P
   };
   const ratio = reach(to) / Math.max(reach(from), 1);
   const key = across ? "stretch_x" : "stretch_y";
-  return { ...transform, [key]: clamp(transform[key] * ratio, MIN_STRETCH, MAX_STRETCH) };
+  return { ...transform, [key]: clamp(transform[key] * ratio, STRETCH_RANGE) };
 }
 
 /**
@@ -202,13 +175,13 @@ function turnedBy(rotation: number, degrees: number, keys: GestureKeys): number 
  * The picture turned about its centre by the rotate handle dragged from `from` to `to`: by the
  * pointer's angle about the centre less its angle when grabbed, snapped (`snapRotation`).
  */
-export function rotated({ transform }: Grabbed, from: Point, to: Point, keys: GestureKeys): PictureTransform {
+export function rotated({ transform }: Grabbed, from: Point, to: Point, keys: GestureKeys): Transform {
   const angle = (point: Point) => Math.atan2(point.y - transform.y, point.x - transform.x);
   return { ...transform, rotation: turnedBy(transform.rotation, turn(angle(from), angle(to)), keys) };
 }
 
 /** The picture after `grip` (or its body) is dragged from `from` to `to`. */
-export function dragged(grab: Grabbed, grip: Grip | "body", from: Point, to: Point, keys: GestureKeys): PictureTransform {
+export function dragged(grab: Grabbed, grip: Grip | "body", from: Point, to: Point, keys: GestureKeys): Transform {
   if (grip === "body") return moved(grab, from, to);
   if (grip === "rotate") return rotated(grab, from, to, keys);
   if (grip === "top" || grip === "right" || grip === "bottom" || grip === "left") return stretched(grab, grip, from, to);
@@ -220,14 +193,14 @@ export function dragged(grab: Grabbed, grip: Grip | "body", from: Point, to: Poi
  * are, turned by how far the line between them turned (snapped as the rotate handle is), and moved
  * as far as their middle moved.
  */
-export function pinched(grab: Grabbed, from: [Point, Point], to: [Point, Point], keys: GestureKeys): PictureTransform {
+export function pinched(grab: Grabbed, from: [Point, Point], to: [Point, Point], keys: GestureKeys): Transform {
   const { transform } = grab;
   const apart = ([a, b]: [Point, Point]) => Math.hypot(b.x - a.x, b.y - a.y);
   const angle = ([a, b]: [Point, Point]) => Math.atan2(b.y - a.y, b.x - a.x);
   const middle = ([a, b]: [Point, Point]) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
   return {
     ...moved(grab, middle(from), middle(to)),
-    scale: clamp((transform.scale * apart(to)) / Math.max(apart(from), 1), MIN_SCALE, MAX_SCALE),
+    scale: clamp((transform.scale * apart(to)) / Math.max(apart(from), 1), SCALE_RANGE),
     rotation: turnedBy(transform.rotation, turn(angle(from), angle(to)), keys),
   };
 }
@@ -249,7 +222,7 @@ export function fingersOn(grab: Grabbed, grip: Grip | "body", id: number, at: Po
 }
 
 // The fingers `down` each starting again where it is, from the picture as `held` now.
-const again = (fingers: Fingers, held: PictureTransform, down: Fingers["down"], grip: Fingers["grip"]): Fingers => ({
+const again = (fingers: Fingers, held: Transform, down: Fingers["down"], grip: Fingers["grip"]): Fingers => ({
   grip,
   grab: { ...fingers.grab, transform: held },
   down: down.map(({ id, at }) => ({ id, from: at, at })),
@@ -259,7 +232,7 @@ const again = (fingers: Fingers, held: PictureTransform, down: Fingers["down"], 
  * A second finger `id` down at `at`: a pinch from here, of the picture as `held` now (the first
  * finger's move so far, as the stage shows it). A third finger is left out.
  */
-export function fingerDown(fingers: Fingers, id: number, at: Point, held: PictureTransform): Fingers {
+export function fingerDown(fingers: Fingers, id: number, at: Point, held: Transform): Fingers {
   if (fingers.down.length !== 1 || fingers.down[0].id === id) return fingers;
   return again(fingers, held, [...fingers.down, { id, from: at, at }], fingers.grip);
 }
@@ -274,14 +247,14 @@ export function fingerMoved(fingers: Fingers, id: number, at: Point): Fingers {
  * Finger `id` lifted, the picture as `held` now: the other of two moves its body on from here, and
  * the last ends the gesture (null).
  */
-export function fingerUp(fingers: Fingers, id: number, held: PictureTransform): Fingers | null {
+export function fingerUp(fingers: Fingers, id: number, held: Transform): Fingers | null {
   if (!fingers.down.some((finger) => finger.id === id)) return fingers;
   const left = fingers.down.filter((finger) => finger.id !== id);
   return left.length ? again(fingers, held, left, "body") : null;
 }
 
 /** The picture as the fingers put it now. */
-export function fingersHeld({ grip, grab, down }: Fingers, keys: GestureKeys): PictureTransform {
+export function fingersHeld({ grip, grab, down }: Fingers, keys: GestureKeys): Transform {
   const [first, second] = down;
   if (second) return pinched(grab, [first.from, second.from], [first.at, second.at], keys);
   return dragged(grab, grip, first.from, first.at, keys);

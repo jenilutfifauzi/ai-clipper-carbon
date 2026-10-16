@@ -1,8 +1,9 @@
 // Seam H (.scratch/transform-crop/spec.md): the Smart Guides (GLOSSARY.md) a picture snaps to while
 // it is moved or scaled on the stage, worked out from numbers alone: the targets at the playhead,
 // and the snap of the picture's bounds (its box after rotation) with the lines that mark it.
-import type { Box, Picture, RenderPlan } from "../../../api";
-import { boundsOf, placed, MAX_SCALE, MIN_SCALE, type PictureTransform, type Size } from "./pictureGestures";
+import type { Box, Picture, RenderPlan, Transform } from "../../../api";
+import { SCALE_RANGE } from "./picture";
+import { boundsOf, placed, type Size } from "./pictureGestures";
 
 // How near, in CSS pixels on screen, an edge or middle comes to a guide before it snaps to it.
 export const SNAP_CSS_PX = 6;
@@ -13,14 +14,14 @@ export const SAFE_BOTTOM = 1536;
 export const GUIDES_X = { middle: 540, end: 950 };
 export const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
 
-/** The Smart Guides to draw for a snap: the x of each line down the frame and the y of each across. */
+/**
+ * Lines down and across the frame, by the x of each down it and the y of each across: the Smart
+ * Guides to draw for a snap, or the targets a picture can snap to.
+ */
 export interface SmartGuides {
   x: number[];
   y: number[];
 }
-
-/** Where a picture can snap to: the x of each line down the frame and the y of each across it. */
-export type GuideTargets = SmartGuides;
 
 /** How a snap is measured: frame pixels to a CSS pixel on screen now, and whether Alt is held. */
 export interface SnapReach {
@@ -30,7 +31,7 @@ export interface SnapReach {
 
 /** A Transform snapped, and the Smart Guides that mark it. */
 export interface Snapped {
-  transform: PictureTransform;
+  transform: Transform;
   guides: SmartGuides;
 }
 
@@ -60,7 +61,7 @@ export function picturesAt(plan: RenderPlan, time: number, scene: number | null)
  * the edges and centres of the other pictures shown at the playhead by their `bounds` (all but the
  * `dragged` one). Text is not a target.
  */
-export function guideTargets(frame: Size, pictures: { id: string; bounds: Box }[], dragged: string): GuideTargets {
+export function guideTargets(frame: Size, pictures: { id: string; bounds: Box }[], dragged: string): SmartGuides {
   const others = pictures.filter((picture) => picture.id !== dragged).map((picture) => picture.bounds);
   const whole = { x: 0, y: 0, ...frame };
   return {
@@ -88,7 +89,7 @@ function nearest(edges: number[], targets: number[], reach: number): number | nu
  * nearest target within 6 CSS pixels, unless Alt is held. With the lines of every target its bounds
  * then meet.
  */
-export function snapMoved(transform: PictureTransform, fitted: Size, targets: GuideTargets, { unit, alt }: SnapReach): Snapped {
+export function snapMoved(transform: Transform, fitted: Size, targets: SmartGuides, { unit, alt }: SnapReach): Snapped {
   if (alt) return { transform, guides: { x: [], y: [] } };
   const bounds = boundsOf(placed(transform, fitted));
   const reach = SNAP_CSS_PX * unit;
@@ -107,7 +108,7 @@ export function snapMoved(transform: PictureTransform, fitted: Size, targets: Gu
  * bounds nearest a target beyond it, within 6 CSS pixels, meets it (unless Alt is held). With the
  * lines of every target its bounds' edges then meet.
  */
-export function snapScaled(transform: PictureTransform, fitted: Size, targets: GuideTargets, { unit, alt }: SnapReach): Snapped {
+export function snapScaled(transform: Transform, fitted: Size, targets: SmartGuides, { unit, alt }: SnapReach): Snapped {
   const none = { transform, guides: { x: [], y: [] } };
   if (alt) return none;
   const reach = SNAP_CSS_PX * unit;
@@ -125,7 +126,7 @@ export function snapScaled(transform: PictureTransform, fitted: Size, targets: G
         const wanted = (target - centre) * side;
         const by = Math.abs(wanted - half);
         const scale = (transform.scale * wanted) / half;
-        if (wanted > 0 && by <= reach && scale >= MIN_SCALE && scale <= MAX_SCALE && (!best || by < best.by)) best = { by, scale };
+        if (wanted > 0 && by <= reach && scale >= SCALE_RANGE[0] && scale <= SCALE_RANGE[1] && (!best || by < best.by)) best = { by, scale };
       }
   }
   if (!best) return none;

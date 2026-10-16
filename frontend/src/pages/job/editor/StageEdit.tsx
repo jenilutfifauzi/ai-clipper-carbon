@@ -21,7 +21,7 @@ import {
 } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
-import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
+import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, pressTogglesPick, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -413,7 +413,7 @@ export function useStageEdit(
       if (!point || !plan || pointer.button !== 0) return;
       pointer.preventDefault();
       pointer.stopPropagation();
-      if (pointer.shiftKey || pointer.metaKey || pointer.ctrlKey) {
+      if (pressTogglesPick(grip, pointer)) {
         onSelect(item.id, true);
         return;
       }

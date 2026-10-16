@@ -1,9 +1,10 @@
-import type { Background, Panel, Picture, ScenePlan, Transform } from "../../../api";
+import type { Background, MediaItem, Panel, Picture, ScenePlan, Transform } from "../../../api";
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
- * rule of backend/app/pictures.py, which the inspector's Fit and Fill and a new Overlay go by. The
- * plan resolves every Picture (ADR 0001); this only turns it into boxes.
+ * rule of backend/app/pictures.py and the Transform's limits, which the inspector's Fit and Fill, a
+ * new Overlay and the stage's gestures go by. The plan resolves every Picture (ADR 0001); this only
+ * turns it into boxes.
  */
 
 // The frame's size, in output pixels.
@@ -120,10 +121,10 @@ export function slotView(scene: ScenePlan | undefined, slot: number): SlotView {
 // The Background of the picture itself, blurred (the colour is kept for when it is switched to one).
 export const BLURRED: Background = { kind: "blur", colour: "#000000" };
 
-/** The largest size of a `width` x `height` picture that fits the frame keeping its aspect: its size at scale 1. */
-export function fittedSize(width: number, height: number): { width: number; height: number } {
-  const fit = Math.min(FRAME.width / width, FRAME.height / height);
-  return { width: width * fit, height: height * fit };
+/** The largest size `size` fits in `frame` at, keeping its aspect: a picture's size at scale 1. */
+export function fittedSize(size: { width: number; height: number }, frame: { width: number; height: number } = FRAME): { width: number; height: number } {
+  const fit = Math.min(frame.width / size.width, frame.height / size.height);
+  return { width: size.width * fit, height: size.height * fit };
 }
 
 /** The scale at which a `width` x `height` picture covers the frame. */
@@ -138,13 +139,25 @@ export function coverScale(width: number, height: number): number {
  */
 export function fillScale(width: number, height: number, rotation: number): number {
   if (Math.abs(rotation % 180) !== 90) return coverScale(width, height);
-  const fitted = fittedSize(width, height);
+  const fitted = fittedSize({ width, height });
   return Math.max(FRAME.width / fitted.height, FRAME.height / fitted.width);
 }
 
 /** The scale that draws a `width` x `height` picture `pixels` wide, within the Transform's range. */
 export function scaleForWidth(width: number, height: number, pixels: number): number {
-  return clamp(pixels / fittedSize(width, height).width, SCALE_RANGE);
+  return clamp(pixels / fittedSize({ width, height }).width, SCALE_RANGE);
+}
+
+/** The size of a Media Library item's picture, in pixels; undefined while it isn't known (or it has none). */
+export const mediaSize = (item: MediaItem | undefined) => (item?.width && item.height ? { width: item.width, height: item.height } : undefined);
+
+/**
+ * Where a new Overlay of an item `size` pixels large is placed, and what its Reset puts it back to:
+ * half the frame wide (540 px, at the scale its size gives that) in its upper middle; at half scale
+ * while its size isn't known.
+ */
+export function overlayPlacement(size: { width: number; height: number } | undefined): Transform {
+  return { ...IDENTITY, y: 760, scale: size ? Number(scaleForWidth(size.width, size.height, 540).toFixed(4)) : 0.5 };
 }
 
 export const clamp = (value: number, [low, high]: readonly [number, number]) => Math.min(Math.max(value, low), high);

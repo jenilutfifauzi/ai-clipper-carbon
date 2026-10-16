@@ -13,7 +13,8 @@ import { sceneAt, sceneOverride, sourceTime } from "./ScenesTrack";
 // What of a Candidate frames its Scenes.
 export type LayoutEdits = Pick<Candidate, "layout" | "framing" | "layout_overrides">;
 
-// The Framing a Scene starts from when the plan has none for it: the Source fitted over its blur.
+// The Framing a Scene starts from when the plan has none for it, and a new video Segment's: its
+// picture fitted over its blur.
 export const FITTED: Framing = { transform: IDENTITY, crop: NO_CROP, background: BLURRED };
 
 /**

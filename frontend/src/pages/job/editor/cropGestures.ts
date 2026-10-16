@@ -4,21 +4,9 @@
 // taken first and the cropped picture is what is fitted, so a new Crop changes the fitted size: the
 // commit makes up for it with the Transform's scale and centre
 // (docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md).
-import type { Crop } from "../../../api";
-import {
-  fittedSize,
-  offsetOnPicture,
-  placed,
-  pointOnPicture,
-  MAX_SCALE,
-  MIN_SCALE,
-  type Corner,
-  type Edge,
-  type Placed,
-  type PictureTransform,
-  type Point,
-  type Size,
-} from "./pictureGestures";
+import type { Crop, Transform } from "../../../api";
+import { clamp, fittedSize, SCALE_RANGE } from "./picture";
+import { offsetOnPicture, placed, pointOnPicture, type Corner, type Edge, type Placed, type Point, type Size } from "./pictureGestures";
 
 export type { Crop };
 
@@ -27,13 +15,11 @@ export const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 };
 // An edge cuts off at most this much, and a pair leaves at least the rest of a whole.
 const MAX_CUT = 0.9;
 
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-
 /** Each edge held to 0..0.9, and a pair that would leave less than a tenth pulled back (its second). */
 export function tidyCrop(crop: Crop): Crop {
-  const left = clamp(crop.left, 0, MAX_CUT);
-  const top = clamp(crop.top, 0, MAX_CUT);
-  return { left, top, right: clamp(crop.right, 0, MAX_CUT - left), bottom: clamp(crop.bottom, 0, MAX_CUT - top) };
+  const left = clamp(crop.left, [0, MAX_CUT]);
+  const top = clamp(crop.top, [0, MAX_CUT]);
+  return { left, top, right: clamp(crop.right, [0, MAX_CUT - left]), bottom: clamp(crop.bottom, [0, MAX_CUT - top]) };
 }
 
 /** The size of what is kept of a picture `item` pixels large: what is fitted. */
@@ -46,7 +32,7 @@ export function croppedSize(item: Size, crop: Crop): Size {
  * pixels, and the frame's. The whole picture lies where these put it until Crop mode closes.
  */
 export interface CropEntry {
-  transform: PictureTransform;
+  transform: Transform;
   crop: Crop;
   item: Size;
   frame: Size;
@@ -54,7 +40,7 @@ export interface CropEntry {
 
 // The kept part's span across and down the picture as drawn, as fractions from its own left and top:
 // a flip draws the item's left cut on the right.
-function spans(crop: Crop, { flip_h, flip_v }: PictureTransform) {
+function spans(crop: Crop, { flip_h, flip_v }: Transform) {
   const [left, right] = flip_h ? [crop.right, crop.left] : [crop.left, crop.right];
   const [top, bottom] = flip_v ? [crop.bottom, crop.top] : [crop.top, crop.bottom];
   return { across: [left, 1 - right], down: [top, 1 - bottom] };
@@ -97,7 +83,7 @@ export function cropDragged(entry: CropEntry, grabbed: Crop, handle: Corner | Ed
   const [top, bottom] = flip_v ? (["bottom", "top"] as const) : (["top", "bottom"] as const);
   const next = { ...grabbed };
   const cut = (edge: keyof Crop, opposite: keyof Crop, by: number) => {
-    next[edge] = clamp(grabbed[edge] + by, 0, MAX_CUT - grabbed[opposite]);
+    next[edge] = clamp(grabbed[edge] + by, [0, MAX_CUT - grabbed[opposite]]);
   };
   if (handle.includes("left")) cut(left, right, across);
   if (handle.includes("right")) cut(right, left, -across);
@@ -111,15 +97,15 @@ export function cropDragged(entry: CropEntry, grabbed: Crop, handle: Corner | Ed
  * scale that makes the newly fitted picture as large, and the centre at the kept part's (which, on a
  * turned picture, moves along its own axes). Its stretch, rotation, flips and opacity are kept.
  */
-export function cropCommitted(entry: CropEntry, crop: Crop): PictureTransform {
+export function cropCommitted(entry: CropEntry, crop: Crop): Transform {
   const tidied = tidyCrop(crop);
   const kept = keptPart(entry, tidied);
   const fitted = fittedSize(croppedSize(entry.item, tidied), entry.frame);
   const { transform, frame } = entry;
   return {
     ...transform,
-    x: clamp(kept.x, 0, frame.width),
-    y: clamp(kept.y, 0, frame.height),
-    scale: clamp(kept.width / (fitted.width * transform.stretch_x), MIN_SCALE, MAX_SCALE),
+    x: clamp(kept.x, [0, frame.width]),
+    y: clamp(kept.y, [0, frame.height]),
+    scale: clamp(kept.width / (fitted.width * transform.stretch_x), SCALE_RANGE),
   };
 }

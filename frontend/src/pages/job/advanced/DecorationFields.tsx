@@ -26,7 +26,7 @@ export function DecorationFields({ overlay, onChange }: { overlay: Overlay; onCh
     <>
       <Group title="Corners">
         <Slider
-          label="Rounded"
+          label="Corners"
           value={overlay.radius}
           min={0}
           max={0.5}
@@ -48,7 +48,7 @@ export function DecorationFields({ overlay, onChange }: { overlay: Overlay; onCh
       </Group>
       <Group title="Shadow">
         <Switch checked={!!shadow} onChange={(on) => onChange({ ...overlay, shadow: on ? SHADOW : null }, group("shadow"))}>
-          <span className="text-sm font-medium">Drop shadow</span>
+          <span className="text-sm font-medium">Shadow</span>
         </Switch>
         {shadow && (
           <>

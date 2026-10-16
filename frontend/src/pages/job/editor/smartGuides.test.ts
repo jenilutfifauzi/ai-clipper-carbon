@@ -1,8 +1,7 @@
 // Seam H (.scratch/transform-crop/spec.md): the Smart Guides a dragged picture snaps to, as worked
 // examples of the pictures at the playhead and a Transform in, and the Transform and lines out.
 import { describe, expect, test } from "vitest";
-import type { OverlayEvent, Picture, RenderPlan, ScenePlan } from "../../../api";
-import type { PictureTransform } from "./pictureGestures";
+import type { OverlayEvent, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
 import { guideTargets, picturesAt, snapMoved, snapScaled } from "./smartGuides";
 
 const FRAME = { width: 1080, height: 1920 };
@@ -11,7 +10,7 @@ const UNIT = 2;
 // A 200×100 picture (at scale 1, before stretch).
 const FITTED = { width: 200, height: 100 };
 
-function transform(changes: Partial<PictureTransform> = {}): PictureTransform {
+function transform(changes: Partial<Transform> = {}): Transform {
   return { x: 540, y: 960, scale: 1, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1, ...changes };
 }
 
@@ -40,7 +39,7 @@ describe("the targets", () => {
 
 describe("moving snaps the picture's edges and centre", () => {
   // Its edges and centre at y 1450, 1500 and 1550 are clear of every guide down.
-  const at = (x: number, changes: Partial<PictureTransform> = {}) => transform({ x, y: 1500, ...changes });
+  const at = (x: number, changes: Partial<Transform> = {}) => transform({ x, y: 1500, ...changes });
 
   test("a left edge 4 CSS px from another picture's right edge snaps to it, and the line is reported", () => {
     // Its left edge at 408: 8 frame pixels from 400.
