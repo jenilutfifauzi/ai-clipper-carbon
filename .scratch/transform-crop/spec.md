@@ -94,7 +94,7 @@ A media Segment or Manual Scene first draws its Background, then its picture.
 - **Keys.** Arrow keys still move a Tab-focused item. The stage adds nothing new to the keymap.
 
 **The inspector.** A Transform section shows for a picked Overlay, media Segment or Manual Scene:
-- X, Y, Scale %, Width % and Height % (stretch), Rotation °;
+- X, Y, Scale %, Stretch ↔ % and Stretch ↕ %, Rotation °;
 - Flip ↔ and Flip ↕, and Opacity;
 - the Crop's four edges and a Crop button;
 - Fit (scale 1, no stretch, centred), Fill (the scale that covers the frame) and Reset (everything to its default).
@@ -219,7 +219,7 @@ Media Segments and Manual Scenes add their Background (Blur or a colour). Overla
   - The defaults are identity values: centre (540, 960), scale 1, no stretch, rotation 0, no flips, opacity 1, no crop, a blurred Background.
 - **Overlay** loses `x`, `y`, `size` and `opacity`. It gains:
   - `transform`, `crop`, `radius`, `border: Border | None` and `shadow: Shadow | None`.
-  - Its default `transform` places a new Overlay as today: its width is 540 px at the centre. The frontend's "add Overlay" computes that scale from the item's size.
+  - Its default `transform` places a new Overlay as today: its width is 540 px, centred across at y 760. The frontend's "add Overlay" computes that scale from the item's size.
 - **Segment** loses `fit` and gains `framing: Framing | None`. It is required on a media Segment and refused on a Source Segment.
 - **Layout** gains `MANUAL`.
   - `LayoutOverride` gains `framing: Framing | None`, required when its Layout is Manual and refused otherwise.
