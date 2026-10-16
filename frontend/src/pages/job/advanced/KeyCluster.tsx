@@ -8,13 +8,18 @@ import type { AdvancedEdits } from "./edits";
 import { keyedItem, keyTime, toggleItemKey, type KeyedRef, type KeyScene } from "./keying";
 
 /**
- * What the ‹ ◆ › clusters of the inspector edit in: the edits and the Pick, the locked Tracks, the
- * playback, and where a Keyframe edit goes, as one change. Without it (outside the Advanced Edit)
- * there are no clusters.
+ * What the ‹ ◆ › clusters of the inspector and the Keyframes pane edit in: the edits and the Pick,
+ * the locked Tracks, the playback, and where a Keyframe edit goes, as one change (of `group`, for a
+ * drag or a field's typing). Without it (outside the Advanced Edit) there are no clusters.
+ *
+ * `touched` is the property last touched (a cluster used, a row of the Keyframes pane clicked), which
+ * the active row is made of (see activeKey): what K and the pane's own ‹ ◆ › act on.
  */
 export interface Keying extends KeyScene {
   playback: Playback;
-  onEdits: (edits: AdvancedEdits) => void;
+  onEdits: (edits: AdvancedEdits, group?: string) => void;
+  touched?: KeyProperty | null;
+  onTouch?: (property: KeyProperty) => void;
 }
 
 export const KeyingContext = createContext<Keying | null>(null);
@@ -49,8 +54,12 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
   const live = at != null;
   const state = live ? keyState(keys, at) : keys.length ? "elsewhere" : "constant";
   const { before, after } = live ? keysAround(keys, at) : { before: null, after: null };
-  const seek = (to: number | null) => keyed && to !== null && keying.playback.seek(keyed.start + to);
+  const seek = (to: number | null) => {
+    keying.onTouch?.(property);
+    if (keyed && to !== null) keying.playback.seek(keyed.start + to);
+  };
   const toggle = () => {
+    keying.onTouch?.(property);
     const outcome = toggleItemKey(keying, item, property, time);
     if (outcome) keying.onEdits(outcome.edits);
   };

@@ -6,7 +6,19 @@ import { NO_CROP } from "../editor/cropGestures";
 import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import type { AdvancedEdits } from "./edits";
-import { keyedItem, keyTime, resetOverlay, stageTransform, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
+import {
+  activeKey,
+  clearItemKeys,
+  keyableOf,
+  keyedItem,
+  keyTime,
+  resetOverlay,
+  setItemKeys,
+  stageTransform,
+  toggleItemKey,
+  writeItemKey,
+  writeItemTransform,
+} from "./keying";
 import { picked } from "./pick";
 
 const overlay = (changes: Partial<Overlay> = {}): Overlay => ({
@@ -145,5 +157,55 @@ describe("a Keyframe edit on an item", () => {
     expect([item.start, item.secs, item.constant("x"), item.constant("volume")]).toEqual([2, 4, 300, 0]);
     expect(keyedItem(edits(), M)?.constant("volume")).toBe(0.8);
     expect(keyedItem(edits(), { kind: "overlay", id: "gone" })).toBeNull();
+  });
+});
+
+describe("the Keyframes pane on an item", () => {
+  const moving = overlay({
+    keys: {
+      x: [
+        { at: 0, value: 100, ease: LINEAR },
+        { at: 2, value: 500, ease: EASE_IN },
+      ],
+      rotation: [
+        { at: 0, value: 0, ease: LINEAR },
+        { at: 4, value: 720, ease: LINEAR },
+      ],
+      volume: [{ at: 1, value: 0.5, ease: LINEAR }],
+    },
+  });
+
+  test("Clear all removes every property's Keyframes, as one change, each constant left where it is at the playhead", () => {
+    const cleared = clearItemKeys(scene(edits({ overlays: [moving] })), O, 3);
+    // At 1 s of the Overlay: x half way (an ease-in quarter of the way is less), a turn of 180°.
+    const x = 100 + 400 * 0.3153568125; // EASE_IN at 0.5
+    expect(cleared?.edits.overlays[0].keys).toEqual({});
+    expect(cleared?.edits.overlays[0].transform.x).toBeCloseTo(x, 3);
+    expect(cleared?.edits.overlays[0].transform.rotation).toBe(180);
+    expect(cleared?.edits.overlays[0].volume).toBe(0.5);
+    // Outside the item, at its end; a turn past a whole one kept within ±360°.
+    expect(clearItemKeys(scene(edits({ overlays: [moving] })), O, 9)?.edits.overlays[0].transform).toEqual({ ...IDENTITY, x: 500, rotation: 0 });
+    expect(clearItemKeys(scene(edits({ overlays: [moving] }), ["overlay"]), O, 3)).toBeNull();
+  });
+
+  test("a property's Keyframes replaced, as a drag or an Ease leaves them, keep the others", () => {
+    const list = [{ at: 0.5, value: 100, ease: LINEAR }];
+    expect(setItemKeys(scene(edits({ overlays: [moving] })), O, "x", list)?.edits.overlays[0].keys).toEqual({ ...moving.keys, x: list });
+    expect(setItemKeys(scene(edits(), ["music"]), M, "volume", list)).toBeNull();
+  });
+
+  test("has a row for each property its item can key", () => {
+    expect(keyableOf(O, { kind: "image", has_audio: false })).toEqual(["x", "y", "scale", "rotation", "opacity"]);
+    expect(keyableOf(O, { kind: "video", has_audio: true })).toEqual(["x", "y", "scale", "rotation", "opacity", "volume"]);
+    expect(keyableOf(O, { kind: "video", has_audio: false })).toEqual(["x", "y", "scale", "rotation", "opacity"]);
+    expect(keyableOf(M)).toEqual(["volume"]);
+  });
+
+  test("its active row is the property last touched, else the first keyed one, else Scale (Volume for a Music Clip)", () => {
+    const rows = keyableOf(O, { kind: "video", has_audio: true });
+    expect(activeKey(rows, moving.keys, "opacity")).toBe("opacity");
+    expect(activeKey(rows, moving.keys, null)).toBe("x");
+    expect(activeKey(rows, {}, null)).toBe("scale");
+    expect(activeKey(["volume"], {}, "x")).toBe("volume");
   });
 });
