@@ -20,7 +20,7 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { pictureStyle, slotView } from "./picture";
+import { isKeyed, overlaysAt, pictureStyle, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -148,7 +148,10 @@ export function ClipPreview({
   const items = plan && fonts && controls ? stageItems(plan, fontById, controls, startEditing, () => playback.time) : [];
   // The picture under the playhead, unless the Video Track is hidden.
   const behind = plan && !blank && controls?.pictureAt ? controls.pictureAt(segmentOfScene(plan, sceneIndex), sceneIndex) : null;
-  const pictures = plan && controls ? stagePictures(plan, controls, behind, sceneIndex) : [];
+  // Keyed pictures' handles and Grips go by their bounds at the playhead: drawn again at each new
+  // time while paused, and left where they were while playing, which doesn't draw the stage again.
+  const keyedAt = useKeyedTime(plan, playback);
+  const pictures = plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt) }, controls, behind, sceneIndex) : [];
   // What is picked on the stage: moving one of several moves them all.
   const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
   const edit = useStageEdit(
@@ -277,6 +280,18 @@ export function ClipPreview({
       <Transport playback={playback} />
     </div>
   );
+}
+
+/**
+ * The time a plan with keyed Overlays has its pictures sampled at for the stage: the playhead's while
+ * paused, and the last one paused at while playing; null without keyed Overlays.
+ */
+function useKeyedTime(plan: RenderPlan | null, playback: Playback): number | null {
+  const keyed = !!plan?.overlays.some((event) => isKeyed(event.picture));
+  const paused = useRef(playback.time);
+  const time = usePlayback(playback, (now, p) => (keyed && !p.playing ? now : null));
+  if (time !== null) paused.current = time;
+  return keyed ? paused.current : null;
 }
 
 // The picture behind the Overlays, at the plan's Scene `scene`: another Scene's is another picture,

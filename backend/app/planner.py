@@ -61,7 +61,9 @@ item's pixels: what is kept is what is fitted) and placed by its Transform: its 
 frame and the picture free to go past the frame's edges; its corners rounded by a share of its drawn
 shorter side, and its border and shadow in output pixels; cut where the Clip or their video ends,
 drawn over the Segments and under the Watermark. A video's sound, when turned up, is heard as a
-Music Clip is.
+Music Clip is. A keyed Overlay's Picture carries its motion (docs/adr/0008): its Keyframes in
+seconds into the Clip, sampled for each frame by the renderer and the preview alike (`picture_at`),
+and it is planned whole, never cut to what is on the frame.
 
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) is planned Segment
 by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
@@ -81,11 +83,14 @@ from enum import StrEnum
 from functools import cache
 
 from app.candidates import (
+    KEY_RANGES,
     Background,
     BackgroundKind,
     Border,
     Crop,
     Framing,
+    KeyProperty,
+    Keys,
     Layout,
     LayoutOverride,
     MAX_SCALE,
@@ -101,7 +106,8 @@ from app.candidates import (
 )
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
-from app.pictures import cover_scale, drawn_size, kept, turned_size
+from app.keyframes import value_at
+from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.styles import (
     CaptionPosition,
     CaptionStyle,
@@ -483,7 +489,12 @@ class Picture:
     `centre` (in output pixels, on the frame), at `opacity`. `bounds` holds it once turned, and may
     go past the frame's edges: what the Smart Guides and the agent's dry run go by. An Overlay's
     corners are rounded `radius` output pixels before it is turned, and it may have a `border` and a
-    `shadow`, in output pixels too."""
+    `shadow`, in output pixels too.
+
+    A keyed picture (docs/adr/0008) also carries its `motion`: the Keyframes of each keyed property
+    (its centre's `x` and `y`, `scale`, `rotation` and `opacity`) in seconds into the Clip, and its
+    drawn size at scale 1 (`unscaled`: its fitted size times its stretch), so that a sampled scale
+    gives its drawn size (`picture_at`). Its other fields are its constants', and so are its bounds."""
 
     crop: Box
     item_size: tuple[int, int]
@@ -498,6 +509,8 @@ class Picture:
     radius: float = 0.0
     border: Border | None = None
     shadow: Shadow | None = None
+    motion: Keys = field(default_factory=dict)
+    unscaled: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -884,12 +897,64 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
         end = min(end, start + item.duration - overlay.offset)
     end = round(min(end, duration), 3)
     offset = round(overlay.offset, 3) if item.duration is not None else 0.0
-    picture = picture_of(item.width, item.height, overlay.transform, overlay.crop)
+    picture = moving(picture_of(item.width, item.height, overlay.transform, overlay.crop), overlay.transform, overlay.keys, start)
     # The radius is a share of the shorter side as drawn, so it scales with the picture; the border
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
     return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id)
+
+
+def moving(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:
+    """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
+    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1. Unkeyed, as it is."""
+    if not keys:
+        return picture
+    motion = {prop: [replace(key, at=round(start + key.at, 4)) for key in given] for prop, given in keys.items()}
+    across, down = fitted(picture.crop.width, picture.crop.height, FRAME)
+    return replace(picture, motion=motion, unscaled=(across * transform.stretch_x, down * transform.stretch_y))
+
+
+def picture_at(picture: Picture, time: float) -> Picture:
+    """`picture` as drawn at `time` seconds into the Clip: each keyed property sampled from its motion
+    (app/keyframes.py) and held to its range, its size its drawn size at scale 1 times the sampled
+    scale (in fractions of a pixel), and its bounds turned about the sampled centre; a still Picture,
+    without motion. The same rule as the preview's (pictureAt in frontend/src/pages/job/editor/picture.ts).
+    An unkeyed picture is itself."""
+    motion = picture.motion
+    if not motion:
+        return picture
+
+    def sampled(prop: KeyProperty, constant: float) -> float:
+        if prop not in motion:
+            return constant
+        low, high = KEY_RANGES[prop]
+        value = value_at(motion[prop], time, constant)
+        return value if prop is KeyProperty.ROTATION else min(max(value, low), high)
+
+    width, height = float(picture.width), float(picture.height)
+    if KeyProperty.SCALE in motion and picture.unscaled is not None:
+        scale = sampled(KeyProperty.SCALE, 1.0)
+        width, height = picture.unscaled[0] * scale, picture.unscaled[1] * scale
+    x, y = sampled(KeyProperty.X, picture.centre[0]), sampled(KeyProperty.Y, picture.centre[1])
+    rotation = sampled(KeyProperty.ROTATION, picture.rotation)
+    across, down = turned_size(width, height, rotation)
+    return replace(
+        picture,
+        width=width,
+        height=height,
+        centre=(x, y),
+        rotation=rotation,
+        opacity=sampled(KeyProperty.OPACITY, picture.opacity),
+        bounds=Box(round(x - across / 2), round(y - down / 2), round(across), round(down)),
+        motion={},
+    )
+
+
+def key_times(picture: Picture) -> list[float]:
+    """The times, in seconds into the Clip, at which a keyed picture has a Keyframe of any property:
+    each once, in order."""
+    return sorted({key.at for keys in picture.motion.values() for key in keys})
 
 
 def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop()) -> Picture:
@@ -910,8 +975,9 @@ def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(
 def on_frame(picture: Picture) -> Picture:
     """The part of an unturned `picture` that is on the frame, as a Picture of its own: what it
     draws there, without scaling what is off it (a picture zoomed in or covering the frame is
-    larger than the frame). A turned picture is given back whole."""
-    if picture.rotation % 360:
+    larger than the frame). A turned picture is given back whole, and so is a keyed one, whose part
+    on the frame changes as it moves."""
+    if picture.rotation % 360 or picture.motion:
         return picture
     x, y = picture.centre
     left, top = x - picture.width / 2, y - picture.height / 2

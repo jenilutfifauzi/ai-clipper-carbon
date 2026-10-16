@@ -32,6 +32,7 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     radius: 0,
     border: null,
     shadow: null,
+    keys: {},
   };
 }
 

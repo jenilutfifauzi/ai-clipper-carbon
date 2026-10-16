@@ -48,6 +48,14 @@ transparent fill, shadowed, faded) and laid over the joined frames at its centre
 before the Logo and the captions. A picture that is only scaled keeps the graph it had: a scale and
 an overlay.
 
+A keyed image Overlay (docs/adr/0008) is drawn by a frame process instead (app/frames.py): a thread
+of this process that draws the picture as it is at each frame of its span with OpenCV and writes it,
+the whole frame in raw RGBA, to a pipe that the encode reads as one more input, laid over at 0, 0 in
+the same place of the graph, each frame over the Clip's frame of its number. With any, the joined
+frames are first brought to the Clip's frame rate (`fps`), so that frame n is at n / fps exactly, the
+time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
+or is stopped ends its frame processes. Without keyed pictures the command is as it was.
+
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume, faded, and delayed to where it is heard, then mixed with the Clip's own sound (at
 its volume) before the loudness is measured and normalized, so that the mix lands at −14 LUFS.
@@ -65,12 +73,16 @@ import os
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
+
+import numpy as np
 
 from app.config import FONTS_DIR, RenderTuning
 from app.fonts import font
+from app.frames import FrameFeed, PictureFrames, read_image
 from app.planner import (
+    FRAME,
     HOOK_LEADING,
     HOOK_PAD_Y,
     Box,
@@ -137,13 +149,16 @@ class Renderer:
         subtitles = video.with_name(f".{video.stem}.part.ass") if drawn else None
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
+        # The keyed pictures' items, read once for every encode.
+        keyed = _keyed_items(plan, files)
         failures = []
         try:
             if subtitles is not None:
                 subtitles.write_text(_ass(plan), encoding="utf-8")
             for encoder in self.tuning.encoders:
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files)
-                stderr = self._run(command, plan.duration, progress)
+                feeds = _feeds(plan, keyed)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds)
+                stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
                     os.replace(parts[1], poster)
@@ -199,17 +214,24 @@ class Renderer:
         subtitles: Path | None,
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
+        feeds: dict[int, FrameFeed] | None = None,
     ) -> list[str]:
+        """The encode's command. `feeds` are the frame processes of the plan's keyed Overlays, by
+        their place among them; a keyed one without is drawn still, at its constants."""
         tuning = self.tuning
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
         count = len(sources) // _INPUT_ARGS
         frame = _segmented(plan, tuning) if plan.segments else _scenes(plan, tuning)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
+        if feeds:
+            # At n / fps exactly, the times the frame processes draw their frames at.
+            frame += f";[frame]fps={_rate(plan)}[timed]"
+            joined = "[timed]"
         inputs, index = _music_inputs(plan, files or {}, first=count + (1 if logo is not None else 0))
-        layers, layered = _overlay_inputs(plan, files or {}, first=count + (1 if logo is not None else 0) + len(index))
-        for i, (event, number) in enumerate(layered):
-            frame += f";{_overlay(event, joined, f'[over{i}]', number, i)}"
+        layers, layered = _overlay_inputs(plan, files or {}, count + (1 if logo is not None else 0) + len(index), feeds or {})
+        for i, (event, number, feed) in enumerate(layered):
+            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
             joined = f"[over{i}]"
         if logo is not None and plan.watermark is not None:
             frame += f";{_logo_overlay(plan.watermark, joined, '[marked]', count)}"
@@ -247,29 +269,46 @@ class Renderer:
             "-map", "[poster]", "-frames:v", "1", "-q:v", "3", "-f", "image2", "-update", "1", str(poster),
         ]
 
-    def _run(self, command: list[str], duration: float, progress: Callable[[float], None]) -> str | None:
-        """Run an encode, reporting its progress; None when it succeeds, else what ffmpeg said."""
-        with tempfile.TemporaryFile() as errors:
-            with self._lock:
+    def _run(self, command: list[str], duration: float, progress: Callable[[float], None], feeds: Sequence[FrameFeed] = ()) -> str | None:
+        """Run an encode, reporting its progress, with `feeds`, the frame processes that write to its
+        pipes; None when it succeeds, else what ffmpeg (or a frame process that failed) said. A frame
+        process that fails stops the encode, and an encode that stops ends the frame processes."""
+        process = None
+        try:
+            with tempfile.TemporaryFile() as errors:
+                with self._lock:
+                    if self._stopping.is_set():
+                        raise RenderStopped("The app is stopping")
+                    process = self._process = subprocess.Popen(
+                        command, stdout=subprocess.PIPE, stderr=errors, text=True, pass_fds=[feed.fd for feed in feeds],
+                    )
+                for feed in feeds:
+                    feed.start(process.kill)
+                try:
+                    assert process.stdout is not None
+                    for line in process.stdout:
+                        key, _, value = line.strip().partition("=")
+                        if key == "out_time_us" and value.isdigit():
+                            progress(min(1.0, int(value) / 1e6 / duration))
+                    process.wait()
+                finally:
+                    with self._lock:
+                        self._process = None
                 if self._stopping.is_set():
                     raise RenderStopped("The app is stopping")
-                process = self._process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True)
-            try:
-                assert process.stdout is not None
-                for line in process.stdout:
-                    key, _, value = line.strip().partition("=")
-                    if key == "out_time_us" and value.isdigit():
-                        progress(min(1.0, int(value) / 1e6 / duration))
+                if failed := next((feed.error for feed in feeds if feed.error is not None), None):
+                    return f"A keyed picture couldn't be drawn: {failed}"
+                if process.returncode == 0:
+                    return None
+                errors.seek(0)
+                return errors.read().decode(errors="replace").strip() or f"exit code {process.returncode}"
+        finally:
+            # A frame process still writing waits on ffmpeg, which is gone once it has been waited for.
+            if process is not None and process.poll() is None:
+                process.kill()
                 process.wait()
-            finally:
-                with self._lock:
-                    self._process = None
-            if self._stopping.is_set():
-                raise RenderStopped("The app is stopping")
-            if process.returncode == 0:
-                return None
-            errors.seek(0)
-            return errors.read().decode(errors="replace").strip() or f"exit code {process.returncode}"
+            for feed in feeds:
+                feed.close()
 
 
 def _check(plan: RenderPlan) -> None:
@@ -500,29 +539,67 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
     return ";".join(chains)
 
 
-def _overlay_inputs(plan: RenderPlan, files: dict[str, Path], first: int) -> tuple[list[str], list[tuple[OverlayEvent, int]]]:
+def _overlay_inputs(
+    plan: RenderPlan, files: dict[str, Path], first: int, feeds: dict[int, FrameFeed]
+) -> tuple[list[str], list[tuple[OverlayEvent, int, FrameFeed | None]]]:
     """The input options of the plan's Overlays, one each, numbered from `first` (a video read from its
-    offset for as long as it shows; an image's one picture), and each Overlay drawn with its input's
-    number. One whose file isn't in `files` isn't drawn."""
+    offset for as long as it shows; an image's one picture; a keyed one's frames, from the pipe of
+    its frame process in `feeds`, by its place among them), and each Overlay drawn with its input's
+    number and its frame process. One whose file isn't in `files` isn't drawn."""
     inputs: list[str] = []
     drawn = []
-    for event in plan.overlays:
+    for i, event in enumerate(plan.overlays):
         if event.media not in files:
             continue
-        if not event.image:
-            inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.end - event.start:.3f}"]
-        inputs += ["-i", str(files[event.media])]
-        drawn.append((event, first + len(drawn)))
+        feed = feeds.get(i)
+        if feed is not None:
+            width, height = FRAME
+            inputs += ["-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{width}x{height}", "-framerate", _rate(plan)]
+            inputs += ["-i", f"pipe:{feed.fd}"]
+        else:
+            if not event.image:
+                inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.end - event.start:.3f}"]
+            inputs += ["-i", str(files[event.media])]
+        drawn.append((event, first + len(drawn), feed))
     return inputs, drawn
 
 
-def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int) -> str:
+def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
-    shows, into `out`: a video's frames moved to start when it does, an image's one picture held."""
-    timed = "" if event.image else f",setpts=PTS-STARTPTS+{event.start:.3f}/TB"
+    shows, into `out`: a video's frames moved to start when it does, an image's one picture held. A
+    keyed one's frames, drawn whole by its frame process `feed`, are laid at 0, 0, each over the
+    frame of its number (the frames below being at n / fps exactly)."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
+    if feed is not None:
+        name = f"[layer{number}]"
+        return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}{name};{below}{name}overlay=0:0:{shows}:eof_action=pass{out}"
+    timed = "" if event.image else f",setpts=PTS-STARTPTS+{event.start:.3f}/TB"
     ends = "repeat" if event.image else "pass"
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}")
+
+
+def _rate(plan: RenderPlan) -> str:
+    """The Clip's frame rate, as the frame processes and the frames they are laid over keep it."""
+    return f"{plan.fps if plan.fps > 0 else 30:.6g}"
+
+
+def _keyed_items(plan: RenderPlan, files: dict[str, Path]) -> dict[int, np.ndarray]:
+    """The pixels of the items of the plan's keyed image Overlays (by their place among them) that
+    are in `files`: what their frame processes draw."""
+    return {
+        i: read_image(files[event.media])
+        for i, event in enumerate(plan.overlays)
+        if event.picture.motion and event.image and event.media in files
+    }
+
+
+def _feeds(plan: RenderPlan, items: dict[int, np.ndarray]) -> dict[int, FrameFeed]:
+    """A frame process for each keyed Overlay whose item's pixels are in `items`, over its span."""
+    rate = float(_rate(plan))
+    return {
+        i: FrameFeed(PictureFrames(plan.overlays[i].picture, pixels), plan.overlays[i].start, plan.overlays[i].end, rate)
+        for i, pixels in items.items()
+    }
 
 
 def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:

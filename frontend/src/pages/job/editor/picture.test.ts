@@ -1,8 +1,9 @@
 // Seam H: a Picture of the plan as the preview draws it, and the fitted-size rule the inspector's
 // Fit and Fill and a new Overlay go by (backend/app/pictures.py's, on the same worked examples).
 import { describe, expect, test } from "vitest";
+import keyed from "../../../../../backend/tests/fixtures/keyed_picture.json";
 import type { Panel, Picture } from "../../../api";
-import { coverScale, fillScale, fittedSize, IDENTITY, overlayPlacement, panelStyle, pictureStyle, scaleForWidth, slotView } from "./picture";
+import { coverScale, fillScale, fittedSize, IDENTITY, overlayPlacement, panelStyle, pictureAt, pictureStyle, scaleForWidth, slotView } from "./picture";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -145,5 +146,40 @@ describe("a new Overlay's placement", () => {
 
   test("is half the frame's scale while its item's size isn't known", () => {
     expect(overlayPlacement(undefined)).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
+  });
+});
+
+// The keyed picture of backend/tests/fixtures/keyed_picture.json, sampled by the backend's
+// picture_at, which the renderer draws by (and which its tests check against rendered frames).
+describe("a keyed Picture at a time", () => {
+  const planned = keyed.picture as Picture;
+
+  for (const at of keyed.at) {
+    test(`is where the renderer draws it at ${at.time} s`, () => {
+      const drawn = pictureAt(planned, at.time);
+      for (const [mine, theirs] of [
+        [drawn.centre[0], at.centre[0]],
+        [drawn.centre[1], at.centre[1]],
+        [drawn.width, at.width],
+        [drawn.height, at.height],
+        [drawn.rotation, at.rotation],
+        [drawn.opacity, at.opacity],
+      ])
+        expect(Math.abs(mine - theirs)).toBeLessThan(1e-6);
+      expect(drawn.bounds).toEqual(at.bounds);
+      expect(drawn.motion).toEqual({});
+    });
+  }
+
+  test("is itself, unkeyed", () => {
+    const still = picture();
+    expect(pictureAt(still, 1)).toBe(still);
+  });
+
+  test("is drawn as CSS from its sampled values", () => {
+    const style = pictureStyle(pictureAt(planned, 1.7), FRAME);
+    const at = keyed.at.find((sample) => sample.time === 1.7)!;
+    expect(parseFloat(style.width)).toBeCloseTo((at.width / 1080) * 100, 9);
+    expect(style.transform).toBe(`translate(-50%, -50%) rotate(${at.rotation}deg) scale(-1, 1)`);
   });
 });

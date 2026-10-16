@@ -1,4 +1,5 @@
-import type { Background, MediaItem, Panel, Picture, ScenePlan, Transform } from "../../../api";
+import type { Background, MediaItem, Panel, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
+import { valueAt } from "./keyframes";
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -75,6 +76,62 @@ export function pictureStyle(picture: Picture, frame: { width: number; height: n
       ? `drop-shadow(${[picture.shadow.x, picture.shadow.y, picture.shadow.blur].map(pixels).join(" ")} ${rgb(picture.shadow.colour, picture.shadow.opacity)})`
       : undefined,
   };
+}
+
+// Each keyed property's range (backend/app/candidates.py's KEY_RANGES): a sampled value is held to
+// it, but a rotation, which may turn any number of times.
+const KEY_RANGES = { x: [0, 1080], y: [0, 1920], scale: SCALE_RANGE, opacity: [0, 1] } as const;
+
+/** Whether `picture` moves: it has Keyframes. */
+export const isKeyed = (picture: Picture) => !!picture.motion && Object.keys(picture.motion).length > 0;
+
+/**
+ * `picture` as drawn at `time` seconds into the Clip (backend/app/planner.py's picture_at, which
+ * the renderer draws by): each keyed property sampled from its motion and held to its range, its
+ * size its drawn size at scale 1 times the sampled scale (in fractions of a pixel), and its bounds
+ * turned about the sampled centre; a still Picture, without motion. An unkeyed picture is itself.
+ */
+export function pictureAt(picture: Picture, time: number): Picture {
+  const motion = picture.motion;
+  if (!motion || !isKeyed(picture)) return picture;
+  const sampled = (prop: "x" | "y" | "scale" | "rotation" | "opacity", constant: number) => {
+    const keys = motion[prop];
+    if (!keys?.length) return constant;
+    const value = valueAt(keys, time, constant);
+    return prop === "rotation" ? value : clamp(value, KEY_RANGES[prop]);
+  };
+  let [width, height] = [picture.width, picture.height];
+  if (motion.scale?.length && picture.unscaled) {
+    const scale = sampled("scale", 1);
+    [width, height] = [picture.unscaled[0] * scale, picture.unscaled[1] * scale];
+  }
+  const [x, y] = [sampled("x", picture.centre[0]), sampled("y", picture.centre[1])];
+  const rotation = sampled("rotation", picture.rotation);
+  const angle = (rotation * Math.PI) / 180;
+  const [cos, sin] = [Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle))];
+  const [across, down] = [width * cos + height * sin, width * sin + height * cos];
+  return {
+    ...picture,
+    width,
+    height,
+    centre: [x, y],
+    rotation,
+    opacity: sampled("opacity", picture.opacity),
+    bounds: { x: roundHalfEven(x - across / 2), y: roundHalfEven(y - down / 2), width: roundHalfEven(across), height: roundHalfEven(down) },
+    motion: {},
+  };
+}
+
+// Python's round(): a half goes to the even neighbour, so that bounds are the backend's to the pixel.
+function roundHalfEven(value: number): number {
+  const floor = Math.floor(value);
+  if (value - floor !== 0.5) return Math.round(value);
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+/** The plan's Overlays as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
+export function overlaysAt(plan: RenderPlan, time: number): RenderPlan["overlays"] {
+  return plan.overlays.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time) } : event));
 }
 
 export interface PanelStyle {

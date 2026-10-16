@@ -14,6 +14,9 @@ dependencies = [
     "mlx-whisper>=0.4.3",
     "numpy>=2.5.4",
     "onnxruntime>=1.31.0",
+    # The renderer's frame process (app/frames.py). The contrib build, which mediapipe needs: a
+    # second OpenCV package would install over the same cv2 module.
+    "opencv-contrib-python>=5.0.0.93",
     "pydantic>=2.14.1",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",

@@ -177,4 +177,12 @@ describe("the pictures at the playhead", () => {
       ["overlay:o2", 30],
     ]);
   });
+
+  test("are a keyed Overlay where its Keyframes have it at the playhead", () => {
+    const moving = overlay("o1", 0, 5, 20);
+    moving.picture.motion = { x: [{ at: 0, value: 70, ease: [0, 0, 1, 1] }, { at: 4, value: 470, ease: [0, 0, 1, 1] }] };
+    const keyed = { ...plan, overlays: [moving] } as RenderPlan;
+    // Half way, its centre is at 270: its 100 px box starts at 220.
+    expect(picturesAt(keyed, 2, null).map(({ picture }) => [picture.centre[0], picture.bounds.x])).toEqual([[270, 220]]);
+  });
 });

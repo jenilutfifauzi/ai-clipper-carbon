@@ -9,7 +9,7 @@ import { useShown, type Playback } from "./playback";
  * captions, each drawn as its Picture: an image, or a video's small copy playing in step with the
  * playback (muted: its sound, when turned up, plays with the music). The `selected` ones (picked in
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
- * outside their time too.
+ * outside their time too. A keyed one moves with the playback (PicturePanel).
  */
 export function PreviewOverlays({ plan, playback, selected }: { plan: RenderPlan | null; playback: Playback; selected: string[] }) {
   if (!plan || !plan.overlays.length) return null;
@@ -54,6 +54,7 @@ function OverlayView({
     <PicturePanel
       picture={picture}
       frame={plan}
+      playback={playback}
       hidden={!shown && !selected}
       faded={shown ? undefined : 0.25}
       media={

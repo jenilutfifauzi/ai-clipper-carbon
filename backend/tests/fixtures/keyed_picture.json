@@ -1,0 +1,322 @@
+{
+ "about": "A keyed Overlay's planned Picture and the picture it is drawn as at some times, as the backend's picture_at gives it. Read by backend/tests/test_keyframes.py and frontend/src/pages/job/editor/picture.test.ts, so that the preview draws a keyed picture where the renderer does (ADR 0008).",
+ "picture": {
+  "crop": {
+   "x": 0,
+   "y": 0,
+   "width": 1920,
+   "height": 1080
+  },
+  "item_size": [
+   1920,
+   1080
+  ],
+  "width": 648,
+  "height": 244,
+  "centre": [
+   540.0,
+   960.0
+  ],
+  "rotation": 0.0,
+  "flip_h": true,
+  "flip_v": false,
+  "opacity": 1.0,
+  "bounds": {
+   "x": 216,
+   "y": 838,
+   "width": 648,
+   "height": 244
+  },
+  "radius": 0.0,
+  "border": null,
+  "shadow": null,
+  "motion": {
+   "x": [
+    {
+     "at": 0.5,
+     "value": 200.0,
+     "ease": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    {
+     "at": 2.5,
+     "value": 800.0,
+     "ease": [
+      0.42,
+      0.0,
+      0.58,
+      1.0
+     ]
+    }
+   ],
+   "y": [
+    {
+     "at": 1.0,
+     "value": 700.0,
+     "ease": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    {
+     "at": 2.0,
+     "value": 1100.0,
+     "ease": [
+      0.34,
+      1.56,
+      0.64,
+      1.0
+     ]
+    }
+   ],
+   "scale": [
+    {
+     "at": 0.5,
+     "value": 0.4,
+     "ease": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    {
+     "at": 3.0,
+     "value": 1.2,
+     "ease": [
+      0.0,
+      0.0,
+      0.58,
+      1.0
+     ]
+    }
+   ],
+   "rotation": [
+    {
+     "at": 1.5,
+     "value": 0.0,
+     "ease": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    {
+     "at": 3.5,
+     "value": 720.0,
+     "ease": [
+      0.42,
+      0.0,
+      1.0,
+      1.0
+     ]
+    }
+   ],
+   "opacity": [
+    {
+     "at": 2.5,
+     "value": 1.0,
+     "ease": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    {
+     "at": 3.5,
+     "value": 0.0,
+     "ease": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    }
+   ]
+  },
+  "unscaled": [
+   1620.0,
+   607.5
+  ]
+ },
+ "at": [
+  {
+   "time": 0.0,
+   "centre": [
+    200.0,
+    700.0
+   ],
+   "width": 648.0,
+   "height": 243.0,
+   "rotation": 0.0,
+   "opacity": 1.0,
+   "bounds": {
+    "x": -124,
+    "y": 578,
+    "width": 648,
+    "height": 243
+   }
+  },
+  {
+   "time": 0.5,
+   "centre": [
+    200.0,
+    700.0
+   ],
+   "width": 648.0,
+   "height": 243.0,
+   "rotation": 0.0,
+   "opacity": 1.0,
+   "bounds": {
+    "x": -124,
+    "y": 578,
+    "width": 648,
+    "height": 243
+   }
+  },
+  {
+   "time": 0.9,
+   "centre": [
+    248.9958932294981,
+    700.0
+   ],
+   "width": 972.7632012640166,
+   "height": 364.7862004740062,
+   "rotation": 0.0,
+   "opacity": 1.0,
+   "bounds": {
+    "x": -237,
+    "y": 518,
+    "width": 973,
+    "height": 365
+   }
+  },
+  {
+   "time": 1.25,
+   "centre": [
+    375.6624805506466,
+    1026.515645897392
+   ],
+   "width": 1224.9610138428861,
+   "height": 459.3603801910823,
+   "rotation": 0.0,
+   "opacity": 1.0,
+   "bounds": {
+    "x": -237,
+    "y": 797,
+    "width": 1225,
+    "height": 459
+   }
+  },
+  {
+   "time": 1.7,
+   "centre": [
+    600.869678167765,
+    1130.3104246210587
+   ],
+   "width": 1507.1201563658365,
+   "height": 565.1700586371886,
+   "rotation": 12.259159751236217,
+   "opacity": 1.0,
+   "bounds": {
+    "x": -196,
+    "y": 694,
+    "width": 1593,
+    "height": 872
+   }
+  },
+  {
+   "time": 2.0,
+   "centre": [
+    722.5028596587273,
+    1100.0
+   ],
+   "width": 1665.5402233764405,
+   "height": 624.5775837661652,
+   "rotation": 67.29454871565672,
+   "opacity": 1.0,
+   "bounds": {
+    "x": 113,
+    "y": 211,
+    "width": 1219,
+    "height": 1778
+   }
+  },
+  {
+   "time": 2.6,
+   "centre": [
+    800.0,
+    1100.0
+   ],
+   "width": 1890.540233296709,
+   "height": 708.9525874862659,
+   "rotation": 266.8867656908577,
+   "opacity": 0.8999999999999999,
+   "bounds": {
+    "x": 395,
+    "y": 137,
+    "width": 811,
+    "height": 1926
+   }
+  },
+  {
+   "time": 3.1,
+   "centre": [
+    800.0,
+    1100.0
+   ],
+   "width": 1944.0,
+   "height": 729.0,
+   "rotation": 497.9764319640085,
+   "opacity": 0.3999999999999999,
+   "bounds": {
+    "x": -166,
+    "y": 179,
+    "width": 1932,
+    "height": 1843
+   }
+  },
+  {
+   "time": 3.5,
+   "centre": [
+    800.0,
+    1100.0
+   ],
+   "width": 1944.0,
+   "height": 729.0,
+   "rotation": 720.0,
+   "opacity": 0.0,
+   "bounds": {
+    "x": -172,
+    "y": 735,
+    "width": 1944,
+    "height": 729
+   }
+  },
+  {
+   "time": 4.0,
+   "centre": [
+    800.0,
+    1100.0
+   ],
+   "width": 1944.0,
+   "height": 729.0,
+   "rotation": 720.0,
+   "opacity": 0.0,
+   "bounds": {
+    "x": -172,
+    "y": 735,
+    "width": 1944,
+    "height": 729
+   }
+  }
+ ]
+}

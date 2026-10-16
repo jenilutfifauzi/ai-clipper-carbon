@@ -479,10 +479,29 @@ export interface Shadow {
   opacity: number;
 }
 
+// How a Keyframe is approached from the one before it (backend/app/candidates.py, ADR 0008): a CSS
+// cubic-bezier [x1, y1, x2, y2] from (0, 0) to (1, 1), its x within 0 to 1, its y -2 to 3.
+export type Ease = [number, number, number, number];
+
+// The value of one property of an item at `at` seconds from its start (in a picture's motion,
+// seconds into the Clip), in the property's own units, approached from the one before by `ease`.
+export interface Keyframe {
+  at: number;
+  value: number;
+  ease: Ease;
+}
+
+// What a Keyframe sets: a picture's centre, scale, rotation and opacity, or a sound's volume.
+export type KeyProperty = "x" | "y" | "scale" | "rotation" | "opacity" | "volume";
+
+// Each keyed property's Keyframes, sorted by `at`; a property without any is left out.
+export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
+
 // A video or image from the Media Library laid over the Clip: from `start` for `secs` in Timeline
 // time (a video from `offset` into it), cut by its Crop and placed by its Transform, a video's
 // sound at `volume` (0, muted, by default); its corners rounded `radius` times its drawn shorter
-// side (0 to 0.5), with a Border and a Shadow or none.
+// side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
+// and opacity over its length, replacing those fields of its Transform.
 export interface Overlay {
   id: string;
   media: string;
@@ -495,12 +514,15 @@ export interface Overlay {
   radius: number;
   border: Border | null;
   shadow: Shadow | null;
+  keys: Keys;
 }
 
 // A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
 // large) scaled to `width` x `height`, flipped, turned `rotation` degrees clockwise about `centre`,
 // at `opacity`; `bounds` holds it once turned, and may go past the frame's edges. An Overlay's
-// corners are rounded `radius` output pixels, and it may have a Border and a Shadow.
+// corners are rounded `radius` output pixels, and it may have a Border and a Shadow. A keyed one
+// (ADR 0008) has its `motion`, the Keyframes of each keyed property in seconds into the Clip, and
+// its drawn size at scale 1 (`unscaled`); its other fields are its constants' (pictureAt samples it).
 export interface Picture {
   crop: Box;
   item_size: [number, number];
@@ -515,6 +537,9 @@ export interface Picture {
   radius: number;
   border: Border | null;
   shadow: Shadow | null;
+  // Absent or empty, and null, for an unkeyed picture.
+  motion?: Keys;
+  unscaled?: [number, number] | null;
 }
 
 // An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still.

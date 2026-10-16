@@ -45,6 +45,7 @@ const overlay = (id: string, transform: Partial<Transform> = {}): Overlay => ({
   radius: 0,
   border: null,
   shadow: null,
+  keys: {},
 });
 
 // A Manual Layout Override at `at`, framed by hand.

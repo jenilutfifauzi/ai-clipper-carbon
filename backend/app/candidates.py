@@ -1,10 +1,11 @@
 """Candidates: proposed clips awaiting review."""
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any, NamedTuple
 
-from pydantic import Field, FiniteFloat, StringConstraints
+from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
 
 from app.fonts import DEFAULT_FONT
 from app.styles import DEFAULT_PRESET, Animation, Colour, FontId, StyleOverrides
@@ -147,7 +148,8 @@ class Transform:
     output pixels, which stays on the frame though the picture may go past its edges; `scale` times its fitted size (the largest that fits the frame keeping its aspect: 1
     fits), stretched `stretch_x` across and `stretch_y` down on top of that (1 keeps its aspect);
     turned `rotation` degrees clockwise about its centre, mirrored left to right (`flip_h`) or top to
-    bottom (`flip_v`), at `opacity`. The same for its item's whole length. A centre given off the
+    bottom (`flip_v`), at `opacity`. The same for its item's whole length, but for the fields its
+    item's Keyframes move (docs/adr/0008). A centre given off the
     frame is brought onto it."""
 
     x: FiniteFloat = 540
@@ -168,6 +170,150 @@ class Transform:
 # A new Overlay's: half its fitted size at the frame's centre, 540 px wide for any item wider than
 # 9:16 (the editor works out the scale that makes any item 540 px wide).
 OVERLAY_TRANSFORM = Transform(scale=0.5)
+
+
+class Ease(NamedTuple):
+    """How a Keyframe is approached from the one before it (docs/adr/0008): a CSS cubic-bezier from
+    (0, 0) to (1, 1) through (x1, y1) and (x2, y2). `x1` and `x2` are kept within 0..1, where the
+    curve moves forwards in time; `y1` and `y2` may overshoot, within EASE_Y. Stored as its four
+    numbers."""
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+LINEAR = Ease(0.0, 0.0, 1.0, 1.0)
+EASE_IN = Ease(0.42, 0.0, 1.0, 1.0)
+EASE_OUT = Ease(0.0, 0.0, 0.58, 1.0)
+EASE_IN_OUT = Ease(0.42, 0.0, 0.58, 1.0)
+# The presets by the names the API and the agent give them; any other Ease is Custom.
+EASES = {"linear": LINEAR, "ease_in": EASE_IN, "ease_out": EASE_OUT, "ease_in_out": EASE_IN_OUT}
+# A preset is recognised within this of each of its numbers.
+PRESET_REACH = 0.005
+# How far an Ease's y may overshoot.
+EASE_Y = (-2.0, 3.0)
+
+
+def tidy_ease(ease: Ease) -> Ease:
+    """`ease` with its x held to 0..1 and its y to EASE_Y; Linear when any of it isn't finite."""
+    if not all(math.isfinite(number) for number in ease):
+        return LINEAR
+    x1, y1, x2, y2 = ease
+    low, high = EASE_Y
+    return Ease(min(max(x1, 0.0), 1.0), min(max(y1, low), high), min(max(x2, 0.0), 1.0), min(max(y2, low), high))
+
+
+def ease_name(ease: Ease) -> str | None:
+    """The preset `ease` is (within PRESET_REACH of each number), or None for a Custom one."""
+    return next((name for name, preset in EASES.items() if all(abs(a - b) <= PRESET_REACH for a, b in zip(ease, preset))), None)
+
+
+def _named_ease(value: Any) -> Any:
+    if isinstance(value, str):
+        if value not in EASES:
+            raise ValueError(f"An Ease is {', '.join(EASES)} or four numbers [x1, y1, x2, y2], not {value!r}")
+        return EASES[value]
+    return value
+
+
+# Given as a preset's name or as four numbers; always kept as four numbers, tidied.
+EaseField = Annotated[
+    Ease,
+    BeforeValidator(_named_ease),
+    AfterValidator(tidy_ease),
+    WithJsonSchema({
+        "anyOf": [
+            {"enum": list(EASES)},
+            {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+        ],
+        "description": "A preset's name, or a cubic-bezier [x1, y1, x2, y2]",
+    }),
+]
+
+
+@dataclass(frozen=True)
+class Keyframe:
+    """The value of one property of an item at one time (docs/adr/0008): `at` seconds from the item's
+    start, `value` in the property's own units, approached from the Keyframe before by `ease` (the
+    first one's is unused)."""
+
+    at: Annotated[FiniteFloat, Field(ge=0, le=3600)]
+    value: FiniteFloat
+    ease: EaseField = LINEAR
+
+
+class KeyProperty(StrEnum):
+    """What a Keyframe sets: a picture's centre, scale, rotation and opacity (its Transform's fields),
+    or a sound's volume."""
+
+    X = "x"
+    Y = "y"
+    SCALE = "scale"
+    ROTATION = "rotation"
+    OPACITY = "opacity"
+    VOLUME = "volume"
+
+
+# The properties of a picture that Keyframes can move.
+PICTURE_KEYS = (KeyProperty.X, KeyProperty.Y, KeyProperty.SCALE, KeyProperty.ROTATION, KeyProperty.OPACITY)
+# Each property's range, in its own units. A centre beyond the frame is brought onto it, as a
+# Transform's is; any other value outside its range is refused. A picture may turn several times.
+KEY_RANGES = {
+    KeyProperty.X: (0.0, 1080.0),
+    KeyProperty.Y: (0.0, 1920.0),
+    KeyProperty.SCALE: (MIN_SCALE, MAX_SCALE),
+    KeyProperty.ROTATION: (-3600.0, 3600.0),
+    KeyProperty.OPACITY: (0.0, 1.0),
+    KeyProperty.VOLUME: (0.0, 2.0),
+}
+_CLAMPED = {KeyProperty.X, KeyProperty.Y}
+# At most this many Keyframes on one property of an item, and at least a frame (at 30 fps) between
+# two of them (less half a millisecond, for times sent rounded).
+MAX_KEYS = 100
+KEY_GAP_SECS = 1 / 30
+_GAP_REACH = 0.0005
+# An `at` this little past its item's length is at its end.
+_END_REACH = 0.001
+
+# A map from property to its Keyframes; the properties without any are left out.
+Keys = dict[KeyProperty, list[Keyframe]]
+
+
+def checked_keys(keys: Keys, item: str, allowed: tuple[KeyProperty, ...], length: float) -> Keys:
+    """`keys` of `item` (such as "Overlay o1"), lasting `length` seconds, each list sorted by `at`, a
+    centre's values brought onto the frame, and the properties without Keyframes left out; ValueError
+    for a property the item can't have, more than MAX_KEYS on one, two closer than a frame, an `at`
+    past its length or a value outside its range."""
+    checked: Keys = {}
+    for name, given in keys.items():
+        prop = KeyProperty(name)
+        if prop not in allowed:
+            raise ValueError(f"{item} has no {prop} Keyframes: its {_listed(allowed)} can be keyed")
+        if len(given) > MAX_KEYS:
+            raise ValueError(f"{item} has {len(given)} {prop} Keyframes; a property has {MAX_KEYS} at most")
+        low, high = KEY_RANGES[prop]
+        ordered = sorted(given, key=lambda key: key.at)
+        for before, key in zip(ordered, ordered[1:]):
+            if key.at - before.at < KEY_GAP_SECS - _GAP_REACH:
+                raise ValueError(
+                    f"{item}'s {prop} Keyframes at {before.at:g} s and {key.at:g} s are closer than a frame (1/30 s)"
+                )
+        for key in ordered:
+            if key.at > length + _END_REACH:
+                raise ValueError(f"{item}'s {prop} Keyframe at {key.at:g} s is past its length of {length:g} s; send its keys too")
+            if prop not in _CLAMPED and not low <= key.value <= high:
+                raise ValueError(f"{item}'s {prop} Keyframe at {key.at:g} s is {key.value:g}; {prop} is {low:g} to {high:g}")
+        if ordered:
+            checked[prop] = [
+                replace(key, value=min(max(key.value, low), high)) if prop in _CLAMPED else key for key in ordered
+            ]
+    return checked
+
+
+def _listed(names: tuple[str, ...]) -> str:
+    return ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else names[0]
 
 # The most a Crop cuts off one edge, and off a pair of opposite edges: a tenth is always kept.
 MAX_CUT = 0.9
@@ -221,7 +367,8 @@ class Overlay:
     for `secs`, in Timeline time, a video from `offset` seconds into it; cut by its `crop` and placed
     by its `transform`, a video's sound at `volume` (none by default). Its corners are rounded
     `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
-    `border` and a `shadow`."""
+    `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length
+    (docs/adr/0008): a property with Keyframes takes its value from them, not from its Transform."""
 
     id: ItemId
     media: MediaId
@@ -234,6 +381,10 @@ class Overlay:
     radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
     border: Border | None = None
     shadow: Shadow | None = None
+    keys: Keys = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS, self.secs))
 
 
 class BackgroundKind(StrEnum):

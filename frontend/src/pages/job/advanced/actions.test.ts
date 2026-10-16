@@ -110,6 +110,7 @@ const overlay = (id: string, start: number, secs: number): Overlay => ({
   radius: 0,
   border: null,
   shadow: null,
+  keys: {},
 });
 
 const text = (id: string) => ({ kind: "text", id }) as const;
