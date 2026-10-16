@@ -164,6 +164,7 @@ describe("a keyed Picture at a time", () => {
         [drawn.height, at.height],
         [drawn.rotation, at.rotation],
         [drawn.opacity, at.opacity],
+        [drawn.radius, at.radius],
       ])
         expect(Math.abs(mine - theirs)).toBeLessThan(1e-6);
       expect(drawn.bounds).toEqual(at.bounds);
