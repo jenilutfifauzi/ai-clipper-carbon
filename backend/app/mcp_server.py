@@ -118,7 +118,7 @@ Edits:
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
-- Keyframes move an image Overlay over its length: its `keys` map a property (x, y, scale,
+- Keyframes move an Overlay over its length: its `keys` map a property (x, y, scale,
   rotation, opacity) to a list of {{at, value, ease}}. `at` is seconds from the Overlay's start, value
   in the field's own units (rotation -3600..3600, to turn several times). A keyed property's
   transform field is unused. The value holds before the first and after the last Keyframe; between

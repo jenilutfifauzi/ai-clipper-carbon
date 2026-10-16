@@ -48,10 +48,11 @@ transparent fill, shadowed, faded) and laid over the joined frames at its centre
 before the Logo and the captions. A picture that is only scaled keeps the graph it had: a scale and
 an overlay.
 
-A keyed image Overlay (docs/adr/0008) is drawn by a frame process instead (app/frames.py): a thread
-of this process that draws the picture as it is at each frame of its span with OpenCV and writes it,
-the whole frame in raw RGBA, to a pipe that the encode reads as one more input, laid over at 0, 0 in
-the same place of the graph, each frame over the Clip's frame of its number. With any, the joined
+A keyed Overlay (docs/adr/0008) is drawn by a frame process instead (app/frames.py): a thread of
+this process that draws the picture as it is at each frame of its span with OpenCV (a video's frames
+decoded for it by an ffmpeg of their own), decorated, and writes it, the whole frame in raw RGBA, to a
+pipe that the encode reads as one more input, laid over at 0, 0 in the same place of the graph, each
+frame over the Clip's frame of its number. With any, the joined
 frames are first brought to the Clip's frame rate (`fps`), so that frame n is at n / fps exactly, the
 time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
 or is stopped ends its frame processes. Without keyed pictures the command is as it was.
@@ -80,7 +81,7 @@ import numpy as np
 
 from app.config import FONTS_DIR, RenderTuning
 from app.fonts import font
-from app.frames import FrameFeed, PictureFrames, read_image
+from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
 from app.planner import (
     FRAME,
     HOOK_LEADING,
@@ -149,14 +150,14 @@ class Renderer:
         subtitles = video.with_name(f".{video.stem}.part.ass") if drawn else None
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
-        # The keyed pictures' items, read once for every encode.
+        # The keyed pictures' items: an image read once for every encode, a video decoded for each.
         keyed = _keyed_items(plan, files)
         failures = []
         try:
             if subtitles is not None:
                 subtitles.write_text(_ass(plan), encoding="utf-8")
             for encoder in self.tuning.encoders:
-                feeds = _feeds(plan, keyed)
+                feeds = _feeds(plan, keyed, self.ffmpeg)
                 command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds)
                 stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
@@ -583,23 +584,29 @@ def _rate(plan: RenderPlan) -> str:
     return f"{plan.fps if plan.fps > 0 else 30:.6g}"
 
 
-def _keyed_items(plan: RenderPlan, files: dict[str, Path]) -> dict[int, np.ndarray]:
-    """The pixels of the items of the plan's keyed image Overlays (by their place among them) that
-    are in `files`: what their frame processes draw."""
+def _keyed_items(plan: RenderPlan, files: dict[str, Path]) -> dict[int, np.ndarray | Path]:
+    """The items of the plan's keyed Overlays (by their place among them) that are in `files`, which
+    their frame processes draw: an image's pixels, a video's file."""
     return {
-        i: read_image(files[event.media])
+        i: read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
-        if event.picture.motion and event.image and event.media in files
+        if event.picture.motion and event.media in files
     }
 
 
-def _feeds(plan: RenderPlan, items: dict[int, np.ndarray]) -> dict[int, FrameFeed]:
-    """A frame process for each keyed Overlay whose item's pixels are in `items`, over its span."""
+def _feeds(plan: RenderPlan, items: dict[int, np.ndarray | Path], ffmpeg: Path) -> dict[int, FrameFeed]:
+    """A frame process for each keyed Overlay whose item is in `items`, over its span: an image's
+    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn."""
     rate = float(_rate(plan))
-    return {
-        i: FrameFeed(PictureFrames(plan.overlays[i].picture, pixels), plan.overlays[i].start, plan.overlays[i].end, rate)
-        for i, pixels in items.items()
-    }
+    feeds = {}
+    for i, item in items.items():
+        event = plan.overlays[i]
+        if isinstance(item, Path):
+            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.offset, rate)
+        else:
+            frames, video = PictureFrames(event.picture, item), None
+        feeds[i] = FrameFeed(frames, event.start, event.end, rate, video)
+    return feeds
 
 
 def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:
@@ -667,7 +674,7 @@ def _shadow(shadow: Shadow, name: str) -> str:
     their alpha at the shadow's opacity, padded with room for the blur and the offset on every side
     (so the picture keeps its centre) and moved by the offset, blurred (sigma half the blur, as a
     CSS shadow's), in the shadow's colour."""
-    room = math.ceil(1.5 * shadow.blur) + math.ceil(max(abs(shadow.x), abs(shadow.y)))
+    room = shadow_room(shadow)
     red, green, blue = _rgb(shadow.colour)
     pad = f"pad=iw+{2 * room}:ih+{2 * room}:{room + round(shadow.x)}:{room + round(shadow.y)}"
     alpha = f"[{name}cast]alphaextract" + (f",lut=c0=val*{shadow.opacity:g}" if shadow.opacity < 1 else "") + f",{pad}:color=black"

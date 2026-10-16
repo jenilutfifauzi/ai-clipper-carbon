@@ -88,7 +88,8 @@ export const isKeyed = (picture: Picture) => !!picture.motion && Object.keys(pic
 /**
  * `picture` as drawn at `time` seconds into the Clip (backend/app/planner.py's picture_at, which
  * the renderer draws by): each keyed property sampled from its motion and held to its range, its
- * size its drawn size at scale 1 times the sampled scale (in fractions of a pixel), and its bounds
+ * size its drawn size at scale 1 times the sampled scale (in fractions of a pixel), its corners'
+ * radius in step with its shorter side (its border and shadow stay as they are), and its bounds
  * turned about the sampled centre; a still Picture, without motion. An unkeyed picture is itself.
  */
 export function pictureAt(picture: Picture, time: number): Picture {
@@ -110,10 +111,12 @@ export function pictureAt(picture: Picture, time: number): Picture {
   const angle = (rotation * Math.PI) / 180;
   const [cos, sin] = [Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle))];
   const [across, down] = [width * cos + height * sin, width * sin + height * cos];
+  const radius = picture.radius ? (picture.radius * Math.min(width, height)) / Math.min(picture.width, picture.height) : 0;
   return {
     ...picture,
     width,
     height,
+    radius,
     centre: [x, y],
     rotation,
     opacity: sampled("opacity", picture.opacity),

@@ -918,7 +918,8 @@ def moving(picture: Picture, transform: Transform, keys: Keys, start: float) -> 
 def picture_at(picture: Picture, time: float) -> Picture:
     """`picture` as drawn at `time` seconds into the Clip: each keyed property sampled from its motion
     (app/keyframes.py) and held to its range, its size its drawn size at scale 1 times the sampled
-    scale (in fractions of a pixel), and its bounds turned about the sampled centre; a still Picture,
+    scale (in fractions of a pixel), its corners' radius in step with its shorter side (its border and
+    shadow stay as they are), and its bounds turned about the sampled centre; a still Picture,
     without motion. The same rule as the preview's (pictureAt in frontend/src/pages/job/editor/picture.ts).
     An unkeyed picture is itself."""
     motion = picture.motion
@@ -939,10 +940,12 @@ def picture_at(picture: Picture, time: float) -> Picture:
     x, y = sampled(KeyProperty.X, picture.centre[0]), sampled(KeyProperty.Y, picture.centre[1])
     rotation = sampled(KeyProperty.ROTATION, picture.rotation)
     across, down = turned_size(width, height, rotation)
+    radius = picture.radius * min(width, height) / min(picture.width, picture.height) if picture.radius else 0.0
     return replace(
         picture,
         width=width,
         height=height,
+        radius=radius,
         centre=(x, y),
         rotation=rotation,
         opacity=sampled(KeyProperty.OPACITY, picture.opacity),

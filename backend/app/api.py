@@ -898,11 +898,6 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id}: no video or image {overlay.media} in the Media Library")
         if item.duration is not None and overlay.offset + overlay.secs > item.duration + 0.05:
             raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s)")
-        # The frame process draws a still picture, undecorated, for now (.scratch/keyframes/issues/02).
-        if overlay.keys and item.kind is not MediaKind.IMAGE:
-            raise HTTPException(422, f"Overlay {overlay.id}: only an image Overlay can have Keyframes for now, not a video")
-        if overlay.keys and (overlay.radius or overlay.border or overlay.shadow):
-            raise HTTPException(422, f"Overlay {overlay.id}: an Overlay with Keyframes can't have rounded corners, a border or a shadow for now")
 
 
 # Media Library files never change under their id.

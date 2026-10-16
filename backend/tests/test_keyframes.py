@@ -183,6 +183,9 @@ def test_keyframes_a_frame_apart_are_kept_with_their_eases_as_four_numbers_and_o
     # A centre is brought onto the frame, as a Transform's is; an Ease is tidied.
     response = keyed({"x": [{"at": 0, "value": 1500, "ease": [-1, 5, 2, 0.5]}]})
     assert response.json()["overlays"][0]["keys"]["x"] == [{"at": 0, "value": 1080, "ease": [0, 3, 1, 0.5]}]
+    # A video Overlay can have them, and so can a decorated one (02).
+    response = keyed({"scale": [{"at": 0, "value": 1}]}, media=green["id"], secs=2.0, radius=0.2, border={"width": 4})
+    assert response.status_code == 200, response.text
 
     many = [{"at": round(i / 30, 4), "value": 1} for i in range(101)]
     for keys, fields, message in (
@@ -193,8 +196,6 @@ def test_keyframes_a_frame_apart_are_kept_with_their_eases_as_four_numbers_and_o
         ({"opacity": [{"at": 0, "value": -0.5}]}, {}, "opacity is 0 to 1"),
         ({"volume": [{"at": 0, "value": 1}]}, {}, "Overlay o has no volume Keyframes"),
         ({"scale": [{"at": 0, "value": 1, "ease": "bounce"}]}, {}, "An Ease is linear, ease_in, ease_out, ease_in_out or four numbers"),
-        ({"scale": [{"at": 0, "value": 1}]}, {"media": green["id"], "secs": 2.0}, "only an image Overlay can have Keyframes"),
-        ({"scale": [{"at": 0, "value": 1}]}, {"radius": 0.2}, "can't have rounded corners, a border or a shadow"),
     ):
         response = keyed(keys, **fields)
         assert response.status_code == 422 and message in response.text, (keys, response.text)
