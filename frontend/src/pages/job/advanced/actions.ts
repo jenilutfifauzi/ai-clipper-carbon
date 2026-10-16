@@ -1,4 +1,5 @@
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
+import { rekeyed } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
@@ -334,16 +335,19 @@ export function split(scene: PickContext, at: number): Outcome | null {
     const shown = scene.played[edits.segments.indexOf(segment)];
     const there = shown.source_start + at - shown.start;
     const cut = Math.round((segment.media ? there : scene.gap(there)) * 1000) / 1000;
-    const second: ClipSegment = { ...segment, id: idOf(scene), start: cut };
-    next.segments = next.segments.flatMap((other) => (other.id === segment.id ? [{ ...segment, start: shown.source_start, end: cut }, second] : [other]));
+    // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start.
+    const second = rekeyed<ClipSegment>({ ...segment, id: idOf(scene), start: cut }, cut - segment.start, segment.end - segment.start);
+    const first = rekeyed<ClipSegment>({ ...segment, start: shown.source_start, end: cut }, shown.source_start - segment.start, cut - segment.start);
+    next.segments = next.segments.flatMap((other) => (other.id === segment.id ? [first, second] : [other]));
     tails.push({ kind: "segment", id: second.id });
   }
   const time = round(at);
   for (const { kind, item } of layers) {
     if (!inside(scene, { kind, id: item.id }, at)) continue;
     const { first, second } = KINDS[kind].cut(item, time);
-    const head = { ...item, secs: round(time - item.start), ...first } as Timed;
-    const tail = { ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed;
+    // Each part has the Keyframes of its own stretch (keyframes.ts' rekeyed).
+    const head = rekeyed({ ...item, secs: round(time - item.start), ...first } as Timed, 0, time - item.start);
+    const tail = rekeyed({ ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed, time - item.start, item.secs);
     const list = KINDS[kind].list;
     Object.assign(next, { [list]: (next[list] as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
     tails.push({ kind, id: tail.id });
@@ -481,6 +485,38 @@ export function changeMusic(scene: { edits: AdvancedEdits; pick: Pick }, clip: M
   const { edits, pick } = scene;
   const fitted = { ...clip, ...fadesWithin(clip, clip.secs) };
   return { edits: { ...edits, music: edits.music.map((each) => (each.id === clip.id ? fitted : each)) }, pick };
+}
+
+/** Which part of an item a change on the Timeline or in the inspector moves: all of it, or one edge. */
+export type TimedEdge = "move" | "start" | "end";
+
+/**
+ * `next`, item `origin` moved or with an edge trimmed (`edge`), its Keyframes re-anchored from
+ * `origin`'s: a later start moves them earlier by as much, and one cut off either end leaves one at
+ * the edge with the value there (keyframes.ts' rewindow). Moved, they move with it, but those past a
+ * shorter end. Longer, it keeps them on the same moments.
+ */
+export function retimed<T extends { start: number; secs: number }>(origin: T, next: T, edge: TimedEdge): T {
+  if (!("keys" in origin)) return next;
+  const from = edge === "move" ? 0 : next.start - origin.start;
+  return rekeyed({ ...next, keys: origin.keys }, from, from + next.secs);
+}
+
+/**
+ * retimed, for the steps of one gesture (a drag, a slider, arrow keys) named by its `group`: each step
+ * is made from the item as the gesture began, so that trimming in and back out again brings back the
+ * Keyframes cut. An item changed since the last step (an undo, another editor) begins it again.
+ */
+export function retimer() {
+  let last: { group: string; id: string; origin: unknown; made: unknown } | null = null;
+  return <T extends { id: string; start: number; secs: number }>(current: T, next: T, edge: TimedEdge, group: string): T => {
+    const keysOf = (item: T) => ("keys" in item ? item.keys : undefined);
+    const going = last && last.group === group && last.id === current.id && last.made === keysOf(current);
+    const origin = going ? (last!.origin as T) : current;
+    const made = retimed(origin, next, edge);
+    last = { group, id: current.id, origin, made: keysOf(made) };
+    return made;
+  };
 }
 
 /** What can be done to the picked items from the toolbar, the timeline's bar and the keyboard. */
