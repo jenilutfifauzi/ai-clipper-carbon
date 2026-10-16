@@ -2,8 +2,10 @@
 // rebasing its undo history, as worked examples of base (the edits the editor started from), mine
 // (its unsaved edits) and theirs (the newer Revision's).
 import { describe, expect, test } from "vitest";
-import type { Candidate, ClipSegment, Overlay, TextLayer, Transform } from "../../../api";
+import type { Candidate, ClipSegment, LayoutOverride, Overlay, TextLayer, Transform } from "../../../api";
+import { NO_CROP } from "./cropGestures";
 import { collidedParts, fieldsOf, mergeEdits, rebaseHistory } from "./merge";
+import { BLURRED, IDENTITY } from "./picture";
 
 function layer(id: string, changes: Partial<TextLayer> = {}): TextLayer {
   return {
@@ -45,6 +47,13 @@ const overlay = (id: string, transform: Partial<Transform> = {}): Overlay => ({
   shadow: null,
 });
 
+// A Manual Layout Override at `at`, framed by hand.
+const manual = (at: number, transform: Partial<Transform> = {}): LayoutOverride => ({
+  at,
+  layout: "manual",
+  framing: { transform: { ...IDENTITY, ...transform }, crop: NO_CROP, background: BLURRED },
+});
+
 describe("keyed lists", () => {
   test("a change on each side to different items keeps both", () => {
     const base = { text_layers: [layer("a"), layer("b")] };
@@ -68,6 +77,17 @@ describe("keyed lists", () => {
     });
     const both = { overlays: [overlay("a"), overlay("b", { flip_h: true })] };
     expect(mergeEdits(base, both, theirs)).toEqual({ merged: both, collisions: [{ field: "overlays", item: "b" }] });
+  });
+
+  test("a change to one Manual Layout Override's Framing on each side keeps both, by their time", () => {
+    const base = { layout_overrides: [manual(1.5), manual(4)] };
+    const mine = { layout_overrides: [manual(1.5, { scale: 2 }), manual(4)] };
+    const theirs = { layout_overrides: [manual(1.5), manual(4, { x: 300 })] };
+
+    expect(mergeEdits(base, mine, theirs)).toEqual({
+      merged: { layout_overrides: [manual(1.5, { scale: 2 }), manual(4, { x: 300 })] },
+      collisions: [],
+    });
   });
 
   test("an item added on each side keeps both, each after the item it followed", () => {

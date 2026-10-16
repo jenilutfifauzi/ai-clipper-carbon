@@ -8,6 +8,7 @@ import {
   type HookEvent,
   type HookStyle,
   type Panel,
+  type Picture,
   type PreviewPlan,
   type RenderPlan,
   type TextEvent,
@@ -17,12 +18,14 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
+import { pictureStyle, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
 import { heldArea, PreviewOverlays, type OverlayControls, type OverlayHold } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
+import { sceneAt } from "./ScenesTrack";
 import { SAFE_BOTTOM, SAFE_TOP, StageHandles, useStageEdit, type Drift, type StageEdit, type StageItem } from "./StageEdit";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
@@ -178,7 +181,7 @@ export function ClipPreview({
               videoRef={ref}
               src={src}
               plan={plan}
-              panel={scene?.panels[slot] ?? null}
+              {...slotView(scene, slot)}
               playback={playback}
               muted={deck > 0 || slot > 0}
               hidden={deck !== shownDeck}
@@ -593,30 +596,19 @@ function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEv
 }
 
 /**
- * The plan's Scene at `time`: of the Segment `segment` (the one playing), when the Clip is cut, so
- * that where a Transition overlaps two Segments the one playing shows.
- */
-export function sceneAt(plan: RenderPlan, time: number, segment = 0): number {
-  if (plan.segments.length) {
-    const first = plan.segments.slice(0, segment).reduce((count, other) => count + other.scenes, 0);
-    const count = plan.segments[segment]?.scenes ?? 1;
-    for (let i = first; i < first + count - 1; i++) if (time < plan.scenes[i].end) return i;
-    return Math.min(first + count - 1, plan.scenes.length - 1);
-  }
-  const index = plan.scenes.findIndex((scene) => time < scene.end);
-  return index === -1 ? plan.scenes.length - 1 : index;
-}
-
-/**
  * One panel slot: its <video>, always mounted (so that it keeps playing across Scenes), shown in the
- * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point.
- * A `hidden` one (its deck parked) is still drawn, transparent, so that its frame is ready.
+ * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point;
+ * or, in a Manual Scene (`slotView`), its picture placed as PicturePanel places one, or its
+ * Background's colour. A `hidden` one (its deck parked) is still drawn, transparent, so that its
+ * frame is ready.
  */
 export function PanelView({
   videoRef,
   src,
   plan,
   panel,
+  picture = null,
+  colour = null,
   playback,
   muted,
   hidden = false,
@@ -625,6 +617,8 @@ export function PanelView({
   src: string;
   plan: RenderPlan | null;
   panel: Panel | null;
+  picture?: Picture | null;
+  colour?: string | null;
   playback: Playback;
   muted: boolean;
   hidden?: boolean;
@@ -635,37 +629,69 @@ export function PanelView({
     while (index + 1 < panel.path.length && panel.path[index + 1].at <= time) index += 1;
     return index;
   });
-  const point = panel?.path[Math.min(pointIndex, panel.path.length - 1)];
-  const box: CSSProperties =
-    plan && panel
-      ? {
-          left: percent(panel.area.x / plan.width),
-          top: percent(panel.area.y / plan.height),
-          width: percent(panel.area.width / plan.width),
-          height: percent(panel.area.height / plan.height),
-        }
-      : { inset: 0, visibility: "hidden" };
-  const video: CSSProperties =
-    plan && panel && point
-      ? {
-          left: percent(-point.x / panel.crop_width),
-          top: percent(-point.y / panel.crop_height),
-          width: percent(plan.source_width / panel.crop_width),
-          height: percent(plan.source_height / panel.crop_height),
-          filter: panel.blur ? `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` : undefined,
-        }
-      : { inset: 0, width: "100%", height: "100%" };
-  return (
-    <div className="absolute overflow-hidden" style={hidden ? { ...box, opacity: 0 } : box}>
-      <video
-        ref={videoRef}
+  const parked = hidden ? { opacity: 0 } : {};
+  if (plan && picture) {
+    const { inner, opacity, transform, left, top, width, height } = pictureStyle(picture, plan);
+    return (
+      <SlotVideo
+        videoRef={videoRef}
         src={src}
         muted={muted}
-        playsInline
-        preload="auto"
-        className="absolute max-w-none object-fill"
-        style={video}
+        box={{ left, top, width, height, transform, ...parked }}
+        layer={{ overflow: "hidden", opacity }}
+        video={inner}
       />
+    );
+  }
+  const point = panel?.path[Math.min(pointIndex, panel.path.length - 1)];
+  const whole: CSSProperties = { inset: 0, width: "100%", height: "100%" };
+  if (!plan || !panel || !point) {
+    // A colour shows where the video doesn't.
+    const box: CSSProperties = colour ? { inset: 0, background: colour } : { inset: 0, visibility: "hidden" };
+    return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={colour ? { ...whole, visibility: "hidden" } : whole} />;
+  }
+  const box: CSSProperties = {
+    left: percent(panel.area.x / plan.width),
+    top: percent(panel.area.y / plan.height),
+    width: percent(panel.area.width / plan.width),
+    height: percent(panel.area.height / plan.height),
+    overflow: "hidden",
+  };
+  const video: CSSProperties = {
+    left: percent(-point.x / panel.crop_width),
+    top: percent(-point.y / panel.crop_height),
+    width: percent(plan.source_width / panel.crop_width),
+    height: percent(plan.source_height / panel.crop_height),
+    filter: panel.blur ? `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` : undefined,
+  };
+  return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} />;
+}
+
+/**
+ * A slot's video in its `box`, inside a `layer` (a picture's: clipped to it, at its opacity), as
+ * `video` sizes and moves it: always the same elements, so that the video plays on whatever its
+ * slot shows.
+ */
+function SlotVideo({
+  videoRef,
+  src,
+  muted,
+  box,
+  layer,
+  video,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement>;
+  src: string;
+  muted: boolean;
+  box: CSSProperties;
+  layer?: CSSProperties;
+  video: CSSProperties;
+}) {
+  return (
+    <div className="absolute" style={box}>
+      <div className="absolute inset-0" style={layer}>
+        <video ref={videoRef} src={src} muted={muted} playsInline preload="auto" className="absolute max-w-none object-fill" style={video} />
+      </div>
     </div>
   );
 }

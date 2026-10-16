@@ -48,13 +48,15 @@ class Origin(StrEnum):
 
 
 class Layout(StrEnum):
-    """How the clip is framed. Auto lets the Render Planner choose per scene; the others replace its
-    choice for every scene."""
+    """How the clip is framed. Auto lets the Render Planner choose per scene (never Manual); the
+    others replace its choice for every scene. Manual frames the Source by hand with a Framing
+    (docs/adr/0007), still for the whole Scene."""
 
     AUTO = "auto"
     TRACK = "track"
     SPLIT = "split"
     BLUR = "blur"
+    MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -68,16 +70,6 @@ class WordEdit:
     at: FiniteFloat
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=WORD_EDIT_MAX_CHARS)] | None = None
     break_before: bool = False
-
-
-@dataclass(frozen=True)
-class LayoutOverride:
-    """The Layout of the one Scene (as planned, short ones merged) that holds `at`, seconds on the
-    Source's timeline, in place of the Candidate's Layout there. Auto chooses that Scene's by its
-    faces even where the Candidate's Layout is forced."""
-
-    at: FiniteFloat
-    layout: Layout
 
 
 class TextAlign(StrEnum):
@@ -140,6 +132,10 @@ class MusicClip:
     fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
 
 
+# The most a Transform scales a picture: eight times its fitted size.
+MAX_SCALE = 8.0
+
+
 @dataclass(frozen=True)
 class Transform:
     """Where and how a picture sits on the 1080×1920 frame (docs/adr/0007): centred on (x, y) in
@@ -150,7 +146,7 @@ class Transform:
 
     x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
     y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
-    scale: Annotated[FiniteFloat, Field(ge=0.05, le=8)] = 1.0
+    scale: Annotated[FiniteFloat, Field(ge=0.05, le=MAX_SCALE)] = 1.0
     stretch_x: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
     stretch_y: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
     rotation: Annotated[FiniteFloat, Field(ge=-360, le=360)] = 0.0
@@ -259,6 +255,18 @@ class Framing:
     transform: Transform = Transform()
     crop: Crop = Crop()
     background: Background = Background()
+
+
+@dataclass(frozen=True)
+class LayoutOverride:
+    """The Layout of the one Scene (as planned, short ones merged) that holds `at`, seconds on the
+    Source's timeline, in place of the Candidate's Layout there. Auto chooses that Scene's by its
+    faces even where the Candidate's Layout is forced. A Manual one frames it by its `framing`,
+    which only a Manual one has (app/review.py)."""
+
+    at: FiniteFloat
+    layout: Layout
+    framing: Framing | None = None
 
 
 @dataclass(frozen=True)
@@ -374,6 +382,8 @@ class Candidate:
     overlays: list[Overlay] = field(default_factory=list)
     # Between its Segments, each by the Segment it follows.
     transitions: list[Transition] = field(default_factory=list)
+    # How its Manual Layout frames every Scene without an override; only a Manual Candidate has one.
+    framing: Framing | None = None
     # Its saved state's number (ADR 0003): each save that changes it makes the next; choosing it for
     # rendering doesn't. One saved before Revisions is at 1.
     revision: int = 1

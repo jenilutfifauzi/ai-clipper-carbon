@@ -940,7 +940,7 @@ def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_
     candidate = add(client, job, "halo", "ya")
     # The two people's Scene (from 3 s into the Source) in Blur instead of Split.
     candidate = patch(client, job, candidate, layout_overrides=[{"at": 4.5, "layout": "blur"}])
-    assert candidate["edited"] is True and candidate["layout_overrides"] == [{"at": 4.5, "layout": "blur"}]
+    assert candidate["edited"] is True and candidate["layout_overrides"] == [{"at": 4.5, "layout": "blur", "framing": None}]
     render(client, job)
     [clip] = rendered(client, job, timeout=60)["clips"]
     job_dir = settings.data_dir / "jobs" / job["id"]

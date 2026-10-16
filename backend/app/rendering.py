@@ -141,7 +141,7 @@ def candidate_plan(
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
     common = dict(
-        layout=candidate.layout, hook=candidate.hook_text, camera=camera,
+        layout=candidate.layout, framing=candidate.framing, hook=candidate.hook_text, camera=camera,
         caption_style=caption_style, hook_style=hook_style,
         hook_start=candidate.hook_start, hook_secs=candidate.hook_secs,
         hook_kicker=candidate.hook_kicker,
@@ -450,6 +450,7 @@ class Renders:
                 end=candidate.end,
                 hook_text=candidate.hook_text,
                 layout=candidate.layout,
+                framing=candidate.framing,
                 video=video,
                 poster=poster,
                 plan=plan_file,

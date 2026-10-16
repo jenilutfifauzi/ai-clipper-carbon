@@ -1,7 +1,9 @@
 // Seam D (.scratch/multi-select-clipboard/spec.md): what is done to a Pick (remove, duplicate, split,
 // move, select all, copy and paste), as worked examples of the edits before and after.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
+import type { ClipSegment, LayoutOverride, MusicClip, Overlay, TextLayer } from "../../../api";
+import { NO_CROP } from "../editor/cropGestures";
+import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import {
   changeMusic,
@@ -76,6 +78,8 @@ function edits(changes: Partial<AdvancedEdits> = {}): AdvancedEdits {
     hook_kicker: "",
     style_overrides: { caption: {}, hook: {}, watermark: {} },
     word_edits: [],
+    layout: "auto",
+    framing: null,
     layout_overrides: [],
     text_layers: [],
     music: [],
@@ -600,6 +604,8 @@ describe("copy and paste", () => {
 
 describe("pasting into another Candidate or Job", () => {
   const here = { job: "j1", candidate: "c1" };
+  // A Scene of 200–210 s framed by hand.
+  const byHand: LayoutOverride = { at: 205, layout: "manual", framing: { transform: { ...IDENTITY, x: 300, scale: 2 }, crop: NO_CROP, background: BLURRED } };
   // The Source's Words around 200–210 s.
   const words = [
     { start: 201, end: 201.5 },
@@ -613,14 +619,11 @@ describe("pasting into another Candidate or Job", () => {
       { at: 202.1, text: "", break_before: false },
       { at: 101, text: "elsewhere", break_before: false },
     ],
-    layout_overrides: [
-      { at: 205, layout: "split" },
-      { at: 102, layout: "blur" },
-    ],
+    layout_overrides: [byHand, { at: 102, layout: "blur" }],
   });
   const held = copy(scene(source, picked(seg("s2"))), here)!;
 
-  test("Segments of the Source bring their range's Word Edits and Layout Overrides to another Candidate", () => {
+  test("Segments of the Source bring their range's Word Edits and Layout Overrides, with their Framings, to another Candidate", () => {
     const target = edits({ segments: [segment("t1", 300, 306)] });
 
     const pasted = paste(scene(target, null), held, 6, { job: "j1", candidate: "c2" }, words).edits;
@@ -629,7 +632,7 @@ describe("pasting into another Candidate or Job", () => {
       { at: 201.2, text: "Gojek", break_before: false },
       { at: 202.1, text: "", break_before: false },
     ]);
-    expect(pasted.layout_overrides).toEqual([{ at: 205, layout: "split" }]);
+    expect(pasted.layout_overrides).toEqual([byHand]);
   });
 
   test("the other Candidate's own Word Edits on the same Words, and its own Layout Overrides in the range, are kept", () => {

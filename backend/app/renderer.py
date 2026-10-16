@@ -35,7 +35,8 @@ as its own input, cut from the Source like a one-range Clip (or from its Media L
 is drawn as above, in its own Scenes, and the Segments' frames and sounds are joined back to back
 (concat). A video's Segment is one Scene of one picture: its Background (the blurred cover panel, or
 its colour) and then its Picture over it, as Overlays are drawn, only the part on the frame of it
-scaled (so a video zoomed in is never scaled past the frame). With videos among them (or a Segment's own volume), each Segment's sound is set to its
+scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of the Source is drawn
+the same way from its own frames. With videos among them (or a Segment's own volume), each Segment's sound is set to its
 volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
 silence. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
@@ -409,10 +410,11 @@ def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, 
 
 
 def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning) -> str:
-    """Filters that draw a Scene of one picture (a media Segment's) from the frames `given` into
-    `out`: its Background, the blurred cover panel or a frame of its colour (made from the frames
-    themselves, so that it has their times), then the part of its Picture on the frame over it. A
-    picture that covers the frame hides its Background, which is then not blurred."""
+    """Filters that draw a Scene of one picture (a media Segment's, or a Manual Scene's of the Source)
+    from the frames `given` into `out`: its Background, the blurred cover panel or a frame of its
+    colour (made from the frames themselves, so that it has their times), then the part of its
+    Picture on the frame over it. A picture that covers the frame hides its Background, which is
+    then not blurred."""
     assert scene.picture is not None
     picture = on_frame(scene.picture)
     covers = picture.opacity >= 1 and not picture.rotation % 360 and picture.bounds == Box(0, 0, plan.width, plan.height)

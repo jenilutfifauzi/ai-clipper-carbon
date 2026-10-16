@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, TransitionEvent, TransitionKind } from "../../../api";
-import { PanelView, sceneAt } from "./ClipPreview";
+import { PanelView } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
+import { slotView } from "./picture";
 import { Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
 import { MediaSegment, segmentScene } from "./PreviewSegments";
+import { sceneAt } from "./ScenesTrack";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
 const READY_SECS = 2;
@@ -101,7 +103,7 @@ function Ghost({
           <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
         ) : (
           [master, follower].map((ref, slot) => (
-            <PanelView key={slot} videoRef={ref} src={src} plan={plan} panel={scene?.panels[slot] ?? null} playback={ghost} muted={slot > 0} />
+            <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />
           ))
         )}
       </div>

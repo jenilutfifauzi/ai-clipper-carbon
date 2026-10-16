@@ -103,6 +103,7 @@ const PART_OF: Record<Collision["field"], string> = {
   style_overrides: "Style",
   word_edits: "Word Edits",
   layout: "Layout",
+  framing: "Layout",
   layout_overrides: "Layout Overrides",
   source_volume: "Source volume",
 };

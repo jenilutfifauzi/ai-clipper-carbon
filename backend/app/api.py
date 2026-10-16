@@ -15,6 +15,7 @@ from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
     Candidate,
+    Framing,
     Layout,
     LayoutOverride,
     MusicClip,
@@ -170,6 +171,8 @@ class CandidateUpdate(BaseModel):
     end: FiniteFloat | None = None
     hook_text: Annotated[str, StringConstraints(max_length=HOOK_MAX_CHARS)] | None = None
     layout: Layout | None = None
+    # The Manual Layout's, which only it has; dropped when the Layout becomes another.
+    framing: Framing | None = None
     selected: bool | None = None
     preset_id: str | None = None
     # Replaces the Candidate's overrides as a whole.

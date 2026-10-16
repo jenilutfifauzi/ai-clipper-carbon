@@ -100,13 +100,16 @@ export interface Transcript {
   segments: Segment[];
 }
 
-export type Layout = "auto" | "track" | "split" | "blur";
+// Auto chooses per Scene by its faces (never Manual); Manual frames the Source by hand with a Framing.
+export type Layout = "auto" | "track" | "split" | "blur" | "manual";
 
 // The Layout of the one Scene that holds `at` (seconds on the Source's timeline), in place of the
-// Candidate's there. Auto chooses that Scene's by its faces.
+// Candidate's there. Auto chooses that Scene's by its faces. A Manual one has its Framing, and no
+// other has one.
 export interface LayoutOverride {
   at: number;
   layout: Layout;
+  framing?: Framing | null;
 }
 
 // The owner's correction of one caption Word, keyed by a time on the Source's timeline (the Word
@@ -294,8 +297,8 @@ export interface Panel {
   blur: boolean;
 }
 
-// "media": a Media Library video placed by its Framing.
-export type SceneLayout = "track" | "split" | "blur" | "passthrough" | "media";
+// "media": a Media Library video placed by its Framing; "manual": the Source placed by one by hand.
+export type SceneLayout = "track" | "split" | "blur" | "passthrough" | "media" | "manual";
 
 export interface ScenePlan {
   start: number;
@@ -303,9 +306,11 @@ export interface ScenePlan {
   layout: SceneLayout;
   // Laid over one another. Under a picture, its Background's: one blurred cover, or none for a colour.
   panels: Panel[];
-  // A media Segment's Scene: its one picture, over its panels, or over `colour` without any.
+  // A media Segment's or a Manual Scene's: its one picture, over its panels, or over `colour` without any.
   picture: Picture | null;
   colour: string | null;
+  // The Framing that draws its first frame (a Manual Scene's own): what a switch to Manual copies.
+  framing: Framing | null;
 }
 
 export interface CaptionEvent {
@@ -660,6 +665,8 @@ export interface Candidate {
   window_score: number | null;
   origin: "ai" | "manual";
   layout: Layout;
+  // How its Manual Layout frames every Scene without an override; null for another Layout.
+  framing: Framing | null;
   // Chosen for rendering.
   selected: boolean;
   // The owner has changed its bounds, hook text, layout or style.
@@ -698,6 +705,8 @@ export interface CandidateChange {
   end?: number;
   hook_text?: string;
   layout?: Layout;
+  // The Manual Layout's, needed with it and refused with another; null leaves it (dropped with Manual).
+  framing?: Framing | null;
   selected?: boolean;
   preset_id?: string;
   // Replaces the Candidate's overrides as a whole.
@@ -759,6 +768,8 @@ export interface RenderedClip {
   end: number;
   hook_text: string;
   layout: Layout;
+  // Its Manual Layout's Framing, as rendered; null for another Layout (and before Manual).
+  framing?: Framing | null;
   video: string;
   poster: string;
   plan: string;

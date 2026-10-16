@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.candidates import (
     Candidate,
+    Framing,
     Layout,
     LayoutOverride,
     MusicClip,
@@ -72,6 +73,8 @@ class CandidateChange:
     overlays: list[Overlay] | None = None
     # Each by the Segment it follows; one whose join isn't there is left out.
     transitions: list[Transition] | None = None
+    # The Manual Layout's, which only it has: dropped when the Layout becomes another.
+    framing: Framing | None = None
     # The Revision the change was made from: StaleRevision unless it is the Candidate's. None: saved
     # over whatever is there.
     revision: int | None = None
@@ -165,12 +168,22 @@ def update(
         _check_ids("Music Clip", [clip.id for clip in change.music])
     if change.overlays is not None:
         _check_ids("Overlay", [overlay.id for overlay in change.overlays])
+    if change.layout_overrides is not None:
+        for override in change.layout_overrides:
+            _check_framing(f"A {override.layout} Layout Override", override.layout, override.framing)
+    layout = _pick(change.layout, old.layout)
+    if change.framing is not None:
+        _check_framing(f"A {layout} clip", layout, change.framing)
+    # Kept while the clip is Manual; dropped with its Layout.
+    framing = _pick(change.framing, old.framing) if layout is Layout.MANUAL else None
+    _check_framing(f"A {layout} clip", layout, framing)
     new = replace(
         old,
         start=start,
         end=end,
         hook_text=old.hook_text if change.hook_text is None else " ".join(change.hook_text.split()),
-        layout=_pick(change.layout, old.layout),
+        layout=layout,
+        framing=framing,
         selected=_pick(change.selected, old.selected),
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
@@ -235,7 +248,7 @@ def _look(candidate: Candidate) -> tuple:
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.music,
-        candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions,
+        candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,
     )
 
 
@@ -260,6 +273,15 @@ def _check_inside(new: Candidate, old: Candidate) -> None:
     for layer in new.text_layers:
         if layer != before.get(layer.id) and layer.start >= new.duration:
             raise InvalidEdit(f"Text Layer {layer.id} starts after the clip ends ({new.duration:g} s)")
+
+
+def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
+    """InvalidEdit unless the Framing is there exactly when the Layout is Manual (`what` being the
+    clip or the Layout Override that has them)."""
+    if layout is Layout.MANUAL and framing is None:
+        raise InvalidEdit(f"{what} needs its framing: the transform, crop and background it frames the episode by")
+    if layout is not Layout.MANUAL and framing is not None:
+        raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
 
 
 def _check_ids(kind: str, ids: list[str]) -> None:

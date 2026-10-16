@@ -9,6 +9,7 @@ import { HookTimingFields } from "../HookEditor";
 import { restyle, setFade, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { SegmentFields } from "./MainTrack";
+import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
@@ -100,6 +101,16 @@ export function Inspector({
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
+        scene={
+          <SceneFields
+            plan={preview?.plan ?? null}
+            index={edits.segments.indexOf(segment)}
+            count={edits.segments.length}
+            playback={playback}
+            edits={edits}
+            onEdits={onEdits}
+          />
+        }
       />
     );
   }

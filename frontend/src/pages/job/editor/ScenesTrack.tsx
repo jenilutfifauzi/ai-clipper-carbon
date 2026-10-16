@@ -10,9 +10,10 @@ const LOOKS: Record<SceneLayout, string> = {
   blur: "bg-surface-raised ring-border",
   passthrough: "bg-surface-raised ring-border",
   media: "bg-surface-raised ring-border",
+  manual: "bg-fill ring-text/40",
 };
 
-const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blur: "Blur", passthrough: "As shot", media: "Video" };
+const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blur: "Blur", passthrough: "As shot", media: "Video", manual: "Manual" };
 
 /**
  * Where `time` (seconds into the Clip) of the plan's Scene `scene` is on the Source's timeline: in
@@ -28,6 +29,21 @@ export function sourceTime(plan: RenderPlan, scene: number, time: number): numbe
     first += segment.scenes;
   }
   return null;
+}
+
+/**
+ * The plan's Scene at `time`: of the Segment `segment` (the one playing), when the Clip is cut, so
+ * that where a Transition overlaps two Segments the one playing shows.
+ */
+export function sceneAt(plan: RenderPlan, time: number, segment = 0): number {
+  if (plan.segments.length) {
+    const first = plan.segments.slice(0, segment).reduce((count, other) => count + other.scenes, 0);
+    const count = plan.segments[segment]?.scenes ?? 1;
+    for (let i = first; i < first + count - 1; i++) if (time < plan.scenes[i].end) return i;
+    return Math.min(first + count - 1, plan.scenes.length - 1);
+  }
+  const index = plan.scenes.findIndex((scene) => time < scene.end);
+  return index === -1 ? plan.scenes.length - 1 : index;
 }
 
 // The override of the plan's Scene `index`, as the planner finds it: the last one whose time (on

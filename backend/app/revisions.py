@@ -30,7 +30,7 @@ PARTS: dict[str, tuple[str, ...]] = {
     "Hook": ("hook_text", "hook_kicker", "hook_start", "hook_secs"),
     "Style": ("preset_id", "style_overrides"),
     "Word Edits": ("word_edits",),
-    "Layout": ("layout",),
+    "Layout": ("layout", "framing"),
     "Layout Overrides": ("layout_overrides",),
     "Source volume": ("source_volume",),
 }

@@ -96,6 +96,11 @@ Edits:
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
+- Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
+  with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
+  every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
+  tracking. The dry run lists each Scene's layout and the framing that draws its first frame: copy
+  it to switch a Scene to Manual without a jump. merge_candidate_items changes only the fields given.
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
@@ -569,14 +574,15 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
 
 
 def _plan_view(preview: dict) -> dict:
-    """A Preview Plan as an agent reads it: what shows when, in Timeline time, where each Overlay is
-    drawn (its box once turned, in output pixels, and what its crop keeps, in its item's), and the Words."""
+    """A Preview Plan as an agent reads it: what shows when, in Timeline time, each Scene's Layout and
+    the Framing that draws its first frame (a Manual Scene's own), where each Overlay is drawn (its
+    box once turned, in output pixels, and what its crop keeps, in its item's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else plan["end"] - plan["start"], 2),
         "words_source": preview["words_source"],
-        "scenes": [_times(scene, "start", "end", "layout") for scene in plan["scenes"]],
+        "scenes": [_times(scene, "start", "end", "layout", "framing") for scene in plan["scenes"]],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),

@@ -2,7 +2,7 @@
 // Fit and Fill and a new Overlay go by (backend/app/pictures.py's, on the same worked examples).
 import { describe, expect, test } from "vitest";
 import type { Panel, Picture } from "../../../api";
-import { coverScale, fillScale, fittedSize, panelStyle, pictureStyle, scaleForWidth } from "./picture";
+import { coverScale, fillScale, fittedSize, panelStyle, pictureStyle, scaleForWidth, slotView } from "./picture";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -86,6 +86,23 @@ describe("a Background panel as CSS", () => {
       box: { left: "0%", top: "0%", width: "100%", height: "100%" },
       inner: { left: `${(-438 / 404) * 100}%`, top: "0%", width: `${(1280 / 404) * 100}%`, height: "100%" },
     });
+  });
+});
+
+describe("a Source deck's two videos", () => {
+  test("show a Scene's panels, or a Manual Scene's Background and then its picture", () => {
+    const panel: Panel = { area: { x: 0, y: 0, width: 1080, height: 1920 }, crop_width: 608, crop_height: 1080, path: [{ at: 0, x: 656, y: 0 }], blur: true };
+    const scene = { start: 0, end: 3, layout: "blur" as const, panels: [panel, { ...panel, blur: false }], picture: null, colour: null, framing: null };
+    expect([0, 1].map((slot) => slotView(scene, slot))).toEqual([
+      { panel, picture: null, colour: null },
+      { panel: { ...panel, blur: false }, picture: null, colour: null },
+    ]);
+    const manual = { ...scene, layout: "manual" as const, panels: [panel], picture: picture() };
+    expect([0, 1].map((slot) => slotView(manual, slot))).toEqual([
+      { panel, picture: null, colour: null },
+      { panel: null, picture: picture(), colour: null },
+    ]);
+    expect(slotView({ ...manual, panels: [], colour: "#123456" }, 0)).toEqual({ panel: null, picture: null, colour: "#123456" });
   });
 });
 

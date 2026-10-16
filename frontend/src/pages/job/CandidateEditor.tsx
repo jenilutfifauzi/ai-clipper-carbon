@@ -81,6 +81,7 @@ const LAYOUT_HINTS: Record<Layout, string> = {
   track: "A 9:16 crop following the speaker, in every scene.",
   split: "Two stacked panels, left person on top, in every scene.",
   blur: "The wide shot over a blurred background, in every scene.",
+  manual: "Framed by hand in the Advanced Edit, in every scene without its own layout.",
 };
 
 /**

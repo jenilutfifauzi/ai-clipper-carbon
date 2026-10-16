@@ -1,5 +1,5 @@
 import { Clapperboard, Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ClipSegment, Framing, MediaItem, Transcript } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
@@ -60,8 +60,8 @@ export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
 }
 
 /**
- * The selected Segment: what it shows (of the episode, or of a video, with its Framing and its
- * sound), and what can be done to it.
+ * The selected Segment: what it shows (of the episode, with how its Scene at the playhead is framed,
+ * or of a video, with its Framing), its sound, and what can be done to it.
  */
 export function SegmentFields({
   segment,
@@ -76,6 +76,7 @@ export function SegmentFields({
   onSourceVolume,
   onVolume,
   onChange,
+  scene,
 }: {
   segment: ClipSegment;
   // Its video, for a video's Segment.
@@ -91,6 +92,8 @@ export function SegmentFields({
   // A video's Segment's volume.
   onVolume: (volume: number, group: string) => void;
   onChange: (segment: ClipSegment, group: string) => void;
+  // A Segment of the episode's: how its Scene at the playhead is framed.
+  scene?: ReactNode;
 }) {
   const Icon = segment.media ? Clapperboard : Film;
   return (
@@ -155,6 +158,7 @@ export function SegmentFields({
             format={(v) => `${Math.round(v * 100)}%`}
             onChange={onSourceVolume}
           />
+          {scene}
         </>
       )}
     </div>

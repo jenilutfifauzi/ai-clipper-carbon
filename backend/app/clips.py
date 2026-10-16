@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from app.candidates import Layout, LayoutOverride, MusicClip, Overlay, Segment, TextLayer, Transition, WordEdit
+from app.candidates import Framing, Layout, LayoutOverride, MusicClip, Overlay, Segment, TextLayer, Transition, WordEdit
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
 CLIPS_DIR = "clips"
@@ -59,6 +59,8 @@ class RenderedClip:
     segments: list[Segment] = field(default_factory=list)
     overlays: list[Overlay] = field(default_factory=list)
     transitions: list[Transition] = field(default_factory=list)
+    # Its Manual Layout's Framing, as rendered; None for another Layout.
+    framing: Framing | None = None
     # The Candidate's Revision it was rendered from: stale once the Candidate's differs (ADR 0003).
     # None in a Clip rendered before Revisions, which is compared by the fields above.
     revision: int | None = None

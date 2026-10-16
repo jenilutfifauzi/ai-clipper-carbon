@@ -21,6 +21,12 @@ The cameras:
 A crop's path is kept as change points: the frames at which its position changes. A Scene starts
 already framed on its faces, and the tracker starts afresh at every cut.
 
+A Manual Scene (a Layout Override of Manual, or the Candidate's Layout of Manual where it has
+none) is the Source drawn as a Picture placed by that Framing, over its Background, as a media
+Segment's Scene is (`framed_scene`): still for the whole Scene, its faces not needed. Auto never
+chooses it. Every other Scene offers the Framing that draws its first frame (`_first_framing`),
+which the editors copy when it is switched to Manual, so that nothing jumps.
+
 A portrait Source is passed through whole.
 
 Captions come from the Clip's own Words (transcribed for it, on the Clip's timeline). They are
@@ -75,12 +81,14 @@ from enum import StrEnum
 from functools import cache
 
 from app.candidates import (
+    Background,
     BackgroundKind,
     Border,
     Crop,
     Framing,
     Layout,
     LayoutOverride,
+    MAX_SCALE,
     MusicClip,
     Overlay,
     Shadow,
@@ -93,7 +101,7 @@ from app.candidates import (
 )
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
-from app.pictures import drawn_size, kept, turned_size
+from app.pictures import cover_scale, drawn_size, kept, turned_size
 from app.styles import (
     CaptionPosition,
     CaptionStyle,
@@ -249,6 +257,8 @@ class SceneLayout(StrEnum):
     PASSTHROUGH = "passthrough"
     # A Media Library video placed by its Framing.
     MEDIA = "media"
+    # The Source placed by a Framing by hand.
+    MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -319,9 +329,12 @@ class ScenePlan:
     # Laid over one another in order. Under a picture, its Background's: the one blurred cover, or
     # none for a colour.
     panels: list[Panel]
-    # A media Segment's Scene: its one picture, drawn over its panels, or over `colour` without any.
+    # A media Segment's or a Manual Scene's: its one picture, drawn over its panels, or over `colour`
+    # without any.
     picture: "Picture | None" = None
     colour: str | None = None
+    # The Framing that draws its first frame (`_first_framing`): what a switch to Manual starts from.
+    framing: Framing | None = None
 
 
 @dataclass(frozen=True)
@@ -568,6 +581,7 @@ def plan_render(
     main_track: list[SegmentInput] | None = None,
     overlays: list[Overlay] | None = None,
     media_info: dict[str, MediaInfo] | None = None,
+    framing: Framing | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -577,7 +591,9 @@ def plan_render(
     `hook_secs`. A Scene that holds one of `layout_overrides` (their times in seconds into the
     Clip) takes its Layout instead of `layout`, the last one if it holds several. Without `scenes`
     the Clip is one Scene; without `faces` (not analysed) an Auto Scene is tracked with its crop in
-    the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. The
+    the middle; without `words`, nothing is captioned; with a blank `hook`, no hook is shown. A
+    Manual Scene is the Source placed by its override's Framing, or by `framing` (the Candidate's)
+    without one (`framed_scene`), and needs no faces. The
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
     `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
     `music` is heard as `audio_events` places it, given what `media_info` says of its songs.
@@ -610,7 +626,7 @@ def plan_render(
             if given.media is not None:
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             else:
-                framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides)
+                framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
             plans.extend(_moved(scene, at) for scene in framed)
             segments.append(
                 SegmentPlan(at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed))
@@ -620,7 +636,7 @@ def plan_render(
         words, word_edits = _segment_words(main_track, segments, cuts, duration)
     else:
         duration = round(end - start, 3)
-        plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides)
+        plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
     return RenderPlan(
         start=start,
         end=end,
@@ -671,40 +687,91 @@ def _framed(
     layout: Layout,
     camera: CameraTuning,
     layout_overrides: list[LayoutOverride] | None,
+    framing: Framing | None = None,
 ) -> list[ScenePlan]:
     """The Scenes of a range of `source` lasting `duration`, whose shots are `scenes` and whose
-    sampled frames have `faces`, framed as plan_render says; in seconds into the range."""
+    sampled frames have `faces`, framed as plan_render says (a Manual one by its override's Framing,
+    or else by `framing`); in seconds into the range."""
     if not reframes(source):
-        plans = [ScenePlan(0.0, duration, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, 0.0)])]
-    else:
-        cuts = sorted({round(scene.start, 3) for scene in scenes or []} - {0.0})
-        edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
-        plans = []
-        for a, b in _merge_short(edges):
-            seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
-            count = None if seen is None else _face_count(seen)
-            held = [o.layout for o in layout_overrides or [] if a <= o.at < b or (b == duration and o.at == b)]
-            chosen = _choose(held[-1] if held else layout, count)
-            if chosen is SceneLayout.TRACK:
-                panels = [_track(a, b, seen, source, camera)]
-            elif chosen is SceneLayout.SPLIT:
-                panels = _split(a, b, seen if count and count >= 2 else None, source, camera)
-            else:
-                panels = _blur(a, source)
-            plans.append(ScenePlan(a, b, chosen, panels))
+        shown = Framing(background=Background(BackgroundKind.COLOUR, "#000000"))
+        return [ScenePlan(0.0, duration, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, 0.0)], framing=shown)]
+    cuts = sorted({round(scene.start, 3) for scene in scenes or []} - {0.0})
+    edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
+    plans = []
+    for a, b in _merge_short(edges):
+        held = [o for o in layout_overrides or [] if a <= o.at < b or (b == duration and o.at == b)]
+        override = held[-1] if held else None
+        wanted = override.layout if override else layout
+        if wanted is Layout.MANUAL:
+            # Still: neither its faces nor a new run of the analysis move it.
+            by_hand = (override.framing if override else framing) or Framing()
+            plans.append(framed_scene(a, b, SceneLayout.MANUAL, source.width, source.height, by_hand))
+            continue
+        seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
+        count = None if seen is None else _face_count(seen)
+        chosen = _choose(wanted, count)
+        if chosen is SceneLayout.TRACK:
+            panels = [_track(a, b, seen, source, camera)]
+        elif chosen is SceneLayout.SPLIT:
+            panels = _split(a, b, seen if count and count >= 2 else None, source, camera)
+        else:
+            panels = _blur(a, source)
+        plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source)))
     return plans
 
 
+def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetadata) -> Framing:
+    """The Framing that draws the first frame of a Scene in `layout` of `source`, whose `panels` are
+    planned: Track's first crop; Blur's whole frame fitted over its blur; and, for Split, which shows
+    two pictures, a centred cover of the frame."""
+    if layout is SceneLayout.TRACK:
+        [panel] = panels
+        start = panel.path[0]
+        return _showing(source.width, source.height, Box(start.x, start.y, panel.crop_width, panel.crop_height))
+    if layout is SceneLayout.SPLIT:
+        return Framing(Transform(scale=min(cover_scale(source.width, source.height, FRAME), MAX_SCALE)))
+    return Framing()
+
+
+def _showing(width: int, height: int, box: Box) -> Framing:
+    """The Framing that draws the `box` of a `width` x `height` picture over the whole frame, as a
+    panel filling the frame with it does: scaled to cover the frame with it and centred on it. Where
+    the box is so far from the picture's middle that the picture's centre would be off the frame,
+    the picture's far side is cropped off, just enough to bring it back on."""
+    # Output pixels per pixel of the picture.
+    zoom = max(OUTPUT_WIDTH / box.width, OUTPUT_HEIGHT / box.height)
+
+    def cuts(size: int, start: int, length: int, frame: int) -> tuple[float, float]:
+        # The shares cut off either end of one axis, so that the middle of what is kept is at most
+        # half the frame (in the picture's pixels) from the box's.
+        middle, reach = start + length / 2, frame / 2 / zoom
+        if size / 2 > middle + reach:
+            return 0.0, round(1 - 2 * (middle + reach) / size, 4)
+        if size / 2 < middle - reach:
+            return round((2 * (middle - reach) - size) / size, 4), 0.0
+        return 0.0, 0.0
+
+    (left, right), (top, bottom) = cuts(width, box.x, box.width, OUTPUT_WIDTH), cuts(height, box.y, box.height, OUTPUT_HEIGHT)
+    crop = Crop(left, top, right, bottom)
+    cut = Box(*kept(width, height, crop))
+    scale = zoom / min(OUTPUT_WIDTH / cut.width, OUTPUT_HEIGHT / cut.height)
+    x = OUTPUT_WIDTH / 2 + (cut.x + cut.width / 2 - (box.x + box.width / 2)) * zoom
+    y = OUTPUT_HEIGHT / 2 + (cut.y + cut.height / 2 - (box.y + box.height / 2)) * zoom
+    centre = (round(min(max(x, 0.0), OUTPUT_WIDTH), 2), round(min(max(y, 0.0), OUTPUT_HEIGHT), 2))
+    return Framing(Transform(x=centre[0], y=centre[1], scale=round(min(scale, MAX_SCALE), 4)), crop)
+
+
 def framed_scene(start: float, end: float, layout: SceneLayout, width: int, height: int, framing: Framing) -> ScenePlan:
-    """A Scene from `start` to `end` of a `width` x `height` picture placed by its `framing`: the
+    """A Scene from `start` to `end` of a `width` x `height` picture (a media Segment's video, or the
+    Source in a Manual Scene) placed by its `framing`, which it carries: the
     picture (`picture_of`) over its Background, which is the largest 9:16 crop from the middle of what
     its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
     picture = picture_of(width, height, framing.transform, framing.crop)
     if framing.background.kind is BackgroundKind.COLOUR:
-        return ScenePlan(start, end, layout, [], picture, framing.background.colour)
+        return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
     kept, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
     point = replace(cover.path[0], x=cover.path[0].x + kept.x, y=cover.path[0].y + kept.y)
-    return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture)
+    return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:

@@ -1,4 +1,4 @@
-import type { Background, Panel, Picture, Transform } from "../../../api";
+import type { Background, Panel, Picture, ScenePlan, Transform } from "../../../api";
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -99,6 +99,22 @@ export function panelStyle(panel: Panel, [across, down]: [number, number], frame
     },
     inner: { left: percent(-point.x / width), top: percent(-point.y / height), width: percent(across / width), height: percent(down / height) },
   };
+}
+
+export interface SlotView {
+  panel: Panel | null;
+  picture: Picture | null;
+  colour: string | null;
+}
+
+/**
+ * What a deck's video `slot` shows in `scene` (docs/adr/0006): the Scene's panel for the slot; but in
+ * a Manual Scene (ADR 0007) the first shows its Background (the blurred cover panel, or its colour)
+ * and the second its picture, so that the Source is drawn from the decks as every other Scene is.
+ */
+export function slotView(scene: ScenePlan | undefined, slot: number): SlotView {
+  if (scene?.layout !== "manual") return { panel: scene?.panels[slot] ?? null, picture: null, colour: null };
+  return slot === 0 ? { panel: scene.panels[0] ?? null, picture: null, colour: scene.colour } : { panel: null, picture: scene.picture, colour: null };
 }
 
 // The Background of the picture itself, blurred (the colour is kept for when it is switched to one).
