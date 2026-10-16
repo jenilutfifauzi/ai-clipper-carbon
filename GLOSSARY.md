@@ -15,7 +15,12 @@ Use these terms in code, UI copy, tickets and commit messages.
 
 ## Rendering
 
-- **Layout:** how a Scene is framed: Track, Split or Blur (Auto: chosen per Scene by its faces).
+- **Layout:** how a Scene is framed: Track, Split, Blur or Manual (Auto: chosen per Scene by its faces, never Manual).
+- **Manual:** the Layout that frames the Source by hand with a Framing, still for the whole Scene: face tracking is not run there. The Candidate's Layout may be Manual (one Framing for every Scene without an override), and so may a Layout Override (its own Framing). See docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md.
+- **Transform:** where and how a picture sits on the frame: its centre in output pixels (kept on the frame), its scale over its fitted size (the largest that fits 1080×1920; 1 fits), its stretch across and down, its rotation (degrees clockwise), its flips and its opacity. Constant over its item's length.
+- **Crop:** what is cut off each edge of a picture before it is fitted, as fractions of its width and height (at most 0.9 each, a tenth always kept).
+- **Framing:** a Transform, a Crop and a Background: how a media Segment, or the Source in a Manual Scene, fills the frame.
+- **Background:** what shows behind a Framing's picture where it doesn't cover the frame: the picture itself, blurred, or a colour.
 - **Scene:** a shot between two cuts.
 - **Render Plan:** the planner's output for one Clip (Scenes with their panels, caption events, and the hook event). It is everything the renderer draws.
 - **Hook:** the opening overlay: the Candidate's hook text (with any Emphasis) and its Kicker, drawn as its Hook Style says.
@@ -34,7 +39,7 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Logo:** an image the owner uploads for Watermarks, kept as a PNG for every Job. Deleting one leaves the Presets and Candidates that showed it with no Watermark.
 - **Style Override:** a field of the Preset's style replaced on one Candidate.
 - **Word Edit:** a correction of one caption Word, keyed by a time on the Source's timeline. It gives new text, removes the Word (empty text), or starts a new line before it.
-- **Layout Override:** a Layout for the one Scene that holds a time on the Source's timeline, replacing the Candidate's Layout there.
+- **Layout Override:** a Layout for the one Scene that holds a time on the Source's timeline, replacing the Candidate's Layout there. A Manual one carries its Framing.
 - **Preview Plan:** the Render Plan of a Candidate, or of an unsaved draft of its edits, computed for the editor's preview without rendering.
 - **Revision:** one saved state of a Candidate, numbered from 1; each saved change makes the next. An edit made from an older Revision is refused, so that no editor (the clip editor, the Advanced Edit, another tab or the agent) saves over another's change without knowing. The editor then merges its unsaved changes onto the newer Revision, item by item; where both changed the same item, the owner's change in front of them wins and they are told. Choosing a Candidate for rendering (selected) is not a change of its Revision.
 - **Revision History:** the Candidate's last 50 saved states kept on this Mac, one per stretch of saving from one editor (a new one when another editor saves, or after a pause), always including the state just before another editor's change. Restoring one saves it again as the next Revision; nothing is lost.
@@ -44,10 +49,10 @@ Use these terms in code, UI copy, tickets and commit messages.
 
 - **Advanced Edit:** a CapCut-like workspace for one Candidate, opened from the clip editor: assets, player, inspector and a multi-track Timeline (on a phone: player, Timeline, a toolbar and bottom sheets). It edits the same Candidate, with undo and redo.
 - **Main Track:** the Clip's video in the Advanced Edit: its Segments, back to back.
-- **Segment:** a piece of the Main Track: a range of the Source, its ends snapped to Words; or part of a video from the Media Library (filled or fitted over its blur, with its own sound's volume, never captioned). A Clip that isn't cut is one Segment (`start` to `end`); with several, `start` and `end` are the hull of what they show. Word Edits and Layout Overrides apply in every Segment that shows their time (docs/adr/0002-segments-and-timeline-time.md).
+- **Segment:** a piece of the Main Track: a range of the Source, its ends snapped to Words; or part of a video from the Media Library (placed by its Framing, with its own sound's volume, never captioned). A Clip that isn't cut is one Segment (`start` to `end`); with several, `start` and `end` are the hull of what they show. Word Edits and Layout Overrides apply in every Segment that shows their time (docs/adr/0002-segments-and-timeline-time.md).
 - **Media Library:** the videos, songs and images the owner uploads for the Advanced Edit, kept for every Job, each normalized on upload. An item a Candidate uses can't be deleted.
 - **Music Clip:** part of a song (or of a video's sound) from the Media Library, heard under the Clip from a time in Timeline time, at its volume, faded in and out. The Clip's own sound has a volume too.
-- **Overlay:** a video or image from the Media Library laid over the Clip (picture in picture), in Timeline time: its place and width on the frame, its opacity, and a video's sound (muted by default). Drawn over the Segments and under the Watermark.
+- **Overlay:** a video or image from the Media Library laid over the Clip (picture in picture), in Timeline time: its Transform and Crop, its corners (a radius as a fraction of its shorter side), border and shadow, and a video's sound (muted by default). Drawn over the Segments and under the Watermark.
 - **Transition:** how one Segment gives way to the next at their join (a fade, a dip, a slide, a wipe, a zoom, a circle): the two overlap for its length (at most half the shorter), so the Clip is that much shorter. Not the Job's status history (`StatusChange`).
 - **Text Layer:** a free text overlay added in the Advanced Edit: its words (lines split at newlines), its time in Timeline time, its centre on the frame, and its own look and in/out animation. Drawn over the captions and under the hook.
 - **Pick:** the items picked on the Advanced Edit's Timeline or preview, which its actions and inspector act on: one or more Segments, Text Layers, Music Clips and Overlays, mixed; or the hook, the captions or a join, alone. Not Selection (the AI's) nor a Candidate selected for rendering. Kept in the editor only, never saved or undone; items removed by an undo or another editor drop out of it.
@@ -64,5 +69,8 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Zoom to fit:** zooming the Timeline so that the Pick fills it, or, with nothing picked, the whole Clip (1×). Never past the Timeline's deepest zoom.
 - **Edit Point:** a place on the Advanced Edit's Timeline where something starts or ends: a join of Segments, an edge of a Text Layer, Music Clip or Overlay, an edge of the hook, or either end of the Clip. ↑ and ↓ move the playhead to the one before or after it, skipping hidden Tracks.
 - **Skim:** the preview showing the frame under the pointer while it moves over the Advanced Edit's Timeline, the playhead staying where it is; with the pointer gone, the preview is back at the playhead. Switched with S and remembered by the browser; the Skim's sound is a second switch, off by default. Only while paused, and not on a phone.
+- **Grips:** the handles on a picked picture on the preview (an Overlay, a media Segment, or the Source in a Manual Scene): corners scale it about its centre, edges stretch it, the handle above it rotates it. One drag is one step of undo.
+- **Smart Guide:** a line shown while a picture is dragged, where its edge or centre meets an edge or centre of the frame, of another picture shown at the playhead, or a fixed guide; it snaps there (Alt: no snapping).
+- **Crop mode:** the preview showing a picked picture whole and dimmed, with handles on its edges and corners that move its Crop. Enter or a click outside keeps it; Escape drops it.
 - **Loop Region:** the stretch between the In and Out marks (set at the playhead with I and O) that playback repeats while Loop is on (L). Kept in the editor only: never saved, never undone.
 - **Timeline time:** seconds into the output Clip. What the Advanced Edit adds, and the hook, are anchored to it; Word Edits and Layout Overrides stay on the Source's timeline.
