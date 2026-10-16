@@ -1,5 +1,5 @@
 import { Pause, Play, SkipForward } from "lucide-react";
-import { createRef, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { createRef, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
   logoUrl,
   type Box,
@@ -66,8 +66,9 @@ const percent = (value: number) => `${value * 100}%`;
  * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move together
  * with the picked Overlays), moved, resized and retyped on the frame (StageEdit.tsx,
  * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
- * Advanced Edit's player), and the transport is a single row; with `rates` too, it offers the
- * playback rate.
+ * Advanced Edit's player), and the transport is a single row, ending with `tools`; with `rates` too,
+ * it offers the playback rate; with `hideBar`, that row fades out (full screen, while the pointer is
+ * still).
  */
 export function ClipPreview({
   src,
@@ -80,6 +81,8 @@ export function ClipPreview({
   fit = false,
   rates = false,
   blank = false,
+  tools,
+  hideBar = false,
 }: {
   src: string;
   preview: PreviewPlan | null;
@@ -92,6 +95,8 @@ export function ClipPreview({
   rates?: boolean;
   // Black where the Segments are (the Advanced Edit's Video Track hidden).
   blank?: boolean;
+  tools?: ReactNode;
+  hideBar?: boolean;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -245,7 +250,7 @@ export function ClipPreview({
         <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
           {frame}
         </div>
-        <Transport playback={playback} compact rates={rates} />
+        <Transport playback={playback} compact rates={rates} tools={tools} hidden={hideBar} />
       </div>
     );
   }
@@ -992,16 +997,34 @@ function runs(line: string, spans: [number, number][]): [string, boolean][] {
 }
 
 /**
- * Play and pause, a scrubber over the Clip, with `rates` the playback rate, and "Play clip" and "Play
- * ending" (not when `compact`).
+ * Play and pause, a scrubber over the Clip, the time, with `rates` the playback rate, and `tools`, and
+ * "Play clip" and "Play ending" (not when `compact`). While `hidden`, faded out, but shown again for
+ * the keyboard's focus.
  */
-function Transport({ playback, compact = false, rates = false }: { playback: Playback; compact?: boolean; rates?: boolean }) {
+function Transport({
+  playback,
+  compact = false,
+  rates = false,
+  tools,
+  hidden = false,
+}: {
+  playback: Playback;
+  compact?: boolean;
+  rates?: boolean;
+  tools?: ReactNode;
+  hidden?: boolean;
+}) {
   const playing = usePlayback(playback, (_, p) => p.playing);
   // Tenths of a second: enough for the label and the scrubber, and few re-renders.
   const tenths = usePlayback(playback, (time) => Math.round(time * 10));
   const duration = playback.duration;
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      className={cx(
+        "flex flex-col gap-2 motion-safe:transition-opacity motion-safe:duration-300",
+        hidden && "not-has-focus-visible:pointer-events-none not-has-focus-visible:opacity-0",
+      )}
+    >
       <div className="flex items-center gap-3">
         <Button variant="secondary" size="icon" onClick={() => playback.toggle()} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause aria-hidden size={18} /> : <Play aria-hidden size={18} />}
@@ -1020,6 +1043,7 @@ function Transport({ playback, compact = false, rates = false }: { playback: Pla
           {formatPrecise(Math.max(0, tenths / 10))} / {formatPrecise(duration)}
         </span>
         {rates && <RateMenu playback={playback} />}
+        {tools}
       </div>
       {!compact && (
         <div className="flex flex-wrap gap-2">
