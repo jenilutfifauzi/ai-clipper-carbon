@@ -15,6 +15,7 @@ from app.clips import Clip
 from app.config import Settings, load_settings
 from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_report, summary
 from app.jobs import DEFAULT_LANGUAGE, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.media import MEDIA_DIR, MediaStore
 from app.pipeline import Pipeline
 from app.ports import real_ports
 from app.profile import PROFILE_FILE, ProfileStore
@@ -68,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "gate":
         return _gate(args.report)
 
-    store = JobStore(settings.data_dir / "jobs")
+    media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
+    store = JobStore(settings.data_dir / "jobs", media.sizes)
     if args.command == "render":
         return _render(settings, store, args.job_id, args.candidate_ids or None)
     pipeline = Pipeline(store, real_ports(settings), settings)

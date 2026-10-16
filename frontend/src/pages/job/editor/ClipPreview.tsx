@@ -148,7 +148,7 @@ export function ClipPreview({
   // grabbed mustn't hold it again.
   useEffect(() => {
     if (!plan || !overlays || !overlayHold || overlayHold.dragging) return;
-    const event = plan.overlays[overlays.ids.indexOf(overlayHold.id)];
+    const event = plan.overlays.find((other) => other.id === overlayHold.id);
     if (!event || !heldArea(overlayHold, overlayHold.id, event)) setOverlayHold(null);
   }, [plan, overlays, overlayHold]);
   const edit = useStageEdit(
@@ -268,10 +268,10 @@ export function ClipPreview({
 // How far the picked items follow an Overlay of several picked that is being moved (not resized).
 function overlayDrift(plan: RenderPlan | null, overlays: OverlayControls | undefined, hold: OverlayHold | null, picked: string[]): Drift | null {
   if (!plan || !overlays || !hold || picked.length < 2 || !overlays.selected.includes(hold.id)) return null;
-  const event = plan.overlays[overlays.ids.indexOf(hold.id)];
+  const event = plan.overlays.find((other) => other.id === hold.id);
   const held = event && heldArea(hold, hold.id, event);
-  if (!held || held.width !== event.area.width) return null;
-  return { lead: `overlay:${hold.id}`, dx: held.x - event.area.x, dy: held.y - event.area.y };
+  if (!held || held.width !== event.picture.width) return null;
+  return { lead: `overlay:${hold.id}`, dx: held.x - event.picture.centre[0], dy: held.y - event.picture.centre[1] };
 }
 
 // The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.

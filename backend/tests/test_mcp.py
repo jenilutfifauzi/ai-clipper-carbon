@@ -322,6 +322,30 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
     assert f"no song or video with sound {"0" * 32}" in message
 
 
+@pytest.mark.anyio
+async def test_an_overlays_transform_is_merged_field_by_field_and_the_dry_run_lists_its_box(mcp, tmp_path):
+    # 320x180 fits as 1080x607.5: at 0.5, 540x304.
+    picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
+    item = await call(mcp, "add_asset", kind="media", path=str(picture))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    await call(mcp, "merge_candidate_items", **ids, overlays=[
+        {"id": "o1", "media": item["id"], "start": 0, "secs": 1, "transform": {"x": 300, "y": 500, "scale": 0.5, "opacity": 0.8}},
+    ])
+    merged = await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "transform": {"rotation": 90}}])
+    transform = merged["overlays"][0]["transform"]
+    assert (transform["x"], transform["y"], transform["scale"], transform["opacity"], transform["rotation"]) == (300, 500, 0.5, 0.8, 90)
+    assert "size" in await fails(mcp, "edit_candidate", **ids, changes={"overlays": [{"id": "o1", "media": item["id"], "start": 0, "secs": 1, "size": 540}]})
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
+    # Turned a quarter, its 540x304 box stands 304x540 about its centre.
+    assert plan["overlays"] == [
+        {"id": "o1", "media": item["id"], "start": 0, "end": 1, "bounds": {"x": 148, "y": 230, "width": 304, "height": 540}, "rotation": 90, "opacity": 0.8},
+    ]
+
+
 # 08: agent guidance
 
 

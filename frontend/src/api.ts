@@ -414,30 +414,58 @@ export interface AudioEvent {
   fade_out: number;
 }
 
+// Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
+// centre (x, y) in output pixels, on the frame; `scale` times its fitted size (the largest that fits
+// the frame keeping its aspect: 1 fits, 0.05 to 8); `stretch_x` and `stretch_y` on top of that (0.1
+// to 10); `rotation` in degrees clockwise (-360 to 360); its flips and its opacity.
+export interface Transform {
+  x: number;
+  y: number;
+  scale: number;
+  stretch_x: number;
+  stretch_y: number;
+  rotation: number;
+  flip_h: boolean;
+  flip_v: boolean;
+  opacity: number;
+}
+
 // A video or image from the Media Library laid over the Clip: from `start` for `secs` in Timeline
-// time (a video from `offset` into it), centred on (x, y), `size` pixels wide, at `opacity`, a
-// video's sound at `volume` (0, muted, by default).
+// time (a video from `offset` into it), placed by its Transform, a video's sound at `volume` (0,
+// muted, by default).
 export interface Overlay {
   id: string;
   media: string;
   start: number;
   secs: number;
   offset: number;
-  x: number;
-  y: number;
-  size: number;
-  opacity: number;
+  transform: Transform;
   volume: number;
 }
 
-// An Overlay as drawn: scaled into `area`, from `start` to `end`; `image` for a still.
+// A picture as drawn (backend/app/planner.py): its item's pixels in `crop` (for now the whole item)
+// scaled to `width` x `height`, flipped, turned `rotation` degrees clockwise about `centre`, at
+// `opacity`; `bounds` holds it once turned, and may go past the frame's edges.
+export interface Picture {
+  crop: Box;
+  width: number;
+  height: number;
+  centre: [number, number];
+  rotation: number;
+  flip_h: boolean;
+  flip_v: boolean;
+  opacity: number;
+  bounds: Box;
+}
+
+// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still.
 export interface OverlayEvent {
+  id: string;
   media: string;
-  area: Box;
+  picture: Picture;
   start: number;
   end: number;
   offset: number;
-  opacity: number;
   image: boolean;
 }
 

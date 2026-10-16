@@ -100,10 +100,7 @@ const overlay = (id: string, start: number, secs: number): Overlay => ({
   start,
   secs,
   offset: 0,
-  x: 540,
-  y: 400,
-  size: 300,
-  opacity: 1,
+  transform: { x: 540, y: 400, scale: 0.3, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1 },
   volume: 0,
 });
 
@@ -380,7 +377,7 @@ describe("moving a Pick on the preview", () => {
     const pick = picked(text("a"), { kind: "overlay", id: "o" });
 
     expect(nudge(scene(before, pick), 100, -50)).toEqual({
-      edits: { ...before, text_layers: [layer("a", 0, 2, { x: 640, y: 910 }), layer("b", 0, 2, { x: 200 })], overlays: [{ ...overlay("o", 0, 2), x: 640, y: 350 }] },
+      edits: { ...before, text_layers: [layer("a", 0, 2, { x: 640, y: 910 }), layer("b", 0, 2, { x: 200 })], overlays: [{ ...overlay("o", 0, 2), transform: { ...overlay("o", 0, 2).transform, x: 640, y: 350 } }] },
       pick,
     });
   });

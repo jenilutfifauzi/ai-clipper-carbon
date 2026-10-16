@@ -1,32 +1,32 @@
 import { useEffect, useRef, type PointerEvent } from "react";
-import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type RenderPlan } from "../../../api";
+import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type RenderPlan, type Transform } from "../../../api";
 import { cx } from "../../../format";
 import { follow } from "./follow";
+import { clamp, FRAME, SCALE_RANGE } from "./picture";
+import { PicturePanel } from "./PicturePanel";
 import { useShown, type Playback } from "./playback";
 import type { Drift } from "./StageEdit";
-
-const percent = (value: number) => `${value * 100}%`;
 
 /** The Advanced Edit's hold on the Overlays in the preview: which are picked, and what a drag does. */
 export interface OverlayControls {
   selected: string[];
-  // The Overlays' ids, in the plan's order.
-  ids: string[];
+  // The Overlay's Transform as saved, by its id: what a drag starts from.
+  transformOf: (id: string) => Transform | undefined;
   // Picked alone, or (`toggle`: a click with Shift, Cmd or Ctrl) added to the Pick or taken out of it.
   onSelect: (id: string, toggle: boolean) => void;
-  // Dragged to centre (x, y), and resized to `size` pixels wide, in output pixels; each drag one `group`.
-  onPlace: (id: string, place: { x: number; y: number; size?: number }, group: string) => void;
+  // Dragged to centre (x, y) in output pixels, and resized to `scale`; each drag one `group`.
+  onPlace: (id: string, place: { x: number; y: number; scale?: number }, group: string) => void;
 }
 
 /**
- * Where a dragged Overlay is drawn, in output pixels, until the plan has it there: `from` is the
- * plan's area for it when it was put there (`overlayKey`), and it is held while `dragging` or until a
- * plan with another area comes.
+ * Where a dragged Overlay is drawn, in output pixels, until the plan has it there: centred on (x, y),
+ * `width` x `height` before it is turned. `from` is the plan's place for it when it was put there
+ * (`overlayKey`), and it is held while `dragging` or until a plan with another place comes.
  */
 export type OverlayHold = { id: string; x: number; y: number; width: number; height: number; from: string; dragging: boolean };
 
-// A plan's area for an Overlay, as a key: what a held place is kept until.
-export const overlayKey = (event: OverlayEvent) => `${event.area.x},${event.area.y},${event.area.width}`;
+// A plan's place for an Overlay, as a key: what a held place is kept until.
+export const overlayKey = ({ picture }: OverlayEvent) => `${picture.centre.join(",")},${picture.width}`;
 
 // The held place of the Overlay drawn by `event`, if it is still held.
 export const heldArea = (hold: OverlayHold | null, id: string, event: OverlayEvent) =>
@@ -36,11 +36,12 @@ let drags = 0;
 
 /**
  * The plan's Overlays while they show, over the Source's (and videos') pictures and under the
- * captions: an image, or a video's small copy playing in step with the playback (muted: its sound,
- * when turned up, plays with the music). With `controls`, one is picked by a click (with Shift, Cmd or
- * Ctrl, added to the Pick), dragged to a new place and, picked alone, resized by its corner; it is
- * drawn where it is put (`hold`) until the plan has it there. Picked ones that follow another moved
- * item are drawn as far from their places (`drift`).
+ * captions, each drawn as its Picture: an image, or a video's small copy playing in step with the
+ * playback (muted: its sound, when turned up, plays with the music). With `controls`, one is picked
+ * by a click (with Shift, Cmd or Ctrl, added to the Pick), dragged to a new place (its centre kept on
+ * the frame) and, picked alone, resized about its centre by its corner; it is drawn where it is put
+ * (`hold`) until the plan has it there. Picked ones that follow another moved item are drawn as far
+ * from their places (`drift`).
  */
 export function PreviewOverlays({
   plan,
@@ -68,7 +69,11 @@ export function PreviewOverlays({
     kind: "move" | "size";
     x: number;
     y: number;
-    area: OverlayEvent["area"];
+    // The picture's centre and size, and its Transform's scale, when it was grabbed.
+    centre: [number, number];
+    width: number;
+    height: number;
+    scale: number;
     group: string;
     moved: boolean;
     together: boolean;
@@ -84,15 +89,22 @@ export function PreviewOverlays({
   return (
     <>
       {plan.overlays.map((event, i) => {
-        const id = controls?.ids[i] ?? String(i);
+        const id = event.id;
         const selected = controls?.selected.includes(id) ?? false;
         const follows = selected && !!drift && drift.lead !== `overlay:${id}`;
-        const area = heldArea(hold, id, event) ?? (follows ? { ...event.area, x: event.area.x + drift!.dx, y: event.area.y + drift!.dy } : event.area);
+        const held = heldArea(hold, id, event);
+        const [x, y] = event.picture.centre;
+        const picture: Picture = held
+          ? { ...event.picture, centre: [held.x, held.y], width: held.width, height: held.height }
+          : follows
+            ? { ...event.picture, centre: [x + drift!.dx, y + drift!.dy] }
+            : event.picture;
         const alone = selected && picked.length === 1;
         const handlers = controls && {
           onPointerDown: (pointer: PointerEvent<HTMLDivElement>) => {
             const at = point(pointer);
-            if (!at || pointer.button !== 0) return;
+            const transform = controls.transformOf(id);
+            if (!at || !transform || pointer.button !== 0) return;
             pointer.preventDefault();
             pointer.stopPropagation();
             if (pointer.shiftKey || pointer.metaKey || pointer.ctrlKey) {
@@ -103,25 +115,30 @@ export function PreviewOverlays({
             const together = selected && picked.length > 1;
             if (!together) controls.onSelect(id, false);
             const kind = (pointer.target as HTMLElement).dataset.corner ? "size" : "move";
-            drag.current = { id, pointer: pointer.pointerId, kind, ...at, area: { ...area }, group: `drag:overlay:${++drags}`, moved: false, together };
+            drag.current = {
+              id, pointer: pointer.pointerId, kind, ...at, centre: picture.centre, width: picture.width, height: picture.height,
+              scale: transform.scale, group: `drag:overlay:${++drags}`, moved: false, together,
+            };
           },
           onPointerMove: (pointer: PointerEvent<HTMLDivElement>) => {
             const current = drag.current;
             const at = point(pointer);
             if (!current || current.pointer !== pointer.pointerId || !at || !plan) return;
             current.moved = true;
-            const { area: from } = current;
+            const [centreX, centreY] = current.centre;
+            const from = overlayKey(event);
             if (current.kind === "move") {
-              const x = Math.round(from.x + at.x - current.x);
-              const y = Math.round(from.y + at.y - current.y);
-              onHold({ id, x, y, width: from.width, height: from.height, from: overlayKey(event), dragging: true });
-              controls.onPlace(id, { x: Math.round(x + from.width / 2), y: Math.round(y + from.height / 2) }, current.group);
+              const x = Math.round(clamp(centreX + at.x - current.x, [0, FRAME.width]));
+              const y = Math.round(clamp(centreY + at.y - current.y, [0, FRAME.height]));
+              onHold({ id, x, y, width: current.width, height: current.height, from, dragging: true });
+              controls.onPlace(id, { x, y }, current.group);
             } else {
-              // From its top-left corner: the bottom-right one sets its width, keeping its shape.
-              const width = Math.max(32, Math.min(plan.width, Math.round(from.width + at.x - current.x)));
-              const height = Math.round((width * from.height) / from.width);
-              onHold({ id, x: from.x, y: from.y, width, height, from: overlayKey(event), dragging: true });
-              controls.onPlace(id, { x: Math.round(from.x + width / 2), y: Math.round(from.y + height / 2), size: width }, current.group);
+              // About its centre: by how much further from it the pointer is than when it was grabbed.
+              const grabbed = Math.hypot(current.x - centreX, current.y - centreY) || 1;
+              const scale = clamp((current.scale * Math.hypot(at.x - centreX, at.y - centreY)) / grabbed, SCALE_RANGE);
+              const grown = scale / current.scale;
+              onHold({ id, x: centreX, y: centreY, width: current.width * grown, height: current.height * grown, from, dragging: true });
+              controls.onPlace(id, { x: centreX, y: centreY, scale: Number(scale.toFixed(4)) }, current.group);
             }
           },
           onPointerUp: (pointer: PointerEvent<HTMLDivElement>) => {
@@ -134,7 +151,7 @@ export function PreviewOverlays({
           },
         };
         return (
-          <OverlayView key={`${i}:${event.media}`} plan={plan} event={event} area={area} playback={playback} selected={selected}>
+          <OverlayView key={`${i}:${event.media}`} plan={plan} event={event} picture={picture} playback={playback} selected={selected}>
             {handlers && (
               <div
                 role="button"
@@ -163,18 +180,18 @@ export function PreviewOverlays({
   );
 }
 
-/** One Overlay in `area`, shown while the Clip's time is in it. */
+/** One Overlay drawn as `picture`, shown while the Clip's time is in it. */
 function OverlayView({
   plan,
   event,
-  area,
+  picture,
   playback,
   selected,
   children,
 }: {
   plan: RenderPlan;
   event: OverlayEvent;
-  area: { x: number; y: number; width: number; height: number };
+  picture: Picture;
   playback: Playback;
   // Selected, it is shown faintly outside its time too, to be placed.
   selected: boolean;
@@ -192,24 +209,20 @@ function OverlayView({
   }, [playback, event]);
 
   return (
-    <div
-      className="absolute"
-      style={{
-        left: percent(area.x / plan.width),
-        top: percent(area.y / plan.height),
-        width: percent(area.width / plan.width),
-        height: percent(area.height / plan.height),
-        visibility: shown || selected ? "visible" : "hidden",
-      }}
-    >
-      <div className="size-full" style={{ opacity: shown ? event.opacity : 0.25 }}>
-        {event.image ? (
+    <PicturePanel
+      picture={picture}
+      frame={plan}
+      hidden={!shown && !selected}
+      faded={shown ? undefined : 0.25}
+      media={
+        event.image ? (
           <img src={mediaItemUrl(event.media)} alt="" draggable={false} className="size-full object-fill" />
         ) : (
           <video ref={video} src={mediaProxyUrl(event.media)} muted playsInline preload="auto" className="size-full object-fill" />
-        )}
-      </div>
+        )
+      }
+    >
       {children}
-    </div>
+    </PicturePanel>
   );
 }
