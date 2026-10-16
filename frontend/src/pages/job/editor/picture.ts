@@ -137,7 +137,7 @@ export function overlaysAt(plan: RenderPlan, time: number): RenderPlan["overlays
   return plan.overlays.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time) } : event));
 }
 
-/** The plan's Scenes as drawn at `time`: each keyed picture (a video Segment's) sampled there (`pictureAt`). */
+/** The plan's Scenes as drawn at `time`: each keyed picture (a video Segment's or a Manual Scene's) sampled there (`pictureAt`). */
 export function scenesAt(plan: RenderPlan, time: number): RenderPlan["scenes"] {
   return plan.scenes.map((scene) => (scene.picture && isKeyed(scene.picture) ? { ...scene, picture: pictureAt(scene.picture, time) } : scene));
 }

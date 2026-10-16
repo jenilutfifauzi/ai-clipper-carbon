@@ -9,7 +9,7 @@ import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { heldTransform, keyableOf, keyedItem, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeSceneTransform } from "./keying";
+import { heldTransform, keyableOf, keyedItem, manualSceneAt, pickedKeyed, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeSceneTransform } from "./keying";
 import { picked } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -56,6 +56,14 @@ describe("a Keyframe edit on a Manual Scene", () => {
     expect(toggleItemKey(keying(), AGAIN, "x", 9.5)).toBeNull();
     // An unkeyed field is its constant, set as such.
     expect(writeItemKey(keying(), FIRST, "scale", 0.8, 4)?.edits.layout_overrides[0]).toMatchObject({ keys: { x: pan }, framing: { transform: { scale: 0.8 } } });
+  });
+
+  test("a Segment of the Source picked is its Manual Scene under the playhead, for K, [ ], the ruler and the pane", () => {
+    const pick = picked({ kind: "segment", id: "b" });
+    expect(manualSceneAt(edits(), plan, "b", 11)).toBe(2);
+    expect(manualSceneAt(edits(), plan, "a", 1)).toBeNull();
+    expect(pickedKeyed(pick, 2)).toEqual(AGAIN);
+    expect(pickedKeyed(pick)).toEqual({ kind: "segment", id: "b" });
   });
 
   test("the Candidate's own Manual Framing, a stale plan and a locked Video Track have none", () => {

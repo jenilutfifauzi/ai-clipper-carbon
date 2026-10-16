@@ -1,5 +1,5 @@
 import { Pause, Play, Repeat, SkipForward } from "lucide-react";
-import { createRef, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { createRef, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
   logoUrl,
   type Box,
@@ -20,7 +20,7 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { hasKeyedPictures, overlaysAt, pictureStyle, scenesAt, slotView } from "./picture";
+import { hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -284,7 +284,7 @@ export function ClipPreview({
 }
 
 /**
- * The time a plan with keyed pictures (an Overlay's or a video Segment's) has them sampled at for the
+ * The time a plan with keyed pictures (an Overlay's, a video Segment's or a Manual Scene's) has them sampled at for the
  * stage: the playhead's while paused, and the last one paused at while playing; null without any.
  */
 function useKeyedTime(plan: RenderPlan | null, playback: Playback): number | null {
@@ -714,7 +714,8 @@ function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEv
  * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point;
  * or, in a Manual Scene (`slotView`), its picture placed as PicturePanel places one, or its
  * Background's colour. A `hidden` one (its deck parked) is still drawn, transparent, so that its
- * frame is ready.
+ * frame is ready. A keyed Manual picture (ADR 0008) moves as PicturePanel moves one: sampled at the
+ * time shown on every frame of the playback's clock, its box and opacity written to it directly.
  */
 export function PanelView({
   videoRef,
@@ -744,8 +745,21 @@ export function PanelView({
     return index;
   });
   const parked = hidden ? { opacity: 0 } : {};
+  const boxRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const moving = plan && picture && isKeyed(picture) ? picture : null;
+  useLayoutEffect(() => {
+    if (!moving || !plan) return;
+    const paint = () => {
+      const { left, top, width, height, transform, opacity } = pictureStyle(pictureAt(moving, playback.shownTime), plan);
+      if (boxRef.current) Object.assign(boxRef.current.style, { left, top, width, height, transform });
+      if (layerRef.current) layerRef.current.style.opacity = String(opacity);
+    };
+    paint();
+    return playback.subscribe(paint);
+  }, [moving, plan, playback]);
   if (plan && picture) {
-    const { inner, opacity, transform, left, top, width, height } = pictureStyle(picture, plan);
+    const { inner, opacity, transform, left, top, width, height } = pictureStyle(moving ? pictureAt(moving, playback.shownTime) : picture, plan);
     return (
       <SlotVideo
         videoRef={videoRef}
@@ -754,6 +768,8 @@ export function PanelView({
         box={{ left, top, width, height, transform, ...parked }}
         layer={{ overflow: "hidden", opacity }}
         video={inner}
+        boxRef={boxRef}
+        layerRef={layerRef}
       />
     );
   }
@@ -793,6 +809,8 @@ function SlotVideo({
   box,
   layer,
   video,
+  boxRef,
+  layerRef,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   src: string;
@@ -800,10 +818,12 @@ function SlotVideo({
   box: CSSProperties;
   layer?: CSSProperties;
   video: CSSProperties;
+  boxRef?: React.RefObject<HTMLDivElement>;
+  layerRef?: React.RefObject<HTMLDivElement>;
 }) {
   return (
-    <div className="absolute" style={box}>
-      <div className="absolute inset-0" style={layer}>
+    <div ref={boxRef} className="absolute" style={box}>
+      <div ref={layerRef} className="absolute inset-0" style={layer}>
         <video ref={videoRef} src={src} muted={muted} playsInline preload="auto" className="absolute max-w-none object-fill" style={video} />
       </div>
     </div>
