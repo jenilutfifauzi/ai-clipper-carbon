@@ -1,13 +1,13 @@
 import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, Transform } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
-import { clearKeys, PICTURE_KEYS, shownTransform, toggleKey, valueAt, writeKey, writtenTransform } from "../editor/keyframes";
+import { clearKeys, keysAround, moveKeysAt, PICTURE_KEYS, shownTransform, toggleKey, valueAt, writeKey, writtenTransform } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
-import type { LayoutEdits } from "../editor/manual";
+import { sourceSceneAt, type LayoutEdits } from "../editor/manual";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { TRACK_OF, type Pick } from "./pick";
+import { onlyItem, TRACK_OF, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
 
 /**
@@ -212,6 +212,59 @@ export function writeItemTransform(scene: KeyScene, id: string, next: Transform,
 }
 
 /**
+ * Item `ref`'s ruler diamond at `from` dragged to `to` (both Timeline time): every Keyframe at that
+ * instant moved there together (see moveKeysAt), on the Clip's frames at `fps`, with the time they
+ * went to. The edits themselves when they stay where they are; null when there are none there, or
+ * the item is gone or locked.
+ */
+export function moveItemKeys(scene: KeyScene, ref: KeyedRef, from: number, to: number, fps: number): (Outcome & { at: number }) | null {
+  const item = itemIn(scene, ref);
+  const moved = item && moveKeysAt(item.keys, from - item.start, to - item.start, { secs: item.secs, fps, start: item.start });
+  if (!item || !moved) return null;
+  const at = Math.round((item.start + moved.at) * 1e6) / 1e6;
+  if (moved.keys === item.keys) return { edits: scene.edits, pick: scene.pick, at };
+  // Its constants stay as they are: the first keyed property's is put back as it was.
+  const [prop] = Object.keys(moved.keys) as KeyProperty[];
+  return { edits: withKeyed(scene.edits, ref, moved.keys, prop, item.constant(prop), scene.plan), pick: scene.pick, at };
+}
+
+// The shortcuts (K, [ and ]) work on the one item picked, as the ruler's diamonds do.
+
+/**
+ * The item the Pick is when it is one of a kind that can have Keyframes, else null. (A Segment of
+ * the Source can't: keyedItem has none for it.) A Segment of the Source picked with its Manual
+ * Scene `scene` under the playhead (`manualSceneAt`) is that Manual Scene.
+ */
+export function pickedKeyed(pick: Pick, scene: number | null = null): KeyedRef | null {
+  const item = onlyItem(pick);
+  if (item?.kind === "segment" && scene !== null) return sceneRef(scene);
+  return item && item.kind !== "text" ? { kind: item.kind, id: item.id } : null;
+}
+
+/**
+ * The plan's Scene under `time` (Timeline time) in Segment `id` of the edits' Main Track when it is
+ * a Manual Scene framed by its own Layout Override, which can have Keyframes; else null.
+ */
+export function manualSceneAt(edits: LayoutEdits & { segments: ClipSegment[] }, plan: RenderPlan, id: string, time: number): number | null {
+  const index = edits.segments.findIndex((segment) => segment.id === id);
+  const scene = index === -1 ? null : sourceSceneAt(plan, index, edits.segments.length, time);
+  return scene !== null && manualScene(edits.layout_overrides, plan, scene) ? scene : null;
+}
+
+/**
+ * Where [ (`direction` -1) or ] (1) takes the playhead from `time`: to `item`'s Keyframe of any
+ * property before or after it (beyond half a frame), in Timeline time; null when there is none.
+ */
+export function keyAround(item: KeyedItem, time: number, direction: -1 | 1): number | null {
+  const all = Object.values(item.keys)
+    .flat()
+    .sort((a, b) => a.at - b.at);
+  const { before, after } = keysAround(all, time - item.start);
+  const at = direction < 0 ? before : after;
+  return at === null ? null : Math.round((item.start + at) * 1e6) / 1e6;
+}
+
+/**
  * Video Segment `id`'s Framing's Transform changed to `next` with the playhead at `time`, from what
  * was `shown` there (see writtenTransform): on the stage, by its Grips. Null for one that isn't
  * there or is locked.
@@ -292,6 +345,13 @@ export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_
   if (ref.kind === "music") return ["volume"];
   if (ref.kind === "scene") return [...PICTURE_KEYS];
   return media?.kind === "video" && media.has_audio ? [...PICTURE_KEYS, "volume"] : [...PICTURE_KEYS];
+}
+
+/** The rows of item `ref` of `edits` (keyableOf), its Media Library item looked up in `mediaById`. */
+export function keyRows(edits: AdvancedEdits, ref: KeyedRef, mediaById: Map<string, MediaItem>): KeyProperty[] {
+  const list = ref.kind === "overlay" ? edits.overlays : ref.kind === "segment" ? edits.segments : [];
+  const id = list.find((other) => other.id === ref.id)?.media;
+  return keyableOf(ref, id ? mediaById.get(id) : undefined);
 }
 
 /**

@@ -45,6 +45,9 @@ export function commandsOf(
     fps: number;
     // The preview put full screen, or back.
     setFullscreen: (on: boolean) => void;
+    // While the Pick is one item that can have Keyframes: a Keyframe added or removed at the
+    // playhead on its active row (K), and where its Keyframe before or after `time` is ([ and ]).
+    keyframes: { toggle: () => boolean | void; around: (time: number, direction: -1 | 1) => number | null } | null;
   },
 ): Commands {
   // The picked Text Layers, Music Clips and Overlays moved `frames` frames; a run of presses is
@@ -62,6 +65,15 @@ export function commandsOf(
     if (point === null) return;
     if (playback.playing) playback.pause();
     playback.seek(Math.min(onFrame(point, more.fps), lastFrame(playback.duration, more.fps)));
+  };
+  // The playhead to the picked item's Keyframe before (-1) or after (1) it, paused; it stays where it
+  // is when there is none. Exactly there, not on the frame grid, so that its ‹ ◆ › show it.
+  const key = (direction: -1 | 1) => {
+    if (!more.keyframes) return false;
+    const at = more.keyframes.around(playback.time, direction);
+    if (at === null) return;
+    if (playback.playing) playback.pause();
+    playback.seek(at);
   };
   return {
     play: () => playback.toggle(),
@@ -84,6 +96,9 @@ export function commandsOf(
     end: () => playback.seek(lastFrame(playback.duration, more.fps)),
     "edit-point-previous": () => jump(previousEditPoint),
     "edit-point-next": () => jump(nextEditPoint),
+    "key-previous": () => key(-1),
+    "key-next": () => key(1),
+    "key-toggle": () => (more.keyframes ? more.keyframes.toggle() : false),
     "move-back": () => move(-1),
     "move-forward": () => move(1),
     "move-back-10": () => move(-10),

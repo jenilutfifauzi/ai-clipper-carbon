@@ -14,6 +14,7 @@ import {
   editPoints,
   filmstripTiles,
   gainAt,
+  keyMarks,
   nextEditPoint,
   peaksExtremes,
   peaksLevel,
@@ -486,6 +487,24 @@ describe("the Volume Line", () => {
 
   test("a volume's height gives the volume back", () => {
     for (const volume of [0, 0.05, 0.25, 0.61, 1, 1.37, 1.99, 2]) expect(volumeOfHeight(volumeHeight(volume))).toBe(volume);
+  });
+});
+
+describe("the ruler's diamonds (.scratch/keyframes/spec.md)", () => {
+  const key = (at: number, value = 1): Keyframe => ({ at, value, ease: LINEAR });
+
+  test("one per instant of the picked item, every property together, at their Timeline times, in order", () => {
+    const item = { start: 2, keys: { x: [key(0, 200), key(3, 500)], scale: [key(1), key(3)], opacity: [key(4.5, 0)] } };
+    expect(keyMarks(item)).toEqual([2, 3, 5, 6.5]);
+  });
+
+  test("Keyframes within half a frame of one another are one diamond, at the first of them", () => {
+    const item = { start: 1, keys: { x: [key(1)], y: [key(1.012)], scale: [key(1.03)] } };
+    expect(keyMarks(item)).toEqual([2, 2.03]);
+  });
+
+  test("an item without Keyframes has none", () => {
+    expect(keyMarks({ start: 1, keys: {} })).toEqual([]);
   });
 });
 

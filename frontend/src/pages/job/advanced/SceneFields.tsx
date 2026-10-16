@@ -1,14 +1,18 @@
 import { Crop as CropIcon } from "lucide-react";
-import type { Framing, Layout, RenderPlan } from "../../../api";
+import type { Crop, Framing, Layout, RenderPlan, Transform } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { forAllScenes, framingSource, reframed, sceneLayoutOverrides, sourceSceneAt, withClipLayout, withSceneFraming, type LayoutEdits } from "../editor/manual";
 import { offeredLayouts, portraitSource, shownLayout } from "../editor/layouts";
+import { PICTURE_KEYS, shownTransform } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import { usePlayback, type Playback } from "../editor/playback";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { Group } from "../editor/StyleFields";
+import { useKeyTime } from "./KeyCluster";
+import { keyTime, manualScene, sceneRef, withSceneTransform } from "./keying";
+import { keyedGroup } from "./Overlays";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
 const LAYOUTS: readonly { value: Layout; label: string }[] = [
@@ -29,6 +33,11 @@ const NAMES: Record<Layout, string> = { auto: "Auto", track: "Track", split: "Sp
  * used for all Scenes) or the clip's ("All Scenes", which can be split off for this Scene only).
  * Each field is one group of the history, named after the Framing's owner and the field. A portrait
  * episode is shown as it was shot (Auto, "As shot") unless a Scene is framed by hand.
+ *
+ * A Scene's own Manual Framing can be keyed (ADR 0008): its Transform is shown as it is at the
+ * playhead, its X, Y, Scale, Rotation and Opacity have their ‹ ◆ ›, a keyed one is set as a Keyframe
+ * there (in seconds from its Scene's start on the Source's timeline), and Reset drops them. The
+ * clip's Framing, every Scene's without its own, has none.
  */
 export function SceneFields<T extends LayoutEdits>({
   plan,
@@ -49,6 +58,7 @@ export function SceneFields<T extends LayoutEdits>({
   onCropMode?: () => void;
 }) {
   const at = usePlayback(playback, (time) => (plan ? sourceSceneAt(plan, index, count, time) : null));
+  const time = useKeyTime(playback);
   if (!plan) return null;
   const scene = at === null ? undefined : plan.scenes[at];
   if (at === null || !scene) {
@@ -67,6 +77,25 @@ export function SceneFields<T extends LayoutEdits>({
   // The history group of a field of the Framing, by where it is kept: the override's time, or the clip.
   const owner = source?.own ? `layout:${source.own.at}` : "layout:clip";
   const setFraming = (framing: Framing, field: string) => apply(withSceneFraming(edits, plan, at, framing), `${owner}:${field}`);
+  // Its own override's Keyframes, and its Transform as it is at the playhead (held at its ends outside it).
+  const keyed = source?.own ? manualScene(edits.layout_overrides, plan, at) : null;
+  const keyAt = keyed && keyTime(keyed, time);
+  const shown = keyed
+    ? shownTransform(keyed.framing.transform, keyed.keys, keyAt ?? Math.min(Math.max(time - keyed.start, keyed.first), keyed.secs))
+    : source?.framing.transform;
+  const setTransform = (transform: Transform, field: string) => {
+    if (!keyed || !source?.own) return setFraming({ ...source!.framing, transform }, `transform.${field}`);
+    const written = !!keyed.keys[field as keyof typeof keyed.keys]?.length;
+    apply(withSceneTransform(edits, plan, at, transform, time, shown), keyedGroup(`${owner}:transform.${field}`, written, keyAt));
+  };
+  // Reset (a Crop with a Transform) drops its Transform's Keyframes as well.
+  const setCrop = (crop: Crop, field: string, transform?: Transform) => {
+    const framing = { ...source!.framing, crop, transform: transform ?? source!.framing.transform };
+    const own = source!.own;
+    if (!transform || !own?.keys || !PICTURE_KEYS.some((prop) => own.keys?.[prop]?.length)) return setFraming(framing, `crop.${field}`);
+    const layout_overrides = edits.layout_overrides.map((override) => (override === own ? { ...own, framing, keys: {} } : override));
+    apply({ ...edits, layout_overrides }, `${owner}:crop.${field}`);
+  };
   return (
     <Group title={`Scene ${at + 1} at the playhead`}>
       <Select
@@ -88,13 +117,14 @@ export function SceneFields<T extends LayoutEdits>({
             </Button>
           </div>
           <TransformFields
-            transform={source.framing.transform}
+            transform={shown ?? source.framing.transform}
             crop={source.framing.crop}
             size={{ width: plan.source_width, height: plan.source_height }}
             defaults={IDENTITY}
-            onChange={(transform, field) => setFraming({ ...source.framing, transform }, `transform.${field}`)}
-            onCrop={(crop, field, transform) => setFraming({ ...source.framing, crop, transform: transform ?? source.framing.transform }, `crop.${field}`)}
+            onChange={setTransform}
+            onCrop={setCrop}
             onCropMode={onCropMode}
+            keyed={keyed ? { item: sceneRef(at), keys: keyed.keys, inside: keyAt !== null } : undefined}
           />
           <BackgroundFields background={source.framing.background} onChange={(background, field) => setFraming({ ...source.framing, background }, `background.${field}`)} />
         </>

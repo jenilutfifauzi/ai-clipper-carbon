@@ -1,7 +1,7 @@
 // Seam D (.scratch/keyframes/spec.md): Keyframe edits on the items of the edits, one change each,
 // at the playhead in the item's own seconds, and refused on a locked Track.
 import { describe, expect, test } from "vitest";
-import type { MusicClip, Overlay } from "../../../api";
+import type { MediaItem, MusicClip, Overlay } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
@@ -10,8 +10,12 @@ import {
   activeKey,
   clearItemKeys,
   keyableOf,
+  keyAround,
   keyedItem,
+  keyRows,
   keyTime,
+  moveItemKeys,
+  pickedKeyed,
   resetOverlay,
   setItemKeys,
   stageTransform,
@@ -152,11 +156,51 @@ describe("a Keyframe edit on an item", () => {
     expect(stageTransform(still, 3)).toBe(still.transform);
   });
 
+  test("a ruler diamond dragged moves every Keyframe at its instant, in Timeline time, as one change", () => {
+    const keyed = edits({ overlays: [overlay({ keys: { x: [{ at: 1, value: 100, ease: LINEAR }], scale: [{ at: 1, value: 2, ease: EASE_IN }] } })] });
+    const moved = moveItemKeys(scene(keyed), O, 3, 4.51, 30);
+    expect(moved?.at).toBe(4.5);
+    expect(moved?.edits.overlays[0].keys).toEqual({ x: [{ at: 2.5, value: 100, ease: LINEAR }], scale: [{ at: 2.5, value: 2, ease: EASE_IN }] });
+    expect(moveItemKeys(scene(keyed), O, 4, 5, 30)).toBeNull();
+    expect(moveItemKeys(scene(keyed, ["overlay"]), O, 3, 4, 30)).toBeNull();
+  });
+
   test("names what an item can key and its constants", () => {
     const item = keyedItem(edits(), O)!;
     expect([item.start, item.secs, item.constant("x"), item.constant("volume")]).toEqual([2, 4, 300, 0]);
     expect(keyedItem(edits(), M)?.constant("volume")).toBe(0.8);
     expect(keyedItem(edits(), { kind: "overlay", id: "gone" })).toBeNull();
+  });
+});
+
+describe("the shortcuts' item", () => {
+  test("the item is the Pick when it is one Overlay, Music Clip or Segment", () => {
+    expect(pickedKeyed(picked(O))).toEqual(O);
+    expect(pickedKeyed(picked(M))).toEqual(M);
+    expect(pickedKeyed(picked({ kind: "segment", id: "s" }))).toEqual({ kind: "segment", id: "s" });
+    expect(pickedKeyed(picked(O, M))).toBeNull();
+    expect(pickedKeyed(picked({ kind: "text", id: "t" }))).toBeNull();
+    expect(pickedKeyed({ kind: "hook" })).toBeNull();
+    expect(pickedKeyed(null)).toBeNull();
+  });
+
+  test("K's rows are what the item can key, by its Media Library item", () => {
+    const library = new Map([["logo", { kind: "image", has_audio: false } as MediaItem]]);
+    expect(keyRows(edits(), O, library)).toEqual(["x", "y", "scale", "rotation", "opacity"]);
+    expect(keyRows(edits(), M, library)).toEqual(["volume"]);
+  });
+
+  test("[ and ] go to the item's previous and next Keyframe of any property, in Timeline time", () => {
+    const item = keyedItem(edits({ overlays: [overlay({ keys: { x: [{ at: 0, value: 1, ease: LINEAR }, { at: 3, value: 2, ease: LINEAR }], scale: [{ at: 1.5, value: 1, ease: LINEAR }] } })] }), O)!;
+    expect(keyAround(item, 3, -1)).toBe(2);
+    expect(keyAround(item, 3, 1)).toBe(3.5);
+    // On a Keyframe (within half a frame), the one before or after it.
+    expect(keyAround(item, 3.5, -1)).toBe(2);
+    expect(keyAround(item, 3.51, 1)).toBe(5);
+    expect(keyAround(item, 5.01, 1)).toBeNull();
+    // From before the item, its first.
+    expect(keyAround(item, 0, 1)).toBe(2);
+    expect(keyAround(item, 2, -1)).toBeNull();
   });
 });
 

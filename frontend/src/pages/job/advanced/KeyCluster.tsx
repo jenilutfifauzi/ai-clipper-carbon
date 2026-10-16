@@ -5,7 +5,8 @@ import { cx } from "../../../format";
 import { keysAround, keyState } from "../editor/keyframes";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
-import { keyedItem, keyTime, toggleItemKey, type KeyedRef, type KeyScene } from "./keying";
+import { keyedItem, keyTime, manualSceneAt, pickedKeyed, toggleItemKey, type KeyedRef, type KeyScene } from "./keying";
+import { onlyItem } from "./pick";
 
 /**
  * What the ‹ ◆ › clusters of the inspector and the Keyframes pane edit in: the edits and the Pick,
@@ -23,6 +24,25 @@ export interface Keying extends KeyScene {
 }
 
 export const KeyingContext = createContext<Keying | null>(null);
+
+/**
+ * The one item picked that can have Keyframes (`pickedKeyed`): for a Segment of the Source, its
+ * Manual Scene under the playhead when its own override frames it, followed as the playhead moves.
+ */
+export function usePickedKeyed(scene: KeyScene, playback: Playback): KeyedRef | null {
+  const only = onlyItem(scene.pick);
+  const id = only?.kind === "segment" ? only.id : null;
+  const index = usePlayback(playback, (time) => (id !== null && scene.plan ? manualSceneAt(scene.edits, scene.plan, id, time) : null));
+  return pickedKeyed(scene.pick, index);
+}
+
+/** What a keyable field calls as it changes: its property touched (K's active row). Nothing outside the Advanced Edit. */
+export function useTouch(): (property: KeyProperty) => void {
+  const keying = useContext(KeyingContext);
+  return (property) => {
+    if (keying?.touched !== property) keying?.onTouch?.(property);
+  };
+}
 
 /**
  * The time Keyframes are shown and set at: the playhead's while paused, and the last one paused at

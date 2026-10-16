@@ -17,15 +17,14 @@ import {
 } from "../editor/keyframes";
 import { usePlayback } from "../editor/playback";
 import { curvePath, curveRange, easeHandles, handleShares, plotPoint, plotValue, type Plot, type PlotPoint } from "./curves";
-import { KeyCluster, useKeyTime, type Keying } from "./KeyCluster";
-import { activeKey, clearItemKeys, keyableOf, keyedItem, keyTime, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
+import { KeyCluster, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
+import { activeKey, clearItemKeys, keyedItem, keyRows, keyTime, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
 import { keyedGroup } from "./Overlays";
-import { onlyItem } from "./pick";
 import { onFrame } from "./playhead";
 
 /**
  * The Keyframes pane (ADR 0008), the desktop's bottom tab beside the Timeline: the Keyframes of the
- * one picked Overlay, Music Clip or video Segment, with room to work on them. A row per property it can key (its
+ * one picked Overlay, Music Clip, video Segment or Manual Scene, with room to work on them. A row per property it can key (its
  * value at the playhead, and its own ‹ ◆ ›), and over the item's own seconds either the Dopesheet (a
  * lane per row, its diamonds dragged to retime them) or the Curves (each keyed row's value over time;
  * the active row's Keyframes dragged in time and value, and its Eases' handles). Its tool strip
@@ -34,11 +33,8 @@ import { onFrame } from "./playhead";
  * edits are off while the playhead is outside the item, and pressing a Keyframe brings it there.
  */
 export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps: number; mediaById: Map<string, MediaItem> }) {
-  const only = onlyItem(keying.pick);
   // A Segment of the Source picked: its Manual Scene under the playhead, framed by its own override.
-  const time = useKeyTime(keying.playback);
-  const scene = only?.kind === "segment" && keying.plan ? manualSceneAt(keying.edits, keying.plan, only.id, time) : null;
-  const ref: KeyedRef | null = scene ?? (only && only.kind !== "text" ? { kind: only.kind, id: only.id } : null);
+  const ref = usePickedKeyed(keying, keying.playback);
   // A Segment of the Source has none: keyedItem gives null for it.
   const item = ref && keyedItem(keying.edits, ref, keying.track, keying.plan);
   if (!ref || !item) {
@@ -48,10 +44,7 @@ export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps:
       </div>
     );
   }
-  const list = ref.kind === "overlay" ? keying.edits.overlays : ref.kind === "segment" ? keying.edits.segments : [];
-  const id = list.find((other) => other.id === ref.id)?.media;
-  const media = id ? mediaById.get(id) : undefined;
-  return <Pane key={`${ref.kind}:${ref.id}`} keying={keying} fps={fps} item={ref} keyed={item} rows={keyableOf(ref, media)} />;
+  return <Pane key={`${ref.kind}:${ref.id}`} keying={keying} fps={fps} item={ref} keyed={item} rows={keyRows(keying.edits, ref, mediaById)} />;
 }
 
 // Each property's row: its name, its unit, and how many of them make one of its value.
@@ -94,7 +87,7 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
   const [view, setView] = useState<"dopesheet" | "curves">("dopesheet");
   const time = useKeyTime(keying.playback);
   const at = keyTime(keyed, time);
-  const held = at ?? Math.min(Math.max(time - keyed.start, 0), keyed.secs);
+  const held = at ?? Math.min(Math.max(time - keyed.start, keyed.first ?? 0), keyed.secs);
   const active = activeKey(rows, keyed.keys, keying.touched ?? null);
   const drag = useRef<Drag | null>(null);
   const grid: KeyGrid = { fps, start: keyed.start, secs: keyed.secs };
@@ -105,7 +98,7 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
     const [low, high] = curveRange(prop, listOf(prop));
     return { secs: keyed.secs, low, high };
   };
-  const seek = (secs: number) => keying.playback.seek(keyed.start + Math.min(Math.max(secs, 0), keyed.secs));
+  const seek = (secs: number) => keying.playback.seek(keyed.start + Math.min(Math.max(secs, keyed.first ?? 0), keyed.secs));
   const save = (prop: KeyProperty, list: Keyframe[], group?: string) => {
     const outcome = setItemKeys(keying, ref, prop, list);
     if (outcome) keying.onEdits(outcome.edits, group);

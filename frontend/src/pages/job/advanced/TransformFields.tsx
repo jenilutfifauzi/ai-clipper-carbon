@@ -10,7 +10,7 @@ import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
 import { PICTURE_KEYS, type PictureKey } from "../editor/keyframes";
 import { clamp, FRAME, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
-import { KeyCluster } from "./KeyCluster";
+import { KeyCluster, useTouch } from "./KeyCluster";
 import type { KeyedRef } from "./keying";
 
 /**
@@ -52,7 +52,11 @@ export function TransformFields({
   const cluster = (prop: PictureKey, label: string): ReactNode => keyed && <KeyCluster item={keyed.item} property={prop} label={label} />;
   const off = (prop: PictureKey) => !!keyed && !keyed.inside && !!keyed.keys[prop]?.length;
   const fitOff = off("x") || off("y") || off("scale");
-  const set = (field: keyof Transform, value: Transform[keyof Transform]) => onChange({ ...transform, [field]: value }, field);
+  const touch = useTouch();
+  const set = (field: keyof Transform, value: Transform[keyof Transform]) => {
+    if (keyed && (PICTURE_KEYS as readonly string[]).includes(field)) touch(field as PictureKey);
+    onChange({ ...transform, [field]: value }, field);
+  };
   const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);
   const kept = size && croppedSize(size, crop);
   const centred = { x: FRAME.width / 2, y: FRAME.height / 2, stretch_x: 1, stretch_y: 1 };

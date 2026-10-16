@@ -164,6 +164,24 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "l" }, { typing: true })).toBeNull();
   });
 
+  test("K keys the active row at the playhead, and [ and ] go to the picked item's previous and next Keyframe", () => {
+    expect(resolveShortcut({ key: "k" })).toBe("key-toggle");
+    expect(resolveShortcut({ key: "K" })).toBe("key-toggle");
+    expect(resolveShortcut({ key: "[" })).toBe("key-previous");
+    expect(resolveShortcut({ key: "]" })).toBe("key-next");
+    // With Cmd, [ and ] are the browser's Back and Forward, and Cmd+K is the browser's too.
+    expect(resolveShortcut({ key: "[", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "]", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "k", command: true })).toBeNull();
+  });
+
+  test("with a field focused, K, [ and ] are typed", () => {
+    const typing = { typing: true };
+    expect(resolveShortcut({ key: "k" }, typing)).toBeNull();
+    expect(resolveShortcut({ key: "[" }, typing)).toBeNull();
+    expect(resolveShortcut({ key: "]" }, typing)).toBeNull();
+  });
+
   test("on a phone, ? gives nothing: there is no sheet", () => {
     expect(resolveShortcut({ key: "?", shift: true }, { phone: true })).toBeNull();
     expect(resolveShortcut({ key: "z", command: true }, { phone: true })).toBe("undo");
@@ -310,7 +328,10 @@ describe("the shortcuts sheet", () => {
       "end",
       "edit-point-previous",
       "edit-point-next",
+      "key-previous",
+      "key-next",
     ]);
+    expect(keyNames(row("key-previous"), true)).toEqual(["["]);
     expect(keyNames(row("edit-point-previous"), true)).toEqual(["↑"]);
     expect(keyNames(row("edit-point-next"), false)).toEqual(["↓"]);
   });

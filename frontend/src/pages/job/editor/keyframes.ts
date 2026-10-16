@@ -181,6 +181,34 @@ export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: numbe
   return list.length ? { keys: withList(keys, prop, setKey(list, prop, at, value)), constant } : { keys, constant: value };
 }
 
+/**
+ * A ruler diamond dragged: every Keyframe of `keys` at `from` (within half a frame, of any property)
+ * moved together to `to`, with its value and Ease, in its item's seconds, by moveKey's rule for all
+ * of them at once: onto the nearest of the Clip's frames (`grid`), within the item, and a frame short
+ * of the neighbours of any of them at the most, so never past one. Gives the Keyframes and the time
+ * they went to (to the millisecond); `keys` themselves when that is where they are, and null when
+ * none is at `from`.
+ */
+export function moveKeysAt(keys: Keys, from: number, to: number, grid: KeyGrid): { keys: Keys; at: number } | null {
+  const moving = (Object.entries(keys) as [KeyProperty, Keyframe[]][])
+    .map(([prop, list]) => ({ prop, list, index: keyAt(list, from) }))
+    .filter(({ index }) => index >= 0);
+  if (!moving.length) return null;
+  // Where all of them may go: a frame clear of each one's neighbours.
+  let [low, high] = [0, grid.secs];
+  for (const { list, index } of moving) {
+    if (index > 0) low = Math.max(low, list[index - 1].at + KEY_GAP_SECS);
+    if (index < list.length - 1) high = Math.min(high, list[index + 1].at - KEY_GAP_SECS);
+  }
+  const at = toMillisecond(onGrid(to, low, high, grid));
+  if (moving.every(({ list, index }) => list[index].at === at)) return { keys, at };
+  const moved = { ...keys };
+  for (const { prop, list, index } of moving) {
+    moved[prop] = list.map((key, other) => (other === index ? { ...key, at } : key)).sort((a, b) => a.at - b.at);
+  }
+  return { keys: moved, at };
+}
+
 /** `keys` without the Keyframes of `props`: of every property when none are named. */
 export function clearKeys(keys: Keys, props?: readonly KeyProperty[]): Keys {
   if (!props) return {};
@@ -244,6 +272,15 @@ export interface KeyGrid {
   secs: number;
 }
 
+// `to` (an item's seconds) on the nearest of the Clip's frames from `low` to `high`: the first or the
+// last of them when it is beyond either, and held there when no frame is between them.
+function onGrid(to: number, low: number, high: number, { fps, start }: KeyGrid): number {
+  let at = Math.round((start + to) * fps) / fps - start;
+  if (at < low) at = Math.ceil((start + low) * fps - 1e-6) / fps - start;
+  if (at > high) at = Math.floor((start + high) * fps + 1e-6) / fps - start;
+  return Math.min(Math.max(at, low), high);
+}
+
 /**
  * `keys` with the one at `index` dragged to `to` (its item's seconds), keeping its Ease: onto the
  * nearest of the Clip's frames, and never past a neighbour or out of its item (a frame short of a
@@ -253,14 +290,9 @@ export interface KeyGrid {
 export function moveKey(keys: readonly Keyframe[], index: number, to: number, grid: KeyGrid, value?: { prop: KeyProperty; value: number }): Keyframe[] {
   const key = keys[index];
   if (!key) return keys as Keyframe[];
-  const { fps, start, secs } = grid;
   const low = index > 0 ? keys[index - 1].at + KEY_GAP_SECS : 0;
-  const high = index < keys.length - 1 ? keys[index + 1].at - KEY_GAP_SECS : secs;
-  let at = Math.round((start + to) * fps) / fps - start;
-  if (at < low) at = Math.ceil((start + low) * fps - 1e-6) / fps - start;
-  if (at > high) at = Math.floor((start + high) * fps + 1e-6) / fps - start;
-  at = Math.min(Math.max(at, low), high);
-  const moved = { ...key, at: toMillisecond(at) };
+  const high = index < keys.length - 1 ? keys[index + 1].at - KEY_GAP_SECS : grid.secs;
+  const moved = { ...key, at: toMillisecond(onGrid(to, low, high, grid)) };
   if (value) {
     const [lowest, highest] = KEY_RANGES[value.prop];
     moved.value = Math.min(Math.max(value.value, lowest), highest);

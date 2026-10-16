@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 // A 10 s Clip at 30 fps, its Edit Points at 0, 2.5, 6 and 10 s.
-function setUp(move: ((delta: number, group: string) => void) | null = null) {
+function setUp(move: ((delta: number, group: string) => void) | null = null, keyframes: Parameters<typeof commandsOf>[3]["keyframes"] = null) {
   const stage = harness();
   const playback = new Playback();
   playback.setSegments(playedFrom([{ start: 100, end: 110 }]));
@@ -31,6 +31,7 @@ function setUp(move: ((delta: number, group: string) => void) | null = null) {
     clearMarks: () => {},
     fps: 30,
     setFullscreen: () => {},
+    keyframes,
   });
   return { stage, playback, commands };
 }
@@ -86,6 +87,34 @@ describe("Edit Point jumps", () => {
     const { playback, commands } = setUp();
     commands["edit-point-previous"]();
     expect(playback.time).toBe(0);
+  });
+});
+
+describe("Keyframes of the picked item", () => {
+  // Its Keyframes at 1.5 and 4 s.
+  const around = (time: number, direction: -1 | 1) => (direction > 0 ? ([1.5, 4].find((at) => at > time) ?? null) : ([1.5, 4].findLast((at) => at < time) ?? null));
+
+  test("[ and ] take the playhead to its previous and next Keyframe, paused", () => {
+    const { stage, playback, commands } = setUp(null, { toggle: () => {}, around });
+    playback.seek(2);
+    stage.settle();
+    playback.play();
+    commands["key-next"]();
+    expect(playback.playing).toBe(false);
+    expect(playback.time).toBeCloseTo(4, 9);
+    commands["key-previous"]();
+    expect(playback.time).toBeCloseTo(1.5, 9);
+    // With none before, it stays.
+    commands["key-previous"]();
+    expect(playback.time).toBeCloseTo(1.5, 9);
+  });
+
+  test("K keys it; with no such item picked, K, [ and ] are left to the browser", () => {
+    const toggle = vi.fn();
+    setUp(null, { toggle, around }).commands["key-toggle"]();
+    expect(toggle).toHaveBeenCalled();
+    const { commands } = setUp();
+    for (const id of ["key-toggle", "key-previous", "key-next"] as const) expect(commands[id]()).toBe(false);
   });
 });
 

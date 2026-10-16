@@ -17,6 +17,7 @@ import {
 import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
+import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
 import { retimer } from "./actions";
@@ -28,6 +29,8 @@ import { ItemCanvas } from "./ItemCanvas";
 import { SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
+import { useKeyTime } from "./KeyCluster";
+import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
 import { gainAt, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
@@ -448,8 +451,7 @@ export function Tracks({
                 )}
                 <VolumeLine
                   volume={clip.volume}
-                  line={clip.keys.volume?.length ? volumeLine(heard) : undefined}
-                  secs={heard.secs}
+                  keyed={clip.keys.volume?.length ? { heard, start: clip.start, playback } : undefined}
                   grab={selected && !locked("music")}
                   onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
                 />
@@ -628,29 +630,21 @@ const VOLUME_HIT_PX = 24;
  * A Music Clip's or media Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
  * height. On a picked item of an unlocked Track (`grab`), it drags up and down to set the volume, with
  * a % label while it does; elsewhere on the item, a drag moves or trims it as ever. With volume
- * Keyframes, it is their `line` (`volumeLine`) over the item's `secs`, and doesn't drag.
+ * Keyframes (`keyed`), it is their line (KeyedVolumeLine).
  */
 function VolumeLine({
   volume,
-  line,
-  secs = 1,
+  keyed,
   grab,
   onVolume,
 }: {
   volume: number;
-  line?: { time: number; height: number }[];
-  secs?: number;
+  // How it is heard, by its volume Keyframes, from `start` (Timeline time), with the playhead on `playback`.
+  keyed?: { heard: Heard; start: number; playback: Playback };
   grab: boolean;
   onVolume: (volume: number, group: string) => void;
 }) {
-  if (line) {
-    const points = line.map(({ time, height }) => `${time / secs},${1 - height}`).join(" ");
-    return (
-      <svg aria-hidden className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 1 1" preserveAspectRatio="none">
-        <polyline points={points} fill="none" stroke="oklch(0.88 0.16 90)" strokeWidth={grab ? 2 : 1} vectorEffect="non-scaling-stroke" />
-      </svg>
-    );
-  }
+  if (keyed) return <KeyedVolumeLine {...keyed} grab={grab} onVolume={onVolume} />;
   const top = `${(1 - volumeHeight(volume)) * 100}%`;
   return (
     <span aria-hidden className="pointer-events-none absolute inset-0">
@@ -670,6 +664,55 @@ function VolumeLine({
             return ({ dy }, group) => onVolume(volumeDragged(from, dy, height), group);
           }}
         />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The Volume Line of an item with volume Keyframes: their line through its fades (`volumeLine`) over
+ * the secs it is `heard`. On a picked item of an unlocked Track (`grab`) with the playhead on it, a
+ * knob on the line at the playhead drags up and down to write a volume Keyframe there (`onVolume`
+ * auto-keys), with a % label while it does; with the playhead outside the item it doesn't drag.
+ */
+function KeyedVolumeLine({
+  heard,
+  start,
+  playback,
+  grab,
+  onVolume,
+}: {
+  heard: Heard;
+  start: number;
+  playback: Playback;
+  grab: boolean;
+  onVolume: (volume: number, group: string) => void;
+}) {
+  const { secs } = heard;
+  const at = keyTime({ start, secs }, useKeyTime(playback));
+  const points = volumeLine(heard)
+    .map(({ time, height }) => `${time / secs},${1 - height}`)
+    .join(" ");
+  // The volume its Keyframes give at the playhead, which the knob drags from.
+  const volume = at === null ? null : valueAt(heard.keys ?? [], at, heard.volume);
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0">
+      <svg className="absolute inset-0 size-full" viewBox="0 0 1 1" preserveAspectRatio="none">
+        <polyline points={points} fill="none" stroke="oklch(0.88 0.16 90)" strokeWidth={grab ? 2 : 1} vectorEffect="non-scaling-stroke" />
+      </svg>
+      {grab && at !== null && volume !== null && (
+        <ItemHandle
+          className="absolute grid size-6 -translate-1/2 cursor-ns-resize place-items-center"
+          style={{ left: `${(at / secs) * 100}%`, top: `${(1 - volumeHeight(gainAt(at, heard))) * 100}%` }}
+          label={`${Math.round(volume * 100)}%`}
+          onGrab={(handle) => {
+            // From where it was when grabbed, by how far it is dragged.
+            const height = handle.parentElement!.getBoundingClientRect().height;
+            return ({ dy }, group) => onVolume(volumeDragged(volume, dy, height), group);
+          }}
+        >
+          <span className="size-2.5 rounded-full bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_1px_rgb(0_0_0/0.5)]" />
+        </ItemHandle>
       )}
     </span>
   );

@@ -27,6 +27,9 @@ export type ShortcutId =
   | "end"
   | "edit-point-previous"
   | "edit-point-next"
+  | "key-previous"
+  | "key-next"
+  | "key-toggle"
   | "move-back"
   | "move-forward"
   | "move-back-10"
@@ -97,6 +100,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "end", keys: [{ key: "End" }], group: "navigation", label: "Playhead to the Clip's last frame" },
   { id: "edit-point-previous", keys: [{ key: "ArrowUp" }], group: "navigation", label: "Playhead to the previous Edit Point" },
   { id: "edit-point-next", keys: [{ key: "ArrowDown" }], group: "navigation", label: "Playhead to the next Edit Point" },
+  { id: "key-previous", keys: [{ key: "[" }], group: "navigation", label: "Playhead to the picked item's previous Keyframe" },
+  { id: "key-next", keys: [{ key: "]" }], group: "navigation", label: "Playhead to the picked item's next Keyframe" },
   { id: "undo", keys: [{ key: "z", command }], group: "editing", label: "Undo" },
   { id: "redo", keys: [{ key: "z", command, shift }, { key: "y", command }], group: "editing", label: "Redo" },
   { id: "pick-all", keys: [{ key: "a", command }], group: "editing", label: "Pick every item" },
@@ -118,6 +123,12 @@ export const SHORTCUTS: Shortcut[] = [
     keys: [{ key: "Backspace", shift }, { key: "Delete", shift }],
     group: "editing",
     label: "Ripple delete: delete them and close the gap",
+  },
+  {
+    id: "key-toggle",
+    keys: [{ key: "k" }],
+    group: "editing",
+    label: "Add or remove a Keyframe at the playhead, on the picked item's property last touched",
   },
   { id: "move-back", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move the picked Text Layers, Music Clips and Overlays a frame earlier" },
   { id: "move-forward", keys: [{ key: "ArrowRight", alt }], group: "editing", label: "Move them a frame later" },
