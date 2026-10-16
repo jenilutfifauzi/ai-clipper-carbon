@@ -5,15 +5,21 @@ import type { Keyframe, Keys, Transform } from "../../../api";
 import {
   clearKeys,
   EASE_IN,
+  EASE_IN_OUT,
   EASE_OUT,
+  easedKey,
+  easeName,
+  handleEase,
   keyAt,
   keysAround,
   keyState,
   LINEAR,
   MAX_KEYS,
+  moveKey,
   moveKeysAt,
   PICTURE_KEYS,
   removeKey,
+  setEase,
   setKey,
   shownTransform,
   toggleKey,
@@ -157,7 +163,7 @@ describe("clearing Keyframes", () => {
 
 describe("moving every Keyframe at an instant (a ruler diamond dragged)", () => {
   // An item 6 s long from the Clip's start, at 30 fps.
-  const item = { secs: 6, fps: 30 };
+  const item = { secs: 6, fps: 30, start: 0 };
   const keys: Keys = {
     x: [key(0, 200), key(2, 500, EASE_IN), key(4, 800)],
     scale: [key(2, 1.5, EASE_OUT), key(5, 1)],
@@ -199,5 +205,60 @@ describe("moving every Keyframe at an instant (a ruler diamond dragged)", () => 
     expect(moveKeysAt(keys, 3, 4, item)).toBeNull();
     expect(moveKeysAt(keys, 2, 2.004, item)).toEqual({ at: 2, keys });
     expect(moveKeysAt(keys, 2, 2.004, item)!.keys).toBe(keys);
+  });
+});
+
+describe("an Ease set on a Keyframe", () => {
+  const keys = [key(0, 1), key(2, 2), key(4, 3, EASE_IN)];
+
+  test("by its preset stores the preset's four numbers", () => {
+    expect(setEase(keys, 1, EASE_OUT)).toEqual([key(0, 1), key(2, 2, [0, 0, 0.58, 1]), key(4, 3, EASE_IN)]);
+    expect(easeName([0.42, 0, 0.58, 1])).toBe("ease_in_out");
+    expect(easeName([0.421, 0, 1, 1])).toBe("ease_in");
+    expect(easeName([0.3, -0.5, 0.2, 1.4])).toBe("custom");
+  });
+
+  test("by a handle dragged stores a Custom one, its x kept within 0..1 and its y within -2..3", () => {
+    // The first handle to (1.4, 1.6) of its span: past the span's end in time, so held at 1.
+    expect(handleEase(LINEAR, 1, 1.4, 1.6)).toEqual([1, 1.6, 1, 1]);
+    expect(handleEase(EASE_IN_OUT, 2, -0.3, 4)).toEqual([0.42, 0, 0, 3]);
+    expect(easeName(handleEase(EASE_IN_OUT, 2, 0.2, 1.3))).toBe("custom");
+    expect(setEase(keys, 2, [1.5, -3, Number.NaN, 1])).toEqual([key(0, 1), key(2, 2), key(4, 3, LINEAR)]);
+    expect(setEase(keys, 2, [1.5, -3, 0.5, 1])[2].ease).toEqual([1, -2, 0.5, 1]);
+  });
+
+  test("is the one at the playhead, or the next eased one: never the first, whose Ease is unused", () => {
+    expect(easedKey(keys, 2)).toBe(1);
+    expect(easedKey(keys, 2.01)).toBe(1);
+    expect(easedKey(keys, 2.5)).toBe(2);
+    expect(easedKey(keys, 0)).toBe(1);
+    expect(easedKey(keys, 4.5)).toBe(-1);
+    expect(easedKey([key(1, 1)], 0)).toBe(-1);
+  });
+});
+
+describe("a Keyframe dragged along its lane", () => {
+  const keys = [key(0, 1), key(1, 2, EASE_IN), key(2, 3)];
+  // An item starting at 0.25 s of a 30 fps Clip, 3 s long.
+  const grid = { fps: 30, start: 0.25, secs: 3 };
+
+  test("moves only it, keeping its value and Ease, to the frame nearest", () => {
+    expect(moveKey(keys, 1, 1.29, grid)).toEqual([key(0, 1), key(1.283, 2, EASE_IN), key(2, 3)]);
+    // On the Clip's frames: 0.25 + 1.283 s is frame 46 (1.5333 s).
+    expect(Math.round((grid.start + 1.283) * 30)).toBe(46);
+  });
+
+  test("never past a neighbour: it stops a frame short of it", () => {
+    expect(moveKey(keys, 1, 2.6, grid)).toEqual([key(0, 1), key(1.95, 2, EASE_IN), key(2, 3)]);
+    expect(moveKey(keys, 1, -1, grid).map((k) => k.at)).toEqual([0, 0.05, 2]);
+  });
+
+  test("stays within its item", () => {
+    expect(moveKey(keys, 2, 9, grid).at(-1)).toEqual(key(2.983, 3));
+    expect(moveKey(keys, 0, -2, grid)[0]).toEqual(key(0.017, 1));
+  });
+
+  test("in the Curves, moves in value too, held to its property's range", () => {
+    expect(moveKey(keys, 1, 0.99, grid, { prop: "opacity", value: 1.4 })[1]).toEqual(key(0.983, 1, EASE_IN));
   });
 });

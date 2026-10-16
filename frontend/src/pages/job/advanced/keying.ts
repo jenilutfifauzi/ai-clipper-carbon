@@ -1,6 +1,6 @@
-import type { ClipSegment, KeyProperty, Keys, Overlay, Transform } from "../../../api";
+import type { ClipSegment, Keyframe, KeyProperty, Keys, MediaItem, Overlay, Transform } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
-import { clearKeys, keysAround, moveKeysAt, PICTURE_KEYS, shownTransform, toggleKey, writeKey, writtenTransform } from "../editor/keyframes";
+import { clearKeys, keysAround, moveKeysAt, PICTURE_KEYS, shownTransform, toggleKey, valueAt, writeKey, writtenTransform } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
@@ -73,8 +73,10 @@ export function keyedItem(edits: AdvancedEdits, ref: KeyedRef, track?: PlayedSeg
   return clip ? { ...clip, constant: () => clip.volume } : null;
 }
 
-// `edits` with item `ref`'s Keyframes `keys`, and `prop`'s constant `constant`.
+// `edits` with item `ref`'s Keyframes `keys`, and `prop`'s constant `constant` (a turn kept within
+// ±360°, as the Transform's is, where a Keyframe may hold more).
 function withKeyed(edits: AdvancedEdits, ref: KeyedRef, keys: Keys, prop: KeyProperty, constant: number): AdvancedEdits {
+  if (prop === "rotation") constant %= 360;
   if (ref.kind === "segment") {
     return {
       ...edits,
@@ -175,24 +177,6 @@ export function pickedKeyed(pick: Pick): KeyedRef | null {
   return item && item.kind !== "text" ? { kind: item.kind, id: item.id } : null;
 }
 
-/** A property of an item last touched: its field changed, its ‹ ◆ › pressed, its row in the Keyframes pane clicked. */
-export interface TouchedRow {
-  item: KeyedRef;
-  property: KeyProperty;
-}
-
-// The order an item's properties are looked through for its first keyed one.
-const KEY_ORDER: readonly KeyProperty[] = [...PICTURE_KEYS, "volume"];
-
-/**
- * The row K keys on item `ref` (as keyed, `item`): its property last `touched`, else its first keyed
- * one, else Scale (Volume for a Music Clip, which has nothing else).
- */
-export function activeRow(ref: KeyedRef, item: KeyedItem, touched: TouchedRow | null): KeyProperty {
-  if (touched && touched.item.kind === ref.kind && touched.item.id === ref.id) return touched.property;
-  return KEY_ORDER.find((prop) => item.keys[prop]?.length) ?? (ref.kind === "music" ? "volume" : "scale");
-}
-
 /**
  * Where [ (`direction` -1) or ] (1) takes the playhead from `time`: to `item`'s Keyframe of any
  * property before or after it (beyond half a frame), in Timeline time; null when there is none.
@@ -249,4 +233,55 @@ export function heldTransform(transform: Transform, keys: Keys, span: { start: n
   if (!PICTURE_KEYS.some((prop) => keys[prop]?.length)) return transform;
   const at = Math.min(Math.max(time - span.start, 0), span.secs);
   return tidyTransform(shownTransform(transform, keys, at));
+}
+
+/**
+ * What item `ref` can key, in the Keyframes pane's order: a picture's Transform fields (an Overlay's,
+ * a video Segment's Framing's) and, for a video with sound (`media`, its Media Library item), its
+ * volume; a Music Clip's volume.
+ */
+export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_audio: boolean }): KeyProperty[] {
+  if (ref.kind === "music") return ["volume"];
+  return media?.kind === "video" && media.has_audio ? [...PICTURE_KEYS, "volume"] : [...PICTURE_KEYS];
+}
+
+/** The rows of item `ref` of `edits` (keyableOf), its Media Library item looked up in `mediaById`. */
+export function keyRows(edits: AdvancedEdits, ref: KeyedRef, mediaById: Map<string, MediaItem>): KeyProperty[] {
+  const list = ref.kind === "overlay" ? edits.overlays : ref.kind === "segment" ? edits.segments : [];
+  const id = list.find((other) => other.id === ref.id)?.media;
+  return keyableOf(ref, id ? mediaById.get(id) : undefined);
+}
+
+/**
+ * The active row of `rows` (an item's keyable properties, its Keyframes `keys`), the one K and the
+ * Keyframes pane's ‹ ◆ › act on: the property last `touched`, else the first keyed one, else Scale
+ * (Volume for a Music Clip).
+ */
+export function activeKey(rows: readonly KeyProperty[], keys: Keys, touched: KeyProperty | null): KeyProperty {
+  if (touched && rows.includes(touched)) return touched;
+  return rows.find((prop) => keys[prop]?.length) ?? (rows.includes("scale") ? "scale" : rows[0]);
+}
+
+/** Item `ref`'s Keyframes of `prop` replaced by `list` (a drag of one, an Ease set): one change. Null when it can't be edited. */
+export function setItemKeys(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, list: Keyframe[]): Outcome | null {
+  const item = refused(scene, ref) ? null : keyedItem(scene.edits, ref, scene.track);
+  if (!item) return null;
+  const { [prop]: _, ...rest } = item.keys;
+  return { edits: withKeyed(scene.edits, ref, list.length ? { ...rest, [prop]: list } : rest, prop, item.constant(prop)), pick: scene.pick };
+}
+
+/**
+ * Clear all: item `ref` without any Keyframes, as one change, each keyed property's constant left at
+ * its value at the playhead `time` (at the item's nearer end outside it), so that nothing jumps there.
+ * Null when it can't be edited.
+ */
+export function clearItemKeys(scene: KeyScene, ref: KeyedRef, time: number): Outcome | null {
+  const item = refused(scene, ref) ? null : keyedItem(scene.edits, ref, scene.track);
+  if (!item) return null;
+  const at = Math.min(Math.max(time - item.start, 0), item.secs);
+  let edits = scene.edits;
+  for (const [prop, list] of Object.entries(item.keys) as [KeyProperty, Keyframe[]][]) {
+    edits = withKeyed(edits, ref, {}, prop, valueAt(list, at, item.constant(prop)));
+  }
+  return { edits, pick: scene.pick };
 }

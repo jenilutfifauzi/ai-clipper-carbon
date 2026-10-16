@@ -54,7 +54,7 @@ export function TransformFields({
   const fitOff = off("x") || off("y") || off("scale");
   const touch = useTouch();
   const set = (field: keyof Transform, value: Transform[keyof Transform]) => {
-    if (keyed && (PICTURE_KEYS as readonly string[]).includes(field)) touch(keyed.item, field as PictureKey);
+    if (keyed && (PICTURE_KEYS as readonly string[]).includes(field)) touch(field as PictureKey);
     onChange({ ...transform, [field]: value }, field);
   };
   const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);

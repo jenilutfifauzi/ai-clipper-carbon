@@ -124,7 +124,7 @@ export function OverlayFields({
   const volume = valueAt(volumeKeys, at ?? heldAt(overlay, time), overlay.volume);
   const touch = useTouch();
   const setVolume = (value: number) => {
-    touch({ kind: "overlay", id: overlay.id }, "volume");
+    touch("volume");
     const { keys, constant } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume);
     onChange({ ...overlay, keys, volume: constant }, keyedGroup(`overlay:${overlay.id}:volume`, keys !== overlay.keys, at));
   };

@@ -95,7 +95,7 @@ export const PICTURE_KEYS = ["x", "y", "scale", "rotation", "opacity"] as const;
 export type PictureKey = (typeof PICTURE_KEYS)[number];
 
 // Each property's range (KEY_RANGES in backend/app/candidates.py).
-const RANGES: Record<KeyProperty, readonly [number, number]> = {
+export const KEY_RANGES: Record<KeyProperty, readonly [number, number]> = {
   x: [0, 1080],
   y: [0, 1920],
   scale: [0.05, 8],
@@ -143,7 +143,7 @@ export function setKey(keys: readonly Keyframe[], prop: KeyProperty, at: number,
   if (kept.length >= MAX_KEYS) return keys as Keyframe[];
   const replaced = keys.filter(crowded).sort((a, b) => Math.abs(a.at - time) - Math.abs(b.at - time))[0];
   const ease = replaced?.ease ?? kept.filter((key) => key.at < time).at(-1)?.ease ?? LINEAR;
-  const [low, high] = RANGES[prop];
+  const [low, high] = KEY_RANGES[prop];
   const key = { at: time, value: Math.min(Math.max(value, low), high), ease };
   return [...kept, key].sort((a, b) => a.at - b.at);
 }
@@ -183,35 +183,24 @@ export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: numbe
 
 /**
  * A ruler diamond dragged: every Keyframe of `keys` at `from` (within half a frame, of any property)
- * moved together to `to`, with its value and Ease, in the seconds of an item `secs` long that starts
- * `start` seconds into the Clip. Where they go is on the Clip's frames at `fps`, within the item, and
- * no nearer than a frame to the neighbours of any of them, so never past one. Gives the Keyframes and
- * the time they went to (to the millisecond); `keys` themselves when that is where they are, and null
- * when none is at `from`.
+ * moved together to `to`, with its value and Ease, in its item's seconds, by moveKey's rule for all
+ * of them at once: onto the nearest of the Clip's frames (`grid`), within the item, and a frame short
+ * of the neighbours of any of them at the most, so never past one. Gives the Keyframes and the time
+ * they went to (to the millisecond); `keys` themselves when that is where they are, and null when
+ * none is at `from`.
  */
-export function moveKeysAt(
-  keys: Keys,
-  from: number,
-  to: number,
-  { secs, fps, start = 0 }: { secs: number; fps: number; start?: number },
-): { keys: Keys; at: number } | null {
+export function moveKeysAt(keys: Keys, from: number, to: number, grid: KeyGrid): { keys: Keys; at: number } | null {
   const moving = (Object.entries(keys) as [KeyProperty, Keyframe[]][])
     .map(([prop, list]) => ({ prop, list, index: keyAt(list, from) }))
     .filter(({ index }) => index >= 0);
   if (!moving.length) return null;
   // Where all of them may go: a frame clear of each one's neighbours.
-  let [low, high] = [0, secs];
+  let [low, high] = [0, grid.secs];
   for (const { list, index } of moving) {
     if (index > 0) low = Math.max(low, list[index - 1].at + KEY_GAP_SECS);
     if (index < list.length - 1) high = Math.min(high, list[index + 1].at - KEY_GAP_SECS);
   }
-  const held = Math.min(Math.max(to, low), high);
-  // The nearest of the Clip's frames, or the nearest within reach when it is beyond one; as held
-  // when there's no frame between the neighbours.
-  const frame = (round: (frames: number) => number) => round((start + held) * fps) / fps - start;
-  const reach = (time: number) => time >= low - 1e-9 && time <= high + 1e-9;
-  const snapped = [frame(Math.round), frame(Math.ceil), frame(Math.floor)].find(reach) ?? held;
-  const at = toMillisecond(snapped);
+  const at = toMillisecond(onGrid(to, low, high, grid));
   if (moving.every(({ list, index }) => list[index].at === at)) return { keys, at };
   const moved = { ...keys };
   for (const { prop, list, index } of moving) {
@@ -226,6 +215,91 @@ export function clearKeys(keys: Keys, props?: readonly KeyProperty[]): Keys {
   return Object.fromEntries(Object.entries(keys).filter(([prop]) => !props.includes(prop as KeyProperty)));
 }
 
+// The Eases' names, the presets' as backend/app/candidates.py's EASES names them; any other is Custom.
+export type EaseName = "linear" | "ease_in" | "ease_out" | "ease_in_out" | "custom";
+export const EASE_PRESETS: readonly { name: Exclude<EaseName, "custom">; label: string; ease: Ease }[] = [
+  { name: "linear", label: "Linear", ease: LINEAR },
+  { name: "ease_in", label: "Ease in", ease: EASE_IN },
+  { name: "ease_out", label: "Ease out", ease: EASE_OUT },
+  { name: "ease_in_out", label: "Ease in-out", ease: EASE_IN_OUT },
+];
+// An Ease within this of each of a preset's numbers is that preset (PRESET_REACH), and its y is held
+// to EASE_Y (backend/app/candidates.py).
+const PRESET_REACH = 0.005;
+const EASE_Y = [-2, 3] as const;
+
+/** The preset `ease` is, or "custom". */
+export function easeName(ease: Ease): EaseName {
+  return EASE_PRESETS.find((preset) => preset.ease.every((number, i) => Math.abs(number - ease[i]) <= PRESET_REACH + 1e-9))?.name ?? "custom";
+}
+
+/** `ease` as the Candidate keeps it (tidy_ease): its x held to 0..1, its y to −2..3, and Linear when any of it isn't finite. */
+export function tidyEase(ease: Ease): Ease {
+  if (!ease.every(Number.isFinite)) return LINEAR;
+  const [x1, y1, x2, y2] = ease;
+  const y = (value: number) => Math.min(Math.max(value, EASE_Y[0]), EASE_Y[1]);
+  return [Math.min(Math.max(x1, 0), 1), y(y1), Math.min(Math.max(x2, 0), 1), y(y2)];
+}
+
+/** `keys` with the Keyframe at `index` approached by `ease` (tidied): a preset's four numbers, or a Custom one. */
+export function setEase(keys: readonly Keyframe[], index: number, ease: Ease): Keyframe[] {
+  return keys.map((key, other) => (other === index ? { ...key, ease: tidyEase(ease) } : key));
+}
+
+/**
+ * `ease` with its first or second handle (`which`) dragged to (`x`, `y`): shares of its span's time
+ * and change, as the Curves draw it. A Custom Ease, tidied, so its x stays within 0..1; to a
+ * thousandth, finer than a drag can tell.
+ */
+export function handleEase(ease: Ease, which: 1 | 2, x: number, y: number): Ease {
+  const [x1, y1, x2, y2] = ease;
+  const [hx, hy] = [x, y].map((value) => Math.round(value * 1000) / 1000);
+  return tidyEase(which === 1 ? [hx, hy, x2, y2] : [x1, y1, hx, hy]);
+}
+
+/**
+ * The Keyframe whose Ease the Keyframes pane shows at `at`: the one there, else the next one; never
+ * the first, whose Ease is unused. -1 when there is none.
+ */
+export function easedKey(keys: readonly Keyframe[], at: number): number {
+  return keys.findIndex((key, index) => index > 0 && key.at >= at - HALF_FRAME);
+}
+
+/** Where a Keyframe can be dragged to: the Clip's frame rate, and its item's start (Timeline time) and length. */
+export interface KeyGrid {
+  fps: number;
+  start: number;
+  secs: number;
+}
+
+// `to` (an item's seconds) on the nearest of the Clip's frames from `low` to `high`: the first or the
+// last of them when it is beyond either, and held there when no frame is between them.
+function onGrid(to: number, low: number, high: number, { fps, start }: KeyGrid): number {
+  let at = Math.round((start + to) * fps) / fps - start;
+  if (at < low) at = Math.ceil((start + low) * fps - 1e-6) / fps - start;
+  if (at > high) at = Math.floor((start + high) * fps + 1e-6) / fps - start;
+  return Math.min(Math.max(at, low), high);
+}
+
+/**
+ * `keys` with the one at `index` dragged to `to` (its item's seconds), keeping its Ease: onto the
+ * nearest of the Clip's frames, and never past a neighbour or out of its item (a frame short of a
+ * neighbour at the most, on a frame where there is one). With `value`, the Curves' drag, its value
+ * changes too, held to its property's range. To the millisecond.
+ */
+export function moveKey(keys: readonly Keyframe[], index: number, to: number, grid: KeyGrid, value?: { prop: KeyProperty; value: number }): Keyframe[] {
+  const key = keys[index];
+  if (!key) return keys as Keyframe[];
+  const low = index > 0 ? keys[index - 1].at + KEY_GAP_SECS : 0;
+  const high = index < keys.length - 1 ? keys[index + 1].at - KEY_GAP_SECS : grid.secs;
+  const moved = { ...key, at: toMillisecond(onGrid(to, low, high, grid)) };
+  if (value) {
+    const [lowest, highest] = KEY_RANGES[value.prop];
+    moved.value = Math.min(Math.max(value.value, lowest), highest);
+  }
+  return keys.map((other, i) => (i === index ? moved : other));
+}
+
 /** `transform` as shown at `at`: its keyed fields at their Keyframes' values there, held to their ranges. */
 export function shownTransform(transform: Transform, keys: Keys, at: number): Transform {
   const keyed = PICTURE_KEYS.filter((prop) => keys[prop]?.length);
@@ -233,7 +307,7 @@ export function shownTransform(transform: Transform, keys: Keys, at: number): Tr
   const shown = { ...transform };
   for (const prop of keyed) {
     const value = valueAt(keys[prop]!, at, transform[prop]);
-    const [low, high] = RANGES[prop];
+    const [low, high] = KEY_RANGES[prop];
     shown[prop] = prop === "rotation" ? value : Math.min(Math.max(value, low), high);
   }
   return shown;

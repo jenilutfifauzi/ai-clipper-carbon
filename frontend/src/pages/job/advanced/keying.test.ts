@@ -1,19 +1,23 @@
 // Seam D (.scratch/keyframes/spec.md): Keyframe edits on the items of the edits, one change each,
 // at the playhead in the item's own seconds, and refused on a locked Track.
 import { describe, expect, test } from "vitest";
-import type { MusicClip, Overlay } from "../../../api";
+import type { MediaItem, MusicClip, Overlay } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import type { AdvancedEdits } from "./edits";
 import {
-  activeRow,
+  activeKey,
+  clearItemKeys,
+  keyableOf,
   keyAround,
   keyedItem,
+  keyRows,
   keyTime,
   moveItemKeys,
   pickedKeyed,
   resetOverlay,
+  setItemKeys,
   stageTransform,
   toggleItemKey,
   writeItemKey,
@@ -169,7 +173,7 @@ describe("a Keyframe edit on an item", () => {
   });
 });
 
-describe("the shortcuts' item and row", () => {
+describe("the shortcuts' item", () => {
   test("the item is the Pick when it is one Overlay, Music Clip or Segment", () => {
     expect(pickedKeyed(picked(O))).toEqual(O);
     expect(pickedKeyed(picked(M))).toEqual(M);
@@ -180,14 +184,10 @@ describe("the shortcuts' item and row", () => {
     expect(pickedKeyed(null)).toBeNull();
   });
 
-  test("K's row is the item's property last touched, else its first keyed one, else Scale (Volume for a Music Clip)", () => {
-    const keyed = keyedItem(edits({ overlays: [overlay({ keys: { opacity: [{ at: 0, value: 1, ease: LINEAR }], volume: [{ at: 0, value: 1, ease: LINEAR }] } })] }), O)!;
-    expect(activeRow(O, keyed, { item: O, property: "rotation" })).toBe("rotation");
-    expect(activeRow(O, keyed, null)).toBe("opacity");
-    // Touched on another item, it isn't this one's.
-    expect(activeRow(O, keyed, { item: { kind: "overlay", id: "other" }, property: "rotation" })).toBe("opacity");
-    expect(activeRow(O, keyedItem(edits(), O)!, null)).toBe("scale");
-    expect(activeRow(M, keyedItem(edits(), M)!, null)).toBe("volume");
+  test("K's rows are what the item can key, by its Media Library item", () => {
+    const library = new Map([["logo", { kind: "image", has_audio: false } as MediaItem]]);
+    expect(keyRows(edits(), O, library)).toEqual(["x", "y", "scale", "rotation", "opacity"]);
+    expect(keyRows(edits(), M, library)).toEqual(["volume"]);
   });
 
   test("[ and ] go to the item's previous and next Keyframe of any property, in Timeline time", () => {
@@ -201,5 +201,56 @@ describe("the shortcuts' item and row", () => {
     // From before the item, its first.
     expect(keyAround(item, 0, 1)).toBe(2);
     expect(keyAround(item, 2, -1)).toBeNull();
+  });
+});
+
+describe("the Keyframes pane on an item", () => {
+  const moving = overlay({
+    keys: {
+      x: [
+        { at: 0, value: 100, ease: LINEAR },
+        { at: 2, value: 500, ease: EASE_IN },
+      ],
+      rotation: [
+        { at: 0, value: 0, ease: LINEAR },
+        { at: 4, value: 720, ease: LINEAR },
+      ],
+      volume: [{ at: 1, value: 0.5, ease: LINEAR }],
+    },
+  });
+
+  test("Clear all removes every property's Keyframes, as one change, each constant left where it is at the playhead", () => {
+    const cleared = clearItemKeys(scene(edits({ overlays: [moving] })), O, 3);
+    // At 1 s of the Overlay: x half way (an ease-in quarter of the way is less), a turn of 180°.
+    const x = 100 + 400 * 0.3153568125; // EASE_IN at 0.5
+    expect(cleared?.edits.overlays[0].keys).toEqual({});
+    expect(cleared?.edits.overlays[0].transform.x).toBeCloseTo(x, 3);
+    expect(cleared?.edits.overlays[0].transform.rotation).toBe(180);
+    expect(cleared?.edits.overlays[0].volume).toBe(0.5);
+    // Outside the item, at its end; a turn past a whole one kept within ±360°.
+    expect(clearItemKeys(scene(edits({ overlays: [moving] })), O, 9)?.edits.overlays[0].transform).toEqual({ ...IDENTITY, x: 500, rotation: 0 });
+    expect(clearItemKeys(scene(edits({ overlays: [moving] }), ["overlay"]), O, 3)).toBeNull();
+  });
+
+  test("a property's Keyframes replaced, as a drag or an Ease leaves them, keep the others", () => {
+    const list = [{ at: 0.5, value: 100, ease: LINEAR }];
+    expect(setItemKeys(scene(edits({ overlays: [moving] })), O, "x", list)?.edits.overlays[0].keys).toEqual({ ...moving.keys, x: list });
+    expect(setItemKeys(scene(edits(), ["music"]), M, "volume", list)).toBeNull();
+  });
+
+  test("has a row for each property its item can key", () => {
+    expect(keyableOf(O, { kind: "image", has_audio: false })).toEqual(["x", "y", "scale", "rotation", "opacity"]);
+    expect(keyableOf(O, { kind: "video", has_audio: true })).toEqual(["x", "y", "scale", "rotation", "opacity", "volume"]);
+    expect(keyableOf(O, { kind: "video", has_audio: false })).toEqual(["x", "y", "scale", "rotation", "opacity"]);
+    expect(keyableOf(M)).toEqual(["volume"]);
+    expect(keyableOf({ kind: "segment", id: "s" }, { kind: "video", has_audio: true })).toEqual(["x", "y", "scale", "rotation", "opacity", "volume"]);
+  });
+
+  test("its active row is the property last touched, else the first keyed one, else Scale (Volume for a Music Clip)", () => {
+    const rows = keyableOf(O, { kind: "video", has_audio: true });
+    expect(activeKey(rows, moving.keys, "opacity")).toBe("opacity");
+    expect(activeKey(rows, moving.keys, null)).toBe("x");
+    expect(activeKey(rows, {}, null)).toBe("scale");
+    expect(activeKey(["volume"], {}, "x")).toBe("volume");
   });
 });
