@@ -232,9 +232,11 @@ class Renderer:
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
         count = len(sources) // _INPUT_ARGS
-        inputs, index = _music_inputs(plan, files or {}, first=count + (1 if logo is not None else 0))
-        layers, layered = _overlay_inputs(plan, files or {}, count + (1 if logo is not None else 0) + len(index), feeds)
-        pictures, drawn = _scene_inputs(plan, count + (1 if logo is not None else 0) + len(index) + len(layered), feeds)
+        # The music's first input: after the Source's and its videos', and the logo's.
+        before_music = count + (1 if logo is not None else 0)
+        inputs, index = _music_inputs(plan, files or {}, first=before_music)
+        layers, layered = _overlay_inputs(plan, files or {}, before_music + len(index), feeds)
+        pictures, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"

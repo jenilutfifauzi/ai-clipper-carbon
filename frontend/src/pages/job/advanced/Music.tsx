@@ -2,12 +2,10 @@ import { Copy, Music as MusicIcon, Trash2 } from "lucide-react";
 import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
-import { valueAt } from "../editor/keyframes";
 import type { Playback } from "../editor/playback";
 import { Group } from "../editor/StyleFields";
 import { FADE_MAX_SECS, ITEM_MIN_SECS, newId, round } from "./edits";
-import { KeyCluster, useKeyTime } from "./KeyCluster";
-import { keyTime } from "./keying";
+import { KeyedVolume } from "./KeyCluster";
 import { TimingFields } from "./TimingFields";
 
 /** A Music Clip of `item` at `at` (the playhead, or where it was dropped), as long as the song or what is left of the Clip. */
@@ -52,10 +50,6 @@ export function MusicFields({
   // Each fade as long as 10 s, or as what the other leaves of the clip.
   const most = (other: number) => Math.max(0, Math.min(FADE_MAX_SECS, clip.secs - other));
   const fade = (field: "fade_in" | "fade_out") => (secs: number) => onFade(field, secs, `music:${clip.id}:${field}`);
-  const time = useKeyTime(playback);
-  const at = keyTime(clip, time);
-  const keys = clip.keys.volume ?? [];
-  const volume = valueAt(keys, at ?? Math.min(Math.max(time - clip.start, 0), clip.secs), clip.volume);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -73,16 +67,15 @@ export function MusicFields({
         </div>
       </div>
       <Group title="Sound">
-        <Slider
+        <KeyedVolume
+          item={{ kind: "music", id: clip.id }}
+          span={clip}
+          keys={clip.keys.volume ?? []}
+          volume={clip.volume}
           label="Volume"
-          value={volume}
-          min={0}
-          max={2}
-          step={0.05}
           format={percent}
+          playback={playback}
           onChange={(volume) => onVolume(volume, `music:${clip.id}:volume`)}
-          after={<KeyCluster item={{ kind: "music", id: clip.id }} property="volume" label="Volume" />}
-          disabled={!!keys.length && at === null}
         />
         <Slider
           label="Fade in"

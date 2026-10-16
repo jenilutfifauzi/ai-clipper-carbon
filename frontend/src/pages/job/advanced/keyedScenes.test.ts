@@ -9,7 +9,7 @@ import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { heldTransform, keyableOf, keyedItem, manualSceneAt, pickedKeyed, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeSceneTransform } from "./keying";
+import { heldTransform, keyableOf, keyedItem, manualSceneAt, pickedKeyed, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeItemTransform } from "./keying";
 import { picked } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -81,7 +81,7 @@ describe("a Keyframe edit on a Manual Scene", () => {
     expect(heldTransform(framing.transform, item.keys, item, 12).x).toBe(800);
     // Before it shows: held at where it first shows, 2 s in.
     expect(heldTransform(framing.transform, item.keys, item, 0).x).toBe(550);
-    const moved = writeSceneTransform(keying(), 1, { ...framing.transform, x: 100, scale: 2 }, 3)!.edits.layout_overrides[0];
+    const moved = writeItemTransform(keying(), FIRST, { ...framing.transform, x: 100, scale: 2 }, 3)!.edits.layout_overrides[0];
     expect(moved.keys?.x).toEqual([key(0, 300), key(1, 100), key(4, 800)]);
     expect(moved.framing?.transform).toEqual({ ...framing.transform, scale: 2 });
     // The inspector's, for the editors' edits whatever they are.

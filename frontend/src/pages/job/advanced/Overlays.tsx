@@ -1,16 +1,15 @@
 import { Copy, Layers, Trash2 } from "lucide-react";
 import type { MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
-import { Slider } from "../../../components/Slider";
 import { NO_CROP } from "../editor/cropGestures";
-import { shownTransform, valueAt, writeKey, writtenTransform } from "../editor/keyframes";
 import { mediaSize, overlayPlacement } from "../editor/picture";
 import type { Playback } from "../editor/playback";
 import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
-import { KeyCluster, useKeyTime, useTouch } from "./KeyCluster";
-import { keyTime, resetOverlay } from "./keying";
+import { shownTransform, writeKey, writtenTransform } from "./keyActions";
+import { KeyedVolume, useKeyTime, useTouch } from "./KeyCluster";
+import { heldKeyTime, keyedGroup, keyTime, resetOverlay } from "./keying";
 import { TimingFields } from "./TimingFields";
 import { TransformFields } from "./TransformFields";
 
@@ -63,7 +62,7 @@ export function OverlayTransform({
 }) {
   const time = useKeyTime(playback);
   const at = keyTime(overlay, time);
-  const shown = shownTransform(overlay.transform, overlay.keys, at ?? heldAt(overlay, time));
+  const shown = shownTransform(overlay.transform, overlay.keys, at ?? heldKeyTime(overlay, time));
   const size = mediaSize(item);
   const defaults = overlayPlacement(size);
   return (
@@ -84,15 +83,6 @@ export function OverlayTransform({
     />
   );
 }
-
-// Where the playhead at `time` is held in `item`'s own seconds: at its start before it and its end after it.
-const heldAt = (item: { start: number; secs: number }, time: number) => Math.min(Math.max(time - item.start, 0), item.secs);
-
-/**
- * A field's history group, of the Keyframe there when the change wrote one (`keyed`): changes to a
- * field merge into one step while they keep coming, but a Keyframe written at another time is a step of its own.
- */
-export const keyedGroup = (group: string, keyed: boolean, at: number | null) => (keyed ? `${group}@${at}` : group);
 
 /** The selected Overlay's Transform, corners, border and shadow, sound and time. */
 export function OverlayFields({
@@ -118,12 +108,8 @@ export function OverlayFields({
   const video = item?.kind === "video";
   const length = item?.duration ?? Infinity;
   // Its sound at the playhead, and set there once it is keyed.
-  const time = useKeyTime(playback);
-  const at = keyTime(overlay, time);
-  const volumeKeys = overlay.keys.volume ?? [];
-  const volume = valueAt(volumeKeys, at ?? heldAt(overlay, time), overlay.volume);
   const touch = useTouch();
-  const setVolume = (value: number) => {
+  const setVolume = (value: number, at: number | null) => {
     touch("volume");
     const { keys, constant } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume);
     onChange({ ...overlay, keys, volume: constant }, keyedGroup(`overlay:${overlay.id}:volume`, keys !== overlay.keys, at));
@@ -152,16 +138,15 @@ export function OverlayFields({
       {video && (
         <Group title="Sound">
           {item?.has_audio ? (
-            <Slider
+            <KeyedVolume
+              item={{ kind: "overlay", id: overlay.id }}
+              span={overlay}
+              keys={overlay.keys.volume ?? []}
+              volume={overlay.volume}
               label="Its sound"
-              value={volume}
-              min={0}
-              max={2}
-              step={0.05}
               format={(v) => (v ? percent(v) : "Muted")}
+              playback={playback}
               onChange={setVolume}
-              after={<KeyCluster item={{ kind: "overlay", id: overlay.id }} property="volume" label="Its sound" />}
-              disabled={!!volumeKeys.length && at === null}
             />
           ) : (
             <p className="text-sm text-muted">This video has no sound.</p>

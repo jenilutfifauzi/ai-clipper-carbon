@@ -1,5 +1,5 @@
 import type { MusicClip, Overlay, TextLayer } from "../../../api";
-import { rekeyed } from "../editor/keyframes";
+import { rekeyed } from "./keyActions";
 import { fadesWithin, ITEM_MIN_SECS, round, type AdvancedEdits } from "./edits";
 import { counted, listed, LISTS } from "./pick";
 
@@ -67,7 +67,7 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
         const secs = round(moved.secs);
         // A Music Clip cut shorter than its fades has them shortened with it.
         const fades = kind === "music" ? fadesWithin(item as MusicClip, secs) : {};
-        // Its Keyframes of the part it still plays, from `skipped` of it (keyframes.ts' rekeyed).
+        // Its Keyframes of the part it still plays, from `skipped` of it (keyActions.ts' rekeyed).
         return [rekeyed({ ...item, start: round(moved.start), secs, ...offset, ...fades }, moved.skipped, moved.skipped + secs)];
       });
       Object.assign(lists, { [list]: items });

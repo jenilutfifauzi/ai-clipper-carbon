@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Slider } from "../../../components/Slider";
 import { Group } from "../editor/StyleFields";
-import { retimer, type TimedEdge } from "./actions";
+import { gestureRetime, type TimedEdge } from "./actions";
 import { ITEM_MIN_SECS } from "./edits";
 
 /**
@@ -25,7 +25,7 @@ export function TimingFields<T extends { id: string; start: number; secs: number
   onChange: (item: T, group: string) => void;
 }) {
   // Moved or trimmed, its Keyframes (if it has any) re-anchored from where they were as the slider's drag began.
-  const [retime] = useState(retimer);
+  const [retime] = useState(gestureRetime);
   const changed = (next: T, edge: TimedEdge, group: string) => onChange(retime(item, next, edge, group), group);
   const offset = item.offset ?? 0;
   const room = Math.min(duration - item.start, length === undefined ? Infinity : length - offset);

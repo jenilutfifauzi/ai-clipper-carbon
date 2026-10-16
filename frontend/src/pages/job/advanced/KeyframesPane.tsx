@@ -2,24 +2,13 @@ import { useRef, useState, type PointerEvent } from "react";
 import type { Ease, Keyframe, KeyProperty, MediaItem } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx } from "../../../format";
-import {
-  easedKey,
-  easeName,
-  handleEase,
-  KEY_RANGES,
-  keyAt,
-  moveKey,
-  setEase,
-  valueAt,
-  type EaseName,
-  type KeyGrid,
-} from "../editor/keyframes";
+import { KEY_RANGES, valueAt } from "../editor/keyframes";
 import { usePlayback } from "../editor/playback";
 import { curvePath, curveRange, easeHandles, handleShares, plotPoint, plotValue, type Plot, type PlotPoint } from "./curves";
+import { easedKey, easeName, handleEase, keyAt, moveKey, setEase, type EaseName, type KeyGrid } from "./keyActions";
 import { KeyCluster, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
 import { EaseSelect, KEY_FIELDS } from "./KeyEase";
-import { activeKey, clearItemKeys, keyedItem, keyRows, keyTime, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
-import { keyedGroup } from "./Overlays";
+import { activeKey, clearItemKeys, heldKeyTime, keyedGroup, keyedItem, keyRows, keyTime, refName, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
 import { onFrame } from "./playhead";
 
 /**
@@ -44,7 +33,7 @@ export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps:
       </div>
     );
   }
-  return <Pane key={`${ref.kind}:${ref.id}`} keying={keying} fps={fps} item={ref} keyed={item} rows={keyRows(keying.edits, ref, mediaById)} />;
+  return <Pane key={refName(ref)} keying={keying} fps={fps} item={ref} keyed={item} rows={keyRows(keying.edits, ref, mediaById)} />;
 }
 
 // A row's height, in CSS pixels: the rows' column and the Dopesheet's lanes line up by it.
@@ -77,7 +66,7 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
   const [view, setView] = useState<"dopesheet" | "curves">("dopesheet");
   const time = useKeyTime(keying.playback);
   const at = keyTime(keyed, time);
-  const held = at ?? Math.min(Math.max(time - keyed.start, keyed.first ?? 0), keyed.secs);
+  const held = at ?? heldKeyTime(keyed, time);
   const active = activeKey(rows, keyed.keys, keying.touched ?? null);
   const drag = useRef<Drag | null>(null);
   const grid: KeyGrid = { fps, start: keyed.start, secs: keyed.secs };
@@ -445,7 +434,7 @@ function Row({
   const [low, high] = prop === "rotation" && !isKeyed ? [-360, 360] : KEY_RANGES[prop];
   const write = (shown: number) => {
     const outcome = writeItemKey(keying, item, prop, Math.min(Math.max(shown / scale, low), high), time);
-    if (outcome) keying.onEdits(outcome.edits, keyedGroup(`keyframes:${item.kind}:${item.id}:${prop}`, isKeyed, at));
+    if (outcome) keying.onEdits(outcome.edits, keyedGroup(`keyframes:${refName(item)}:${prop}`, isKeyed, at));
   };
   return (
     <div

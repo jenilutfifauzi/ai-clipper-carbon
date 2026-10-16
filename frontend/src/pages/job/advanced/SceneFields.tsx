@@ -5,14 +5,14 @@ import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { forAllScenes, framingSource, reframed, sceneLayoutOverrides, sourceSceneAt, withClipLayout, withSceneFraming, type LayoutEdits } from "../editor/manual";
 import { offeredLayouts, portraitSource, shownLayout } from "../editor/layouts";
-import { PICTURE_KEYS, shownTransform } from "../editor/keyframes";
+import { PICTURE_KEYS } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import { usePlayback, type Playback } from "../editor/playback";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { Group } from "../editor/StyleFields";
+import { shownTransform } from "./keyActions";
 import { useKeyTime } from "./KeyCluster";
-import { keyTime, manualScene, sceneRef, withSceneTransform } from "./keying";
-import { keyedGroup } from "./Overlays";
+import { heldKeyTime, keyedGroup, keyTime, manualScene, sceneRef, withSceneTransform } from "./keying";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
 const LAYOUTS: readonly { value: Layout; label: string }[] = [
@@ -81,7 +81,7 @@ export function SceneFields<T extends LayoutEdits>({
   const keyed = source?.own ? manualScene(edits.layout_overrides, plan, at) : null;
   const keyAt = keyed && keyTime(keyed, time);
   const shown = keyed
-    ? shownTransform(keyed.framing.transform, keyed.keys, keyAt ?? Math.min(Math.max(time - keyed.start, keyed.first), keyed.secs))
+    ? shownTransform(keyed.framing.transform, keyed.keys, keyAt ?? heldKeyTime(keyed, time))
     : source?.framing.transform;
   const setTransform = (transform: Transform, field: string) => {
     if (!keyed || !source?.own) return setFraming({ ...source!.framing, transform }, `transform.${field}`);

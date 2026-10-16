@@ -20,7 +20,7 @@ import { cx, formatPrecise } from "../../../format";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
-import { retimer } from "./actions";
+import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
@@ -122,7 +122,7 @@ export function Tracks({
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
   // A Music Clip or Overlay trimmed: its Keyframes re-anchored from where they were as the drag began.
-  const [retime] = useState(retimer);
+  const [retime] = useState(gestureRetime);
   // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
   const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
   // A picked item of several dragged or trimmed (or a Segment moved): picked alone.

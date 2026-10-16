@@ -3,12 +3,13 @@
 // and duplicate carry them; the client merge takes them as part of their item.
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, Ease, Keyframe, Keys, MusicClip, Overlay } from "../../../api";
-import { EASE_IN, EASE_IN_OUT, EASE_OUT, eased, easePart, LINEAR, rekeyed, rewindow, rewindowKeys, valueAt } from "../editor/keyframes";
+import { EASE_IN, EASE_IN_OUT, EASE_OUT, eased, LINEAR, valueAt } from "../editor/keyframes";
 import { mergeEdits } from "../editor/merge";
 import { playedFrom } from "../editor/playback";
-import { clipTrimmed, duplicate, layersOf, remove, retimed, retimer, rippleRemove, split, type PickContext } from "./actions";
+import { clipTrimmed, duplicate, gestureRetime, layersOf, remove, retimed, rippleRemove, split, type PickContext } from "./actions";
 import { copy, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
+import { easePart, rekeyed, rewindow, rewindowKeys } from "./keyActions";
 import { picked, type Pick } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -140,7 +141,7 @@ describe("trimming a keyed item on the Timeline or in the inspector", () => {
   });
 
   test("a drag in and back out again gets them back: each step is made from the item as the drag began", () => {
-    const retime = retimer();
+    const retime = gestureRetime();
     const shorter = retime(whole, { ...whole, secs: 1.5 }, "end", "drag:1");
     const back = retime(shorter, { ...shorter, secs: 5 }, "end", "drag:1");
     expect(shorter.keys).toEqual({ x: rewindow(slide, 0, 1.5) });
@@ -150,7 +151,7 @@ describe("trimming a keyed item on the Timeline or in the inspector", () => {
   });
 
   test("an item changed since the last step (an undo, another editor) starts the gesture again from it", () => {
-    const retime = retimer();
+    const retime = gestureRetime();
     retime(whole, { ...whole, secs: 1.5 }, "end", "key:end");
     const other = overlay("o", 2, 5, { x: [key(0, 1)] });
     expect(retime(other, { ...other, secs: 4 }, "end", "key:end").keys).toEqual(other.keys);

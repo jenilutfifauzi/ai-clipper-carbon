@@ -79,22 +79,7 @@ import { Inspector } from "./Inspector";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
 import { KeyframesPane } from "./KeyframesPane";
-import {
-  activeKey,
-  heldTransform,
-  keyRows,
-  keyAround,
-  keyedItem,
-  manualScene,
-  moveItemKeys,
-  segmentSpan,
-  stageTransform,
-  toggleItemKey,
-  writeItemKey,
-  writeItemTransform,
-  writeSceneTransform,
-  writeSegmentTransform,
-} from "./keying";
+import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
@@ -649,15 +634,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     : {
         transformOf: (id, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
-          return overlay && stageTransform(overlay, time);
+          return overlay && heldTransform(overlay.transform, overlay.keys, overlay, time);
         },
         onTransform: (id, transform, group, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
-          const old = stageTransform(overlay, time);
+          const old = heldTransform(overlay.transform, overlay.keys, overlay, time);
           if (placedTogether("overlay", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else {
-            const outcome = writeItemTransform(scene, id, transform, time, old);
+            const outcome = writeItemTransform(scene, { kind: "overlay", id }, transform, time, old);
             if (outcome) history.set(outcome.edits, group);
           }
         },
@@ -666,7 +651,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
           const cropped = { ...scene, edits: { ...edits, overlays: replaced(edits.overlays, { ...overlay, crop }) } };
-          const outcome = writeItemTransform(cropped, id, transform, playback.time, stageTransform(overlay, playback.time));
+          const held = heldTransform(overlay.transform, overlay.keys, overlay, playback.time);
+          const outcome = writeItemTransform(cropped, { kind: "overlay", id }, transform, playback.time, held);
           if (outcome) history.set(outcome.edits, group);
         },
       };
@@ -674,20 +660,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const keying: Keying = {
     edits, pick, locked: tracks.locked, track, plan, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched,
   };
-  // A video Segment keyed in its Framing's Transform: held on the stage where it is at the playhead,
-  // and its keyed fields written there as Keyframes, as a keyed Overlay's are.
-  const keyedFraming = (id: string) => {
-    const segment = edits.segments.find((other) => other.id === id);
-    const span = segmentSpan(edits.segments, id, track);
-    if (!segment?.framing || !span || !PICTURE_KEYS.some((prop) => segment.keys?.[prop]?.length)) return null;
-    const { framing } = segment;
-    return { held: (time: number) => heldTransform(framing.transform, segment.keys ?? {}, span, time), framing };
-  };
-  // A Manual Scene keyed in its override's Framing's Transform: the same, in seconds from its Scene's start.
-  const keyedScene = (index: number) => {
-    const found = plan && manualScene(edits.layout_overrides, plan, index);
-    if (!found || !PICTURE_KEYS.some((prop) => found.keys[prop]?.length)) return null;
-    return { held: (time: number) => heldTransform(found.framing.transform, found.keys, found, time), framing: found.framing };
+  // A video Segment keyed in its Framing's Transform, or a Manual Scene in its override's: held on
+  // the stage where it is at the playhead, and its keyed fields written there as Keyframes, as a
+  // keyed Overlay's are (a Manual Scene's in seconds from its Scene's start).
+  const keyedPicture = (ref: KeyedRef) => {
+    const item = keyedItem(edits, ref, track, plan);
+    const transform = item?.transform;
+    if (!item || !transform || !PICTURE_KEYS.some((prop) => item.keys[prop]?.length)) return null;
+    return { ref, transform, held: (time: number) => heldTransform(transform, item.keys, item, time) };
   };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
@@ -697,13 +677,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       : (segment, at) => {
           const source = pictureSource(edits, plan, segment, at);
           if (!source) return null;
-          const keyed = source.kind === "media" ? keyedFraming(source.segment) : source.kind === "manual" ? keyedScene(source.scene) : null;
+          const ref: KeyedRef | null = source.kind === "media" ? { kind: "segment", id: source.segment } : source.kind === "manual" ? sceneRef(source.scene) : null;
+          const keyed = ref && keyedPicture(ref);
           const written = (next: AdvancedEdits, transform: Transform, group: string) => {
-            const held = keyed!.held(playback.time);
-            const outcome =
-              source.kind === "manual"
-                ? writeSceneTransform({ ...scene, edits: next, plan }, source.scene, transform, playback.time, held)
-                : writeSegmentTransform({ ...scene, edits: next, track }, source.segment, transform, playback.time, held);
+            const outcome = keyed && writeItemTransform({ ...scene, edits: next, track, plan }, keyed.ref, transform, playback.time, keyed.held(playback.time));
             if (outcome) history.set(outcome.edits, group);
           };
           return {
@@ -715,7 +692,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             crop: pictureCrop(edits, plan, source),
             onCrop: (crop, transform, group) =>
               keyed
-                ? written(withPictureCrop(edits, plan, source, crop, keyed.framing.transform), transform, group)
+                ? written(withPictureCrop(edits, plan, source, crop, keyed.transform), transform, group)
                 : history.set(withPictureCrop(edits, plan, source, crop, transform), group),
           };
         };

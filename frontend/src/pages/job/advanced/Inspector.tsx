@@ -9,12 +9,12 @@ import { HookTimingFields } from "../HookEditor";
 import { restyle, setFade, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
-import { segmentSpan, writeItemKey } from "./keying";
+import { keyedGroup, keyedItem, segmentSpan, writeItemKey } from "./keying";
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
-import { isPicked, itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
@@ -65,10 +65,9 @@ export function Inspector({
   // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's or
   // video Segment's, as a Keyframe at the playhead.
   const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
-    const keys = item.kind === "music" ? edits.music.find((clip) => clip.id === item.id)?.keys : edits.segments.find((segment) => segment.id === item.id)?.keys;
-    const keyed = !!keys?.volume?.length;
+    const keyed = !!keyedItem(edits, item, track)?.keys.volume?.length;
     const outcome = keyed ? writeItemKey({ edits, pick, track }, item, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
-    if (outcome) onEdits(outcome.edits, keyed ? `${group}@${keyTime}` : group);
+    if (outcome) onEdits(outcome.edits, keyedGroup(group, keyed, keyTime));
   };
 
   const items = itemsOf(pick);
@@ -247,9 +246,7 @@ const NAMES: Record<ItemKind, [string, string]> = {
  */
 function PickSummary({ pick, edits, actions }: { pick: Pick; edits: AdvancedEdits; actions: ItemActions }) {
   const items = itemsOf(pick);
-  const keyed = [...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)), ...edits.music.filter((clip) => isPicked(pick, "music", clip.id))].some(
-    (item) => Object.keys(item.keys).length > 0,
-  );
+  const keyed = items.some(({ kind, id }) => (kind === "overlay" || kind === "music") && Object.keys(keyedItem(edits, { kind, id })?.keys ?? {}).length > 0);
   const counts = (Object.keys(NAMES) as ItemKind[])
     .map((kind) => [kind, items.filter((item) => item.kind === kind).length] as const)
     .filter(([, count]) => count > 0)

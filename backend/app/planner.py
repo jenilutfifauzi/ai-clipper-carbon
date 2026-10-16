@@ -666,7 +666,7 @@ def plan_render(
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             else:
                 framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
-                showings += _showings(framed, given.layout_overrides, length, given.start, len(plans))
+                showings += _manual_showings(framed, given.layout_overrides, length, given.start, len(plans))
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
@@ -684,7 +684,7 @@ def plan_render(
     else:
         duration = round(end - start, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
-        plans = _keyed_manual(plans, _showings(plans, layout_overrides or [], duration, start, 0), rate)
+        plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, start, 0), rate)
     return RenderPlan(
         start=start,
         end=end,
@@ -779,7 +779,7 @@ def _held(overrides: list[LayoutOverride], start: float, end: float, duration: f
 
 
 @dataclass(frozen=True)
-class _Showing:
+class _ManualShowing:
     """A Manual Scene of the plan framed by a Layout Override: its place among the plan's
     Scenes, the override, and where the Scene starts and ends and the override is, on the Source's
     timeline."""
@@ -790,7 +790,7 @@ class _Showing:
     end: float
     at: float
 
-    def of_same(self, other: "_Showing") -> bool:
+    def same_scene_as(self, other: "_ManualShowing") -> bool:
         """Whether `other` shows the same override's Scene (in another Segment, or the same piece
         again): its time, to rounding, and its Framing and Keyframes."""
         same = (self.override.framing, self.override.keys) == (other.override.framing, other.override.keys)
@@ -802,7 +802,7 @@ class _Showing:
 _SAME_OVERRIDE_SECS = 0.002
 
 
-def _showings(framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, start: float, first: int) -> list[_Showing]:
+def _manual_showings(framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, start: float, first: int) -> list[_ManualShowing]:
     """The Manual Scenes among `framed` (a range lasting `duration`, `start` seconds into the Source,
     its Scenes `first` onwards among the plan's) framed by one of `overrides` (in seconds into the
     range)."""
@@ -810,11 +810,11 @@ def _showings(framed: list[ScenePlan], overrides: list[LayoutOverride], duration
     for i, scene in enumerate(framed):
         override = _held(overrides, scene.start, scene.end, duration) if scene.layout is SceneLayout.MANUAL else None
         if override is not None and override.layout is Layout.MANUAL:
-            found.append(_Showing(first + i, override, round(start + scene.start, 3), round(start + scene.end, 3), start + override.at))
+            found.append(_ManualShowing(first + i, override, round(start + scene.start, 3), round(start + scene.end, 3), start + override.at))
     return found
 
 
-def _keyed_manual(plans: list[ScenePlan], showings: list[_Showing], fps: float) -> list[ScenePlan]:
+def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: float) -> list[ScenePlan]:
     """`plans` with each Manual Scene of `showings` moved by its override's Keyframes (`keyed_scene`).
     They are in seconds from its Scene's start on the Source's timeline: where the earliest of the
     Segments showing that Scene starts it, so that a Segment starting part way into it (the tail of
@@ -822,7 +822,7 @@ def _keyed_manual(plans: list[ScenePlan], showings: list[_Showing], fps: float) 
     Those past the latest end any of them shows are ignored."""
     plans = list(plans)
     for showing in showings:
-        alike = [other for other in showings if showing.of_same(other)]
+        alike = [other for other in showings if showing.same_scene_as(other)]
         start, end = min(other.start for other in alike), max(other.end for other in alike)
         scene = plans[showing.index]
         keys_from = round(scene.start - (showing.start - start), 3)
@@ -902,12 +902,12 @@ def framed_scene(start: float, end: float, layout: SceneLayout, width: int, heig
 
 def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float) -> ScenePlan:
     """`scene`, of one picture placed by `transform` (a media Segment's or a Manual Scene's), moved by
-    the `keys` of its item, whose Keyframes count from `start` seconds into the Clip (`moving`; before
-    the Scene, for a Manual one shown from part way into it): its Background is left out when the
-    picture covers the frame at every one of its frames at `fps` (`covers`), each at n / `fps`
+    the `keys` of its item, whose Keyframes count from `start` seconds into the Clip (`with_motion`;
+    before the Scene, for a Manual one shown from part way into it): its Background is left out when
+    the picture covers the frame at every one of its frames at `fps` (`covers`), each at n / `fps`
     seconds into the Scene, as the renderer draws it. Unkeyed, as it is."""
     assert scene.picture is not None
-    picture = moving(scene.picture, transform, keys, start)
+    picture = with_motion(scene.picture, transform, keys, start)
     if not picture.motion:
         return scene
     count = math.ceil((scene.end - scene.start) * fps - 1e-6)
@@ -1055,7 +1055,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
         end = min(end, start + item.duration - overlay.offset)
     end = round(min(end, duration), 3)
     offset = round(overlay.offset, 3) if item.duration is not None else 0.0
-    picture = moving(picture_of(item.width, item.height, overlay.transform, overlay.crop), overlay.transform, overlay.keys, start)
+    picture = with_motion(picture_of(item.width, item.height, overlay.transform, overlay.crop), overlay.transform, overlay.keys, start)
     # The radius is a share of the shorter side as drawn, so it scales with the picture; the border
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
@@ -1063,7 +1063,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id)
 
 
-def moving(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:
+def with_motion(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:
     """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
     the Clip: its motion in seconds into the Clip, and its drawn size at scale 1. Unkeyed (a volume
     isn't the picture's), as it is."""

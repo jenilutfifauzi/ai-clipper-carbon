@@ -1,32 +1,10 @@
-// Seam D (.scratch/keyframes/spec.md): the editor's pure Keyframe actions in ./keyframes.ts (set,
+// Seam D (.scratch/keyframes/spec.md): the editor's pure Keyframe actions in ./keyActions.ts (set,
 // remove and toggle at a time, auto-key, clear, move every one at an instant), as worked examples of the Keyframes before and after.
 import { describe, expect, test } from "vitest";
 import type { Keyframe, Keys, Transform } from "../../../api";
-import {
-  clearKeys,
-  EASE_IN,
-  EASE_IN_OUT,
-  EASE_OUT,
-  easedKey,
-  easeName,
-  handleEase,
-  keyAt,
-  keysAround,
-  keyState,
-  LINEAR,
-  MAX_KEYS,
-  moveKey,
-  moveKeysAt,
-  PICTURE_KEYS,
-  removeKey,
-  setEase,
-  setKey,
-  shownTransform,
-  toggleKey,
-  writeKey,
-  writtenTransform,
-} from "./keyframes";
-import { IDENTITY } from "./picture";
+import { EASE_IN, EASE_IN_OUT, EASE_OUT, LINEAR, PICTURE_KEYS } from "../editor/keyframes";
+import { IDENTITY } from "../editor/picture";
+import { clearKeys, easedKey, easeName, handleEase, keyAt, keysAround, keyState, MAX_KEYS, moveKey, moveKeysAt, removeKey, setEase, setKey, shownTransform, toggleKey, writeKey, writtenTransform } from "./keyActions";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
 

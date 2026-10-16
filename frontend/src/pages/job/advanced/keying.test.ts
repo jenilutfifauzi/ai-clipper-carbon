@@ -9,6 +9,7 @@ import type { AdvancedEdits } from "./edits";
 import {
   activeKey,
   clearItemKeys,
+  heldTransform,
   keyableOf,
   keyAround,
   keyedItem,
@@ -18,7 +19,6 @@ import {
   pickedKeyed,
   resetOverlay,
   setItemKeys,
-  stageTransform,
   toggleItemKey,
   writeItemKey,
   writeItemTransform,
@@ -113,7 +113,7 @@ describe("a Keyframe edit on an item", () => {
     const keyed = edits({ overlays: [overlay({ keys: { x: [{ at: 0, value: 100, ease: LINEAR }] } })] });
     expect(toggleItemKey(scene(edits(), ["overlay"]), O, "x", 3)).toBeNull();
     expect(writeItemKey(scene(edits(), ["music"]), M, "volume", 0.5, 3)).toBeNull();
-    expect(writeItemTransform(scene(keyed, ["overlay"]), "o", { ...IDENTITY, x: 900 }, 3)).toBeNull();
+    expect(writeItemTransform(scene(keyed, ["overlay"]), O, { ...IDENTITY, x: 900 }, 3)).toBeNull();
   });
 
   test("a volume change writes a Keyframe once the volume is keyed, else the constant", () => {
@@ -129,7 +129,7 @@ describe("a Keyframe edit on an item", () => {
 
   test("a Transform change on a keyed property writes a Keyframe at the playhead, and on an unkeyed one it changes the constant", () => {
     const keyed = edits({ overlays: [overlay({ keys: { x: [{ at: 0, value: 100, ease: LINEAR }] } })] });
-    const moved = writeItemTransform(scene(keyed), "o", { ...IDENTITY, x: 900, scale: 2 }, 4);
+    const moved = writeItemTransform(scene(keyed), O, { ...IDENTITY, x: 900, scale: 2 }, 4);
     expect(moved?.edits.overlays[0]).toEqual(
       overlay({
         transform: { ...IDENTITY, x: 300, scale: 2 },
@@ -150,10 +150,10 @@ describe("a Keyframe edit on an item", () => {
 
   test("the Grips hold a keyed Overlay where it is at the playhead, tidied, and at its ends outside it", () => {
     const keyed = overlay({ keys: { x: [{ at: 0, value: 100, ease: LINEAR }, { at: 3, value: 200.5, ease: LINEAR }] } });
-    expect(stageTransform(keyed, 3.5).x).toBe(150);
-    expect(stageTransform(keyed, 9).x).toBe(201);
+    expect(heldTransform(keyed.transform, keyed.keys, keyed, 3.5).x).toBe(150);
+    expect(heldTransform(keyed.transform, keyed.keys, keyed, 9).x).toBe(201);
     const still = overlay();
-    expect(stageTransform(still, 3)).toBe(still.transform);
+    expect(heldTransform(still.transform, still.keys, still, 3)).toBe(still.transform);
   });
 
   test("a ruler diamond dragged moves every Keyframe at its instant, in Timeline time, as one change", () => {

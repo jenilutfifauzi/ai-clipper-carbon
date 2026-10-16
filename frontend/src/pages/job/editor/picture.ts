@@ -1,5 +1,5 @@
 import type { Background, MediaItem, Panel, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
-import { valueAt } from "./keyframes";
+import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -78,24 +78,20 @@ export function pictureStyle(picture: Picture, frame: { width: number; height: n
   };
 }
 
-// Each keyed property's range (backend/app/candidates.py's KEY_RANGES): a sampled value is held to
-// it, but a rotation, which may turn any number of times.
-const KEY_RANGES = { x: [0, 1080], y: [0, 1920], scale: SCALE_RANGE, opacity: [0, 1] } as const;
-
 /** Whether `picture` moves: it has Keyframes. */
 export const isKeyed = (picture: Picture) => !!picture.motion && Object.keys(picture.motion).length > 0;
 
 /**
  * `picture` as drawn at `time` seconds into the Clip (backend/app/planner.py's picture_at, which
- * the renderer draws by): each keyed property sampled from its motion and held to its range, its
- * size its drawn size at scale 1 times the sampled scale (in fractions of a pixel), its corners'
- * radius in step with its shorter side (its border and shadow stay as they are), and its bounds
- * turned about the sampled centre; a still Picture, without motion. An unkeyed picture is itself.
+ * the renderer draws by): each keyed property sampled from its motion and held to its range (but a
+ * rotation, which may turn any number of times), its size its drawn size at scale 1 times the
+ * sampled scale (in fractions of a pixel), its corners' radius in step with its shorter side (its
+ * border and shadow stay as they are), and its bounds turned about the sampled centre; a still Picture, without motion. An unkeyed picture is itself.
  */
 export function pictureAt(picture: Picture, time: number): Picture {
   const motion = picture.motion;
   if (!motion || !isKeyed(picture)) return picture;
-  const sampled = (prop: "x" | "y" | "scale" | "rotation" | "opacity", constant: number) => {
+  const sampled = (prop: PictureKey, constant: number) => {
     const keys = motion[prop];
     if (!keys?.length) return constant;
     const value = valueAt(keys, time, constant);

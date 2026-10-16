@@ -1,11 +1,13 @@
 import { ChevronLeft, ChevronRight, Diamond } from "lucide-react";
 import { createContext, useContext, useRef } from "react";
-import type { KeyProperty } from "../../../api";
+import type { Keyframe, KeyProperty } from "../../../api";
+import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
-import { keysAround, keyState } from "../editor/keyframes";
+import { valueAt } from "../editor/keyframes";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
-import { keyedItem, keyTime, manualSceneAt, pickedKeyed, toggleItemKey, type KeyedRef, type KeyScene } from "./keying";
+import { keysAround, keyState } from "./keyActions";
+import { heldKeyTime, keyedItem, keyTime, manualSceneAt, pickedKeyed, toggleItemKey, type KeyedRef, type KeyScene, type KeySpan } from "./keying";
 import { onlyItem } from "./pick";
 
 /**
@@ -106,5 +108,48 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
         <ChevronRight aria-hidden size={14} />
       </button>
     </div>
+  );
+}
+
+/**
+ * A keyable volume's slider (a Music Clip's, an Overlay video's or a video Segment's sound, `item`
+ * playing over `span`): its value at the playhead (at the item's nearer end outside it), from its
+ * Keyframes `keys` or its constant `volume`, with its ‹ ◆ ›; off outside the item once it is keyed.
+ * `onChange` gets the playhead in the item's own seconds there (null outside it), where a keyed
+ * change is written.
+ */
+export function KeyedVolume({
+  item,
+  span,
+  keys,
+  volume,
+  label,
+  format,
+  playback,
+  onChange,
+}: {
+  item: KeyedRef;
+  span: KeySpan | null;
+  keys: readonly Keyframe[];
+  volume: number;
+  label: string;
+  format: (volume: number) => string;
+  playback: Playback;
+  onChange: (volume: number, at: number | null) => void;
+}) {
+  const time = useKeyTime(playback);
+  const at = span && keyTime(span, time);
+  return (
+    <Slider
+      label={label}
+      value={valueAt(keys, at ?? (span ? heldKeyTime(span, time) : 0), volume)}
+      min={0}
+      max={2}
+      step={0.05}
+      format={format}
+      onChange={(value) => onChange(value, at)}
+      after={<KeyCluster item={item} property="volume" label={label} />}
+      disabled={!!keys.length && at === null}
+    />
   );
 }

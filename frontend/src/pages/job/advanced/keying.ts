@@ -1,35 +1,37 @@
 import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, Transform } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
-import { clearKeys, keysAround, moveKeysAt, PICTURE_KEYS, shownTransform, toggleKey, valueAt, writeKey, writtenTransform } from "../editor/keyframes";
+import { PICTURE_KEYS, valueAt } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
 import { sourceSceneAt, type LayoutEdits } from "../editor/manual";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { onlyItem, TRACK_OF, type Pick } from "./pick";
+import { clearKeys, keysAround, moveKeysAt, shownTransform, toggleKey, toMillionth, writeKey, writtenTransform } from "./keyActions";
+import { onlyItem, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
 
 /**
  * Keyframe edits on the items of the edits (ADR 0008): the pure Keyframe actions of
- * ../editor/keyframes.ts done to an Overlay, a Music Clip, a video's Segment or a Manual Scene at
+ * ./keyActions.ts done to an Overlay, a Music Clip, a video's Segment or a Manual Scene at
  * the playhead, each one change of the edits, so one step of undo. A Keyframe is set at the playhead
  * minus the item's start on the Timeline (a Manual Scene's: the playhead's Source time minus its
  * Scene's start, which the plan gives as `keys_from`), and only with the playhead inside the item;
- * a locked Track refuses them.
+ * a locked Track refuses them. What each kind of item is, and where its Keyframes and constants are
+ * kept, is its row of KINDS.
  */
 
 /**
  * An item that can have Keyframes: an Overlay, a Music Clip, a video's Segment, or a Manual Scene of
- * a Layout Override's (`id` its place among the plan's Scenes, `sceneRef`: that Segment's showing of it).
+ * a Layout Override's (`index` its place among the plan's Scenes, `sceneRef`: that Segment's showing of it).
  */
-export interface KeyedRef {
-  kind: "overlay" | "music" | "segment" | "scene";
-  id: string;
-}
+export type KeyedRef = { kind: "overlay"; id: string } | { kind: "music"; id: string } | { kind: "segment"; id: string } | { kind: "scene"; index: number };
 
 /** The Manual Scene that is the plan's Scene `index`, as a KeyedRef. */
-export const sceneRef = (index: number): KeyedRef => ({ kind: "scene", id: String(index) });
+export const sceneRef = (index: number): KeyedRef => ({ kind: "scene", index });
+
+/** Item `ref`'s name, one of its own among the keyed items: a React key's, a history group's. */
+export const refName = (ref: KeyedRef) => (ref.kind === "scene" ? `scene:${ref.index}` : `${ref.kind}:${ref.id}`);
 
 /**
  * What Keyframe edits are done in: the edits, the Pick (kept) and the locked Tracks, and the Main
@@ -46,28 +48,58 @@ export interface KeyScene {
 }
 
 /**
- * An item as keyed: its span in Timeline time (where its Keyframes count from, for `secs`), its
- * Keyframes, and the constant each property has without them. A Manual Scene shown from part way
- * into its shot is on the Timeline from `first` seconds in (0 for every other item).
+ * Where an item's Keyframes count from on the Timeline (`start`), and for how long (`secs`). A Manual
+ * Scene shown from part way into its shot is on the Timeline from `first` seconds in (0 for every
+ * other item).
  */
-export interface KeyedItem {
+export interface KeySpan {
   start: number;
   secs: number;
   first?: number;
+}
+
+/**
+ * An item as keyed: its span, its Keyframes, its constant Transform (a picture's; none for a Music
+ * Clip) and volume, its Media Library item's id (`media`, which says whether it has sound to key),
+ * and the constant each property has without Keyframes.
+ */
+export interface KeyedItem extends KeySpan {
   keys: Keys;
+  transform?: Transform;
+  volume: number;
+  media?: string;
   constant: (prop: KeyProperty) => number;
 }
+
+// An item's constants as written back: its Transform, its volume; those left out stay as they are.
+type Constants = { transform?: Transform; volume?: number };
+
+// `item` as keyed, its constants read from its Transform and volume.
+const asKeyed = <T extends Omit<KeyedItem, "constant">>(item: T): T & KeyedItem => ({
+  ...item,
+  constant: (prop) => (prop === "volume" || !item.transform ? item.volume : item.transform[prop]),
+});
+
+// `set` with `prop`'s constant `value`: a turn kept within ±360°, as the Transform's is, where a
+// Keyframe may hold more.
+function withConstant(set: Constants, prop: KeyProperty, value: number): Constants {
+  if (prop === "volume" || !set.transform) return { ...set, volume: value };
+  return { ...set, transform: { ...set.transform, [prop]: prop === "rotation" ? value % 360 : value } };
+}
+
+// The volume of `set`, as fields to spread: none when it isn't given.
+const soundOf = (set: Constants) => (set.volume === undefined ? {} : { volume: set.volume });
 
 /**
  * Where Segment `id` plays on the Timeline: from where it starts on the Main Track as planned
  * (`track`), for as long as its range; null when there is no such Segment.
  */
-export function segmentSpan(segments: ClipSegment[], id: string, track?: PlayedSegment[]): { start: number; secs: number } | null {
+export function segmentSpan(segments: ClipSegment[], id: string, track?: PlayedSegment[]): KeySpan | null {
   const index = segments.findIndex((segment) => segment.id === id);
   if (index === -1) return null;
   const planned = track?.length === segments.length ? track : playedFrom(segments);
   const { start, end } = segments[index];
-  return { start: planned[index].start, secs: Math.round((end - start) * 1e6) / 1e6 };
+  return { start: planned[index].start, secs: toMillionth(end - start) };
 }
 
 /**
@@ -86,103 +118,141 @@ export function manualScene(
   const from = scene?.keys_from;
   if (!own || own.layout !== "manual" || !own.framing || from == null) return null;
   const { framing } = own;
-  const micro = (seconds: number) => Math.round(seconds * 1e6) / 1e6;
-  return {
+  return asKeyed({
     start: from,
-    first: micro(scene.start - from),
-    secs: micro(scene.end - from),
+    first: toMillionth(scene.start - from),
+    secs: toMillionth(scene.end - from),
     keys: own.keys ?? {},
-    constant: (prop) => (prop === "volume" ? 1 : framing.transform[prop]),
+    transform: framing.transform,
+    volume: 1,
     override: own,
     framing,
-  };
+  });
 }
 
-// `edits` with `own` of its Layout Overrides replaced by `next`.
-const withOverride = <T extends LayoutEdits>(edits: T, own: LayoutOverride, next: LayoutOverride): T => ({
-  ...edits,
-  layout_overrides: edits.layout_overrides.map((override) => (override === own ? next : override)),
-});
+// `edits` with Manual Scene `index`'s own override keyed by `keys`, its Framing's Transform
+// `transform` when it is given; as they are without that override.
+function withSceneKeys<T extends LayoutEdits>(edits: T, plan: RenderPlan, index: number, keys: Keys, transform?: Transform): T {
+  const found = manualScene(edits.layout_overrides, plan, index);
+  if (!found) return edits;
+  const { override, framing } = found;
+  const next = { ...override, keys, framing: transform ? { ...framing, transform } : framing };
+  return { ...edits, layout_overrides: edits.layout_overrides.map((other) => (other === override ? next : other)) };
+}
+
+// A picture's rows: its Transform's fields, and for a video with sound its volume.
+const pictureRows = (media?: { kind: MediaItem["kind"]; has_audio: boolean }): KeyProperty[] =>
+  media?.kind === "video" && media.has_audio ? [...PICTURE_KEYS, "volume"] : [...PICTURE_KEYS];
+
+type RefOf<K extends KeyedRef["kind"]> = Extract<KeyedRef, { kind: K }>;
+
+/**
+ * How each kind of keyed item is kept: the Track whose lock refuses its Keyframe edits (a Manual
+ * Scene's is the Video Track, as the Segment showing it is); it as keyed (`find`: a Segment from
+ * where the Main Track as planned starts it, a Manual Scene as the plan places it; null when the
+ * edits don't have it); what it can key, in the Keyframes pane's order, by its Media Library item;
+ * and the edits with it keyed by `keys` and its constants `set` (those given).
+ */
+interface Kind<R extends KeyedRef> {
+  track: TrackKind;
+  find: (edits: AdvancedEdits, ref: R, track?: PlayedSegment[], plan?: RenderPlan | null) => KeyedItem | null;
+  keyable: (media?: { kind: MediaItem["kind"]; has_audio: boolean }) => KeyProperty[];
+  write: (edits: AdvancedEdits, ref: R, keys: Keys, set: Constants, plan?: RenderPlan | null) => AdvancedEdits;
+}
+
+const KINDS: { [K in KeyedRef["kind"]]: Kind<RefOf<K>> } = {
+  overlay: {
+    track: "overlay",
+    find: (edits, ref) => {
+      const overlay = edits.overlays.find((other) => other.id === ref.id);
+      return overlay ? asKeyed({ start: overlay.start, secs: overlay.secs, keys: overlay.keys, transform: overlay.transform, volume: overlay.volume, media: overlay.media }) : null;
+    },
+    keyable: pictureRows,
+    write: (edits, ref, keys, set) => ({
+      ...edits,
+      overlays: edits.overlays.map((overlay) => (overlay.id === ref.id ? { ...overlay, keys, transform: set.transform ?? overlay.transform, ...soundOf(set) } : overlay)),
+    }),
+  },
+  music: {
+    track: "music",
+    find: (edits, ref) => {
+      const clip = edits.music.find((other) => other.id === ref.id);
+      return clip ? asKeyed({ start: clip.start, secs: clip.secs, keys: clip.keys, volume: clip.volume, media: clip.media }) : null;
+    },
+    keyable: () => ["volume"],
+    write: (edits, ref, keys, set) => ({ ...edits, music: edits.music.map((clip) => (clip.id === ref.id ? { ...clip, keys, ...soundOf(set) } : clip)) }),
+  },
+  // A video's Segment; one of the Source has no Keyframes.
+  segment: {
+    track: "video",
+    find: (edits, ref, track) => {
+      const segment = edits.segments.find((other) => other.id === ref.id);
+      const span = segmentSpan(edits.segments, ref.id, track);
+      if (!segment?.media || !segment.framing || !span) return null;
+      return asKeyed({ ...span, keys: segment.keys ?? {}, transform: segment.framing.transform, volume: segment.volume ?? 1, media: segment.media });
+    },
+    keyable: pictureRows,
+    write: (edits, ref, keys, set) => ({
+      ...edits,
+      segments: edits.segments.map((segment) => {
+        if (segment.id !== ref.id || !segment.framing) return segment;
+        const framing = set.transform ? { ...segment.framing, transform: set.transform } : segment.framing;
+        return { ...segment, keys, framing, ...soundOf(set) };
+      }),
+    }),
+  },
+  // Its Transform only: its sound is its Segment's, of the Source.
+  scene: {
+    track: "video",
+    find: (edits, ref, _track, plan) => (plan ? manualScene(edits.layout_overrides, plan, ref.index) : null),
+    keyable: () => [...PICTURE_KEYS],
+    write: (edits, ref, keys, set, plan) => (plan ? withSceneKeys(edits, plan, ref.index, keys, set.transform) : edits),
+  },
+};
+
+// Item `ref`'s row of KINDS.
+const kindOf = <R extends KeyedRef>(ref: R) => KINDS[ref.kind] as unknown as Kind<R>;
 
 /**
  * The item `ref` names, as keyed (a Segment from where `track` starts it, a Manual Scene as `plan`
  * places it); null when the edits don't have it, or for a Segment of the Source, which has no Keyframes.
  */
 export function keyedItem(edits: AdvancedEdits, ref: KeyedRef, track?: PlayedSegment[], plan?: RenderPlan | null): KeyedItem | null {
-  if (ref.kind === "scene") return plan ? manualScene(edits.layout_overrides, plan, Number(ref.id)) : null;
-  if (ref.kind === "segment") {
-    const segment = edits.segments.find((other) => other.id === ref.id);
-    const span = segmentSpan(edits.segments, ref.id, track);
-    const framing = segment?.framing;
-    if (!segment?.media || !framing || !span) return null;
-    return { ...span, keys: segment.keys ?? {}, constant: (prop) => (prop === "volume" ? (segment.volume ?? 1) : framing.transform[prop]) };
-  }
-  if (ref.kind === "overlay") {
-    const overlay = edits.overlays.find((other) => other.id === ref.id);
-    return overlay ? { ...overlay, constant: (prop) => (prop === "volume" ? overlay.volume : overlay.transform[prop]) } : null;
-  }
-  const clip = edits.music.find((other) => other.id === ref.id);
-  return clip ? { ...clip, constant: () => clip.volume } : null;
+  return kindOf(ref).find(edits, ref, track, plan);
 }
 
-// `edits` with item `ref`'s Keyframes `keys`, and `prop`'s constant `constant` (a turn kept within
-// ±360°, as the Transform's is, where a Keyframe may hold more); a Manual Scene's as `plan` places it.
-function withKeyed(edits: AdvancedEdits, ref: KeyedRef, keys: Keys, prop: KeyProperty, constant: number, plan?: RenderPlan | null): AdvancedEdits {
-  if (prop === "rotation") constant %= 360;
-  if (ref.kind === "scene") {
-    const found = plan && manualScene(edits.layout_overrides, plan, Number(ref.id));
-    if (!found || prop === "volume") return edits;
-    const { override, framing } = found;
-    return withOverride(edits, override, { ...override, keys, framing: { ...framing, transform: { ...framing.transform, [prop]: constant } } });
-  }
-  if (ref.kind === "segment") {
-    return {
-      ...edits,
-      segments: edits.segments.map((segment) => {
-        if (segment.id !== ref.id || !segment.framing) return segment;
-        if (prop === "volume") return { ...segment, keys, volume: constant };
-        const { framing } = segment;
-        return { ...segment, keys, framing: { ...framing, transform: { ...framing.transform, [prop]: constant } } };
-      }),
-    };
-  }
-  if (ref.kind === "music") {
-    return { ...edits, music: edits.music.map((clip) => (clip.id === ref.id ? { ...clip, keys, volume: constant } : clip)) };
-  }
-  return {
-    ...edits,
-    overlays: edits.overlays.map((overlay) => {
-      if (overlay.id !== ref.id) return overlay;
-      if (prop === "volume") return { ...overlay, keys, volume: constant };
-      return { ...overlay, keys, transform: { ...overlay.transform, [prop]: constant } };
-    }),
-  };
-}
+// `edits` with `item` (item `ref`) keyed by `keys`, and `prop`'s constant `constant`.
+const withKeyed = (scene: KeyScene, ref: KeyedRef, item: KeyedItem, keys: Keys, prop: KeyProperty, constant: number) =>
+  kindOf(ref).write(scene.edits, ref, keys, withConstant({ transform: item.transform }, prop, constant), scene.plan);
 
 /** The playhead at `time` (Timeline time) in `item`'s own seconds, to the millisecond; null outside it. */
-export function keyTime(item: { start: number; secs: number; first?: number }, time: number): number | null {
+export function keyTime(item: KeySpan, time: number): number | null {
   const at = Math.round((time - item.start) * 1000) / 1000;
   return at >= Math.round((item.first ?? 0) * 1000) / 1000 && at <= item.secs ? at : null;
 }
 
-// A Manual Scene is the Video Track's, as the Segment showing it is.
-const refused = (scene: KeyScene, ref: KeyedRef) => (scene.locked ?? []).includes(ref.kind === "scene" ? "video" : TRACK_OF[ref.kind]);
+/** The playhead at `time` (Timeline time) in `item`'s own seconds, held at its start before it and at its end after it. */
+export const heldKeyTime = (item: KeySpan, time: number) => Math.min(Math.max(time - item.start, item.first ?? 0), item.secs);
+
+/**
+ * A field's history group, of the Keyframe there when the change wrote one (`keyed`): changes to a
+ * field merge into one step while they keep coming, but a Keyframe written at another time is a step of its own.
+ */
+export const keyedGroup = (group: string, keyed: boolean, at: number | null) => (keyed ? `${group}@${at}` : group);
 
 // Item `ref` as keyed in `scene`; null when it can't be edited (gone, or on a locked Track).
-const itemIn = (scene: KeyScene, ref: KeyedRef) => (refused(scene, ref) ? null : keyedItem(scene.edits, ref, scene.track, scene.plan));
-
-// The item to edit and the playhead in it; null when it can't be (gone, or on a locked Track).
-function editable(scene: KeyScene, ref: KeyedRef, time: number) {
-  const item = itemIn(scene, ref);
-  return item && { item, at: keyTime(item, time) };
+function editableItem(scene: KeyScene, ref: KeyedRef): KeyedItem | null {
+  if ((scene.locked ?? []).includes(kindOf(ref).track)) return null;
+  return keyedItem(scene.edits, ref, scene.track, scene.plan);
 }
 
 /** The diamond of `prop` of item `ref` clicked with the playhead at `time`: see toggleKey. Null outside the item. */
 export function toggleItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, time: number): Outcome | null {
-  const found = editable(scene, ref, time);
-  if (!found || found.at === null) return null;
-  const { keys, constant } = toggleKey(found.item.keys, prop, found.at, found.item.constant(prop));
-  return { edits: withKeyed(scene.edits, ref, keys, prop, constant, scene.plan), pick: scene.pick };
+  const item = editableItem(scene, ref);
+  const at = item && keyTime(item, time);
+  if (!item || at === null) return null;
+  const { keys, constant } = toggleKey(item.keys, prop, at, item.constant(prop));
+  return { edits: withKeyed(scene, ref, item, keys, prop, constant), pick: scene.pick };
 }
 
 /**
@@ -190,25 +260,36 @@ export function toggleItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty,
  * property is written only with the playhead inside the item, else null.
  */
 export function writeItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, value: number, time: number): Outcome | null {
-  const found = editable(scene, ref, time);
-  if (!found) return null;
-  const keyed = !!found.item.keys[prop]?.length;
-  if (keyed && found.at === null) return null;
-  const { keys, constant } = writeKey(found.item.keys, prop, found.at ?? found.item.first ?? 0, value, found.item.constant(prop));
-  return { edits: withKeyed(scene.edits, ref, keys, prop, constant, scene.plan), pick: scene.pick };
+  const item = editableItem(scene, ref);
+  if (!item) return null;
+  const at = keyTime(item, time);
+  if (item.keys[prop]?.length && at === null) return null;
+  const { keys, constant } = writeKey(item.keys, prop, at ?? item.first ?? 0, value, item.constant(prop));
+  return { edits: withKeyed(scene, ref, item, keys, prop, constant), pick: scene.pick };
 }
 
 /**
- * Overlay `id`'s Transform changed to `next` with the playhead at `time`, from what was `shown` there
- * (see writtenTransform): on the stage, by its Grips. Null for one that isn't there or is locked.
+ * Item `ref`'s Transform (an Overlay's, a video Segment's or a Manual Scene's Framing's) changed to
+ * `next` with the playhead at `time`, from what was `shown` there (see writtenTransform): on the
+ * stage, by its Grips. Null for one that isn't there, has no Transform, or is locked.
  */
-export function writeItemTransform(scene: KeyScene, id: string, next: Transform, time: number, shown?: Transform): Outcome | null {
-  const ref = { kind: "overlay", id } as const;
-  const found = editable(scene, ref, time);
-  const overlay = scene.edits.overlays.find((other) => other.id === id);
-  if (!found || !overlay) return null;
-  const written = writtenTransform(overlay.transform, overlay.keys, next, found.at, shown);
-  return { edits: { ...scene.edits, overlays: scene.edits.overlays.map((other) => (other.id === id ? { ...other, ...written } : other)) }, pick: scene.pick };
+export function writeItemTransform(scene: KeyScene, ref: KeyedRef, next: Transform, time: number, shown?: Transform): Outcome | null {
+  const item = editableItem(scene, ref);
+  if (!item?.transform) return null;
+  const written = writtenTransform(item.transform, item.keys, next, keyTime(item, time), shown);
+  return { edits: kindOf(ref).write(scene.edits, ref, written.keys, { transform: written.transform }, scene.plan), pick: scene.pick };
+}
+
+/**
+ * Manual Scene `index`'s Framing's Transform (of `plan`, its own override's) changed to `next` with
+ * the playhead at `time`, from what was `shown` there (see writtenTransform): by its inspector's
+ * fields, whatever the editor's edits. Null for a Scene without its own Manual override.
+ */
+export function withSceneTransform<T extends LayoutEdits>(edits: T, plan: RenderPlan, index: number, next: Transform, time: number, shown?: Transform): T | null {
+  const found = manualScene(edits.layout_overrides, plan, index);
+  if (!found) return null;
+  const written = writtenTransform(found.framing.transform, found.keys, next, keyTime(found, time), shown);
+  return withSceneKeys(edits, plan, index, written.keys, written.transform);
 }
 
 /**
@@ -218,14 +299,13 @@ export function writeItemTransform(scene: KeyScene, id: string, next: Transform,
  * the item is gone or locked.
  */
 export function moveItemKeys(scene: KeyScene, ref: KeyedRef, from: number, to: number, fps: number): (Outcome & { at: number }) | null {
-  const item = itemIn(scene, ref);
+  const item = editableItem(scene, ref);
   const moved = item && moveKeysAt(item.keys, from - item.start, to - item.start, { secs: item.secs, fps, start: item.start });
   if (!item || !moved) return null;
-  const at = Math.round((item.start + moved.at) * 1e6) / 1e6;
+  const at = toMillionth(item.start + moved.at);
   if (moved.keys === item.keys) return { edits: scene.edits, pick: scene.pick, at };
-  // Its constants stay as they are: the first keyed property's is put back as it was.
-  const [prop] = Object.keys(moved.keys) as KeyProperty[];
-  return { edits: withKeyed(scene.edits, ref, moved.keys, prop, item.constant(prop), scene.plan), pick: scene.pick, at };
+  // Its constants stay as they are.
+  return { edits: kindOf(ref).write(scene.edits, ref, moved.keys, {}, scene.plan), pick: scene.pick, at };
 }
 
 // The shortcuts (K, [ and ]) work on the one item picked, as the ruler's diamonds do.
@@ -261,47 +341,7 @@ export function keyAround(item: KeyedItem, time: number, direction: -1 | 1): num
     .sort((a, b) => a.at - b.at);
   const { before, after } = keysAround(all, time - item.start);
   const at = direction < 0 ? before : after;
-  return at === null ? null : Math.round((item.start + at) * 1e6) / 1e6;
-}
-
-/**
- * Video Segment `id`'s Framing's Transform changed to `next` with the playhead at `time`, from what
- * was `shown` there (see writtenTransform): on the stage, by its Grips. Null for one that isn't
- * there or is locked.
- */
-export function writeSegmentTransform(scene: KeyScene, id: string, next: Transform, time: number, shown?: Transform): Outcome | null {
-  const found = editable(scene, { kind: "segment", id }, time);
-  if (!found) return null;
-  const segments = scene.edits.segments.map((segment) => {
-    if (segment.id !== id || !segment.framing) return segment;
-    const written = writtenTransform(segment.framing.transform, segment.keys ?? {}, next, found.at, shown);
-    return { ...segment, keys: written.keys, framing: { ...segment.framing, transform: written.transform } };
-  });
-  return { edits: { ...scene.edits, segments }, pick: scene.pick };
-}
-
-/**
- * Manual Scene `index`'s Framing's Transform (of `plan`, its own override's) changed to `next` with
- * the playhead at `time`, from what was `shown` there (see writtenTransform): by its inspector's
- * fields, whatever the editor's edits. Null for a Scene without its own Manual override.
- */
-export function withSceneTransform<T extends LayoutEdits>(edits: T, plan: RenderPlan, index: number, next: Transform, time: number, shown?: Transform): T | null {
-  const found = manualScene(edits.layout_overrides, plan, index);
-  if (!found) return null;
-  const { override, framing } = found;
-  const written = writtenTransform(framing.transform, found.keys, next, keyTime(found, time), shown);
-  return withOverride(edits, override, { ...override, keys: written.keys, framing: { ...framing, transform: written.transform } });
-}
-
-/**
- * Manual Scene `index`'s Framing's Transform changed to `next` with the playhead at `time`, from what
- * was `shown` there (see withSceneTransform): on the stage, by its Grips. Null for one without its
- * own override, or on a locked Video Track.
- */
-export function writeSceneTransform(scene: KeyScene, index: number, next: Transform, time: number, shown?: Transform): Outcome | null {
-  if (refused(scene, sceneRef(index)) || !scene.plan) return null;
-  const edits = withSceneTransform(scene.edits, scene.plan, index, next, time, shown);
-  return edits && { edits, pick: scene.pick };
+  return at === null ? null : toMillionth(item.start + at);
 }
 
 /** Video `segment`'s Framing Reset: its Transform at `defaults`, no Crop, and none of the Transform's Keyframes (its sound's kept). */
@@ -319,21 +359,13 @@ export const resetOverlay = (overlay: Overlay, defaults: Transform): Overlay => 
 });
 
 /**
- * `overlay`'s Transform as the stage's Grips hold it at `time` (Timeline time): its keyed fields at
- * the playhead (held at its ends outside it), tidied as the stage tidies what it puts.
+ * A Transform keyed by `keys`, of an item playing over `span` of the Timeline, as the stage's Grips
+ * hold it at `time`: its keyed fields at the playhead (held at its ends outside it), tidied as the
+ * stage tidies what it puts.
  */
-export function stageTransform(overlay: Overlay, time: number): Transform {
-  return heldTransform(overlay.transform, overlay.keys, overlay, time);
-}
-
-/**
- * A Transform keyed by `keys`, of an item playing over `span` of the Timeline (from `first` seconds
- * into it, for a Manual Scene), as the stage's Grips hold it at `time` (see stageTransform).
- */
-export function heldTransform(transform: Transform, keys: Keys, span: { start: number; secs: number; first?: number }, time: number): Transform {
+export function heldTransform(transform: Transform, keys: Keys, span: KeySpan, time: number): Transform {
   if (!PICTURE_KEYS.some((prop) => keys[prop]?.length)) return transform;
-  const at = Math.min(Math.max(time - span.start, span.first ?? 0), span.secs);
-  return tidyTransform(shownTransform(transform, keys, at));
+  return tidyTransform(shownTransform(transform, keys, heldKeyTime(span, time)));
 }
 
 /**
@@ -342,15 +374,12 @@ export function heldTransform(transform: Transform, keys: Keys, span: { start: n
  * volume; a Music Clip's volume; a Manual Scene's Transform fields only.
  */
 export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_audio: boolean }): KeyProperty[] {
-  if (ref.kind === "music") return ["volume"];
-  if (ref.kind === "scene") return [...PICTURE_KEYS];
-  return media?.kind === "video" && media.has_audio ? [...PICTURE_KEYS, "volume"] : [...PICTURE_KEYS];
+  return kindOf(ref).keyable(media);
 }
 
 /** The rows of item `ref` of `edits` (keyableOf), its Media Library item looked up in `mediaById`. */
 export function keyRows(edits: AdvancedEdits, ref: KeyedRef, mediaById: Map<string, MediaItem>): KeyProperty[] {
-  const list = ref.kind === "overlay" ? edits.overlays : ref.kind === "segment" ? edits.segments : [];
-  const id = list.find((other) => other.id === ref.id)?.media;
+  const id = keyedItem(edits, ref)?.media;
   return keyableOf(ref, id ? mediaById.get(id) : undefined);
 }
 
@@ -366,10 +395,10 @@ export function activeKey(rows: readonly KeyProperty[], keys: Keys, touched: Key
 
 /** Item `ref`'s Keyframes of `prop` replaced by `list` (a drag of one, an Ease set): one change. Null when it can't be edited. */
 export function setItemKeys(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, list: Keyframe[]): Outcome | null {
-  const item = itemIn(scene, ref);
+  const item = editableItem(scene, ref);
   if (!item) return null;
   const { [prop]: _, ...rest } = item.keys;
-  return { edits: withKeyed(scene.edits, ref, list.length ? { ...rest, [prop]: list } : rest, prop, item.constant(prop), scene.plan), pick: scene.pick };
+  return { edits: kindOf(ref).write(scene.edits, ref, list.length ? { ...rest, [prop]: list } : rest, {}, scene.plan), pick: scene.pick };
 }
 
 /**
@@ -378,12 +407,10 @@ export function setItemKeys(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, l
  * Null when it can't be edited.
  */
 export function clearItemKeys(scene: KeyScene, ref: KeyedRef, time: number): Outcome | null {
-  const item = itemIn(scene, ref);
+  const item = editableItem(scene, ref);
   if (!item) return null;
-  const at = Math.min(Math.max(time - item.start, item.first ?? 0), item.secs);
-  let edits = scene.edits;
-  for (const [prop, list] of Object.entries(item.keys) as [KeyProperty, Keyframe[]][]) {
-    edits = withKeyed(edits, ref, {}, prop, valueAt(list, at, item.constant(prop)), scene.plan);
-  }
-  return { edits, pick: scene.pick };
+  const at = heldKeyTime(item, time);
+  let set: Constants = { transform: item.transform };
+  for (const [prop, list] of Object.entries(item.keys) as [KeyProperty, Keyframe[]][]) set = withConstant(set, prop, valueAt(list, at, item.constant(prop)));
+  return { edits: kindOf(ref).write(scene.edits, ref, {}, set, scene.plan), pick: scene.pick };
 }

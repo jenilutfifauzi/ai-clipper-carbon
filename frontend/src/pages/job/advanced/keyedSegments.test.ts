@@ -4,12 +4,13 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, Keyframe, Keys } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
-import { EASE_IN_OUT, LINEAR, rewindow, valueAt } from "../editor/keyframes";
+import { EASE_IN_OUT, LINEAR, valueAt } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { keyedItem, resetFraming, segmentSpan, toggleItemKey, writeItemKey, writeSegmentTransform } from "./keying";
+import { rewindow } from "./keyActions";
+import { keyedItem, resetFraming, segmentSpan, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
 import { picked } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -125,7 +126,7 @@ describe("a Keyframe edit on a video Segment", () => {
 
   test("its Grips write a keyed field at the playhead and set an unkeyed one's constant", () => {
     const state = edits();
-    const moved = writeSegmentTransform({ edits: state, pick: picked(V) }, "v", { ...IDENTITY, x: 300, scale: 2 }, 12)!.edits.segments[1];
+    const moved = writeItemTransform({ edits: state, pick: picked(V) }, V, { ...IDENTITY, x: 300, scale: 2 }, 12)!.edits.segments[1];
     expect(moved.framing?.transform.x).toBe(300);
     expect(moved.framing?.transform.scale).toBe(1);
     expect(moved.keys?.scale).toContainEqual({ ...key(2, 2), ease: expect.any(Array) });

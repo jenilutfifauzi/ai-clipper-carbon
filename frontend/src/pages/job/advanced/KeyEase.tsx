@@ -1,8 +1,8 @@
 import { useContext, useId } from "react";
 import type { Ease, KeyProperty, MediaItem } from "../../../api";
-import { EASE_PRESETS, easedKey, easeName, keyAt, setEase, type EaseName } from "../editor/keyframes";
+import { EASE_PRESETS, easedKey, easeName, keyAt, setEase, type EaseName } from "./keyActions";
 import { KeyingContext, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
-import { activeKey, keyedItem, keyRows, keyTime, setItemKeys } from "./keying";
+import { activeKey, heldKeyTime, keyedItem, keyRows, keyTime, setItemKeys } from "./keying";
 
 /** Each keyable property's name, its unit, and how many of them make one of its value. */
 export const KEY_FIELDS: Record<KeyProperty, { label: string; unit: string; scale: number }> = {
@@ -71,7 +71,7 @@ function Picker({ keying, mediaById, shown }: { keying: Keying; mediaById: Map<s
   const prop = activeKey(keyed, item.keys, keying.touched ?? null);
   const list = item.keys[prop] ?? [];
   const at = keyTime(item, time);
-  const held = at ?? Math.min(Math.max(time - item.start, item.first ?? 0), item.secs);
+  const held = at ?? heldKeyTime(item, time);
   const index = easedKey(list, held);
   const { label } = KEY_FIELDS[prop];
   const note =

@@ -1,7 +1,7 @@
 import type { ClipSegment, MusicClip, Overlay, TextLayer } from "../../../api";
-import { rekeyed } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
+import { rekeyed } from "./keyActions";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
@@ -349,7 +349,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
   for (const { kind, item } of layers) {
     if (!inside(scene, { kind, id: item.id }, at)) continue;
     const { first, second } = KINDS[kind].cut(item, time);
-    // Each part has the Keyframes of its own stretch (keyframes.ts' rekeyed).
+    // Each part has the Keyframes of its own stretch (keyActions.ts' rekeyed).
     const head = rekeyed({ ...item, secs: round(time - item.start), ...first } as Timed, 0, time - item.start);
     const tail = rekeyed({ ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed, time - item.start, item.secs);
     const list = KINDS[kind].list;
@@ -497,7 +497,7 @@ export type TimedEdge = "move" | "start" | "end";
 /**
  * `next`, item `origin` moved or with an edge trimmed (`edge`), its Keyframes re-anchored from
  * `origin`'s: a later start moves them earlier by as much, and one cut off either end leaves one at
- * the edge with the value there (keyframes.ts' rewindow). Moved, they move with it, but those past a
+ * the edge with the value there (keyActions.ts' rewindow). Moved, they move with it, but those past a
  * shorter end. Longer, it keeps them on the same moments. A Segment, from `start` to `end` of its
  * file, is trimmed the same way: a later `start` cuts as much off its head.
  */
@@ -509,11 +509,12 @@ export function retimed<T extends { start: number } & ({ secs: number } | { end:
 }
 
 /**
- * retimed, for the steps of one gesture (a drag, a slider, arrow keys) named by its `group`: each step
- * is made from the item as the gesture began, so that trimming in and back out again brings back the
- * Keyframes cut. An item changed since the last step (an undo, another editor) begins it again.
+ * A gesture's retime: retimed for each step of one gesture (a drag, a slider, arrow keys) named by
+ * its `group`, each step made from the item as the gesture began, so that trimming in and back out
+ * again brings back the Keyframes cut. An item changed since the last step (an undo, another
+ * editor) begins it again.
  */
-export function retimer() {
+export function gestureRetime() {
   let last: { group: string; id: string; origin: unknown; made: unknown } | null = null;
   return <T extends { id: string; start: number; secs: number }>(current: T, next: T, edge: TimedEdge, group: string): T => {
     const keysOf = (item: T) => ("keys" in item ? item.keys : undefined);

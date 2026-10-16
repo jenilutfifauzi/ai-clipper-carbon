@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
-import { rekeyed } from "../editor/keyframes";
+import { rekeyed } from "./keyActions";
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
@@ -154,7 +154,7 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     }
     if (start > from || end < from + item.secs - 1e-6) trimmed += 1;
     const offset = start > from && "offset" in item ? { offset: round(item.offset + start - from) } : {};
-    // Its Keyframes come as they are, but for the part cut off (keyframes.ts' rekeyed).
+    // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed).
     const copy = rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from);
     Object.assign(next, { [LISTS[kind]]: [...(next[LISTS[kind]] as Timed[]), copy] });
     pasted.push({ kind, id: copy.id });

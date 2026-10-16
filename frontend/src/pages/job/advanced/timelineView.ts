@@ -4,9 +4,10 @@
 // item, and the Volume Line's curve; for .scratch/navigation-playback/spec.md, the Edit Points; and
 // for .scratch/keyframes/spec.md, the ruler's diamonds.
 import type { Keyframe, Keys } from "../../../api";
-import { KEY_GAP_SECS, valueAt } from "../editor/keyframes";
+import { valueAt } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import type { AdvancedEdits } from "./edits";
+import { KEY_GAP_SECS, toMillionth } from "./keyActions";
 import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
 
@@ -170,7 +171,7 @@ export function keyMarks({ start, keys }: { start: number; keys: Keys }): number
     .sort((a, b) => a - b);
   const instants: number[] = [];
   for (const at of ats) if (!instants.length || at - instants[instants.length - 1] > KEY_GAP_SECS / 2 + 1e-9) instants.push(at);
-  return instants.map((at) => Math.round((start + at) * 1e6) / 1e6);
+  return instants.map((at) => toMillionth(start + at));
 }
 
 // --- Filmstrips, and the canvas they are drawn on ---
