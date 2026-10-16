@@ -599,6 +599,10 @@ export interface SegmentPlan {
   silent: boolean;
   // How many of the plan's Scenes, in order, are its.
   scenes: number;
+  // A keyed video's volume Keyframes, in seconds from its start, setting its volume in place of `volume`.
+  gain: Keyframe[];
+  // Its Segment's id.
+  id: string;
 }
 
 export interface RenderPlan {
@@ -668,6 +672,8 @@ export interface FontInfo {
 // A piece of a Candidate's Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source
 // from `start` to `end`, snapped to Words; or, with `media`, a Media Library video from `start` to
 // `end` seconds into it, placed by its `framing` (which only it has), its own sound at `volume`.
+// A video's `keys` move its Framing's Transform and shape its volume (ADR 0008), each `at` in
+// seconds from its start; the Source's have none.
 export interface ClipSegment {
   id: string;
   start: number;
@@ -675,6 +681,7 @@ export interface ClipSegment {
   media?: string | null;
   framing?: Framing | null;
   volume?: number;
+  keys?: Keys;
 }
 
 export interface Candidate {

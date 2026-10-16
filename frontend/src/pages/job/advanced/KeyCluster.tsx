@@ -48,7 +48,7 @@ export function KeyCluster(props: { item: KeyedRef; property: KeyProperty; label
 
 function Cluster({ keying, item, property, label }: { keying: Keying; item: KeyedRef; property: KeyProperty; label: string }) {
   const time = useKeyTime(keying.playback);
-  const keyed = keyedItem(keying.edits, item);
+  const keyed = keyedItem(keying.edits, item, keying.track);
   const at = keyed && keyTime(keyed, time);
   const keys = keyed?.keys[property] ?? [];
   const live = at != null;

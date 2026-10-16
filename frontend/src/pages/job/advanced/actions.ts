@@ -231,7 +231,11 @@ export function dragSegment(
   change: { start: number; end: number; edge: "move" | "start" | "end" },
   lengthOf: (segment: ClipSegment) => number,
 ): Outcome {
-  const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned);
+  const before = origin.edits.segments.find((segment) => segment.id === id);
+  // A video's Keyframes re-anchored to what its trim keeps (retimed), from the Segment as the drag began.
+  const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned).map((segment) =>
+    segment.id === id && before ? retimed(before, segment, change.edge) : segment,
+  );
   const index = segments.findIndex((segment) => segment.id === id);
   const whole = origin.planned[index];
   if (change.edge === "move" || !whole || !scene.magnetic) return { edits: { ...scene.edits, segments }, pick: scene.pick };
@@ -494,12 +498,14 @@ export type TimedEdge = "move" | "start" | "end";
  * `next`, item `origin` moved or with an edge trimmed (`edge`), its Keyframes re-anchored from
  * `origin`'s: a later start moves them earlier by as much, and one cut off either end leaves one at
  * the edge with the value there (keyframes.ts' rewindow). Moved, they move with it, but those past a
- * shorter end. Longer, it keeps them on the same moments.
+ * shorter end. Longer, it keeps them on the same moments. A Segment, from `start` to `end` of its
+ * file, is trimmed the same way: a later `start` cuts as much off its head.
  */
-export function retimed<T extends { start: number; secs: number }>(origin: T, next: T, edge: TimedEdge): T {
-  if (!("keys" in origin)) return next;
+export function retimed<T extends { start: number } & ({ secs: number } | { end: number })>(origin: T, next: T, edge: TimedEdge): T {
+  if (!("keys" in origin) || !origin.keys) return next;
   const from = edge === "move" ? 0 : next.start - origin.start;
-  return rekeyed({ ...next, keys: origin.keys }, from, from + next.secs);
+  const length = "secs" in next ? next.secs : next.end - next.start;
+  return rekeyed({ ...next, keys: origin.keys }, from, from + length);
 }
 
 /**

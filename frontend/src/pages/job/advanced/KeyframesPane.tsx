@@ -25,7 +25,7 @@ import { onFrame } from "./playhead";
 
 /**
  * The Keyframes pane (ADR 0008), the desktop's bottom tab beside the Timeline: the Keyframes of the
- * one picked Overlay or Music Clip, with room to work on them. A row per property it can key (its
+ * one picked Overlay, Music Clip or video Segment, with room to work on them. A row per property it can key (its
  * value at the playhead, and its own ‹ ◆ ›), and over the item's own seconds either the Dopesheet (a
  * lane per row, its diamonds dragged to retime them) or the Curves (each keyed row's value over time;
  * the active row's Keyframes dragged in time and value, and its Eases' handles). Its tool strip
@@ -35,8 +35,9 @@ import { onFrame } from "./playhead";
  */
 export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps: number; mediaById: Map<string, MediaItem> }) {
   const only = onlyItem(keying.pick);
-  const ref: KeyedRef | null = only && (only.kind === "overlay" || only.kind === "music") ? { kind: only.kind, id: only.id } : null;
-  const item = ref && keyedItem(keying.edits, ref);
+  const ref: KeyedRef | null = only && only.kind !== "text" ? { kind: only.kind, id: only.id } : null;
+  // A Segment of the Source has none: keyedItem gives null for it.
+  const item = ref && keyedItem(keying.edits, ref, keying.track);
   if (!ref || !item) {
     return (
       <div className="grid min-h-0 flex-1 place-items-center p-4">
@@ -44,7 +45,9 @@ export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps:
       </div>
     );
   }
-  const media = ref.kind === "overlay" ? mediaById.get(keying.edits.overlays.find((overlay) => overlay.id === ref.id)!.media) : undefined;
+  const list = ref.kind === "overlay" ? keying.edits.overlays : ref.kind === "segment" ? keying.edits.segments : [];
+  const id = list.find((other) => other.id === ref.id)?.media;
+  const media = id ? mediaById.get(id) : undefined;
   return <Pane key={`${ref.kind}:${ref.id}`} keying={keying} fps={fps} item={ref} keyed={item} rows={keyableOf(ref, media)} />;
 }
 

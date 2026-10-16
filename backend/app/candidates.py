@@ -440,7 +440,12 @@ class Segment:
     to `end` on its timeline, snapped to Words as a Clip's edges are; or, with `media`, a video from
     the Media Library from `start` to `end` seconds into it, placed by its `framing` (which only it
     has: the Source is framed by its Layouts), its own sound at `volume`. A Clip's Segments play in
-    order, back to back. `id` names it in the editor."""
+    order, back to back. `id` names it in the editor.
+
+    A video's Segment may have `keys` (docs/adr/0008): they move its Framing's centre, scale,
+    rotation and opacity, and shape its sound's volume, over its length, each `at` in seconds from
+    its start (where it starts on the Timeline, which is `start` seconds into its video). A Segment
+    of the Source has none: its Layouts frame it."""
 
     id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
@@ -448,6 +453,13 @@ class Segment:
     media: MediaId | None = None
     framing: Framing | None = None
     volume: Volume = 1.0
+    keys: Keys = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.media is None and any(self.keys.values()):
+            raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
+        length = round(self.end - self.start, 6)
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
 
 
 class TransitionKind(StrEnum):

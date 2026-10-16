@@ -30,6 +30,7 @@ Three questions had to be settled:
   Text, the Clip's own sound and effect parameters are left for later features. They reuse the same shape.
 - **A Keyframe is `{at, value, ease}`.** Items carry `keys`, a map from property to its Keyframes.
   - **`at` is seconds from the item's start.** Concat uses a fraction of the clip instead. With seconds, moving an item moves its Keyframes, and trimming its end leaves them where they are. They read the way the agent and the rest of Timeline time do.
+  - **For a media Segment, `at` is seconds from where it starts on the Timeline,** which is its `start` in its video: a trim or split of its range in the video cuts as many seconds off its Keyframes' window (`[cut − start]`).
   - **For a Manual Layout Override, `at` is seconds from its Scene's start on the Source's timeline,** so it follows the Source as the override does (ADR 0002).
   - **`value` is absolute, in the field's own units,** and replaces the constant while the property has Keyframes, as in Concat. Volume is the linear gain 0..2, so the curve drawn is the curve heard.
   - **`ease` is a CSS cubic-bezier on the Keyframe being approached.** The presets are Linear, Ease in, Ease out and Ease in-out, and any other Ease is Custom. There is no Hold.

@@ -57,6 +57,11 @@ frames are first brought to the Clip's frame rate (`fps`), so that frame n is at
 time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
 or is stopped ends its frame processes. Without keyed pictures the command is as it was.
 
+A keyed video Segment's picture is drawn by a frame process too, in seconds into its Segment, and
+laid over its Background inside its Segment's own chain (`_keyed_scene`, its frames first brought to
+the Clip's frame rate from 0 s), so that its Transitions see the picture move. Its keyed volume is
+an expression of its own time in its own sound's chain, as a Music Clip's is.
+
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume (a keyed one's by an expression of its own time, from its Keyframes), faded, and
 delayed to where it is heard, then mixed with the Clip's own sound (at its volume) before the
@@ -76,6 +81,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -95,6 +101,7 @@ from app.planner import (
     Panel,
     RenderPlan,
     ScenePlan,
+    SegmentPlan,
     TextEvent,
     OverlayEvent,
     Picture,
@@ -217,22 +224,25 @@ class Renderer:
         subtitles: Path | None,
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
-        feeds: dict[int, FrameFeed] | None = None,
+        feeds: "Feeds | None" = None,
     ) -> list[str]:
-        """The encode's command. `feeds` are the frame processes of the plan's keyed Overlays, by
-        their place among them; a keyed one without is drawn still, at its constants."""
+        """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
+        Overlays', and its video Segments' Scenes', by their places among them); a keyed one without
+        is drawn still, at its constants."""
         tuning = self.tuning
+        feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
         count = len(sources) // _INPUT_ARGS
-        frame = _segmented(plan, tuning) if plan.segments else _scenes(plan, tuning)
+        inputs, index = _music_inputs(plan, files or {}, first=count + (1 if logo is not None else 0))
+        layers, layered = _overlay_inputs(plan, files or {}, count + (1 if logo is not None else 0) + len(index), feeds)
+        pictures, drawn = _scene_inputs(plan, count + (1 if logo is not None else 0) + len(index) + len(layered), feeds)
+        frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
-        if feeds:
-            # At n / fps exactly, the times the frame processes draw their frames at.
+        if any(feed is not None for _, _, feed in layered):
+            # At n / fps exactly, the times the Overlays' frame processes draw their frames at.
             frame += f";[frame]fps={_rate(plan)}[timed]"
             joined = "[timed]"
-        inputs, index = _music_inputs(plan, files or {}, first=count + (1 if logo is not None else 0))
-        layers, layered = _overlay_inputs(plan, files or {}, count + (1 if logo is not None else 0) + len(index), feeds or {})
         for i, (event, number, feed) in enumerate(layered):
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
             joined = f"[over{i}]"
@@ -263,7 +273,7 @@ class Renderer:
             codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers,
+            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *pictures,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
@@ -347,6 +357,9 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     for i, segment in enumerate(plan.segments):
         if segment.silent:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.source_end - segment.source_start:.3f}[a{i}]")
+        elif segment.gain:
+            # Its time from 0 at its start, which its Keyframes' are from.
+            chains.append(f"[{i}:a:0]asetpts=PTS-STARTPTS,{','.join(_volume(segment.gain, segment.volume))},{form}[a{i}]")
         else:
             volume = segment.volume * (1 if segment.media else plan.source_volume)
             chains.append(f"[{i}:a:0]volume={volume:g},{form}[a{i}]")
@@ -377,15 +390,17 @@ def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
     return ";".join(chains)
 
 
-def _segmented(plan: RenderPlan, tuning: RenderTuning) -> str:
+def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment), and the Segments
-    joined back to back."""
+    joined back to back. A keyed Scene's picture is the input `drawn` gives by its place among the
+    plan's Scenes, from its frame process."""
     chains, first = [], 0
     for i, segment in enumerate(plan.segments):
         scenes = plan.scenes[first : first + segment.scenes]
+        keyed = {j: number for j in range(segment.scenes) if (number := (drawn or {}).get(first + j)) is not None}
         first += segment.scenes
-        chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]", f"[g{i}]", f"g{i}s", segment.start))
+        chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]", f"[g{i}]", f"g{i}s", segment.start, keyed))
     count = len(plan.segments)
     if not plan.transitions:
         chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
@@ -405,15 +420,18 @@ def _scenes(
     out: str = "[frame]",
     prefix: str = "s",
     offset: float = 0.0,
+    keyed: dict[int, int] | None = None,
 ) -> str:
     """The filtergraph that draws the plan's Scenes (or `scenes`, starting `offset` seconds into the
     Clip) from `given` (by default [0:v]) into `out` (by default [frame]), its filters named from
     `prefix`. With several, the video is split into a branch per Scene, trimmed to it from half a
     frame before its first frame (so that rounding can't move a frame across a cut) and restarted at
-    0 s, and the branches are concatenated."""
+    0 s, and the branches are concatenated. A Scene `keyed` (by its place among them) has its
+    picture drawn by the frame process whose frames are that input."""
     scenes = plan.scenes if scenes is None else scenes
+    keyed = keyed or {}
     if len(scenes) == 1:
-        return _scene(plan, scenes[0], f"{prefix}0", given, out, tuning)
+        return _scene(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0))
     count = len(scenes)
     chains = [f"{given}split={count}" + "".join(f"[{prefix}{i}]" for i in range(count))]
     for i, scene in enumerate(scenes):
@@ -423,16 +441,22 @@ def _scenes(
         if i < count - 1:
             bounds.append(f"end={scene.end - offset - 0.5 / plan.fps:.4f}")
         chains.append(
-            _scene(plan, scene, f"{prefix}{i}", f"[{prefix}{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[{prefix}v{i}]", tuning)
+            _scene(
+                plan, scene, f"{prefix}{i}", f"[{prefix}{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[{prefix}v{i}]", tuning,
+                keyed.get(i),
+            )
         )
     chains.append("".join(f"[{prefix}v{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0{out}")
     return ";".join(chains)
 
 
-def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning) -> str:
+def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None) -> str:
     """Filters that draw `scene` from the frames `given` (a link label, then any filters to start
     with) into the link `out`: its first panel, padded to the frame unless it fills it, then each
-    other panel laid over it in its area; or, for a Scene of one picture, as `_framed_scene` draws it."""
+    other panel laid over it in its area; or, for a Scene of one picture, as `_framed_scene` draws it
+    (a keyed one's picture from input `keyed`, as `_keyed_scene` does)."""
+    if scene.picture is not None and keyed is not None:
+        return _keyed_scene(plan, scene, name, given, out, tuning, keyed)
     if scene.picture is not None:
         return _framed_scene(plan, scene, name, given, out, tuning)
     panels = scene.panels
@@ -470,6 +494,23 @@ def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out
         # and a Clip's frames are full range (its poster is a JPEG), so black would show as grey.
         chains.append(f"[{name}b]crop=2:2:0:0,format=rgb24,drawbox=c=0x{colour}:t=fill,scale={plan.width}:{plan.height},setsar=1[{name}l]")
     chains.append(_picture(picture, f"[{name}f]", f"[{name}l]", out, f"{name}q"))
+    return ";".join(chains)
+
+
+def _keyed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, index: int) -> str:
+    """Filters that draw a Scene of one keyed picture (a video Segment's) from the frames `given`
+    into `out`: its Background as `_framed_scene` draws it (none at all when the plan has left it
+    out: the picture covers the frame throughout), from the frames brought to the Clip's frame rate
+    from 0 s, then its frame process's frames (input `index`) laid at 0, 0, frame n over frame n.
+    The Transitions then see the picture move."""
+    timed = f"{given}setpts=PTS-STARTPTS,fps={_rate(plan)}:start_time=0:round=up,"
+    if scene.panels:
+        panel = scene.panels[0]
+        chains = [f"{timed}{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]"]
+    else:
+        colour = (scene.colour or "#000000").removeprefix("#")
+        chains = [f"{timed}crop=2:2:0:0,format=rgb24,drawbox=c=0x{colour}:t=fill,scale={plan.width}:{plan.height},setsar=1[{name}l]"]
+    chains.append(f"[{index}:v]setpts=PTS-STARTPTS[{name}q];[{name}l][{name}q]overlay=0:0{out}")
     return ";".join(chains)
 
 
@@ -562,7 +603,7 @@ def _volume(gain: Sequence[Keyframe], volume: float) -> list[str]:
 
 
 def _overlay_inputs(
-    plan: RenderPlan, files: dict[str, Path], first: int, feeds: dict[int, FrameFeed]
+    plan: RenderPlan, files: dict[str, Path], first: int, feeds: "Feeds"
 ) -> tuple[list[str], list[tuple[OverlayEvent, int, FrameFeed | None]]]:
     """The input options of the plan's Overlays, one each, numbered from `first` (a video read from its
     offset for as long as it shows; an image's one picture; a keyed one's frames, from the pipe of
@@ -573,11 +614,9 @@ def _overlay_inputs(
     for i, event in enumerate(plan.overlays):
         if event.media not in files:
             continue
-        feed = feeds.get(i)
+        feed = feeds.get(("overlay", i))
         if feed is not None:
-            width, height = FRAME
-            inputs += ["-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{width}x{height}", "-framerate", _rate(plan)]
-            inputs += ["-i", f"pipe:{feed.fd}"]
+            inputs += _piped(plan, feed)
         else:
             if not event.image:
                 inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.end - event.start:.3f}"]
@@ -600,34 +639,92 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}")
 
 
+def _scene_inputs(plan: RenderPlan, first: int, feeds: "Feeds") -> tuple[list[str], dict[int, int]]:
+    """The input options of the frame processes in `feeds` of the plan's keyed Scenes, numbered from
+    `first`, and each one's input number by the Scene's place among the plan's Scenes."""
+    inputs: list[str] = []
+    numbers: dict[int, int] = {}
+    for (kind, i), feed in feeds.items():
+        if kind == "scene":
+            numbers[i] = first + len(numbers)
+            inputs += _piped(plan, feed)
+    return inputs, numbers
+
+
+def _piped(plan: RenderPlan, feed: FrameFeed) -> list[str]:
+    """The input options that read a frame process's frames from its pipe, at the Clip's frame rate."""
+    width, height = FRAME
+    return [
+        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{width}x{height}", "-framerate", _rate(plan), "-i", f"pipe:{feed.fd}",
+    ]
+
+
 def _rate(plan: RenderPlan) -> str:
     """The Clip's frame rate, as the frame processes and the frames they are laid over keep it."""
     return f"{plan.fps if plan.fps > 0 else 30:.6g}"
 
 
-def _keyed_items(plan: RenderPlan, files: dict[str, Path]) -> dict[int, np.ndarray | Path]:
-    """The items of the plan's keyed Overlays (by their place among them) that are in `files`, which
-    their frame processes draw: an image's pixels, a video's file."""
-    return {
-        i: read_image(files[event.media]) if event.image else files[event.media]
+# A keyed picture of the plan: ("overlay", its place among the Overlays) or ("scene", its Scene's
+# place among the Scenes); and each one's frame process.
+Keyed = tuple[str, int]
+Feeds = dict[Keyed, FrameFeed]
+
+
+def _keyed_items(plan: RenderPlan, files: dict[str, Path]) -> dict[Keyed, np.ndarray | Path]:
+    """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
+    an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's)."""
+    items: dict[Keyed, np.ndarray | Path] = {
+        ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
         if event.picture.motion and event.media in files
     }
+    for i, (segment, _) in _keyed_scenes(plan).items():
+        if segment.media in files:
+            items[("scene", i)] = files[segment.media]
+    return items
 
 
-def _feeds(plan: RenderPlan, items: dict[int, np.ndarray | Path], ffmpeg: Path) -> dict[int, FrameFeed]:
-    """A frame process for each keyed Overlay whose item is in `items`, over its span: an image's
-    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn."""
+def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[SegmentPlan, ScenePlan]]:
+    """The plan's Scenes of a keyed picture of a video's Segment, by their places among its Scenes,
+    each with its Segment."""
+    keyed, first = {}, 0
+    for segment in plan.segments:
+        for i in range(first, first + segment.scenes):
+            scene = plan.scenes[i]
+            if segment.media is not None and scene.picture is not None and scene.picture.motion:
+                keyed[i] = (segment, scene)
+        first += segment.scenes
+    return keyed
+
+
+def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
+    """A frame process for each keyed picture whose item is in `items`, over its span: an image's
+    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn. A Segment's
+    Scene's are drawn in seconds into its Segment, its frame n at n / fps from its start, as the
+    Segment's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
     rate = float(_rate(plan))
+    scenes = _keyed_scenes(plan)
     feeds = {}
-    for i, item in items.items():
+    for (kind, i), item in items.items():
+        if kind == "scene":
+            segment, scene = scenes[i]
+            picture = _later(scene.picture, -scene.start)
+            length = scene.end - scene.start
+            video = VideoDecode(ffmpeg, item, picture, 0.0, length, segment.source_start + scene.start - segment.start, rate)
+            feeds[(kind, i)] = FrameFeed(PictureFrames(picture), 0.0, length, rate, video)
+            continue
         event = plan.overlays[i]
         if isinstance(item, Path):
             frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.offset, rate)
         else:
             frames, video = PictureFrames(event.picture, item), None
-        feeds[i] = FrameFeed(frames, event.start, event.end, rate, video)
+        feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
     return feeds
+
+
+def _later(picture: Picture, by: float) -> Picture:
+    """A keyed `picture` with its motion `by` seconds later."""
+    return replace(picture, motion={prop: [replace(key, at=key.at + by) for key in keys] for prop, keys in picture.motion.items()})
 
 
 def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:

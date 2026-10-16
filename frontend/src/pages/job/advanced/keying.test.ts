@@ -199,6 +199,7 @@ describe("the Keyframes pane on an item", () => {
     expect(keyableOf(O, { kind: "video", has_audio: true })).toEqual(["x", "y", "scale", "rotation", "opacity", "volume"]);
     expect(keyableOf(O, { kind: "video", has_audio: false })).toEqual(["x", "y", "scale", "rotation", "opacity"]);
     expect(keyableOf(M)).toEqual(["volume"]);
+    expect(keyableOf({ kind: "segment", id: "s" }, { kind: "video", has_audio: true })).toEqual(["x", "y", "scale", "rotation", "opacity", "volume"]);
   });
 
   test("its active row is the property last touched, else the first keyed one, else Scale (Volume for a Music Clip)", () => {

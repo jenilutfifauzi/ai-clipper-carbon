@@ -70,7 +70,10 @@ A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) i
 by Segment: each framed on its own, from its own Scenes and faces, its Scenes moved to where it
 plays in the Clip. A Segment of a Media Library video is one Scene, with no captions: the video
 drawn as a Picture placed by its Framing, over its Background (a blurred copy of what its Crop keeps,
-covering the frame, or a colour) (`framed_scene`). A Transition overlaps
+covering the frame, or a colour) (`framed_scene`). A keyed one's Picture carries its motion in
+seconds into the Clip, as a keyed Overlay's does, and its sound its gain track in seconds from its
+start; its Background is left out when the moving picture covers the frame at every one of its
+frames (`keyed_scene`). A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
 is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
 Everything else is planned over the whole Clip, in seconds into it.
@@ -244,6 +247,9 @@ class SegmentInput:
     words: list[Word] | None = None
     word_edits: list[WordEdit] = field(default_factory=list)
     join: Join | None = None
+    # A video's: its Keyframes, in seconds from its start (docs/adr/0008), and its Segment's id.
+    keys: Keys = field(default_factory=dict)
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -455,7 +461,8 @@ class AudioEvent:
 class SegmentPlan:
     """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
     `source_end`, from `start` to `end` seconds into the Clip; a video's own sound at `volume`, or
-    none when it is `silent`."""
+    none when it is `silent`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008), in
+    seconds from its start, which set its volume in place of `volume`. `id` is its Segment's."""
 
     start: float
     end: float
@@ -466,6 +473,8 @@ class SegmentPlan:
     silent: bool = False
     # How many of the plan's Scenes, in order, are its.
     scenes: int = 1
+    gain: list[Keyframe] = field(default_factory=list)
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -633,6 +642,8 @@ def plan_render(
     cuts: list[float] = []
     if main_track:
         plans, at = [], 0.0
+        # The frames a keyed picture is drawn at, as the renderer draws them.
+        rate = source.fps if source.fps > 0 else 30.0
         for i, given in enumerate(main_track):
             length = round(given.end - given.start, 3)
             if i and given.join is not None:
@@ -648,9 +659,15 @@ def plan_render(
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             else:
                 framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
-            plans.extend(_moved(scene, at) for scene in framed)
+            moved = [_moved(scene, at) for scene in framed]
+            if given.media is not None:
+                moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
+            plans.extend(moved)
             segments.append(
-                SegmentPlan(at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed))
+                SegmentPlan(
+                    at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
+                    given.keys.get(KeyProperty.VOLUME, []), given.id,
+                )
             )
             at = round(at + length, 3)
         duration = at
@@ -804,6 +821,41 @@ def framed_scene(start: float, end: float, layout: SceneLayout, width: int, heig
     cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
     point = replace(cover.path[0], x=cover.path[0].x + cropped.x, y=cover.path[0].y + cropped.y)
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
+
+
+def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float) -> ScenePlan:
+    """`scene`, of one picture placed by `transform` (a media Segment's), moved by the `keys` of its
+    item, which starts `start` seconds into the Clip (`moving`): its Background is left out when the
+    picture covers the frame at every one of its frames at `fps` (`covers`), each at n / `fps`
+    seconds into the Scene, as the renderer draws it. Unkeyed, as it is."""
+    assert scene.picture is not None
+    picture = moving(scene.picture, transform, keys, start)
+    if not picture.motion:
+        return scene
+    count = math.ceil((scene.end - scene.start) * fps - 1e-6)
+    if all(covers(picture_at(picture, scene.start + n / fps)) for n in range(count)):
+        return replace(scene, picture=picture, panels=[], colour=None)
+    return replace(scene, picture=picture)
+
+
+# A corner of the frame this far outside a picture is still covered by it, in output pixels.
+_COVER_REACH = 1e-3
+
+
+def covers(picture: Picture) -> bool:
+    """Whether a still `picture` hides the whole frame: opaque, with every corner of the frame inside
+    it once it is turned."""
+    if picture.opacity < 1:
+        return False
+    angle = math.radians(picture.rotation)
+    cos, sin = math.cos(angle), math.sin(angle)
+    (cx, cy), half_width, half_height = picture.centre, picture.width / 2 + _COVER_REACH, picture.height / 2 + _COVER_REACH
+    for px, py in ((0, 0), (OUTPUT_WIDTH, 0), (0, OUTPUT_HEIGHT), (OUTPUT_WIDTH, OUTPUT_HEIGHT)):
+        # The corner in the picture's own directions, from its centre (frames.py turns it so).
+        across, down = (px - cx) * cos + (py - cy) * sin, -(px - cx) * sin + (py - cy) * cos
+        if abs(across) > half_width or abs(down) > half_height:
+            return False
+    return True
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:

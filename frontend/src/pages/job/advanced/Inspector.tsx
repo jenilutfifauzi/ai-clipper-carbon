@@ -1,5 +1,5 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
@@ -8,8 +8,8 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
 import { restyle, setFade, setVolume, type ItemActions } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { useKeyTime } from "./KeyCluster";
-import { writeItemKey } from "./keying";
+import { KeyingContext, useKeyTime } from "./KeyCluster";
+import { segmentSpan, writeItemKey } from "./keying";
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
@@ -60,11 +60,14 @@ export function Inspector({
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
   const keyTime = useKeyTime(playback);
-  // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's, as a
-  // Keyframe at the playhead.
+  // Where the Segments play on the Timeline, which a video's Keyframes are set in.
+  const track = useContext(KeyingContext)?.track;
+  // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's or
+  // video Segment's, as a Keyframe at the playhead.
   const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
-    const keyed = item.kind === "music" && !!edits.music.find((clip) => clip.id === item.id)?.keys.volume?.length;
-    const outcome = keyed ? writeItemKey({ edits, pick }, { kind: "music", id: item.id }, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
+    const keys = item.kind === "music" ? edits.music.find((clip) => clip.id === item.id)?.keys : edits.segments.find((segment) => segment.id === item.id)?.keys;
+    const keyed = !!keys?.volume?.length;
+    const outcome = keyed ? writeItemKey({ edits, pick, track }, item, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
     if (outcome) onEdits(outcome.edits, keyed ? `${group}@${keyTime}` : group);
   };
 
@@ -110,6 +113,8 @@ export function Inspector({
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
         onCropMode={cropMode?.("segment", segment.id)}
+        playback={playback}
+        span={segmentSpan(edits.segments, segment.id, track)}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}

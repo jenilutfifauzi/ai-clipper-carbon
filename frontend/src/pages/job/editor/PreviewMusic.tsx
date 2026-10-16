@@ -54,9 +54,10 @@ function unschedule(gain: GainNode) {
  * Sets how loud a keyed sound's `element` plays at the playback's time: while playing, through Web
  * Audio, as a curve sampled from the playhead to its end (loudnessCurve), set on play, on every seek
  * (when the time is further than MAX_DRIFT_SECS from where the curve has got to), at a new rate and
- * for a new plan; otherwise its loudness there.
+ * for a new `event` (another object); otherwise its loudness there. A Music Clip's, an Overlay
+ * video's, and a video Segment's (PreviewSegments.tsx, as an event of its own).
  */
-function followCurve(element: HTMLMediaElement, playback: Playback, event: AudioEvent) {
+export function followCurve(element: HTMLMediaElement, playback: Playback, event: AudioEvent) {
   const time = playback.shownTime;
   const gain = gainOf(element);
   if (!gain || !context || context.state !== "running" || !playback.playing) {

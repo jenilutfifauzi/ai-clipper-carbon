@@ -1,8 +1,11 @@
+import { useContext } from "react";
 import type { ClipSegment, MediaItem, Overlay, PreviewPlan } from "../../../api";
 import { Hint } from "../../../components/InfoTip";
 import type { Playback } from "../editor/playback";
 import { DecorationFields } from "./DecorationFields";
 import type { AdvancedEdits } from "./edits";
+import { KeyingContext } from "./KeyCluster";
+import { segmentSpan } from "./keying";
 import { FramingFields } from "./MainTrack";
 import { OverlayTransform } from "./Overlays";
 import { onlyItem, type Pick } from "./pick";
@@ -38,6 +41,8 @@ export function TransformPanel({
   cropMode: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
 }) {
   const only = onlyItem(pick);
+  // Where the Segments play on the Timeline, which a video's Keyframes are set in.
+  const track = useContext(KeyingContext)?.track;
   const overlay = only?.kind === "overlay" ? edits.overlays.find((other) => other.id === only.id) : undefined;
   const segment = only?.kind === "segment" ? edits.segments.find((other) => other.id === only.id) : undefined;
   if (overlay) {
@@ -56,6 +61,8 @@ export function TransformPanel({
           segment={segment}
           framing={segment.framing}
           item={mediaById.get(segment.media)}
+          playback={playback}
+          span={segmentSpan(edits.segments, segment.id, track)}
           onChange={onSegment}
           onCropMode={cropMode("segment", segment.id)}
         />
