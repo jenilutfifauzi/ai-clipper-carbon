@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Maximize, Minimize } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -22,6 +22,7 @@ import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Panel } from "../../../components/Panel";
 import { loadFonts } from "../../../fonts";
+import { cx } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
@@ -58,6 +59,7 @@ import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, ItemTools, SaveStatus, Sheet, ShortcutsSheet, Toolbar, TopBar, type AssetTab } from "./Chrome";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
+import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { resolveShortcut, type ShortcutId } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
@@ -155,7 +157,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector or of the Tracks.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | "tracks" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
-  const wide = useMediaQuery(WIDE);
+  // The player's room, which goes full screen with the stage and the player bar.
+  const fullscreenRoom = useRef<HTMLDivElement>(null);
+  const fullscreen = useFullscreen(fullscreenRoom);
+  const fullscreenBar = useControls(fullscreen.way !== null);
+  // Full screen, the layout stays the one it was entered from: the screen's width swapping it would
+  // take the preview out of the page, and so out of full screen.
+  const wideNow = useMediaQuery(WIDE);
+  const wideEntered = useRef(wideNow);
+  if (!fullscreen.way) wideEntered.current = wideNow;
+  const wide = fullscreen.way ? wideEntered.current : wideNow;
   // On a desktop: the shortcuts sheet open.
   const [shortcuts, setShortcuts] = useState(false);
   // On a phone, picking mode: a tap adds an item to the Pick or takes it out.
@@ -496,6 +507,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const moved = move(scene, delta);
     if (moved) history.set(moved.edits, group);
   }
+  // The preview full screen, or back. Text being retyped on the stage is put down first, and the
+  // focus leaves the button, so that Space plays.
+  function setFullscreen(on: boolean) {
+    (document.activeElement as HTMLElement | null)?.blur();
+    if (on) fullscreen.enter();
+    else fullscreen.exit();
+  }
   useShortcuts(history, playback, actions, {
     pickAll: () => select(pickAll(edits)),
     pickNone: () => select(null),
@@ -504,6 +522,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     split: splits.split,
     fit: () => fitTimeline.current?.(),
     shortcuts: () => setShortcuts(true),
+    fullscreen: fullscreen.way !== null,
+    setFullscreen,
     phone: !wide,
   });
 
@@ -546,6 +566,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         },
       };
   const source = job.source!;
+  const fullscreenButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setFullscreen(!fullscreen.way)}
+      aria-label={fullscreen.way ? "Leave full screen" : "Full screen"}
+      title={fullscreen.way ? "Leave full screen (F)" : "Full screen (F)"}
+    >
+      {fullscreen.way ? <Minimize aria-hidden size={18} /> : <Maximize aria-hidden size={18} />}
+    </Button>
+  );
   const player = (
     <ClipPreview
       src={mediaUrl(job.id, source.preview ?? source.video)}
@@ -553,7 +584,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       blank={tracks.hidden.includes("video")}
       fonts={fonts}
       playback={playback}
-      stage={{
+      // Full screen, nothing on the stage is picked, moved or retyped: it is watched.
+      stage={fullscreen.way ? undefined : {
         selected: stageIdsOf(pick),
         onSelect: (id, toggle) => {
           const item = stageItem(id);
@@ -584,9 +616,29 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         texts: !tracks.locked.includes("text"),
         fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
       }}
-      overlays={overlayControls}
+      overlays={fullscreen.way ? undefined : overlayControls}
       fit
+      tools={fullscreenButton}
+      hideBar={!fullscreenBar.shown}
     />
+  );
+  // The player, or full screen (over the whole window where the browser can't put it full screen),
+  // the player alone on black, its bar shown while the pointer moves.
+  const room = (
+    <div
+      ref={fullscreenRoom}
+      onPointerMove={fullscreen.way ? fullscreenBar.wake : undefined}
+      onPointerDown={fullscreen.way ? fullscreenBar.wake : undefined}
+      className={cx(
+        "flex min-h-0 flex-1 flex-col",
+        fullscreen.way && "bg-black p-3",
+        fullscreen.way === "window" &&
+          "fixed inset-0 z-50 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+        !fullscreenBar.shown && "cursor-none",
+      )}
+    >
+      {player}
+    </div>
   );
   const timeline = (
     <AdvancedTimeline
@@ -759,7 +811,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
           </aside>
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
-            {player}
+            {room}
             {notes}
           </section>
           <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
@@ -777,7 +829,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">
       {bar}
       <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
-        {player}
+        {room}
         {notes}
       </section>
       <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
@@ -838,6 +890,9 @@ function useShortcuts(
     fit: () => void;
     // Open the shortcuts sheet.
     shortcuts: () => void;
+    // The preview is full screen, and is put full screen or back.
+    fullscreen: boolean;
+    setFullscreen: (on: boolean) => void;
     // The phone's layout, without the desktop's shortcuts.
     phone: boolean;
   },
@@ -864,13 +919,15 @@ function useShortcuts(
       "move-back-10": () => move(-10),
       "move-forward-10": () => move(10),
       fit: () => more.fit(),
+      fullscreen: () => more.setFullscreen(true),
+      "fullscreen-exit": () => more.setFullscreen(false),
       shortcuts: () => more.shortcuts(),
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       const id = resolveShortcut(
         { key: event.key, command: event.metaKey || event.ctrlKey, shift: event.shiftKey, alt: event.altKey },
-        { typing: !!target.closest(FIELD), item: !!target.closest(ITEM), phone: more.phone },
+        { typing: !!target.closest(FIELD), item: !!target.closest(ITEM), fullscreen: more.fullscreen, phone: more.phone },
       );
       if (!id || run[id]() === false) return;
       // Escape is the browser's too (it closes a dialog), and still does that.

@@ -1,5 +1,5 @@
 import { Pause, Play, SkipForward } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
   logoUrl,
   type Box,
@@ -66,7 +66,8 @@ const percent = (value: number) => `${value * 100}%`;
  * Layers on screen are picked by a click (several with Shift, Cmd or Ctrl, which then move together
  * with the picked Overlays), moved, resized and retyped on the frame (StageEdit.tsx,
  * InlineText.tsx). With `fit`, the frame is as large as fits the space its parent gives it (the
- * Advanced Edit's player), and the transport is a single row.
+ * Advanced Edit's player), and the transport is a single row, ending with `tools`; with `hideBar`,
+ * that row fades out (full screen, while the pointer is still).
  */
 export function ClipPreview({
   src,
@@ -78,6 +79,8 @@ export function ClipPreview({
   overlays,
   fit = false,
   blank = false,
+  tools,
+  hideBar = false,
 }: {
   src: string;
   preview: PreviewPlan | null;
@@ -89,6 +92,8 @@ export function ClipPreview({
   fit?: boolean;
   // Black where the Segments are (the Advanced Edit's Video Track hidden).
   blank?: boolean;
+  tools?: ReactNode;
+  hideBar?: boolean;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -241,7 +246,7 @@ export function ClipPreview({
         <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
           {frame}
         </div>
-        <Transport playback={playback} compact />
+        <Transport playback={playback} compact tools={tools} hidden={hideBar} />
       </div>
     );
   }
@@ -984,14 +989,32 @@ function runs(line: string, spans: [number, number][]): [string, boolean][] {
   return parts;
 }
 
-/** Play and pause, a scrubber over the Clip, and "Play clip" and "Play ending" (not when `compact`). */
-function Transport({ playback, compact = false }: { playback: Playback; compact?: boolean }) {
+/**
+ * Play and pause, a scrubber over the Clip, the time and `tools`, and "Play clip" and "Play ending"
+ * (not when `compact`). While `hidden`, faded out, but shown again for the keyboard's focus.
+ */
+function Transport({
+  playback,
+  compact = false,
+  tools,
+  hidden = false,
+}: {
+  playback: Playback;
+  compact?: boolean;
+  tools?: ReactNode;
+  hidden?: boolean;
+}) {
   const playing = usePlayback(playback, (_, p) => p.playing);
   // Tenths of a second: enough for the label and the scrubber, and few re-renders.
   const tenths = usePlayback(playback, (time) => Math.round(time * 10));
   const duration = playback.duration;
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      className={cx(
+        "flex flex-col gap-2 motion-safe:transition-opacity motion-safe:duration-300",
+        hidden && "not-has-focus-visible:pointer-events-none not-has-focus-visible:opacity-0",
+      )}
+    >
       <div className="flex items-center gap-3">
         <Button variant="secondary" size="icon" onClick={() => playback.toggle()} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause aria-hidden size={18} /> : <Play aria-hidden size={18} />}
@@ -1009,6 +1032,7 @@ function Transport({ playback, compact = false }: { playback: Playback; compact?
         <span className="shrink-0 text-sm text-muted tabular-nums">
           {formatPrecise(Math.max(0, tenths / 10))} / {formatPrecise(duration)}
         </span>
+        {tools}
       </div>
       {!compact && (
         <div className="flex flex-wrap gap-2">

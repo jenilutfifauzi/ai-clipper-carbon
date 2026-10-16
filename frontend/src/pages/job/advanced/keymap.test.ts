@@ -72,9 +72,31 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "Escape" }, item)).toBe("pick-none");
   });
 
+  test("F goes full screen; full screen, F and Escape leave it", () => {
+    expect(resolveShortcut({ key: "f" })).toBe("fullscreen");
+    // With Caps Lock on.
+    expect(resolveShortcut({ key: "F" })).toBe("fullscreen");
+    const fullscreen = { fullscreen: true };
+    expect(resolveShortcut({ key: "f" }, fullscreen)).toBe("fullscreen-exit");
+    expect(resolveShortcut({ key: "F" }, fullscreen)).toBe("fullscreen-exit");
+    expect(resolveShortcut({ key: "Escape" }, fullscreen)).toBe("fullscreen-exit");
+    // Space and the arrows keep working.
+    expect(resolveShortcut({ key: " " }, fullscreen)).toBe("play");
+    expect(resolveShortcut({ key: "ArrowRight" }, fullscreen)).toBe("move-forward");
+  });
+
+  test("Cmd+F stays the browser's, full screen or not", () => {
+    expect(resolveShortcut({ key: "f", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "f", command: true }, { fullscreen: true })).toBeNull();
+  });
+
   test("on a phone, ? gives nothing: there is no sheet", () => {
     expect(resolveShortcut({ key: "?", shift: true }, { phone: true })).toBeNull();
     expect(resolveShortcut({ key: "z", command: true }, { phone: true })).toBe("undo");
+  });
+
+  test("on a phone too, Escape leaves full screen", () => {
+    expect(resolveShortcut({ key: "Escape" }, { phone: true, fullscreen: true })).toBe("fullscreen-exit");
   });
 });
 
@@ -100,9 +122,9 @@ describe("the table", () => {
     }
   });
 
-  test("every row gives its own id for each of its keys, on a desktop with nothing focused", () => {
+  test("every row gives its own id for each of its keys, on a desktop with nothing focused (full screen for its rows)", () => {
     for (const row of SHORTCUTS) {
-      for (const keys of row.keys) expect(resolveShortcut(keys)).toBe(row.id);
+      for (const keys of row.keys) expect(resolveShortcut(keys, { fullscreen: row.fullscreen })).toBe(row.id);
     }
   });
 
@@ -148,5 +170,6 @@ describe("the shortcuts sheet", () => {
     expect(keyNames(row("play"), false)).toEqual(["Space"]);
     expect(keyNames(row("pick-none"), true)).toEqual(["Esc"]);
     expect(keyNames(row("shortcuts"), true)).toEqual(["?"]);
+    expect(keyNames(row("fullscreen-exit"), false)).toEqual(["F", "Esc"]);
   });
 });

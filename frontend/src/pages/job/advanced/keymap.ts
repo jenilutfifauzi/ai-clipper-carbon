@@ -20,6 +20,8 @@ export type ShortcutId =
   | "move-back-10"
   | "move-forward-10"
   | "fit"
+  | "fullscreen"
+  | "fullscreen-exit"
   | "shortcuts";
 
 export type ShortcutGroup = "playback" | "navigation" | "editing" | "view";
@@ -70,7 +72,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "undo", keys: [{ key: "z", command }], group: "editing", label: "Undo" },
   { id: "redo", keys: [{ key: "z", command, shift }, { key: "y", command }], group: "editing", label: "Redo" },
   { id: "pick-all", keys: [{ key: "a", command }], group: "editing", label: "Pick every item" },
-  { id: "pick-none", keys: [{ key: "Escape" }], group: "editing", label: "Pick nothing", typing: true },
+  // Full screen, Escape leaves it instead.
+  { id: "pick-none", keys: [{ key: "Escape" }], group: "editing", label: "Pick nothing", typing: true, fullscreen: false },
   {
     id: "split",
     keys: [{ key: "b", command }],
@@ -93,6 +96,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "move-back-10", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move them 1 s earlier" },
   { id: "move-forward-10", keys: [{ key: "ArrowRight", alt }], group: "editing", label: "Move them 1 s later" },
   { id: "fit", keys: [{ key: "z", shift }], group: "view", label: "Zoom the Timeline to fit the picked items, or the whole Clip" },
+  { id: "fullscreen", keys: [{ key: "f" }], group: "view", label: "Watch the preview full screen", fullscreen: false },
+  { id: "fullscreen-exit", keys: [{ key: "f" }, { key: "Escape" }], group: "view", label: "Leave full screen", fullscreen: true },
   { id: "shortcuts", keys: [{ key: "?" }], group: "view", label: "Show these shortcuts", desktop: true },
 ];
 
