@@ -29,7 +29,7 @@
 - **Seam D, the pure action:** `moveKeysAt(keys, from, to, {secs, fps, start})` in `frontend/src/pages/job/editor/keyframes.ts` (tested in `editor/keyActions.test.ts`). Every property's Keyframe within half a frame of `from` (by `keyAt`) goes to one time, with its value and Ease: held within the item and at least `KEY_GAP_SECS` from each moved Keyframe's own neighbours, then put on the nearest of the Clip's frames within that reach. `start` is the item's start, so "the Clip's frames" is the playhead's grid, not the item's. The time is kept to the millisecond. It returns `{keys, at}`: the same `keys` object when nothing moves, and null when no Keyframe is at `from`.
 - **On the items:** `advanced/keying.ts` gained:
   - `moveItemKeys(scene, ref, from, to, fps)`, in Timeline time. It returns an `Outcome` plus `at`, the scene's own edits when nothing moved, and null when nothing is at `from` or the Track is locked. It doesn't change `withKeyed`: it passes the first keyed property's constant back as it was.
-  - `pickedKeyed(pick)`: the one picked Overlay or Music Clip as a `KeyedRef`. **04 adds `segment` here.**
+  - `pickedKeyed(pick)`: the one picked Overlay, Music Clip or Segment as a `KeyedRef`. A Source Segment has no `keyedItem`, so nothing is shown for it.
   - `TouchedRow {item, property}` and `activeRow(ref, item, touched)`: the property last touched *on this item*, else the first keyed one in the order x, y, scale, rotation, opacity, volume, else `scale` (`volume` for `music`).
   - `keyAround(item, time, direction)`: the Timeline time of the item's Keyframe before or after `time`, any property, beyond half a frame (`keysAround` over all of them).
 - **Seam E:** `keyMarks({start, keys})` in `advanced/timelineView.ts` gives the instants in Timeline time, sorted. A Keyframe within half a frame of an instant's first one joins that instant, the same rule `keyAt` uses for a drag.
@@ -46,7 +46,9 @@
   - **Ticket 09:** a row click should call `keying.onTouch`, and the pane's active row should be `activeRow(ref, item, keying.touched)`.
 - **The Volume Line:** `Tracks.tsx`'s `VolumeLine` takes `keyed?: {heard, start, playback}` instead of `line`/`secs`. `KeyedVolumeLine` draws the polyline as before.
   - On a picked item of an unlocked Track, with the playhead inside what is heard, it adds a knob on the line at the playhead (`useKeyTime`, so it stays put while playing). Dragging the knob changes the volume, starting from the keyed value there (`valueAt`, without the fades), through `onVolume`. Outside the item there is no knob.
-  - `AdvancedEdit`'s `onVolume` now sends a Music Clip through `writeItemKey` at `playback.time`: a Keyframe at the playhead once it has volume Keyframes, else the constant. A Segment still goes through `setVolume`. **04:** a keyed media Segment's Volume Line can pass `keyed` the same way, and route `segment` through `writeItemKey` once `KeyedRef` has it.
+  - `AdvancedEdit`'s `onVolume` now sends a Music Clip through `writeItemKey` at `playback.time`: a Keyframe at the playhead once it has volume Keyframes, else the constant. A Segment still goes through `setVolume`.
+- **Merged with 04 (keyed media Segments):** the ruler diamonds, K and [ ] work on a picked video Segment too. `moveItemKeys` and `AdvancedEdit`'s keyed calls pass the planned `track`, the same one `KeyingContext` carries.
+  - **Left over:** a media Segment's Volume Line still draws its constant and sets it, even when the Segment has volume Keyframes. The fix is to pass `keyed` to its `VolumeLine` (a `Heard` with no fades and its `keys.volume`, from `segmentSpan`'s start) and send `segment` through `writeItemKey` in `onVolume`.
 
 Choices:
 - **Ruler diamonds show, and work, with the playhead outside the item.** The spec's "off while the playhead is outside it" covers the inspector's diamonds and the pane. A ruler diamond is how the playhead gets *into* the item, and a drag doesn't depend on the playhead.

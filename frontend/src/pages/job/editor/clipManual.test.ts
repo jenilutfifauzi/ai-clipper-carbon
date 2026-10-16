@@ -29,6 +29,8 @@ const segmentPlan = (start: number, end: number, source_start: number, media: st
   volume: 1,
   silent: false,
   scenes: 1,
+  gain: [],
+  id: "",
 });
 
 // A clip of the Source from 100 s: a Track Scene for 3 s, then a Split one.

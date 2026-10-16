@@ -170,9 +170,10 @@ describe("a Keyframe edit on an item", () => {
 });
 
 describe("the shortcuts' item and row", () => {
-  test("the item is the Pick when it is one Overlay or Music Clip", () => {
+  test("the item is the Pick when it is one Overlay, Music Clip or Segment", () => {
     expect(pickedKeyed(picked(O))).toEqual(O);
     expect(pickedKeyed(picked(M))).toEqual(M);
+    expect(pickedKeyed(picked({ kind: "segment", id: "s" }))).toEqual({ kind: "segment", id: "s" });
     expect(pickedKeyed(picked(O, M))).toBeNull();
     expect(pickedKeyed(picked({ kind: "text", id: "t" }))).toBeNull();
     expect(pickedKeyed({ kind: "hook" })).toBeNull();

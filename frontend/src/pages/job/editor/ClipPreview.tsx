@@ -20,7 +20,7 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { isKeyed, overlaysAt, pictureStyle, slotView } from "./picture";
+import { hasKeyedPictures, overlaysAt, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -152,7 +152,7 @@ export function ClipPreview({
   // time while paused, and left where they were while playing, which doesn't draw the stage again.
   const keyedAt = useKeyedTime(plan, playback);
   const pictures =
-    plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt) }, controls, behind, sceneIndex, keyedAt ?? playback.time) : [];
+    plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt) }, controls, behind, sceneIndex, keyedAt ?? playback.time) : [];
   // What is picked on the stage: moving one of several moves them all.
   const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
   const edit = useStageEdit(
@@ -284,11 +284,11 @@ export function ClipPreview({
 }
 
 /**
- * The time a plan with keyed Overlays has its pictures sampled at for the stage: the playhead's while
- * paused, and the last one paused at while playing; null without keyed Overlays.
+ * The time a plan with keyed pictures (an Overlay's or a video Segment's) has them sampled at for the
+ * stage: the playhead's while paused, and the last one paused at while playing; null without any.
  */
 function useKeyedTime(plan: RenderPlan | null, playback: Playback): number | null {
-  const keyed = !!plan?.overlays.some((event) => isKeyed(event.picture));
+  const keyed = !!plan && hasKeyedPictures(plan);
   const paused = useRef(playback.time);
   const time = usePlayback(playback, (now, p) => (keyed && !p.playing ? now : null));
   if (time !== null) paused.current = time;

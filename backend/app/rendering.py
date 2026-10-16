@@ -205,7 +205,7 @@ def candidate_plan(
             inputs.append(SegmentInput(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
-                words=None if words is None else [], join=join,
+                words=None if words is None else [], join=join, keys=segment.keys, id=segment.id,
             ))
             continue
         inputs.append(SegmentInput(

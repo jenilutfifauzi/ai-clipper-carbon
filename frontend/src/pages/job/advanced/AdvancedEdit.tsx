@@ -15,6 +15,7 @@ import {
   type MusicClip,
   type Overlay,
   type TextLayer,
+  type Transform,
   type Transition,
   type TransitionKind,
 } from "../../../api";
@@ -27,6 +28,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
+import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
@@ -76,14 +78,17 @@ import { Inspector } from "./Inspector";
 import { KeyingContext, type Keying } from "./KeyCluster";
 import {
   activeRow,
+  heldTransform,
   keyAround,
   keyedItem,
   moveItemKeys,
   pickedKeyed,
+  segmentSpan,
   stageTransform,
   toggleItemKey,
   writeItemKey,
   writeItemTransform,
+  writeSegmentTransform,
   type TouchedRow,
 } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
@@ -564,12 +569,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const points = editPoints(edits, played, { duration, hidden: tracks.hidden });
   // The one item picked that can have Keyframes: K, [ and ] and the ruler's diamonds work on it.
   const keyedRef = pickedKeyed(pick);
-  const keyed = keyedRef && keyedItem(edits, keyedRef);
+  const keyed = keyedRef && keyedItem(edits, keyedRef, track);
   const keyframes =
     keyedRef && keyed
       ? {
           toggle: () => {
-            const outcome = toggleItemKey(scene, keyedRef, activeRow(keyedRef, keyed, touched), playback.time);
+            const outcome = toggleItemKey({ ...scene, track }, keyedRef, activeRow(keyedRef, keyed, touched), playback.time);
             if (!outcome) return false;
             history.set(outcome.edits);
           },
@@ -581,7 +586,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // back to where it began puts them back, and a drag that moves none leaves no step of undo).
   let keysMoved = false;
   const moveKeys = (from: number, to: number, group: string) => {
-    const moved = keyedRef && moveItemKeys(scene, keyedRef, from, to, fps);
+    const moved = keyedRef && moveItemKeys({ ...scene, track }, keyedRef, from, to, fps);
     if (!moved || (!keysMoved && moved.edits === edits)) return;
     keysMoved = true;
     history.set(moved.edits, group);
@@ -659,7 +664,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         },
       };
   // What the inspector's ‹ ◆ › edit in: each Keyframe edit one change.
-  const keying: Keying = { edits, pick, locked: tracks.locked, playback, onEdits: (next) => history.set(next), touched, onTouch: setTouched };
+  const keying: Keying = { edits, pick, locked: tracks.locked, track, playback, onEdits: (next) => history.set(next), touched, onTouch: setTouched };
+  // A video Segment keyed in its Framing's Transform: held on the stage where it is at the playhead,
+  // and its keyed fields written there as Keyframes, as a keyed Overlay's are.
+  const keyedFraming = (id: string) => {
+    const segment = edits.segments.find((other) => other.id === id);
+    const span = segmentSpan(edits.segments, id, track);
+    if (!segment?.framing || !span || !PICTURE_KEYS.some((prop) => segment.keys?.[prop]?.length)) return null;
+    const { framing } = segment;
+    return { held: (time: number) => heldTransform(framing.transform, segment.keys ?? {}, span, time), framing };
+  };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
   const plan = preview?.plan ?? null;
@@ -669,13 +683,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       : (segment, at) => {
           const source = pictureSource(edits, plan, segment, at);
           if (!source) return null;
+          const keyed = source.kind === "media" ? keyedFraming(source.segment) : null;
+          const written = (next: AdvancedEdits, transform: Transform, group: string) => {
+            const outcome = writeSegmentTransform({ ...scene, edits: next, track }, source.segment, transform, playback.time, keyed!.held(playback.time));
+            if (outcome) history.set(outcome.edits, group);
+          };
           return {
             picked: isPicked(pick, "segment", source.segment),
             onPick: (toggle) => select(clicked(pick, { kind: "segment", id: source.segment }, toggle || picking)),
-            transform: source.kind === "auto" ? null : source.transform,
-            onTransform: (transform, group) => history.set(withPictureTransform(edits, plan, source, transform), group),
+            transform: source.kind === "auto" ? null : keyed ? keyed.held(playback.time) : source.transform,
+            onTransform: (transform, group) =>
+              keyed ? written(edits, transform, group) : history.set(withPictureTransform(edits, plan, source, transform), group),
             crop: pictureCrop(edits, plan, source),
-            onCrop: (crop, transform, group) => history.set(withPictureCrop(edits, plan, source, crop, transform), group),
+            onCrop: (crop, transform, group) =>
+              keyed
+                ? written(withPictureCrop(edits, plan, source, crop, keyed.framing.transform), transform, group)
+                : history.set(withPictureCrop(edits, plan, source, crop, transform), group),
           };
         };
   // The inspector's Crop for a Segment's or an Overlay's picture: the playhead put on it if it isn't,

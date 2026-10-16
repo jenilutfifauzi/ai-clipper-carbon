@@ -137,6 +137,15 @@ export function overlaysAt(plan: RenderPlan, time: number): RenderPlan["overlays
   return plan.overlays.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time) } : event));
 }
 
+/** The plan's Scenes as drawn at `time`: each keyed picture (a video Segment's) sampled there (`pictureAt`). */
+export function scenesAt(plan: RenderPlan, time: number): RenderPlan["scenes"] {
+  return plan.scenes.map((scene) => (scene.picture && isKeyed(scene.picture) ? { ...scene, picture: pictureAt(scene.picture, time) } : scene));
+}
+
+/** Whether any picture of the plan moves: an Overlay's or a Scene's. */
+export const hasKeyedPictures = (plan: RenderPlan) =>
+  plan.overlays.some((event) => isKeyed(event.picture)) || plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture));
+
 export interface PanelStyle {
   box: { left: string; top: string; width: string; height: string };
   // Its item inside the box, sized and moved so that only the panel's crop shows in it.

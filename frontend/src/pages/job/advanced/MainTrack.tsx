@@ -8,7 +8,11 @@ import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
 import { FITTED } from "../editor/manual";
 import { IDENTITY, mediaSize } from "../editor/picture";
-import type { PlayedSegment } from "../editor/playback";
+import { shownTransform, valueAt, writtenTransform } from "../editor/keyframes";
+import type { Playback, PlayedSegment } from "../editor/playback";
+import { KeyCluster, useKeyTime } from "./KeyCluster";
+import { keyTime, resetFraming } from "./keying";
+import { keyedGroup } from "./Overlays";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
 // The shortest Segment the editor makes; the backend snaps each to Words.
@@ -77,6 +81,8 @@ export function SegmentFields({
   onChange,
   onCropMode,
   scene,
+  playback,
+  span,
 }: {
   segment: ClipSegment;
   // Its video, for a video's Segment.
@@ -96,8 +102,16 @@ export function SegmentFields({
   onCropMode?: () => void;
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
+  playback: Playback;
+  // Where it plays on the Timeline (keying.ts' segmentSpan), which a video's Keyframes are set in.
+  span: { start: number; secs: number } | null;
 }) {
   const Icon = segment.media ? Clapperboard : Film;
+  // A video's sound at the playhead, and set there once it is keyed.
+  const time = useKeyTime(playback);
+  const at = span && keyTime(span, time);
+  const volumeKeys = segment.keys?.volume ?? [];
+  const volume = valueAt(volumeKeys, at ?? (span ? heldAt(span, time) : 0), segment.volume ?? 1);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -122,18 +136,22 @@ export function SegmentFields({
           <Hint more="Drag its edges to trim it, or drag it to another place.">
             {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s
           </Hint>
-          {segment.framing && <FramingFields segment={segment} framing={segment.framing} item={item} onChange={onChange} onCropMode={onCropMode} />}
+          {segment.framing && (
+            <FramingFields segment={segment} framing={segment.framing} item={item} playback={playback} span={span} onChange={onChange} onCropMode={onCropMode} />
+          )}
           {item?.has_audio === false ? (
             <p className="text-sm text-muted">This video has no sound.</p>
           ) : (
             <Slider
               label="Its sound"
-              value={segment.volume ?? 1}
+              value={volume}
               min={0}
               max={2}
               step={0.05}
               format={(v) => `${Math.round(v * 100)}%`}
               onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
+              after={<KeyCluster item={{ kind: "segment", id: segment.id }} property="volume" label="Its sound" />}
+              disabled={!!volumeKeys.length && at === null}
             />
           )}
         </>
@@ -167,39 +185,63 @@ export function SegmentFields({
   );
 }
 
-/** A video's Segment's Framing: its Transform and Crop, and its Background, each field one group of the history. */
+/**
+ * A video's Segment's Framing: its Transform and Crop, and its Background, each field one group of
+ * the history. Its Transform is shown as it is at the playhead, and its X, Y, Scale, Rotation and
+ * Opacity have their ‹ ◆ › (ADR 0008): a keyed one is set as a Keyframe there. Reset drops the
+ * Transform's Keyframes.
+ */
 export function FramingFields({
   segment,
   framing,
   item,
+  playback,
+  span,
   onChange,
   onCropMode,
 }: {
   segment: ClipSegment;
   framing: Framing;
   item: MediaItem | undefined;
+  playback: Playback;
+  // Where it plays on the Timeline (keying.ts' segmentSpan), which its Keyframes are set in.
+  span: { start: number; secs: number } | null;
   onChange: (segment: ClipSegment, group: string) => void;
   onCropMode?: () => void;
 }) {
+  const time = useKeyTime(playback);
+  const keys = segment.keys ?? {};
+  const at = span && keyTime(span, time);
+  const shown = shownTransform(framing.transform, keys, at ?? (span ? heldAt(span, time) : 0));
   const set = <K extends keyof Framing>(part: K, value: Framing[K], field: string) =>
     onChange({ ...segment, framing: { ...framing, [part]: value } }, `segment:${segment.id}:${part}.${field}`);
   return (
     <>
       <TransformFields
-        transform={framing.transform}
+        transform={shown}
         crop={framing.crop}
         size={mediaSize(item)}
         defaults={IDENTITY}
-        onChange={(transform, field) => set("transform", transform, field)}
+        onChange={(next, field) => {
+          const written = writtenTransform(framing.transform, keys, next, at, shown);
+          onChange(
+            { ...segment, keys: written.keys, framing: { ...framing, transform: written.transform } },
+            keyedGroup(`segment:${segment.id}:transform.${field}`, written.keys !== keys, at),
+          );
+        }}
         onCrop={(crop, field, transform) =>
-          onChange({ ...segment, framing: { ...framing, crop, transform: transform ?? framing.transform } }, `segment:${segment.id}:crop.${field}`)
+          onChange(transform ? resetFraming(segment, transform) : { ...segment, framing: { ...framing, crop } }, `segment:${segment.id}:crop.${field}`)
         }
         onCropMode={onCropMode}
+        keyed={{ item: { kind: "segment", id: segment.id }, keys, inside: at !== null }}
       />
       <BackgroundFields background={framing.background} onChange={(background, field) => set("background", background, field)} />
     </>
   );
 }
+
+// Where the playhead at `time` is held in an item playing over `span`: at its start before it and its end after it.
+const heldAt = (span: { start: number; secs: number }, time: number) => Math.min(Math.max(time - span.start, 0), span.secs);
 
 /**
  * "Add from the episode": the Transcript, on which a range is picked (a click on its first and last

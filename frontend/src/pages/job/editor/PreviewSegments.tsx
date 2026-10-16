@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
-import { mediaProxyUrl, type RenderPlan, type ScenePlan, type SegmentPlan } from "../../../api";
+import { mediaProxyUrl, type AudioEvent, type RenderPlan, type ScenePlan, type SegmentPlan } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./ClipPreview";
 import { follow } from "./follow";
 import { FRAME, panelStyle } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { playable, type Playback } from "./playback";
-import { setVolume } from "./PreviewMusic";
+import { loudness } from "./loudness";
+import { followCurve, setVolume } from "./PreviewMusic";
 
 /**
  * The plan's Segments of Media Library videos, over the Source's panels while they play: each its
@@ -37,7 +38,8 @@ export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undef
  * A video's Segment, shown until `end` (where it gives way), or within a Transition when `end` is its
  * own; its sound faded out over `fade` (the Transition taking it away), if any. It is drawn from its
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
- * its span its video waits at its start, so that its first frame is ready.
+ * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
+ * with the playback (PicturePanel), and a keyed sound follows its gain track (followCurve).
  */
 export function MediaSegment({
   segment,
@@ -58,11 +60,23 @@ export function MediaSegment({
 
   useEffect(() => {
     const span = { start: segment.start, end, from: segment.source_start };
+    // Its sound as heard: its gain track, when keyed, faded out by the Transition taking it away.
+    const sound: AudioEvent = {
+      media: segment.media!,
+      start: segment.start,
+      end: fade ? fade.end : segment.end,
+      offset: segment.source_start,
+      volume: segment.volume,
+      fade_in: 0,
+      fade_out: fade ? fade.end - fade.start : 0,
+      gain: segment.gain,
+      id: segment.id,
+    };
     const sync = () => {
       const inside = main.current ? follow(main.current, playback, span, true) : false;
       if (back.current) follow(back.current, playback, span, true);
-      const left = fade ? Math.min(1, Math.max(0, (fade.end - playback.shownTime) / (fade.end - fade.start))) : 1;
-      if (main.current) setVolume(main.current, segment.silent ? 0 : segment.volume * left);
+      if (main.current && !segment.silent && segment.gain.length) followCurve(main.current, playback, sound);
+      else if (main.current) setVolume(main.current, segment.silent ? 0 : loudness(sound, playback.shownTime));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
     sync();
@@ -91,6 +105,7 @@ export function MediaSegment({
         <PicturePanel
           picture={picture}
           frame={FRAME}
+          playback={playback}
           media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
         />
       )}
