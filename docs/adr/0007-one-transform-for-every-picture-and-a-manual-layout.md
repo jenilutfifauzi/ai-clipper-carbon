@@ -51,7 +51,7 @@ Two Out of Scope lines stand in the way:
   - its opacity, radius, border and shadow.
 
   The preview draws exactly that with CSS transforms. Media Segments are drawn from the plan too, no longer with `object-cover`.
-- **Keyframes stay out.** A Transform is constant for its item's whole length.
+- **Keyframes stay out.** A Transform is constant for its item's whole length. (Amended 2026-10-16: position, scale, rotation and opacity can have Keyframes. See docs/adr/0008-keyframes-for-pictures-and-sound.md.)
 
 ## Considered options
 

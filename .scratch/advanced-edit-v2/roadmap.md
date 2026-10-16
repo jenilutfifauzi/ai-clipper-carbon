@@ -51,7 +51,7 @@ Daftar gap Advanced Edit terhadap editor referensi `docs/referensi/concat`, urut
 | 3 | `timeline-visuals` | Filmstrip, waveform, garis volume dan fade di clip, zoom-to-fit | — | P1 |
 | 4 | `navigation-playback` | Frame step, Home/End, zoom keys, hover scrub, sheet shortcut, loop/fullscreen, join mulus | — | P1 |
 | 5 | `transform-crop` | Scale/posisi/rotasi/flip/crop/opacity untuk Segment dan Overlay, rotate grip — **selesai 2026-10-16** | — | P1 |
-| 6 | `keyframes` | Keyframe Pos/Scale/Rot/Opacity/Volume dengan easing, panel keyframe | 5 | P2 |
+| 6 | `keyframes` | Keyframe Pos/Scale/Rot/Opacity/Volume dengan easing, panel keyframe — **spec 2026-10-16** (`.scratch/keyframes/spec.md`, ADR 0008) | 5 | P2 |
 | 7 | `speed` | Speed konstan, preserve pitch, reverse, freeze frame | — | P2 |
 | 8 | `text-advanced` | Shadow, tracking, line height, rotasi, plate, impor font, preset teks | — | P2 |
 | 9 | `shapes` | Shape layers (rect, circle, triangle, line, arrow…) | 8 (opsional) | P3 |
