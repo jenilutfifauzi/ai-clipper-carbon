@@ -1,4 +1,4 @@
-import { Minus, Plus, UnfoldHorizontal } from "lucide-react";
+import { Minus, Plus, ScanLine, UnfoldHorizontal, Volume2, VolumeX } from "lucide-react";
 import {
   useEffect,
   useImperativeHandle,
@@ -16,6 +16,7 @@ import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import { usePlayback, type Playback } from "../editor/playback";
 import { onFrame, revealScroll } from "./playhead";
+import { setSkim, setSkimSound, useSkim, useSkimSound } from "./skim";
 import { MAX_ZOOM, zoomAboutPlayhead, type ZoomedView } from "./timelineView";
 
 // The labels' column, by default (a phone's), in CSS pixels: its Tracks' names.
@@ -71,7 +72,10 @@ export type Area = { left: number; right: number; top: number; bottom: number };
  * `toFit` gives for its width and zoom (Zoom to fit); and `zoomStepRef`, called, zooms in (1) or
  * out (-1) a button's step about the playhead. A press on it never gives the keyboard focus to what
  * it is on, so that the arrow keys stay the playhead's (an item reached by Tab keeps its own); and
- * while paused, a playhead moved out of view (a frame step, a jump) is scrolled back into it.
+ * while paused, a playhead moved out of view (a frame step, a jump) is scrolled back into it. With
+ * `skimmable` (a desktop), its Skim button turns the Skim on: then a mouse over the ruler or the
+ * tracks, pressing nothing, has the paused preview show the time under it, marked by a thin line,
+ * until it leaves or presses.
  */
 export function AdvancedTimeline({
   duration,
@@ -84,6 +88,7 @@ export function AdvancedTimeline({
   toFit,
   fitRef,
   zoomStepRef,
+  skimmable = false,
   labelWidth = LABEL_WIDTH,
   children,
 }: {
@@ -103,6 +108,8 @@ export function AdvancedTimeline({
   fitRef: Ref<() => void>;
   // Set to zoom in (1) or out (-1) about the playhead, for the zoom keys.
   zoomStepRef: Ref<(direction: 1 | -1) => void>;
+  // The Skim and its sound can be switched on: a desktop's.
+  skimmable?: boolean;
   // The labels' column's width, in pixels: wider on a desktop, where it holds the Tracks' buttons.
   labelWidth?: number;
   children: (geometry: TimeGeometry) => ReactNode;
@@ -116,6 +123,8 @@ export function AdvancedTimeline({
   // The rubber band as drawn, over the tracks.
   const [band, setBand] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [width, setWidth] = useState(600);
+  const skimming = useSkim() && skimmable;
+  const skimSound = useSkimSound();
   const [zoom, setZoom] = useState(1);
   // A zoom about a point: the time under it and where it is in the view, kept there after the zoom.
   const anchor = useRef<{ time: number; offset: number } | null>(null);
@@ -156,6 +165,21 @@ export function AdvancedTimeline({
     const left = element.getBoundingClientRect().left + labelWidth - element.scrollLeft;
     return Math.min(Math.max((clientX - left) / pps, 0), duration);
   };
+
+  // The Skim off, or the Timeline gone: the preview back on the playhead.
+  useEffect(() => {
+    if (!skimming) return;
+    return () => playback.skim(null);
+  }, [skimming, playback]);
+
+  // A mouse moving over the ruler or the tracks skims there, unless it presses (dragging an item or
+  // the playhead) or is over the labels' column.
+  function skimAt(event: PointerEvent) {
+    if (!skimming || event.pointerType !== "mouse") return;
+    const left = scroller.current!.getBoundingClientRect().left + labelWidth;
+    if (event.buttons !== 0 || event.clientX < left) playback.skim(null);
+    else playback.skim(timeAt(event.clientX), skimSound);
+  }
 
   const zoomRef = useRef({ zoom, timeAt });
   zoomRef.current = { zoom, timeAt };
@@ -288,6 +312,33 @@ export function AdvancedTimeline({
       <div className="flex min-h-11 items-center justify-between gap-2 px-2">
         {/* On a phone the tools scroll sideways, so that the zoom's buttons always show. */}
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">{tools}</div>
+        {skimmable && (
+          <div className="ml-auto flex shrink-0 items-center gap-1" role="group" aria-label="Skim">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="aria-pressed:text-accent-text"
+              onClick={() => setSkim(!skimming)}
+              aria-pressed={skimming}
+              aria-label="Skim"
+              aria-keyshortcuts="S"
+              title="Skim (S): while paused, the preview shows the frame under the pointer"
+            >
+              <ScanLine aria-hidden size={16} />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="aria-pressed:text-accent-text"
+              onClick={() => setSkimSound(!skimSound)}
+              aria-pressed={skimSound}
+              aria-label="Skim sound"
+              title="Skim sound: hear what is under the pointer in short snippets"
+            >
+              {skimSound ? <Volume2 aria-hidden size={16} /> : <VolumeX aria-hidden size={16} />}
+            </Button>
+          </div>
+        )}
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Zoom">
           <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom / ZOOM_STEP)} disabled={zoom <= 1} aria-label="Zoom out" aria-keyshortcuts="-" title="Zoom out (-)">
             <Minus aria-hidden size={16} />
@@ -304,6 +355,9 @@ export function AdvancedTimeline({
         <div
           className="relative flex min-h-full flex-col pb-2"
           style={{ width: total + labelWidth + 16, "--track-label": `${labelWidth}px` } as CSSProperties}
+          // Any press ends a skim, even one an item keeps to itself.
+          onPointerDownCapture={() => playback.skim(null)}
+          onPointerLeave={() => playback.skim(null)}
           onPointerDown={(event) => {
             const target = event.target as HTMLElement;
             // Items and buttons are picked and dragged as they are; the labels' column isn't time.
@@ -326,6 +380,7 @@ export function AdvancedTimeline({
             }
           }}
           onPointerMove={(event) => {
+            skimAt(event);
             const pressed = banding.current;
             if (pressed?.pointer === event.pointerId) {
               if (!pressed.moved && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) <= TAP_SLOP_PX) return;
@@ -382,6 +437,7 @@ export function AdvancedTimeline({
           </TrackRow>
           {children(geometry)}
           <Playhead playback={playback} fps={fps} pps={pps} labelWidth={labelWidth} />
+          <SkimLine playback={playback} pps={pps} labelWidth={labelWidth} />
           {band && (
             <div
               aria-hidden
@@ -487,6 +543,19 @@ function Playhead({ playback, fps, pps, labelWidth }: { playback: Playback; fps:
     >
       <span className="absolute -top-0.5 left-1/2 size-2.5 -translate-x-1/2 rotate-45 rounded-xs bg-text" />
     </div>
+  );
+}
+
+// Where the preview's skim is, while it skims: a thin line, fainter than the playhead.
+function SkimLine({ playback, pps, labelWidth }: { playback: Playback; pps: number; labelWidth: number }) {
+  const time = usePlayback(playback, (_, p) => p.skimTime);
+  if (time === null) return null;
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute top-0 bottom-0 z-30 w-px -translate-x-1/2 bg-accent/80"
+      style={{ left: labelWidth + time * pps }}
+    />
   );
 }
 

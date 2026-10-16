@@ -16,7 +16,7 @@ import {
 import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
-import { RATES, usePlayback, type Playback } from "./playback";
+import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { PreviewMusic } from "./PreviewMusic";
 import { heldArea, PreviewOverlays, type OverlayControls, type OverlayHold } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -124,7 +124,7 @@ export function ClipPreview({
     return () => observer.disconnect();
   }, []);
 
-  const sceneIndex = usePlayback(playback, (time, p) => (plan ? sceneAt(plan, time, p.segmentIndex) : 0));
+  const sceneIndex = useShown(playback, (time, p) => (plan ? sceneAt(plan, time, p.shownSegmentIndex) : 0));
   const scene = plan?.scenes[sceneIndex];
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
   const watermark = useWatermarkDrag(plan, stage, onWatermarkMove);
@@ -497,7 +497,7 @@ function TextLayerView({
   still?: boolean;
 }) {
   const layer = event.layer;
-  const key = usePlayback(playback, (time, p) => {
+  const key = useShown(playback, (time, p) => {
     if (still && !p.playing && event.start <= time && time < event.end) return "1 1 0";
     const look = hookLook(time, event, layer, 0);
     return look && look.map((value) => value.toFixed(3)).join(" ");
@@ -626,7 +626,7 @@ export function PanelView({
   muted: boolean;
   hidden?: boolean;
 }) {
-  const pointIndex = usePlayback(playback, (time) => {
+  const pointIndex = useShown(playback, (time) => {
     if (!panel) return 0;
     let index = 0;
     while (index + 1 < panel.path.length && panel.path[index + 1].at <= time) index += 1;
@@ -669,7 +669,7 @@ export function PanelView({
 
 /** The caption line on screen, with its spoken Word highlighted as the Caption Style says, moved while it is. */
 function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback; edit: StageEdit }) {
-  const key = usePlayback(playback, (time) => {
+  const key = useShown(playback, (time) => {
     const event = plan.captions.findIndex((caption) => caption.start <= time && time < caption.end);
     if (event === -1) return "";
     const word = plan.captions[event].words.findIndex((w) => w.start <= time && time < w.end);
@@ -841,7 +841,7 @@ function Hook({
   const first = hook.kicker ? 1 : 0;
   const steps = first + hook.lines.length - 1;
   const step = stagger(hook, style, steps);
-  const key = usePlayback(playback, (time, p) => {
+  const key = useShown(playback, (time, p) => {
     if (still && !p.playing && hook.start <= time && time < hook.end) return Array.from({ length: steps + 1 }, () => "1 1 0").join("|");
     const looks = Array.from({ length: steps + 1 }, (_, rank) => hookLook(time, hook, style, rank * step));
     if (looks.every((look) => look === null)) return null;

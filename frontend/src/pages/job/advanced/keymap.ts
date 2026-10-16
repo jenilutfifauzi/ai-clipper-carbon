@@ -32,6 +32,7 @@ export type ShortcutId =
   | "fit"
   | "fullscreen"
   | "fullscreen-exit"
+  | "skim"
   | "shortcuts";
 
 export type ShortcutGroup = "playback" | "navigation" | "editing" | "view";
@@ -118,6 +119,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "fit", keys: [{ key: "z", shift }], group: "view", label: "Zoom the Timeline to fit the picked items, or the whole Clip" },
   { id: "fullscreen", keys: [{ key: "f" }], group: "view", label: "Watch the preview full screen", fullscreen: false },
   { id: "fullscreen-exit", keys: [{ key: "f" }, { key: "Escape" }], group: "view", label: "Leave full screen", fullscreen: true },
+  { id: "skim", keys: [{ key: "s" }], group: "view", label: "Skim on or off: the preview shows the frame under the pointer", desktop: true },
   { id: "shortcuts", keys: [{ key: "?" }], group: "view", label: "Show these shortcuts", desktop: true },
 ];
 

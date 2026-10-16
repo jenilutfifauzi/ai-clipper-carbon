@@ -82,6 +82,14 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "Z", shift: true })).toBe("fit");
   });
 
+  test("S turns the Skim on and off, in either case; with Cmd or Ctrl, or on a phone, it gives nothing", () => {
+    expect(resolveShortcut({ key: "s" })).toBe("skim");
+    expect(resolveShortcut({ key: "S" })).toBe("skim");
+    expect(resolveShortcut({ key: "s", command: true })).toBeNull();
+    expect(resolveShortcut({ key: "s" }, { phone: true })).toBeNull();
+    expect(resolveShortcut({ key: "s" }, { typing: true })).toBeNull();
+  });
+
   test("? opens the sheet, with Shift or without (as the keyboard's layout needs)", () => {
     expect(resolveShortcut({ key: "?", shift: true })).toBe("shortcuts");
     expect(resolveShortcut({ key: "?" })).toBe("shortcuts");

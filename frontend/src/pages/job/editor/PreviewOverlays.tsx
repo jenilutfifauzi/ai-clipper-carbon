@@ -2,7 +2,7 @@ import { useEffect, useRef, type PointerEvent } from "react";
 import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type RenderPlan } from "../../../api";
 import { cx } from "../../../format";
 import { follow } from "./follow";
-import { usePlayback, type Playback } from "./playback";
+import { useShown, type Playback } from "./playback";
 import type { Drift } from "./StageEdit";
 
 const percent = (value: number) => `${value * 100}%`;
@@ -181,7 +181,7 @@ function OverlayView({
   children?: React.ReactNode;
 }) {
   const video = useRef<HTMLVideoElement>(null);
-  const shown = usePlayback(playback, (time) => time >= event.start && time < event.end);
+  const shown = useShown(playback, (time) => time >= event.start && time < event.end);
 
   useEffect(() => {
     const element = video.current;

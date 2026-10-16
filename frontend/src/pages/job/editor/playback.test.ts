@@ -305,3 +305,182 @@ describe("rate", () => {
     expect(playback.time).toBeCloseTo(6.5, 5);
   });
 });
+
+describe("skim", () => {
+  test("skimming to 7 s while paused seeks the parked deck to 202 s and shows it, the time staying at 1 s", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [live, parked] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.skim(7);
+    expect(parked.master.currentTime).toBe(202);
+    expect(parked.follower.currentTime).toBe(202);
+    expect(parked.master.paused).toBe(true);
+    expect(parked.master.muted).toBe(true);
+    expect(playback.shownDeck).toBe(1);
+    expect(playback.shownTime).toBe(7);
+    expect(playback.shownSegmentIndex).toBe(1);
+    expect(playback.skimTime).toBe(7);
+    expect(playback.time).toBe(1);
+    expect(playback.segmentIndex).toBe(0);
+    expect(live.master.currentTime).toBe(101);
+    expect(live.master.seeking).toBe(false);
+    // Back over the first Segment: 3 s is 103 s.
+    playback.skim(3);
+    expect(parked.master.currentTime).toBe(103);
+    expect(playback.shownSegmentIndex).toBe(0);
+  });
+
+  test("skimming to null shows the live deck again and parks the other at the next join", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [live, parked] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.skim(7);
+    stage.settle();
+    playback.skim(null);
+    expect(playback.shownDeck).toBe(0);
+    expect(playback.shownTime).toBe(1);
+    expect(playback.skimTime).toBeNull();
+    expect(parked.master.currentTime).toBe(200);
+    expect(parked.follower.currentTime).toBe(200);
+    expect(parked.master.seeking).toBe(true);
+    expect(live.master.currentTime).toBe(101);
+    // Parked again, it takes the join.
+    stage.settle();
+    playback.play();
+    stage.advance(3.98);
+    expect(playback.shownDeck).toBe(1);
+    expect(parked.master.paused).toBe(false);
+  });
+
+  test("skimming while playing does nothing, and playing ends a skim", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, parked] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.play();
+    stage.advance(1);
+    playback.skim(7);
+    expect(playback.shownDeck).toBe(0);
+    expect(playback.skimTime).toBeNull();
+    expect(playback.shownTime).toBeCloseTo(2, 5);
+    expect(parked.master.currentTime).toBe(200);
+    expect(parked.master.seeking).toBe(false);
+    playback.pause();
+    playback.skim(7);
+    expect(playback.shownDeck).toBe(1);
+    playback.play();
+    expect(playback.skimTime).toBeNull();
+    expect(playback.shownDeck).toBe(0);
+    expect(parked.master.currentTime).toBe(200);
+  });
+
+  test("a seek while skimming moves the time, and leaves the borrowed deck where it shows", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [live, parked] = stage.decks(playback);
+    playback.seek(1);
+    playback.skim(7);
+    playback.seek(2);
+    expect(live.master.currentTime).toBe(102);
+    expect(parked.master.currentTime).toBe(202);
+    expect(playback.shownTime).toBe(7);
+  });
+
+  test("the same position again seeks nothing, and an edit of the Segments shows the skimmed time as they now play it", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, parked] = stage.decks(playback);
+    playback.seek(1);
+    playback.skim(7);
+    stage.settle();
+    playback.skim(7);
+    expect(parked.master.seeking).toBe(false);
+    // The second Segment now from 250 s: 7 s is 252 s.
+    playback.setSegments(
+      playedFrom([
+        { start: 100, end: 105 },
+        { start: 250, end: 254 },
+      ]),
+    );
+    expect(parked.master.currentTime).toBe(252);
+    expect(playback.shownDeck).toBe(1);
+    expect(playback.time).toBe(1);
+  });
+
+  test("skimming over a media Segment shows its video at the skimmed time", () => {
+    // 0–5 s from 100 s of the Source, 5–8 s of a video from 10 s into it, 8–12 s from 200 s.
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(
+      playedFrom([
+        { start: 100, end: 105 },
+        { start: 10, end: 13, media: "intro" },
+        { start: 200, end: 204 },
+      ]),
+    );
+    stage.decks(playback);
+    const media = stage.video();
+    playback.subscribe(() => follow(media.element, playback, { start: 5, end: 8, from: 10 }, true));
+    playback.seek(1);
+    playback.skim(6.5);
+    expect(playback.shownSegmentIndex).toBe(1);
+    expect(media.currentTime).toBe(11.5);
+    expect(media.paused).toBe(true);
+    playback.skim(null);
+    expect(media.currentTime).toBe(10);
+  });
+
+  test("with sound, each new position plays the parked deck for 80 ms, one snippet at a time", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [live, parked] = stage.decks(playback);
+    playback.seek(1);
+    stage.settle();
+    playback.skim(7, true);
+    expect(parked.master.paused).toBe(false);
+    expect(parked.master.muted).toBe(false);
+    expect(live.master.paused).toBe(true);
+    stage.settle();
+    stage.advance(0.04);
+    // A move during the snippet only seeks.
+    playback.skim(7.5, true);
+    expect(parked.master.currentTime).toBe(202.5);
+    stage.settle();
+    stage.advance(0.06);
+    expect(parked.master.paused).toBe(true);
+    expect(parked.master.muted).toBe(true);
+    // Back on the frame under the pointer.
+    expect(parked.master.currentTime).toBe(202.5);
+    expect(playback.playing).toBe(false);
+    expect(playback.time).toBe(1);
+    // The next move plays a snippet again; the end of the skim silences it.
+    playback.skim(8, true);
+    expect(parked.master.paused).toBe(false);
+    playback.skim(null);
+    expect(parked.master.paused).toBe(true);
+    expect(parked.master.muted).toBe(true);
+  });
+
+  test("without sound, skimming plays nothing", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [, parked] = stage.decks(playback);
+    playback.seek(1);
+    playback.skim(7);
+    stage.advance(0.1);
+    expect(parked.master.paused).toBe(true);
+    expect(parked.master.muted).toBe(true);
+  });
+});

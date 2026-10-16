@@ -81,6 +81,7 @@ import {
   unlockedPick,
   type Pick,
 } from "./pick";
+import { toggleSkim } from "./skim";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { edgesOf, editPoints, nextEditPoint, previousEditPoint, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
@@ -663,6 +664,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       toFit={(timeline) => zoomToFit({ pick, edits, played, duration }, timeline)}
       fitRef={fitTimeline}
       zoomStepRef={zoomTimeline}
+      skimmable={wide}
     >
       {(geometry) => (
         <Tracks
@@ -956,6 +958,7 @@ function useShortcuts(
       fit: () => more.fit(),
       fullscreen: () => more.setFullscreen(true),
       "fullscreen-exit": () => more.setFullscreen(false),
+      skim: () => toggleSkim(),
       shortcuts: () => more.shortcuts(),
     };
     const onKeyDown = (event: KeyboardEvent) => {
