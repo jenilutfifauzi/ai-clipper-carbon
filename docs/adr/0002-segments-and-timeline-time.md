@@ -51,4 +51,4 @@ Two questions follow. What does the Candidate store? And what are its other edit
 - Nothing changes for Clips the Advanced Edit hasn't cut. Their ASS, ffmpeg command and Render Plan are as before, apart from new empty fields in the plan's JSON.
 - A cut Clip renders slower: it decodes each Segment separately, and its captions transcribe each Segment's range.
 - The clip editor shows a cut Clip's preview and captions. Its trim and Source-time Timeline give way to a link to the Advanced Edit.
-- The preview jumps the Source video at each join with a seek. The pause there is short on a local file. A second, preloaded video could hide it later.
+- The preview jumps the Source video at each join with a seek. The pause there is short on a local file. A second, preloaded video could hide it later. (Amended 2026-10-16: the preview now plays the Source on two decks, so a join no longer waits for a seek. See docs/adr/0006-the-preview-plays-the-source-on-two-decks.md.)
