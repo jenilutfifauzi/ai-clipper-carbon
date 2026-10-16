@@ -35,9 +35,12 @@ import { onFrame } from "./playhead";
  */
 export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps: number; mediaById: Map<string, MediaItem> }) {
   const only = onlyItem(keying.pick);
-  const ref: KeyedRef | null = only && only.kind !== "text" ? { kind: only.kind, id: only.id } : null;
+  // A Segment of the Source picked: its Manual Scene under the playhead, framed by its own override.
+  const time = useKeyTime(keying.playback);
+  const scene = only?.kind === "segment" && keying.plan ? manualSceneAt(keying.edits, keying.plan, only.id, time) : null;
+  const ref: KeyedRef | null = scene ?? (only && only.kind !== "text" ? { kind: only.kind, id: only.id } : null);
   // A Segment of the Source has none: keyedItem gives null for it.
-  const item = ref && keyedItem(keying.edits, ref, keying.track);
+  const item = ref && keyedItem(keying.edits, ref, keying.track, keying.plan);
   if (!ref || !item) {
     return (
       <div className="grid min-h-0 flex-1 place-items-center p-4">

@@ -25,7 +25,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
 
-from app.api import CandidateUpdate, PresetBody, no_old_overlays, no_old_segments
+from app.api import CandidateUpdate, PresetBody, no_framing_keys, no_old_overlays, no_old_segments
 from app.candidates import (
     KICKER_MAX_CHARS,
     Ease,
@@ -118,11 +118,13 @@ Edits:
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
-- Keyframes move an Overlay, or a video Segment's framing, over its length: its `keys` map a
+- Keyframes move an Overlay, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
-  of the episode has none. `at` is seconds from the item's start (a Segment's: where it starts in
-  the Clip, its `start` in the video), value in the field's own units (rotation -3600..3600, to
+  of the episode, another Layout and the Candidate's own framing have none. `at` is seconds from the
+  item's start (a Segment's: where it starts in the Clip, its `start` in the video; a Manual
+  override's: its Scene's start on the Source's timeline, so every Segment showing that Scene moves
+  alike; the dry run lists those past the Scene's end as `ignored`), value in the field's own units (rotation -3600..3600, to
   turn several times). A keyed property's transform field is unused. The value holds before the
   first and after the last Keyframe; between two it moves by the later one's ease: linear (the
   default), ease_in, ease_out, ease_in_out, or a cubic-bezier [x1, y1, x2, y2] (x 0..1; y may
@@ -349,7 +351,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         word_edits: list[_PATCHES["word_edits"]] | None = None,  # type: ignore[valid-type]
         layout_overrides: list[_PATCHES["layout_overrides"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
-        framing: _FRAMING_PATCH | None = None,  # type: ignore[valid-type]
+        framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
         one the Candidate has (id; a Transition's `after`; a Word Edit's or Layout Override's `at`)
@@ -638,7 +640,8 @@ def _plan_view(preview: dict) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time, each Scene's Layout and
     the Framing that draws its first frame (a Manual Scene's own), where the picture of a Manual
     Scene, of a video's Scene and of each Overlay is drawn (`_picture_view`), a keyed one's
-    Keyframes and its bounds at each (`_motion_view`), the keyed sounds' volume Keyframes (a video
+    Keyframes and its bounds at each (`_motion_view`), a Manual Scene's Keyframes past its end
+    (`ignored`), the keyed sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
@@ -649,6 +652,7 @@ def _plan_view(preview: dict) -> dict:
             {
                 **_times(scene, "start", "end", "layout", "framing"),
                 **(_picture_view(scene["picture"]) | _motion_view(scene["picture"]) if scene["picture"] else {}),
+                **({"ignored": _keys_view(scene["ignored"])} if scene["ignored"] else {}),
             }
             for scene in plan["scenes"]
         ],

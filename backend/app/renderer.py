@@ -101,7 +101,6 @@ from app.planner import (
     Panel,
     RenderPlan,
     ScenePlan,
-    SegmentPlan,
     TextEvent,
     OverlayEvent,
     Picture,
@@ -160,7 +159,7 @@ class Renderer:
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
-        keyed = _keyed_items(plan, files)
+        keyed = _keyed_items(plan, files, source)
         failures = []
         try:
             if subtitles is not None:
@@ -227,7 +226,7 @@ class Renderer:
         feeds: "Feeds | None" = None,
     ) -> list[str]:
         """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
-        Overlays', and its video Segments' Scenes', by their places among them); a keyed one without
+        Overlays', and its keyed Scenes', by their places among them); a keyed one without
         is drawn still, at its constants."""
         tuning = self.tuning
         feeds = feeds or {}
@@ -236,7 +235,7 @@ class Renderer:
         inputs, index = _music_inputs(plan, files or {}, first=count + (1 if logo is not None else 0))
         layers, layered = _overlay_inputs(plan, files or {}, count + (1 if logo is not None else 0) + len(index), feeds)
         pictures, drawn = _scene_inputs(plan, count + (1 if logo is not None else 0) + len(index) + len(layered), feeds)
-        frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning)
+        frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
         if any(feed is not None for _, _, feed in layered):
@@ -498,7 +497,7 @@ def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out
 
 
 def _keyed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, index: int) -> str:
-    """Filters that draw a Scene of one keyed picture (a video Segment's) from the frames `given`
+    """Filters that draw a Scene of one keyed picture (a video Segment's or a Manual Scene's) from the frames `given`
     into `out`: its Background as `_framed_scene` draws it (none at all when the plan has left it
     out: the picture covers the frame throughout), from the frames brought to the Clip's frame rate
     from 0 s, then its frame process's frames (input `index`) laid at 0, 0, frame n over frame n.
@@ -670,47 +669,58 @@ Keyed = tuple[str, int]
 Feeds = dict[Keyed, FrameFeed]
 
 
-def _keyed_items(plan: RenderPlan, files: dict[str, Path]) -> dict[Keyed, np.ndarray | Path]:
+def _keyed_items(plan: RenderPlan, files: dict[str, Path], source: Path) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
-    an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's)."""
+    an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's), or the `source`
+    for a Manual Scene."""
     items: dict[Keyed, np.ndarray | Path] = {
         ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
         if event.picture.motion and event.media in files
     }
-    for i, (segment, _) in _keyed_scenes(plan).items():
-        if segment.media in files:
-            items[("scene", i)] = files[segment.media]
+    for i, (media, _) in _keyed_scenes(plan).items():
+        if media is None:
+            items[("scene", i)] = source
+        elif media in files:
+            items[("scene", i)] = files[media]
     return items
 
 
-def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[SegmentPlan, ScenePlan]]:
-    """The plan's Scenes of a keyed picture of a video's Segment, by their places among its Scenes,
-    each with its Segment."""
-    keyed, first = {}, 0
+def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, float]]:
+    """The plan's Scenes of a keyed picture (a video Segment's, or a Manual Scene's of the Source), by
+    their places among its Scenes, each with its video's Media Library id (None: the Source) and
+    where the Scene starts in it, in seconds."""
+    keyed: dict[int, tuple[str | None, float]] = {}
+    if not plan.segments:
+        for i, scene in enumerate(plan.scenes):
+            if scene.picture is not None and scene.picture.motion:
+                keyed[i] = (None, plan.start + scene.start)
+        return keyed
+    first = 0
     for segment in plan.segments:
         for i in range(first, first + segment.scenes):
             scene = plan.scenes[i]
-            if segment.media is not None and scene.picture is not None and scene.picture.motion:
-                keyed[i] = (segment, scene)
+            if scene.picture is not None and scene.picture.motion:
+                keyed[i] = (segment.media, segment.source_start + scene.start - segment.start)
         first += segment.scenes
     return keyed
 
 
 def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
     """A frame process for each keyed picture whose item is in `items`, over its span: an image's
-    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn. A Segment's
-    Scene's are drawn in seconds into its Segment, its frame n at n / fps from its start, as the
-    Segment's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
+    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn. A Scene's are
+    drawn in seconds into the Scene, its frame n at n / fps from its start, as the Scene's own frames
+    are once brought to the Clip's frame rate (`_keyed_scene`)."""
     rate = float(_rate(plan))
     scenes = _keyed_scenes(plan)
     feeds = {}
     for (kind, i), item in items.items():
         if kind == "scene":
-            segment, scene = scenes[i]
+            scene = plan.scenes[i]
+            assert scene.picture is not None and isinstance(item, Path)
             picture = _later(scene.picture, -scene.start)
             length = scene.end - scene.start
-            video = VideoDecode(ffmpeg, item, picture, 0.0, length, segment.source_start + scene.start - segment.start, rate)
+            video = VideoDecode(ffmpeg, item, picture, 0.0, length, scenes[i][1], rate)
             feeds[(kind, i)] = FrameFeed(PictureFrames(picture), 0.0, length, rate, video)
             continue
         event = plan.overlays[i]

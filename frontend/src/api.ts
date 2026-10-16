@@ -110,6 +110,9 @@ export interface LayoutOverride {
   at: number;
   layout: Layout;
   framing?: Framing | null;
+  // A Manual one's Keyframes (ADR 0008): its Framing's Transform moved, each `at` in seconds from its
+  // Scene's start on the Source's timeline (the plan's `ScenePlan.keys_from`).
+  keys?: Keys;
 }
 
 // The owner's correction of one caption Word, keyed by a time on the Source's timeline (the Word
@@ -311,6 +314,10 @@ export interface ScenePlan {
   colour: string | null;
   // The Framing that draws its first frame (a Manual Scene's own): what a switch to Manual copies.
   framing: Framing | null;
+  // A Manual Scene of a Layout Override's: where (Timeline time) its Keyframes count from, before the
+  // Scene when it shows its shot from part way in; and those past its shot's end, never reached.
+  keys_from?: number | null;
+  ignored?: Keys;
 }
 
 export interface CaptionEvent {

@@ -79,7 +79,7 @@ import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, type Keying } from "./KeyCluster";
 import { KeyframesPane } from "./KeyframesPane";
-import { heldTransform, segmentSpan, stageTransform, writeItemTransform, writeSegmentTransform } from "./keying";
+import { heldTransform, manualScene, segmentSpan, stageTransform, writeItemTransform, writeSceneTransform, writeSegmentTransform } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
@@ -629,8 +629,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           if (outcome) history.set(outcome.edits, group);
         },
       };
+  const plan = preview?.plan ?? null;
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.
-  const keying: Keying = { edits, pick, locked: tracks.locked, track, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched };
+  const keying: Keying = {
+    edits, pick, locked: tracks.locked, track, plan, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched,
+  };
   // A video Segment keyed in its Framing's Transform: held on the stage where it is at the playhead,
   // and its keyed fields written there as Keyframes, as a keyed Overlay's are.
   const keyedFraming = (id: string) => {
@@ -640,18 +643,27 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const { framing } = segment;
     return { held: (time: number) => heldTransform(framing.transform, segment.keys ?? {}, span, time), framing };
   };
+  // A Manual Scene keyed in its override's Framing's Transform: the same, in seconds from its Scene's start.
+  const keyedScene = (index: number) => {
+    const found = plan && manualScene(edits.layout_overrides, plan, index);
+    if (!found || !PICTURE_KEYS.some((prop) => found.keys[prop]?.length)) return null;
+    return { held: (time: number) => heldTransform(found.framing.transform, found.keys, found, time), framing: found.framing };
+  };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
-  const plan = preview?.plan ?? null;
   const pictureAt: StageControls["pictureAt"] =
     tracks.locked.includes("video") || !plan
       ? undefined
       : (segment, at) => {
           const source = pictureSource(edits, plan, segment, at);
           if (!source) return null;
-          const keyed = source.kind === "media" ? keyedFraming(source.segment) : null;
+          const keyed = source.kind === "media" ? keyedFraming(source.segment) : source.kind === "manual" ? keyedScene(source.scene) : null;
           const written = (next: AdvancedEdits, transform: Transform, group: string) => {
-            const outcome = writeSegmentTransform({ ...scene, edits: next, track }, source.segment, transform, playback.time, keyed!.held(playback.time));
+            const held = keyed!.held(playback.time);
+            const outcome =
+              source.kind === "manual"
+                ? writeSceneTransform({ ...scene, edits: next, plan }, source.scene, transform, playback.time, held)
+                : writeSegmentTransform({ ...scene, edits: next, track }, source.segment, transform, playback.time, held);
             if (outcome) history.set(outcome.edits, group);
           };
           return {
