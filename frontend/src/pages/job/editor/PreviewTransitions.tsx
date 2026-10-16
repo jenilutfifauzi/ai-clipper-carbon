@@ -52,8 +52,8 @@ function Ghost({
 
   useEffect(() => {
     if (segment.media) return;
-    ghost.attach(master.current);
-    return () => ghost.attach(null);
+    ghost.attachDeck(0, master.current);
+    return () => ghost.attachDeck(0, null);
   }, [ghost, segment.media]);
 
   useEffect(() => {

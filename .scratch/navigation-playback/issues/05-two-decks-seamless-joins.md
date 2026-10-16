@@ -31,17 +31,21 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam F (vitest), worked examples on Segments 0–5 s from 100 s and 5–9 s from 200 s:
-  - [ ] paused at 1 s, the parked deck is at 200 s and the live deck at 101 s;
-  - [ ] playing through 5 s swaps the decks;
-  - [ ] the new live deck plays from 200 s, is unmuted and is read for time;
-  - [ ] the old one is paused and muted;
-  - [ ] with `seeked` not yet fired at the handover, the live deck is seeked instead, and playing continues;
-  - [ ] a media Segment's clock runs while the Source decks wait, and its video was parked at its `source_start`;
-  - [ ] seeking, and changing the Segments, re-park the parked deck;
-  - [ ] a one-Segment Clip plays and stops at its end as today.
+- [x] Seam F (vitest), worked examples on Segments 0–5 s from 100 s and 5–9 s from 200 s:
+  - [x] paused at 1 s, the parked deck is at 200 s and the live deck at 101 s;
+  - [x] playing through 5 s swaps the decks;
+  - [x] the new live deck plays from 200 s, is unmuted and is read for time;
+  - [x] the old one is paused and muted;
+  - [x] with `seeked` not yet fired at the handover, the live deck is seeked instead, and playing continues;
+  - [x] a media Segment's clock runs while the Source decks wait, and its video was parked at its `source_start`;
+  - [x] seeking, and changing the Segments, re-park the parked deck;
+  - [x] a one-Segment Clip plays and stops at its end as today.
 - [ ] A Clip cut into five Source Segments plays through every join with no visible pause in Chrome and Safari, Split and Blur Scenes included.
 - [ ] A Transition and a media Segment look and sound as before. The clip editor plays a cut Clip seamlessly.
-- [ ] `npm run typecheck`, `npm test` and `npm run build` pass.
+- [x] `npm run typecheck`, `npm test` and `npm run build` pass.
+
+## Comments
+
+**2026-10-16: done.** Built as specified. `Playback` (`playback.ts`) holds two decks, registered with `attachDeck(slot, master, follower)`; `shownDeck` says which one the panels show. The live deck plays, is heard and is read for time; the other is paused, muted and cued, master and follower, to `parkTarget()`, the one place that says where it waits (the start of the next Source Segment after the time's, or nowhere when none is left). It is parked again after every seek, change of the Segments and swap, and when its video loads. At the handover into a Source Segment the decks swap if the parked deck is there and both its videos have fired `seeked`; otherwise the live deck seeks as before. `Playback` now keeps each live follower in step itself (it seeks, plays and pauses both videos of a deck), so ClipPreview's follower effect is gone. ClipPreview mounts both decks' panel videos; the parked deck's are drawn transparent, not removed, so that their frame is ready. PreviewMusic sets the Source volume on both decks' masters. A media Segment's videos wait at its start outside its span (`follow`'s new `park`). The Transition ghost keeps its own pair and its own `Playback`, with one deck (`attachDeck(0, master)`), so it seeks as before. The Seam F fakes (fake video and stubbed clock) are in `playbackHarness.ts`, for 06–08; the examples are in `playback.test.ts`, plus one for the old deck parking for the join after and the decks swapping back. Not tried in the browser: seamless joins in Chrome and Safari (Split and Blur included), a Transition and a media Segment as before, the clip editor, and the phone. Worth watching in the walkthrough: a swapped-in deck's unmuted `play()` outside a click on an iPhone; the parked deck's muted master once it is routed through Web Audio (a Clip with Music or another Source volume); and memory with four Source videos.
