@@ -98,6 +98,25 @@ describe("a Keyframe edit on a Manual Scene", () => {
   });
 });
 
+describe("a Manual Scene in a sped Segment", () => {
+  // The same Clip with its first Segment at 2×: 10 s of the Source in 5 s, the shot from 1 s on.
+  const sped = {
+    ...plan,
+    segments: [{ ...segmentOf(0, 5, 10, 2), source_end: 20, speed: 2 }, segmentOf(5, 9, 14, 1)],
+    scenes: [sceneOf(0, 1, null), sceneOf(1, 5, 1), sceneOf(5, 9, 3)],
+  } as unknown as RenderPlan;
+  const state = () => ({ ...edits(), segments: [{ ...whole, speed: 2 }, later] });
+
+  test("shows its Keyframes in Timeline seconds, at half their seconds of the shot, and writes them back at twice", () => {
+    expect(keyedItem(state(), FIRST, undefined, sped)).toMatchObject({ start: 1, secs: 4, keys: { x: [key(0, 300), key(2, 800)] } });
+    // 1 s into the shot on the Timeline is 2 s of it on the Source.
+    const toggled = toggleItemKey({ edits: state(), pick: null, plan: sped }, FIRST, "x", 2);
+    expect(toggled?.edits.layout_overrides[0].keys?.x).toEqual([key(0, 300), key(2, valueAt(pan, 2, 0)), key(4, 800)]);
+    // Unsped, the later Segment shows it at its seconds on the Source.
+    expect(keyedItem(state(), AGAIN, undefined, sped)).toMatchObject({ keys: { x: pan } });
+  });
+});
+
 describe("trimming or splitting a Segment that shows a keyed Manual Scene", () => {
   test("leaves its Keyframes as they are: they follow the Source", () => {
     const state = edits();

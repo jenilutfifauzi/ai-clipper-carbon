@@ -63,7 +63,9 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
           return [];
         }
         if (moved.start === item.start && moved.secs === item.secs) return [item];
-        const offset = "offset" in item && moved.skipped ? { offset: round(item.offset + moved.skipped) } : {};
+        // A video Overlay at a Speed goes on as much further into its video.
+        const pace = "speed" in item ? (item.speed ?? 1) : 1;
+        const offset = "offset" in item && moved.skipped ? { offset: round(item.offset + moved.skipped * pace) } : {};
         const secs = round(moved.secs);
         // A Music Clip cut shorter than its fades has them shortened with it.
         const fades = kind === "music" ? fadesWithin(item as MusicClip, secs) : {};

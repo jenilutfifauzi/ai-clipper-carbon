@@ -13,18 +13,22 @@ import { rangeOf, segmentLength, sourceAt } from "../editor/segmentTime";
 import { shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyedVolume, useKeyNotice, useKeyTime } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, resetFraming, type KeySpan } from "./keying";
+import { SpeedFields } from "./SpeedFields";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
 // The shortest Segment the editor makes; the backend snaps each to Words.
 export const SEGMENT_MIN_SECS = 0.3;
+// The shortest a video's Segment plays on the Timeline (MIN_MEDIA_SECS in backend/app/review.py).
+export const MEDIA_MIN_SECS = 0.1;
 
 /**
  * The Main Track's Segments after a drag of Segment `id` from `origin` (the Segments when the drag
  * began), given how the track was drawn then (`shown`: each Segment's span on the Timeline, cut short
  * where a Transition into the next starts) and planned (`planned`: each Segment's whole span and its
  * range of the Source or its video, snapped to Words). Moved, it takes the place its middle is
- * dragged to. Its start or end trimmed, its planned edge moves as far as the drawn one did (within
- * its file's `lengthOf`), and the Segments after it close up behind it.
+ * dragged to. Its start or end trimmed, its planned edge moves as far as the drawn one did, times its
+ * Speed in its file (within its file's `lengthOf`, and for one of the Source within the `longest`
+ * clip of it), at least SEGMENT_MIN_SECS on the Timeline; the Segments after it close up behind it.
  */
 export function draggedSegments(
   origin: ClipSegment[],
@@ -33,6 +37,7 @@ export function draggedSegments(
   lengthOf: (segment: ClipSegment) => number,
   shown: PlayedSegment[],
   planned: PlayedSegment[],
+  longest = Infinity,
 ): ClipSegment[] {
   const index = origin.findIndex((segment) => segment.id === id);
   const segment = origin[index];
@@ -47,13 +52,22 @@ export function draggedSegments(
   }
   // Where the dragged edge now is, in its file.
   const range = rangeOf(whole);
+  // The least and the most of its file it can show.
+  const least = SEGMENT_MIN_SECS * (range.speed ?? 1);
+  const most = segment.media ? Infinity : longest;
   const next =
     change.edge === "start"
-      ? { ...segment, start: round(Math.min(Math.max(sourceAt(range, change.start - drawn.start), 0), whole.source_end - SEGMENT_MIN_SECS)), end: whole.source_end }
+      ? {
+          ...segment,
+          start: round(Math.min(Math.max(sourceAt(range, change.start - drawn.start), 0, whole.source_end - most), whole.source_end - least)),
+          end: whole.source_end,
+        }
       : {
           ...segment,
           start: whole.source_start,
-          end: round(Math.max(Math.min(sourceAt(range, segmentLength(range) + change.end - drawn.end), lengthOf(segment)), whole.source_start + SEGMENT_MIN_SECS)),
+          end: round(
+            Math.max(Math.min(sourceAt(range, segmentLength(range) + change.end - drawn.end), lengthOf(segment), whole.source_start + most), whole.source_start + least),
+          ),
         };
   return origin.map((other) => (other.id === id ? next : other));
 }
@@ -62,6 +76,12 @@ const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
 // The longest video Segment: the longest video the Media Library takes (MAX_SECS in backend/app/media.py).
 const VIDEO_MAX_SECS = 180;
+
+/**
+ * The longest clip of a Job whose range goes up to `maxSecs`: on the Timeline, and a Segment's range
+ * of the Source (MAX_CLIP_SECS and `longest` in backend/app/review.py).
+ */
+export const longestClip = (maxSecs: number) => Math.max(180, maxSecs);
 
 /** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), fitted over its blur. */
 export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
@@ -84,6 +104,7 @@ export function SegmentFields({
   onDelete,
   onSourceVolume,
   onVolume,
+  onSpeed,
   onChange,
   onCropMode,
   scene,
@@ -103,6 +124,8 @@ export function SegmentFields({
   onSourceVolume: (volume: number) => void;
   // A video's Segment's volume.
   onVolume: (volume: number, group: string) => void;
+  // Its Speed set (actions.ts' setSpeed), a change of `group`.
+  onSpeed: (speed: number, group: string) => void;
   onChange: (segment: ClipSegment, group: string) => void;
   // A video's Segment's Crop mode on the stage, when it can be opened there.
   onCropMode?: () => void;
@@ -113,6 +136,17 @@ export function SegmentFields({
   span: KeySpan | null;
 }) {
   const Icon = segment.media ? Clapperboard : Film;
+  // A Freeze frame holds one frame: no Speed.
+  const speed = segment.hold == null && (
+    <SpeedFields
+      speed={segment.speed ?? 1}
+      pitch={segment.pitch ?? false}
+      heard={!segment.media || item?.has_audio !== false}
+      group={`segment:${segment.id}:speed`}
+      onSpeed={onSpeed}
+      onPitch={(pitch) => onChange({ ...segment, pitch }, `segment:${segment.id}:pitch`)}
+    />
+  );
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -137,6 +171,7 @@ export function SegmentFields({
           <Hint more="Drag its edges to trim it, or drag it to another place.">
             {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {segmentLength(segment).toFixed(1)} s
           </Hint>
+          {speed}
           {segment.framing && (
             <FramingFields segment={segment} framing={segment.framing} item={item} playback={playback} span={span} onChange={onChange} onCropMode={onCropMode} />
           )}
@@ -160,6 +195,7 @@ export function SegmentFields({
           <Hint more="Drag its edges to trim it, or drag it to another place. Its ends snap to words.">
             {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {segmentLength(segment).toFixed(1)} s
           </Hint>
+          {speed}
           <Slider
             label="This Segment's sound"
             value={segment.volume ?? 1}

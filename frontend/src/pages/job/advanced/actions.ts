@@ -2,10 +2,11 @@ import type { ClipSegment, Keyframe, MusicClip, Overlay, TextLayer } from "../..
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, rangeOf, segmentLength, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
-import { rekeyed, toMillionth } from "./keyActions";
-import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
+import { rekeyed, scaledKeys, toMillionth } from "./keyActions";
+import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
+import { speedLabel, speedOf } from "./speed";
 import type { TrackKind } from "./trackState";
 
 /**
@@ -71,7 +72,10 @@ const KINDS: {
       const { transform } = item as Overlay;
       return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
     },
-    cut: (item, at) => ({ first: {}, second: { offset: round((item as Overlay).offset + at - item.start) } }),
+    cut: (item, at) => {
+      const { offset, speed = 1 } = item as Overlay;
+      return { first: {}, second: { offset: round(offset + (at - item.start) * speed) } };
+    },
   },
 };
 
@@ -220,8 +224,8 @@ export interface SegmentDrag {
 
 /**
  * Segment `id` dragged since `origin`: moved to another place, or its start or end trimmed (within its
- * file's `lengthOf`). See draggedSegments. Trimmed on the Magnetic timeline, the layers move with
- * the edge from where they were when the drag began; moved, they stay.
+ * file's `lengthOf`, and the `longest` clip). See draggedSegments. Trimmed on the Magnetic timeline,
+ * the layers move with the edge from where they were when the drag began; moved, they stay.
  */
 export function dragSegment(
   scene: PickContext,
@@ -229,10 +233,11 @@ export function dragSegment(
   id: string,
   change: { start: number; end: number; edge: "move" | "start" | "end" },
   lengthOf: (segment: ClipSegment) => number,
+  longest?: number,
 ): Outcome {
   const before = origin.edits.segments.find((segment) => segment.id === id);
   // A video's Keyframes re-anchored to what its trim keeps (retimed), from the Segment as the drag began.
-  const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned).map((segment) =>
+  const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned, longest).map((segment) =>
     segment.id === id && before ? retimed(before, segment, change.edge) : segment,
   );
   const index = segments.findIndex((segment) => segment.id === id);
@@ -465,6 +470,70 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
   const set = <T extends { id: string }>(items: T[]) => items.map((other) => (other.id === item.id ? { ...other, volume: level } : other));
   if (item.kind === "music") return edits.music.some((clip) => clip.id === item.id) ? { edits: { ...edits, music: set(edits.music) }, pick } : null;
   return edits.segments.some((segment) => segment.id === item.id && segment.media) ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
+}
+
+/** A Segment or a video Overlay, which has a Speed. */
+export type SpedRef = { kind: "segment" | "overlay"; id: string };
+
+/**
+ * Segment or video Overlay `item`'s Speed set to `speed` (speedOf), a trim at its end (ADR 0009): its
+ * Keyframes scaled by the old Speed ÷ the new, so that they stay on the same frames. A Segment keeps
+ * its range and plays it in its new Timeline length; the Main Track closes up or opens out after it,
+ * and on the Magnetic timeline the layers follow as they follow a trim of its end. Refused, with a
+ * notice, when a video's Segment would play under MEDIA_MIN_SECS or the Clip would last longer than
+ * the `longest` clip. An Overlay keeps its start and shows as much of its video, its end kept within
+ * the video (`video` seconds long). Null for a Freeze frame, or an item that isn't there.
+ */
+export function setSpeed(scene: PickContext, item: SpedRef, value: number, limits: { longest?: number; video?: number } = {}): Outcome | null {
+  const { edits, pick } = scene;
+  const speed = speedOf(value);
+  if (item.kind === "overlay") {
+    const overlay = edits.overlays.find((other) => other.id === item.id);
+    if (!overlay) return null;
+    const by = (overlay.speed ?? 1) / speed;
+    const room = limits.video === undefined ? Infinity : (limits.video - overlay.offset) / speed;
+    const secs = round(Math.max(Math.min(overlay.secs * by, room), ITEM_MIN_SECS));
+    const sped = rekeyed({ ...overlay, speed, secs, keys: scaledKeys(overlay.keys, by) }, 0, secs);
+    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? sped : other)) }, pick };
+  }
+  const index = edits.segments.findIndex((other) => other.id === item.id);
+  const segment = edits.segments[index];
+  if (!segment || segment.hold != null) return null;
+  const by = (segment.speed ?? 1) / speed;
+  const sped = { ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) };
+  const [before, after] = [segmentLength(segment), segmentLength(sped)];
+  const refused = (notice: string): Outcome => ({ edits, pick, notice });
+  if (segment.media && after < MEDIA_MIN_SECS) {
+    return refused(`A video's Segment lasts ${MEDIA_MIN_SECS} s at least: at ${speedLabel(speed)} this one would last ${after.toFixed(2)} s.`);
+  }
+  const length = scene.duration + after - before;
+  if (limits.longest !== undefined && length > limits.longest + 1e-6) {
+    return refused(`A clip can last at most ${limits.longest} s: at ${speedLabel(speed)} this one would last ${Math.round(length)} s.`);
+  }
+  const next = { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? sped : other)) };
+  // Its end on the Main Track, which moves.
+  const end = (scene.played[index]?.start ?? 0) + before;
+  const change: TrackChange = after < before ? { kind: "removed", at: end - (before - after), secs: before - after } : { kind: "inserted", at: end, secs: after - before };
+  const { edits: rippled, notice } = rippledIf(next, [change], (scene.magnetic ?? false) && Math.abs(after - before) > 1e-6, scene.duration);
+  return { edits: rippled, pick, ...(notice ? { notice } : {}) };
+}
+
+/**
+ * A gesture's setSpeed: each step of one gesture (the slider, the chips and the field, by `group`)
+ * made from the edits as it began, so that sliding through a slow Speed and back brings back the
+ * layers its ripple cut and the Keyframes it crowded. Edits changed since its last step (an undo,
+ * another editor) begin it again. A refused step leaves the edits as they are, with its notice.
+ */
+export function gestureSpeed() {
+  let last: { group: string; origin: PickContext; made: AdvancedEdits } | null = null;
+  return (scene: PickContext, item: SpedRef, speed: number, group: string, limits?: { longest?: number; video?: number }): Outcome | null => {
+    const origin = last && last.group === group && last.made === scene.edits ? last.origin : scene;
+    const outcome = setSpeed({ ...origin, pick: scene.pick, magnetic: scene.magnetic }, item, speed, limits);
+    if (!outcome) return null;
+    if (outcome.edits === origin.edits && outcome.notice) return { ...outcome, edits: scene.edits };
+    last = { group, origin, made: outcome.edits };
+    return outcome;
+  };
 }
 
 /**

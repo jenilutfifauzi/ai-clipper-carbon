@@ -43,6 +43,7 @@ import { usePreviewPlan } from "../editor/usePreviewPlan";
 import {
   changeMusic,
   dragSegment,
+  gestureSpeed,
   insertSegment,
   itemActions,
   splitter,
@@ -54,6 +55,7 @@ import {
   setFade,
   type Outcome,
   type SegmentDrag,
+  type SpedRef,
 } from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
@@ -81,7 +83,7 @@ import { SheetEase } from "./KeyEase";
 import { KeyframesPane } from "./KeyframesPane";
 import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
-import { newMediaSegment } from "./MainTrack";
+import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
@@ -407,6 +409,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const region = useMemo(() => loopRegion(marks, { fps, duration }), [marks, fps, duration]);
   useEffect(() => playback.setLoop(looping ? region : null), [playback, looping, region]);
   const sourceLength = job.source?.metadata.duration ?? Infinity;
+  const longest = longestClip(job.options.max_secs);
+  // A Speed's steps, from the slider, the chips or the field, each made from where its group began.
+  const [speedGesture] = useState(gestureSpeed);
   // The Main Track when the drag under way began, by its gesture.
   const dragOrigin = useRef<(SegmentDrag & { group: string }) | null>(null);
   // The Timeline's Zoom to fit, for its shortcut.
@@ -468,7 +473,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function moveSegment(id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) {
     if (dragOrigin.current?.group !== group) dragOrigin.current = { group, edits, shown: played, planned: track };
     const lengthOf = (segment: ClipSegment) => (segment.media ? (mediaById.get(segment.media)?.duration ?? segment.end) : sourceLength);
-    const outcome = dragSegment(scene, dragOrigin.current, id, moved, lengthOf);
+    const outcome = dragSegment(scene, dragOrigin.current, id, moved, lengthOf, longest);
     history.set(outcome.edits, group);
     // Told once while the drag cuts the same layers out, not at every step.
     const text = outcome.notice;
@@ -513,6 +518,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
   // A notice told once while the change that makes it keeps coming (a drag), not at every step.
   const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
+  // A Segment's or video Overlay's Speed set from the inspector: one change of `group`, its ripple included.
+  function setItemSpeed(item: SpedRef, speed: number, group: string) {
+    const overlay = item.kind === "overlay" ? edits.overlays.find((other) => other.id === item.id) : undefined;
+    const video = overlay ? (mediaById.get(overlay.media)?.duration ?? undefined) : undefined;
+    const outcome = speedGesture(scene, item, speed, group, { longest, video });
+    if (!outcome) return;
+    if (outcome.edits !== edits) history.set(outcome.edits, group);
+    if (outcome.notice) tellOnce(outcome.notice);
+  }
   // A Keyframe edit's outcome: its edits as one change (of `group`), or, refused (a 101st Keyframe), why.
   function applyKeyed(outcome: Outcome | null, group?: string) {
     if (outcome?.notice) tellOnce(outcome.notice);
@@ -896,6 +910,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onMusic={updateMusic}
         onOverlay={updateOverlay}
         onSegment={updateSegment}
+        onSpeed={setItemSpeed}
         cropMode={cropMode}
       />
     </KeyingContext.Provider>

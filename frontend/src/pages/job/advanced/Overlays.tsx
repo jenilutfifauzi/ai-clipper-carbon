@@ -10,6 +10,7 @@ import { newId, round } from "./edits";
 import { shownTransform, tooManyKeys, writeKey, writtenTransform } from "./keyActions";
 import { KeyedVolume, useKeyNotice, useKeyTime, useTouch } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, resetOverlay } from "./keying";
+import { SpeedFields } from "./SpeedFields";
 import { TimingFields } from "./TimingFields";
 import { TransformFields } from "./TransformFields";
 
@@ -86,13 +87,14 @@ export function OverlayTransform({
   );
 }
 
-/** The selected Overlay's Transform, corners, border and shadow, sound and time. */
+/** The selected Overlay's Transform, corners, border and shadow, sound, a video's Speed, and time. */
 export function OverlayFields({
   overlay,
   item,
   duration,
   playback,
   onChange,
+  onSpeed,
   onDuplicate,
   onDelete,
   onCropMode,
@@ -102,6 +104,8 @@ export function OverlayFields({
   duration: number;
   playback: Playback;
   onChange: (overlay: Overlay, group: string) => void;
+  // A video's Speed set (actions.ts' setSpeed), a change of `group`.
+  onSpeed: (speed: number, group: string) => void;
   onDuplicate: () => void;
   onDelete: () => void;
   // Crop mode on the stage, when it can be opened there.
@@ -156,6 +160,16 @@ export function OverlayFields({
             <p className="text-sm text-muted">This video has no sound.</p>
           )}
         </Group>
+      )}
+      {video && (
+        <SpeedFields
+          speed={overlay.speed ?? 1}
+          pitch={overlay.pitch ?? false}
+          heard={!!item?.has_audio}
+          group={`overlay:${overlay.id}:speed`}
+          onSpeed={onSpeed}
+          onPitch={(pitch) => onChange({ ...overlay, pitch }, `overlay:${overlay.id}:pitch`)}
+        />
       )}
       <TimingFields
         item={overlay}
