@@ -43,6 +43,7 @@ from app.renderer import Renderer, RenderStopped
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
 from app.segment_time import segment_time
+from app.text_pictures import TEXTS_DIR, make_pictures
 from app.storage import write_atomic
 from app.styles import PRESETS_FILE, PresetStore
 from app.transcript import Transcript
@@ -510,8 +511,10 @@ class Renders:
             ).make(
                 self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
             ))
+            # Its Text Layers' pictures, made now if they aren't there (docs/adr/0010).
+            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.texts), job_dir / TEXTS_DIR)
             encoder = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:

@@ -51,7 +51,9 @@ centred where the owner dragged it, kept inside the frame.
 
 Text Layers (the Advanced Edit's free text) are centred where the owner put them, kept inside the
 frame, each in its own look; one wider than the frame less TEXT_MARGIN either side is set smaller.
-They are drawn over the captions and under the hook, in their order.
+They are drawn over the captions and under the hook, in their order, each as a picture
+(docs/adr/0010): its layout (`TextLayout`) holds its box and room round it for its ink, its lines
+placed from its corner, so that moving it keeps the same picture, named by a hash of what it shows.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes
@@ -81,10 +83,12 @@ is that much shorter; each side's captions end or start at its middle. Its ends 
 Everything else is planned over the whole Clip, in seconds into it.
 """
 
+import hashlib
+import json
 import math
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
@@ -109,6 +113,7 @@ from app.candidates import (
     Shadow,
     TextAlign,
     TextLayer,
+    TextStyle,
     Transform,
     TransitionKind,
     WordEdit,
@@ -181,6 +186,11 @@ QUOTE_SCALE = 0.9
 QUOTE_INSET = 0.75
 # A Text Layer is at most as wide as the frame less this many pixels either side.
 TEXT_MARGIN = 48
+# A Text Layer's picture holds its box and this many of its sizes round it, plus its stroke: room
+# for what its letters draw past their advances and above their capitals (accents, a slanted face).
+TEXT_INK_ROOM = 0.5
+# A Text Layer's picture is at most this many pixels on its longest side, whatever its scale.
+MAX_TEXT_PICTURE = 4096
 
 
 # The planner's input, found by app/analysis.py.
@@ -438,24 +448,6 @@ class WatermarkEvent:
 
 
 @dataclass(frozen=True)
-class TextEvent:
-    """A Text Layer as drawn: its `lines` set at font `size` (its style's, or smaller for one too
-    wide), on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it
-    has a Block plate, which is `box` (the area), its corners `radius` pixels round. Each line is
-    placed by its anchor: the middle of its text and its baseline."""
-
-    layer: TextLayer
-    lines: list[str]
-    start: float
-    end: float
-    area: Box
-    size: float
-    anchors: list[tuple[float, float]]
-    box: Box | None = None
-    radius: int = 0
-
-
-@dataclass(frozen=True)
 class AudioEvent:
     """A Music Clip (or an Overlay video's sound) as heard: the Media Library item `media` from
     `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
@@ -593,6 +585,66 @@ class OverlayEvent:
     def time(self) -> SegmentTime:
         """How a video's plays it (`overlay_time`), `offset`s being seconds from its `start` into the Clip."""
         return overlay_time(self.offset, self.end - self.start, self.speed, self.reverse)
+
+
+@dataclass(frozen=True)
+class TextLayout:
+    """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
+    scale 1: its `lines` in `style` set at font `size`, each placed by its anchor (the middle of its
+    text and its baseline), over its Block plate `box` with corners `radius` pixels round. The
+    picture is rasterised `scale` times as large (app/text_pictures.py), and named by a hash of all
+    of it (`name`), so that the same look is one file wherever the layer is."""
+
+    style: TextStyle
+    size: float
+    lines: list[str]
+    anchors: list[tuple[float, float]]
+    width: int
+    height: int
+    scale: float = 1.0
+    box: Box | None = None
+    radius: int = 0
+
+    @property
+    def raster(self) -> tuple[int, int]:
+        """The picture's size in its own pixels: its size at scale 1 times its scale."""
+        return max(1, round(self.width * self.scale)), max(1, round(self.height * self.scale))
+
+    @property
+    def name(self) -> str:
+        """Its picture's file name: a hash of the layout and of how pictures are drawn (TEXT_PICTURE_FORMAT)."""
+        drawn = json.dumps([TEXT_PICTURE_FORMAT, asdict(self)], sort_keys=True, default=str)
+        return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
+
+
+# How Text Layers' pictures are drawn: a new one is new pictures, under new names.
+TEXT_PICTURE_FORMAT = "v1-libass-matte"
+
+
+@dataclass(frozen=True)
+class TextEvent:
+    """A Text Layer as drawn: its `lines` set at font `size` (its style's, or smaller for one too
+    wide), on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it
+    has a Block plate, which is `box` (the area), its corners `radius` pixels round. Each line is
+    placed by its anchor: the middle of its text and its baseline.
+
+    It is drawn as the picture of its `layout` (docs/adr/0010), the file `image`, placed as `picture`
+    says with the Overlay's maths: its box and the room round it for its ink, centred about the
+    middle of its area (to within half a pixel). `bounds` holds its area once turned and scaled."""
+
+    layer: TextLayer
+    lines: list[str]
+    start: float
+    end: float
+    area: Box
+    size: float
+    anchors: list[tuple[float, float]]
+    layout: TextLayout
+    image: str
+    picture: Picture
+    bounds: Box
+    box: Box | None = None
+    radius: int = 0
 
 
 @dataclass(frozen=True)
@@ -1396,10 +1448,59 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
         for i, line in enumerate(widths)
     ]
     end = round(min(start + layer.secs, duration), 3)
-    if block is None:
-        return TextEvent(layer, lines, start, end, area, size, anchors)
-    radius = min(round(block.radius / style.size * size), height // 2)
-    return TextEvent(layer, lines, start, end, area, size, anchors, area, radius)
+    radius = 0 if block is None else min(round(block.radius / style.size * size), height // 2)
+    layout, origin = _text_layout(layer, lines, size, area, anchors, radius if block else None)
+    picture = _text_picture(layout, origin, layer.transform)
+    return TextEvent(
+        layer, lines, start, end, area, size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
+        None if block is None else area, radius,
+    )
+
+
+def _text_layout(
+    layer: TextLayer, lines: list[str], size: float, area: Box, anchors: list[tuple[float, float]], radius: int | None
+) -> tuple[TextLayout, tuple[int, int]]:
+    """A Text Layer's layout, set at `size` in `area` with its lines at `anchors` (a Block plate's
+    corners `radius` round; None without one), and where its picture's top-left corner is on the
+    frame: its area and TEXT_INK_ROOM round it, made even across and down. Its anchors are kept from
+    that corner, so that the layout (and its picture) is the same wherever the layer is."""
+    style = layer.style
+    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size)
+    left, top = area.x - room, area.y - room
+    width, height = area.width + 2 * room, area.height + 2 * room
+    width, height = width + width % 2, height + height % 2
+    local = [(round(x - left, 4), round(y - top, 4)) for x, y in anchors]
+    scale = min(layer.transform.scale, MAX_TEXT_PICTURE / max(width, height))
+    box = None if radius is None else Box(room, room, area.width, area.height)
+    return TextLayout(style, size, lines, local, width, height, round(scale, 4), box, radius or 0), (left, top)
+
+
+def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:
+    """How a Text Layer's picture is drawn, its top-left corner at `origin` at scale 1: scaled,
+    turned and faded by `transform` about its middle, as an Overlay's is."""
+    raster = layout.raster
+    width, height = max(2, _even(layout.width * transform.scale)), max(2, _even(layout.height * transform.scale))
+    centre = (origin[0] + layout.width / 2, origin[1] + layout.height / 2)
+    across, down = turned_size(width, height, transform.rotation)
+    bounds = Box(round(centre[0] - across / 2), round(centre[1] - down / 2), round(across), round(down))
+    return Picture(
+        Box(0, 0, *raster), raster, width, height, centre, transform.rotation, False, False, transform.opacity, bounds,
+    )
+
+
+def _turned_box(area: Box, centre: tuple[float, float], transform: Transform) -> Box:
+    """What holds `area` once scaled and turned by `transform` about `centre`."""
+    angle = math.radians(transform.rotation)
+    cos, sin = math.cos(angle), math.sin(angle)
+    corners = [
+        ((x - centre[0]) * transform.scale, (y - centre[1]) * transform.scale)
+        for x in (area.x, area.x + area.width)
+        for y in (area.y, area.y + area.height)
+    ]
+    xs = [centre[0] + u * cos - v * sin for u, v in corners]
+    ys = [centre[1] + u * sin + v * cos for u, v in corners]
+    left, top = math.floor(min(xs) + 1e-6), math.floor(min(ys) + 1e-6)
+    return Box(left, top, math.ceil(max(xs) - 1e-6) - left, math.ceil(max(ys) - 1e-6) - top)
 
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:

@@ -44,6 +44,7 @@ from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
+from app.text_pictures import TEXTS_DIR, pictures_used, sweep as sweep_pictures
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
 from app.storage import DiskUsage, disk_usage
@@ -380,14 +381,14 @@ def list_jobs(
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, store: Store, library: Media, background: BackgroundTasks) -> JobDetail:
-    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies are swept
-    (`sweep_retimed`)."""
+    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies and Text
+    Layer pictures are swept (`sweep_unused`)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     candidates = store.load_candidates(job_id)
-    background.add_task(sweep_retimed, store, library, job_id)
+    background.add_task(sweep_unused, store, library, job_id)
     return JobDetail(
         **vars(job),
         transcript=store.load_transcript(job_id),
@@ -474,6 +475,17 @@ def job_peaks(start: int, job: ExistingJob, store: Store, settings: AppSettings)
         # A Source without sound, or gone from the disk.
         raise HTTPException(404, str(exc)) from None
     return FileResponse(chunk, media_type="application/octet-stream", headers=_DERIVED)
+
+
+@router.get(f"/jobs/{{job_id}}/{TEXTS_DIR}/{{name}}")
+def job_text_picture(name: str, job: ExistingJob, store: Store) -> FileResponse:
+    """A Text Layer's picture (app/text_pictures.py), by the name its event in a Preview Plan gives:
+    made with that plan, and named by a hash of what it shows, so never stale. 404 for one not made,
+    or swept since."""
+    picture = store.job_dir(job.id) / TEXTS_DIR / name
+    if not name.endswith(".png") or name.startswith(".") or "/" in name or not picture.is_file():
+        raise HTTPException(404, f"No Text Layer picture {name} in Job {job.id}")
+    return FileResponse(picture, media_type="image/png", headers=_DERIVED)
 
 
 @router.post("/jobs/{job_id}/retimed")
@@ -976,10 +988,10 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
     library.delete(media_id)
 
 
-def sweep_retimed(store: JobStore, library: MediaStore, job_id: str) -> None:
+def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
     """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
     Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
-    History plays from."""
+    History plays from; and the Job's Text Layer pictures (app/text_pictures.py) none of them shows."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
@@ -989,6 +1001,7 @@ def sweep_retimed(store: JobStore, library: MediaStore, job_id: str) -> None:
     for media_id in sorted(set().union(*(state.media_ids() for state in states)) & videos.keys()):
         if all(use.job_id == job_id for use in media_uses(store, media_id)):
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
+    sweep_pictures(store.job_dir(job_id) / TEXTS_DIR, pictures_used(states))
 
 
 def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:

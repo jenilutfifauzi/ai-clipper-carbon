@@ -2,11 +2,15 @@
 each placed by its Transform and drawn in its Text Style
 (.scratch/text-advanced/issues/01-text-style-and-transform-shape.md).
 
-Seam B on the planner, the ASS it gives the Renderer and the migration of old Text Layers, then the
-update API, stored Candidates and a Seam A render with the real ffmpeg.
+Seam B on the planner and the migration of old Text Layers, whose pictures look as their ASS events
+did, then the update API, stored Candidates and a Seam A render with the real ffmpeg. Their pictures
+are tested in test_text_pictures.py.
 """
 
 import json
+import subprocess
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,8 +19,10 @@ from pydantic import TypeAdapter, ValidationError
 from app.candidates import TextAlign, TextLayer
 from app.jobs import CANDIDATES_FILE, REVISIONS_DIR
 from app.migration import migrated_candidate, migrated_clip, migrated_text_layer
+from app.config import FONTS_DIR, load_settings
 from app.planner import OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, TextEvent, font_metrics, plan_render, text_event
 from app.renderer import _ass
+from app.text_pictures import rasterised
 from app.video_source import SourceMetadata
 from conftest import FIXTURES
 from test_render import HEARD, add, check_clip, full_frame, pixels, preview, render, rendered, reviewed
@@ -32,6 +38,8 @@ _EVENT = TypeAdapter(TextEvent)
 # the ASS lines the renderer wrote for them (both from the code before Text Styles).
 BEFORE = json.loads((FIXTURES / "text_layers_before_text_style.json").read_text())
 BEFORE_ASS = (FIXTURES / "text_layers_before_text_style.ass").read_text()
+# The colour behind the text, plain_video's.
+GREY = np.array([0x4A, 0x55, 0x60])
 
 
 def layer(transform: dict | None = None, style: dict | None = None, **fields) -> TextLayer:
@@ -44,10 +52,43 @@ def drawn(event: TextEvent) -> dict:
     return {key: value for key, value in _EVENT.dump_python(event, mode="json").items() if key != "layer"}
 
 
-def text_lines(script: str) -> str:
-    """The lines of an ASS script that draw Text Layers: their styles and Dialogue events."""
-    lines = [line for line in script.splitlines() if line.startswith("Style: Text") or (line.startswith("Dialogue") and ",Text" in line)]
-    return "\n".join(lines) + "\n"
+def old_look(at: float) -> np.ndarray:
+    """What the Text Layers' ASS lines from before Text Styles drew over GREY at `at` seconds into
+    the Clip: 1080x1920 RGB."""
+    header = _ass(plan_render(0, 7, SOURCE)).split("[Events]")[0]
+    styles, events = [], []
+    for line in BEFORE_ASS.splitlines():
+        (styles if line.startswith("Style:") else events).append(line)
+    script = header.rstrip("\n") + "\n" + "\n".join(styles) + "\n\n[Events]\n"
+    script += "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" + "\n".join(events) + "\n"
+    with tempfile.TemporaryDirectory() as work:
+        path = Path(work, "old.ass")
+        path.write_text(script)
+        command = [
+            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", f"color=c=0x4a5560:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:r=10:d=7",
+            "-vf", f"format=rgb24,ass=filename={path}:fontsdir={FONTS_DIR}", "-ss", f"{at}", "-frames:v", "1",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ]
+        data = subprocess.run(command, capture_output=True, check=True).stdout
+    return np.frombuffer(data, np.uint8).reshape(OUTPUT_HEIGHT, OUTPUT_WIDTH, 3).astype(float)
+
+
+def new_look(events: list[TextEvent], at: float) -> np.ndarray:
+    """The pictures of the Text Layers shown at `at` (none coming on or going off then) laid over
+    GREY, each at its picture's place, as the render lays them."""
+    frame = np.tile(GREY.astype(float), (OUTPUT_HEIGHT, OUTPUT_WIDTH, 1))
+    for event in events:
+        if not event.start <= at < event.end:
+            continue
+        pixels = rasterised(load_settings().ffmpeg_bin, event.layout).astype(float)
+        x, y = (round(c - size / 2) for c, size in zip(event.picture.centre, (event.picture.width, event.picture.height)))
+        # Only what is on the frame.
+        left, top = max(x, 0), max(y, 0)
+        right, bottom = min(x + pixels.shape[1], OUTPUT_WIDTH), min(y + pixels.shape[0], OUTPUT_HEIGHT)
+        shown = pixels[top - y : bottom - y, left - x : right - x]
+        alpha = shown[..., 3:] / 255
+        frame[top:bottom, left:right] = shown[..., :3] * alpha + frame[top:bottom, left:right] * (1 - alpha)
+    return frame
 
 
 def test_without_text_layers_the_plan_and_the_script_are_unchanged():
@@ -108,26 +149,16 @@ def test_a_text_layer_is_kept_in_the_clip_and_blank_or_late_ones_show_nothing():
     assert text_event(layer(text="Halo 🔥"), 6).lines == ["Halo"]
 
 
-def test_text_layers_are_drawn_over_the_captions_and_under_the_hook_in_their_order():
+def test_text_layers_leave_the_ass_script_in_their_order():
     planned = plan_render(
         0, 5, SOURCE, hook="Halo",
-        text_layers=[
-            layer(id="a", style={"colour": "#00FF00", "plate": {"shape": "block"}}),
-            layer(id="b", text="Dua", animation_in="fade"),
-        ],
+        text_layers=[layer(id="a", style={"colour": "#00FF00", "plate": {"shape": "block"}}), layer(id="b", text="Dua")],
     )
     assert [event.layer.id for event in planned.texts] == ["a", "b"]
+    # Pictures of their own (test_text_pictures.py), and the hook's layers as they are without them.
     script = _ass(planned)
-    assert "Style: Text0,Montserrat ExtraBold,80,&H0000FF00" in script
-    events = [line for line in script.splitlines() if line.startswith("Dialogue")]
-    texts = [line for line in events if ",Text" in line]
-    hooks = [line for line in events if ",Hook," in line]
-    layers = lambda lines: [int(line.split(",")[0].split()[1]) for line in lines]
-    # Each Text Layer above the one before, and the hook above them all.
-    assert layers([line for line in texts if ",Text0," in line]) == [2, 3]
-    assert min(layers([line for line in texts if ",Text1," in line])) > 3
-    assert min(layers(hooks)) > max(layers(texts))
-    assert "\\fad(300,0)" in next(line for line in texts if ",Text1," in line)
+    assert "Dua" not in script and "Style: Text" not in script
+    assert script == _ass(plan_render(0, 5, SOURCE, hook="Halo"))
 
 
 def test_an_old_text_layer_moves_its_centre_into_its_transform_and_its_look_into_its_style():
@@ -156,15 +187,23 @@ def test_an_old_text_layer_moves_its_centre_into_its_transform_and_its_look_into
     assert migrated_clip({"candidate_id": "c1", "output": {"text_layers": [old]}}, {}) == {"candidate_id": "c1", "output": {"text_layers": [new]}}
 
 
-def test_migrated_text_layers_plan_and_write_what_they_did():
+def test_migrated_text_layers_plan_and_look_as_they_did():
     layers = _LAYERS.validate_python([migrated_text_layer(old) for old in BEFORE["layers"]])
     planned = plan_render(0, 7, SOURCE, text_layers=layers)
     for event, before in zip(planned.texts, BEFORE["events"], strict=True):
         assert {key: drawn(event)[key] for key in before} == before, event.layer.id
-    assert text_lines(_ass(planned)) == BEFORE_ASS
+    # Their pictures, laid where the plan puts them, show what their ASS events drew, at two moments
+    # that show all 9 between them (each between its animations).
+    for at in (1.5, 3.2):
+        old, new = old_look(at), new_look(planned.texts, at)
+        differs = np.abs(old - new).max(axis=2)
+        inked = np.abs(old - GREY).max(axis=2) > 8
+        assert inked.sum() > 100_000, at
+        # Within rounding: the alpha recovered from the matte, and libass's own blending.
+        assert differs.max() <= 6 and differs[inked].mean() < 1.0, at
 
 
-def test_a_text_layer_is_never_stretched_nor_flipped_and_draws_only_what_its_ass_can():
+def test_a_text_layer_is_never_stretched_nor_flipped_and_draws_only_what_its_picture_can_yet():
     for transform in ({"stretch_x": 2}, {"stretch_y": 0.5}, {"flip_h": True}, {"flip_v": True}):
         with pytest.raises(ValidationError, match="stretched|flipped"):
             layer(transform)

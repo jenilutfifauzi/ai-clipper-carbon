@@ -158,7 +158,7 @@ class TextStyle:
     plate: Plate = Plate()
     # Its lines' baselines this many sizes apart.
     line_height: Annotated[FiniteFloat, Field(ge=0.5, le=3)] = 1.1
-    # Added after each character but a line's last; 0 until Text Layers are drawn as pictures
+    # Added after each character but a line's last; 0 until a Text Layer's picture draws it
     # (docs/adr/0010-text-layers-are-rasterised-pictures.md), as are the wrap width (0: the frame less
     # TEXT_MARGIN either side) and the fixed height (0: the words' own height).
     tracking: Annotated[FiniteFloat, Field(ge=-50, le=200)] = 0.0
@@ -173,8 +173,8 @@ class TextLayer:
     `secs` in Timeline time, centred by its `transform` (never stretched nor flipped) in its `style`,
     coming on and going off as the hook does."""
 
-    # In Timeline time, so that trimming the Clip leaves it where it was in it. Until it is drawn as a
-    # picture (docs/adr/0010) it is unscaled, unturned and opaque, and its style has no tracking,
+    # In Timeline time, so that trimming the Clip leaves it where it was in it. It is drawn as a
+    # picture (docs/adr/0010), for now unscaled, unturned and opaque, and its style has no tracking,
     # wrap width, fixed height nor Strips (_check_drawn). `id` names it in the editor.
 
     id: ItemId
@@ -204,9 +204,9 @@ def _check_text_transform(layer: TextLayer) -> None:
 
 
 def _check_drawn(layer: TextLayer) -> None:
-    """ValueError for what a Text Layer has that its ASS events don't draw: a scale, rotation or
-    opacity of its Transform, or its style's tracking, wrap width, fixed height or Strips. Each
-    comes with its picture (docs/adr/0010)."""
+    """ValueError for what a Text Layer has that isn't drawn yet: a scale, rotation or opacity of its
+    Transform, or its style's tracking, wrap width, fixed height or Strips. Its picture
+    (docs/adr/0010) will draw each."""
     transform, style = layer.transform, layer.style
     undrawn = [
         name
