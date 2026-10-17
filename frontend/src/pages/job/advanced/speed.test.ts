@@ -12,7 +12,7 @@ import { dragSegment, gestureSpeed, remove, setSpeed, split, type PickContext } 
 import { copy, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { picked, type Pick } from "./pick";
-import { speedAtOctave, speedLabel, speedOf } from "./speed";
+import { cutNote, speedAtOctave, speedLabel, speedOf } from "./speed";
 import { chunksAcross, filmstripTiles } from "./timelineView";
 
 const key = (at: number, value: number): Keyframe => ({ at, value, ease: LINEAR });
@@ -77,6 +77,16 @@ describe("a Speed", () => {
     expect([speedLabel(2), speedLabel(0.25), speedLabel(1.5)]).toEqual(["2×", "0.25×", "1.5×"]);
     // The slider runs over octaves.
     expect([speedAtOctave(-4), speedAtOctave(0), speedAtOctave(1), speedAtOctave(4)]).toEqual([0.0625, 1, 2, 16]);
+  });
+
+  test("the clip editor's note says how a one-Segment Clip plays: its Speed, its Reverse or both", () => {
+    expect(cutNote([segment("s", 0, 10, { speed: 2 })])).toBe("This clip plays at a Speed of 2×");
+    expect(cutNote([segment("s", 0, 10, { reverse: true })])).toBe("This clip plays in Reverse");
+    expect(cutNote([segment("s", 0, 10, { speed: 1, reverse: true, pitch: true })])).toBe("This clip plays in Reverse");
+    expect(cutNote([segment("s", 0, 10, { speed: 0.5, reverse: true })])).toBe("This clip plays in Reverse at a Speed of 0.5×");
+    expect(cutNote([segment("s", 4, 4, { hold: 1 })])).toBe("This clip is a Freeze frame");
+    expect(cutNote([video("v", 0, 4)])).toBe("This clip plays a video from the Media Library");
+    expect(cutNote([segment("a", 0, 2), segment("b", 5, 8)])).toBe("This clip is cut into 2 Segments");
   });
 });
 

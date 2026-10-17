@@ -6,6 +6,7 @@ import {
   mediaUrl,
   type Candidate,
   type CandidateChange,
+  type ClipSegment,
   type FontInfo,
   type JobDetail,
   type JobProgress,
@@ -19,6 +20,7 @@ import { Switch } from "../../components/Switch";
 import { loadFonts } from "../../fonts";
 import { cx, formatPrecise } from "../../format";
 import { clipTrimmed, layersOf } from "./advanced/actions";
+import { cutNote } from "./advanced/speed";
 import { candidateName } from "./CandidateList";
 import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview, type PickedOnStage, type StageControls } from "./editor/ClipPreview";
@@ -504,7 +506,7 @@ export function CandidateEditor({
                   />
                   <p className="text-sm text-muted">{portrait && candidate.layout !== "manual" ? PORTRAIT_HINT : LAYOUT_HINTS[candidate.layout]}</p>
                 </div>
-                {cut && <CutNote count={candidate.segments.length} to={advanced} />}
+                {cut && <CutNote segments={candidate.segments} to={advanced} />}
                 <section aria-labelledby="picker-heading" className="flex flex-col gap-3">
                     <h4 id="picker-heading" className="font-semibold">
                       Transcript
@@ -695,11 +697,11 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void })
 }
 
 // A Clip cut into Segments is trimmed and timed in the Advanced Edit.
-function CutNote({ count, to }: { count: number; to: string }) {
+function CutNote({ segments, to }: { segments: readonly ClipSegment[]; to: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-fill p-3 text-sm">
       <p className="min-w-0 flex-1 text-pretty">
-        {count === 1 ? "This clip plays at its own Speed" : `This clip is cut into ${count} Segments`}, edited in the Advanced Edit.
+        {cutNote(segments)}, edited in the Advanced Edit.
       </p>
       <Link to={to} className={buttonClass("secondary", "sm")}>
         <SlidersHorizontal aria-hidden size={16} />

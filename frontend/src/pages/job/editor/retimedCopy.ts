@@ -14,6 +14,8 @@ import { paceOf } from "./segmentTime";
 
 // How often a copy being made is asked after.
 const POLL_MS = 500;
+// How long a copy stays wanted before it is asked for.
+export const SETTLE_MS = 300;
 // A frame of a Media Library video (normalized to 30 fps).
 const FRAME_SECS = 1 / 30;
 // Copies made, by item and range, with what was asked: an item shown again, or one whose range a
@@ -97,35 +99,44 @@ function known(ask: RetimedAsk): RetimedCopy | undefined {
 const asked = (ask: RetimedAsk, signal: AbortSignal) =>
   "media" in ask ? api.retimedCopy(ask.media, ask.range, signal) : api.sourceRetimedCopy(ask.job, ask.range, signal);
 
-/** The preview copies `asks` name, each asked for and polled until it is made; null for a null ask. */
+/**
+ * Each of `asks` not made yet asked for once it has stayed wanted SETTLE_MS (so the Speed slider
+ * dragged past 4× asks only for the Speed it stops at, not one copy per step), then polled until it
+ * is made, every answer told to `heard` by its key. Returns what stops it all: an ask stopped before
+ * it settles is never sent.
+ */
+export function askCopies(asks: readonly (RetimedAsk | null)[], heard: (key: string, copy: RetimedCopy) => void): () => void {
+  const abort = new AbortController();
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const pending = new Map(asks.flatMap((ask) => (ask && !known(ask) ? [[keyOf(ask), ask] as const] : [])));
+  for (const [key, item] of pending) {
+    const ask = () =>
+      asked(item, abort.signal).then(
+        (answer) => {
+          if (answer.url) made.set(key, { ask: item, copy: answer });
+          if (abort.signal.aborted) return;
+          heard(key, answer);
+          if (!answer.url && !answer.error) timers.push(setTimeout(ask, POLL_MS));
+        },
+        (reason: Error) => {
+          if (!abort.signal.aborted) heard(key, { ...ASKED, error: reason.message });
+        },
+      );
+    timers.push(setTimeout(ask, SETTLE_MS));
+  }
+  return () => {
+    abort.abort();
+    timers.forEach((timer) => clearTimeout(timer));
+  };
+}
+
+/** The preview copies `asks` name, each asked for once settled and polled until it is made (askCopies); null for a null ask. */
 export function useRetimedCopies(asks: (RetimedAsk | null)[]): (RetimedCopy | null)[] {
   const keys = asks.map((ask) => (ask ? keyOf(ask) : null));
   const [heard, setHeard] = useState<ReadonlyMap<string, RetimedCopy>>(new Map());
   const wanted = keys.join("|");
-  useEffect(() => {
-    const abort = new AbortController();
-    const timers: number[] = [];
-    const pending = new Map(asks.flatMap((ask) => (ask && !known(ask) ? [[keyOf(ask), ask] as const] : [])));
-    for (const [key, item] of pending) {
-      const ask = () =>
-        asked(item, abort.signal).then(
-          (answer) => {
-            if (answer.url) made.set(key, { ask: item, copy: answer });
-            setHeard((before) => new Map(before).set(key, answer));
-            if (!answer.url && !answer.error) timers.push(window.setTimeout(ask, POLL_MS));
-          },
-          (reason: Error) => {
-            if (!abort.signal.aborted) setHeard((before) => new Map(before).set(key, { ...ASKED, error: reason.message }));
-          },
-        );
-      void ask();
-    }
-    return () => {
-      abort.abort();
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-    // `asks` is new on each render: `wanted` names what it asks for.
-  }, [wanted]);
+  // `asks` is new on each render: `wanted` names what it asks for.
+  useEffect(() => askCopies(asks, (key, answer) => setHeard((before) => new Map(before).set(key, answer))), [wanted]);
   return asks.map((ask, i) => (ask === null ? null : (known(ask) ?? heard.get(keys[i]!) ?? ASKED)));
 }
 

@@ -70,11 +70,29 @@ describe("Freeze frame", () => {
     expect(freezeFrame(scene(before), 3)!.edits.text_layers).toEqual(before.text_layers);
   });
 
-  test("of the Source cuts between Words, as Split does, and holds the frame shown at the playhead", () => {
-    const frozen = freezeFrame(scene(edits(), { gap: () => 103.2 }), 3)!;
-    expect(frozen.edits.segments).toEqual([segment("s1", 100, 103.2), held("n2", 103, 1), segment("n1", 103.2, 106)]);
-    // The Clip is a second longer: the Freeze frame goes in at the cut.
-    expect(playedFrom(frozen.edits.segments).at(-1)!.end).toBe(7);
+  test("of the Source cuts at the frame shown at the playhead, not between Words as Split does", () => {
+    const frozen = freezeFrame(scene(edits(), { gap: () => 103.2 }), 3.25)!;
+    expect(frozen.edits.segments).toEqual([segment("s1", 100, 103.25), held("n2", 103.25, 1), segment("n1", 103.25, 106)]);
+    // The Clip is a second longer exactly at the playhead: nothing played twice or skipped.
+    const played = playedFrom(frozen.edits.segments);
+    expect(played.map((shown) => [shown.start, shown.end])).toEqual([
+      [0, 3.25],
+      [3.25, 4.25],
+      [4.25, 7],
+    ]);
+    expect(playedSourceAt(played[0], 3.25)).toBe(103.25);
+    expect(playedSourceAt(played[2], 4.25)).toBe(103.25);
+  });
+
+  test("of a reversed 2× Source Segment, head and tail meet at the held frame", () => {
+    const before = edits({ segments: [segment("s1", 100, 112, { speed: 2, reverse: true })] });
+    const frozen = freezeFrame(scene(before, { gap: () => 105 }), 2.5)!.edits.segments;
+    expect(frozen.map(({ start, end, hold }) => ({ start, end, hold }))).toEqual([
+      { start: 107, end: 112, hold: undefined },
+      { start: 107, end: 107, hold: 1 },
+      { start: 100, end: 107, hold: undefined },
+    ]);
+    expect(frozen.map(segmentLength)).toEqual([2.5, 1, 3.5]);
   });
 
   test("on a 2× Segment holds the Source frame shown at the playhead", () => {

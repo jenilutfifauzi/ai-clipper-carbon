@@ -392,3 +392,23 @@ export function scaledKeys(keys: Keys, by: number): Keys {
     }, []);
   return Object.fromEntries((Object.entries(keys) as [KeyProperty, Keyframe[]][]).map(([prop, list]) => [prop, scaled(list)]));
 }
+
+/** The Ease of a span played backwards: its curve turned end for end (point-reflected), so that it eases out where it eased in. */
+export const reversedEase = ([x1, y1, x2, y2]: Ease): Ease => [toMillionth(1 - x2), toMillionth(1 - y2), toMillionth(1 - x1), toMillionth(1 - y1)];
+
+/**
+ * `keys` (in seconds from their item's start) once the item, `length` seconds long, plays its range
+ * the other way, as Reverse switched on or off makes it (ADR 0009): each Keyframe's time mirrored
+ * (`at → length − at`), so that it stays on the same frame of its video, and each span's Ease
+ * reversed and carried by the Keyframe that now ends it, so that the motion is the same one played
+ * backwards. The first Keyframe, which no span ends, takes the old first one's (unused) Ease, so that
+ * switching back gives `keys` again.
+ */
+export function mirroredKeys(keys: Keys, length: number): Keys {
+  const mirrored = (list: Keyframe[]) =>
+    list.map((_, i) => {
+      const key = list[list.length - 1 - i];
+      return { at: toMillionth(length - key.at), value: key.value, ease: i ? reversedEase(list[list.length - i].ease) : list[0].ease };
+    });
+  return Object.fromEntries((Object.entries(keys) as [KeyProperty, Keyframe[]][]).map(([prop, list]) => [prop, mirrored(list)]));
+}

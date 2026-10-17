@@ -2,7 +2,7 @@ import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, TextLayer, Transf
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
-import { rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
+import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
@@ -415,11 +415,11 @@ export const canFreezeAt = (scene: PickContext, time: number) => freezable(scene
 /**
  * Freeze frame at the playhead (`at`, docs/adr/0009): the Segment there split into a head, a Freeze
  * frame of FREEZE_SECS holding the frame shown at the playhead (at any Speed, in Reverse), and a
- * tail, the Freeze frame picked. The cut is split's (between Words for the Source). Keyframes are
- * re-anchored on head and tail; a video's Freeze frame takes its Framing as shown there, its
- * Keyframes sampled into constants. A Transition after the Segment stays after the tail. The Main
- * Track gets FREEZE_SECS longer where the Freeze frame goes, and on the Magnetic timeline the layers
- * after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
+ * tail, the Freeze frame picked. The cut is at that frame, a Source Segment's too (not between Words
+ * as Split's), so nothing is played twice or skipped. Keyframes are re-anchored on head and tail; a
+ * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants. A
+ * Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
+ * playhead, and on the Magnetic timeline the layers after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
  */
 export function freezeFrame(scene: PickContext, at: number, limits: { longest?: number } = {}): Outcome | null {
   const { edits } = scene;
@@ -431,8 +431,9 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   }
   const segment = edits.segments[index];
   const shown = scene.played[index];
-  const there = playedSourceAt(shown, at);
-  const cut = Math.round((segment.media ? there : scene.gap(there)) * 1000) / 1000;
+  // The head ends and the tail begins on the held frame: the backend leaves a Source Segment's end
+  // that touches a held Segment of its time unsnapped.
+  const cut = Math.round(playedSourceAt(shown, at) * 1000) / 1000;
   const length = segmentLength(segment);
   const into = offsetAt(segment, cut);
   // Where the cut is on the Timeline, which the Freeze frame goes in at.
@@ -443,8 +444,7 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
     : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
   const head = rekeyed<ClipSegment>({ ...segment, ...headRange }, into - (cutAt - shown.start), into);
   const tail = rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length);
-  const frame = Math.round(there * 1000) / 1000;
-  const held: ClipSegment = { id: idOf(scene), start: frame, end: frame, hold: FREEZE_SECS };
+  const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
@@ -679,16 +679,20 @@ export function paced(scene: { edits: AdvancedEdits; pick: Pick }, video: (media
 
 /**
  * Segment or video Overlay `item` played backwards, or forwards again (`reverse`, ADR 0009), from a
- * Retimed copy. It keeps its range, its place and length on the Timeline, and its Keyframes, in
- * seconds from its start: its motion keeps its moments, not its frames. Null for a Freeze frame, or
- * an item that isn't there.
+ * Retimed copy. It keeps its range and its place and length on the Timeline. Its Keyframes are
+ * mirrored (mirroredKeys), so that its motion stays on the same frames of its video, as a Speed
+ * change scales them. Null for a Freeze frame, or an item that isn't there.
  */
 export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: SpedRef, reverse: boolean): Outcome | null {
   const { edits, pick } = scene;
-  const set = <T extends { id: string; hold?: number | null }>(items: T[]) =>
-    items.some((other) => other.id === item.id && other.hold == null) ? items.map((other) => (other.id === item.id ? { ...other, reverse } : other)) : null;
-  const changed = item.kind === "segment" ? set(edits.segments) : set(edits.overlays);
-  return changed && { edits: { ...edits, [item.kind === "segment" ? "segments" : "overlays"]: changed }, pick };
+  const turned = <T extends { reverse?: boolean; keys?: Keys }>(other: T, length: number): T =>
+    other.keys && reverse !== (other.reverse ?? false) ? { ...other, reverse, keys: mirroredKeys(other.keys, length) } : { ...other, reverse };
+  if (item.kind === "overlay") {
+    if (!edits.overlays.some((other) => other.id === item.id)) return null;
+    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? turned(other, other.secs) : other)) }, pick };
+  }
+  if (!edits.segments.some((other) => other.id === item.id && other.hold == null)) return null;
+  return { edits: { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? turned(other, segmentLength(other)) : other)) }, pick };
 }
 
 /**

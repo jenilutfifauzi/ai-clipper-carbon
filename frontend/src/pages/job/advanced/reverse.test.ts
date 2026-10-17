@@ -2,9 +2,9 @@
 // (docs/adr/0009): the switch and R, and a reversed Segment or Overlay trimmed, split, ripped, copied
 // and drawn on the Timeline from its end.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, Keyframe, Overlay } from "../../../api";
+import type { ClipSegment, Ease, Keyframe, Overlay } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
-import { LINEAR } from "../editor/keyframes";
+import { EASE_IN, EASE_IN_OUT, EASE_OUT, LINEAR, valueAt } from "../editor/keyframes";
 import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
 import { segmentCopy, servedBy } from "../editor/retimedCopy";
@@ -71,13 +71,15 @@ const over = (id: string) => ({ kind: "overlay", id }) as const;
 const videos = (media: string) => media === "clip";
 
 describe("Reverse, by its switch or R", () => {
-  test("turns on and off for one Segment or video Overlay, its range, place and Keyframes kept", () => {
+  test("turns on and off for one Segment or video Overlay, its range and place kept, its Keyframes mirrored", () => {
     const keyed = video("v", 2, 6, { keys: { scale: [key(1, 2)] } });
     const before = edits({ segments: [segment("s1", 100, 110), keyed], overlays: [overlay("o", 1, 2)] });
     const on = setReverse(scene(before), seg("v"), true)!.edits;
-    expect(on.segments).toEqual([segment("s1", 100, 110), { ...keyed, reverse: true }]);
+    expect(on.segments).toEqual([segment("s1", 100, 110), { ...keyed, reverse: true, keys: { scale: [key(3, 2)] } }]);
     expect(playedFrom(on.segments).at(-1)!.end).toBe(14);
     expect(setReverse(scene(on), seg("v"), false)!.edits.segments[1]).toEqual({ ...keyed, reverse: false });
+    // Set again as it is, nothing moves.
+    expect(setReverse(scene(on), seg("v"), true)!.edits.segments[1]).toEqual(on.segments[1]);
     expect(setReverse(scene(before), over("o"), true)!.edits.overlays).toEqual([overlay("o", 1, 2, { reverse: true })]);
     // An episode's Segment too; a Freeze frame holds one frame.
     expect(setReverse(scene(before), seg("s1"), true)!.edits.segments[0].reverse).toBe(true);
@@ -104,6 +106,53 @@ describe("Reverse, by its switch or R", () => {
     expect(resolveShortcut({ key: "r" }, { typing: true })).toBeNull();
     const editing = shortcutSheet().find((group) => group.group === "editing")!;
     expect(editing.shortcuts.map((shortcut) => shortcut.id)).toContain("reverse");
+  });
+});
+
+describe("Reverse mirrors Keyframes", () => {
+  const custom: Ease = [0.2, 0.9, 0.6, 0.1];
+  const keys = {
+    x: [{ at: 0.5, value: 100, ease: LINEAR }, { at: 2, value: 300, ease: EASE_IN }, { at: 3.5, value: 200, ease: custom }],
+    scale: [{ at: 0, value: 1, ease: EASE_OUT }, { at: 4, value: 2, ease: EASE_IN_OUT }],
+    volume: [{ at: 1, value: 0, ease: LINEAR }, { at: 3, value: 1, ease: [0.1, 1.4, 0.3, -0.5] as Ease }],
+  };
+  const times = Array.from({ length: 81 }, (_, i) => i * 0.05);
+
+  test("a 2× video's Segment: each value is the one it had on the same frame of the video", () => {
+    const forwards = video("v", 2, 10, { speed: 2, keys });
+    const on = setReverse(scene(edits({ segments: [forwards] })), seg("v"), true)!.edits.segments[0];
+    const length = segmentLength(forwards);
+    expect(length).toBe(4);
+    for (const t of times) {
+      // The same frame, shown `t` into the Segment forwards and `length − t` into it in Reverse.
+      expect(sourceAt(on, length - t)).toBeCloseTo(sourceAt(forwards, t), 9);
+      for (const [prop, list] of Object.entries(keys)) expect(valueAt(on.keys![prop as "x"]!, length - t, 0)).toBeCloseTo(valueAt(list, t, 0), 5);
+    }
+    // In time order, each span's Ease turned end for end on the Keyframe that now ends it.
+    expect(on.keys!.x).toEqual([
+      { at: 0.5, value: 200, ease: LINEAR },
+      { at: 2, value: 300, ease: [0.4, 0.9, 0.8, 0.1] },
+      { at: 3.5, value: 100, ease: EASE_OUT },
+    ]);
+    expect(on.keys!.scale).toEqual([{ at: 0, value: 2, ease: EASE_OUT }, { at: 4, value: 1, ease: EASE_IN_OUT }]);
+    // Back forwards, the Keyframes as they were.
+    expect(setReverse(scene(edits({ segments: [on] })), seg("v"), false)!.edits.segments[0].keys).toEqual(keys);
+  });
+
+  test("a video Overlay, over its length on the Timeline; turned on twice it moves once", () => {
+    const forwards = overlay("o", 1, 4, { speed: 0.5, keys });
+    const on = setReverse(scene(edits({ overlays: [forwards] })), over("o"), true)!.edits.overlays[0];
+    for (const t of times) {
+      for (const [prop, list] of Object.entries(keys)) expect(valueAt(on.keys[prop as "x"]!, 4 - t, 0)).toBeCloseTo(valueAt(list, t, 0), 5);
+    }
+    expect(setReverse(scene(edits({ overlays: [on] })), over("o"), true)!.edits.overlays[0]).toEqual(on);
+    expect(setReverse(scene(edits({ overlays: [on] })), over("o"), false)!.edits.overlays[0]).toEqual({ ...forwards, reverse: false });
+  });
+
+  test("a Manual Scene's Keyframes stay: they follow the Source", () => {
+    const manual = { at: 104, layout: "manual" as const, framing: { transform: IDENTITY, crop: NO_CROP, background: BLURRED }, keys: { x: [key(1, 10), key(3, 20)] } };
+    const state = edits({ layout_overrides: [manual] });
+    expect(setReverse(scene(state), seg("s1"), true)!.edits.layout_overrides).toBe(state.layout_overrides);
   });
 });
 

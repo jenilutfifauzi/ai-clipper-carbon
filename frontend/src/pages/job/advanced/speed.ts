@@ -1,3 +1,5 @@
+import type { ClipSegment } from "../../../api";
+
 /**
  * A Segment's or a video Overlay's Speed (GLOSSARY.md, docs/adr/0009): 0.0625–16×, as Concat's
  * SPEED_RANGE and the backend's `Speed` (MIN_SPEED, MAX_SPEED in backend/app/candidates.py).
@@ -20,3 +22,19 @@ export const speedLabel = (speed: number) => `${speedOf(speed)}×`;
 export const SPEED_OCTAVES = [Math.log2(SPEED_RANGE[0]), Math.log2(SPEED_RANGE[1])] as const;
 export const octaveOf = (speed: number) => Math.log2(speed);
 export const speedAtOctave = (octave: number) => speedOf(2 ** octave);
+
+/**
+ * What the clip editor says of a Clip cut into `segments`, which it gives way to the Advanced Edit
+ * for: how many Segments, or how its one Segment plays (its Speed, its Reverse or both; a Freeze
+ * frame; a video).
+ */
+export function cutNote(segments: readonly ClipSegment[]): string {
+  if (segments.length !== 1) return `This clip is cut into ${segments.length} Segments`;
+  const [{ speed = 1, reverse, hold, media }] = segments;
+  if (hold != null) return "This clip is a Freeze frame";
+  const sped = speedOf(speed) !== 1;
+  if (sped && reverse) return `This clip plays in Reverse at a Speed of ${speedLabel(speed)}`;
+  if (sped) return `This clip plays at a Speed of ${speedLabel(speed)}`;
+  if (reverse) return "This clip plays in Reverse";
+  return media ? "This clip plays a video from the Media Library" : "This clip is one Segment";
+}

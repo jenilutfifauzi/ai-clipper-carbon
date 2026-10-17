@@ -3,11 +3,11 @@
 // and Segments of the Source played from a copy (.scratch/speed/issues/07-reversed-source-segment.md): `Playback`
 // with the fake videos and clock, the Segment's own videos following it as `mediaPlay` and `sourcePlay` say.
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { RetimedCopy, SegmentPlan } from "../../../api";
+import { api, type RetimedCopy, type SegmentPlan } from "../../../api";
 import { follow } from "./follow";
 import { onOwnVideos, Playback, playedFrom } from "./playback";
 import { harness } from "./playbackHarness";
-import { copyProgress, eventCopy, eventPlay, mediaPlay, previewCopyOf, segmentCopy, sourcePlay } from "./retimedCopy";
+import { askCopies, copyProgress, eventCopy, eventPlay, mediaPlay, previewCopyOf, segmentCopy, SETTLE_MS, sourcePlay } from "./retimedCopy";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -330,5 +330,44 @@ describe("a Segment of the Source played from a copy", () => {
     expect(second.master.playbackRate).toBe(2);
     expect(first.master.paused).toBe(true);
     expect(own.master.currentTime).toBe(0);
+  });
+});
+
+describe("asking for copies", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  test("the Speed slider dragged past 4× asks only for the Speed it stops at, then polls it until made", async () => {
+    vi.useFakeTimers();
+    const answers = [BEING_MADE, { ...MADE, at: 0 }];
+    const asked = vi.spyOn(api, "retimedCopy").mockImplementation(async () => answers.shift()!);
+    const heard: RetimedCopy[] = [];
+    const ask = (speed: number) => ({ media: "dragged", range: { start: 0, end: 16, reverse: false, speed, pitch: false } });
+
+    // A step every 50 ms through 5×…8×: each new ask stops the one before it.
+    let stop = () => {};
+    for (const speed of [5, 6, 7, 8]) {
+      stop();
+      stop = askCopies([ask(speed), null], (_, copy) => heard.push(copy));
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(asked).not.toHaveBeenCalled();
+
+    // Settled, it is asked for once, at 8×; being made, it is asked after again.
+    await vi.advanceTimersByTimeAsync(SETTLE_MS);
+    expect(asked.mock.calls.map(([media, range]) => [media, range.speed])).toEqual([["dragged", 8]]);
+    expect(heard.map((copy) => copy.progress)).toEqual([0.4]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(asked).toHaveBeenCalledTimes(2);
+    expect(heard.at(-1)!.url).toBe(MADE.url);
+
+    // Made, it is known: asked again, nothing is sent.
+    stop();
+    stop = askCopies([ask(8)], () => {});
+    await vi.advanceTimersByTimeAsync(SETTLE_MS * 4);
+    expect(asked).toHaveBeenCalledTimes(2);
+    stop();
   });
 });

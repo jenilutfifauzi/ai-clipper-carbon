@@ -44,6 +44,7 @@ Segments and Overlay videos get a **Speed**, may play in **Reverse**, and a Segm
   - Two sizes: from the proxy for the preview, from the full video for the render.
   - Any copy of a wider range of the same item serves: a reversed copy of `a..b` holds every `c..d` inside it, from `b − d` on. A split or a trim inward makes no new copy; a trim outward does.
 - **Speed applies after Reverse:** the copy is played at the Segment's Speed, with its pitch kept or not.
+- **Its Keyframes are mirrored** when Reverse is switched on or off (`at → length − at`, each span's Ease turned to match), so its motion stays on the same frames of the video, as a Speed change scales them.
 - **A reversed Source Segment has no captions.** Speech played backwards can't be read.
 - **Its Scenes are the forward ones, mirrored.** The analysis of the same range (`analysis/<start>-<end>`) is used with its times turned (`t → length − t`) and its camera path run backwards. A Layout Override still applies to the Scene that holds its Source time. No new analysis is run.
 
@@ -52,7 +53,7 @@ Segments and Overlay videos get a **Speed**, may play in **Reverse**, and a Segm
   - Silent; the Music Clips play on over it.
   - No captions, no Word snapping. Speed, pitch and Reverse don't apply.
 - **Made from the playhead.** "Freeze frame" (Shift+F) on the Segment under the playhead, at least 0.3 s from its edges on the Timeline:
-  - The Segment is split there into a head, a Freeze frame of 1 s and a tail. The frame is the one shown at the playhead, at any Speed or in Reverse.
+  - The Segment is split there into a head, a Freeze frame of 1 s and a tail. The frame is the one shown at the playhead, at any Speed or in Reverse; head and tail meet on it, a Source Segment's too (not between Words).
   - The Main Track gets 1 s longer at the playhead; the layers after it follow while the Magnetic timeline is on, as an inserted Segment's do.
   - A Transition after the Segment stays after its tail. None is added inside.
   - Segments only. Overlays have no Freeze frame.
