@@ -425,6 +425,86 @@ describe("speed", () => {
     slow.playback.seek(5);
     expect(slow.media.playbackRate).toBe(0.25);
   });
+
+  // 0–5 s from 100 s of the Source, then 5–9 s of 8 s from 200 s at `speed` 2.
+  const sped = (pitch?: boolean) =>
+    playedFrom([
+      { start: 100, end: 105 },
+      { start: 200, end: 208, speed: 2, ...(pitch !== undefined && { pitch }) },
+    ]);
+
+  test("a Source Segment at 2× is parked at its rate and taken over seamlessly, the time running at the Timeline's pace", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(sped());
+    const [first, second] = stage.decks(playback);
+    playback.seek(1);
+    expect(first.master.playbackRate).toBe(1);
+    // The parked deck waits at 200 s at the rate of the Segment it waits for, its pitch kept.
+    for (const video of [second.master, second.follower]) {
+      expect(video.currentTime).toBe(200);
+      expect(video.playbackRate).toBe(2);
+      expect(video.preservesPitch).toBe(true);
+    }
+    stage.settle();
+    playback.play();
+    stage.advance(3.98);
+    expect(playback.shownDeck).toBe(1);
+    expect(second.master.paused).toBe(false);
+    expect(second.master.currentTime).toBe(200);
+    expect(playback.time).toBe(5);
+    // A second on: 2 s of the Source, 1 s of the Clip.
+    stage.advance(1);
+    expect(second.master.currentTime).toBeCloseTo(202, 5);
+    expect(playback.time).toBeCloseTo(6, 5);
+    // At 1.5× the preview's rate, 3× the deck's.
+    playback.setRate(1.5);
+    expect(second.master.playbackRate).toBe(3);
+    expect(second.follower.playbackRate).toBe(3);
+    stage.advance(1);
+    expect(playback.time).toBeCloseTo(7.5, 5);
+    // The old live deck, parked nowhere now, stays at the preview's rate for the 1× Segment it showed.
+    expect(first.master.playbackRate).toBe(1.5);
+  });
+
+  test("seeking moves the live deck's rate to the Segment's, and one with its pitch changed doesn't keep it", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(sped(true));
+    const [first, second] = stage.decks(playback);
+    playback.seek(6);
+    expect(first.master.currentTime).toBe(202);
+    expect(first.master.playbackRate).toBe(2);
+    expect(first.master.preservesPitch).toBe(false);
+    expect(first.follower.preservesPitch).toBe(false);
+    playback.seek(1);
+    expect(first.master.playbackRate).toBe(1);
+    expect(first.master.preservesPitch).toBe(true);
+    expect(second.master.playbackRate).toBe(2);
+  });
+
+  test("a Source Segment past 4× plays at 4× on its deck until it has a copy", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(playedFrom([{ start: 200, end: 240, speed: 8 }]));
+    const [first] = stage.decks(playback);
+    playback.seek(1);
+    expect(first.master.currentTime).toBe(208);
+    expect(first.master.playbackRate).toBe(4);
+  });
+
+  test("a Transition's ghost, one deck playing the Segment it takes away, plays it at its Speed", () => {
+    const stage = harness();
+    const ghost = new Playback();
+    ghost.setSegments([{ start: 3, end: 5, source_start: 200, source_end: 204, speed: 2, pitch: true }]);
+    const master = stage.video();
+    ghost.attachDeck(0, master.element);
+    ghost.setRate(0.5);
+    ghost.seek(4);
+    expect(master.currentTime).toBe(202);
+    expect(master.playbackRate).toBe(1);
+    expect(master.preservesPitch).toBe(false);
+  });
 });
 
 describe("skim", () => {
