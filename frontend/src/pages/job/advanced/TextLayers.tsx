@@ -7,15 +7,12 @@ import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
-import { fontFamily } from "../../../fonts";
-import { IDENTITY } from "../editor/picture";
 import { FacePicker } from "../editor/FacePicker";
 import { Group } from "../editor/StyleFields";
-import { DRAG_TEXT } from "./drag";
-import { ImportFont } from "./ImportFont";
 import { shared } from "./actions";
 import { newId, round } from "./edits";
-import { styled, textStyle } from "./textStyle";
+import { styled } from "./textStyle";
+import { ApplyLook, SaveAsTextPreset } from "./TextPresets";
 import { layersStyle, layerStyle, Mixed, PlateGroup, ShadowGroup, SpacingGroup } from "./TextStyleGroups";
 import { TimingFields } from "./TimingFields";
 import { TextTransformFields } from "./TransformFields";
@@ -25,92 +22,13 @@ const TEXT_SECS = 3;
 // The backend's limit (TEXT_LAYER_MAX_CHARS in app/candidates.py).
 const TEXT_MAX_CHARS = 300;
 
-// What a new Text Layer is made of: all of it but its id and its time.
+// What a new Text Layer is made of: all of it but its id and its time (a Text Preset's look, TextPresets.tsx).
 export type TextLook = Omit<TextLayer, "id" | "start" | "secs">;
-
-const BASE: TextLook = {
-  text: "Text",
-  transform: IDENTITY,
-  style: textStyle({ stroke_width: 4 }),
-  animation_in: "none",
-  animation_out: "none",
-  animation_ms: 300,
-};
-
-/** The looks a new Text Layer can start from. */
-export const TEXT_PRESETS: { name: string; layer: TextLook }[] = [
-  { name: "Text", layer: BASE },
-  {
-    name: "Title",
-    layer: {
-      ...BASE,
-      text: "Title",
-      transform: { ...IDENTITY, y: 700 },
-      style: textStyle({ font: "anton", size: 130, colour: "#FFE600", stroke_width: 6 }),
-      animation_in: "pop",
-    },
-  },
-  {
-    name: "Label",
-    layer: { ...BASE, text: "Label", style: textStyle({ size: 64, colour: "#000000", plate: { shape: "block", colour: "#FFFFFF", opacity: 1 } }) },
-  },
-  {
-    name: "Subtitle",
-    layer: {
-      ...BASE,
-      text: "Subtitle",
-      transform: { ...IDENTITY, y: 1400 },
-      style: textStyle({ size: 56, plate: { shape: "block", opacity: 0.6 } }),
-      animation_in: "fade",
-      animation_out: "fade",
-    },
-  },
-];
 
 /** A Text Layer in `look` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
 export function newTextLayer(look: TextLook, at: number, duration: number): TextLayer {
   const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
   return { ...look, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)) };
-}
-
-/**
- * The Text tab: a button per look, each adding a Text Layer at the playhead, or where it is dropped on
- * the timeline; and Import font, whose Faces every font picker then lists.
- */
-export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (look: TextLook) => void }) {
-  return (
-    <div className="flex flex-col gap-3">
-      <Hint more="Drag a text on the video to place it.">Click to add at the playhead, or drag onto the timeline.</Hint>
-      <div className="grid grid-cols-2 gap-2">
-        {TEXT_PRESETS.map(({ name, layer, layer: { style } }) => (
-          <button
-            key={name}
-            type="button"
-            draggable
-            onDragStart={(event) => {
-              event.dataTransfer.setData(DRAG_TEXT, name);
-              event.dataTransfer.effectAllowed = "copy";
-            }}
-            onClick={() => onAdd(layer)}
-            className="raised flex min-h-20 items-center justify-center rounded-[10px] p-2 hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
-          >
-            <span
-              className="rounded-md px-1.5 text-lg leading-tight"
-              style={{
-                fontFamily: fonts?.some((font) => font.id === style.font) ? fontFamily(style.font) : undefined,
-                color: style.colour,
-                backgroundColor: style.plate.shape === "none" ? undefined : style.plate.colour,
-                WebkitTextStroke: style.stroke_width ? `1px ${style.stroke_colour}` : undefined,
-              }}
-            >
-              {name}
-            </span>
-          </button>
-        ))}
-      </div>
-      <ImportFont />
-    </div>
-  );
 }
 
 const ALIGNS = [
@@ -132,6 +50,7 @@ export function TextLayerFields({
   duration,
   fonts,
   onChange,
+  onApplyLook,
   onDuplicate,
   onDelete,
 }: {
@@ -140,6 +59,8 @@ export function TextLayerFields({
   fonts: FontInfo[] | null;
   // `group` names the field being changed, so that its changes are undone as one.
   onChange: (layer: TextLayer, group: string) => void;
+  // A Text Preset's style given to it (actions.ts' applyLook), as one change.
+  onApplyLook: (style: TextStyle) => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -177,6 +98,7 @@ export function TextLayerFields({
         />
       </div>
       <Group title="Look">
+        <ApplyLook onApply={onApplyLook} />
         <FacePicker value={style.font} fonts={fonts} onChange={(font) => setStyle("font", font)} />
         <Slider label="Size" value={style.size} min={16} max={320} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={style.colour} onChange={(colour) => setStyle("colour", colour)} />
@@ -190,6 +112,7 @@ export function TextLayerFields({
         />
         {style.stroke_width > 0 && <ColorField label="Outline colour" value={style.stroke_colour} onChange={(colour) => setStyle("stroke_colour", colour)} />}
         <Segmented legend="Lines" options={ALIGNS} value={style.align} onChange={(align: TextAlign) => setStyle("align", align)} />
+        <SaveAsTextPreset style={style} />
       </Group>
       <ShadowGroup style={access} />
       <PlateGroup style={access} />
@@ -239,6 +162,7 @@ export function TextLayersFields({
   layers,
   fonts,
   onChange,
+  onApplyLook,
   onDuplicate,
   onCopy,
   onDelete,
@@ -247,6 +171,8 @@ export function TextLayersFields({
   fonts: FontInfo[] | null;
   // `change` made to them all; `group` names the field, so that its changes are undone as one.
   onChange: (change: (layer: TextLayer) => TextLayer, group: string) => void;
+  // A Text Preset's style given to them all (actions.ts' applyLook), as one change.
+  onApplyLook: (style: TextStyle) => void;
   onDuplicate: () => void;
   onCopy: () => void;
   onDelete: () => void;
@@ -280,6 +206,7 @@ export function TextLayersFields({
       </div>
       <Hint more="Their words, places and times stay each one's own: change those one at a time.">A change here applies to every picked text.</Hint>
       <Group title="Look">
+        <ApplyLook onApply={onApplyLook} />
         <FacePicker value={value("font")} fonts={fonts} onChange={(font) => setStyle("font", font)} marker={marker("font")} />
         <Slider label="Size" value={value("size")} min={16} max={320} format={shown("size", String)} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={value("colour")} onChange={(colour) => setStyle("colour", colour)} marker={marker("colour")} />

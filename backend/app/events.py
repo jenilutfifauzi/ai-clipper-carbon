@@ -1,8 +1,8 @@
 """A Job's progress as server-sent events, sent each time the Job changes."""
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import nullcontext, suppress
+from collections.abc import AsyncIterator, Callable
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -13,6 +13,7 @@ from app.candidates import Candidate
 from app.fonts import Faces
 from app.jobs import Job, JobNotFound, JobStatus, JobStore, JobWarning
 from app.revisions import changed_parts
+from app.text_presets import TextPresetStore
 
 # The statuses a Job stays in until the owner acts (reviews it, or retries it): the stream ends there.
 SETTLED = frozenset({JobStatus.REVIEW, JobStatus.ERROR})
@@ -96,7 +97,11 @@ _CANDIDATE = TypeAdapter(Candidate)
 
 
 async def candidate_events(
-    store: JobStore, job_id: str, recheck_secs: float = RECHECK_SECS, faces: Faces | None = None
+    store: JobStore,
+    job_id: str,
+    recheck_secs: float = RECHECK_SECS,
+    faces: Faces | None = None,
+    text_presets: TextPresetStore | None = None,
 ) -> AsyncIterator[ServerSentEvent]:
     """The Job's Candidates as they are saved, for as long as the Job exists (ADR 0003).
 
@@ -108,7 +113,9 @@ async def candidate_events(
     latest every `recheck_secs`, with source unknown.
 
     With `faces`, a `fonts` event each time Faces are imported or deleted, so that an editor lists
-    them again in its font pickers.
+    them again in its font pickers. With `text_presets`, a `text_presets` event each time Text
+    Presets are saved, changed or deleted, or another is used for new titles, so that its Text tab
+    lists them again.
     """
     loop = asyncio.get_running_loop()
     changes: asyncio.Queue[str] = asyncio.Queue()
@@ -118,11 +125,19 @@ async def candidate_events(
             with suppress(RuntimeError):  # the event loop has closed: the app is stopping
                 loop.call_soon_threadsafe(changes.put_nowait, "candidates")
 
-    def fonts_changed() -> None:
-        with suppress(RuntimeError):
-            loop.call_soon_threadsafe(changes.put_nowait, "fonts")
+    def told(kind: str) -> Callable[[], None]:
+        def tell() -> None:
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(changes.put_nowait, kind)
 
-    with store.watch(changed), faces.watch(fonts_changed) if faces is not None else nullcontext():
+        return tell
+
+    with ExitStack() as watching:
+        watching.enter_context(store.watch(changed))
+        if faces is not None:
+            watching.enter_context(faces.watch(told("fonts")))
+        if text_presets is not None:
+            watching.enter_context(text_presets.watch(told("text_presets")))
         # Read after subscribing, so that no change falls between the two.
         candidates = _candidates(store, job_id)
         if candidates is None:
@@ -132,8 +147,11 @@ async def candidate_events(
         sent = {candidate.id: candidate for candidate in candidates}
         while True:
             with suppress(TimeoutError):
-                if await asyncio.wait_for(changes.get(), recheck_secs) == "fonts":
-                    yield ServerSentEvent(event="fonts", data={"ids": faces.ids() if faces is not None else []})
+                change = await asyncio.wait_for(changes.get(), recheck_secs)
+                if change == "fonts" and faces is not None:
+                    yield ServerSentEvent(event="fonts", data={"ids": faces.ids()})
+                if change == "text_presets" and text_presets is not None:
+                    yield ServerSentEvent(event="text_presets", data={"ids": [preset.id for preset in text_presets.all()]})
             candidates = _candidates(store, job_id)
             if candidates is None:
                 yield ServerSentEvent(event="deleted", data=job_id)

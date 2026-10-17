@@ -16,6 +16,7 @@ import {
   placeAfter,
   placeDropped,
   remove,
+  applyLook,
   restyle,
   rippleRemove,
   setFade,
@@ -443,6 +444,18 @@ describe("editing several Text Layers", () => {
       edits: { ...before, text_layers: [blue(a), blue(b), c] },
       pick,
     });
+  });
+
+  test("Apply look gives the picked ones a Preset's style in one change, their words, places, Keyframes and times kept", () => {
+    // .scratch/text-advanced/issues/08: a Text Preset's look replaces the style only.
+    const keyed = { ...layer("k", 1, 3, { x: 200, y: 300, text: "Halo" }), keys: { x: [{ at: 0, value: 200, ease: [0, 0, 1, 1] }] } } as TextLayer;
+    const c = layer("c", 6, 2);
+    const before = edits({ text_layers: [a, keyed, c] });
+    const pick = picked(text("a"), text("k"));
+    const look = textStyle({ font: "anton", size: 130, colour: "#FFE600", stroke_width: 6 });
+
+    // One Outcome, so one step of undo takes both back.
+    expect(applyLook(scene(before, pick), look)).toEqual({ edits: { ...before, text_layers: [{ ...a, style: look }, { ...keyed, style: look }, c] }, pick });
   });
 });
 

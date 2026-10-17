@@ -1,0 +1,8 @@
+{
+  "id": "text",
+  "name": "Text",
+  "category": "Basic",
+  "order": 10,
+  "sample": "Text",
+  "style": {"stroke_width": 4}
+}

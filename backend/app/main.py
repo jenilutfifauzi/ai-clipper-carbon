@@ -17,6 +17,7 @@ from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
 from app.rendering import Renders
 from app.styles import PRESETS_FILE, PresetStore
+from app.text_presets import TEXT_PRESETS_FILE, TextPresetStore
 from app.uploads import UPLOADS_DIR
 from app.worker import Worker
 
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.worker = worker
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
+    app.state.text_presets = TextPresetStore(settings.data_dir / TEXT_PRESETS_FILE)
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media
     app.state.faces = fonts.use(settings.data_dir / fonts.IMPORTED_DIR)

@@ -126,6 +126,28 @@ def test_fonts_imported_or_deleted_are_told(served, llm):
     assert next(stream) == ("fonts", {"ids": data["ids"][:-1]})
 
 
+def test_text_presets_saved_by_the_agent_or_changed_are_told(served, llm):
+    client, app = served
+    job, _ = in_review(client, llm)
+    saved: dict = {}
+
+    async def save() -> None:
+        async with Client(app.state.mcp) as mcp:
+            result = await mcp.call_tool("save_preset", {"kind": "text", "preset": {"name": "Brand", "style": {"size": 100}}})
+            assert not result.is_error, result.content
+            saved.update(json.loads(result.content[0].text))
+
+    stream = candidate_events(client, job["id"])
+    assert next(stream)[0] == "ready"
+    anyio.run(save)
+    name, data = next(stream)
+    assert name == "text_presets" and data["ids"][-1] == saved["id"]
+    assert client.put("/api/text-presets/default", json={"id": saved["id"]}).status_code == 200
+    assert next(stream) == ("text_presets", data)
+    assert client.delete(f"/api/text-presets/{saved['id']}").status_code == 204
+    assert next(stream) == ("text_presets", {"ids": data["ids"][:-1]})
+
+
 def test_deleting_the_job_ends_the_stream(served, llm):
     client, _ = served
     job, _ = in_review(client, llm)

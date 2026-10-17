@@ -3,7 +3,7 @@ import type { ClipSegment, FontInfo, MediaItem, TextLayer, Transcript } from "..
 import type { AssetTab } from "./Chrome";
 import { SourcePicker } from "./MainTrack";
 import { MediaAssets, type MediaLibrary } from "./MediaLibrary";
-import { TextAssets } from "./TextLayers";
+import { TextAssets } from "./TextPresets";
 
 /**
  * An asset tab's content: the Text Layers' looks; the episode's moments and the Media Library's

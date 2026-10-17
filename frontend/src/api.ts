@@ -274,6 +274,23 @@ export interface StylePreset {
   builtin: boolean;
 }
 
+// A Text Preset (GLOSSARY): a named Text Style a new Text Layer copies, never linked to it.
+export interface TextPreset {
+  id: string;
+  name: string;
+  style: TextStyle;
+  // The words it is shown in on its shelf, which a Text Layer made from it starts with.
+  sample: string;
+  // Its shelf in the Text tab: "Mine" for the owner's, a built-in one's kind otherwise.
+  category: string;
+  // A built-in one's place among them.
+  order: number;
+  // Built-in Presets can't be changed, renamed or deleted.
+  builtin: boolean;
+  // The one used for new titles.
+  default: boolean;
+}
+
 export type StyleValue = string | number | boolean | null;
 
 // The fields of the Preset's styles a Candidate replaces.
@@ -1098,6 +1115,15 @@ export const api = {
   updatePreset: (id: string, preset: NewPreset) =>
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
+  listTextPresets: () => request<TextPreset[]>("/text-presets"),
+  createTextPreset: (name: string, style: TextStyle) =>
+    request<TextPreset>("/text-presets", { method: "POST", body: JSON.stringify({ name, style }) }),
+  // One of the owner's renamed, or given another style.
+  changeTextPreset: (id: string, change: { name?: string; style?: TextStyle }) =>
+    request<TextPreset>(`/text-presets/${id}`, { method: "PATCH", body: JSON.stringify(change) }),
+  deleteTextPreset: (id: string) => request<void>(`/text-presets/${id}`, { method: "DELETE" }),
+  useTextPresetForNewTitles: (id: string) =>
+    request<TextPreset>("/text-presets/default", { method: "PUT", body: JSON.stringify({ id }) }),
   listLogos: () => request<Logo[]>("/logos"),
   // A PNG, JPEG or WebP image of 5 MB at most; rejects with the backend's message otherwise.
   uploadLogo: (file: File) => {

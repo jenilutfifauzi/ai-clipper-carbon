@@ -1,4 +1,4 @@
-import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, TextLayer, Transform } from "../../../api";
+import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, TextLayer, TextStyle, Transform } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
@@ -582,6 +582,9 @@ export function restyle(scene: { edits: AdvancedEdits; pick: Pick }, change: (la
   const text_layers = scene.edits.text_layers.map((layer) => (isPicked(scene.pick, "text", layer.id) ? change(layer) : layer));
   return { edits: { ...scene.edits, text_layers }, pick: scene.pick };
 }
+
+/** Every picked Text Layer given `style`, a Text Preset's look: their words, Transforms, Keyframes and times stay their own. */
+export const applyLook = (scene: { edits: AdvancedEdits; pick: Pick }, style: TextStyle): Outcome => restyle(scene, (layer) => ({ ...layer, style }));
 
 /**
  * Music Clip or media Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2

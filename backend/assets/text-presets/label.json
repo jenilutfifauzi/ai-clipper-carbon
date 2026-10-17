@@ -1,0 +1,12 @@
+{
+  "id": "label",
+  "name": "Label",
+  "category": "Labels",
+  "order": 200,
+  "sample": "Label",
+  "style": {
+    "size": 64,
+    "colour": "#000000",
+    "plate": {"shape": "block", "colour": "#FFFFFF", "opacity": 1, "radius": 16, "padding_x": 22.4, "padding_y": 14.08}
+  }
+}

@@ -24,6 +24,7 @@ from app.candidates import (
     Segment,
     Speed,
     TextLayer,
+    TextStyle,
     Transition,
     Volume,
     WordEdit,
@@ -45,6 +46,7 @@ from app.rendering import NothingToRender, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_pictures import TEXTS_DIR, pictures_used, sweep as sweep_pictures
+from app.text_presets import TextPreset, TextPresetStore
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
 from app.storage import DiskUsage, disk_usage
@@ -109,6 +111,10 @@ def _presets(request: Request) -> PresetStore:
     return request.app.state.presets
 
 
+def _text_presets(request: Request) -> TextPresetStore:
+    return request.app.state.text_presets
+
+
 def _logos(request: Request) -> LogoStore:
     return request.app.state.logos
 
@@ -139,6 +145,7 @@ Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
+TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
@@ -252,6 +259,43 @@ class PresetBody(BaseModel):
     watermark: WatermarkStyle = WatermarkStyle()
 
 
+class TextPresetBody(BaseModel):
+    """A Text Preset as the owner saves it: a name and a Text Style."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name
+    style: TextStyle
+
+
+class TextPresetChange(BaseModel):
+    """A change to one of the owner's Text Presets; a field left out stays as it is."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name | None = None
+    style: TextStyle | None = None
+
+
+class TextPresetChoice(BaseModel):
+    """The Text Preset to use for new titles."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+
+
+@dataclass(frozen=True)
+class TextPresetInfo(TextPreset):
+    """A Text Preset, and whether it is the one used for new titles."""
+
+    default: bool = False
+
+    @classmethod
+    def of(cls, preset: TextPreset, default: TextPreset) -> "TextPresetInfo":
+        return cls(**vars(preset), default=preset.id == default.id)
+
+
 class ManualCandidate(BaseModel):
     """A transcript range to make a manual Candidate of, snapped to Words."""
 
@@ -311,9 +355,9 @@ class FontImported(BaseModel):
 
 
 class FaceUse(BaseModel):
-    """What names a Face: a Candidate, as it is or in its Revision History, or a Preset."""
+    """What names a Face: a Candidate, as it is or in its Revision History, a Style Preset or a Text Preset."""
 
-    kind: Literal["candidate", "style_preset"]
+    kind: Literal["candidate", "style_preset", "text_preset"]
     # The Candidate's or the Preset's.
     id: str
     # The Candidate's Job.
@@ -567,11 +611,13 @@ async def stream_job_events(job: ExistingJob, store: Store) -> AsyncIterator[Ser
 
 
 @router.get("/jobs/{job_id}/candidates/events", response_class=EventSourceResponse)
-async def stream_candidate_events(job: ExistingJob, store: Store, faces: FaceRegistry) -> AsyncIterator[ServerSentEvent]:
+async def stream_candidate_events(
+    job: ExistingJob, store: Store, faces: FaceRegistry, text_presets: TextPresets
+) -> AsyncIterator[ServerSentEvent]:
     """The Job's Candidates as they are saved (ADR 0003): `ready` with them as they are now, then a
     `candidate` event per new Revision (with who saved it and the parts it changed), `removed` for
     one that is gone, and `deleted` once the Job is. A `fonts` event says the Faces have changed."""
-    async for event in candidate_events(store, job.id, faces=faces):
+    async for event in candidate_events(store, job.id, faces=faces, text_presets=text_presets):
         yield event
 
 
@@ -848,12 +894,12 @@ def font_file(font_id: str, faces: FaceRegistry, v: str | None = None) -> FileRe
 
 
 @router.delete("/fonts/{font_id}", status_code=204)
-def delete_font(font_id: str, faces: FaceRegistry, store: Store, presets: Presets) -> None:
+def delete_font(font_id: str, faces: FaceRegistry, store: Store, presets: Presets, text_presets: TextPresets) -> None:
     """Delete an imported Face and its file. 409 for a bundled one, and while a Candidate (as it is,
-    or in its Revision History) or a Style Preset names it, listing where."""
+    or in its Revision History), a Style Preset or a Text Preset names it, listing where."""
     if faces.find(font_id) is None:
         raise HTTPException(404, f"No font {font_id}")
-    if uses := face_uses(store, presets, font_id):
+    if uses := face_uses(store, presets, text_presets, font_id):
         message = f"Font {font_id} is used by {'; '.join(use.where for use in uses)}: change them first"
         raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
     try:
@@ -864,9 +910,9 @@ def delete_font(font_id: str, faces: FaceRegistry, store: Store, presets: Preset
         raise HTTPException(404, f"No font {font_id}") from None
 
 
-def face_uses(store: JobStore, presets: PresetStore, face_id: str) -> list[FaceUse]:
-    """The Candidates of every Job (with their Revision Histories) and the Style Presets that name
-    the Face."""
+def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetStore, face_id: str) -> list[FaceUse]:
+    """The Candidates of every Job (with their Revision Histories), and the owner's Style Presets and
+    Text Presets that name the Face."""
     uses = []
     for job in store.all():
         for candidate in store.load_candidates(job.id) or []:
@@ -887,7 +933,62 @@ def face_uses(store: JobStore, presets: PresetStore, face_id: str) -> list[FaceU
                 kind="style_preset", id=preset.id, title=preset.name, parts=parts,
                 where=f"Style Preset {preset.name} ({', '.join(parts)})",
             ))
+    for text_preset in text_presets.all():
+        if text_preset.style.font == face_id and not text_preset.builtin:
+            uses.append(FaceUse(
+                kind="text_preset", id=text_preset.id, title=text_preset.name, parts=["Text Style"],
+                where=f"Text Preset {text_preset.name}",
+            ))
     return uses
+
+
+@router.get("/text-presets")
+def list_text_presets(text_presets: TextPresets) -> list[TextPresetInfo]:
+    """The built-in Text Presets by their order, then the owner's, the one used for new titles marked."""
+    default = text_presets.default()
+    return [TextPresetInfo.of(preset, default) for preset in text_presets.all()]
+
+
+@router.post("/text-presets", status_code=201)
+def create_text_preset(body: TextPresetBody, text_presets: TextPresets) -> TextPresetInfo:
+    """Save a Text Style as a new Text Preset of the owner's."""
+    return TextPresetInfo.of(text_presets.create(body.name, body.style), text_presets.default())
+
+
+@router.put("/text-presets/default")
+def use_text_preset_for_new_titles(body: TextPresetChoice, text_presets: TextPresets) -> TextPresetInfo:
+    """Use a Text Preset, built-in or the owner's, for new titles: by the Text tab's Add text, and for
+    a Text Layer the agent adds without a style. 404 for an unknown one."""
+    try:
+        preset = text_presets.use_for_new_titles(body.id)
+    except PresetNotFound:
+        raise HTTPException(404, f"No Text Preset {body.id}") from None
+    return TextPresetInfo.of(preset, preset)
+
+
+@router.patch("/text-presets/{preset_id}")
+def change_text_preset(preset_id: str, body: TextPresetChange, text_presets: TextPresets) -> TextPresetInfo:
+    """Rename one of the owner's Text Presets, or give it another style. Text Layers made from it keep
+    their look. 409 for a built-in Preset."""
+    try:
+        preset = text_presets.change(preset_id, body.name, body.style)
+    except PresetNotFound:
+        raise HTTPException(404, f"No Text Preset {preset_id}") from None
+    except BuiltinPreset:
+        raise HTTPException(409, f"Text Preset {preset_id} is built in: save a copy instead") from None
+    return TextPresetInfo.of(preset, text_presets.default())
+
+
+@router.delete("/text-presets/{preset_id}", status_code=204)
+def delete_text_preset(preset_id: str, text_presets: TextPresets) -> None:
+    """Delete one of the owner's Text Presets. Text Layers made from it keep their look; used for new
+    titles, built-in Text is used again. 409 for a built-in Preset."""
+    try:
+        text_presets.delete(preset_id)
+    except PresetNotFound:
+        raise HTTPException(404, f"No Text Preset {preset_id}") from None
+    except BuiltinPreset:
+        raise HTTPException(409, f"Text Preset {preset_id} is built in and can't be deleted") from None
 
 
 @router.get("/presets")

@@ -1,0 +1,14 @@
+{
+  "id": "title",
+  "name": "Title",
+  "category": "Titles",
+  "order": 100,
+  "sample": "Title",
+  "style": {
+    "font": "anton",
+    "size": 130,
+    "colour": "#FFE600",
+    "stroke_width": 6,
+    "plate": {"radius": 32.5, "padding_x": 45.5, "padding_y": 28.6}
+  }
+}

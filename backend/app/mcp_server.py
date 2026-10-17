@@ -24,9 +24,9 @@ from fastapi import FastAPI
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, create_model
 
-from app.api import CandidateUpdate, PresetBody, no_framing_keys, no_old_overlays, no_old_segments, no_old_text_layers
+from app.api import CandidateUpdate, PresetBody, TextPresetBody, TextPresetChange, no_framing_keys, no_old_overlays, no_old_segments, no_old_text_layers
 from app.candidates import (
     KICKER_MAX_CHARS,
     Ease,
@@ -36,6 +36,7 @@ from app.candidates import (
     Overlay,
     Segment,
     TextLayer,
+    TextStyle,
     Transition,
     WordEdit,
     ease_name,
@@ -135,6 +136,10 @@ Edits:
   as they aren't drawn yet. merge_candidate_items changes only the style, shadow, plate and
   transform fields given. The dry run lists each Text Layer's lines, its box once scaled and turned
   (bounds) and its picture: the URL, on this app, of the PNG the Clip burns.
+- A Text Preset is a named Text Style a new Text Layer copies, never linked to it: list_presets,
+  save_preset and delete_preset with kind "text"; built-in ones can't change. One is used for new
+  titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some
+  of its fields, takes that Preset's.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -252,6 +257,19 @@ def build_mcp(app: FastAPI) -> MCPServer:
             job = app.state.store.get(job_id)
             retimed = source_copies(app.state.store.job_dir(job_id), job.source)
         return retimed.find(CopySize.FULL, Retime(segment["source_start"], segment["source_end"])) is not None
+
+    def new_title(layer: Any) -> Any:
+        """A new Text Layer, its style the fields it gives over the Text Preset used for new titles'."""
+        if not isinstance(layer, dict):
+            return layer
+        style = _dump(TextStyle, app.state.text_presets.default().style)
+        return layer | {"style": _merged_fields(style, layer["style"]) if isinstance(layer.get("style"), dict) else style}
+
+    def new_titles(changes: Any) -> Any:
+        """An edit_candidate's changes, each Text Layer's style laid over the one used for new titles (`new_title`)."""
+        if isinstance(changes, dict) and isinstance(changes.get("text_layers"), list):
+            return changes | {"text_layers": [new_title(layer) for layer in changes["text_layers"]]}
+        return changes
 
     def clips(job_id: str, listed: list[dict]) -> list[dict]:
         job_dir = app.state.store.job_dir(job_id).resolve()
@@ -381,7 +399,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return await candidate(job_id, candidate_id)
 
     @tool()
-    async def edit_candidate(job_id: str, candidate_id: str, changes: CandidateUpdate, dry_run: bool = False) -> dict:
+    async def edit_candidate(
+        job_id: str, candidate_id: str, changes: Annotated[CandidateUpdate, BeforeValidator(new_titles)], dry_run: bool = False
+    ) -> dict:
         """Change a Candidate and save it: only the fields given change. start and end (Source time)
         are snapped to Words. Lists and style_overrides replace the Candidate's whole list (see
         merge_candidate_items). With changes.revision (the `revision` you read), an edit made after
@@ -433,7 +453,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
             body: dict[str, Any] = {}
             for kind, patches in given.items():
                 if patches is not None:
-                    body[kind] = _merge(current[kind], [p.model_dump(mode="json", exclude_unset=True) for p in patches], _KEYS[kind])
+                    dumped = [patch.model_dump(mode="json", exclude_unset=True) for patch in patches]
+                    if kind == "text_layers":
+                        dumped = [patch if any(_same(item["id"], patch["id"]) for item in current[kind]) else new_title(patch) for patch in dumped]
+                    body[kind] = _merge(current[kind], dumped, _KEYS[kind])
             if style_overrides is not None:
                 new = _dump(StyleOverrides, style_overrides)
                 body["style_overrides"] = {section: {**fields, **new[section]} for section, fields in current["style_overrides"].items()}
@@ -507,26 +530,50 @@ def build_mcp(app: FastAPI) -> MCPServer:
     # Styles, assets and the Channel Profile
 
     @tool(read_only=True)
-    async def list_presets(include_styles: bool = False) -> dict:
-        """The Style Presets: the built-in ones, then the owner's. With include_styles, their
-        Caption, Hook and Watermark Styles (the fields a Style Override can replace)."""
+    async def list_presets(kind: Literal["style", "text"] = "style", include_styles: bool = False) -> dict:
+        """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
+        then the owner's. With include_styles, their styles (a Style Override replaces their fields)."""
+        if kind == "text":
+            presets = await api("GET", "/text-presets")
+            keys = ("id", "name", "category", "builtin", "default", *(("sample", "style") if include_styles else ()))
+            return {"presets": [{key: preset[key] for key in keys} for preset in presets]}
         presets = await api("GET", "/presets")
         if not include_styles:
             presets = [{key: p[key] for key in ("id", "name", "builtin")} for p in presets]
         return {"presets": presets}
 
     @tool()
-    async def save_preset(preset: PresetBody, preset_id: str | None = None) -> dict:
-        """Save a new Style Preset, or replace the owner's Preset `preset_id` (built-in ones can't be)."""
-        body = preset.model_dump(mode="json")
-        if preset_id is None:
-            return await api("POST", "/presets", json=body)
-        return await api("PUT", f"/presets/{preset_id}", json=body)
+    async def save_preset(
+        preset: PresetBody | TextPresetGiven | None = None,
+        preset_id: str | None = None,
+        kind: Literal["style", "text"] = "style",
+        use_for_new_titles: bool = False,
+    ) -> dict:
+        """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
+        Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
+        preset_id alone)."""
+        if kind == "style":
+            body = _validated(PresetBody, preset)
+            if preset_id is None:
+                return await api("POST", "/presets", json=body)
+            return await api("PUT", f"/presets/{preset_id}", json=body)
+        saved = None
+        if preset is not None:
+            if preset_id is None:
+                saved = await api("POST", "/text-presets", json=_validated(TextPresetBody, preset))
+            else:
+                saved = await api("PATCH", f"/text-presets/{preset_id}", json=_validated(TextPresetChange, preset))
+        elif not (preset_id and use_for_new_titles):
+            raise ToolError("Give the preset to save, or a preset_id with use_for_new_titles")
+        if use_for_new_titles:
+            return await api("PUT", "/text-presets/default", json={"id": saved["id"] if saved else preset_id})
+        return saved
 
     @tool(destructive=True)
-    async def delete_preset(preset_id: str) -> dict:
-        """Delete one of the owner's Style Presets; Candidates using it render in Default."""
-        await api("DELETE", f"/presets/{preset_id}")
+    async def delete_preset(preset_id: str, kind: Literal["style", "text"] = "style") -> dict:
+        """Delete one of the owner's Presets. Candidates using a Style Preset render in Default; Text
+        Layers keep their look."""
+        await api("DELETE", f"/{'text-presets' if kind == 'text' else 'presets'}/{preset_id}")
         return {"deleted": preset_id}
 
     @tool(read_only=True)
@@ -594,6 +641,15 @@ def build_mcp(app: FastAPI) -> MCPServer:
     return mcp
 
 
+class TextPresetGiven(BaseModel):
+    """A Text Preset: a name and a Text Style, as a Text Layer's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    style: dict[str, Any] | None = None
+
+
 class StaleCandidate(ToolError):
     """An edit made from a Revision the Candidate has moved past; `candidate` is it as it is now."""
 
@@ -639,6 +695,14 @@ def _face(face: dict) -> dict:
     """A Face as the tools list it: without its measures and URL, and without licence fields its font leaves empty."""
     keys = ("id", "label", "typographic_family", "weight", "italic", "bundled", "restricted", "copyright", "licence", "licence_url")
     return {key: face[key] for key in keys if face[key] != ""}
+
+
+def _validated(kind: type[BaseModel], given: BaseModel | None) -> dict:
+    """The fields given of a body, as `kind` takes them, or a ToolError saying what it refuses."""
+    try:
+        return kind.model_validate(given.model_dump(exclude_unset=True) if given else {}).model_dump(mode="json", exclude_unset=True)
+    except ValidationError as exc:
+        raise ToolError("; ".join(f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in exc.errors())) from None
 
 
 def _dump(kind: type, value: Any) -> Any:

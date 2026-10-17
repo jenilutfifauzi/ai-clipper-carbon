@@ -22,7 +22,7 @@ from test_jobs_api import URL
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 67_500
+TOOLS_BUDGET_BYTES = 68_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -268,6 +268,76 @@ async def test_presets_are_saved_replaced_and_deleted_but_not_builtin_ones(mcp):
     assert "built in" in await fails(mcp, "delete_preset", preset_id=builtin["id"])
     await call(mcp, "delete_preset", preset_id=saved["id"])
     assert saved["id"] not in {preset["id"] for preset in (await call(mcp, "list_presets"))["presets"]}
+
+
+async def text_presets(mcp: Client, **options) -> dict[str, dict]:
+    return {preset["id"]: preset for preset in (await call(mcp, "list_presets", kind="text", **options))["presets"]}
+
+
+def used_for_new_titles(presets: dict[str, dict]) -> str:
+    [default] = [preset_id for preset_id, preset in presets.items() if preset["default"]]
+    return default
+
+
+@pytest.mark.anyio
+async def test_text_presets_are_saved_renamed_and_deleted_and_one_is_used_for_new_titles(mcp):
+    presets = await text_presets(mcp)
+    assert {"text", "title", "label", "subtitle"} <= presets.keys()
+    assert presets["title"]["builtin"] and "style" not in presets["title"]
+    assert used_for_new_titles(presets) == "text"
+    assert (await text_presets(mcp, include_styles=True))["title"]["style"]["font"] == "anton"
+
+    style = {"font": "anton", "size": 120, "colour": "#ff0000", "plate": {"shape": "block"}}
+    saved = await call(mcp, "save_preset", kind="text", preset={"name": "Brand", "style": style}, use_for_new_titles=True)
+    assert (saved["name"], saved["builtin"], saved["default"], saved["style"]["colour"]) == ("Brand", False, True, "#FF0000")
+    assert used_for_new_titles(await text_presets(mcp)) == saved["id"]
+    renamed = await call(mcp, "save_preset", kind="text", preset_id=saved["id"], preset={"name": "Brand 2"})
+    assert (renamed["name"], renamed["style"]) == ("Brand 2", saved["style"])
+    restyled = await call(mcp, "save_preset", kind="text", preset_id=saved["id"], preset={"name": "Brand 2", "style": {"size": 90}})
+    assert (restyled["style"]["size"], restyled["style"]["font"]) == (90, "montserrat-extrabold")
+
+    assert "built in" in await fails(mcp, "save_preset", kind="text", preset_id="title", preset={"name": "x"})
+    assert "built in" in await fails(mcp, "delete_preset", kind="text", preset_id="title")
+    assert "style" in await fails(mcp, "save_preset", kind="text", preset={"name": "No style"})
+    assert "style" in await fails(mcp, "save_preset", preset={"name": "Mixed up", "style": style})
+    assert "No Text Preset" in await fails(mcp, "save_preset", kind="text", preset_id="nope", use_for_new_titles=True)
+
+    # A built-in one is used for new titles by its id alone.
+    assert (await call(mcp, "save_preset", kind="text", preset_id="label", use_for_new_titles=True))["default"]
+    await call(mcp, "save_preset", kind="text", preset_id=saved["id"], use_for_new_titles=True)
+    assert await call(mcp, "delete_preset", kind="text", preset_id=saved["id"]) == {"deleted": saved["id"]}
+    presets = await text_presets(mcp)
+    assert saved["id"] not in presets and used_for_new_titles(presets) == "text"
+
+
+@pytest.mark.anyio
+async def test_a_text_layer_given_without_a_style_takes_the_one_used_for_new_titles_and_keeps_it(mcp):
+    style = {"font": "anton", "size": 120, "colour": "#FF0000", "plate": {"shape": "block", "colour": "#FFFFFF", "opacity": 1}}
+    brand = await call(mcp, "save_preset", kind="text", preset={"name": "Brand", "style": style}, use_for_new_titles=True)
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    layers = (await call(mcp, "merge_candidate_items", **ids, text_layers=[
+        {"id": "plain", "text": "Judul", "start": 0, "secs": 1},
+        {"id": "bigger", "text": "Judul", "start": 0, "secs": 1, "style": {"size": 150, "plate": {"opacity": 0.5}}},
+    ]))["text_layers"]
+    assert layers[0]["style"] == brand["style"]
+    assert layers[1]["style"] == brand["style"] | {"size": 150, "plate": brand["style"]["plate"] | {"opacity": 0.5}}
+    # A change to one it has keeps its own style.
+    [changed, _] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "plain", "style": {"colour": "#00FF00"}}]))["text_layers"]
+    assert changed["style"] == brand["style"] | {"colour": "#00FF00"}
+    [replaced] = (await call(mcp, "edit_candidate", **ids, changes={"text_layers": [{"id": "new", "text": "Baru", "start": 0, "secs": 1}]}))["text_layers"]
+    assert replaced["style"] == brand["style"]
+
+    # Changing or deleting the Preset leaves the layer as it is.
+    await call(mcp, "save_preset", kind="text", preset_id=brand["id"], preset={"name": "Brand", "style": {"size": 60}})
+    await call(mcp, "delete_preset", kind="text", preset_id=brand["id"])
+    assert (await call(mcp, "get_candidate", **ids))["text_layers"] == [replaced]
+    # Then built-in Text is used for new titles.
+    text = (await text_presets(mcp, include_styles=True))["text"]
+    [plain] = (await call(mcp, "edit_candidate", **ids, changes={"text_layers": [{"id": "t", "text": "x", "start": 0, "secs": 1}]}))["text_layers"]
+    assert plain["style"] == text["style"]
 
 
 @pytest.mark.anyio

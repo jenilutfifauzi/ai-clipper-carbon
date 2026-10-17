@@ -1,0 +1,11 @@
+{
+  "id": "subtitle",
+  "name": "Subtitle",
+  "category": "Subtitles",
+  "order": 300,
+  "sample": "Subtitle",
+  "style": {
+    "size": 56,
+    "plate": {"shape": "block", "opacity": 0.6, "radius": 14, "padding_x": 19.6, "padding_y": 12.32}
+  }
+}

@@ -23,6 +23,7 @@ import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Panel } from "../../../components/Panel";
 import { useFonts } from "../../../fonts";
+import { useTextPresets } from "../../../textPresets";
 import { cx } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
@@ -107,7 +108,8 @@ import {
   unlockedPick,
   type Pick,
 } from "./pick";
-import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
+import { newTextLayer } from "./TextLayers";
+import { lookOf } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
@@ -178,6 +180,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const fonts = useFonts();
+  const textPresets = useTextPresets();
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
@@ -927,9 +930,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             },
             onDropTransition: setTransition,
             onDropMedia: dropMedia,
-            onDropText: (name, time) => {
-              const look = TEXT_PRESETS.find((preset) => preset.name === name);
-              if (look) addText(look.layer, time);
+            onDropText: (id, time) => {
+              const preset = textPresets?.find((p) => p.id === id);
+              if (preset) addText(lookOf(preset), time);
             },
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
           }}
