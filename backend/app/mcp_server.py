@@ -131,11 +131,13 @@ Edits:
   halo), plate (what is behind its lines: shape "none", "block" behind them all or "strips" behind
   each, colour, opacity, radius, padding_x and padding_y in output pixels), line_height (baselines
   apart, in sizes), tracking (output pixels after each character but a line's last, may be
-  negative) and align (center, left, right). Its lines break at newlines; one wider than the frame
-  is set smaller. It is never stretched or flipped; its style's wrap_width and fixed_height stay 0,
-  as they aren't drawn yet. merge_candidate_items changes only the style, shadow, plate and
-  transform fields given. The dry run lists each Text Layer's lines, its box once scaled and turned
-  (bounds) and its picture: the URL, on this app, of the PNG the Clip burns.
+  negative) and align (center, left, right). Its text is never set smaller: its lines break at
+  newlines and between words at its wrap_width (px, plate padding included; 0: the frame less 48 px
+  either side), a word too long between letters, and its box is at least fixed_height px tall (0:
+  its words'), the words centred down it. It is never stretched or flipped. merge_candidate_items
+  changes only the style, shadow, plate and transform fields given. The dry run lists each Text
+  Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
+  app, of the PNG the Clip burns.
 - A Text Preset is a named Text Style a new Text Layer copies, never linked to it: list_presets,
   save_preset and delete_preset with kind "text"; built-in ones can't change. One is used for new
   titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some

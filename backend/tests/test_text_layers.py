@@ -52,6 +52,14 @@ def drawn(event: TextEvent) -> dict:
     return {key: value for key, value in _EVENT.dump_python(event, mode="json").items() if key != "layer"}
 
 
+def as_before(event: dict, before: dict, keys: tuple[str, ...]) -> None:
+    """`event` (as JSON) plans `keys` as `before` did: the same, its anchors to within a hundredth of a
+    pixel (a layer once set smaller has its plate's padding saved to the hundredth at its size)."""
+    assert {key: event[key] for key in keys if key != "anchors"} == {key: before[key] for key in keys if key != "anchors"}, event
+    for anchor, old in zip(event["anchors"], before["anchors"], strict=True):
+        assert anchor == pytest.approx(old, abs=0.01), event
+
+
 def old_look(at: float) -> np.ndarray:
     """What the Text Layers' ASS lines from before Text Styles drew over GREY at `at` seconds into
     the Clip: 1080x1920 RGB."""
@@ -127,18 +135,70 @@ def test_lines_are_split_at_newlines_aligned_and_spaced_by_the_line_height():
     assert right.anchors[0][0] + metrics.width("Satu", 60) / 2 == pytest.approx(right.area.x + right.area.width, abs=0.5)
 
 
-def test_a_block_plate_pads_the_text_by_its_pixels_and_a_text_too_wide_is_set_smaller():
+def test_a_block_plate_pads_the_text_by_its_pixels():
     plain = text_event(layer(style={"size": 80}), 10)
     block = {"shape": "block", "padding_x": 30, "padding_y": 10, "radius": 12}
     boxed = text_event(layer(style={"size": 80, "plate": block}), 10)
     assert boxed.box == boxed.area and boxed.radius == 12
     assert boxed.area.width - plain.area.width in (60, 61) and boxed.area.height - plain.area.height in (20, 21)
-    wide = text_event(layer(style={"size": 200, "plate": {"shape": "block"}}, text="Ini adalah kalimat yang sangat panjang sekali"), 10)
-    assert wide.size < 200
-    assert wide.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN + 1
 
 
-def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_is_set_smaller():
+def test_a_sentence_wider_than_the_frame_breaks_between_words_at_its_size_inside_the_frame():
+    text = "Ini adalah kalimat yang sangat panjang sekali"
+    wide = text_event(layer(style={"size": 200, "plate": {"shape": "block", "padding_x": 30}}, text=text), 10)
+    metrics = font_metrics(wide.layer.style.font)
+    assert wide.size == 200 and len(wide.lines) > 1
+    assert " ".join(wide.lines) == text
+    # Each line as long as fits the frame less TEXT_MARGIN and the padding either side: the next
+    # word would not.
+    room = OUTPUT_WIDTH - 2 * TEXT_MARGIN - 2 * 30
+    for line, after in zip(wide.lines, wide.lines[1:]):
+        assert metrics.width(line, 200) <= room < metrics.width(f"{line} {after.split()[0]}", 200)
+    widest = max(metrics.width(line, 200) for line in wide.lines)
+    assert wide.area.width == pytest.approx(widest + 60, abs=1) and wide.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN
+    assert [y for _, y in wide.anchors] == pytest.approx([wide.anchors[0][1] + i * 1.1 * 200 for i in range(len(wide.lines))])
+
+
+def test_a_wrap_width_breaks_lines_at_it_keeps_newlines_and_breaks_an_over_long_word_between_characters():
+    style = {"size": 60, "wrap_width": 400}
+    wrapped = text_event(layer(style=style, text="Satu dua tiga empat lima enam\nTujuh"), 10)
+    metrics = font_metrics(wrapped.layer.style.font)
+    assert wrapped.size == 60 and len(wrapped.lines) > 2 and wrapped.lines[-1] == "Tujuh"
+    assert " ".join(wrapped.lines[:-1]) == "Satu dua tiga empat lima enam"
+    assert all(metrics.width(line, 60) <= 400 for line in wrapped.lines)
+    # The box is the wrap width wide, its lines aligned inside it.
+    assert wrapped.area.width == 400
+    left = text_event(layer(style=style | {"align": "left"}, text="Satu"), 10)
+    assert left.area.width == 400 and left.anchors[0][0] - metrics.width("Satu", 60) / 2 == pytest.approx(left.area.x)
+    # With a Block plate, it holds the plate's padding too: the lines break that much narrower.
+    plated = text_event(layer(style=style | {"plate": {"shape": "block", "padding_x": 50}}, text="Satu dua tiga empat lima enam"), 10)
+    assert plated.area.width == 400 and all(metrics.width(line, 60) <= 300 for line in plated.lines)
+    # A word wider than the wrap width breaks between its characters, each line as full as fits.
+    word = "Supercalifragilisticexpialidocious"
+    long = text_event(layer(style=style, text=f"A {word}"), 10)
+    assert long.lines[0] == "A" and "".join(long.lines[1:]) == word and len(long.lines) > 2
+    for line, after in zip(long.lines[1:], long.lines[2:]):
+        assert metrics.width(line, 60) <= 400 < metrics.width(line + after[0], 60)
+    # A wrap width wider than the words is the box's width.
+    assert text_event(layer(style={"size": 60, "wrap_width": 900}, text="Satu"), 10).area.width == 900
+
+
+def test_a_fixed_height_taller_than_the_words_centres_them_and_a_shorter_one_grows_to_hold_them():
+    words = text_event(layer(style={"size": 60, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10)
+    tall = text_event(layer(style={"size": 60, "fixed_height": 400, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10)
+    assert tall.area.height == 400 and tall.box == tall.area
+    assert tall.area.y + tall.area.height / 2 == pytest.approx(960, abs=1)
+    # The words, as tall as they are without it, centred down it.
+    letters_top = words.anchors[0][1] - words.area.y
+    letters_bottom = words.area.y + words.area.height - words.anchors[-1][1]
+    middle = (tall.anchors[0][1] - letters_top + 10 + tall.anchors[-1][1] + letters_bottom - 10) / 2
+    assert middle == pytest.approx(tall.area.y + 200, abs=0.5)
+    assert tall.anchors[1][1] - tall.anchors[0][1] == pytest.approx(66)
+    short = text_event(layer(style={"size": 60, "fixed_height": 30, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10)
+    assert short.area.height == words.area.height and short.anchors == words.anchors
+
+
+def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_wraps():
     text = "Satu\nDua yang lebih panjang"
     plain = text_event(layer(style={"size": 60}, text=text), 10)
     spaced = text_event(layer(style={"size": 60, "tracking": 8}, text=text), 10)
@@ -150,14 +210,14 @@ def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_is_se
     left = text_event(layer(style={"size": 60, "tracking": 8, "align": "left"}, text=text), 10)
     metrics = font_metrics(left.layer.style.font)
     assert left.anchors[0][0] - (metrics.width("Satu", 60) + 3 * 8) / 2 == pytest.approx(left.area.x, abs=0.5)
-    # It is set smaller only once its tracked width is too wide for the frame, and then just fits.
+    # It wraps only once its tracked width is too wide for the frame, never set smaller.
     words = "Kalimat yang cukup panjang"
     fits = text_event(layer(style={"size": 70}, text=words), 10)
-    assert fits.size == 70
-    squeezed = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10)
-    assert squeezed.size < 70
-    assert OUTPUT_WIDTH - 2 * TEXT_MARGIN - 4 <= squeezed.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN + 1
-    assert squeezed.layout.style.tracking == 20
+    assert fits.size == 70 and fits.lines == [words]
+    wrapped = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10)
+    assert wrapped.size == 70 and len(wrapped.lines) == 2 and " ".join(wrapped.lines) == words
+    assert all(metrics.width(line, 70, 20) <= OUTPUT_WIDTH - 2 * TEXT_MARGIN for line in wrapped.lines)
+    assert wrapped.layout.style.tracking == 20
 
 
 def test_line_height_sets_the_pitch_of_the_anchors_and_the_box_grows_with_it():
@@ -271,6 +331,19 @@ def test_an_old_text_layer_moves_its_centre_into_its_transform_and_its_look_into
     assert migrated_clip({"candidate_id": "c1", "output": {"text_layers": [old]}}, {}) == {"candidate_id": "c1", "output": {"text_layers": [new]}}
 
 
+def test_an_old_text_layer_set_smaller_keeps_that_size_and_a_wrap_width_holding_its_widest_line():
+    [wide, narrow] = [migrated_text_layer(old) for old in BEFORE["layers"] if old["id"] in ("wide", "narrow")]
+    [wide_before, narrow_before] = [event for old, event in zip(BEFORE["layers"], BEFORE["events"]) if old["id"] in ("wide", "narrow")]
+    assert (wide["style"]["size"], narrow["style"]["size"]) == (wide_before["size"], narrow_before["size"]) == (59.9, 81.3)
+    # Padded by its box, which is sized at that size.
+    assert wide["style"]["plate"]["padding_x"] == round(0.35 * 59.9, 2)
+    assert wide["style"]["wrap_width"] == pytest.approx(wide_before["area"]["width"], abs=1)
+    assert narrow["style"]["wrap_width"] == pytest.approx(narrow_before["area"]["width"], abs=1)
+    # One that fitted keeps its size and no wrap width.
+    [title] = [migrated_text_layer(old) for old in BEFORE["layers"] if old["id"] == "title"]
+    assert title["style"]["size"] == 130 and "wrap_width" not in title["style"]
+
+
 def test_an_old_text_layer_the_planner_kept_inside_the_frame_is_centred_where_it_was_drawn():
     old = next(layer for layer in BEFORE["layers"] if layer["id"] == "corner")
     area = next(event for layer, event in zip(BEFORE["layers"], BEFORE["events"]) if layer["id"] == "corner")["area"]
@@ -287,7 +360,7 @@ def test_migrated_text_layers_plan_and_look_as_they_did():
     layers = _LAYERS.validate_python([migrated_text_layer(old) for old in BEFORE["layers"]])
     planned = plan_render(0, 7, SOURCE, text_layers=layers)
     for event, before in zip(planned.texts, BEFORE["events"], strict=True):
-        assert {key: drawn(event)[key] for key in before} == before, event.layer.id
+        as_before(drawn(event), before, tuple(before))
     # Their pictures, laid where the plan puts them, show what their ASS events drew, at two moments
     # that show all 9 between them (each between its animations).
     for at in (1.5, 3.2):
@@ -299,13 +372,12 @@ def test_migrated_text_layers_plan_and_look_as_they_did():
         assert differs.max() <= 6 and differs[inked].mean() < 1.0, at
 
 
-def test_a_text_layer_is_never_stretched_nor_flipped_and_draws_only_what_its_picture_can_yet():
+def test_a_text_layer_is_never_stretched_nor_flipped():
     for transform in ({"stretch_x": 2}, {"stretch_y": 0.5}, {"flip_h": True}, {"flip_v": True}):
         with pytest.raises(ValidationError, match="stretched|flipped"):
             layer(transform)
-    for style in ({"wrap_width": 600}, {"fixed_height": 300}):
-        with pytest.raises(ValidationError, match="can't have"):
-            layer(style=style)
+    # Every field of its style is drawn.
+    assert layer(style={"wrap_width": 600, "fixed_height": 300, "tracking": 4, "plate": {"shape": "strips"}}).style.wrap_width == 600
     # Scaled, turned and faded, as an Overlay is.
     assert layer({"scale": 2, "rotation": 15, "opacity": 0.5}).transform.rotation == 15
 
@@ -408,9 +480,7 @@ def test_a_stored_candidate_and_its_revisions_read_in_the_new_shape_and_plan_as_
     assert all("style" in layer and "outline" not in layer for layer in read["text_layers"])
     planned = preview(client, job, read)["plan"]["texts"]
     for event, before in zip(planned, BEFORE["events"], strict=True):
-        assert {key: event[key] for key in before if key not in ("start", "end")} == {
-            key: value for key, value in before.items() if key not in ("start", "end")
-        }
+        as_before(event, before, tuple(key for key in before if key not in ("start", "end")))
 
     restored = client.post(f"{candidate_url(job, candidate)}/revisions/1/restore", json={"revision": 2})
     assert restored.status_code == 200, restored.text

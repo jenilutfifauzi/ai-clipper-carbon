@@ -421,7 +421,9 @@ export interface DropShadow {
 // How a Text Layer's words look (backend/app/candidates.py): its Face at `size` (libass's, as the
 // captions') in `colour`, stroked `stroke_width` px (none at 0), with its shadow, over its plate (a
 // Block, or Strips: one per line); its baselines `line_height` sizes apart, `tracking` px after
-// each character but a line's last. `wrap_width` and `fixed_height` stay 0 until they are drawn.
+// each character but a line's last. Its box's least size, plate and padding and all: its words
+// break into lines at `wrap_width` (0: the frame less a margin) and are centred down `fixed_height`
+// (0: their own height); never set smaller.
 export interface TextStyle {
   font: string;
   size: number;
