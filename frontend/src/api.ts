@@ -408,7 +408,8 @@ export interface TextStyle {
 
 // A free text overlay of the Advanced Edit (backend/app/candidates.py): its text (lines split at
 // newlines) from `start` for `secs` in Timeline time, centred by its Transform (never stretched nor
-// flipped; for now unscaled, unturned and opaque) in its Text Style.
+// flipped) in its Text Style. Its `keys` move its centre, scale, rotation and opacity as an
+// Overlay's do (ADR 0008), its animations stacked on them.
 export interface TextLayer {
   id: string;
   text: string;
@@ -419,6 +420,7 @@ export interface TextLayer {
   animation_in: Animation;
   animation_out: Animation;
   animation_ms: number;
+  keys: Keys;
 }
 
 // A Text Layer as drawn: its lines at font `size`, each placed by its anchor (the middle of its text

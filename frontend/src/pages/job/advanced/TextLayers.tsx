@@ -24,8 +24,8 @@ const TEXT_SECS = 3;
 // The backend's limit (TEXT_LAYER_MAX_CHARS in app/candidates.py).
 const TEXT_MAX_CHARS = 300;
 
-// What a new Text Layer is made of: all of it but its id and its time.
-export type TextLook = Omit<TextLayer, "id" | "start" | "secs">;
+// What a new Text Layer is made of: all of it but its id, its time and its Keyframes (it has none).
+export type TextLook = Omit<TextLayer, "id" | "start" | "secs" | "keys">;
 
 const BASE: TextLook = {
   text: "Text",
@@ -69,7 +69,7 @@ export const TEXT_PRESETS: { name: string; layer: TextLook }[] = [
 /** A Text Layer in `look` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
 export function newTextLayer(look: TextLook, at: number, duration: number): TextLayer {
   const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
-  return { ...look, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)) };
+  return { ...look, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)), keys: {} };
 }
 
 /**
@@ -208,7 +208,7 @@ export function TextLayerFields({
         )}
         <Segmented legend="Lines" options={ALIGNS} value={style.align} onChange={(align: TextAlign) => setStyle("align", align)} />
       </Group>
-      <TextTransformFields transform={layer.transform} onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)} />
+      <TextTransformFields layer={layer} onChange={onChange} />
       <Group title="Motion">
         <div className="grid grid-cols-2 gap-3">
           <Select label="Comes on" value={layer.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />

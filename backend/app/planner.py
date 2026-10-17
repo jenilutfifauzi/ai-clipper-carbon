@@ -197,10 +197,13 @@ TEXT_MARGIN = 48
 TEXT_INK_ROOM = 0.5
 # A Text Layer's picture is at most this many pixels on its longest side, whatever its scale.
 MAX_TEXT_PICTURE = 4096
-# A Text Layer's picture is made at the first of these scales its Transform's scale doesn't pass:
-# scaling it within one step is drawing the same picture smaller or larger, and only a scale past
-# it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
+# A Text Layer's picture is made at the first of these scales the largest it is drawn at doesn't pass
+# (`reached_scale`): scaling it within one step is drawing the same picture smaller or larger, and
+# only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
 TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
+# Pop grows a Text Layer to its full size, never past it (app/renderer.py's POP_FROM): the most it
+# multiplies the layer's scale by.
+POP_PEAK = 1.0
 
 
 # The planner's input, found by app/analysis.py.
@@ -614,8 +617,8 @@ class TextLayout:
     """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
     scale 1: its `lines` in `style` set at font `size`, each placed by its anchor (the middle of its
     text and its baseline) and drawn as its `runs`, over its Block plate `box` with corners `radius`
-    pixels round. The picture is rasterised `scale` times as large (app/text_pictures.py; its
-    Transform's scale, up to the next of TEXT_PICTURE_SCALES), and named by a hash of all of it
+    pixels round. The picture is rasterised `scale` times as large (app/text_pictures.py; the
+    largest scale the layer is drawn at, up to the next of TEXT_PICTURE_SCALES), and named by a hash of all of it
     (`name`), so that the same look is one file wherever the layer is."""
 
     style: TextStyle
@@ -1337,16 +1340,20 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     )
 
 
-def with_motion(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:
+def with_motion(
+    picture: Picture, transform: Transform, keys: Keys, start: float, unscaled: tuple[float, float] | None = None
+) -> Picture:
     """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
-    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1. Unkeyed (a volume
-    isn't the picture's), as it is."""
+    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1 (`unscaled` when
+    given, else its crop's fitted size stretched). Unkeyed (a volume isn't the picture's), as it is."""
     keys = {prop: given for prop, given in keys.items() if prop in PICTURE_KEYS}
     if not keys:
         return picture
     motion = {prop: [replace(key, at=round(start + key.at, 4)) for key in given] for prop, given in keys.items()}
-    across, down = fitted(picture.crop.width, picture.crop.height, FRAME)
-    return replace(picture, motion=motion, unscaled=(across * transform.stretch_x, down * transform.stretch_y))
+    if unscaled is None:
+        across, down = fitted(picture.crop.width, picture.crop.height, FRAME)
+        unscaled = (across * transform.stretch_x, down * transform.stretch_y)
+    return replace(picture, motion=motion, unscaled=unscaled)
 
 
 def picture_at(picture: Picture, time: float) -> Picture:
@@ -1494,7 +1501,8 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     radius = 0 if block is None else min(round(block.radius / style.size * size), height // 2)
     placed = [placed_runs(line, x - width / 2, size) for line, width, (x, _) in zip(runs, widths, anchors)]
     layout, origin = _text_layout(layer, lines, placed, size, area, anchors, radius if block else None)
-    picture = _text_picture(layout, origin, layer.transform)
+    # Keyed, it moves as an Overlay does, its whole picture scaled from its size at scale 1.
+    picture = with_motion(_text_picture(layout, origin, layer.transform), layer.transform, layer.keys, start, (layout.width, layout.height))
     return TextEvent(
         layer, lines, start, end, area, size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
         None if block is None else area, radius, layout.look,
@@ -1517,10 +1525,17 @@ def _text_layout(
     width, height = width + width % 2, height + height % 2
     local = [(round(x - left, 4), round(y - top, 4)) for x, y in anchors]
     local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
-    stepped = next((step for step in TEXT_PICTURE_SCALES if layer.transform.scale <= step), TEXT_PICTURE_SCALES[-1])
+    stepped = next((step for step in TEXT_PICTURE_SCALES if reached_scale(layer) <= step), TEXT_PICTURE_SCALES[-1])
     scale = min(stepped, MAX_TEXT_PICTURE / max(width, height))
     box = None if radius is None else Box(room, room, area.width, area.height)
     return TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), box, radius or 0), (left, top)
+
+
+def reached_scale(layer: TextLayer) -> float:
+    """The largest scale a Text Layer is drawn at: its Transform's, or its largest scale Keyframe's
+    while its scale is keyed (the Keyframes replace it), times Pop's peak."""
+    keyed = layer.keys.get(KeyProperty.SCALE)
+    return (max(key.value for key in keyed) if keyed else layer.transform.scale) * POP_PEAK
 
 
 def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:
@@ -1536,8 +1551,9 @@ def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transf
     )
 
 
-def _turned_box(area: Box, centre: tuple[float, float], transform: Transform) -> Box:
-    """What holds `area` once scaled and turned by `transform` about `centre`."""
+def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to: tuple[float, float] | None = None) -> Box:
+    """What holds `area` once scaled and turned by `transform` about `centre`, and moved for `centre`
+    to be at `to` when that is given."""
     angle = math.radians(transform.rotation)
     cos, sin = math.cos(angle), math.sin(angle)
     corners = [
@@ -1545,10 +1561,22 @@ def _turned_box(area: Box, centre: tuple[float, float], transform: Transform) ->
         for x in (area.x, area.x + area.width)
         for y in (area.y, area.y + area.height)
     ]
-    xs = [centre[0] + u * cos - v * sin for u, v in corners]
-    ys = [centre[1] + u * sin + v * cos for u, v in corners]
+    x, y = to or centre
+    xs = [x + u * cos - v * sin for u, v in corners]
+    ys = [y + u * sin + v * cos for u, v in corners]
     left, top = math.floor(min(xs) + 1e-6), math.floor(min(ys) + 1e-6)
     return Box(left, top, math.ceil(max(xs) - 1e-6) - left, math.ceil(max(ys) - 1e-6) - top)
+
+
+def text_bounds_at(event: TextEvent, time: float) -> Box:
+    """What holds a Text Layer's area at `time` seconds into the Clip, as its Keyframes have it then
+    (`picture_at`): scaled and turned about its picture's sampled centre. Unkeyed, its `bounds`."""
+    picture = event.picture
+    if not picture.motion or picture.unscaled is None:
+        return event.bounds
+    drawn = picture_at(picture, time)
+    scale = drawn.width / picture.unscaled[0] if KeyProperty.SCALE in picture.motion else event.layer.transform.scale
+    return _turned_box(event.area, picture.centre, replace(event.layer.transform, scale=scale, rotation=drawn.rotation), drawn.centre)
 
 
 def text_runs(line: str, font_id: str) -> list[TextRun]:

@@ -46,7 +46,7 @@ from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
-from app.planner import Box, Picture, key_times, picture_at
+from app.planner import Box, Picture, TextEvent, key_times, picture_at, text_bounds_at
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
@@ -158,7 +158,7 @@ Edits:
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
-- Keyframes move an Overlay, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
+- Keyframes move an Overlay, a Text Layer, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
   of the episode, another Layout and the Candidate's own framing have none. `at` is seconds from the
@@ -172,7 +172,8 @@ Edits:
   lists of the properties given ([] clears one) and keeps the others. Moving an item moves its
   Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
   leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
-  the picture's bounds at each (an Overlay's or a Scene's); a keyed volume's under `sounds`.
+  the picture's bounds at each (an Overlay's, a Text Layer's box or a Scene's); a keyed volume's
+  under `sounds`. A Text Layer's animations (fade, pop, slide) play on top of its keyed values.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -193,6 +194,7 @@ Edits:
 
 _JOB = TypeAdapter(Job)
 _PICTURE = TypeAdapter(Picture)
+_TEXT = TypeAdapter(TextEvent)
 # httpx logs each request at INFO: here, every tool's call to the API.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -713,6 +715,16 @@ def _motion_view(picture: dict) -> dict:
     return {"keys": keys, "bounds_at_keys": bounds}
 
 
+def _text_motion_view(text: dict) -> dict:
+    """A keyed Text Layer's Keyframes in Timeline time (`_keys_view`), and its box at each time any
+    property has one (`text_bounds_at`); nothing for an unkeyed one."""
+    if not text["picture"]["motion"]:
+        return {}
+    event = _TEXT.validate_python(text)
+    bounds = [{"at": round(at, 3), "bounds": _dump(Box, text_bounds_at(event, at))} for at in key_times(event.picture)]
+    return {"keys": _keys_view(text["picture"]["motion"]), "bounds_at_keys": bounds}
+
+
 def _plan_view(
     preview: dict, copied: Callable[[dict], bool] = lambda segment: False, picture_url: Callable[[str], str] = lambda name: name
 ) -> dict:
@@ -753,7 +765,10 @@ def _plan_view(
             "kicker": hook["kicker"] and hook["kicker"]["text"],
         },
         "text_layers": [
-            {"id": text["layer"]["id"], **_times(text, "start", "end", "lines"), "bounds": text["bounds"], "picture": picture_url(text["image"])}
+            {
+                "id": text["layer"]["id"], **_times(text, "start", "end", "lines"), "bounds": text["bounds"], "picture": picture_url(text["image"]),
+                **_text_motion_view(text),
+            }
             for text in plan["texts"]
         ],
         "overlays": [

@@ -82,9 +82,10 @@ Without music, and at its own volume, the Clip's sound goes as it did.
 Text Layers are pictures (docs/adr/0010): each one's, made by app/text_pictures.py before the render,
 is one more input, drawn as an Overlay's image is (`_picture`) while it shows, over the captions and
 under the hook, in their order. With any, the script is cut in two: the Watermark's text and the
-captions are burned before them, and the hook after. One that comes on or goes off as the hook does
-(Fade, Pop, Slide) is drawn by a frame process, as a keyed Overlay is, its picture faded, scaled and
-moved by the hook's curves (`text_at`). Without Text Layers, the command is as it was.
+captions are burned before them, and the hook after. One that is keyed (docs/adr/0008), or comes on
+or goes off as the hook does (Fade, Pop, Slide), is drawn by a frame process, as a keyed Overlay is:
+its picture sampled from its Keyframes, then faded, scaled and moved by the hook's curves on top
+(`text_at`). Without Text Layers, the command is as it was.
 """
 
 import json
@@ -122,6 +123,7 @@ from app.planner import (
     WatermarkEvent,
     font_metrics,
     on_frame,
+    picture_at,
 )
 from app.candidates import Keyframe, Shadow, TextLayer
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
@@ -767,10 +769,13 @@ def _text_layer(event: TextEvent, below: str, out: str, index: int, number: int,
 
 
 def text_at(event: TextEvent, time: float) -> Picture:
-    """A Text Layer's picture as drawn at `time` seconds into the Clip: faded, scaled about its centre
-    and moved down as its animations have it then (`text_look`)."""
+    """A Text Layer's picture as drawn at `time` seconds into the Clip: as its Keyframes have it then
+    (`picture_at`), and on top of that faded, scaled about its centre and moved down as its
+    animations have it (`text_look`): its keyed opacity and scale multiplied, its drop added."""
     opacity, scale, below = text_look(event, time)
-    picture = event.picture
+    picture = picture_at(event.picture, time)
+    if (opacity, scale, below) == (1.0, 1.0, 0.0):
+        return picture
     x, y = picture.centre
     return replace(
         picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below), opacity=picture.opacity * opacity
@@ -839,7 +844,7 @@ def _rate(plan: RenderPlan) -> str:
 
 
 # A keyed picture of the plan: ("overlay", its place among the Overlays), ("scene", its Scene's
-# place among the Scenes) or ("text", an animated Text Layer's place among them); and each one's
+# place among the Scenes) or ("text", a keyed or animated Text Layer's place among them); and each one's
 # frame process.
 Keyed = tuple[str, int]
 Feeds = dict[Keyed, FrameFeed]
@@ -850,7 +855,7 @@ def _keyed_items(
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
     an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's), or the `source`
-    for a Manual Scene; and an animated Text Layer's picture's pixels, from `pictures`."""
+    for a Manual Scene; and a keyed or animated Text Layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {
         ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
@@ -862,7 +867,7 @@ def _keyed_items(
         elif media in files:
             items[("scene", i)] = files[media]
     for i, event in enumerate(plan.texts):
-        if _animated_text(event) and pictures and event.image in pictures:
+        if (_animated_text(event) or event.picture.motion) and pictures and event.image in pictures:
             items[("text", i)] = read_image(pictures[event.image])
     return items
 

@@ -171,7 +171,8 @@ class TextStyle:
 class TextLayer:
     """A free text overlay of the Advanced Edit: `text` (lines split at newlines) from `start` for
     `secs` in Timeline time, centred by its `transform` (never stretched nor flipped) in its `style`,
-    coming on and going off as the hook does."""
+    coming on and going off as the hook does. Its `keys` move its centre, scale, rotation and opacity
+    over its length as an Overlay's do (docs/adr/0008); its animations are stacked on them."""
 
     # In Timeline time, so that trimming the Clip leaves it where it was in it. It is drawn as a
     # picture (docs/adr/0010), scaled, turned and faded by its Transform as an Overlay is, its centre
@@ -187,10 +188,13 @@ class TextLayer:
     animation_in: Animation = Animation.NONE
     animation_out: Animation = Animation.NONE
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
+    # Keys is defined with Keyframes, below.
+    keys: "Keys" = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _check_text_transform(self)
         _check_drawn(self)
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Text Layer {self.id}", PICTURE_KEYS, self.secs))
 
 
 def _check_text_transform(layer: TextLayer) -> None:
@@ -331,8 +335,9 @@ _GAP_REACH = 0.0005
 # An `at` this little past its item's length is at its end.
 _END_REACH = 0.001
 
-# A map from property to its Keyframes; the properties without any are left out.
-Keys = dict[KeyProperty, list[Keyframe]]
+# A map from property to its Keyframes; the properties without any are left out. An alias of its
+# own, so that the tools' schemas define it once and name it where an item has it.
+type Keys = dict[KeyProperty, list[Keyframe]]
 
 
 def checked_keys(keys: Keys, item: str, allowed: tuple[KeyProperty, ...], length: float) -> Keys:
