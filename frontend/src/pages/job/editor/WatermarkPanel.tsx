@@ -4,11 +4,11 @@ import { AnchorGrid } from "../../../components/AnchorGrid";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
-import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { LogoPicker } from "./LogoPicker";
-import { fontChoices, StyleMarker } from "./StyleFields";
+import { FacePicker } from "./FacePicker";
+import { StyleMarker } from "./StyleFields";
 import type { StyleControls } from "./useStyleDraft";
 
 const KINDS: readonly { value: WatermarkKind; label: string }[] = [
@@ -70,7 +70,13 @@ export function WatermarkPanel({ style, fonts }: { style: StyleControls; fonts: 
             />
           </div>
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-            <Select label="Font" value={watermark.font} {...fontChoices(fonts)} onChange={(v) => set("font", v)} marker={marker("font", "watermark font")} />
+            <FacePicker
+              value={watermark.font}
+              fonts={fonts}
+              onChange={(v) => set("font", v)}
+              marker={marker("font", "watermark font")}
+              className="sm:col-span-2"
+            />
             <ColorField label="Colour" value={watermark.colour} onChange={(v) => set("colour", v)} marker={marker("colour", "watermark colour")} />
           </div>
           <Switch checked={watermark.outline} onChange={(v) => set("outline", v)}>

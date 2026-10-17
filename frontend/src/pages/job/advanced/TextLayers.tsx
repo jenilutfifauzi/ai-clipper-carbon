@@ -10,13 +10,15 @@ import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { fontFamily } from "../../../fonts";
 import { IDENTITY } from "../editor/picture";
-import { fontChoices, Group } from "../editor/StyleFields";
+import { FacePicker } from "../editor/FacePicker";
+import { Group } from "../editor/StyleFields";
 import { DRAG_TEXT } from "./drag";
 import { ImportFont } from "./ImportFont";
 import { shared } from "./actions";
 import { newId, round } from "./edits";
 import { styled, textStyle } from "./textStyle";
 import { TimingFields } from "./TimingFields";
+import { TextTransformFields } from "./TransformFields";
 
 // A new Text Layer stays this long, or to the Clip's end.
 const TEXT_SECS = 3;
@@ -124,7 +126,7 @@ const ANIMATIONS = [
   { value: "slide", label: "Slide" },
 ] as const;
 
-/** The selected Text Layer's text, look, motion and time. */
+/** The selected Text Layer's text, look, Transform, motion and time. */
 export function TextLayerFields({
   layer,
   duration,
@@ -176,7 +178,7 @@ export function TextLayerFields({
         />
       </div>
       <Group title="Look">
-        <Select label="Font" value={style.font} onChange={(font) => setStyle("font", font)} {...fontChoices(fonts)} />
+        <FacePicker value={style.font} fonts={fonts} onChange={(font) => setStyle("font", font)} />
         <Slider label="Size" value={style.size} min={16} max={320} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={style.colour} onChange={(colour) => setStyle("colour", colour)} />
         <Slider
@@ -207,6 +209,7 @@ export function TextLayerFields({
         )}
         <Segmented legend="Lines" options={ALIGNS} value={style.align} onChange={(align: TextAlign) => setStyle("align", align)} />
       </Group>
+      <TextTransformFields transform={layer.transform} onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)} />
       <Group title="Motion">
         <div className="grid grid-cols-2 gap-3">
           <Select label="Comes on" value={layer.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />
@@ -296,7 +299,7 @@ export function TextLayersFields({
       </div>
       <Hint more="Their words, places and times stay each one's own: change those one at a time.">A change here applies to every picked text.</Hint>
       <Group title="Look">
-        <Select label="Font" value={value("font")} onChange={(font) => setStyle("font", font)} marker={marker("font")} {...fontChoices(fonts)} />
+        <FacePicker value={value("font")} fonts={fonts} onChange={(font) => setStyle("font", font)} marker={marker("font")} />
         <Slider label="Size" value={value("size")} min={16} max={320} format={shown("size", String)} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={value("colour")} onChange={(colour) => setStyle("colour", colour)} marker={marker("colour")} />
         <Slider

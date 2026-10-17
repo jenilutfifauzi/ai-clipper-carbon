@@ -20,7 +20,7 @@ from app.candidates import TextAlign, TextLayer
 from app.jobs import CANDIDATES_FILE, REVISIONS_DIR
 from app.migration import migrated_candidate, migrated_clip, migrated_text_layer
 from app.config import FONTS_DIR, load_settings
-from app.planner import OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, TextEvent, font_metrics, plan_render, text_event
+from app.planner import MAX_TEXT_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, TextEvent, font_metrics, plan_render, text_event
 from app.renderer import _ass
 from app.text_pictures import rasterised
 from app.video_source import SourceMetadata
@@ -127,7 +127,7 @@ def test_lines_are_split_at_newlines_aligned_and_spaced_by_the_line_height():
     assert right.anchors[0][0] + metrics.width("Satu", 60) / 2 == pytest.approx(right.area.x + right.area.width, abs=0.5)
 
 
-def test_a_block_plate_pads_the_text_by_its_pixels_and_a_text_too_wide_is_set_smaller_inside_the_frame():
+def test_a_block_plate_pads_the_text_by_its_pixels_and_a_text_too_wide_is_set_smaller():
     plain = text_event(layer(style={"size": 80}), 10)
     block = {"shape": "block", "padding_x": 30, "padding_y": 10, "radius": 12}
     boxed = text_event(layer(style={"size": 80, "plate": block}), 10)
@@ -136,9 +136,6 @@ def test_a_block_plate_pads_the_text_by_its_pixels_and_a_text_too_wide_is_set_sm
     wide = text_event(layer(style={"size": 200, "plate": {"shape": "block"}}, text="Ini adalah kalimat yang sangat panjang sekali"), 10)
     assert wide.size < 200
     assert wide.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN + 1
-    # Placed near a corner, it is kept inside the frame.
-    corner = text_event(layer({"x": OUTPUT_WIDTH, "y": OUTPUT_HEIGHT}, {"size": 120}), 10)
-    assert corner.area.x + corner.area.width <= OUTPUT_WIDTH and corner.area.y + corner.area.height <= OUTPUT_HEIGHT
 
 
 def test_a_text_layer_is_kept_in_the_clip_and_blank_or_late_ones_show_nothing():
@@ -189,6 +186,18 @@ def test_an_old_text_layer_moves_its_centre_into_its_transform_and_its_look_into
     assert migrated_clip({"candidate_id": "c1", "output": {"text_layers": [old]}}, {}) == {"candidate_id": "c1", "output": {"text_layers": [new]}}
 
 
+def test_an_old_text_layer_the_planner_kept_inside_the_frame_is_centred_where_it_was_drawn():
+    old = next(layer for layer in BEFORE["layers"] if layer["id"] == "corner")
+    area = next(event for layer, event in zip(BEFORE["layers"], BEFORE["events"]) if layer["id"] == "corner")["area"]
+    # Centred on the frame's corner, it was drawn inside the frame.
+    assert (old["x"], old["y"]) == (OUTPUT_WIDTH, OUTPUT_HEIGHT)
+    assert area["x"] + area["width"] == OUTPUT_WIDTH and area["y"] + area["height"] == OUTPUT_HEIGHT
+    new = migrated_text_layer(old)
+    assert new["transform"] == {"x": area["x"] + area["width"] / 2, "y": area["y"] + area["height"] / 2}
+    assert drawn(text_event(_LAYER.validate_python(new), 10))["area"] == area
+    assert migrated_text_layer(new) == new
+
+
 def test_migrated_text_layers_plan_and_look_as_they_did():
     layers = _LAYERS.validate_python([migrated_text_layer(old) for old in BEFORE["layers"]])
     planned = plan_render(0, 7, SOURCE, text_layers=layers)
@@ -209,12 +218,55 @@ def test_a_text_layer_is_never_stretched_nor_flipped_and_draws_only_what_its_pic
     for transform in ({"stretch_x": 2}, {"stretch_y": 0.5}, {"flip_h": True}, {"flip_v": True}):
         with pytest.raises(ValidationError, match="stretched|flipped"):
             layer(transform)
-    for transform, style in (
-        ({"scale": 2}, {}), ({"rotation": 15}, {}), ({"opacity": 0.5}, {}),
-        ({}, {"tracking": 4}), ({}, {"wrap_width": 600}), ({}, {"fixed_height": 300}), ({}, {"plate": {"shape": "strips"}}),
-    ):
+    for style in ({"tracking": 4}, {"wrap_width": 600}, {"fixed_height": 300}, {"plate": {"shape": "strips"}}):
         with pytest.raises(ValidationError, match="can't have"):
-            layer(transform, style)
+            layer(style=style)
+    # Scaled, turned and faded, as an Overlay is.
+    assert layer({"scale": 2, "rotation": 15, "opacity": 0.5}).transform.rotation == 15
+
+
+def test_a_text_layer_is_centred_on_its_transform_past_the_frames_edges():
+    corner = text_event(layer({"x": OUTPUT_WIDTH, "y": OUTPUT_HEIGHT}, {"size": 120}), 10)
+    assert corner.area.x + corner.area.width / 2 == pytest.approx(OUTPUT_WIDTH, abs=1)
+    assert corner.area.y + corner.area.height / 2 == pytest.approx(OUTPUT_HEIGHT, abs=1)
+    assert corner.picture.centre == pytest.approx((OUTPUT_WIDTH, OUTPUT_HEIGHT), abs=1)
+    # Its centre is kept on the frame.
+    off = text_event(layer({"x": -400, "y": 5000}), 10)
+    assert off.picture.centre == pytest.approx((0, OUTPUT_HEIGHT), abs=1)
+
+
+def test_a_scaled_and_turned_text_layer_keeps_its_layout_and_turns_its_bounds_about_its_centre():
+    plain = text_event(layer({"x": 500, "y": 900}, text="Halo dunia"), 10)
+    turned = text_event(layer({"x": 500, "y": 900, "scale": 2, "rotation": 90, "opacity": 0.4}, text="Halo dunia"), 10)
+    # The same lines, size and area: scaling neither rewraps nor resizes it.
+    assert (turned.lines, turned.size, turned.area) == (plain.lines, plain.size, plain.area)
+    assert turned.layout.anchors == plain.layout.anchors
+    picture = turned.picture
+    assert (picture.rotation, picture.opacity) == (90, 0.4)
+    assert picture.width == pytest.approx(2 * plain.picture.width, abs=2)
+    assert picture.height == pytest.approx(2 * plain.picture.height, abs=2)
+    # Its area, twice as large and stood on end about its centre.
+    area = plain.area
+    assert turned.bounds.width == pytest.approx(2 * area.height, abs=2) and turned.bounds.height == pytest.approx(2 * area.width, abs=2)
+    assert turned.bounds.x + turned.bounds.width / 2 == pytest.approx(500, abs=1)
+    assert turned.bounds.y + turned.bounds.height / 2 == pytest.approx(900, abs=1)
+
+
+def test_a_text_layers_picture_is_made_at_the_next_scale_up_and_is_one_picture_within_it():
+    def made(scale: float) -> TextEvent:
+        return text_event(layer({"scale": scale}, {"size": 60}), 10)
+
+    assert [made(scale).layout.scale for scale in (0.3, 1, 1.2, 1.5, 2.5, 3, 5, 8)] == [1, 1, 1.5, 1.5, 3, 3, 6, 8]
+    # Scaled within one step, it is the same picture; past it, another of the same look.
+    assert made(2.2).image == made(2.9).image != made(3.1).image
+    assert made(2.2).look == made(3.1).look == made(0.5).look
+    assert text_event(layer({"scale": 2.2}, {"size": 61}), 10).look != made(2.2).look
+    # Drawn at its own scale whatever its picture's.
+    assert made(2.2).picture.width == pytest.approx(2.2 * made(1).picture.width, abs=2)
+    assert made(2.2).picture.item_size == made(2.9).picture.item_size
+    # Never more than MAX_TEXT_PICTURE on its longest side.
+    huge = text_event(layer({"scale": 8}, {"size": 300}, text="Kalimat yang panjang"), 10)
+    assert max(huge.picture.item_size) <= MAX_TEXT_PICTURE
 
 
 def test_text_layers_are_saved_on_the_candidate_validated_and_kept_through_a_trim(client):

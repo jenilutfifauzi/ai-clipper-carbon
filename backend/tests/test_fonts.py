@@ -7,9 +7,10 @@ real ffmpeg. The font files are built by tests/fontfiles.py.
 from io import BytesIO
 
 import numpy as np
+import pytest
 from fontTools.ttLib import TTFont
 
-from app.fonts import BUNDLED_IDS
+from app.fonts import BUNDLED_IDS, MissingFace, registry
 from fontfiles import RESTRICTED, collection, font_file
 from test_render import HEARD, add, full_frame, pixels, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
@@ -216,3 +217,72 @@ def test_a_render_whose_face_file_is_gone_fails_saying_so(client, settings, vide
     render(client, job)
     [clip] = rendered(client, job)["clips"]
     assert clip["status"] == "error" and "Testg Regular" in clip["error"] and "missing" in clip["error"]
+
+
+# .scratch/text-advanced/issues/07: the families `make setup` downloads, each listed as bundled, by
+# their weights and whether they are italic.
+BUNDLED_FAMILIES = {
+    "Montserrat": {(400, False), (400, True), (600, False), (700, False), (700, True), (800, False), (800, True), (900, False), (900, True)},
+    "Poppins": {(400, False), (400, True), (500, False), (600, False), (700, False), (700, True), (800, False), (900, False), (900, True)},
+    "Barlow Condensed": {(400, False), (600, False), (700, False), (700, True), (800, False), (900, False), (900, True)},
+    "Kanit": {(400, False), (500, False), (700, False), (800, False), (900, False), (900, True)},
+    "Oswald": {(400, False), (500, False), (600, False), (700, False)},
+    "Passion One": {(400, False), (700, False), (900, False)},
+    "DM Serif Display": {(400, False), (400, True)},
+    **{
+        family: {(400, False)}
+        for family in ("Anton", "Bebas Neue", "Archivo Black", "Bangers", "Abril Fatface", "Lobster", "Pacifico",
+                       "Titan One", "Caveat Brush", "Staatliches", "Permanent Marker", "Luckiest Guy")
+    },
+}
+
+
+def test_the_bundled_families_are_listed_with_their_weights_and_italics(client):
+    listed = fonts(client)
+    bundled = [face for face in listed.values() if face["bundled"]]
+    families: dict[str, set] = {}
+    for face in bundled:
+        families.setdefault(face["typographic_family"], set()).add((face["weight"], face["italic"]))
+    assert families == BUNDLED_FAMILIES
+    # The ids styles already store are among them, unchanged.
+    assert {"montserrat-extrabold", "anton", "bebas-neue", "poppins-black", "archivo-black", "bangers"} <= set(listed)
+    assert (listed["montserrat-extrabold"]["typographic_family"], listed["montserrat-extrabold"]["weight"]) == ("Montserrat", 800)
+    assert [face["id"] for face in bundled if face["typographic_family"] == "Passion One"] == [
+        "passion-one-regular", "passion-one-bold", "passion-one-black",
+    ]
+    # Each says where it comes from.
+    assert all(face["copyright"] for face in bundled)
+    # Bundled once each: importing a bundled file adds nothing.
+    kanit = client.get(listed["kanit-black-italic"]["url"]).content
+    assert [face["id"] for face in imported(client, kanit, "Kanit-BlackItalic.ttf")["existing"]] == ["kanit-black-italic"]
+
+
+def test_a_bundled_face_not_yet_downloaded_is_left_out_of_the_list_and_fails_a_render_saying_so(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("app.fonts.FONTS_DIR", tmp_path)
+    assert fonts(client) == {}
+    # Styles naming it still validate: `make setup` brings it back.
+    preset = client.post("/api/presets", json={"name": "Kanit", "caption": {"font": "kanit-bold"}})
+    assert preset.status_code == 201, preset.text
+    with pytest.raises(MissingFace, match="make setup"):
+        registry().file("kanit-bold")
+
+
+def test_captions_in_a_bundled_bold_face_render_in_it_beside_its_regular(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    job_dir = settings.data_dir / "jobs" / job["id"]
+
+    inks = []
+    for face in ("kanit-regular", "kanit-bold"):
+        # A red Watermark in the family's Regular, so that libass is given both Faces of the family.
+        watermark = {"kind": "text", "text": "KANIT", "font": "kanit-regular", "colour": "#FF0000", "outline": False}
+        candidate = patch(client, job, candidate, style_overrides={
+            "caption": {"font": face, "outline": 0, "highlight": "none"}, "watermark": watermark,
+        })
+        render(client, job)
+        [clip] = rendered(client, job)["clips"]
+        assert clip["status"] == "done", clip["error"]
+        inks.append(caption_ink(settings, job_dir, clip))
+    assert inks[0] > 2000 and inks[1] > 1.2 * inks[0]

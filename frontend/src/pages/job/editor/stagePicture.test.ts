@@ -279,6 +279,10 @@ describe("the Grips a picture has", () => {
   test("are only its corners in the clip editor: scaled, never stretched or turned", () => {
     expect(gripsIn("corners")).toEqual(["top-left", "top-right", "bottom-right", "bottom-left"]);
   });
+
+  test("are its corners and the rotate handle on a Text Layer: scaled and turned, never stretched", () => {
+    expect(gripsIn("corners-rotate")).toEqual(["top-left", "top-right", "bottom-right", "bottom-left", "rotate"]);
+  });
 });
 
 describe("a press on a picture", () => {

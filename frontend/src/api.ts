@@ -425,6 +425,7 @@ export interface TextLayer {
 // and its baseline), in `area`; `box` is the area when it has a Block plate, its corners `radius` px round.
 // It is drawn as the picture the backend made of it (docs/adr/0010), the file `image`
 // (textPictureUrl), placed as `picture` says; `bounds` holds its area once turned and scaled.
+// `look` names what its picture shows at any scale: its pictures of one look differ only in size.
 export interface TextEvent {
   layer: TextLayer;
   lines: string[];
@@ -438,6 +439,7 @@ export interface TextEvent {
   bounds: Box;
   box: Box | null;
   radius: number;
+  look: string;
 }
 
 // A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`

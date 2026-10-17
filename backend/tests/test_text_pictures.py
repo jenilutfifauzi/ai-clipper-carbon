@@ -53,6 +53,10 @@ def test_a_picture_is_clean_transparency_round_its_ink_and_made_once_for_its_loo
     [there] = preview(client, job, moved)["plan"]["texts"]
     assert there["image"] == event["image"] and there["area"] != event["area"]
     assert (folder / event["image"]).stat().st_mtime_ns == made
+    # Nor does turning or fading it, or scaling it down.
+    turned = {"x": 300, "y": 1500, "rotation": 30, "opacity": 0.5, "scale": 0.6}
+    [faded] = preview(client, job, moved, {"text_layers": [title(text="Halo Ägypten", style=white, transform=turned)]})["plan"]["texts"]
+    assert faded["image"] == event["image"] and faded["look"] == event["look"]
     # Another colour is another picture.
     [red] = preview(client, job, moved, {"text_layers": [title(text="Halo Ägypten", style=white | {"colour": "#FF0000"})]})["plan"]["texts"]
     assert red["image"] != event["image"]
@@ -194,3 +198,72 @@ def test_fade_pop_and_slide_bring_a_text_layer_on_and_off_as_the_hook_comes(
             assert box[1] - whole[1] == pytest.approx(30, abs=3) and box[0] == pytest.approx(whole[0], abs=2)
         else:
             assert box == pytest.approx(whole, abs=2)
+
+
+def test_a_text_layer_is_turned_scaled_and_faded_as_its_plan_says_and_sharp_at_any_scale(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    green = {"shape": "block", "colour": "#00FF00", "opacity": 1, "radius": 0, "padding_x": 150, "padding_y": 60}
+    blue = {"shape": "block", "colour": "#0000FF", "opacity": 1, "radius": 0, "padding_x": 60, "padding_y": 30}
+    white = {"size": 60, "colour": "#FFFFFF"}
+    candidate = patch(client, job, candidate, text_layers=[
+        # A green card, turned and scaled; its letters as green as its plate.
+        title(id="turned", text="--", start=0.0, secs=2.6, transform={"x": 540, "y": 380, "rotation": 30, "scale": 1.5},
+              style={"size": 60, "colour": "#00FF00", "plate": green}),
+        # Red letters on a blue plate, half transparent.
+        title(id="faded", text="HH", start=0.0, secs=2.6, transform={"x": 540, "y": 1050, "opacity": 0.5},
+              style={"size": 120, "colour": "#FF0000", "plate": blue}),
+        # The same words three times as large: by their scale, then by their size.
+        title(id="scaled", text="HM", start=0.0, secs=1.2, transform={"x": 540, "y": 780, "scale": 3}, style=white),
+        title(id="sized", text="HM", start=1.3, secs=1.3, transform={"x": 540, "y": 780}, style=white | {"size": 180}),
+    ])
+    turned, faded, scaled, sized = preview(client, job, candidate)["plan"]["texts"]
+    # Each picture holds its words at the scale they are drawn at.
+    assert scaled["picture"]["item_size"] == pytest.approx(sized["picture"]["item_size"], abs=4)
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    video = settings.data_dir / "jobs" / job["id"] / clip["output"]["video"]
+    first, second = full_frame(settings, video, 0.6), full_frame(settings, video, 1.9)
+
+    # The turned card's corners: its plate's, scaled about its centre and turned 30° clockwise.
+    rows, columns = pixels(first, np.array([0, 255, 0]))
+    bounds = turned["bounds"]
+    assert abs(rows.min() - bounds["y"]) <= 3 and abs(rows.max() + 1 - bounds["y"] - bounds["height"]) <= 3
+    assert abs(columns.min() - bounds["x"]) <= 3 and abs(columns.max() + 1 - bounds["x"] - bounds["width"]) <= 3
+    area, (x, y) = turned["area"], turned["picture"]["centre"]
+    angle = np.radians(30)
+    for across in (area["x"], area["x"] + area["width"]):
+        for down in (area["y"], area["y"] + area["height"]):
+            u, v = 1.5 * (across - x), 1.5 * (down - y)
+            row, column = y + u * np.sin(angle) + v * np.cos(angle), x + u * np.cos(angle) - v * np.sin(angle)
+            # Within its antialiased tip, which the colour's tolerance leaves out.
+            nearest = np.hypot(rows - row, columns - column).min()
+            assert nearest <= 5, (across, down, nearest)
+
+    # At half opacity, the plate and the letters are half way to the picture behind.
+    grey = np.array([0x4A, 0x55, 0x60])
+    box = faded["box"]
+    shown = first[box["y"] : box["y"] + box["height"], box["x"] : box["x"] + box["width"]]
+    plate = pixels(shown, (grey + np.array([0, 0, 255])) / 2, 14)
+    letters = pixels(shown, (grey + np.array([255, 0, 0])) / 2, 20)
+    assert len(plate[0]) > 0.5 * box["width"] * box["height"] and len(letters[0]) > 2000
+    assert len(pixels(first, np.array([0, 0, 255]), 60)[0]) == 0 and len(pixels(first, np.array([255, 0, 0]), 60)[0]) == 0
+
+    # Scaled three times, it is as sharp as at three times the size: round as many pixels part way
+    # between the letters and what is behind them (from a picture made at scale 1, twice as many),
+    # round as many inked.
+    def edges(frame: np.ndarray, event: dict) -> tuple[int, int]:
+        b = event["bounds"]
+        luma = frame[b["y"] - 10 : b["y"] + b["height"] + 10, b["x"] - 10 : b["x"] + b["width"] + 10].mean(axis=2)
+        low, high = grey.mean(), 255
+        part = (luma > low + 0.2 * (high - low)) & (luma < high - 0.2 * (high - low))
+        return int(part.sum()), int((luma >= high - 0.2 * (high - low)).sum())
+
+    (scaled_edges, scaled_ink), (sized_edges, sized_ink) = edges(first, scaled), edges(second, sized)
+    assert sized_ink > 5000 and scaled_ink == pytest.approx(sized_ink, rel=0.08), (scaled_ink, sized_ink)
+    assert scaled_edges < 1.5 * sized_edges, (scaled_edges, sized_edges)

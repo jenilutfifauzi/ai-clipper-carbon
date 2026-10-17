@@ -51,6 +51,8 @@ export function InlineText({
 
 interface Field {
   area: Box;
+  // Turned with what it retypes, in degrees clockwise (a Text Layer's Transform).
+  rotation?: number;
   initial: string;
   font: FontInfo | undefined;
   size: number;
@@ -118,11 +120,16 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
     case "text": {
       const event = plan.texts.find((other) => other.layer.id === editing.id);
       if (!event) return null;
+      // Its area as its Transform scales and turns it about its picture's centre.
+      const { scale, rotation } = event.layer.transform;
+      const [x, y] = event.picture.centre;
+      const [width, height] = [event.area.width * scale, event.area.height * scale];
       return {
-        area: event.area,
+        area: { x: x - width / 2, y: y - height / 2, width, height },
+        rotation,
         initial: event.layer.text,
         font: fontById.get(event.layer.style.font),
-        size: event.size,
+        size: event.size * scale,
         uppercase: false,
         maxLength: TEXT_MAX_CHARS,
         label: "Text",
@@ -136,6 +143,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
 function TextField({
   plan,
   area,
+  rotation,
   initial,
   font,
   size,
@@ -185,6 +193,7 @@ function TextField({
     fontSize: `max(16px, calc(var(--scale) * ${fontSize}px))`,
     fontFamily: font ? fontFamily(font.id) : undefined,
     textTransform: uppercase ? "uppercase" : undefined,
+    rotate: rotation ? `${rotation}deg` : undefined,
   };
   return (
     <textarea
