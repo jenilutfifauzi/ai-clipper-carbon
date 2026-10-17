@@ -1,0 +1,20 @@
+{
+  "id": "pill",
+  "name": "Pill",
+  "category": "Labels",
+  "order": 220,
+  "sample": "Episode 12",
+  "style": {
+    "font": "poppins-semibold",
+    "size": 54,
+    "colour": "#111111",
+    "plate": {
+      "shape": "block",
+      "colour": "#FFD60A",
+      "opacity": 1,
+      "radius": 200,
+      "padding_x": 38,
+      "padding_y": 16
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "part",
+  "name": "Part",
+  "category": "Labels",
+  "order": 250,
+  "sample": "PART 2",
+  "style": {
+    "font": "staatliches",
+    "size": 58,
+    "tracking": 10,
+    "plate": {
+      "shape": "block",
+      "colour": "#000000",
+      "opacity": 1,
+      "radius": 0,
+      "padding_x": 30,
+      "padding_y": 14
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "question",
+  "name": "Question",
+  "category": "Callouts",
+  "order": 600,
+  "sample": "Kenapa begitu?",
+  "style": {
+    "font": "poppins-bold",
+    "size": 60,
+    "plate": {
+      "shape": "block",
+      "colour": "#2563EB",
+      "opacity": 1,
+      "radius": 28,
+      "padding_x": 38,
+      "padding_y": 22
+    }
+  }
+}

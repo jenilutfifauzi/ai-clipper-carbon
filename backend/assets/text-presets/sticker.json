@@ -1,0 +1,21 @@
+{
+  "id": "sticker",
+  "name": "Sticker",
+  "category": "Stickers",
+  "order": 400,
+  "sample": "WOW",
+  "style": {
+    "font": "passion-one-black",
+    "size": 120,
+    "colour": "#FF006E",
+    "tracking": 2,
+    "plate": {
+      "shape": "block",
+      "colour": "#FFFFFF",
+      "opacity": 1,
+      "radius": 34,
+      "padding_x": 36,
+      "padding_y": 18
+    }
+  }
+}

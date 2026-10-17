@@ -52,19 +52,24 @@ export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: 
   );
 }
 
-// The size a tile draws its sample at (text-lg), in CSS pixels.
-const TILE_SIZE = 18;
+// The size a tile draws its sample at (text-base), in CSS pixels.
+const TILE_SIZE = 16;
 
-// How a Preset's sample is drawn on its tile: its Face, colours, stroke, shadow and plate, scaled to the tile's size.
+// How a Preset's sample is drawn on its tile: its Face, colours, stroke, shadow, tracking and plate (its radius and
+// padding too), scaled to the tile's size.
 function sampleStyle(style: TextStyle, fonts: FontInfo[] | null): CSSProperties {
   const by = TILE_SIZE / style.size;
   const { shadow, plate } = style;
   const offset = shadowOffset(shadow);
   const px = (value: number) => `${Math.round(value * by * 10) / 10}px`;
+  const plated = plate.shape !== "none" && plate.opacity > 0;
   return {
     fontFamily: fonts?.some((font) => font.id === style.font) ? fontFamily(style.font) : undefined,
     color: style.colour,
-    backgroundColor: plate.shape !== "none" && plate.opacity > 0 ? `color-mix(in srgb, ${plate.colour} ${Math.round(plate.opacity * 100)}%, transparent)` : undefined,
+    letterSpacing: style.tracking ? px(style.tracking) : undefined,
+    backgroundColor: plated ? `color-mix(in srgb, ${plate.colour} ${Math.round(plate.opacity * 100)}%, transparent)` : undefined,
+    borderRadius: plated ? px(plate.radius) : undefined,
+    padding: plated ? `${px(plate.padding_y)} ${px(plate.padding_x)}` : undefined,
     WebkitTextStroke: style.stroke_width ? `1px ${style.stroke_colour}` : undefined,
     textShadow: shadowOn(shadow)
       ? `${px(offset.x)} ${px(offset.y)} ${px(shadow.blur)} color-mix(in srgb, ${shadow.colour} ${Math.round(shadow.opacity * 100)}%, transparent)`
@@ -147,8 +152,9 @@ function PresetTile({ preset, fonts, onAdd }: { preset: TextPreset; fonts: FontI
         title={preset.name}
         className="raised flex min-h-20 w-full flex-col items-center justify-center gap-1 rounded-[10px] p-2 hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
       >
-        <span className="max-w-full truncate rounded-md px-1.5 text-lg leading-tight" style={sampleStyle(preset.style, fonts)}>
-          {preset.sample}
+        {/* Its plate round at most two lines of it, so that a card's sample shows as a card. */}
+        <span className="max-w-full rounded-md px-1.5 text-base leading-tight break-words" style={sampleStyle(preset.style, fonts)}>
+          <span className="line-clamp-2">{preset.sample}</span>
         </span>
         {preset.sample !== preset.name && <span className="max-w-full truncate text-xs text-muted">{preset.name}</span>}
         {preset.default && <span className="sr-only">(used for new titles)</span>}

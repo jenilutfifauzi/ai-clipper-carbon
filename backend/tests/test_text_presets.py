@@ -4,16 +4,19 @@ them, as the Style Presets' tests use theirs."""
 
 import json
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.fonts import BUNDLED_IDS
 from app.main import create_app
 from app.ports import Ports
 from app.text_presets import builtin_text_presets
 from fontfiles import font_file
 from test_fonts import imported
-from test_render import add, render_video, reviewed  # noqa: F401 (a fixture)
+from test_render import add, preview, render, render_video, rendered, reviewed  # noqa: F401 (a fixture)
 from test_review import candidates, patch
+from test_text_pictures import picture_of
 
 OLD_LOOKS = {"text": "Text", "title": "Title", "label": "Label", "subtitle": "Subtitle"}
 URL = "/api/text-presets"
@@ -54,6 +57,44 @@ def test_the_four_old_looks_are_built_in_with_stable_ids_and_text_is_used_for_ne
     # Built-ins come first, by their order.
     builtins = [preset for preset in presets.values() if preset["builtin"]]
     assert builtins == sorted(builtins, key=lambda preset: preset["order"])
+
+
+def test_the_31_builtins_have_unique_ids_and_samples_on_a_handful_of_shelves_and_name_bundled_faces(client):
+    builtins = [preset for preset in listed(client).values() if preset["builtin"]]
+
+    assert len(builtins) == 31
+    assert len({preset["sample"] for preset in builtins}) == 31
+    assert all(preset["name"] and preset["sample"] and preset["category"] for preset in builtins)
+    assert 5 <= len({preset["category"] for preset in builtins}) <= 8
+    assert {preset["style"]["font"] for preset in builtins} <= set(BUNDLED_IDS)
+    # Each is a Text Style the owner could save as it is.
+    for preset in builtins:
+        assert saved(client, preset["name"], **preset["style"])["style"] == preset["style"], preset["id"]
+
+
+def test_every_builtin_renders_in_a_short_clip_its_sample_in_its_colour(client, video_source, render_video):
+    video_source.video = render_video
+    builtins = [preset for preset in listed(client).values() if preset["builtin"]]
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    layers = [
+        {"id": preset["id"], "text": preset["sample"], "start": 0, "secs": 1, "style": preset["style"]}
+        for preset in builtins
+    ]
+    candidate = patch(client, job, candidate, text_layers=layers)
+
+    texts = preview(client, job, candidate)["plan"]["texts"]
+    assert len(texts) == len(builtins)
+    for preset, event in zip(builtins, texts):
+        # Every character of its sample is set, none left out for want of a glyph.
+        assert " ".join(event["lines"]) == preset["sample"], preset["id"]
+        picture = picture_of(client, job, event)
+        colour = np.array([int(preset["style"]["colour"][i : i + 2], 16) for i in (1, 3, 5)])
+        inked = (picture[..., 3] == 255) & (np.abs(picture[..., :3] - colour).max(axis=-1) < 40)
+        assert inked.sum() > 200, preset["id"]
+    render(client, job)
+    [clip] = rendered(client, job, timeout=120)["clips"]
+    assert clip["status"] == "done", clip["error"]
 
 
 def test_builtin_presets_cant_be_changed_renamed_or_deleted(client):

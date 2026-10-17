@@ -1,0 +1,15 @@
+{
+  "id": "classic",
+  "name": "Classic",
+  "category": "Subtitles",
+  "order": 340,
+  "sample": "menurut saya, itu kuncinya",
+  "style": {
+    "font": "barlow-condensed-semibold",
+    "size": 64,
+    "colour": "#FFE14D",
+    "stroke_width": 3,
+    "tracking": 1,
+    "wrap_width": 900
+  }
+}

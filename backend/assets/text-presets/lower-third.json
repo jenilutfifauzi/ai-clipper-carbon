@@ -1,0 +1,21 @@
+{
+  "id": "lower-third",
+  "name": "Lower Third",
+  "category": "Labels",
+  "order": 230,
+  "sample": "Rina Pratiwi · Psikolog",
+  "style": {
+    "font": "barlow-condensed-bold",
+    "size": 62,
+    "tracking": 1,
+    "align": "left",
+    "plate": {
+      "shape": "block",
+      "colour": "#111827",
+      "opacity": 0.88,
+      "radius": 6,
+      "padding_x": 30,
+      "padding_y": 16
+    }
+  }
+}

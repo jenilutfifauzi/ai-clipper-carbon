@@ -1,0 +1,16 @@
+{
+  "id": "drop-shadow",
+  "name": "Drop Shadow",
+  "category": "Basic",
+  "order": 30,
+  "sample": "Lihat ini",
+  "style": {
+    "font": "montserrat-black",
+    "size": 80,
+    "shadow": {
+      "opacity": 1,
+      "distance": 7,
+      "angle": 60
+    }
+  }
+}

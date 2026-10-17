@@ -1,0 +1,22 @@
+{
+  "id": "quote-dark",
+  "name": "Quote Dark",
+  "category": "Quotes",
+  "order": 510,
+  "sample": "Uang bukan segalanya, tapi semua butuh uang.",
+  "style": {
+    "font": "poppins-medium",
+    "size": 58,
+    "wrap_width": 780,
+    "line_height": 1.25,
+    "align": "left",
+    "plate": {
+      "shape": "block",
+      "colour": "#111111",
+      "opacity": 0.85,
+      "radius": 28,
+      "padding_x": 56,
+      "padding_y": 44
+    }
+  }
+}
