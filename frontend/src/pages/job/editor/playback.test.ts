@@ -1,7 +1,7 @@
 // Seam F (.scratch/navigation-playback/spec.md): `Playback` driven by fake videos and a fake clock,
 // as worked examples of what each deck's videos are doing.
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { follow } from "./follow";
+import { eventSpan, follow } from "./follow";
 import { Playback, playedFrom } from "./playback";
 import { harness } from "./playbackHarness";
 
@@ -424,6 +424,46 @@ describe("speed", () => {
     const slow = spedMedia(0.125);
     slow.playback.seek(5);
     expect(slow.media.playbackRate).toBe(0.25);
+  });
+
+  test("a 2× Overlay plays its video at twice the rate on the render's frames at its start, middle and end", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(playedFrom([{ start: 100, end: 106 }]));
+    stage.decks(playback);
+    const video = stage.video();
+    // As test_sped_overlays.py renders it: 4 s from 0.5 s, its video from 1 s.
+    const overlay = { start: 0.5, end: 4.5, offset: 1, speed: 2 };
+    playback.subscribe(() => follow(video.element, playback, eventSpan(overlay)));
+    playback.seek(0.5);
+    stage.settle();
+    playback.play();
+    expect(video.playbackRate).toBe(2);
+    expect(video.currentTime).toBeCloseTo(1, 5);
+    for (const at of [2.5, 4.45]) {
+      stage.advance(at - playback.time);
+      // The render's frame at `at`: its video at offset + (at − start) × speed.
+      expect(Math.abs(video.currentTime - (1 + (at - 0.5) * 2))).toBeLessThanOrEqual(1 / 30);
+    }
+    stage.advance(0.1);
+    expect(video.paused).toBe(true);
+  });
+
+  test("an Overlay's sound at 0.5× plays at half the rate, its pitch kept unless `pitch`", () => {
+    for (const pitch of [false, true]) {
+      const stage = harness();
+      const playback = new Playback();
+      playback.setSegments(playedFrom([{ start: 100, end: 106 }]));
+      stage.decks(playback);
+      const sound = stage.video();
+      const event = { start: 0.5, end: 2, offset: 0, speed: 0.5, pitch };
+      playback.subscribe(() => follow(sound.element, playback, eventSpan(event)));
+      playback.seek(1.5);
+      expect(sound.playbackRate).toBe(0.5);
+      expect(sound.preservesPitch).toBe(!pitch);
+      expect(sound.currentTime).toBeCloseTo(0.5, 5);
+      vi.unstubAllGlobals();
+    }
   });
 });
 

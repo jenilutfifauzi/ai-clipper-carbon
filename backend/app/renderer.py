@@ -606,8 +606,9 @@ def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int) -> tuple
 
 def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str = "[0:a:0]") -> str | None:
     """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into [mix]: each Music Clip its part of its song (input
-    `index[media]`), at its volume, faded, delayed to its start. None without music at the Clip's own
-    volume, where the sound goes as it is."""
+    `index[media]`), at its volume, faded, delayed to its start; an Overlay's sound played at its
+    Speed first (`speed_filters`). None without music at the Clip's own volume, where the sound goes
+    as it is."""
     heard = [event for event in plan.audio if event.media in index]
     # Segments' sounds set to their volumes already (with videos among them) aren't set again.
     volume = 1.0 if source == "[srcv]" else plan.source_volume
@@ -619,8 +620,12 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
     chains = [f"{source}volume={volume:g},{form}[m0]"]
     for i, event in enumerate(heard, 1):
         length = round(event.end - event.start, 3)
+        read = round(length * event.speed, 3)
+        sped = speed_filters(event.speed, event.pitch, rate)
         filters = [
-            f"atrim=start={event.offset:g}:end={event.offset + length:g}", "asetpts=PTS-STARTPTS", *_volume(event.gain, event.volume),
+            f"atrim=start={event.offset:g}:end={event.offset + read:g}", "asetpts=PTS-STARTPTS",
+            # Then its time on the Timeline from 0 at its start, which its Keyframes and fades are in.
+            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *_volume(event.gain, event.volume),
         ]
         if event.fade_in:
             filters.append(f"afade=t=in:st=0:d={event.fade_in:g}")
@@ -657,9 +662,9 @@ def _overlay_inputs(
     plan: RenderPlan, files: dict[str, Path], first: int, feeds: "Feeds"
 ) -> tuple[list[str], list[tuple[OverlayEvent, int, FrameFeed | None]]]:
     """The input options of the plan's Overlays, one each, numbered from `first` (a video read from its
-    offset for as long as it shows; an image's one picture; a keyed one's frames, from the pipe of
-    its frame process in `feeds`, by its place among them), and each Overlay drawn with its input's
-    number and its frame process. One whose file isn't in `files` isn't drawn."""
+    offset for as long as it shows times its Speed; an image's one picture; a keyed one's frames,
+    from the pipe of its frame process in `feeds`, by its place among them), and each Overlay drawn
+    with its input's number and its frame process. One whose file isn't in `files` isn't drawn."""
     inputs: list[str] = []
     drawn = []
     for i, event in enumerate(plan.overlays):
@@ -670,7 +675,7 @@ def _overlay_inputs(
             inputs += _piped(plan, feed)
         else:
             if not event.image:
-                inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.end - event.start:.3f}"]
+                inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{(event.end - event.start) * event.speed:.3f}"]
             inputs += ["-i", str(files[event.media])]
         drawn.append((event, first + len(drawn), feed))
     return inputs, drawn
@@ -678,14 +683,15 @@ def _overlay_inputs(
 
 def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
-    shows, into `out`: a video's frames moved to start when it does, an image's one picture held. A
-    keyed one's frames, drawn whole by its frame process `feed`, are laid at 0, 0, each over the
-    frame of its number (the frames below being at n / fps exactly)."""
+    shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
+    image's one picture held. A keyed one's frames, drawn whole by its frame process `feed`, are
+    laid at 0, 0, each over the frame of its number (the frames below being at n / fps exactly)."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
     if feed is not None:
         name = f"[layer{number}]"
         return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}{name};{below}{name}overlay=0:0:{shows}:eof_action=pass{out}"
-    timed = "" if event.image else f",setpts=PTS-STARTPTS+{event.start:.3f}/TB"
+    played = "PTS-STARTPTS" if event.speed == 1 else f"(PTS-STARTPTS)/{event.speed:.6g}"
+    timed = "" if event.image else f",setpts={played}+{event.start:.3f}/TB"
     ends = "repeat" if event.image else "pass"
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}")
 
@@ -778,8 +784,8 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             continue
         event = plan.overlays[i]
         if isinstance(item, Path):
-            # An Overlay's video plays forwards from its offset for as long as it shows.
-            shown = SegmentTime(event.offset, event.offset + (event.end - event.start))
+            # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
+            shown = SegmentTime(event.offset, event.offset + (event.end - event.start) * event.speed, event.speed)
             frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, shown, rate)
         else:
             frames, video = PictureFrames(event.picture, item), None

@@ -11,6 +11,18 @@ const PLAYABLE_SPEEDS = { min: 0.25, max: 4 };
 /** The Speed a video is played at to show `speed`: the nearest a browser plays well, until Retimed copies play the others. */
 export const previewSpeed = (speed = 1) => Math.min(PLAYABLE_SPEEDS.max, Math.max(PLAYABLE_SPEEDS.min, speed));
 
+// A plan's Overlay or sound (OverlayEvent, AudioEvent): from `start` to `end` in the Clip, its item from `offset`, at its Speed and pitch.
+interface PlannedItem {
+  start: number;
+  end: number;
+  offset: number;
+  speed?: number;
+  pitch?: boolean;
+}
+
+/** The span `follow` keeps a plan's Overlay video or sound in. */
+export const eventSpan = ({ start, end, offset, speed, pitch }: PlannedItem) => ({ start, end, from: offset, speed, pitch });
+
 /**
  * Keeps `element` (a song, a video's Segment, an Overlay) in step with `playback` while the Clip's
  * time shown (the skimmed time while skimming) is in its span, from `start` to `end`, where it plays

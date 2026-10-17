@@ -106,6 +106,9 @@ Edits:
   width or height cut off before it is fitted (a tenth is always kept). merge_candidate_items
   changes only the transform and crop fields given. The dry run lists each Overlay's drawn box once
   turned (bounds) and what its crop keeps, in its item's pixels.
+  A video Overlay's `speed` and `pitch` are as a video Segment's (below), but it keeps its start and
+  secs: it shows secs * speed of its video from its offset, within the video. An image has none. The
+  dry run gives what of its video it shows (source_start, source_end).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -657,9 +660,9 @@ def _plan_view(preview: dict) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
-    video's Scene and of each Overlay is drawn (`_picture_view`), a keyed one's Keyframes and its
-    bounds at each (`_motion_view`), a Manual Scene's Keyframes past its end (`ignored`), the keyed
-    sounds' volume Keyframes (a video
+    video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
+    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
+    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
@@ -691,6 +694,7 @@ def _plan_view(preview: dict) -> dict:
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
+                **({} if event["image"] else _video_read(event)),
                 **_motion_view(event["picture"]),
             }
             for event in plan["overlays"]
@@ -702,6 +706,15 @@ def _plan_view(preview: dict) -> dict:
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _video_read(event: dict) -> dict:
+    """What of its video an Overlay shows: seconds into it, and its Speed and pitch when not the default."""
+    end = event["offset"] + (event["end"] - event["start"]) * event["speed"]
+    return _compact({
+        "source_start": round(event["offset"], 2), "source_end": round(end, 2),
+        "speed": event["speed"] if event["speed"] != 1 else None, "pitch": event["pitch"] or None,
+    })
 
 
 # What identifies an item of each kind within its Candidate.
