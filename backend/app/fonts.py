@@ -4,6 +4,10 @@ Job in DATA_DIR/fonts. Each render gives libass the Faces it needs through one `
 and the browser's preview loads each Face's file from GET /api/fonts/{id}, so that both set the same
 glyphs.
 
+One more bundled Face, FALLBACK_FONT (CJK), is never offered for a style to name: a Text Layer's
+characters its own Face hasn't got are set in it (docs/adr/0010), so that libass's own fallback to
+the system's fonts is never used.
+
 Each Face is a static font of one weight and slant: libass sets only a variable font's default
 instance. So an imported variable font is split into a Face per named instance (fontTools' instancer),
 as a collection (TTC) is split into its members, each written out as its own file.
@@ -108,6 +112,10 @@ _BUNDLED = [
     ("bangers", "Bangers", "Bangers-Regular.ttf"),
 ]
 BUNDLED_IDS = [face_id for face_id, _, _ in _BUNDLED]
+# The bundled Face a Text Layer's characters its Face hasn't got are set in: Chinese, and Japanese
+# kana and kanji. Not one a style names, nor listed.
+FALLBACK_FONT = "noto-sans-sc-bold"
+_FALLBACK = (FALLBACK_FONT, "Noto Sans SC Bold", "NotoSansSC-Bold.otf")
 _FACES = TypeAdapter(list[Face])
 
 
@@ -130,7 +138,8 @@ class Faces:
         return [*(_bundled(face_id) for face_id in BUNDLED_IDS), *self._imported()]
 
     def find(self, face_id: str) -> Face | None:
-        if face_id in BUNDLED_IDS:
+        """The Face `face_id`, FALLBACK_FONT's too, or None."""
+        if face_id in BUNDLED_IDS or face_id == FALLBACK_FONT:
             return _bundled(face_id)
         return next((face for face in self._imported() if face.id == face_id), None)
 
@@ -144,7 +153,8 @@ class Faces:
         """The Face's file; MissingFace when it is gone from disk."""
         face = self.get(face_id)
         if not face.file.is_file():
-            raise MissingFace(f"The font file of {face.label} ({face.id}) is missing: import it again")
+            again = "run make setup" if face.bundled else "import it again"
+            raise MissingFace(f"The font file of {face.label} ({face.id}) is missing: {again}")
         return face.file
 
     def add(self, data: bytes, filename: str) -> FontImport:
@@ -197,7 +207,7 @@ class Faces:
     def delete(self, face_id: str) -> None:
         """Remove an imported Face and its file. BundledFace for a bundled one. (Whether anything still
         names it is for the caller to check.)"""
-        if face_id in BUNDLED_IDS:
+        if face_id in BUNDLED_IDS or face_id == FALLBACK_FONT:
             raise BundledFace(face_id)
         with self._lock:
             face = self.get(face_id)
@@ -293,12 +303,15 @@ def font(face_id: str) -> Face:
 
 @cache
 def _bundled(face_id: str) -> Face:
-    label, filename = next((label, filename) for id, label, filename in _BUNDLED if id == face_id)
+    label, filename = next((label, filename) for id, label, filename in [*_BUNDLED, _FALLBACK] if id == face_id)
     file = FONTS_DIR / filename
-    font = _open(file.read_bytes())
+    data = file.read_bytes()
+    font = _open(data)
     face = _describe(font, face_id, file, bundled=True)
-    # Hashed as an import of its file would be, so that importing it adds nothing.
-    return replace(face, label=label, family=_name(font, 1), sha256=_sha256(_saved(font)))
+    # Hashed as an import of its file would be, so that importing it adds nothing; the fallback's as
+    # it is, since writing its tens of thousands of glyphs out again takes seconds.
+    digest = _sha256(data) if face_id == FALLBACK_FONT else _sha256(_saved(font))
+    return replace(face, label=label, family=_name(font, 1), sha256=digest)
 
 
 def _statics(data: bytes) -> list[bytes]:
