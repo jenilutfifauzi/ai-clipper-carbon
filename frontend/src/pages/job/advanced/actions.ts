@@ -1,10 +1,10 @@
 import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, TextLayer, Transform } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
-import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, type SegmentRange } from "../editor/segmentTime";
-import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
+import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
+import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
 import { rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
+import { isPicked, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import { speedLabel, speedOf } from "./speed";
 import type { TrackKind } from "./trackState";
@@ -72,9 +72,11 @@ const KINDS: {
       const { transform } = item as Overlay;
       return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
     },
+    // Each part shows its stretch of the video (keptOffset): in Reverse, the first the later part.
     cut: (item, at) => {
-      const { offset, speed = 1 } = item as Overlay;
-      return { first: {}, second: { offset: round(offset + (at - item.start) * speed) } };
+      const overlay = item as Overlay;
+      const into = at - overlay.start;
+      return { first: { offset: keptOffset(overlay, 0, into) }, second: { offset: keptOffset(overlay, into, overlay.secs) } };
     },
   },
 };
@@ -346,11 +348,17 @@ export function split(scene: PickContext, at: number): Outcome | null {
     const shown = scene.played[edits.segments.indexOf(segment)];
     const there = playedSourceAt(shown, at);
     const cut = Math.round((segment.media ? there : scene.gap(there)) * 1000) / 1000;
+    // On the Timeline the first part plays first: in Reverse, the later part of the range, from its
+    // end (as played) down to the cut. Both keep the Segment's Speed, pitch and Reverse, and a
+    // reversed one's copy serves both.
+    const [firstRange, secondRange] = segment.reverse
+      ? [{ start: cut, end: rangeOf(shown).end }, { start: segment.start, end: cut }]
+      : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
     // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start.
-    const second = rekeyed<ClipSegment>({ ...segment, id: idOf(scene), start: cut }, offsetAt(segment, cut), segmentLength(segment));
+    const second = rekeyed<ClipSegment>({ ...segment, ...secondRange, id: idOf(scene) }, offsetAt(segment, cut), segmentLength(segment));
     const first = rekeyed<ClipSegment>(
-      { ...segment, start: shown.source_start, end: cut },
-      offsetAt(segment, shown.source_start),
+      { ...segment, ...firstRange },
+      offsetAt(segment, segment.reverse ? firstRange.end : firstRange.start),
       offsetAt(segment, cut),
     );
     next.segments = next.segments.flatMap((other) => (other.id === segment.id ? [first, second] : [other]));
@@ -647,6 +655,33 @@ export function gestureSpeed() {
 }
 
 /**
+ * The one picked Segment or video Overlay, which Reverse (R) turns on or off: null with nothing or
+ * several picked, or for a Freeze frame (it holds one frame), an image Overlay (`video` says whether
+ * a Media Library item is a video), a Text Layer or a Music Clip.
+ */
+export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpedRef | null {
+  const only = onlyItem(scene.pick);
+  const { segments, overlays } = scene.edits;
+  if (only?.kind === "segment" && segments.some((segment) => segment.id === only.id && segment.hold == null)) return { kind: "segment", id: only.id };
+  if (only?.kind === "overlay" && overlays.some((overlay) => overlay.id === only.id && video(overlay.media))) return { kind: "overlay", id: only.id };
+  return null;
+}
+
+/**
+ * Segment or video Overlay `item` played backwards, or forwards again (`reverse`, ADR 0009), from a
+ * Retimed copy. It keeps its range, its place and length on the Timeline, and its Keyframes, in
+ * seconds from its start: its motion keeps its moments, not its frames. Null for a Freeze frame, or
+ * an item that isn't there.
+ */
+export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: SpedRef, reverse: boolean): Outcome | null {
+  const { edits, pick } = scene;
+  const set = <T extends { id: string; hold?: number | null }>(items: T[]) =>
+    items.some((other) => other.id === item.id && other.hold == null) ? items.map((other) => (other.id === item.id ? { ...other, reverse } : other)) : null;
+  const changed = item.kind === "segment" ? set(edits.segments) : set(edits.overlays);
+  return changed && { edits: { ...edits, [item.kind === "segment" ? "segments" : "overlays"]: changed }, pick };
+}
+
+/**
  * Music Clip `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle or the
  * inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins, so
  * that the two together are never longer than the Music Clip. Cut short by the Clip's end (`heard`
@@ -697,8 +732,9 @@ export function retimed<T extends { start: number } & ({ secs: number } | { end:
     const from = edge === "move" ? 0 : next.start - origin.start;
     return rekeyed({ ...next, keys: origin.keys }, from, from + next.secs);
   }
-  // A Segment's, in seconds into it on the Timeline.
-  const from = edge === "move" ? 0 : offsetAt(origin as SegmentRange, next.start);
+  // A Segment's, in seconds into it on the Timeline: from where its left edge (its range's start,
+  // or end in Reverse) now shows.
+  const from = edge === "move" ? 0 : offsetAt(origin as SegmentRange, sourceAt(next as SegmentRange, 0));
   const length = segmentLength(next);
   return rekeyed({ ...next, keys: origin.keys }, from, from + length);
 }

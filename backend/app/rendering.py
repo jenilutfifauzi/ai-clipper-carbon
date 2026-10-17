@@ -498,8 +498,10 @@ class Renders:
                 | {overlay.media for overlay in plan.overlays}
             )
             files = {media_id: self.media.file(media_id) for media_id in used}
-            # A reversed Segment reads its full-size Retimed copy, made now if it isn't there.
-            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None)
+            # A reversed Segment or Overlay reads its full-size Retimed copy, made now if it isn't there.
+            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
+                1 for event in plan.overlays + plan.audio if event.reverse
+            )
             plan, files = read_from_copies(plan, files, lambda media_id, played: (
                 self.media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
             ).make(

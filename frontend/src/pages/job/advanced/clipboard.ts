@@ -3,7 +3,7 @@ import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../..
 import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
-import { ITEM_MIN_SECS, round } from "./edits";
+import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
 
@@ -148,8 +148,8 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
       continue;
     }
     if (start > from || end < from + item.secs - 1e-6) trimmed += 1;
-    const pace = "speed" in item ? (item.speed ?? 1) : 1;
-    const offset = start > from && "offset" in item ? { offset: round(item.offset + (start - from) * pace) } : {};
+    // A song or video goes on from where it is at its new start (an Overlay in Reverse, at its new end).
+    const offset = "offset" in item ? { offset: keptOffset(item, start - from, end - from) } : {};
     // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed).
     const copy = rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from);
     Object.assign(next, { [LISTS[kind]]: [...(next[LISTS[kind]] as Timed[]), copy] });

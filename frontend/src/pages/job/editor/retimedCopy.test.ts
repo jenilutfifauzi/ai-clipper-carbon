@@ -200,6 +200,29 @@ describe("an item at a Speed a browser won't play", () => {
       span: { start: 2, end: 2.5, from: 1, speed: 2, pitch: false },
     });
   });
+
+  test("a reversed Overlay's video and sound play its reversed copy at its Speed, its last frame held until the copy is made", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(playedFrom([{ start: 100, end: 110 }]));
+    stage.decks(playback);
+    // 1..3 s of its video, backwards at 2×, over 2..3 s; its sound from the same copy.
+    const event = { start: 2, end: 3, offset: 1, speed: 2, pitch: false, reverse: true };
+    expect(eventCopy(event)).toEqual({ start: 1, end: 3, reverse: true });
+    expect(eventPlay(event, "/api/media/intro/proxy", null)).toEqual({
+      src: "/api/media/intro/proxy",
+      span: { start: 2, end: 3, from: 3 - 1 / 30, hold: 1 },
+    });
+    const video = stage.video();
+    const shown = eventPlay(event, "/api/media/intro/proxy", retimed("reversed-preview-0-3000.mp4"));
+    playback.subscribe(() => follow(video.element, playback, shown.span));
+    playback.seek(2);
+    stage.settle();
+    playback.play();
+    stage.advance(0.25);
+    expect(video.playbackRate).toBe(2);
+    expect(video.currentTime).toBeCloseTo(0.5, 5);
+  });
 });
 
 // 0–5 s from 100 s of the Source, then 50–54 s of it played as `pace` says, then 4 s from 200 s; the

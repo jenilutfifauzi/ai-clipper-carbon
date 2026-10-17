@@ -9,6 +9,7 @@ import { TranscriptPicker } from "../TranscriptPicker";
 import { FITTED } from "../editor/manual";
 import { IDENTITY, mediaSize } from "../editor/picture";
 import type { Playback, PlayedSegment } from "../editor/playback";
+import type { RetimedAsk } from "../editor/retimedCopy";
 import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyedVolume, useKeyNotice, useKeyTime } from "./KeyCluster";
@@ -29,6 +30,7 @@ export const MEDIA_MIN_SECS = 0.1;
  * dragged to. Its start or end trimmed, its planned edge moves as far as the drawn one did, times its
  * Speed in its file (within its file's `lengthOf`, and for one of the Source within the `longest`
  * clip of it), at least SEGMENT_MIN_SECS on the Timeline; the Segments after it close up behind it.
+ * In Reverse its left edge is its range's end, and its right edge its start (ADR 0009).
  */
 export function draggedSegments(
   origin: ClipSegment[],
@@ -57,20 +59,13 @@ export function draggedSegments(
   // The least and the most of its file it can show.
   const least = SEGMENT_MIN_SECS * (range.speed ?? 1);
   const most = segment.media ? Infinity : longest;
+  // What its file shows at the dragged edge now; in Reverse, its left edge shows its range's end and
+  // its right edge its start.
+  const there = sourceAt(range, change.edge === "start" ? change.start - drawn.start : segmentLength(range) + change.end - drawn.end);
   const next =
-    change.edge === "start"
-      ? {
-          ...segment,
-          start: round(Math.min(Math.max(sourceAt(range, change.start - drawn.start), 0, whole.source_end - most), whole.source_end - least)),
-          end: whole.source_end,
-        }
-      : {
-          ...segment,
-          start: whole.source_start,
-          end: round(
-            Math.max(Math.min(sourceAt(range, segmentLength(range) + change.end - drawn.end), lengthOf(segment), whole.source_start + most), whole.source_start + least),
-          ),
-        };
+    (change.edge === "start") !== !!segment.reverse
+      ? { ...segment, start: round(Math.min(Math.max(there, 0, range.end - most), range.end - least)), end: range.end }
+      : { ...segment, start: range.start, end: round(Math.max(Math.min(there, lengthOf(segment), range.start + most), range.start + least)) };
   return origin.map((other) => (other.id === id ? next : other));
 }
 
@@ -123,12 +118,14 @@ export function SegmentFields({
   onSourceVolume,
   onVolume,
   onSpeed,
+  onReverse,
   onHold,
   onChange,
   onCropMode,
   scene,
   playback,
   span,
+  copy,
 }: {
   segment: ClipSegment;
   // Its video, for a video's Segment.
@@ -145,6 +142,8 @@ export function SegmentFields({
   onVolume: (volume: number, group: string) => void;
   // Its Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (speed: number, group: string) => void;
+  // Its Reverse turned on or off (actions.ts' setReverse).
+  onReverse: (reverse: boolean) => void;
   // A Freeze frame's hold set (actions.ts' setHold).
   onHold: (hold: number) => void;
   onChange: (segment: ClipSegment, group: string) => void;
@@ -155,6 +154,8 @@ export function SegmentFields({
   playback: Playback;
   // Where it plays on the Timeline (keying.ts' segmentSpan), which a video's Keyframes are set in.
   span: KeySpan | null;
+  // The Retimed copy the preview plays it from, if any.
+  copy: RetimedAsk | null;
 }) {
   const Icon = segment.media ? Clapperboard : Film;
   // A Freeze frame holds one frame, silent: its Duration instead of a Speed, and no sound.
@@ -162,17 +163,22 @@ export function SegmentFields({
   const range = (of: string) =>
     held
       ? `Holds ${formatPrecise(segment.start)} of ${of} · ${segmentLength(segment).toFixed(1)} s`
-      : `${formatPrecise(segment.start)} – ${formatPrecise(segment.end)} of ${of} · ${segmentLength(segment).toFixed(1)} s`;
+      : segment.reverse
+        ? `${formatPrecise(segment.end)} back to ${formatPrecise(segment.start)} of ${of} · ${segmentLength(segment).toFixed(1)} s`
+        : `${formatPrecise(segment.start)} – ${formatPrecise(segment.end)} of ${of} · ${segmentLength(segment).toFixed(1)} s`;
   const speed = held ? (
     <HoldFields hold={segment.hold!} onHold={onHold} />
   ) : (
     <SpeedFields
       speed={segment.speed ?? 1}
       pitch={segment.pitch ?? false}
+      reverse={segment.reverse ?? false}
       heard={!segment.media || item?.has_audio !== false}
       group={`segment:${segment.id}:speed`}
+      copy={copy}
       onSpeed={onSpeed}
       onPitch={(pitch) => onChange({ ...segment, pitch }, `segment:${segment.id}:pitch`)}
+      onReverse={onReverse}
     />
   );
   return (

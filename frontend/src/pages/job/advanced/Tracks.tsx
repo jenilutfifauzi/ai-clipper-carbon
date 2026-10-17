@@ -20,10 +20,11 @@ import { cx, formatPrecise } from "../../../format";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
+import { rangeOf } from "../editor/segmentTime";
 import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
-import { fadesWithin, ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
+import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
@@ -208,22 +209,30 @@ export function Tracks({
             const selected = isPicked(pick, "overlay", overlay.id);
             const item = mediaById.get(overlay.media);
             const length = item?.duration ?? Infinity;
-            // A video at a Speed plays that many of its seconds in each of the Timeline's.
+            // A video at a Speed plays that many of its seconds in each of the Timeline's. In
+            // Reverse its left edge shows the end of its part of the video, and its right edge the
+            // start (its offset): trimmed, each reaches as far as the video goes that way.
             const speed = overlay.speed ?? 1;
+            const video = item?.duration != null;
+            const until = overlay.start + overlay.secs;
+            const reach = {
+              before: overlay.reverse ? until - (length - overlay.offset) / speed : overlay.start - overlay.offset / speed,
+              after: overlay.reverse ? until + overlay.offset / speed : overlay.start + (length - overlay.offset) / speed,
+            };
             return (
               <TimelineItem
                 key={overlay.id}
                 geometry={geometry}
                 start={overlay.start}
-                end={Math.min(overlay.start + overlay.secs, duration)}
+                end={Math.min(until, duration)}
                 max={duration}
                 minSecs={ITEM_MIN_SECS}
-                maxSecs={(length - overlay.offset) / speed}
-                trimMin={item?.duration != null ? overlay.start - overlay.offset / speed : undefined}
+                trimMin={video ? reach.before : undefined}
+                trimMax={video ? reach.after : undefined}
                 tone="overlay"
                 selected={selected}
                 changed={changed.has(overlay.id)}
-                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${speed !== 1 ? `, at ${speedLabel(speed)}` : ""}`}
+                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${paceName(overlay)}`}
                 pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -235,8 +244,8 @@ export function Tracks({
                           ...overlay,
                           start: round(start),
                           secs: round(end - start),
-                          // Trimming a video's start starts it later in the video.
-                          offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + (start - overlay.start) * speed)) : overlay.offset,
+                          // Trimmed, a video shows the part of it its edges now reach.
+                          offset: edge !== "move" && video ? keptOffset(overlay, start - overlay.start, end - overlay.start) : overlay.offset,
                         },
                         edge,
                         group,
@@ -249,7 +258,7 @@ export function Tracks({
               >
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
                 <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
-                {speed !== 1 && <SpeedBadge speed={speed} />}
+                <PaceBadge pace={overlay} />
               </TimelineItem>
             );
           })}
@@ -279,7 +288,7 @@ export function Tracks({
               tone="video"
               selected={selected}
               changed={changed.has(segment.id)}
-              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${(segment.speed ?? 1) !== 1 ? `, at ${speedLabel(segment.speed ?? 1)}` : ""}${held ? `, held ${holdLabel(segment.hold!)}` : ""}`}
+              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${paceName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => {
@@ -309,10 +318,10 @@ export function Tracks({
                 />
               )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
-                {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(shown.source_start)}
+                {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(paceAlong(shown).mediaStart)}
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
               </span>
-              {(segment.speed ?? 1) !== 1 && <SpeedBadge speed={segment.speed ?? 1} />}
+              <PaceBadge pace={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
             </TimelineItem>
           );
@@ -486,11 +495,18 @@ export function Tracks({
   );
 }
 
-/** A sped Segment's or Overlay's Speed on the Timeline: "2×". */
-function SpeedBadge({ speed }: { speed: number }) {
+/** How a Segment or Overlay plays, as its accessible name says it: ", at 2×", ", reversed at 2×", or nothing at 1× forwards. */
+function paceName({ speed = 1, reverse }: { speed?: number; reverse?: boolean }): string {
+  const sped = speed !== 1 ? ` at ${speedLabel(speed)}` : "";
+  return reverse ? `, reversed${sped}` : sped && `,${sped}`;
+}
+
+/** A sped or reversed Segment's or Overlay's badge on the Timeline: "2×", "◀", "◀ 2×"; none at 1× forwards. */
+function PaceBadge({ pace: { speed = 1, reverse } }: { pace: { speed?: number; reverse?: boolean } }) {
+  if (speed === 1 && !reverse) return null;
   return (
     <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white tabular-nums">
-      {speedLabel(speed)}
+      {[reverse && "◀", speed !== 1 && speedLabel(speed)].filter(Boolean).join(" ")}
     </span>
   );
 }
@@ -507,9 +523,14 @@ function HoldBadge({ hold }: { hold: number }) {
   );
 }
 
-// How a Segment's Filmstrip and Waveform run along it: at its Speed, or, for a Freeze frame, its one
-// frame repeated.
-const paceAlong = (shown: PlayedSegment) => (shown.hold != null ? 0 : shown.speed);
+// How a Segment's Filmstrip and Waveform run along it: from what it shows at its left edge (its
+// range's end, in Reverse) at its Speed, backwards in Reverse, or, for a Freeze frame, its one frame
+// repeated.
+const paceAlong = (shown: PlayedSegment) => ({
+  mediaStart: shown.reverse ? rangeOf(shown).end : shown.source_start,
+  speed: shown.hold != null ? 0 : shown.speed,
+  reverse: shown.reverse,
+});
 
 /**
  * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
@@ -549,8 +570,7 @@ function MediaFilmstrip({
             filmstripLayer({
               cache,
               url: (start) => mediaFilmstripUrl(media, start),
-              mediaStart: shown.source_start,
-              speed: paceAlong(shown),
+              ...paceAlong(shown),
               media: { duration: item.duration, width: item.width, height: item.height },
             }),
             ...(item.has_audio && shown.hold == null
@@ -558,8 +578,7 @@ function MediaFilmstrip({
                   waveformLayer({
                     cache,
                     url: (start) => mediaPeaksUrl(media, start),
-                    mediaStart: shown.source_start,
-                    speed: shown.speed,
+                    ...paceAlong(shown),
                     duration: item.duration,
                     gain: (time) => gainAt(time, heard),
                     color: MEDIA_WAVE,
@@ -603,8 +622,7 @@ function SourceFilmstrip({
         filmstripLayer({
           cache,
           url: (start) => jobFilmstripUrl(source.job, start),
-          mediaStart: shown.source_start,
-          speed: paceAlong(shown),
+          ...paceAlong(shown),
           media: source.metadata,
         }),
         ...(shown.hold != null
@@ -613,8 +631,7 @@ function SourceFilmstrip({
               waveformLayer({
                 cache,
                 url: (start) => jobPeaksUrl(source.job, start),
-                mediaStart: shown.source_start,
-                speed: shown.speed,
+                ...paceAlong(shown),
                 duration: source.metadata.duration,
                 gain: () => gain,
                 color: MEDIA_WAVE,

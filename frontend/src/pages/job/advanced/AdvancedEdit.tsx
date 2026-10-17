@@ -40,6 +40,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
   changeMusic,
   dragSegment,
@@ -53,8 +54,10 @@ import {
   pickAll,
   placeAfter,
   placeDropped,
+  reversible,
   setFade,
   setHold,
+  setReverse,
   type Outcome,
   type SegmentDrag,
   type SpedRef,
@@ -560,6 +563,26 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const actions = itemActions(scene, () => playback.time, apply, clip);
   const splits = splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
+  // A Segment's or video Overlay's Reverse turned on or off (the inspector's switch, R): one change.
+  function setItemReverse(item: SpedRef, reverse: boolean) {
+    const outcome = setReverse(scene, item, reverse);
+    if (outcome) history.set(outcome.edits);
+  }
+  // The one picked Segment or video Overlay, which R reverses.
+  const reversed = reversible(scene, (media) => mediaById.get(media)?.kind === "video");
+  // The Retimed copy the preview plays a Segment or Overlay from, as the plan has it (retimedCopy.ts).
+  function copyOf(item: SpedRef): RetimedAsk | null {
+    const plan = preview?.plan;
+    if (item.kind === "segment") {
+      const shown = plan?.segments.find((segment) => segment.id === item.id);
+      const range = shown && segmentCopy(shown);
+      if (!range) return null;
+      return shown.media ? { media: shown.media, range } : { job: job.id, range };
+    }
+    const event = plan?.overlays.find((overlay) => overlay.id === item.id);
+    const range = event && !event.image ? eventCopy(event) : null;
+    return event && range ? { media: event.media, range } : null;
+  }
   // A Freeze frame's Duration typed in: one change, its ripple included.
   function setFreezeHold(id: string, hold: number) {
     const outcome = setHold(scene, id, hold, { longest });
@@ -622,6 +645,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
     freeze: () => (freezes.canFreeze(playback.time) ? freezes.freeze() : false),
+    reverse: () => {
+      if (!reversed) return false;
+      const items: { id: string; reverse?: boolean }[] = reversed.kind === "segment" ? edits.segments : edits.overlays;
+      setItemReverse(reversed, !items.find((item) => item.id === reversed.id)?.reverse);
+    },
     fit: () => fitTimeline.current?.(),
     zoom: (direction) => zoomTimeline.current?.(direction),
     shortcuts: () => setShortcuts(true),
@@ -923,6 +951,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onOverlay={updateOverlay}
         onSegment={updateSegment}
         onSpeed={setItemSpeed}
+        onReverse={setItemReverse}
+        copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
       />

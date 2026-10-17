@@ -77,7 +77,7 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
 /**
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip (and Overlay
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
- * curve) through its fades. An Overlay's sound at a Speed a browser won't play is its Retimed copy's
+ * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
  * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
  * live) is set to the plan's `source_volume`, times the Segment's own volume. Nothing is routed
  * through Web Audio until the plan has music or another volume.

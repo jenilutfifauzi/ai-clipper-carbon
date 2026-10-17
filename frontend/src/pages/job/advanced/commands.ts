@@ -30,6 +30,8 @@ export function commandsOf(
     split: () => void;
     // Freeze frame at the playhead; false where none can be made.
     freeze: () => boolean | void;
+    // Reverse on or off for the one picked Segment or video Overlay; false where there is none.
+    reverse: () => boolean | void;
     // Zoom the Timeline to fit: what is picked, or with nothing picked, the whole Clip.
     fit: () => void;
     // Zoom the Timeline in (1) or out (-1) about the playhead.
@@ -85,6 +87,7 @@ export function commandsOf(
     "pick-none": () => more.pickNone(),
     split: () => more.split(),
     "freeze-frame": () => more.freeze(),
+    reverse: () => more.reverse(),
     copy: () => (actions && !window.getSelection()?.toString() ? actions.copy() : false),
     cut: () => (actions ? actions.cut() : false),
     paste: () => (more.paste ? more.paste() : false),

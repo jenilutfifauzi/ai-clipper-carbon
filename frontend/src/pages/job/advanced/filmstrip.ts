@@ -9,25 +9,27 @@ const FADE_MS = 150;
  * An item's Filmstrip, as a layer of its canvas: tiles a frame wide at the canvas's height, each with
  * the frame under its middle, from the chunks at `url(start)` in `cache`. A tile whose chunk isn't
  * here yet is left clear, for what is under the canvas (a media item's thumbnail) to show.
- * `mediaStart` is the media's time at the item's left edge, played at `speed` (a Segment's Speed);
- * `media` is the video's length and size.
+ * `mediaStart` is the media's time at the item's left edge, played at `speed` (a Segment's Speed),
+ * backwards in `reverse`; `media` is the video's length and size.
  */
 export function filmstripLayer({
   cache,
   url,
   mediaStart,
   speed,
+  reverse,
   media,
 }: {
   cache: MediaCache;
   url: (start: number) => string;
   mediaStart: number;
   speed?: number;
+  reverse?: boolean;
   media: { duration: number; width: number; height: number };
 }): Layer {
   return ({ ctx, span, view, width, height, dpr, pps, now, want }) => {
     const tile = tileWidth(height, media.width, media.height);
-    const tiles = filmstripTiles({ width, mediaStart, speed, frames: Math.ceil(media.duration), tile, pps, view, span });
+    const tiles = filmstripTiles({ width, mediaStart, speed, reverse, frames: Math.ceil(media.duration), tile, pps, view, span });
     const decoded = Math.round(height * dpr);
     let fading = false;
     for (const { left, frame } of tiles) {

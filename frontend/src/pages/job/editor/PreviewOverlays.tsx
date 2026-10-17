@@ -8,8 +8,8 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
 /**
  * The plan's Overlays while they show, over the Source's (and videos') pictures and under the
  * captions, each drawn as its Picture: an image, or a video's small copy playing in step with the
- * playback at its Speed (muted: its sound, when turned up, plays with the music); at a Speed a
- * browser won't play, from a Retimed copy (retimedCopy.ts). The `selected` ones (picked in
+ * playback at its Speed (muted: its sound, when turned up, plays with the music); in Reverse or at
+ * a Speed a browser won't play, from a Retimed copy (retimedCopy.ts). The `selected` ones (picked in
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
  * outside their time too. A keyed one moves with the playback (PicturePanel).
  */
@@ -43,12 +43,15 @@ function OverlayView({
   const shown = useShown(playback, (time) => time >= event.start && time < event.end);
 
   // By its times, not the event: one is made afresh while it is held on the stage.
-  const { start, end, offset, speed, pitch, media, image } = event;
-  const range = useMemo(() => (image ? null : eventCopy({ start, end, offset, speed, pitch })), [image, start, end, offset, speed, pitch]);
+  const { start, end, offset, speed, pitch, reverse, media, image } = event;
+  const range = useMemo(
+    () => (image ? null : eventCopy({ start, end, offset, speed, pitch, reverse })),
+    [image, start, end, offset, speed, pitch, reverse],
+  );
   const copy = useRetimedCopy(media, range);
   const { src, span } = useMemo(
-    () => eventPlay({ start, end, offset, speed, pitch }, mediaProxyUrl(media), copy),
-    [start, end, offset, speed, pitch, media, copy],
+    () => eventPlay({ start, end, offset, speed, pitch, reverse }, mediaProxyUrl(media), copy),
+    [start, end, offset, speed, pitch, reverse, media, copy],
   );
   useEffect(() => {
     const element = video.current;

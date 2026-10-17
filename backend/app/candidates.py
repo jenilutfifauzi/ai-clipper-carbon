@@ -379,8 +379,8 @@ class Overlay:
     `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
     `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
     and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
-    not from its Transform or `volume`. An image's volume Keyframes, Speed and pitch are refused with
-    the Media Library at hand (app/api.py)."""
+    not from its Transform or `volume`. An image's volume Keyframes, Speed, pitch and Reverse are
+    refused with the Media Library at hand (app/api.py)."""
 
     id: ItemId
     media: MediaId
@@ -391,9 +391,11 @@ class Overlay:
     crop: Crop = Crop()
     volume: Volume = 0.0
     # A video's: over its `secs` it shows `secs` × speed of it from `offset` (docs/adr/0009), its
-    # sound keeping its pitch unless `pitch`.
+    # sound keeping its pitch unless `pitch`; backwards, from a Retimed copy, with `reverse`, so that
+    # `offset` is then the frame it ends on (its left edge shows `offset + secs × speed`).
     speed: Speed = 1.0
     pitch: bool = False
+    reverse: bool = False
     radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
     border: Border | None = None
     shadow: Shadow | None = None

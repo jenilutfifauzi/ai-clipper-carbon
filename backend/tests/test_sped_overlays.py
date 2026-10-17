@@ -76,7 +76,7 @@ def test_speed_and_pitch_are_saved_and_one_past_its_video_or_on_an_image_is_refu
     saved = patch(client, job, candidate, overlays=[sped])
     assert (saved["overlays"][0]["speed"], saved["overlays"][0]["pitch"]) == (2, True)
     assert preview(client, job, saved)["plan"]["overlays"][0] | {"picture": None} == {
-        "id": "o", "media": video["id"], "picture": None, "start": 0.5, "end": 4.5, "offset": 1, "image": False, "speed": 2, "pitch": True,
+        "id": "o", "media": video["id"], "picture": None, "start": 0.5, "end": 4.5, "offset": 1, "image": False, "speed": 2, "pitch": True, "reverse": False,
     }
 
     still = {"id": "i", "media": image["id"], "start": 0, "secs": 1}
@@ -84,8 +84,8 @@ def test_speed_and_pitch_are_saved_and_one_past_its_video_or_on_an_image_is_refu
         # 1 + 5 × 2 = 11 s of a 10 s video.
         ([sped | {"secs": 5}], "Overlay o runs past the end of its video (10 s) at 2x"),
         ([sped | {"speed": 17}], "less than or equal to 16"),
-        ([still | {"speed": 2}], "Overlay i is an image: it has no Speed or pitch"),
-        ([still | {"pitch": True}], "Overlay i is an image: it has no Speed or pitch"),
+        ([still | {"speed": 2}], "Overlay i is an image: it has no Speed, pitch or Reverse"),
+        ([still | {"pitch": True}], "Overlay i is an image: it has no Speed, pitch or Reverse"),
     ):
         response = client.patch(candidate_url(job, saved), json={"overlays": overlays})
         assert response.status_code == 422 and message in response.text, (message, response.text)
@@ -106,7 +106,7 @@ async def test_the_agent_speeds_an_overlay_and_the_dry_run_shows_what_of_its_vid
     await call(mcp, "edit_candidate", **ids, changes={"overlays": [shown, {"id": "i", "media": image["id"], "start": 0, "secs": 1}]})
 
     message = await fails(mcp, "merge_candidate_items", **ids, overlays=[{"id": "i", "speed": 2}])
-    assert "Overlay i is an image: it has no Speed or pitch" in message, message
+    assert "Overlay i is an image: it has no Speed, pitch or Reverse" in message, message
     await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o", "speed": 2, "pitch": True}])
     plan = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
     sped, still = plan["overlays"]

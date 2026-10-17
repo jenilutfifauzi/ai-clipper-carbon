@@ -4,6 +4,7 @@ import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan,
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
+import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
 import { restyle, setFade, setVolume, type ItemActions, type SpedRef } from "./actions";
@@ -37,6 +38,8 @@ export function Inspector({
   onOverlay,
   onSegment,
   onSpeed,
+  onReverse,
+  copyOf,
   onHold,
   cropMode,
 }: {
@@ -57,6 +60,10 @@ export function Inspector({
   onSegment: (segment: ClipSegment, group?: string) => void;
   // A Segment's or video Overlay's Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (item: SpedRef, speed: number, group: string) => void;
+  // A Segment's or video Overlay's Reverse turned on or off (actions.ts' setReverse).
+  onReverse: (item: SpedRef, reverse: boolean) => void;
+  // The Retimed copy the preview plays a Segment or video Overlay from, as the plan has it, if any.
+  copyOf: (item: SpedRef) => RetimedAsk | null;
   // A Freeze frame's hold set (actions.ts' setHold).
   onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
@@ -119,6 +126,8 @@ export function Inspector({
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
         onSpeed={(speed, group) => onSpeed({ kind: "segment", id: segment.id }, speed, group)}
+        onReverse={(reverse) => onReverse({ kind: "segment", id: segment.id }, reverse)}
+        copy={copyOf({ kind: "segment", id: segment.id })}
         onHold={(hold) => onHold(segment.id, hold)}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
         onCropMode={cropMode?.("segment", segment.id)}
@@ -173,6 +182,8 @@ export function Inspector({
         playback={playback}
         onChange={onOverlay}
         onSpeed={(speed, group) => onSpeed({ kind: "overlay", id: overlay.id }, speed, group)}
+        onReverse={(reverse) => onReverse({ kind: "overlay", id: overlay.id }, reverse)}
+        copy={copyOf({ kind: "overlay", id: overlay.id })}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}

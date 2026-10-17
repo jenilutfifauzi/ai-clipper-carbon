@@ -2,15 +2,17 @@ import { useState } from "react";
 import { Slider } from "../../../components/Slider";
 import { Group } from "../editor/StyleFields";
 import { gestureRetime, type TimedEdge } from "./actions";
-import { ITEM_MIN_SECS } from "./edits";
+import { ITEM_MIN_SECS, keptOffset } from "./edits";
 
 /**
  * When an item of the timeline shows (or is heard): where it starts in the Clip, how long it stays
  * (kept in the Clip and, for a song or a video, in its file, which a video at a Speed plays that many
- * seconds of in each of the Clip's), and with `length` (its file's), where in its file it starts.
+ * seconds of in each of the Clip's), and with `length` (its file's), where in its file it starts. A
+ * video in Reverse stays longer or shorter at its end as its right edge's trim does: its part of the
+ * video reaches further back or less far (its offset), its end in the video staying.
  * Each field's changes are one `group` of the history.
  */
-export function TimingFields<T extends { id: string; start: number; secs: number; offset?: number; speed?: number }>({
+export function TimingFields<T extends { id: string; start: number; secs: number; offset?: number; speed?: number; reverse?: boolean }>({
   item,
   duration,
   length,
@@ -30,7 +32,8 @@ export function TimingFields<T extends { id: string; start: number; secs: number
   const changed = (next: T, edge: TimedEdge, group: string) => onChange(retime(item, next, edge, group), group);
   const offset = item.offset ?? 0;
   const speed = item.speed ?? 1;
-  const room = Math.min(duration - item.start, length === undefined ? Infinity : (length - offset) / speed);
+  const reach = length === undefined ? Infinity : item.reverse ? item.secs + offset / speed : (length - offset) / speed;
+  const room = Math.min(duration - item.start, reach);
   const seconds = (v: number) => `${v.toFixed(2)} s`;
   return (
     <Group title="Time">
@@ -61,7 +64,9 @@ export function TimingFields<T extends { id: string; start: number; secs: number
         max={Math.max(ITEM_MIN_SECS, room)}
         step={0.05}
         format={seconds}
-        onChange={(secs) => changed({ ...item, secs }, "end", `${item.id}:secs`)}
+        onChange={(secs) =>
+          changed({ ...item, secs, ...(item.reverse && length !== undefined && { offset: keptOffset({ ...item, offset }, 0, secs) }) }, "end", `${item.id}:secs`)
+        }
       />
     </Group>
   );

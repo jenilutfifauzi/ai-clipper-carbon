@@ -4,6 +4,7 @@ import { Button } from "../../../components/Button";
 import { NO_CROP } from "../editor/cropGestures";
 import { mediaSize, overlayPlacement } from "../editor/picture";
 import type { Playback } from "../editor/playback";
+import type { RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
@@ -93,8 +94,10 @@ export function OverlayFields({
   item,
   duration,
   playback,
+  copy,
   onChange,
   onSpeed,
+  onReverse,
   onDuplicate,
   onDelete,
   onCropMode,
@@ -103,9 +106,13 @@ export function OverlayFields({
   item: MediaItem | undefined;
   duration: number;
   playback: Playback;
+  // The Retimed copy the preview plays a video's from, if any.
+  copy: RetimedAsk | null;
   onChange: (overlay: Overlay, group: string) => void;
   // A video's Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (speed: number, group: string) => void;
+  // A video's Reverse turned on or off (actions.ts' setReverse).
+  onReverse: (reverse: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
   // Crop mode on the stage, when it can be opened there.
@@ -165,17 +172,20 @@ export function OverlayFields({
         <SpeedFields
           speed={overlay.speed ?? 1}
           pitch={overlay.pitch ?? false}
+          reverse={overlay.reverse ?? false}
           heard={!!item?.has_audio}
           group={`overlay:${overlay.id}:speed`}
+          copy={copy}
           onSpeed={onSpeed}
           onPitch={(pitch) => onChange({ ...overlay, pitch }, `overlay:${overlay.id}:pitch`)}
+          onReverse={onReverse}
         />
       )}
       <TimingFields
         item={overlay}
         duration={duration}
         length={video ? length : undefined}
-        labels={{ start: "Comes on at", secs: "Stays for", offset: "Starts in the video at" }}
+        labels={{ start: "Comes on at", secs: "Stays for", offset: overlay.reverse ? "Ends in the video at" : "Starts in the video at" }}
         onChange={onChange}
       />
     </div>

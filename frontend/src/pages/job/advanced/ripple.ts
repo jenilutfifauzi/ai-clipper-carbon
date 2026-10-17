@@ -1,6 +1,6 @@
 import type { MusicClip, Overlay, TextLayer } from "../../../api";
 import { rekeyed } from "./keyActions";
-import { fadesWithin, ITEM_MIN_SECS, round, type AdvancedEdits } from "./edits";
+import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, type AdvancedEdits } from "./edits";
 import { counted, listed, LISTS } from "./pick";
 
 // The Magnetic timeline (GLOSSARY.md, docs/adr/0004-layers-ripple-with-the-main-track.md): the Text
@@ -63,10 +63,10 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
           return [];
         }
         if (moved.start === item.start && moved.secs === item.secs) return [item];
-        // A video Overlay at a Speed goes on as much further into its video.
-        const pace = "speed" in item ? (item.speed ?? 1) : 1;
-        const offset = "offset" in item && moved.skipped ? { offset: round(item.offset + moved.skipped * pace) } : {};
         const secs = round(moved.secs);
+        // A song or video goes on from as far into it as its start was cut (a video Overlay's, at its
+        // Speed; in Reverse, as far as its end was).
+        const offset = "offset" in item ? { offset: keptOffset(item, moved.skipped, moved.skipped + moved.secs) } : {};
         // A Music Clip cut shorter than its fades has them shortened with it.
         const fades = kind === "music" ? fadesWithin(item as MusicClip, secs) : {};
         // Its Keyframes of the part it still plays, from `skipped` of it (keyActions.ts' rekeyed).

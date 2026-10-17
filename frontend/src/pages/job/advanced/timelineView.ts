@@ -218,12 +218,13 @@ export interface Tile {
  * shows the frame under the middle of its visible part, in `view` (where the item is on screen) and
  * within the item's `width`, rounded to the nearest second and kept within the media's `frames`.
  * `mediaStart` is the media's time at the item's left edge, played at `speed` (a Segment's Speed),
- * and `pps` the Timeline's pixels a second.
+ * backwards in `reverse`, and `pps` the Timeline's pixels a second.
  */
 export function filmstripTiles({
   width,
   mediaStart,
   speed,
+  reverse,
   frames,
   tile,
   pps,
@@ -233,6 +234,7 @@ export function filmstripTiles({
   width: number;
   mediaStart: number;
   speed?: number;
+  reverse?: boolean;
   frames: number;
   tile: number;
   pps: number;
@@ -246,7 +248,7 @@ export function filmstripTiles({
     const right = Math.min(left + tile, width);
     // Its visible part, or the whole of it in the margins off screen.
     const shown = Math.min(right, view.right) > Math.max(left, view.left) ? { left: Math.max(left, view.left), right: Math.min(right, view.right) } : { left, right };
-    const time = sourceAt(playingFrom(mediaStart, speed), (shown.left + shown.right) / 2 / pps);
+    const time = sourceAt(playingFrom(mediaStart, speed, reverse), (shown.left + shown.right) / 2 / pps);
     tiles.push({ left, width: tile, frame: Math.min(Math.max(Math.round(time), 0), frames - 1) });
   }
   return tiles;
@@ -291,12 +293,13 @@ export interface Peaks {
 /**
  * The starts of the chunks an item needs across `span` (pixels from its left edge), within its
  * `width`: of its media from `mediaStart` at its left edge (a Music Clip's offset into its song, a
- * Segment's start in its media) played at `speed` (a Segment's Speed), at `pps` pixels a second,
- * within the media's `duration`.
+ * Segment's start in its media, or its end in Reverse) played at `speed` (a Segment's Speed),
+ * backwards in `reverse`, at `pps` pixels a second, within the media's `duration`.
  */
 export function chunksAcross({
   mediaStart,
   speed,
+  reverse,
   pps,
   width,
   span,
@@ -304,14 +307,16 @@ export function chunksAcross({
 }: {
   mediaStart: number;
   speed?: number;
+  reverse?: boolean;
   pps: number;
   width: number;
   span: Span;
   duration: number;
 }): number[] {
-  const media = playingFrom(mediaStart, speed);
-  const from = sourceAt(media, Math.max(span.left, 0) / pps);
-  const to = Math.min(sourceAt(media, Math.min(span.right, width) / pps), duration);
+  const media = playingFrom(mediaStart, speed, reverse);
+  const [left, right] = [sourceAt(media, Math.max(span.left, 0) / pps), sourceAt(media, Math.min(span.right, width) / pps)];
+  const from = Math.max(Math.min(left, right), 0);
+  const to = Math.min(Math.max(left, right), duration);
   if (to <= from) return [];
   // The chunk the end falls on the start of isn't needed.
   return chunksOf(from, to).filter((start) => start < to);

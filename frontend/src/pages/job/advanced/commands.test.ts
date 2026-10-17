@@ -22,6 +22,7 @@ function setUp(move: ((delta: number, group: string) => void) | null = null, key
     move,
     split: () => {},
     freeze: () => {},
+    reverse: () => {},
     fit: () => {},
     zoom: () => {},
     shortcuts: () => {},

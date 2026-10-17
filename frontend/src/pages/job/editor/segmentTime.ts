@@ -58,10 +58,12 @@ export function offsetAt(segment: SegmentRange, source: number): number {
 }
 
 /**
- * Media an item plays forwards from `from` at `speed`, as a range open at its end: what a Segment's
- * Filmstrip and Waveform draw along it, from where it is at the item's left edge.
+ * Media an item plays from `from` at `speed`, forwards (a range open at its end) or in `reverse` (open
+ * at its start): what a Segment's Filmstrip and Waveform draw along it, from where it is at the item's
+ * left edge.
  */
-export const playingFrom = (from: number, speed?: number): SegmentRange => ({ start: from, end: Infinity, ...paceOf({ speed }) });
+export const playingFrom = (from: number, speed?: number, reverse?: boolean): SegmentRange =>
+  reverse ? { start: -Infinity, end: from, ...paceOf({ speed, reverse }) } : { start: from, end: Infinity, ...paceOf({ speed }) };
 
 /** The range of a Segment as played, and how it plays it. */
 export function rangeOf(played: PlayedRange): SegmentRange {

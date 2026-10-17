@@ -2,29 +2,39 @@ import { useId, useState } from "react";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
+import { copyProgress, useRetimedCopies, type RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
 import { octaveOf, SPEED_CHIPS, SPEED_OCTAVES, SPEED_RANGE, speedAtOctave, speedLabel, speedOf } from "./speed";
 
 /**
  * A Segment's or a video Overlay's Speed section (docs/adr/0009): chips of the common Speeds, a
- * slider over its octaves (0.0625–16×) and the Speed typed in, each a change of `group`; and, for an
- * item with sound (`heard`), the switch "Change pitch with speed".
+ * slider over its octaves (0.0625–16×) and the Speed typed in, each a change of `group`; for an item
+ * with sound (`heard`), the switch "Change pitch with speed"; and the switch Reverse (R), with the
+ * progress of the Retimed copy the preview plays it from (`copy`), while it is made.
  */
 export function SpeedFields({
   speed,
   pitch,
+  reverse,
   heard,
   group,
+  copy,
   onSpeed,
   onPitch,
+  onReverse,
 }: {
   speed: number;
   pitch: boolean;
+  reverse: boolean;
   heard: boolean;
   group: string;
+  // The preview's copy of the item, as its plan plays it (retimedCopy.ts); null when it plays its own file.
+  copy: RetimedAsk | null;
   onSpeed: (speed: number, group: string) => void;
   onPitch: (pitch: boolean) => void;
+  onReverse: (reverse: boolean) => void;
 }) {
+  const [made] = useRetimedCopies([copy]);
   const set = (value: number) => {
     if (value !== speed) onSpeed(value, group);
   };
@@ -61,6 +71,19 @@ export function SpeedFields({
         <Switch checked={pitch} onChange={onPitch}>
           <span className="text-sm font-medium">Change pitch with speed</span>
         </Switch>
+      )}
+      <Switch checked={reverse} onChange={onReverse}>
+        <span className="flex flex-1 items-center justify-between gap-2 text-sm font-medium">
+          Reverse
+          <kbd aria-hidden className="raised min-w-6 rounded-md px-1.5 py-0.5 text-center font-sans text-xs text-muted">
+            R
+          </kbd>
+        </span>
+      </Switch>
+      {copy && made && !made.url && (
+        <p aria-live="polite" className={cx("text-xs tabular-nums", made.error ? "text-danger" : "text-muted")}>
+          {copyProgress(copy.range, made, "media" in copy ? "video" : "Segment")}
+        </p>
       )}
     </Group>
   );

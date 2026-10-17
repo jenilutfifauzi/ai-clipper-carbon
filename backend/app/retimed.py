@@ -42,13 +42,16 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
+from typing import TypeVar
 
 from app.candidates import Candidate
 from app.derived import _LatestFirst
 from app.library import shrink
-from app.planner import RenderPlan
+from app.planner import AudioEvent, OverlayEvent, RenderPlan
 from app.renderer import last_lines, speed_filters
 from app.segment_time import SegmentTime
+
+E = TypeVar("E", OverlayEvent, AudioEvent)
 
 # In a Job's directory.
 RETIMED_DIR = "retimed"
@@ -252,23 +255,35 @@ def piece_secs(width: int, height: int, fps: float) -> float:
 def read_from_copies(
     plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str | None, SegmentTime], Copy]
 ) -> tuple[RenderPlan, dict[str, Path]]:
-    """The Render Plan as the renderer reads it, and its files: each reversed Segment played forwards
-    from the full-size copy `copy_of` gives for its video (None: the Source) and range, at its Speed.
-    The copy is in `files` under its own path: a media Segment's stands in for its video; a Source
-    Segment's is its `read_from`, still a Segment of the Source (its Scenes' panels, the Clip's own
-    volume)."""
+    """The Render Plan as the renderer reads it, and its files: each reversed Segment, and each
+    reversed Overlay's picture and sound, played forwards from the full-size copy `copy_of` gives for
+    its video (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
+    media Segment's or an Overlay's stands in for its video; a Source Segment's is its `read_from`,
+    still a Segment of the Source (its Scenes' panels, the Clip's own volume)."""
     segments = []
     files = dict(files)
+
+    def read(media: str | None, time: SegmentTime) -> tuple[str, SegmentTime]:
+        copy = copy_of(media, time)
+        files[str(copy.path)] = copy.path
+        return str(copy.path), copy.read(time)
+
     for segment in plan.segments:
         if not segment.reverse or segment.hold is not None:
             segments.append(segment)
             continue
-        copy = copy_of(segment.media, segment.time)
-        read = copy.read(segment.time)
-        files[str(copy.path)] = copy.path
-        reads = {"media": str(copy.path)} if segment.media is not None else {"read_from": str(copy.path)}
-        segments.append(replace(segment, **reads, source_start=read.start, source_end=read.end, reverse=False))
-    return replace(plan, segments=segments), files
+        path, played = read(segment.media, segment.time)
+        reads = {"media": path} if segment.media is not None else {"read_from": path}
+        segments.append(replace(segment, **reads, source_start=played.start, source_end=played.end, reverse=False))
+
+    def forwards(event: E) -> E:
+        if not event.reverse:
+            return event
+        path, played = read(event.media, SegmentTime(event.offset, event.offset + (event.end - event.start) * event.speed, event.speed, True))
+        return replace(event, media=path, offset=played.start, reverse=False)
+
+    overlays, audio = [forwards(event) for event in plan.overlays], [forwards(event) for event in plan.audio]
+    return replace(plan, segments=segments, overlays=overlays, audio=audio), files
 
 
 def copies_played(start: float, end: float, speed: float = 1.0, reverse: bool = False, pitch: bool = False) -> list[tuple[CopySize, Retime]]:
@@ -291,7 +306,8 @@ def copies_played(start: float, end: float, speed: float = 1.0, reverse: bool = 
 def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float]) -> dict[str | None, list[tuple[CopySize, Retime]]]:
     """The Retimed copies `candidates` play from (`copies_played`), by their item: a Media Library
     video's id, or None for the Source. An Overlay is of one of the videos `durations` gives (an
-    image's has none), its range cut at the video's end as the planner cuts it."""
+    image's has none), its range cut where its video and the Clip end as the planner cuts it
+    (`_overlay_event`)."""
     used: dict[str | None, list[tuple[CopySize, Retime]]] = defaultdict(list)
     for candidate in candidates:
         for segment in candidate.main_track():
@@ -299,8 +315,10 @@ def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float])
                 used[segment.media] += copies_played(segment.start, segment.end, segment.speed, segment.reverse, segment.pitch)
         for overlay in candidate.overlays:
             if overlay.media in durations:
-                end = min(overlay.offset + overlay.secs * overlay.speed, durations[overlay.media])
-                used[overlay.media] += copies_played(overlay.offset, end, overlay.speed, pitch=overlay.pitch)
+                whole = min(overlay.offset + overlay.secs * overlay.speed, durations[overlay.media])
+                shown = max(0.0, min(overlay.secs, candidate.duration - overlay.start)) * overlay.speed
+                start, end = (max(overlay.offset, whole - shown), whole) if overlay.reverse else (overlay.offset, min(whole, overlay.offset + shown))
+                used[overlay.media] += copies_played(start, end, overlay.speed, overlay.reverse, overlay.pitch)
     return used
 
 

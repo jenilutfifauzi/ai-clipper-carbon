@@ -14,13 +14,14 @@ const BAND_BACKDROP = "rgb(0 0 0 / 0.45)";
  * (over a dark backdrop), scaled by `gain(time)` (`time` in seconds into the item) and clipped there.
  * Its Peaks are the chunks at `url(start)` in `cache`; a stretch whose chunk isn't here yet is left
  * clear. `mediaStart` is the media's time at the item's left edge, played at `speed` (a Segment's
- * Speed), and `duration` the media's length.
+ * Speed), backwards in `reverse` (its Waveform mirrored), and `duration` the media's length.
  */
 export function waveformLayer({
   cache,
   url,
   mediaStart,
   speed,
+  reverse,
   duration,
   gain,
   color,
@@ -30,6 +31,7 @@ export function waveformLayer({
   url: (start: number) => string;
   mediaStart: number;
   speed?: number;
+  reverse?: boolean;
   duration: number;
   gain: (time: number) => number;
   color: string;
@@ -40,16 +42,18 @@ export function waveformLayer({
     const middle = height - tall / 2;
     const column = 1 / dpr;
     let fading = false;
-    const media = playingFrom(mediaStart, speed);
-    for (const start of chunksAcross({ mediaStart, speed, pps, width, span, duration })) {
+    const media = playingFrom(mediaStart, speed, reverse);
+    for (const start of chunksAcross({ mediaStart, speed, reverse, pps, width, span, duration })) {
       const chunk = cache.peaks(url(start), want(url(start)));
       if (!chunk) continue;
       const shown = Math.min(1, (now - chunk.arrived) / FADE_MS);
       fading ||= shown < 1;
       const level = peaksLevel(chunk.levels, pps, dpr);
-      // The columns of the canvas (counted from its left) that start in this chunk, on the item.
-      const left = Math.max(span.left, 0, offsetAt(media, start) * pps);
-      const right = Math.min(span.right, width, offsetAt(media, Math.min(start + CHUNK_SECS, duration)) * pps);
+      // The columns of the canvas (counted from its left) that start in this chunk, on the item: in
+      // Reverse its end is to the left of its start.
+      const [from, to] = [offsetAt(media, start), offsetAt(media, Math.min(start + CHUNK_SECS, duration))];
+      const left = Math.max(span.left, 0, Math.min(from, to) * pps);
+      const right = Math.min(span.right, width, Math.max(from, to) * pps);
       const first = Math.ceil((left - span.left) * dpr - 1e-6);
       const last = Math.ceil((right - span.left) * dpr - 1e-6);
       if (last <= first) continue;
@@ -61,8 +65,8 @@ export function waveformLayer({
       ctx.beginPath();
       for (let i = first; i < last; i++) {
         const x = span.left + i * column;
-        const into = sourceAt(media, x / pps) - start;
-        const [low, high] = peaksExtremes(level, into, sourceAt(media, (x + column) / pps) - start);
+        const [a, b] = [sourceAt(media, x / pps) - start, sourceAt(media, (x + column) / pps) - start];
+        const [low, high] = peaksExtremes(level, Math.min(a, b), Math.max(a, b));
         const scale = (gain((x + column / 2) / pps) * tall) / 2;
         const top = Math.min(high * scale, tall / 2);
         const bottom = Math.min(-low * scale, tall / 2);

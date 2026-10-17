@@ -994,7 +994,7 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
     be a song or a video with sound, a Segment a video, within its length, and an Overlay within its
-    video's at its Speed, an image's having no Speed."""
+    video's at its Speed, an image's having no Speed nor Reverse."""
     for clip in body.music or []:
         item = library.find(clip.media)
         if item is None or not item.has_audio:
@@ -1016,8 +1016,8 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s){sped}")
         if KeyProperty.VOLUME in overlay.keys and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
-        if (overlay.speed != 1 or overlay.pitch) and item.kind is not MediaKind.VIDEO:
-            raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed or pitch")
+        if (overlay.speed != 1 or overlay.pitch or overlay.reverse) and item.kind is not MediaKind.VIDEO:
+            raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed, pitch or Reverse")
 
 
 # Media Library files never change under their id.

@@ -435,9 +435,10 @@ export interface AudioEvent {
   gain: Keyframe[];
   id: string;
   // An Overlay's sound plays (end − start) × speed of its item, its pitch following the Speed with
-  // `pitch` (docs/adr/0009). A plan made by hand may leave them out, at 1 and false.
+  // `pitch`, backwards with `reverse` (docs/adr/0009). A plan made by hand may leave them out, at 1 and false.
   speed?: number;
   pitch?: boolean;
+  reverse?: boolean;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -528,9 +529,11 @@ export interface Overlay {
   transform: Transform;
   crop: Crop;
   volume: number;
-  // A video's: it shows `secs` × speed of it from `offset` (docs/adr/0009), its sound's pitch following the Speed with `pitch`.
+  // A video's: it shows `secs` × speed of it from `offset` (docs/adr/0009), its sound's pitch following the Speed with `pitch`;
+  // with `reverse`, backwards from a Retimed copy: its left edge shows `offset + secs × speed`, its right edge `offset`.
   speed?: number;
   pitch?: boolean;
+  reverse?: boolean;
   radius: number;
   border: Border | null;
   shadow: Shadow | null;
@@ -571,9 +574,10 @@ export interface OverlayEvent {
   end: number;
   offset: number;
   image: boolean;
-  // A video's Speed: it shows (end − start) × speed of it from `offset` (docs/adr/0009).
+  // A video's Speed: it shows (end − start) × speed of it from `offset` (docs/adr/0009), backwards with `reverse`.
   speed?: number;
   pitch?: boolean;
+  reverse?: boolean;
 }
 
 // How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
@@ -709,7 +713,7 @@ export interface ClipSegment {
   // Its range plays in (end − start) ÷ speed on the Timeline (docs/adr/0009); its sound's pitch follows the speed with `pitch`.
   speed?: number;
   pitch?: boolean;
-  // A video's (ADR 0009): its range played backwards, from a Retimed copy; its left edge is `end`.
+  // Its range played backwards, from a Retimed copy (ADR 0009); its left edge is `end`.
   reverse?: boolean;
   keys?: Keys;
   // A Freeze frame's (ADR 0009): how long it holds the frame at `start`, silent; `end` is `start`.

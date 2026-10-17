@@ -109,8 +109,9 @@ Edits:
   changes only the transform and crop fields given. The dry run lists each Overlay's drawn box once
   turned (bounds) and what its crop keeps, in its item's pixels.
   A video Overlay's `speed` and `pitch` are as a Segment's (below), but it keeps its start and
-  secs: it shows secs * speed of its video from its offset, within the video. An image has none. The
-  dry run gives what of its video it shows (source_start, source_end).
+  secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
+  backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
+  (source_start, source_end).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -714,7 +715,7 @@ def _plan_view(preview: dict, copied: Callable[[dict], bool] = lambda segment: F
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
-                **({} if event["image"] else _video_read(event)),
+                **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
             }
             for event in plan["overlays"]
@@ -728,12 +729,14 @@ def _plan_view(preview: dict, copied: Callable[[dict], bool] = lambda segment: F
     }
 
 
-def _video_read(event: dict) -> dict:
-    """What of its video an Overlay shows: seconds into it, and its Speed and pitch when not the default."""
-    end = event["offset"] + (event["end"] - event["start"]) * event["speed"]
+def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
+    """What of its video an Overlay shows: seconds into it, its Speed and pitch when not the default,
+    and in Reverse whether its copy is made (`copied`)."""
+    read = {"media": event["media"], "source_start": event["offset"], "source_end": event["offset"] + (event["end"] - event["start"]) * event["speed"]}
     return _compact({
-        "source_start": round(event["offset"], 2), "source_end": round(end, 2),
-        "speed": event["speed"] if event["speed"] != 1 else None, "pitch": event["pitch"] or None,
+        "source_start": round(read["source_start"], 2), "source_end": round(read["source_end"], 2),
+        "speed": event["speed"] if event["speed"] != 1 else None, "pitch": event["pitch"] or None, "reverse": event["reverse"] or None,
+        "copy": ("ready" if copied(read) else "made by the render") if event["reverse"] else None,
     })
 
 
