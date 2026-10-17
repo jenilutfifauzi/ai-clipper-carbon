@@ -103,31 +103,52 @@ export function segmentSpan(segments: ClipSegment[], id: string, track?: PlayedS
   return { start: planned[index].start, secs: segmentLength(segments[index]) };
 }
 
+// The Speed of the Segment of `plan` that shows its Scene `index` (1 in a Clip of one range).
+function sceneSpeed(plan: RenderPlan, index: number): number {
+  let first = 0;
+  for (const segment of plan.segments) {
+    if (index < first + segment.scenes) return segment.speed ?? 1;
+    first += segment.scenes;
+  }
+  return 1;
+}
+
+// `keys` with every Keyframe's time `by` times as far from its item's start.
+const paced = (keys: Keys, by: number): Keys =>
+  by === 1
+    ? keys
+    : Object.fromEntries((Object.entries(keys) as [KeyProperty, Keyframe[]][]).map(([prop, list]) => [prop, list.map((key) => ({ ...key, at: toMillionth(key.at * by) }))]));
+
 /**
  * Manual Scene `index` of `plan` framed by its own Layout Override (of `overrides`), as keyed: from
  * the plan's `keys_from` (where its Scene starts, on the Timeline of this showing of it) to its end,
  * on the Timeline from its own start; with its override. Null for any other Scene, one the Candidate's
  * own Manual Framing frames (which has no Keyframes), or while the plan isn't of the override yet.
+ * Its override keeps its Keyframes in seconds of its shot on the Source's timeline (the planner's
+ * `_keyed_manual`): in a Segment at a Speed they are shown here divided by it, in Timeline seconds,
+ * and written back times it (`speed`).
  */
 export function manualScene(
   overrides: LayoutOverride[],
   plan: RenderPlan,
   index: number,
-): (KeyedItem & { first: number; override: LayoutOverride; framing: Framing }) | null {
+): (KeyedItem & { first: number; override: LayoutOverride; framing: Framing; speed: number }) | null {
   const scene = plan.scenes[index];
   const own = scene && sceneOverride(overrides, plan, index);
   const from = scene?.keys_from;
   if (!own || own.layout !== "manual" || !own.framing || from == null) return null;
   const { framing } = own;
+  const speed = sceneSpeed(plan, index);
   return asKeyed({
     start: from,
     first: toMillionth(scene.start - from),
     secs: toMillionth(scene.end - from),
-    keys: own.keys ?? {},
+    keys: paced(own.keys ?? {}, 1 / speed),
     transform: framing.transform,
     volume: 1,
     override: own,
     framing,
+    speed,
   });
 }
 
@@ -136,8 +157,8 @@ export function manualScene(
 function withSceneKeys<T extends LayoutEdits>(edits: T, plan: RenderPlan, index: number, keys: Keys, transform?: Transform): T {
   const found = manualScene(edits.layout_overrides, plan, index);
   if (!found) return edits;
-  const { override, framing } = found;
-  const next = { ...override, keys, framing: transform ? { ...framing, transform } : framing };
+  const { override, framing, speed } = found;
+  const next = { ...override, keys: paced(keys, speed), framing: transform ? { ...framing, transform } : framing };
   return { ...edits, layout_overrides: edits.layout_overrides.map((other) => (other === override ? next : other)) };
 }
 

@@ -148,7 +148,8 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
       continue;
     }
     if (start > from || end < from + item.secs - 1e-6) trimmed += 1;
-    const offset = start > from && "offset" in item ? { offset: round(item.offset + start - from) } : {};
+    const pace = "speed" in item ? (item.speed ?? 1) : 1;
+    const offset = start > from && "offset" in item ? { offset: round(item.offset + (start - from) * pace) } : {};
     // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed).
     const copy = rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from);
     Object.assign(next, { [LISTS[kind]]: [...(next[LISTS[kind]] as Timed[]), copy] });

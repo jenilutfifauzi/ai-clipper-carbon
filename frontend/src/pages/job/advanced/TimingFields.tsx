@@ -6,10 +6,11 @@ import { ITEM_MIN_SECS } from "./edits";
 
 /**
  * When an item of the timeline shows (or is heard): where it starts in the Clip, how long it stays
- * (kept in the Clip and, for a song or a video, in its file), and with `length` (its file's), where
- * in its file it starts. Each field's changes are one `group` of the history.
+ * (kept in the Clip and, for a song or a video, in its file, which a video at a Speed plays that many
+ * seconds of in each of the Clip's), and with `length` (its file's), where in its file it starts.
+ * Each field's changes are one `group` of the history.
  */
-export function TimingFields<T extends { id: string; start: number; secs: number; offset?: number }>({
+export function TimingFields<T extends { id: string; start: number; secs: number; offset?: number; speed?: number }>({
   item,
   duration,
   length,
@@ -28,7 +29,8 @@ export function TimingFields<T extends { id: string; start: number; secs: number
   const [retime] = useState(gestureRetime);
   const changed = (next: T, edge: TimedEdge, group: string) => onChange(retime(item, next, edge, group), group);
   const offset = item.offset ?? 0;
-  const room = Math.min(duration - item.start, length === undefined ? Infinity : length - offset);
+  const speed = item.speed ?? 1;
+  const room = Math.min(duration - item.start, length === undefined ? Infinity : (length - offset) / speed);
   const seconds = (v: number) => `${v.toFixed(2)} s`;
   return (
     <Group title="Time">
@@ -37,7 +39,7 @@ export function TimingFields<T extends { id: string; start: number; secs: number
           label={labels.offset}
           value={offset}
           min={0}
-          max={Math.max(0, length - item.secs)}
+          max={Math.max(0, length - item.secs * speed)}
           step={0.1}
           format={(v) => `${v.toFixed(1)} s`}
           onChange={(value) => onChange({ ...item, offset: value }, `${item.id}:offset`)}

@@ -375,3 +375,20 @@ export function rekeyed<T extends object>(item: T, from: number, to: number): T 
   const next = rewindowKeys(keys, from, to);
   return next === keys ? item : { ...item, keys: next };
 }
+
+/**
+ * `keys` (in seconds from their item's start) once the item plays `by` times as long, as a Speed
+ * change makes it (the old Speed ÷ the new, ADR 0009): each Keyframe's time scaled by `by`, so that
+ * it stays on the same frame of its video. Sped up, they may crowd: one closer than a frame to the
+ * one kept before it is dropped. `keys` itself when `by` is 1.
+ */
+export function scaledKeys(keys: Keys, by: number): Keys {
+  if (by === 1) return keys;
+  const scaled = (list: Keyframe[]) =>
+    list.reduce<Keyframe[]>((kept, key) => {
+      const at = toMillionth(key.at * by);
+      const last = kept.at(-1);
+      return last && at - last.at < KEY_GAP_SECS - GAP_REACH ? kept : [...kept, { ...key, at }];
+    }, []);
+  return Object.fromEntries((Object.entries(keys) as [KeyProperty, Keyframe[]][]).map(([prop, list]) => [prop, scaled(list)]));
+}

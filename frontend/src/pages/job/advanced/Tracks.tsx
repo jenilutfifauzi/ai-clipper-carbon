@@ -32,6 +32,7 @@ import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } fr
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
+import { speedLabel } from "./speed";
 import { gainAt, segmentHeard, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
@@ -207,6 +208,8 @@ export function Tracks({
             const selected = isPicked(pick, "overlay", overlay.id);
             const item = mediaById.get(overlay.media);
             const length = item?.duration ?? Infinity;
+            // A video at a Speed plays that many of its seconds in each of the Timeline's.
+            const speed = overlay.speed ?? 1;
             return (
               <TimelineItem
                 key={overlay.id}
@@ -215,12 +218,12 @@ export function Tracks({
                 end={Math.min(overlay.start + overlay.secs, duration)}
                 max={duration}
                 minSecs={ITEM_MIN_SECS}
-                maxSecs={length - overlay.offset}
-                trimMin={item?.duration != null ? overlay.start - overlay.offset : undefined}
+                maxSecs={(length - overlay.offset) / speed}
+                trimMin={item?.duration != null ? overlay.start - overlay.offset / speed : undefined}
                 tone="overlay"
                 selected={selected}
                 changed={changed.has(overlay.id)}
-                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s`}
+                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${speed !== 1 ? `, at ${speedLabel(speed)}` : ""}`}
                 pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -233,7 +236,7 @@ export function Tracks({
                           start: round(start),
                           secs: round(end - start),
                           // Trimming a video's start starts it later in the video.
-                          offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + start - overlay.start)) : overlay.offset,
+                          offset: edge === "start" && item?.duration != null ? round(Math.max(0, overlay.offset + (start - overlay.start) * speed)) : overlay.offset,
                         },
                         edge,
                         group,
@@ -246,6 +249,7 @@ export function Tracks({
               >
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
                 <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
+                {speed !== 1 && <SpeedBadge speed={speed} />}
               </TimelineItem>
             );
           })}
@@ -273,7 +277,7 @@ export function Tracks({
               tone="video"
               selected={selected}
               changed={changed.has(segment.id)}
-              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}`}
+              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${(segment.speed ?? 1) !== 1 ? `, at ${speedLabel(segment.speed ?? 1)}` : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => {
@@ -306,6 +310,7 @@ export function Tracks({
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(shown.source_start)}
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
               </span>
+              {(segment.speed ?? 1) !== 1 && <SpeedBadge speed={segment.speed ?? 1} />}
             </TimelineItem>
           );
         })}
@@ -475,6 +480,15 @@ export function Tracks({
         </TrackRow>
       ))}
     </>
+  );
+}
+
+/** A sped Segment's or Overlay's Speed on the Timeline: "2×". */
+function SpeedBadge({ speed }: { speed: number }) {
+  return (
+    <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white tabular-nums">
+      {speedLabel(speed)}
+    </span>
   );
 }
 

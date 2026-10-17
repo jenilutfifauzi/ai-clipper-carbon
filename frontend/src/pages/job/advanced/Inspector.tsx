@@ -6,7 +6,7 @@ import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { restyle, setFade, setVolume, type ItemActions } from "./actions";
+import { restyle, setFade, setVolume, type ItemActions, type SpedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -36,6 +36,7 @@ export function Inspector({
   onMusic,
   onOverlay,
   onSegment,
+  onSpeed,
   cropMode,
 }: {
   pick: Pick;
@@ -53,6 +54,8 @@ export function Inspector({
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
+  // A Segment's or video Overlay's Speed set (actions.ts' setSpeed), a change of `group`.
+  onSpeed: (item: SpedRef, speed: number, group: string) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
   cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
 }) {
@@ -112,6 +115,7 @@ export function Inspector({
         onDelete={actions.remove}
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
+        onSpeed={(speed, group) => onSpeed({ kind: "segment", id: segment.id }, speed, group)}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
         onCropMode={cropMode?.("segment", segment.id)}
         playback={playback}
@@ -164,6 +168,7 @@ export function Inspector({
         duration={duration}
         playback={playback}
         onChange={onOverlay}
+        onSpeed={(speed, group) => onSpeed({ kind: "overlay", id: overlay.id }, speed, group)}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
