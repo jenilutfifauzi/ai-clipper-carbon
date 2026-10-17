@@ -839,6 +839,70 @@ def test_tracking_and_line_height_space_the_burned_hook_and_captions_as_planned(
     assert (left + right) / 2 == pytest.approx(area["x"] + area["width"] / 2, abs=3)
 
 
+def test_the_hooks_soft_shadow_and_its_boxs_padding_and_radius_are_burned_as_planned(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    start = candidate["start"]
+    green, blue = np.array([0, 255, 0]), np.array([0, 0, 255])
+    look = {"colour": "#00FF00", "box_colour": "#0000FF", "box_opacity": 1.0, "shape": "block"}
+    default = preview(client, job, patch(client, job, candidate, hook_text="HALO", style_overrides={"hook": look}))["plan"]["hook"]
+    # Captions saved before drop shadows: a hard magenta shadow 4 px right and down.
+    candidate = patch(client, job, candidate, hook_text="HALO", style_overrides={
+        "hook": {**look, "padding_x": 90, "padding_y": 50, "radius": 60,
+                 "shadow": {"colour": "#FF0000", "opacity": 1, "blur": 12, "distance": 16, "angle": 45}},
+        "caption": {"shadow": 4, "shadow_colour": "#FF00FF", "highlight": "none", "outline": 0},
+    })
+    assert candidate["style_overrides"]["caption"]["shadow"]["colour"] == "#FF00FF"
+    plan = preview(client, job, candidate)["plan"]
+    hook = plan["hook"]
+    # Padded, the box is wider and taller round the same line.
+    assert hook["lines"] == default["lines"] and hook["size"] == default["size"]
+    area = hook["area"]
+    assert (area["width"] - default["area"]["width"], area["height"] - default["area"]["height"]) == (2 * (90 - 36), 2 * (50 - 26))
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 4.2 - start)
+    top, left, bottom, right = area["y"], area["x"], area["y"] + area["height"], area["x"] + area["width"]
+
+    # The box fills its area, but for its rounded corners.
+    rows, columns = pixels(frame[:900], blue, tolerance=60)
+    assert (rows.min(), rows.max(), columns.min(), columns.max()) == (top, bottom - 1, left, right - 1)
+    middle = (top + bottom) // 2
+    assert (np.abs(frame[top + 2, (left + right) // 2] - blue).max() <= 60) and (np.abs(frame[middle, left + 2] - blue).max() <= 60)
+    assert np.abs(frame[top + 4, left + 4] - blue).max() > 100 and np.abs(frame[bottom - 5, right - 5] - blue).max() > 100
+
+    # The shadow falls down and to the right of the letters, soft.
+    box = frame[top:bottom, left:right]
+    letters = np.abs(box - green).max(axis=2) <= 60
+    # Red over the box (the encode leaves a little red in the blue).
+    redness = np.clip(box[:, :, 0] - box[:, :, 1] - 30, 0, 255) * ~letters
+    ys, xs = np.nonzero(letters)
+    weight = redness.sum()
+    assert weight > 0
+    shadow_y = (redness.sum(axis=1) * np.arange(box.shape[0])).sum() / weight
+    shadow_x = (redness.sum(axis=0) * np.arange(box.shape[1])).sum() / weight
+    # Its middle about 11 px right of and below the letters' (16 px at 45°), give or take what they hide.
+    assert 8 < shadow_x - xs.mean() < 20 and 8 < shadow_y - ys.mean() < 20
+    # None of it above or left of the letters but its blur's; much of it blurred, between red and the box.
+    assert redness[: ys.min() - 8].sum() == 0 and redness[:, : xs.min() - 8].sum() == 0
+    partial = ((box[:, :, 0] > 60) & (box[:, :, 0] < 200) & ~letters).sum()
+    assert partial > 0.3 * (redness > 0).sum()
+
+    # The caption's migrated shadow: magenta, right of and below its white letters, as before.
+    [caption] = [event for event in plan["captions"] if event["start"] <= 4.2 - start < event["end"]]
+    band = frame[caption["area"]["y"]:caption["area"]["y"] + caption["area"]["height"]]
+    white_rows, white_columns = pixels(band, WHITE)
+    magenta_rows, magenta_columns = pixels(band, np.array([255, 0, 255]))
+    assert len(magenta_rows) > 300
+    assert magenta_rows.max() - white_rows.max() == pytest.approx(4, abs=1)
+    assert magenta_columns.max() - white_columns.max() == pytest.approx(4, abs=1)
+
+
 # The clip editor's Preview Plan and preparation (clip-editor ticket 03).
 
 

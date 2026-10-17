@@ -7,6 +7,8 @@ import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { HookShapePicker } from "./HookShapePicker";
 import { FacePicker } from "./FacePicker";
+import { ShadowFields } from "./ShadowFields";
+import { hookPadding } from "./styleShape";
 import { countChanged, Group, StyleMarker } from "./StyleFields";
 import type { StyleControls } from "./useStyleDraft";
 
@@ -45,10 +47,11 @@ const MORE = [
   "tracking",
   "box_opacity",
   "radius",
+  "padding_x",
+  "padding_y",
   "outline",
   "outline_colour",
   "shadow",
-  "shadow_colour",
   "quote",
   "quote_colour",
   "kicker_colour",
@@ -120,8 +123,15 @@ export function HookPosition({ style }: { style: StyleControls }) {
 export function HookMoreOptions({ style, open, onToggle }: { style: StyleControls; open: boolean; onToggle: (open: boolean) => void }) {
   const { hook, set, marker } = hookFields(style);
   const box = hook.shape !== "none";
+  // The padding drawn, the Shape's own until it is set.
+  const [paddingX, paddingY] = hookPadding(hook);
   return (
-    <MoreOptions open={open} onToggle={onToggle} contents="Lines, spacing, outline, Quote Mark, Kicker colours, animation" changed={countChanged(style, "hook", MORE)}>
+    <MoreOptions
+      open={open}
+      onToggle={onToggle}
+      contents="Lines, spacing, box, outline, shadow, Quote Mark, Kicker colours, animation"
+      changed={countChanged(style, "hook", MORE)}
+    >
       <Group title="Lines">
         <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
           <Segmented
@@ -176,13 +186,30 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
                 marker={marker("box_opacity", "box opacity")}
               />
               <Slider label="Corner radius" value={hook.radius} min={0} max={80} format={(v) => `${v} px`} onChange={(v) => set("radius", v)} marker={marker("radius", "corner radius")} />
+              <Slider
+                label="Padding across"
+                value={paddingX}
+                min={0}
+                max={200}
+                format={(v) => `${Math.round(v)} px`}
+                onChange={(v) => set("padding_x", v)}
+                marker={marker("padding_x", "box padding across")}
+              />
+              <Slider
+                label="Padding down"
+                value={paddingY}
+                min={0}
+                max={200}
+                format={(v) => `${Math.round(v)} px`}
+                onChange={(v) => set("padding_y", v)}
+                marker={marker("padding_y", "box padding down")}
+              />
             </>
           )}
           <Slider label="Outline" value={hook.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("outline", v)} marker={marker("outline", "hook outline")} />
           <ColorField label="Outline colour" value={hook.outline_colour} onChange={(v) => set("outline_colour", v)} marker={marker("outline_colour", "hook outline colour")} />
-          <Slider label="Shadow" value={hook.shadow} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("shadow", v)} marker={marker("shadow", "hook shadow")} />
-          <ColorField label="Shadow colour" value={hook.shadow_colour} onChange={(v) => set("shadow_colour", v)} marker={marker("shadow_colour", "hook shadow colour")} />
         </div>
+        <ShadowFields shadow={hook.shadow} onChange={(v) => set("shadow", v)} marker={marker("shadow", "hook shadow")} />
       </Group>
 
       <Group title="Quote Mark">

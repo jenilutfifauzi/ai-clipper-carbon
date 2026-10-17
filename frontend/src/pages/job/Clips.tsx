@@ -11,6 +11,7 @@ import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
 import { same } from "./editor/merge";
+import { overridden } from "./editor/useStyleDraft";
 
 // How many more Clips are drawn each time the end of the grid comes into reach.
 const BATCH = 6;
@@ -106,10 +107,10 @@ function restyled(candidate: Candidate, output: RenderedClip, presets: StylePres
   const preset = presets?.find((p) => p.id === candidate.preset_id) ?? presets?.[0];
   if (!preset || !output.caption_style || !output.hook_style) return false;
   // A Clip rendered before Watermarks had none.
-  const watermark = { ...preset.watermark, ...candidate.style_overrides.watermark };
+  const watermark = overridden(preset.watermark, candidate.style_overrides.watermark);
   return (
-    !same({ ...preset.caption, ...candidate.style_overrides.caption }, output.caption_style) ||
-    !same({ ...preset.hook, ...candidate.style_overrides.hook }, output.hook_style) ||
+    !same(overridden(preset.caption, candidate.style_overrides.caption), output.caption_style) ||
+    !same(overridden(preset.hook, candidate.style_overrides.hook), output.hook_style) ||
     (output.watermark_style ? !same(watermark, output.watermark_style) : watermark.kind !== "none")
   );
 }

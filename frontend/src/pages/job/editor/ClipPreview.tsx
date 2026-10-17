@@ -1,10 +1,11 @@
 import { Pause, Play, Repeat, SkipForward } from "lucide-react";
-import { createRef, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { createRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
   logoUrl,
   type Box,
   type CaptionEvent,
   type CaptionStyle,
+  type DropShadow,
   type Crop,
   type FontInfo,
   type HookEvent,
@@ -33,12 +34,12 @@ import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { highlightShape, shadowLook } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
-// how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
-// and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
+// how far a sliding hook moves; and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 const SLIDE_PX = 60;
 // In a staggered entrance, each element of the hook comes on this long after the one before.
 const HOOK_STAGGER_SECS = 0.08;
@@ -50,9 +51,6 @@ const QUOTE_DOTS = [
   [35, 58.8],
   [65, 58.8],
 ];
-const HIGHLIGHT_PAD_X = 0.12;
-const HIGHLIGHT_PAD_Y = 0.08;
-const HIGHLIGHT_RADIUS = 0.12;
 export const BLUR_SIGMA = 40;
 export const BLUR_BRIGHTNESS = 0.9;
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
@@ -874,31 +872,35 @@ function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; activ
     </text>
   );
   const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
+  const shadow = style.shadow.colour;
   return (
     <g>
-      {style.shadow > 0 &&
-        text(
-          {
-            transform: `translate(${style.shadow} ${style.shadow})`,
-            fill: style.shadow_colour,
-            stroke: style.outline > 0 ? style.shadow_colour : undefined,
-            strokeWidth: 2 * style.outline,
-          },
-          false,
-        )}
       {style.highlight === "box" && active >= 0 && (
-        <HighlightBox
-          words={words}
-          active={active}
-          centreX={centreX}
-          baseline={baseline}
-          size={size}
-          font={font}
-          tracking={style.tracking}
-          colour={style.active_colour}
-        />
+        <HighlightBox words={words} active={active} centreX={centreX} baseline={baseline} size={size} font={font} style={style} />
       )}
+      <Shadow shadow={style.shadow}>{text({ fill: shadow, stroke: style.outline > 0 ? shadow : undefined, strokeWidth: 2 * style.outline }, false)}</Shadow>
       {text({ fill: style.colour, ...outline }, true)}
+    </g>
+  );
+}
+
+/**
+ * A line's drop `shadow` under it, as the renderer draws it: `children` (the line in the shadow's
+ * colour, its stroke too) moved, faded and blurred. Nothing when it is off.
+ */
+function Shadow({ shadow, children }: { shadow: DropShadow; children: ReactNode }) {
+  const id = `shadow${useId().replace(/[^\w-]/g, "")}`;
+  const look = shadowLook(shadow);
+  if (!look) return null;
+  return (
+    <g transform={`translate(${look.x} ${look.y})`} opacity={look.opacity} filter={look.sigma ? `url(#${id})` : undefined}>
+      {look.sigma > 0 && (
+        // Over the whole frame, wherever the line is.
+        <filter id={id} filterUnits="userSpaceOnUse" x={-1080} y={-1920} width={3 * 1080} height={3 * 1920}>
+          <feGaussianBlur stdDeviation={look.sigma} />
+        </filter>
+      )}
+      {children}
     </g>
   );
 }
@@ -913,8 +915,7 @@ function HighlightBox({
   baseline,
   size,
   font,
-  tracking,
-  colour,
+  style,
 }: {
   words: string[];
   active: number;
@@ -922,14 +923,12 @@ function HighlightBox({
   baseline: number;
   size: number;
   font: FontInfo;
-  tracking: number;
-  colour: string;
+  style: CaptionStyle;
 }) {
   if (!measure) return null;
   measure.font = `${cssFontSize(font, size)}px "${fontFamily(font.id)}"`;
-  const { before, word, line } = wordSpan(words, active, (text) => measure.measureText(text).width, tracking);
-  const padX = HIGHLIGHT_PAD_X * size;
-  const padY = HIGHLIGHT_PAD_Y * size;
+  const { before, word, line } = wordSpan(words, active, (text) => measure.measureText(text).width, style.tracking);
+  const { padX, padY, radius } = highlightShape(style, size);
   const cap = (font.cap_height / font.units) * size;
   const height = cap + 2 * padY;
   return (
@@ -938,8 +937,8 @@ function HighlightBox({
       y={baseline - cap - padY}
       width={word + 2 * padX}
       height={height}
-      rx={Math.min(HIGHLIGHT_RADIUS * size, height / 2)}
-      fill={colour}
+      rx={Math.min(Math.round(radius), Math.floor(height / 2))}
+      fill={style.active_colour}
     />
   );
 }
@@ -1107,14 +1106,12 @@ function Hook({
         moved(
           first + i,
           <>
-            {style.shadow > 0 && (
-              <g transform={`translate(${style.shadow} ${style.shadow})`}>
-                {text(i, style.shadow_colour, style.shadow_colour, {
-                  stroke: style.outline > 0 ? style.shadow_colour : undefined,
-                  strokeWidth: 2 * style.outline,
-                })}
-              </g>
-            )}
+            <Shadow shadow={style.shadow}>
+              {text(i, style.shadow.colour, style.shadow.colour, {
+                stroke: style.outline > 0 ? style.shadow.colour : undefined,
+                strokeWidth: 2 * style.outline,
+              })}
+            </Shadow>
             {text(i, style.colour, style.emphasis_colour, outline)}
           </>,
           i,
