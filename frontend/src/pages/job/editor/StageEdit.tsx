@@ -18,6 +18,7 @@ import {
   type Grip,
   type Placed,
   type Point,
+  type Size,
 } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
@@ -36,8 +37,7 @@ const percent = (value: number) => `${value * 100}%`;
 
 /**
  * Something drawn on the stage that can be selected, moved and nudged, resized from a corner when it
- * has a `size`, its box shaped by the Grips on its edges when it has `onBox` (a Text Layer's), and
- * edited (a double-click or double-tap, or Enter) when it has `onEdit`.
+ * has a `size`, and edited (a double-click or double-tap, or Enter) when it has `onEdit`.
  */
 export interface StageItem {
   id: string;
@@ -54,17 +54,16 @@ export interface StageItem {
   // Moved to `area` (as drawn), and resized to `size` (null: the size kept). Each gesture is one
   // `group`.
   onPlace: (area: Box, size: number | null, group: string) => void;
-  // Its box set to `box` by the Grip on its `edge` (TextBoxGrips): one `group` per drag.
-  onBox?: (edge: BoxEdge, box: Box, group: string) => void;
   // Edited where it was double-tapped (output pixels), or from the keyboard (no point).
   onEdit?: (point?: { x: number; y: number }) => void;
 }
 
 /**
- * A picture drawn on the stage (ADR 0007): an Overlay ("overlay:<id>"), or the picture behind every
- * Overlay ("picture:<n>": the Segment under the playhead, at the plan's Scene n). It is picked, moved and nudged as the other
- * items are and, picked alone, scaled from its corners, stretched from its edges and turned by the
- * handle above it: its Grips (GLOSSARY.md), on the picture as turned.
+ * A picture drawn on the stage (ADR 0007): an Overlay ("overlay:<id>"), a Text Layer ("text:<id>",
+ * by its area: textStage.ts), or the picture behind every Overlay ("picture:<n>": the Segment under
+ * the playhead, at the plan's Scene n). It is picked, moved and nudged as the other items are and,
+ * picked alone, scaled from its corners, stretched from its edges and turned by the handle above
+ * it: its Grips (GLOSSARY.md), on the picture as turned.
  */
 export interface StagePicture {
   id: string;
@@ -74,14 +73,23 @@ export interface StagePicture {
   start: number;
   end: number;
   picture: Picture | null;
+  // Its size at scale 1, when it isn't its crop's fitted to the frame (a Text Layer's area).
+  fitted?: Size;
   // Its Transform as saved, what a gesture starts from: null where it has none to set here.
   transform: Transform | null;
   // The picture behind: the whole frame picks it, and it moves by itself, never with the others picked.
   behind?: boolean;
-  // Its Grips: all of them (by default), or only its corners (the clip editor's).
+  // Its Grips: all of them (by default), only its corners (the clip editor's), or its corners and
+  // the rotate handle (a Text Layer's).
   grips?: GripSet;
+  // Edited where it was double-tapped (output pixels), or from the keyboard (no point), in place of
+  // Crop mode: a Text Layer's words, retyped.
+  onEdit?: (point?: { x: number; y: number }) => void;
   // Put where a gesture leaves it, once, at its end: one `group` of changes.
   onTransform: (transform: Transform, group: string) => void;
+  // A Text Layer's: its box's wrap width (the sides) or fixed height (the top and bottom) set to
+  // `length` of its own pixels by the box Grip on `edge` (TextBoxGrips), once a drag ends: one `group`.
+  onBox?: (edge: BoxEdge, length: number, group: string) => void;
   // Its Crop as saved, what Crop mode opens on, and where Crop mode leaves it, with the Transform
   // that keeps the kept part in place, together: one `group`. Without them it has no Crop mode.
   crop?: Crop | null;
@@ -143,15 +151,15 @@ const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.heigh
  * The gestures that move, resize and edit `items`, and move and transform `pictures`, on the stage.
  * While one is under way, and until a plan comes back after its last change, the item is drawn where
  * it is being put: the plan comes from the backend only once the draft changes
- * (docs/adr/0001-backend-plans-frontend-draws.md). A text's gesture saves as it goes, each change in
- * one group; a picture's saves once, when it is let go.
+ * (docs/adr/0001-backend-plans-frontend-draws.md). An item's gesture (the hook's, the captions')
+ * saves as it goes, each change in one group; a picture's saves once, when it is let go.
  *
  * `picked` are the ids picked: a click picks an item alone, or with Shift, Cmd or Ctrl (`toggle`)
  * adds it or takes it out. When several are picked, moving one draws the others moved as far
  * (`drift`), but for the picture behind, which moves alone; only one picked alone can be resized or
  * transformed by its Grips.
  *
- * A text snaps to the fixed guides. A picture moved, or scaled from a corner, snaps to its Smart
+ * An item snaps to the fixed guides. A picture moved, or scaled from a corner, snaps to its Smart
  * Guides (GLOSSARY.md): the frame, the fixed guides and the pictures `atPlayhead` (`picturesAt`)
  * but those moving with it. Alt turns snapping off; `guides` are the lines of a snap.
  *
@@ -159,7 +167,8 @@ const centreOf = (box: Box) => ({ x: box.x + box.width / 2, y: box.y + box.heigh
  * (`fingersHeld`), without Smart Guides; with one of the two lifted, the other moves it on. However
  * many fingers it took, a gesture is saved once, when the last is lifted: one step of undo.
  *
- * A picture with a Crop opens Crop mode on a double-click or double-tap, or when `crop.asked` (a
+ * A picture with `onEdit` (a Text Layer) is edited on a double-click, a double-tap or Enter. One
+ * with a Crop opens Crop mode on a double-click or double-tap, or when `crop.asked` (a
  * count) goes up while it is picked alone (`crop.onOpen` then, to pause the playback): it is drawn
  * whole, its handles move the Crop, and Enter or a press anywhere but on it keeps the Crop (with the
  * Transform that keeps the kept part where it was, one step of undo), and Escape drops it.
@@ -208,8 +217,12 @@ export function useStageEdit(
     }
     if (cropping?.id === id) return wholeOnStage(picture, cropping.entry);
     if (holding?.id !== id || !holding.transform || !plan) return picture;
-    return heldPicture(holding.crop ? croppedPicture(picture, holding.crop) : picture, holding.transform, plan);
+    const fitted = pictures.find((item) => item.id === id)?.fitted;
+    return heldPicture(holding.crop ? croppedPicture(picture, holding.crop) : picture, holding.transform, plan, fitted);
   }
+
+  // What `item`'s Grips scale: its size at scale 1.
+  const fittedFor = (item: StagePicture, picture: Picture, frame: Size) => item.fitted ?? fittedOf(picture, frame);
 
   // An SVG transform for what is drawn in `area` of item `id`, while it is held.
   function transform(id: string, area: Box): string | undefined {
@@ -427,7 +440,7 @@ export function useStageEdit(
       // Only picked: an automatic Scene's picture, or the frame around the picture behind.
       if (!item.transform || !item.picture || (grip === "body" && !onPicture(point))) return;
       pointer.currentTarget.setPointerCapture(pointer.pointerId);
-      const grabbed = { transform: item.transform, fitted: fittedOf(item.picture, plan), frame: plan };
+      const grabbed = { transform: item.transform, fitted: fittedFor(item, item.picture, plan), frame: plan };
       gesture.current = {
         id: item.id,
         pointer: pointer.pointerId,
@@ -492,12 +505,13 @@ export function useStageEdit(
       else if (current.moved && current.picture) commit(item, current.picture.now, current.kind, current.group);
       // A click on one of several picked picks it alone.
       else if (current.together) onSelect(item.id, false);
-      // Two taps on its body open Crop mode.
+      // Two taps on its body edit it, or open Crop mode.
       else if (current.picture.fingers.grip === "body") {
         const now = performance.now();
         if (lastTap.current?.id === item.id && now - lastTap.current.at < DOUBLE_TAP_MS) {
           lastTap.current = null;
-          openCrop(item);
+          if (item.onEdit) item.onEdit(at(pointer) ?? undefined);
+          else openCrop(item);
         } else {
           lastTap.current = { id: item.id, at: now };
         }
@@ -514,11 +528,16 @@ export function useStageEdit(
         onPointerDown: (pointer: PointerEvent<HTMLElement>) => start(pointer, "body"),
         ...pointers,
         onKeyDown: (key: KeyboardEvent<HTMLElement>) => {
+          if (key.key === "Enter" && item.onEdit) {
+            key.preventDefault();
+            item.onEdit();
+            return;
+          }
           const step = key.shiftKey ? NUDGE_PX * 5 : NUDGE_PX;
           const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[key.key];
           if (!delta || !item.transform || !item.picture || !plan) return;
           key.preventDefault();
-          const grabbed = { transform: item.transform, fitted: fittedOf(item.picture, plan), frame: plan };
+          const grabbed = { transform: item.transform, fitted: fittedFor(item, item.picture, plan), frame: plan };
           commit(item, movedPicture(grabbed, { x: 0, y: 0 }, { x: delta[0], y: delta[1] }), "move", `stage-nudge:${item.id}`);
         },
       },
@@ -695,8 +714,8 @@ export type StageEdit = ReturnType<typeof useStageEdit>;
 /**
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
  * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
- * with a corner to resize it by when it has a size, and the Grips on its edges when it has a box. Under them, the pictures' handles (each on its
- * picture as turned), and over everything the Grips of one picked alone. The guides it snaps to
+ * with a corner to resize it by when it has a size. Under them, the pictures' handles (each on its
+ * picture as turned), and over everything the Grips of one picked alone (and a Text Layer's box Grips). The guides it snaps to
  * (a picture's Smart Guides), while it does. `scale` is the stage's CSS pixels per output pixel.
  */
 export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan; playback: Playback; edit: StageEdit; scale: number }) {
@@ -710,16 +729,6 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
   const picturesOn = shownAt.splice(0, edit.pictures.length);
   // The one picture picked alone, with a Transform to set: its Grips.
   const gripped = edit.picked.length === 1 ? edit.pictures.find((picture) => picture.id === edit.picked[0] && picture.transform && picture.picture) : undefined;
-  // Where item `i` is shown now: on screen, or (faded) picked with one place while off it.
-  const showOf = (item: StageItem, i: number) => {
-    const index = shownAt[i] ?? -1;
-    const show = index >= 0 ? item.shows[index] : edit.picked.includes(item.id) && item.shows.length === 1 ? item.shows[0] : null;
-    return show && { index, show };
-  };
-  // The one item picked alone with a box to shape, where it is drawn: its box Grips.
-  const boxedAt = edit.picked.length === 1 ? edit.items.findIndex((item) => item.id === edit.picked[0] && item.onBox) : -1;
-  const boxedShow = boxedAt >= 0 ? showOf(edit.items[boxedAt], boxedAt) : null;
-  const boxed = boxedShow && { item: edit.items[boxedAt], area: edit.shown(edit.items[boxedAt].id, boxedShow.show.area) };
   return (
     <>
       {edit.pictures.map((picture, i) => (
@@ -728,9 +737,9 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
       ))}
       {edit.items.map((item, i) => {
         const selected = edit.picked.includes(item.id);
-        const shown = showOf(item, i);
-        if (!shown) return null;
-        const { index, show } = shown;
+        const index = shownAt[i] ?? -1;
+        const show = index >= 0 ? item.shows[index] : selected && item.shows.length === 1 ? item.shows[0] : null;
+        if (!show) return null;
         const area = edit.shown(item.id, show.area);
         const { move, size } = edit.handlers(item, show.area);
         const hints = ["drag to move it, or use the arrow keys", item.onEdit && "double-click or press Enter to edit its words"];
@@ -777,8 +786,8 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
           </div>
         );
       })}
-      {boxed && !edit.moving && <TextBoxGrips key={boxed.item.id} plan={plan} area={boxed.area} at={edit.at} onBox={boxed.item.onBox!} />}
       {edit.cropMode ? <CropHandles plan={plan} edit={edit} scale={scale} /> : gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
+      {!edit.cropMode && !edit.moving && gripped?.onBox && <BoxGrips plan={plan} edit={edit} item={gripped} scale={scale} />}
       {edit.guides?.x.map((x) => (
         <div key={`x${x}`} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(x / plan.width) }} />
       ))}
@@ -811,12 +820,18 @@ function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: Stage
   const { body } = edit.pictureHandlers(item);
   const picture = item.picture && edit.cropMode?.id !== item.id && edit.shownPicture(item.id, item.picture);
   const outline = selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed";
+  const grips = { all: ", its edges stretch it, the handle above turns it", corners: "", "corners-rotate": ", the handle above turns it" }[item.grips ?? "all"];
+  const hints = [
+    "drag to move it, or use the arrow keys",
+    selected && `its corners scale it${grips}`,
+    item.onEdit && "double-click or press Enter to edit its words",
+  ];
   const box = picture && item.transform && (!item.behind || selected) && (
     <div
       role="button"
       tabIndex={0}
       aria-roledescription="movable picture"
-      aria-label={`${item.label}: drag to move it, or use the arrow keys${selected ? `; its corners scale it${item.grips === "corners" ? "" : ", its edges stretch it, the handle above turns it"}` : ""}`}
+      aria-label={`${item.label}: ${hints.filter(Boolean).join("; ")}`}
       aria-pressed={selected}
       {...body}
       className={cx(
@@ -896,6 +911,26 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
         <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white pointer-coarse:size-5")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
       )}
     </div>
+  );
+}
+
+/**
+ * The box Grips of a Text Layer picked alone (TextBoxGrips), on its area as drawn, pulled in from off
+ * the stage as its other Grips are. `scale` is the stage's CSS pixels per output pixel.
+ */
+function BoxGrips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; scale: number }) {
+  const picture = edit.shownPicture(item.id, item.picture!);
+  const [x, y] = picture.centre;
+  return (
+    <TextBoxGrips
+      key={item.id}
+      plan={plan}
+      box={{ x, y, width: picture.width, height: picture.height, rotation: picture.rotation }}
+      scale={item.transform!.scale}
+      inset={GRIP_INSET_CSS_PX / scale}
+      at={edit.at}
+      onBox={item.onBox!}
+    />
   );
 }
 

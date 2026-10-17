@@ -121,18 +121,19 @@ Edits:
   secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
   (source_start, source_end).
-- A Text Layer is placed by its transform: x, y its centre, as an Overlay's, the text kept inside the
-  frame. Its look is its style, a Text Style: font (a font id), size (as the captions', in output
+- A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
+  may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
+  are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the captions', in output
   pixels), colour, stroke_width (output pixels, 0 for none) and stroke_colour, plate (what is behind
   its lines: shape "none" or "block", colour, opacity, radius, padding_x and padding_y in output
   pixels), line_height (baselines apart, in sizes) and align (center, left, right). Its text is
   never set smaller: its lines break at newlines and between words at its wrap_width (px, plate
   padding included; 0: the frame less 48 px either side), a word too long between letters, and its
   box is at least fixed_height px tall (0: its words'), the words centred down it. It is never
-  stretched or flipped; its transform's scale, rotation and opacity stay 1, 0 and 1, and its style's
-  tracking 0, as they aren't drawn yet. merge_candidate_items changes only the style, plate and
-  transform fields given. The dry run lists each Text Layer's wrapped lines, its box (bounds) and its
-  picture: the URL, on this app, of the PNG the Clip burns.
+  stretched or flipped; its style's tracking stays 0, as it isn't drawn yet. merge_candidate_items
+  changes only the style, plate and transform fields given. The dry run lists each Text Layer's
+  wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this app, of
+  the PNG the Clip burns.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A

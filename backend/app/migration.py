@@ -17,16 +17,20 @@ moves into its Transform and its look into its Text Style: its outline becomes t
 Block plate padded and rounded as the planner did, in pixels at its size, and its leading the line
 height. The planner set one too wide for the frame less TEXT_MARGIN either side smaller, as words are
 no longer set (docs/adr/0010): such a layer keeps the size it was set at, and a wrap width that just
-holds its widest line, so that it breaks nowhere new. It draws what it did.
+holds its widest line, so that it breaks nowhere new. The planner kept its area inside the frame,
+which it no longer does (a Text Layer may go past the edges, as an Overlay may): one it moved in is
+centred where it drew it. It draws what it did.
 """
 
 import math
 from collections.abc import Mapping
 from typing import Any
 
-from app.candidates import MAX_SCALE, MIN_SCALE
+from pydantic import TypeAdapter
+
+from app.candidates import MAX_SCALE, MIN_SCALE, TextLayer
 from app.pictures import cover_scale, fitted
-from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, font_metrics, without_emoji
+from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, font_metrics, text_event, without_emoji
 
 # Media Library items' picture sizes, by id.
 Sizes = Mapping[str, tuple[int, int]]
@@ -53,6 +57,7 @@ _OLD_TEXT_STYLE = {
 _OLD_TEXT_PLATE = {"box_colour": "colour", "box_opacity": "opacity"}
 # The fields of a Text Layer before Text Styles, which its Transform and Text Style replace.
 OLD_TEXT_LAYER = ("x", "y", "box", *_OLD_TEXT_STYLE, *_OLD_TEXT_PLATE)
+_TEXT_LAYER = TypeAdapter(TextLayer)
 
 
 def migrated_candidate(data: dict[str, Any], sizes: Sizes) -> dict[str, Any]:
@@ -128,7 +133,7 @@ def migrated_text_layer(data: dict[str, Any]) -> dict[str, Any]:
         padded = shrunk[1] + (2 * plate["padding_x"] if data.get("box") else 0)
         style |= {"size": size, "wrap_width": math.ceil(padded * 100 - 1e-6) / 100}
     layer = {key: value for key, value in data.items() if key not in OLD_TEXT_LAYER}
-    return layer | {"transform": {axis: data[axis] for axis in ("x", "y") if axis in data}, "style": style}
+    return _drawn_where_it_was(layer | {"transform": {axis: data[axis] for axis in ("x", "y") if axis in data}, "style": style})
 
 
 def _shrunk_text(data: dict[str, Any], size: float) -> tuple[float, float] | None:
@@ -148,3 +153,17 @@ def _shrunk_text(data: dict[str, Any], size: float) -> tuple[float, float] | Non
     # Never under the least size a Text Style has (as it was, it would be wider than the frame).
     shrunk = max(math.floor(room / (widest + padded) * 10) / 10, _MIN_TEXT_SIZE)
     return shrunk, widest * shrunk
+
+
+def _drawn_where_it_was(layer: dict[str, Any]) -> dict[str, Any]:
+    """A migrated Text Layer centred where the planner drew it: then, one whose area went past the
+    frame's edges was moved inside them. Its area is today's, centred on its Transform."""
+    event = text_event(_TEXT_LAYER.validate_python(layer), math.inf)
+    if event is None:
+        return layer
+    area = event.area
+    left = min(max(area.x, 0), OUTPUT_WIDTH - area.width)
+    top = min(max(area.y, 0), OUTPUT_HEIGHT - area.height)
+    if (left, top) == (area.x, area.y):
+        return layer
+    return layer | {"transform": {"x": left + area.width / 2, "y": top + area.height / 2}}

@@ -109,7 +109,6 @@ import {
   type Pick,
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
-import { atSize } from "./textStyle";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
@@ -716,6 +715,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           applyKeyed(writeItemTransform(cropped, { kind: "overlay", id }, transform, playback.time, held), group);
         },
       };
+  // The Text Layers on the preview, moved, scaled and turned there; on a locked Track, only drawn.
+  // One of several picked moves them all; scaling or turning one leaves its words and size as they are.
+  const textControls: StageControls["texts"] = tracks.locked.includes("text")
+    ? undefined
+    : {
+        onTransform: (id, transform, group) => {
+          const layer = edits.text_layers.find((other) => other.id === id);
+          if (!layer) return;
+          if (placedTogether("text", id)) moveOnFrame(transform.x - layer.transform.x, transform.y - layer.transform.y, group);
+          else updateText({ ...layer, transform }, group);
+        },
+        // Its box Grips: its wrap width or fixed height, its words rewrapped by the next plan.
+        onBox: (id, edge, length, group) => {
+          const layer = edits.text_layers.find((other) => other.id === id);
+          if (layer) updateText({ ...layer, style: boxStyle(layer.style, edge, length) }, group);
+        },
+      };
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.
   const keying: Keying = {
     edits, pick, locked: tracks.locked, track, plan, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched, onNotice: tellOnce,
@@ -796,21 +812,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const item = stageItem(id);
           select("id" in item ? clicked(pick, item, toggle || picking) : item);
         },
-        onPlace: (id, place, group) => {
-          if (id === "hook" || id === "captions") {
-            change({ style_overrides: placedOverrides(edits.style_overrides, id === "hook" ? "hook" : "caption", place) }, group);
-            return;
-          }
-          const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
-          if (!layer) return;
-          const { transform, style } = layer;
-          if (place.size == null && placedTogether("text", layer.id)) moveOnFrame(place.x - transform.x, place.y - transform.y, group);
-          else updateText({ ...layer, transform: { ...transform, x: place.x, y: place.y }, style: atSize(style, place.size ?? style.size) }, group);
-        },
-        onBox: (id, edge, box, group) => {
-          const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
-          if (layer) updateText({ ...layer, style: boxStyle(layer.style, edge, box) }, group);
-        },
+        onPlace: (id, place, group) =>
+          change({ style_overrides: placedOverrides(edits.style_overrides, id === "hook" ? "hook" : "caption", place) }, group),
         retype: {
           textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
           onText: (id, text) => {
@@ -823,7 +826,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           },
           onWords: (update) => change({ word_edits: update(edits.word_edits) }),
         },
-        texts: !tracks.locked.includes("text"),
+        texts: textControls,
         fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
         overlays: overlayControls,
         pictureAt,
