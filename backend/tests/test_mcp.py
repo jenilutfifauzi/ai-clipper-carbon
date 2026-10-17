@@ -435,6 +435,14 @@ async def test_a_text_layers_style_and_transform_are_merged_field_by_field_and_t
     assert stood["lines"] == ["Judul"]
     assert abs(stood["bounds"]["width"] - 2 * bounds["height"]) <= 2 and abs(stood["bounds"]["height"] - 2 * bounds["width"]) <= 2
     assert abs(stood["bounds"]["x"] + stood["bounds"]["width"] / 2 - 300) <= 1 and abs(stood["bounds"]["y"] + stood["bounds"]["height"] / 2 - 400) <= 1
+    # A wrap width and a fixed height merged into its style: the dry run lists the lines it wraps to.
+    [boxed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[
+        {"id": "title", "text": "Judul yang panjang sekali", "style": {"wrap_width": 400, "fixed_height": 500}, "transform": {"scale": 1, "rotation": 0}},
+    ]))["text_layers"]
+    assert boxed["style"] == changed["style"] | {"wrap_width": 400, "fixed_height": 500}
+    [shown] = (await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True))["text_layers"]
+    assert len(shown["lines"]) > 1 and " ".join(shown["lines"]) == "Judul yang panjang sekali"
+    assert (shown["bounds"]["width"], shown["bounds"]["height"]) == (400, 500)
 
     assert "stretched" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"stretch_x": 2}}])
     assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"flip_v": True}}])

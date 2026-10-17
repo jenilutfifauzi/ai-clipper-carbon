@@ -130,11 +130,13 @@ Edits:
   halo), plate (what is behind its lines: shape "none", "block" behind them all or "strips" behind
   each, colour, opacity, radius, padding_x and padding_y in output pixels), line_height (baselines
   apart, in sizes), tracking (output pixels after each character but a line's last, may be
-  negative) and align (center, left, right). Its lines break at newlines; one wider than the frame
-  is set smaller. It is never stretched or flipped; its style's wrap_width and fixed_height stay 0,
-  as they aren't drawn yet. merge_candidate_items changes only the style, shadow, plate and
-  transform fields given. The dry run lists each Text Layer's lines, its box once scaled and turned
-  (bounds) and its picture: the URL, on this app, of the PNG the Clip burns.
+  negative) and align (center, left, right). Its text is never set smaller: its lines break at
+  newlines and between words at its wrap_width (px, plate padding included; 0: the frame less 48 px
+  either side), a word too long between letters, and its box is at least fixed_height px tall (0:
+  its words'), the words centred down it. It is never stretched or flipped. merge_candidate_items
+  changes only the style, shadow, plate and transform fields given. The dry run lists each Text
+  Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
+  app, of the PNG the Clip burns.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
