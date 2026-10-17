@@ -20,6 +20,7 @@ import {
   Scissors,
   Shuffle,
   SlidersHorizontal,
+  Snowflake,
   StepBack,
   StepForward,
   Trash2,
@@ -33,7 +34,7 @@ import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
 import type { LoopRegion } from "../editor/loop";
 import { RATES, usePlayback, type Playback } from "../editor/playback";
-import type { ItemActions, Splitter } from "./actions";
+import type { Freezer, ItemActions, Splitter } from "./actions";
 import type { Commands } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { keyNames, shortcutSheet } from "./keymap";
@@ -387,16 +388,19 @@ export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () =
 export function ItemTools({
   actions,
   splitter,
+  freezer,
   playback,
   paste,
 }: {
   actions: ItemActions | null;
   splitter: Splitter;
+  freezer: Freezer;
   playback: Playback;
   paste: (() => void) | null;
 }) {
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
   const splittable = usePlayback(playback, splitter.canSplit);
+  const freezable = usePlayback(playback, freezer.canFreeze);
   return (
     <>
       <Button
@@ -408,6 +412,16 @@ export function ItemTools({
         title={`Split at the playhead (${shortcut}B): the picked items, or with nothing picked, everything there`}
       >
         <Scissors aria-hidden size={17} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={freezer.freeze}
+        disabled={!freezable}
+        aria-label="Freeze frame"
+        title={`Freeze frame (${shortcut === "⌘" ? "⇧F" : "Shift+F"}): hold the frame at the playhead for a second`}
+      >
+        <Snowflake aria-hidden size={17} />
       </Button>
       <Button variant="ghost" size="icon" onClick={actions?.duplicate} disabled={!actions} aria-label="Duplicate" title={`Duplicate (${shortcut}D)`}>
         <Copy aria-hidden size={17} />

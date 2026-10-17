@@ -37,6 +37,7 @@ export function Inspector({
   onOverlay,
   onSegment,
   onSpeed,
+  onHold,
   cropMode,
 }: {
   pick: Pick;
@@ -56,6 +57,8 @@ export function Inspector({
   onSegment: (segment: ClipSegment, group?: string) => void;
   // A Segment's or video Overlay's Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (item: SpedRef, speed: number, group: string) => void;
+  // A Freeze frame's hold set (actions.ts' setHold).
+  onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
   cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
 }) {
@@ -116,6 +119,7 @@ export function Inspector({
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
         onSpeed={(speed, group) => onSpeed({ kind: "segment", id: segment.id }, speed, group)}
+        onHold={(hold) => onHold(segment.id, hold)}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
         onCropMode={cropMode?.("segment", segment.id)}
         playback={playback}

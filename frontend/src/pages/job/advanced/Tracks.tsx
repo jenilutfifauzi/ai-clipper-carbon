@@ -26,7 +26,7 @@ import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
-import { SEGMENT_MIN_SECS } from "./MainTrack";
+import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { useKeyTime } from "./KeyCluster";
@@ -265,6 +265,8 @@ export function Tracks({
           const volume = segment.media ? 1 : sourceGain(edits, segment);
           // A video's sound, by its volume Keyframes once it has some.
           const heard = segmentHeard(segment, shown);
+          // A Freeze frame is silent: no Waveform and no Volume Line.
+          const held = segment.hold != null;
           return (
             <TimelineItem
               key={segment.id}
@@ -273,11 +275,11 @@ export function Tracks({
               end={shown.end}
               min={-1e6}
               max={1e6}
-              minSecs={SEGMENT_MIN_SECS}
+              minSecs={held ? MEDIA_MIN_SECS : SEGMENT_MIN_SECS}
               tone="video"
               selected={selected}
               changed={changed.has(segment.id)}
-              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${(segment.speed ?? 1) !== 1 ? `, at ${speedLabel(segment.speed ?? 1)}` : ""}`}
+              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${(segment.speed ?? 1) !== 1 ? `, at ${speedLabel(segment.speed ?? 1)}` : ""}${held ? `, held ${holdLabel(segment.hold!)}` : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => {
@@ -298,7 +300,7 @@ export function Tracks({
               ) : (
                 <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} gain={volume} />
               )}
-              {segment.media && mediaById.get(segment.media)?.has_audio !== false && (
+              {segment.media && !held && mediaById.get(segment.media)?.has_audio !== false && (
                 <VolumeLine
                   volume={segment.volume ?? 1}
                   keyed={segment.keys?.volume?.length ? { heard, start: shown.start, playback } : undefined}
@@ -311,6 +313,7 @@ export function Tracks({
                 {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
               </span>
               {(segment.speed ?? 1) !== 1 && <SpeedBadge speed={segment.speed ?? 1} />}
+              {held && <HoldBadge hold={segment.hold!} />}
             </TimelineItem>
           );
         })}
@@ -492,6 +495,22 @@ function SpeedBadge({ speed }: { speed: number }) {
   );
 }
 
+/** A Freeze frame's hold, as its badge and name say it: "1 s", "2.5 s". */
+const holdLabel = (hold: number) => `${Math.round(hold * 100) / 100} s`;
+
+/** A Freeze frame's hold on the Timeline: "❚❚ 1 s". */
+function HoldBadge({ hold }: { hold: number }) {
+  return (
+    <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white tabular-nums">
+      ❚❚ {holdLabel(hold)}
+    </span>
+  );
+}
+
+// How a Segment's Filmstrip and Waveform run along it: at its Speed, or, for a Freeze frame, its one
+// frame repeated.
+const paceAlong = (shown: PlayedSegment) => (shown.hold != null ? 0 : shown.speed);
+
 /**
  * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
  * tiled, which shows until they arrive. A video with sound has its Waveform along the bottom, as it
@@ -531,10 +550,10 @@ function MediaFilmstrip({
               cache,
               url: (start) => mediaFilmstripUrl(media, start),
               mediaStart: shown.source_start,
-              speed: shown.speed,
+              speed: paceAlong(shown),
               media: { duration: item.duration, width: item.width, height: item.height },
             }),
-            ...(item.has_audio
+            ...(item.has_audio && shown.hold == null
               ? [
                   waveformLayer({
                     cache,
@@ -585,19 +604,23 @@ function SourceFilmstrip({
           cache,
           url: (start) => jobFilmstripUrl(source.job, start),
           mediaStart: shown.source_start,
-          speed: shown.speed,
+          speed: paceAlong(shown),
           media: source.metadata,
         }),
-        waveformLayer({
-          cache,
-          url: (start) => jobPeaksUrl(source.job, start),
-          mediaStart: shown.source_start,
-          speed: shown.speed,
-          duration: source.metadata.duration,
-          gain: () => gain,
-          color: MEDIA_WAVE,
-          band: MEDIA_WAVE_BAND,
-        }),
+        ...(shown.hold != null
+          ? []
+          : [
+              waveformLayer({
+                cache,
+                url: (start) => jobPeaksUrl(source.job, start),
+                mediaStart: shown.source_start,
+                speed: shown.speed,
+                duration: source.metadata.duration,
+                gain: () => gain,
+                color: MEDIA_WAVE,
+                band: MEDIA_WAVE_BAND,
+              }),
+            ]),
       ]}
     />
   );

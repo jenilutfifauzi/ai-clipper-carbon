@@ -43,6 +43,7 @@ import { usePreviewPlan } from "../editor/usePreviewPlan";
 import {
   changeMusic,
   dragSegment,
+  freezer,
   gestureSpeed,
   insertSegment,
   itemActions,
@@ -53,6 +54,7 @@ import {
   placeAfter,
   placeDropped,
   setFade,
+  setHold,
   type Outcome,
   type SegmentDrag,
   type SpedRef,
@@ -557,6 +559,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here, job.transcript?.words ?? [])));
   const actions = itemActions(scene, () => playback.time, apply, clip);
   const splits = splitter(scene, () => playback.time, apply);
+  const freezes = freezer(scene, () => playback.time, apply, { longest });
+  // A Freeze frame's Duration typed in: one change, its ripple included.
+  function setFreezeHold(id: string, hold: number) {
+    const outcome = setHold(scene, id, hold, { longest });
+    if (!outcome) return;
+    history.set(outcome.edits);
+    if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
+  }
   // The picked Text Layers, Music Clips and Overlays moved `delta` seconds, together.
   function moveLayers(delta: number, group: string) {
     const moved = move(scene, delta);
@@ -611,6 +621,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     paste: pasteHere,
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
+    freeze: () => (freezes.canFreeze(playback.time) ? freezes.freeze() : false),
     fit: () => fitTimeline.current?.(),
     zoom: (direction) => zoomTimeline.current?.(direction),
     shortcuts: () => setShortcuts(true),
@@ -826,7 +837,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       tools={
         <>
           <MagneticToggle />
-          <ItemTools actions={actions} splitter={splits} playback={playback} paste={pasteHere} />
+          <ItemTools actions={actions} splitter={splits} freezer={freezes} playback={playback} paste={pasteHere} />
         </>
       }
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
@@ -911,6 +922,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onOverlay={updateOverlay}
         onSegment={updateSegment}
         onSpeed={setItemSpeed}
+        onHold={setFreezeHold}
         cropMode={cropMode}
       />
     </KeyingContext.Provider>

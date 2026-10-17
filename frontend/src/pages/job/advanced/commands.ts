@@ -28,6 +28,8 @@ export function commandsOf(
     move: ((delta: number, group: string) => void) | null;
     // Split at the playhead: the picked items, or with nothing picked, everything there.
     split: () => void;
+    // Freeze frame at the playhead; false where none can be made.
+    freeze: () => boolean | void;
     // Zoom the Timeline to fit: what is picked, or with nothing picked, the whole Clip.
     fit: () => void;
     // Zoom the Timeline in (1) or out (-1) about the playhead.
@@ -82,6 +84,7 @@ export function commandsOf(
     "pick-all": () => more.pickAll(),
     "pick-none": () => more.pickNone(),
     split: () => more.split(),
+    "freeze-frame": () => more.freeze(),
     copy: () => (actions && !window.getSelection()?.toString() ? actions.copy() : false),
     cut: () => (actions ? actions.cut() : false),
     paste: () => (more.paste ? more.paste() : false),
