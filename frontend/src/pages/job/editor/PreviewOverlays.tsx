@@ -1,13 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type RenderPlan } from "../../../api";
-import { eventSpan, follow } from "./follow";
+import { follow } from "./follow";
 import { PicturePanel } from "./PicturePanel";
 import { useShown, type Playback } from "./playback";
+import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCopy";
 
 /**
  * The plan's Overlays while they show, over the Source's (and videos') pictures and under the
  * captions, each drawn as its Picture: an image, or a video's small copy playing in step with the
- * playback at its Speed (muted: its sound, when turned up, plays with the music). The `selected` ones (picked in
+ * playback at its Speed (muted: its sound, when turned up, plays with the music); at a Speed a
+ * browser won't play, from a Retimed copy (retimedCopy.ts). The `selected` ones (picked in
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
  * outside their time too. A keyed one moves with the playback (PicturePanel).
  */
@@ -41,29 +43,46 @@ function OverlayView({
   const shown = useShown(playback, (time) => time >= event.start && time < event.end);
 
   // By its times, not the event: one is made afresh while it is held on the stage.
-  const { start, end, offset, speed } = event;
+  const { start, end, offset, speed, pitch, media, image } = event;
+  const range = useMemo(() => (image ? null : eventCopy({ start, end, offset, speed, pitch })), [image, start, end, offset, speed, pitch]);
+  const copy = useRetimedCopy(media, range);
+  const { src, span } = useMemo(
+    () => eventPlay({ start, end, offset, speed, pitch }, mediaProxyUrl(media), copy),
+    [start, end, offset, speed, pitch, media, copy],
+  );
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    const sync = () => void follow(element, playback, eventSpan({ start, end, offset, speed }));
+    const sync = () => void follow(element, playback, span);
     sync();
     return playback.subscribe(sync);
-  }, [playback, start, end, offset, speed]);
+  }, [playback, span]);
 
   return (
-    <PicturePanel
-      picture={picture}
-      frame={plan}
-      playback={playback}
-      hidden={!shown && !selected}
-      faded={shown ? undefined : 0.25}
-      media={
-        event.image ? (
-          <img src={mediaItemUrl(event.media)} alt="" draggable={false} className="size-full object-fill" />
-        ) : (
-          <video ref={video} src={mediaProxyUrl(event.media)} muted playsInline preload="auto" className="size-full object-fill" />
-        )
-      }
-    />
+    <>
+      <PicturePanel
+        picture={picture}
+        frame={plan}
+        playback={playback}
+        hidden={!shown && !selected}
+        faded={shown ? undefined : 0.25}
+        media={
+          image ? (
+            <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" />
+          ) : (
+            <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" />
+          )
+        }
+      />
+      {shown && range && copy && !copy.url && (
+        <div
+          aria-live="polite"
+          className="absolute inset-x-0 top-[8%] mx-auto w-fit rounded-full bg-black/70 px-3 py-1 text-white tabular-nums"
+          style={{ fontSize: "max(12px, calc(var(--scale) * 36px))" }}
+        >
+          {copyProgress(range, copy)}
+        </div>
+      )}
+    </>
   );
 }

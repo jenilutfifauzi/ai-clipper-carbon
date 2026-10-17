@@ -5,10 +5,10 @@ import { paceOf, playedSourceAt, type Pace } from "./segmentTime";
 export const MAX_DRIFT_SECS = 0.15;
 // A parked element this close to its start is there already.
 const PARKED_SECS = 0.01;
-// The Speeds a browser plays a video at; beyond them it mutes or stutters (ADR 0009).
-const PLAYABLE_SPEEDS = { min: 0.25, max: 4 };
+// The Speeds a browser plays a video at; beyond them it mutes or stutters, and the item plays a Retimed copy instead (ADR 0009, retimedCopy.ts).
+export const PLAYABLE_SPEEDS = { min: 0.25, max: 4 };
 
-/** The Speed a video is played at to show `speed`: the nearest a browser plays well, until Retimed copies play the others. */
+/** The Speed a video is played at to show `speed`: the nearest a browser plays well (an item beyond them plays a Retimed copy, retimedCopy.ts). */
 export const previewSpeed = (speed = 1) => Math.min(PLAYABLE_SPEEDS.max, Math.max(PLAYABLE_SPEEDS.min, speed));
 
 // A plan's Overlay or sound (OverlayEvent, AudioEvent): from `start` to `end` in the Clip, its item from `offset`, at its Speed and pitch.

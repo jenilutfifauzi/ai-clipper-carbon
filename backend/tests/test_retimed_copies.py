@@ -138,13 +138,40 @@ def test_a_copy_of_a_to_b_serves_c_to_d_inside_it_and_a_range_reaching_outside_m
     assert sorted(path.name for path in (tmp_path / "retimed").iterdir()) == ["reversed-full-1000-2400.mp4", "reversed-full-200-2200.mp4"]
 
 
-def test_a_copy_retimed_at_a_speed_lasts_its_range_divided_by_it(tmp_path, counter):
-    """For ticket 09's preview copies: made alike, at their Speed."""
-    copy = copies_of(tmp_path / "retimed", counter).make(load_settings().ffmpeg_bin, CopySize.PREVIEW, Retime(0, 2, reverse=False, speed=4))
-    assert copy.path.name == "retimed-preview-0-2000-x4.mp4"
-    streams = {stream["codec_type"]: float(stream["duration"]) for stream in probe(load_settings(), copy.path)["streams"]}
-    # Within a frame or two: its last frame keeps its length at 1×.
-    assert streams["video"] == pytest.approx(0.5, abs=0.07) and streams["audio"] == pytest.approx(0.5, abs=0.05), streams
+def test_a_copy_retimed_at_a_speed_has_its_frames_at_the_videos_rate_and_lasts_its_range_divided_by_it(tmp_path, counter):
+    """Ticket 09's preview copies: every 4th frame at 4×, each frame 8 times at 0.125×, every 8th
+    counting down at 8× reversed, and as long as the render makes them; also when made in pieces
+    (of 1.4 s, as of a 1080p video)."""
+    copies = copies_of(tmp_path / "retimed", counter)
+    in_pieces = Copies(tmp_path / "pieces", {CopySize.FULL: counter}, (1920, 1080, FPS))
+    ffmpeg = load_settings().ffmpeg_bin
+    forward = lumas(counter)
+    step = np.diff(forward).mean()
+    for made, retime, frames in (
+        (copies, Retime(0, 2, reverse=False, speed=4), forward[0:60:4]),
+        (copies, Retime(0.5, 1.0, reverse=False, speed=0.125), np.repeat(forward[15:30], 8)),
+        (copies, Retime(0, 2.4, speed=8), forward[71::-8][:9]),
+        (in_pieces, Retime(0, 2.4, reverse=False, speed=0.25), np.repeat(forward[:72], 4)),
+        (in_pieces, Retime(0, 2.4, speed=6), forward[71::-6]),
+    ):
+        size = CopySize.FULL if made is in_pieces else CopySize.PREVIEW
+        copy = made.make(ffmpeg, size, retime)
+        streams = {stream["codec_type"]: float(stream["duration"]) for stream in probe(load_settings(), copy.path)["streams"]}
+        length = (retime.end - retime.start) / retime.speed
+        assert streams["video"] == pytest.approx(length, abs=0.5 / FPS), (retime, streams)
+        assert streams["audio"] == pytest.approx(length, abs=0.05), (retime, streams)
+        shown = lumas(copy.path)
+        assert len(shown) == len(frames), (retime, len(shown))
+        assert np.abs(shown - frames).max() < step / 2, (retime, shown - frames)
+
+
+def test_a_slowed_copys_sound_keeps_its_pitch_as_the_renders_does(tmp_path, counter):
+    copy = copies_of(tmp_path / "retimed", counter).make(
+        load_settings().ffmpeg_bin, CopySize.PREVIEW, Retime(0.5, 1.0, reverse=False, speed=0.125)
+    )
+    for at in (0.5, 2.0, 3.5):
+        heard = sweep_at(0.5 + at * 0.125)
+        assert tone_level(load_settings(), copy.path, heard, at) > 5 * tone_level(load_settings(), copy.path, heard / 2, at), at
 
 
 def test_an_interrupted_copy_leaves_no_file_under_its_name_nor_its_pieces(tmp_path, counter):

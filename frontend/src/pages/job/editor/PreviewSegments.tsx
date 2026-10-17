@@ -6,7 +6,7 @@ import { FRAME, panelStyle } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { playable, type Playback } from "./playback";
 import { loudness } from "./loudness";
-import { mediaPlay, useRetimedCopy } from "./retimedCopy";
+import { copyProgress, mediaPlay, segmentCopy, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
 
 /**
@@ -42,8 +42,8 @@ export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undef
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed sound follows its volume Keyframes (followCurve).
- * A reversed one plays its Retimed copy, and shows its first frame held with the copy's progress
- * until the copy is made (`mediaPlay`).
+ * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
+ * frame held with the copy's progress until the copy is made (`mediaPlay`).
  */
 export function MediaSegment({
   segment,
@@ -61,7 +61,8 @@ export function MediaSegment({
   const box = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLVideoElement>(null);
   const back = useRef<HTMLVideoElement>(null);
-  const copy = useRetimedCopy(segment.reverse ? segment.media : null, segment.source_start, segment.source_end);
+  const range = useMemo(() => segmentCopy(segment), [segment]);
+  const copy = useRetimedCopy(segment.media, range);
   const { src, span } = useMemo(() => mediaPlay(segment, end, copy), [segment, end, copy]);
 
   useEffect(() => {
@@ -113,13 +114,13 @@ export function MediaSegment({
           media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
         />
       )}
-      {copy && !copy.url && (
+      {range && copy && !copy.url && (
         <div
           aria-live="polite"
           className="absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full bg-black/70 px-3 py-1 text-white tabular-nums"
           style={{ fontSize: "max(12px, calc(var(--scale) * 36px))" }}
         >
-          {copy.error ? "Couldn't reverse this video" : `Reversing… ${Math.round(copy.progress * 100)}%`}
+          {copyProgress(range, copy)}
         </div>
       )}
     </div>
