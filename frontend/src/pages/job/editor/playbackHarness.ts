@@ -16,6 +16,7 @@ export class FakeVideo extends EventTarget {
   paused = true;
   muted = false;
   playbackRate = 1;
+  preservesPitch = true;
   volume = 1;
   seeking = false;
   refuse = false;

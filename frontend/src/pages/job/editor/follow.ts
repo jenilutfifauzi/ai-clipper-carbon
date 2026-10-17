@@ -5,24 +5,32 @@ import { paceOf, playedSourceAt, type Pace } from "./segmentTime";
 export const MAX_DRIFT_SECS = 0.15;
 // A parked element this close to its start is there already.
 const PARKED_SECS = 0.01;
+// The Speeds a browser plays a video at; beyond them it mutes or stutters (ADR 0009).
+const PLAYABLE_SPEEDS = { min: 0.25, max: 4 };
+
+/** The Speed a video is played at to show `speed`: the nearest a browser plays well, until Retimed copies play the others. */
+export const previewSpeed = (speed = 1) => Math.min(PLAYABLE_SPEEDS.max, Math.max(PLAYABLE_SPEEDS.min, speed));
 
 /**
  * Keeps `element` (a song, a video's Segment, an Overlay) in step with `playback` while the Clip's
  * time shown (the skimmed time while skimming) is in its span, from `start` to `end`, where it plays
  * its file from `from` seconds into it, as a Segment as played does (segmentTime.ts): moved back
- * when it drifts, playing and pausing with the playback, at its rate; paused outside its span, and
- * with `park`, waiting where it starts so that its first frame is ready when its turn comes.
+ * when it drifts, playing and pausing with the playback, at its rate times its Speed
+ * (`previewSpeed`), its pitch kept unless `pitch`; paused outside its span, and with `park`, waiting
+ * where it starts so that its first frame is ready when its turn comes.
  * Returns whether the time is in its span.
  */
 export function follow(
   element: HTMLMediaElement,
   playback: Playback,
-  span: { start: number; end: number; from: number } & Pace,
+  span: { start: number; end: number; from: number; pitch?: boolean } & Pace,
   park = false,
 ): boolean {
   const time = playback.shownTime;
   const played = { start: span.start, end: span.end, source_start: span.from, ...paceOf(span) };
-  if (element.playbackRate !== playback.rate) element.playbackRate = playback.rate;
+  const rate = playback.rate * previewSpeed(span.speed);
+  if (element.playbackRate !== rate) element.playbackRate = rate;
+  if (element.preservesPitch === !!span.pitch) element.preservesPitch = !span.pitch;
   if (time < span.start || time >= span.end) {
     if (!element.paused) element.pause();
     const first = playedSourceAt(played, span.start);

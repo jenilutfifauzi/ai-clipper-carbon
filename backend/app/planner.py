@@ -256,6 +256,8 @@ class SegmentInput:
     speed: float = 1.0
     reverse: bool = False
     hold: float | None = None
+    # Whether its sound's pitch follows its Speed.
+    pitch: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -495,6 +497,8 @@ class SegmentPlan:
     speed: float = 1.0
     reverse: bool = False
     hold: float | None = None
+    # Whether its sound's pitch follows its Speed, as tape does; kept by default.
+    pitch: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -691,7 +695,7 @@ def plan_render(
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
-                    given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold,
+                    given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold, given.pitch,
                 )
             )
             at, before = round(at + length, 3), length

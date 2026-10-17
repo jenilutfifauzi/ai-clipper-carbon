@@ -116,6 +116,9 @@ class TextLayer:
 MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
 Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
+# A Speed (docs/adr/0009): how many seconds of its range an item plays in one on the Timeline.
+MIN_SPEED, MAX_SPEED = 0.0625, 16.0
+Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
 
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
@@ -462,6 +465,9 @@ class Segment:
     media: MediaId | None = None
     framing: Framing | None = None
     volume: Volume = 1.0
+    # It plays its range in (end − start) ÷ speed on the Timeline; its sound keeps its pitch unless `pitch`.
+    speed: Speed = 1.0
+    pitch: bool = False
     # They move its Framing's centre, scale, rotation and opacity, and shape its sound's volume,
     # over its length, each `at` in seconds from its start (where it starts on the Timeline, which
     # is `start` seconds into its video). A Segment of the Source has none: its Layouts frame it.

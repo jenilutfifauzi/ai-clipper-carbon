@@ -208,7 +208,7 @@ def candidate_plan(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else [], join=join, keys=segment.keys, id=segment.id,
-                speed=played.speed, reverse=played.reverse, hold=played.hold,
+                speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
             ))
             continue
         inputs.append(SegmentInput(
@@ -225,8 +225,8 @@ def candidate_plan(
                 for edit in candidate.word_edits
                 if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
             ],
-            join=join,
-            speed=played.speed, reverse=played.reverse, hold=played.hold,
+            join=join, id=segment.id,
+            speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
 

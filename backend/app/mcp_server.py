@@ -110,6 +110,13 @@ Edits:
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
+- A video's Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast):
+  it lasts (end - start) / speed in the Clip, `start` and `end` staying seconds into its video. Its
+  sound keeps its pitch; with `pitch` true it rises and falls with the speed instead, as tape. It
+  lasts 0.1 s at least in the Clip, and the Clip the longest clip at most. A Speed change moves the
+  Segments after it, not the layers: the dry run lists each Segment's span in the Clip (`segments`).
+  Its Keyframes stay in seconds from its start, so a Speed that leaves one past its new end is
+  refused: send its keys too, each `at` times old / new speed to keep the motion on the same frames.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -638,17 +645,24 @@ def _motion_view(picture: dict) -> dict:
 
 
 def _plan_view(preview: dict) -> dict:
-    """A Preview Plan as an agent reads it: what shows when, in Timeline time, each Scene's Layout and
-    the Framing that draws its first frame (a Manual Scene's own), where the picture of a Manual
-    Scene, of a video's Scene and of each Overlay is drawn (`_picture_view`), a keyed one's
-    Keyframes and its bounds at each (`_motion_view`), a Manual Scene's Keyframes past its end
-    (`ignored`), the keyed sounds' volume Keyframes (a video
+    """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span
+    there, with its Speed), each Scene's Layout and the Framing that draws its first frame (a Manual
+    Scene's own), where the picture of a Manual Scene, of a video's Scene and of each Overlay is
+    drawn (`_picture_view`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a
+    Manual Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else SegmentTime(plan["start"], plan["end"]).length, 2),
         "words_source": preview["words_source"],
+        "segments": [
+            _compact({
+                "id": segment["id"], "media": segment["media"], **_times(segment, "start", "end"),
+                "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
+            })
+            for segment in plan["segments"]
+        ],
         "scenes": [
             {
                 **_times(scene, "start", "end", "layout", "framing"),

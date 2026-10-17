@@ -616,6 +616,8 @@ export interface SegmentPlan {
   speed?: number;
   reverse?: boolean;
   hold?: number | null;
+  // Whether its sound's pitch follows its Speed, as tape's does; kept by default.
+  pitch?: boolean;
 }
 
 export interface RenderPlan {
@@ -694,6 +696,9 @@ export interface ClipSegment {
   media?: string | null;
   framing?: Framing | null;
   volume?: number;
+  // Its range plays in (end − start) ÷ speed on the Timeline (docs/adr/0009); its sound's pitch follows the speed with `pitch`.
+  speed?: number;
+  pitch?: boolean;
   keys?: Keys;
 }
 

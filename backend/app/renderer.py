@@ -42,6 +42,13 @@ silence. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
+A Segment at a Speed (docs/adr/0009) has its frames' times divided by it and then brought to the
+Clip's frame rate (frames dropped or repeated, none blended); its sound is played at it, its pitch
+kept by a chain of `atempo` stages or changed with it by `asetrate`, before its volume and volume
+Keyframes, which are in Timeline seconds. The Clip's sound is resampled once more before its
+loudness is measured and normalized: that keeps `atempo`'s fractional timestamps from cutting it
+short, as Concat found.
+
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
 drawn as its Picture (`_picture`: cropped, scaled, flipped, rounded and bordered, turned with a
 transparent fill, shadowed, faded) and laid over the joined frames at its centre while it shows,
@@ -201,7 +208,7 @@ class Renderer:
             audio = ["-map", "0:a:0", "-af", measure]
         else:
             heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
-            audio = ["-filter_complex", f"{heard}{measure}[measured]", "-map", "[measured]"]
+            audio = ["-filter_complex", f"{heard}aresample={tuning.audio_rate},{measure}[measured]", "-map", "[measured]"]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
             *sources, *inputs, *audio, "-f", "null", "-",
@@ -261,7 +268,7 @@ class Renderer:
         audio = f"{heard}aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
-                f"{heard}loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
+                f"{heard}aresample={tuning.audio_rate},loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
                 f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
                 f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
                 f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}[a]"
@@ -340,9 +347,9 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, a Segment's own volume, or Transitions, each Segment's sound is first set to its
-    volume (a Source Segment's also to the Clip's own, which the mix then leaves) in one format, and
-    a video without sound gives silence."""
+    the Segments, a Segment's own volume or Speed, or Transitions, each Segment's sound is first
+    played at its Speed (`speed_filters`) and set to its volume (a Source Segment's also to the
+    Clip's own, which the mix then leaves) in one format, and a video without sound gives silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -350,7 +357,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         read = files[segment.media] if segment.media else source
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{segment.time.span:.3f}", "-i", str(read)]
     count = len(plan.segments)
-    plain = all(segment.media is None and segment.volume == 1 for segment in plan.segments)
+    plain = all(segment.media is None and segment.volume == 1 and segment.speed == 1 for segment in plan.segments)
     if plain and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
@@ -358,17 +365,42 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     for i, segment in enumerate(plan.segments):
         if segment.silent:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
-        elif segment.gain:
-            # Its time from 0 at its start, which its Keyframes' are from.
-            chains.append(f"[{i}:a:0]asetpts=PTS-STARTPTS,{','.join(_volume(segment.gain, segment.volume))},{form}[a{i}]")
+            continue
+        sped = speed_filters(segment.speed, segment.pitch, rate)
+        if segment.gain:
+            # Its time on the Timeline from 0 at its start, which its Keyframes' are from.
+            filters = [*sped, "asetpts=PTS-STARTPTS", *_volume(segment.gain, segment.volume)]
         else:
-            volume = segment.volume * (1 if segment.media else plan.source_volume)
-            chains.append(f"[{i}:a:0]volume={volume:g},{form}[a{i}]")
+            filters = [*sped, f"volume={segment.volume * (1 if segment.media else plan.source_volume):g}"]
+        chains.append(f"[{i}:a:0]{','.join(filters)},{form}[a{i}]")
     if plan.transitions:
         chains.append(_joins(plan, [f"[a{i}]" for i in range(count)], "a", "[srcv]"))
     else:
         chains.append("".join(f"[a{i}]" for i in range(count)) + f"concat=n={count}:v=0:a=1[srcv]")
     return inputs, ";".join(chains) + ";", "[srcv]"
+
+
+def speed_filters(speed: float, pitch: bool, rate: int) -> list[str]:
+    """Filters that play a sound at `speed`: its pitch kept, through `atempo` stages
+    (`tempo_stages`); or, with `pitch`, changed with it as tape's is, its samples played at `speed`
+    times its rate between two resamplings to `rate`. None at 1×."""
+    if speed == 1:
+        return []
+    if not pitch:
+        return [f"atempo={stage:.6g}" for stage in tempo_stages(speed)]
+    return [f"aresample={rate}", f"asetrate={rate}*{speed:.6g}", f"aresample={rate}"]
+
+
+def tempo_stages(speed: float) -> list[float]:
+    """`speed` as factors within 0.5–2, which one `atempo` takes, whose product it is: 4× is 2, 2."""
+    stages = []
+    while speed > 2:
+        stages.append(2.0)
+        speed /= 2
+    while speed < 0.5:
+        stages.append(0.5)
+        speed /= 0.5
+    return [*stages, speed]
 
 
 def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
@@ -401,7 +433,9 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
         scenes = plan.scenes[first : first + segment.scenes]
         keyed = {j: number for j in range(segment.scenes) if (number := (drawn or {}).get(first + j)) is not None}
         first += segment.scenes
-        chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]", f"[g{i}]", f"g{i}s", segment.start, keyed))
+        # At a Speed, its frames are moved onto the Timeline, then dropped or repeated to the Clip's frame rate.
+        sped = "" if segment.speed == 1 else f"setpts=(PTS-STARTPTS)/{segment.speed:.6g},fps={_rate(plan)},"
+        chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]{sped}", f"[g{i}]", f"g{i}s", segment.start, keyed))
     count = len(plan.segments)
     if not plan.transitions:
         chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")

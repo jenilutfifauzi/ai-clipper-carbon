@@ -273,7 +273,7 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
 class VideoDecode:
     """The frames of a keyed video Overlay's `picture`, from `video` (by `ffmpeg`), one for each of
     the Clip's frames at `fps` (`numbers`) while the Overlay shows, from `start` to `end` seconds
-    into the Clip, playing the video as `shown` says: each cropped and flipped as the picture is, no
+    into the Clip, playing the video as `shown` says (at its Speed): each cropped and flipped as the picture is, no
     larger than it is drawn at its largest over its span (`size`), RGBA. Each is the video's last
     frame at or before the Clip's frame's time, the video's first frame from `shown`'s start at the
     Overlay's start, as the still chain lays a video Overlay over the frames (renderer.py's
@@ -295,7 +295,7 @@ class VideoDecode:
         crop = self.picture.crop
         width, height = self.size
         steps = [
-            f"setpts=PTS-STARTPTS+{self.start:.3f}/TB",
+            f"setpts=(PTS-STARTPTS)/{self.shown.speed:.6g}+{self.start:.3f}/TB",
             f"fps={self.fps:.6g}:start_time={self.numbers.start / self.fps:.6f}:round=up",
             f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1",
             *([] if (width, height) == (crop.width, crop.height) else [f"scale={width}:{height}:flags=lanczos"]),

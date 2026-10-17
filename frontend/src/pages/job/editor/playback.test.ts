@@ -367,6 +367,66 @@ describe("rate", () => {
   });
 });
 
+describe("speed", () => {
+  // 0–5 s from 100 s of the Source, then 6 s of a video from 10 s into it at `speed`, then 4 s from 200 s.
+  function spedMedia(speed: number, pitch = false) {
+    const stage = harness();
+    const playback = new Playback();
+    const segments = playedFrom([
+      { start: 100, end: 105 },
+      { start: 10, end: 16, media: "intro", speed },
+      { start: 200, end: 204 },
+    ]);
+    playback.setSegments(segments);
+    const [, second] = stage.decks(playback);
+    const media = stage.video();
+    const sped = segments[1];
+    playback.subscribe(() => follow(media.element, playback, { start: sped.start, end: sped.end, from: sped.source_start, speed, pitch }, true));
+    return { stage, playback, second, media, sped };
+  }
+
+  test("a media Segment at 2× plays in half the time at twice the rate, its pitch kept, and the playhead leaves it at its Timeline end", () => {
+    const { stage, playback, second, media, sped } = spedMedia(2);
+    expect([sped.start, sped.end]).toEqual([5, 8]);
+    playback.seek(5);
+    stage.settle();
+    playback.play();
+    stage.advance(1);
+    expect(playback.time).toBeCloseTo(6, 5);
+    expect(media.playbackRate).toBe(2);
+    expect(media.preservesPitch).toBe(true);
+    expect(media.currentTime).toBeCloseTo(12, 5);
+    // At 1.5× the preview's rate, 3× the video's.
+    playback.setRate(1.5);
+    stage.advance(0.5);
+    expect(media.playbackRate).toBe(3);
+    expect(media.currentTime).toBeCloseTo(13.5, 5);
+    // Past 7.97 s, the handover into the last Segment: the parked deck takes it from 200 s.
+    stage.advance(0.82);
+    expect(playback.current.media).toBeFalsy();
+    expect(second.master.currentTime).toBe(200);
+    expect(media.paused).toBe(true);
+  });
+
+  test("a media Segment with its pitch changed plays without keeping it, and one past 4× plays at 4× until it has a copy", () => {
+    const tape = spedMedia(0.5, true);
+    tape.playback.seek(6);
+    tape.stage.settle();
+    tape.playback.play();
+    expect(tape.media.playbackRate).toBe(0.5);
+    expect(tape.media.preservesPitch).toBe(false);
+    vi.unstubAllGlobals();
+    const fast = spedMedia(8);
+    fast.playback.seek(5.5);
+    expect(fast.media.playbackRate).toBe(4);
+    expect(fast.media.currentTime).toBeCloseTo(14, 5);
+    vi.unstubAllGlobals();
+    const slow = spedMedia(0.125);
+    slow.playback.seek(5);
+    expect(slow.media.playbackRate).toBe(0.25);
+  });
+});
+
 describe("skim", () => {
   test("skimming to 7 s while paused seeks the parked deck to 202 s and shows it, the time staying at 1 s", () => {
     const stage = harness();

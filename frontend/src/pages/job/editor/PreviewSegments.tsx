@@ -37,7 +37,8 @@ export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undef
 
 /**
  * A video's Segment, shown until `end` (where it gives way), or within a Transition when `end` is its
- * own; its sound faded out over `fade` (the Transition taking it away), if any. It is drawn from its
+ * own; its sound faded out over `fade` (the Transition taking it away), if any. Its video plays at
+ * its Speed, its pitch kept or not (`follow`). It is drawn from its
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed sound follows its volume Keyframes (followCurve).
@@ -60,7 +61,7 @@ export function MediaSegment({
   const back = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const span = { start: segment.start, end, from: segment.source_start, ...paceOf(segment) };
+    const span = { start: segment.start, end, from: segment.source_start, pitch: segment.pitch, ...paceOf(segment) };
     // Its sound: its volume Keyframes when keyed, faded out by the Transition taking it away.
     const sound: AudioEvent = {
       media: segment.media!,
