@@ -393,6 +393,13 @@ async def test_a_text_layers_style_and_transform_are_merged_field_by_field_and_t
     assert abs(bounds["x"] + bounds["width"] / 2 - 300) <= 1 and abs(bounds["y"] + bounds["height"] / 2 - 400) <= 1
     picture = client.get(shown["picture"])
     assert picture.status_code == 200 and picture.headers["content-type"] == "image/png"
+    # Scaled and turned, its box stands twice as large on end about its centre, its lines as they were.
+    [turned] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"scale": 2, "rotation": 90, "opacity": 0.5}}]))["text_layers"]
+    assert turned["transform"] == made["transform"] | {"scale": 2, "rotation": 90, "opacity": 0.5}
+    [stood] = (await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True))["text_layers"]
+    assert stood["lines"] == ["Judul"]
+    assert abs(stood["bounds"]["width"] - 2 * bounds["height"]) <= 2 and abs(stood["bounds"]["height"] - 2 * bounds["width"]) <= 2
+    assert abs(stood["bounds"]["x"] + stood["bounds"]["width"] / 2 - 300) <= 1 and abs(stood["bounds"]["y"] + stood["bounds"]["height"] / 2 - 400) <= 1
 
     assert "stretched" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"stretch_x": 2}}])
     assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"flip_v": True}}])

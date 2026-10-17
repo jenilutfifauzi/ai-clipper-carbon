@@ -17,6 +17,7 @@ import { shared } from "./actions";
 import { newId, round } from "./edits";
 import { styled, textStyle } from "./textStyle";
 import { TimingFields } from "./TimingFields";
+import { TextTransformFields } from "./TransformFields";
 
 // A new Text Layer stays this long, or to the Clip's end.
 const TEXT_SECS = 3;
@@ -124,7 +125,7 @@ const ANIMATIONS = [
   { value: "slide", label: "Slide" },
 ] as const;
 
-/** The selected Text Layer's text, look, motion and time. */
+/** The selected Text Layer's text, look, Transform, motion and time. */
 export function TextLayerFields({
   layer,
   duration,
@@ -207,6 +208,7 @@ export function TextLayerFields({
         )}
         <Segmented legend="Lines" options={ALIGNS} value={style.align} onChange={(align: TextAlign) => setStyle("align", align)} />
       </Group>
+      <TextTransformFields transform={layer.transform} onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)} />
       <Group title="Motion">
         <div className="grid grid-cols-2 gap-3">
           <Select label="Comes on" value={layer.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />

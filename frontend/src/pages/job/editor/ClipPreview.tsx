@@ -27,6 +27,7 @@ import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import { useTextPicture, wantedPicture } from "./textPicture";
+import { heldTextEvent, textStagePicture } from "./textStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
@@ -156,7 +157,7 @@ export function ClipPreview({
   // time while paused, and left where they were while playing, which doesn't draw the stage again.
   const keyedAt = useKeyedTime(plan, playback);
   const pictures =
-    plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt) }, controls, behind, sceneIndex, keyedAt ?? playback.time) : [];
+    plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt) }, controls, behind, sceneIndex, keyedAt ?? playback.time, startEditing) : [];
   // What is picked on the stage: moving one of several moves them all.
   const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
   const edit = useStageEdit(
@@ -217,7 +218,7 @@ export function ClipPreview({
           {editing?.kind !== "captions" && (
             <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} edit={edit} />
           )}
-          {plan.texts.map(
+          {(drawn ?? plan).texts.map(
             (event) =>
               !(editing?.kind === "text" && editing.id === event.layer.id) && (
                 <TextLayerView
@@ -225,7 +226,6 @@ export function ClipPreview({
                   event={event}
                   jobId={jobId}
                   playback={playback}
-                  moving={edit.transform(`text:${event.layer.id}`, event.area)}
                   still={controls?.selected.includes(`text:${event.layer.id}`)}
                 />
               ),
@@ -305,9 +305,17 @@ const behindId = (scene: number): StageId => `picture:${scene}`;
 
 /**
  * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
- * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at `time`.
+ * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at
+ * `time`, then the Text Layers, by their areas (textStage.ts), each retyped by `edit` when given.
  */
-function stagePictures(plan: RenderPlan, controls: StageControls, behind: PictureTarget | null, scene: number, time: number): StagePicture[] {
+function stagePictures(
+  plan: RenderPlan,
+  controls: StageControls,
+  behind: PictureTarget | null,
+  scene: number,
+  time: number,
+  edit: ((editing: Editing) => void) | undefined,
+): StagePicture[] {
   const pictures: StagePicture[] = [];
   const shown = plan.scenes[scene];
   if (behind && shown) {
@@ -342,10 +350,26 @@ function stagePictures(plan: RenderPlan, controls: StageControls, behind: Pictur
       onCrop: overlays!.onCrop && ((crop, next, group) => overlays!.onCrop!(event.id, crop, next, group)),
     });
   }
+  const texts = controls.texts;
+  for (const event of texts ? plan.texts : []) {
+    const { picture, fitted } = textStagePicture(event);
+    pictures.push({
+      id: `text:${event.layer.id}`,
+      label: `Text: ${event.lines.join(" ")}`,
+      start: event.start,
+      end: event.end,
+      picture,
+      fitted,
+      transform: event.layer.transform,
+      grips: "corners-rotate",
+      onTransform: (next, group) => texts!.onTransform(event.layer.id, next, group),
+      onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
+    });
+  }
   return pictures;
 }
 
-// The plan with its Overlays and the Scene `scene`'s picture drawn where the stage holds them.
+// The plan with its Overlays, Text Layers and the Scene `scene`'s picture drawn where the stage holds them.
 function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number): RenderPlan {
   const overlays = plan.overlays.map((event) => {
     const picture = edit.shownPicture(`overlay:${event.id}`, event.picture);
@@ -355,7 +379,11 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number): RenderPlan
     const picture = index === scene && each.picture ? edit.shownPicture(behindId(scene), each.picture) : each.picture;
     return picture === each.picture ? each : { ...each, picture };
   });
-  return { ...plan, overlays, scenes };
+  const texts = plan.texts.map((event) => {
+    const { picture } = textStagePicture(event);
+    return heldTextEvent(event, picture, edit.shownPicture(`text:${event.layer.id}`, picture));
+  });
+  return { ...plan, overlays, scenes, texts };
 }
 
 // The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
@@ -491,12 +519,14 @@ export interface PictureTarget {
 export interface StageControls {
   selected: PickedOnStage[];
   onSelect: (id: PickedOnStage, toggle: boolean) => void;
-  // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
-  // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
-  onPlace: (id: StageId, place: Place, group: string) => void;
+  // Moved to (x, y) in output pixels: the middle of a caption line, the middle and the top of the
+  // hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
+  onPlace: (id: "hook" | "captions", place: Place, group: string) => void;
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
-  texts?: boolean;
+  // The Text Layers (their Track unlocked), pictures with corners and a rotate handle: where a
+  // gesture puts one's Transform, once, as one `group`.
+  texts?: { onTransform: (id: string, transform: Transform, group: string) => void };
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];
   // The Overlays (their Track unlocked): each one's Transform as shown at `time` (a keyed one's at
@@ -515,10 +545,9 @@ export interface StageControls {
   cropAsked?: number;
 }
 
-// The sizes the hook, the captions and a Text Layer can be set to (styles.py, candidates.py).
+// The sizes the hook and the captions can be set to (styles.py).
 const HOOK_SIZES = { min: 40, max: 160 };
 const CAPTION_SIZES = { min: 40, max: 200 };
-const TEXT_SIZES = { min: 16, max: 320 };
 // Around a caption line's letters, what can be grabbed of it, in output pixels.
 const CAPTION_GRAB_PAD = 12;
 // The hook stays between the safe area's top and bottom, and a caption line's middle stays half its
@@ -556,19 +585,6 @@ function stageItems(
         }),
     });
   }
-  if (controls.texts) {
-    for (const event of plan.texts) {
-      const id: StageId = `text:${event.layer.id}`;
-      items.push({
-        id,
-        label: `Text: ${event.lines.join(" ")}`,
-        shows: [{ start: event.start, end: event.end, area: event.area }],
-        size: { now: event.layer.style.size, ...TEXT_SIZES },
-        onPlace: (area, size, group) => controls.onPlace(id, { ...middle(area), size }, group),
-        onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
-      });
-    }
-  }
   if (plan.hook && !controls.fixed?.includes("hook")) {
     const hook = plan.hook;
     items.push({
@@ -605,24 +621,13 @@ function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): 
 
 /**
  * A Text Layer while it is on screen: the picture the backend made of it (docs/adr/0010), the same
- * pixels the Clip burns, placed, turned and faded as its plan's `picture` says, and animated on and
- * off as the hook is; moved by `moving` while dragged. While a changed look's picture loads, the last
- * one stays. A `still` one (selected in the Advanced Edit) is shown whole while paused in its time,
- * so that it can be seen while it is edited, even on a frame its animation hasn't reached.
+ * pixels the Clip burns, placed, scaled, turned and faded as its plan's `picture` says (or as the
+ * stage holds it: `heldTextEvent`), and animated on and off as the hook is. While a changed look's
+ * picture loads, the last one stays. A `still` one (selected in the Advanced Edit) is shown whole
+ * while paused in its time, so that it can be seen while it is edited, even on a frame its
+ * animation hasn't reached.
  */
-function TextLayerView({
-  event,
-  jobId,
-  playback,
-  moving,
-  still = false,
-}: {
-  event: TextEvent;
-  jobId: string;
-  playback: Playback;
-  moving: string | undefined;
-  still?: boolean;
-}) {
+function TextLayerView({ event, jobId, playback, still = false }: { event: TextEvent; jobId: string; playback: Playback; still?: boolean }) {
   const shown = useTextPicture(wantedPicture(jobId, event));
   const key = useShown(playback, (time, p) => {
     if (still && !p.playing && event.start <= time && time < event.end) return "1 1 0";
@@ -634,7 +639,7 @@ function TextLayerView({
   const { picture } = event;
   const [x, y] = picture.centre;
   return (
-    <g opacity={opacity * picture.opacity} transform={moving}>
+    <g opacity={opacity * picture.opacity}>
       <g transform={below ? `translate(0 ${below})` : undefined}>
         <g style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box", transformOrigin: "center" }}>
           <image
