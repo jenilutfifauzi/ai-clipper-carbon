@@ -159,6 +159,21 @@ the SIL Open Font License 1.1, whose text is given in full under Montserrat abov
 
 - Noto Sans SC Bold: © 2014-2021 Adobe (http://www.adobe.com/).
 
+## Noto Color Emoji
+
+Text Layers draw emoji from Noto Color Emoji's 512 px images, © Google LLC, downloaded by
+`make setup` from [googlefonts/noto-emoji](https://github.com/googlefonts/noto-emoji) (release
+v2026-09-24-unicode18_0, its `2D/png/512` directory) to `backend/assets/emoji/`. The project's README
+gives its image resources under the Apache License, version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0); the repository's `LICENSE` at that release, saved
+beside the images as `LICENSE`, holds the SIL Open Font License 1.1, which also allows them to be
+used and redistributed.
+
+Its flags are drawn, as its font draws them, from the flag images of
+[region-flags](https://github.com/google/region-flags) kept in that repository
+(`third_party/region-flags/png`), which are in the public domain or otherwise exempt from copyright.
+They are saved under their emoji names, with their notice as `LICENSE-region-flags`.
+
 ## Downloaded models
 
 `make setup` also downloads these models; they are not stored in this repository.

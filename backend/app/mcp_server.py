@@ -130,7 +130,9 @@ Edits:
   transform's scale, rotation and opacity stay 1, 0 and 1, and its style's tracking, wrap_width and
   fixed_height 0, as they aren't drawn yet. merge_candidate_items changes only the style, plate and
   transform fields given. The dry run lists each Text Layer's lines, its box (bounds) and its
-  picture: the URL, on this app, of the PNG the Clip burns.
+  picture: the URL, on this app, of the PNG the Clip burns. Emoji in a Text Layer are drawn in
+  colour (Noto Color Emoji), each 1 em wide; the hook, the Kicker, the Watermark and captions leave
+  emoji out.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A

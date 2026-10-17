@@ -13,6 +13,8 @@ ENV_FILE = REPO_ROOT / ".env"
 
 MODELS_DIR = BACKEND_DIR / "models"
 FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
+# Noto Color Emoji's images, which Text Layers draw emoji from (app/emoji.py).
+EMOJI_DIR = BACKEND_DIR / "assets" / "emoji"
 # MediaPipe's full-range BlazeFace, which also finds the smaller and turned faces of wide shots (the
 # short-range model, made for faces near a phone's camera, missed one in four there).
 BLAZE_FACE_MODEL = MODELS_DIR / "blaze_face_full_range.tflite"

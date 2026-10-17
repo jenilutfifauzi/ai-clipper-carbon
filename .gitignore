@@ -5,6 +5,7 @@
 # Assets downloaded by `make setup`
 backend/models/
 backend/assets/fonts/
+backend/assets/emoji/
 
 # Python
 .venv/

@@ -2,7 +2,7 @@ import json
 import subprocess
 import time
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -10,10 +10,12 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app import emoji
 from app.config import QuotaTuning, SelectionTuning, Settings, TranscriptionTuning, load_settings
 from app.main import create_app
 from app.ports import Ports
 from app.transcript import Word
+from emojifiles import write_emoji_images
 from fakes import FakeLlm, FakeTranscriber, FakeVideoSource
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -60,6 +62,15 @@ class Speech:
     video: Path
     # The spoken words, each phrase's span shared out evenly between its words.
     words: list[Word]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def emoji_images(tmp_path_factory) -> Iterator[Path]:
+    """Text Layers draw emoji from the stand-ins of emojifiles.py, not from `make setup`'s images."""
+    with pytest.MonkeyPatch.context() as patch:
+        folder = write_emoji_images(tmp_path_factory.mktemp("emoji"))
+        patch.setattr(emoji, "images_dir", folder)
+        yield folder
 
 
 @pytest.fixture

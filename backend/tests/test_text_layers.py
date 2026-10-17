@@ -145,8 +145,10 @@ def test_a_text_layer_is_kept_in_the_clip_and_blank_or_late_ones_show_nothing():
     assert text_event(layer(start=4.0, secs=5.0), 6).end == 6
     assert text_event(layer(start=6.0), 6) is None
     assert text_event(layer(text="  \n "), 6) is None
-    # Emoji, which no bundled font has, are left out.
-    assert text_event(layer(text="Halo 🔥"), 6).lines == ["Halo"]
+    # An emoji is kept, drawn from its image (test_emoji_text.py); a character no Face nor image has
+    # is left out.
+    assert text_event(layer(text="Halo 🔥"), 6).lines == ["Halo 🔥"]
+    assert text_event(layer(text="Halo 🫨"), 6).lines == ["Halo"]
 
 
 def test_text_layers_leave_the_ass_script_in_their_order():
