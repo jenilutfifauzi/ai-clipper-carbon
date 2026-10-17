@@ -129,8 +129,10 @@ def test_a_layer_of_only_emoji_shows_them_and_one_of_only_unknown_characters_sho
 
 
 def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
-    # A red stroke and a grey plate: neither is drawn on the emoji, which keeps its colours over them.
+    # A magenta stroke, a cyan shadow and a grey plate: none is drawn on the emoji, which keeps its
+    # colours over them.
     event = text_event(layer("🔥 HALO 🇮🇩", colour="#FFFFFF", stroke_width=8, stroke_colour="#FF00FF",
+                             shadow={"colour": "#00FFFF", "opacity": 1.0, "distance": 12, "angle": 0},
                              plate={"shape": "block", "colour": "#404040", "opacity": 1.0, "padding_x": 60, "padding_y": 60}), 10)
     pixels = rasterised(load_settings().ffmpeg_bin, event.layout)
     scale = event.layout.raster[0] / event.layout.width
@@ -145,6 +147,7 @@ def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
     assert share(corner, (64, 64, 64)) > 0.9
     square = pixels[round(top * scale) : bottom, left:right]
     assert share(square, (255, 0, 255), 40) == 0 and share(square, (255, 255, 255), 30) == 0
+    assert share(square, (0, 255, 255), 40) == 0
     # The flag, 3:2, fills its square across, red over white, centred down it.
     flag_pixels = pixels[round(ftop * scale) : round((ftop + fside) * scale), round(fx * scale) + 2 : round((fx + fside) * scale) - 2]
     middle = flag_pixels.shape[0] // 2
@@ -155,6 +158,7 @@ def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
     # The text is drawn between them, in white with its stroke.
     text = pixels[:, round((x + side) * scale) + 4 : round(fx * scale) - 4]
     assert share(text, (255, 255, 255), 30) > 0.05 and share(text, (255, 0, 255), 40) > 0.05
+    assert share(text, (0, 255, 255), 40) > 0.005
 
 
 def test_a_picture_made_larger_draws_its_emoji_as_large_as_its_text():

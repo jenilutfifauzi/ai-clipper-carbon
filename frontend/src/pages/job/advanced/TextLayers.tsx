@@ -1,13 +1,12 @@
 import { ClipboardCopy, Copy, Trash2 } from "lucide-react";
 import { useId } from "react";
-import type { Animation, FontInfo, Plate, TextAlign, TextLayer, TextStyle } from "../../../api";
+import type { Animation, FontInfo, TextAlign, TextLayer, TextStyle } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
-import { Switch } from "../../../components/Switch";
 import { fontFamily } from "../../../fonts";
 import { IDENTITY } from "../editor/picture";
 import { FacePicker } from "../editor/FacePicker";
@@ -17,6 +16,7 @@ import { ImportFont } from "./ImportFont";
 import { shared } from "./actions";
 import { newId, round } from "./edits";
 import { styled, textStyle } from "./textStyle";
+import { layersStyle, layerStyle, Mixed, PlateGroup, ShadowGroup, SpacingGroup } from "./TextStyleGroups";
 import { TimingFields } from "./TimingFields";
 import { TextTransformFields } from "./TransformFields";
 
@@ -147,9 +147,8 @@ export function TextLayerFields({
   const set = <K extends keyof TextLayer>(field: K, value: TextLayer[K]) => onChange({ ...layer, [field]: value }, `text:${layer.id}:${field}`);
   const setStyle = <K extends keyof TextStyle>(field: K, value: TextStyle[K]) =>
     onChange({ ...layer, style: styled(layer.style, field, value) }, `text:${layer.id}:style.${field}`);
-  const setPlate = <K extends keyof Plate>(field: K, value: Plate[K]) =>
-    onChange({ ...layer, style: { ...layer.style, plate: { ...layer.style.plate, [field]: value } } }, `text:${layer.id}:plate.${field}`);
   const { style } = layer;
+  const access = layerStyle(layer, onChange);
   const animated = layer.animation_in !== "none" || layer.animation_out !== "none";
   return (
     <div className="flex flex-col gap-4">
@@ -190,25 +189,11 @@ export function TextLayerFields({
           onChange={(width) => setStyle("stroke_width", width)}
         />
         {style.stroke_width > 0 && <ColorField label="Outline colour" value={style.stroke_colour} onChange={(colour) => setStyle("stroke_colour", colour)} />}
-        <Switch checked={style.plate.shape === "block"} onChange={(box) => setPlate("shape", box ? "block" : "none")}>
-          <span className="text-sm font-medium">Box behind the text</span>
-        </Switch>
-        {style.plate.shape === "block" && (
-          <>
-            <ColorField label="Box colour" value={style.plate.colour} onChange={(colour) => setPlate("colour", colour)} />
-            <Slider
-              label="Box opacity"
-              value={style.plate.opacity}
-              min={0}
-              max={1}
-              step={0.05}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(opacity) => setPlate("opacity", opacity)}
-            />
-          </>
-        )}
         <Segmented legend="Lines" options={ALIGNS} value={style.align} onChange={(align: TextAlign) => setStyle("align", align)} />
       </Group>
+      <ShadowGroup style={access} />
+      <PlateGroup style={access} />
+      <SpacingGroup style={access} />
       <TextTransformFields transform={layer.transform} onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)} />
       <Group title="Motion">
         <div className="grid grid-cols-2 gap-3">
@@ -240,9 +225,6 @@ const READ = {
   stroke_width: (layer: TextLayer) => layer.style.stroke_width,
   stroke_colour: (layer: TextLayer) => layer.style.stroke_colour,
   align: (layer: TextLayer) => layer.style.align,
-  box: (layer: TextLayer) => layer.style.plate.shape === "block",
-  box_colour: (layer: TextLayer) => layer.style.plate.colour,
-  box_opacity: (layer: TextLayer) => layer.style.plate.opacity,
   animation_in: (layer: TextLayer) => layer.animation_in,
   animation_out: (layer: TextLayer) => layer.animation_out,
   animation_ms: (layer: TextLayer) => layer.animation_ms,
@@ -276,8 +258,7 @@ export function TextLayersFields({
   const set = <K extends keyof TextLayer>(field: K, next: TextLayer[K]) => onChange((layer) => ({ ...layer, [field]: next }), `texts:${field}`);
   const setStyle = <K extends keyof TextStyle>(field: K, next: TextStyle[K]) =>
     onChange((layer) => ({ ...layer, style: styled(layer.style, field, next) }), `texts:style.${field}`);
-  const setPlate = <K extends keyof Plate>(field: K, next: Plate[K]) =>
-    onChange((layer) => ({ ...layer, style: { ...layer.style, plate: { ...layer.style.plate, [field]: next } } }), `texts:plate.${field}`);
+  const access = layersStyle(layers, onChange);
   // A number as its slider shows it, or Mixed.
   const shown = (field: Field, format: (v: number) => string) => (v: number) => (mixed(field) ? "Mixed" : format(v));
   const any = (test: (layer: TextLayer) => boolean) => layers.some(test);
@@ -318,27 +299,11 @@ export function TextLayersFields({
             marker={marker("stroke_colour")}
           />
         )}
-        <Switch checked={value("box")} onChange={(box) => setPlate("shape", box ? "block" : "none")}>
-          <span className="flex items-center gap-1.5 text-sm font-medium">
-            Box behind the text {marker("box")}
-          </span>
-        </Switch>
-        {any(READ.box) && (
-          <>
-            <ColorField label="Box colour" value={value("box_colour")} onChange={(colour) => setPlate("colour", colour)} marker={marker("box_colour")} />
-            <Slider
-              label="Box opacity"
-              value={value("box_opacity")}
-              min={0}
-              max={1}
-              step={0.05}
-              format={shown("box_opacity", (v) => `${Math.round(v * 100)}%`)}
-              onChange={(opacity) => setPlate("opacity", opacity)}
-            />
-          </>
-        )}
         <Segmented legend="Lines" options={ALIGNS} value={value("align")} onChange={(align: TextAlign) => setStyle("align", align)} marker={marker("align")} />
       </Group>
+      <ShadowGroup style={access} />
+      <PlateGroup style={access} />
+      <SpacingGroup style={access} />
       <Group title="Motion">
         <div className="grid grid-cols-2 gap-3">
           <Select
@@ -370,9 +335,4 @@ export function TextLayersFields({
       </Group>
     </div>
   );
-}
-
-// A field the picked Text Layers differ in.
-function Mixed() {
-  return <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-normal text-muted">Mixed</span>;
 }
