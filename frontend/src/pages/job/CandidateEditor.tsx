@@ -310,7 +310,10 @@ export function CandidateEditor({
           </div>
         </div>
         <p className="text-sm text-muted tabular-nums">
-          {cut ? `${candidate.segments.length} Segments` : `${formatPrecise(candidate.start)} – ${formatPrecise(candidate.end)}`} ·{" "}
+          {cut && candidate.segments.length > 1
+            ? `${candidate.segments.length} Segments`
+            : `${formatPrecise(candidate.start)} – ${formatPrecise(candidate.end)}`}{" "}
+          ·{" "}
           {length.toFixed(1)} s
           {candidate.predicted_score !== null && ` · score ${candidate.predicted_score}`}
           {candidate.origin === "manual" && " · added by hand"}
@@ -695,7 +698,7 @@ function CutNote({ count, to }: { count: number; to: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control bg-fill p-3 text-sm">
       <p className="min-w-0 flex-1 text-pretty">
-        This clip is cut into {count} Segments, edited in the Advanced Edit.
+        {count === 1 ? "This clip plays at its own Speed" : `This clip is cut into ${count} Segments`}, edited in the Advanced Edit.
       </p>
       <Link to={to} className={buttonClass("secondary", "sm")}>
         <SlidersHorizontal aria-hidden size={16} />

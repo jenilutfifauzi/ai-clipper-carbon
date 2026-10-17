@@ -106,19 +106,21 @@ Edits:
   width or height cut off before it is fitted (a tenth is always kept). merge_candidate_items
   changes only the transform and crop fields given. The dry run lists each Overlay's drawn box once
   turned (bounds) and what its crop keeps, in its item's pixels.
-  A video Overlay's `speed` and `pitch` are as a video Segment's (below), but it keeps its start and
+  A video Overlay's `speed` and `pitch` are as a Segment's (below), but it keeps its start and
   secs: it shows secs * speed of its video from its offset, within the video. An image has none. The
   dry run gives what of its video it shows (source_start, source_end).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
-- A video's Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast):
-  it lasts (end - start) / speed in the Clip, `start` and `end` staying seconds into its video. Its
-  sound keeps its pitch; with `pitch` true it rises and falls with the speed instead, as tape. It
-  lasts 0.1 s at least in the Clip, and the Clip the longest clip at most. A Speed change moves the
-  Segments after it, not the layers: the dry run lists each Segment's span in the Clip (`segments`).
-  Its Keyframes stay in seconds from its start, so a Speed that leaves one past its new end is
+- A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
+  lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
+  into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
+  as tape. One of the episode keeps its ends on Words, its captions retimed with its speech; Word
+  Edits and Layout Overrides stay keyed by Source time. A video's lasts 0.1 s at least in the Clip,
+  and the Clip the longest clip at most. A Speed change moves the Segments after it, not the
+  layers: the dry run lists each Segment's span in the Clip (`segments`).
+  A video's Keyframes stay in seconds from its start, so a Speed that leaves one past its new end is
   refused: send its keys too, each `at` times old / new speed to keep the motion on the same frames.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for

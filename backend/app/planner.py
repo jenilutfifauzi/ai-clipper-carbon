@@ -697,8 +697,11 @@ def plan_render(
             elif given.hold is not None:
                 framed = [_still(given, length, source, layout, camera, framing)]
             else:
-                framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
-                showings += _manual_showings(framed, given.layout_overrides, length, given.time, len(plans))
+                # Framed over its range as at 1×, then put on the Timeline at its Speed.
+                reach = round(given.time.span, 3)
+                framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
+                showings += _manual_showings(framed, given.layout_overrides, reach, given.time, len(plans))
+                framed = _retimed(framed, given.speed, length)
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
@@ -844,6 +847,8 @@ class _ManualShowing:
     start: float
     end: float
     at: float
+    # The Speed of the Segment showing it.
+    speed: float = 1.0
 
     def same_scene_as(self, other: "_ManualShowing") -> bool:
         """Whether `other` shows the same override's Scene (in another Segment, or the same piece
@@ -861,13 +866,14 @@ def _manual_showings(
     framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, time: SegmentTime, first: int
 ) -> list[_ManualShowing]:
     """The Manual Scenes among `framed` (a range lasting `duration` that plays as `time`, its Scenes
-    `first` onwards among the plan's) framed by one of `overrides` (in seconds into the range)."""
+    `first` onwards among the plan's, in seconds into the range) framed by one of `overrides` (in
+    seconds into the range too)."""
     found = []
     for i, scene in enumerate(framed):
         override = _held(overrides, scene.start, scene.end, duration) if scene.layout is SceneLayout.MANUAL else None
         if override is not None and override.layout is Layout.MANUAL:
-            on, off = round(time.source_at(scene.start), 3), round(time.source_at(scene.end), 3)
-            found.append(_ManualShowing(first + i, override, on, off, time.start + override.at))
+            on, off = round(time.start + scene.start, 3), round(time.start + scene.end, 3)
+            found.append(_ManualShowing(first + i, override, on, off, time.start + override.at, time.speed))
     return found
 
 
@@ -876,19 +882,21 @@ def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: f
     They are in seconds from its Scene's start on the Source's timeline: where the earliest of the
     Segments showing that Scene starts it, so that a Segment starting part way into it (the tail of
     a split) shows the motion from there on, and a piece of it shown twice moves alike both times.
-    Those past the latest end any of them shows are ignored."""
+    In a sped Segment they are divided by its Speed, on the same frames. Those past the latest end
+    any of them shows are ignored."""
     plans = list(plans)
     for showing in showings:
         alike = [other for other in showings if showing.same_scene_as(other)]
         start, end = min(other.start for other in alike), max(other.end for other in alike)
         scene = plans[showing.index]
-        keys_from = round(scene.start - (showing.start - start), 3)
+        speed = showing.speed
+        keys_from = round(scene.start - (showing.start - start) / speed, 3)
         kept: Keys = {}
         ignored: Keys = {}
         for prop, given in showing.override.keys.items():
-            if within := [key for key in given if key.at <= end - start + 1e-3]:
+            if within := [replace(key, at=round(key.at / speed, 6)) for key in given if key.at <= end - start + 1e-3]:
                 kept[prop] = within
-            if past := [replace(key, at=round(keys_from + key.at, 4)) for key in given if key.at > end - start + 1e-3]:
+            if past := [replace(key, at=round(keys_from + key.at / speed, 4)) for key in given if key.at > end - start + 1e-3]:
                 ignored[prop] = past
         assert showing.override.framing is not None
         keyed = keyed_scene(scene, showing.override.framing.transform, kept, keys_from, fps)
@@ -991,6 +999,21 @@ def covers(picture: Picture) -> bool:
         if abs(across) > half_width or abs(down) > half_height:
             return False
     return True
+
+
+def _retimed(framed: list[ScenePlan], speed: float, length: float) -> list[ScenePlan]:
+    """The Scenes `framed` of a range (in seconds into it) as a Segment playing it at `speed` shows
+    them, `length` long on the Timeline: their times and their crops' change points divided by it."""
+    if speed == 1:
+        return framed
+
+    def on_timeline(scene: ScenePlan) -> ScenePlan:
+        panels = [replace(panel, path=[replace(point, at=round(point.at / speed, 3)) for point in panel.path]) for panel in scene.panels]
+        return replace(scene, start=round(scene.start / speed, 3), end=round(scene.end / speed, 3), panels=panels)
+
+    retimed = [on_timeline(scene) for scene in framed]
+    retimed[-1] = replace(retimed[-1], end=length)
+    return retimed
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:
