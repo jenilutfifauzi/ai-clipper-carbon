@@ -78,6 +78,9 @@ GOOGLE_VARIABLE_FONTS = [
 ]
 # Each licence directory's licence file, and the prefix it is saved under with its family's name.
 LICENCES = {"ofl": ("OFL.txt", "OFL"), "apache": ("LICENSE.txt", "LICENSE")}
+# The Face Text Layers fall back to for Chinese and Japanese (app/fonts.py's FALLBACK_FONT), from Noto
+# CJK's release Sans2.004.
+NOTO_CJK = "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004"
 
 ASSETS = {
     BLAZE_FACE_MODEL: "https://storage.googleapis.com/mediapipe-models/face_detector/"
@@ -95,6 +98,8 @@ ASSETS = {
         FONTS_DIR / f"{LICENCES[licence][1]}-{family}.txt": f"{GOOGLE_FONTS}/{licence}/{family}/{LICENCES[licence][0]}"
         for licence, family, *_ in [*GOOGLE_FONT_FILES, *GOOGLE_VARIABLE_FONTS]
     },
+    FONTS_DIR / "NotoSansSC-Bold.otf": f"{NOTO_CJK}/Sans/SubsetOTF/SC/NotoSansSC-Bold.otf",
+    FONTS_DIR / "OFL-notosanssc.txt": f"{NOTO_CJK}/LICENSE",
 }
 
 

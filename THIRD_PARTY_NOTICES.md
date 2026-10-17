@@ -173,6 +173,15 @@ downloaded with each:
 - Luckiest Guy: Copyright (c) 2010 by Brian J. Bonislawsky DBA Astigmatic (AOETI). All rights reserved.
 - Permanent Marker: Copyright (c) 2010 by Font Diner, Inc. All rights reserved.
 
+## Noto Sans SC
+
+Text Layers set the Chinese and Japanese characters their own font hasn't got in Noto Sans SC Bold,
+downloaded by `make setup` from [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk) (release
+Sans2.004) to `backend/assets/fonts/`, with its licence (`OFL-notosanssc.txt`). It is licensed under
+the SIL Open Font License 1.1, whose text is given in full under Montserrat above.
+
+- Noto Sans SC Bold: © 2014-2021 Adobe (http://www.adobe.com/).
+
 ## Downloaded models
 
 `make setup` also downloads these models; they are not stored in this repository.
