@@ -123,14 +123,18 @@ Edits:
   (source_start, source_end).
 - A Text Layer is placed by its transform: x, y its centre, as an Overlay's, the text kept inside the
   frame. Its look is its style, a Text Style: font (a font id), size (as the captions', in output
-  pixels), colour, stroke_width (output pixels, 0 for none) and stroke_colour, plate (what is behind
-  its lines: shape "none" or "block", colour, opacity, radius, padding_x and padding_y in output
-  pixels), line_height (baselines apart, in sizes) and align (center, left, right). Its lines break
-  at newlines; one wider than the frame is set smaller. It is never stretched or flipped; its
-  transform's scale, rotation and opacity stay 1, 0 and 1, and its style's tracking, wrap_width and
-  fixed_height 0, as they aren't drawn yet. merge_candidate_items changes only the style, plate and
-  transform fields given. The dry run lists each Text Layer's lines, its box (bounds) and its
-  picture: the URL, on this app, of the PNG the Clip burns.
+  pixels), colour, stroke_width (output pixels, 0 for none) and stroke_colour, shadow (colour,
+  opacity, blur and distance in output pixels, angle in degrees clockwise from the right: 45 falls
+  down and right; off at opacity 0 or with no distance nor blur; a blur alone is a halo), plate
+  (what is behind its lines: shape "none", "block" behind them all or "strips" behind each, colour,
+  opacity, radius, padding_x and padding_y in output pixels), line_height (baselines apart, in
+  sizes), tracking (output pixels after each character but a line's last, may be negative) and
+  align (center, left, right). Its lines break at newlines; one wider than the frame is set
+  smaller. It is never stretched or flipped; its transform's scale, rotation and opacity stay 1, 0
+  and 1, and its style's wrap_width and fixed_height 0, as they aren't drawn yet.
+  merge_candidate_items changes only the style, shadow, plate and transform fields given. The dry
+  run lists each Text Layer's lines, its box (bounds) and its picture: the URL, on this app, of the
+  PNG the Clip burns.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A

@@ -141,6 +141,93 @@ def test_a_block_plate_pads_the_text_by_its_pixels_and_a_text_too_wide_is_set_sm
     assert corner.area.x + corner.area.width <= OUTPUT_WIDTH and corner.area.y + corner.area.height <= OUTPUT_HEIGHT
 
 
+def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_is_set_smaller():
+    text = "Satu\nDua yang lebih panjang"
+    plain = text_event(layer(style={"size": 60}, text=text), 10)
+    spaced = text_event(layer(style={"size": 60, "tracking": 8}, text=text), 10)
+    tight = text_event(layer(style={"size": 60, "tracking": -3}, text=text), 10)
+    # The widest line has 22 characters: 21 gaps.
+    assert spaced.area.width - plain.area.width == pytest.approx(21 * 8, abs=1)
+    assert tight.area.width - plain.area.width == pytest.approx(-21 * 3, abs=1)
+    # A left-aligned line's middle moves by half its own tracking.
+    left = text_event(layer(style={"size": 60, "tracking": 8, "align": "left"}, text=text), 10)
+    metrics = font_metrics(left.layer.style.font)
+    assert left.anchors[0][0] - (metrics.width("Satu", 60) + 3 * 8) / 2 == pytest.approx(left.area.x, abs=0.5)
+    # It is set smaller only once its tracked width is too wide for the frame, and then just fits.
+    words = "Kalimat yang cukup panjang"
+    fits = text_event(layer(style={"size": 70}, text=words), 10)
+    assert fits.size == 70
+    squeezed = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10)
+    assert squeezed.size < 70
+    assert OUTPUT_WIDTH - 2 * TEXT_MARGIN - 4 <= squeezed.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN + 1
+    assert squeezed.layout.style.tracking == 20
+
+
+def test_line_height_sets_the_pitch_of_the_anchors_and_the_box_grows_with_it():
+    text = "Satu\nDua\nTiga"
+    tight = text_event(layer(style={"size": 60, "line_height": 0.9}, text=text), 10)
+    airy = text_event(layer(style={"size": 60, "line_height": 1.8}, text=text), 10)
+    for event, pitch in ((tight, 0.9 * 60), (airy, 1.8 * 60)):
+        [first, second, third] = event.anchors
+        assert second[1] - first[1] == pytest.approx(pitch) and third[1] - second[1] == pytest.approx(pitch)
+    assert airy.area.height - tight.area.height == pytest.approx(2 * 0.9 * 60, abs=1)
+
+
+def test_strips_put_a_plate_behind_each_line_as_wide_as_it_and_a_block_one_behind_them_all():
+    text = "Satu\nDua yang lebih panjang"
+    plate = {"padding_x": 20, "padding_y": 10, "radius": 200}
+    for align in ("center", "left", "right"):
+        strips = text_event(layer(style={"size": 60, "align": align, "tracking": 4, "plate": plate | {"shape": "strips"}}, text=text), 10)
+        layout = strips.layout
+        assert len(layout.plates) == 2
+        metrics = font_metrics(strips.layer.style.font)
+        letters = (metrics.cap_height + metrics.descent) / metrics.units * 60
+        origin = (strips.area.x - layout.plates[1].x, strips.area.y - layout.plates[0].y)
+        for plate_box, line, (x, baseline) in zip(layout.plates, strips.lines, strips.anchors, strict=True):
+            width = metrics.width(line, 60, 4)
+            assert plate_box.width == pytest.approx(width + 40, abs=1)
+            assert plate_box.height == pytest.approx(letters + 20, abs=1)
+            # Round its line, on the frame.
+            assert plate_box.x + origin[0] + plate_box.width / 2 == pytest.approx(x, abs=1)
+            assert plate_box.y + origin[1] + 10 + metrics.cap_height / metrics.units * 60 == pytest.approx(baseline, abs=1)
+        # The widest strip spans the area.
+        assert layout.plates[1].width == pytest.approx(strips.area.width, abs=1)
+        # Corners at most half a strip's height round.
+        assert layout.radius == layout.plates[0].height // 2
+    block = text_event(layer(style={"size": 60, "plate": plate | {"shape": "block", "radius": 12}}, text=text), 10)
+    [only] = block.layout.plates
+    assert (only.width, only.height) == (block.area.width, block.area.height) and block.box == block.area
+    assert text_event(layer(style={"size": 60}, text=text), 10).layout.plates == []
+
+
+def test_a_shadow_is_moved_by_its_distance_towards_its_angle_and_its_picture_grows_to_hold_it():
+    plain = text_event(layer(style={"size": 80}), 10)
+    for angle, offset in ((0, (12, 0)), (90, (0, 12)), (180, (-12, 0)), (-90, (0, -12)), (45, (8.4853, 8.4853))):
+        shadowed = text_event(layer(style={"size": 80, "shadow": {"distance": 12, "angle": angle, "blur": 6}}), 10)
+        assert shadowed.layout.shadow == pytest.approx(offset, abs=1e-3)
+        # Room for its distance and its blur's reach on every side, the layer's area and centre as they were.
+        assert shadowed.layout.width - plain.layout.width in (2 * (12 + 9), 2 * (12 + 9) + 2)
+        assert shadowed.area == plain.area and shadowed.picture.centre == plain.picture.centre
+    halo = text_event(layer(style={"size": 80, "shadow": {"blur": 10}}), 10)
+    assert halo.layout.shadow == (0, 0) and halo.layout.width > plain.layout.width
+    # Off: transparent, or neither moved nor blurred.
+    for off in ({"opacity": 0, "distance": 12, "blur": 6}, {"distance": 0, "blur": 0, "opacity": 1}):
+        event = text_event(layer(style={"size": 80, "shadow": off}), 10)
+        assert event.layout.shadow is None and event.layout.width == plain.layout.width
+
+
+def test_a_text_styles_shadow_and_plate_refuse_values_out_of_range():
+    for style in (
+        {"shadow": {"blur": -1}}, {"shadow": {"opacity": 1.5}}, {"shadow": {"distance": -2}}, {"shadow": {"angle": 400}},
+        {"shadow": {"colour": "black"}}, {"plate": {"radius": -1}}, {"plate": {"padding_x": 500}}, {"plate": {"shape": "pill"}},
+        {"tracking": 500}, {"line_height": 0.1},
+    ):
+        with pytest.raises(ValidationError):
+            layer(style=style)
+    drawn_now = layer(style={"tracking": -4, "plate": {"shape": "strips"}, "shadow": {"distance": 6}})
+    assert drawn_now.style.shadow.opacity == 0.6 and drawn_now.style.shadow.angle == 45
+
+
 def test_a_text_layer_is_kept_in_the_clip_and_blank_or_late_ones_show_nothing():
     assert text_event(layer(start=4.0, secs=5.0), 6).end == 6
     assert text_event(layer(start=6.0), 6) is None
@@ -209,7 +296,7 @@ def test_a_text_layer_is_never_stretched_nor_flipped_and_draws_only_what_its_pic
             layer(transform)
     for transform, style in (
         ({"scale": 2}, {}), ({"rotation": 15}, {}), ({"opacity": 0.5}, {}),
-        ({}, {"tracking": 4}), ({}, {"wrap_width": 600}), ({}, {"fixed_height": 300}), ({}, {"plate": {"shape": "strips"}}),
+        ({}, {"wrap_width": 600}), ({}, {"fixed_height": 300}),
     ):
         with pytest.raises(ValidationError, match="can't have"):
             layer(transform, style)

@@ -2,9 +2,12 @@
 drawn once by libass onto a transparent picture, which the render lays over the Clip and the preview
 shows as it is.
 
-The layout (planner.py's `TextLayout`) is written as an ASS script of the picture's size: its Block
-plate as a `\\p1` drawing, and each line centred on its anchor in the layer's style, its stroke as
-the outline, as the hook's lines are. libass draws it as large as the layout's scale says.
+The layout (planner.py's `TextLayout`) is written as an ASS script of the picture's size: its plate
+(a Block, or a Strip per line) as one `\\p1` drawing, then its drop shadow, then each line centred on
+its anchor in the layer's style, its stroke as the outline and its tracking as `\\fsp`, as the
+hook's lines are. The shadow is each line again, moved and in the shadow's colour, blurred with
+`\\blur`: it can't be the lines' own `\\shad`, since libass would blur their stroke with it. libass
+draws it all as large as the layout's scale says.
 
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
@@ -38,7 +41,9 @@ import numpy as np
 from app.candidates import Candidate
 from app.fonts import font, registry
 from app.planner import TextLayout, font_metrics, text_event
-from app.renderer import _ass_text, _filter_value, _rounded_box, _style_colour, _tag_colour, last_lines
+from app.renderer import (
+    _ass_text, _filter_value, _rounded_box, _shadow_tags, _spacing, _style_colour, _tag_colour, _tracked, last_lines,
+)
 
 # In a Job's directory.
 TEXTS_DIR = "texts"
@@ -104,25 +109,31 @@ def matted(over_black: np.ndarray, over_white: np.ndarray) -> np.ndarray:
 
 
 def layout_script(layout: TextLayout) -> str:
-    """`layout` as an ASS script of its size at scale 1: its plate, then its lines over it. libass
-    scales it to the canvas, the stroke with it."""
+    """`layout` as an ASS script of its size at scale 1: its plate, its lines' shadow over it, then its
+    lines over that. libass scales it to the canvas, the stroke, tracking and blur with it."""
     style = layout.style
     metrics = font_metrics(style.font)
     text, edge = _style_colour(style.colour), _style_colour(style.stroke_colour)
     events = []
-    if layout.box is not None:
-        box, plate = layout.box, style.plate
+    if layout.plates:
+        plate = style.plate
         alpha = f"&H{round(255 * (1 - plate.opacity)):02X}&"
-        drawing = _rounded_box(box.width, box.height, layout.radius)
-        events.append(f"{{\\an7\\pos({box.x},{box.y})\\p1\\bord0\\shad0\\c{_tag_colour(plate.colour)}\\alpha{alpha}}}{drawing}{{\\p0}}")
+        # One drawing, so that Strips that overlap are drawn once.
+        drawing = " ".join(_moved(_rounded_box(box.width, box.height, layout.radius), box.x, box.y) for box in layout.plates)
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{_tag_colour(plate.colour)}\\alpha{alpha}}}{drawing}{{\\p0}}")
+    size = f"\\fs{layout.size:g}" if layout.size != style.size else ""
+    placed = []
     for line, (x, baseline) in zip(layout.lines, layout.anchors):
-        if not line:
-            continue
-        # Centred (5) on the middle of its height: its ascent above the baseline and its descent
-        # below, which together are the font size.
-        centre_y = baseline - metrics.ascent / metrics.units * layout.size + layout.size / 2
-        size = f"\\fs{layout.size:g}" if layout.size != style.size else ""
-        events.append(f"{{\\an5\\pos({x:.3f},{centre_y:.1f}){size}}}{_ass_text(line)}")
+        if line:
+            # Centred (5) on the middle of its height: its ascent above the baseline and its descent
+            # below, which together are the font size.
+            centre_y = baseline - metrics.ascent / metrics.units * layout.size + layout.size / 2
+            placed.append((_tracked(x, style.tracking), centre_y, f"{size}{_spacing(style.tracking)}", _ass_text(line)))
+    if layout.shadow is not None:
+        dx, dy = layout.shadow
+        tags = _shadow_tags(style.shadow, style.stroke_width)
+        events += [f"{{\\an5\\pos({x + dx:.3f},{y + dy:.1f}){look}{tags}}}{line}" for x, y, look, line in placed]
+    events += [f"{{\\an5\\pos({x:.3f},{y:.1f}){look}}}{line}" for x, y, look, line in placed]
     return "\n".join([
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -143,6 +154,18 @@ def layout_script(layout: TextLayout) -> str:
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         *(f"Dialogue: {layer},0:00:00.00,0:00:10.00,Text,,0,0,0,,{event}" for layer, event in enumerate(events)),
     ]) + "\n"
+
+
+def _moved(drawing: str, x: float, y: float) -> str:
+    """An ASS drawing's points moved `x` right and `y` down."""
+    words, moved, axis = drawing.split(), [], 0
+    for word in words:
+        if word.isalpha():
+            moved.append(word)
+            continue
+        moved.append(f"{float(word) + (x, y)[axis]:g}")
+        axis = 1 - axis
+    return " ".join(moved)
 
 
 def pictures_used(candidates: Iterable[Candidate]) -> set[str]:

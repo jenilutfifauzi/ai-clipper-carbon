@@ -10,6 +10,7 @@ Built-in Presets are defined here and can't be changed or deleted. The owner's a
 DATA_DIR/presets.json.
 """
 
+import math
 import threading
 from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import Annotated, NamedTuple
 from uuid import uuid4
 
-from pydantic import AfterValidator, Field, StringConstraints, TypeAdapter, ValidationError
+from pydantic import AfterValidator, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app.fonts import DEFAULT_FONT, registry
 from app.storage import write_atomic
@@ -83,6 +84,37 @@ class HookShape(StrEnum):
     BLOCK = "block"
     STRIPS = "strips"
     NONE = "none"
+
+
+@dataclass(frozen=True)
+class DropShadow:
+    """A drop shadow under text, off when its opacity is 0 or its distance and blur both are."""
+
+    # Its letters and their stroke again in `colour` at `opacity`, moved `distance` output pixels
+    # towards `angle` degrees clockwise from the right (0 right, 45 down and to the right, 90 down),
+    # and blurred `blur` output pixels (as a CSS shadow's blur radius: a Gaussian whose sigma is half
+    # of it). A blur at no distance is a halo.
+    colour: Colour = "#000000"
+    opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 0.6
+    blur: Annotated[FiniteFloat, Field(ge=0, le=100)] = 0.0
+    distance: Annotated[FiniteFloat, Field(ge=0, le=100)] = 0.0
+    angle: Annotated[FiniteFloat, Field(ge=-360, le=360)] = 45.0
+
+    @property
+    def on(self) -> bool:
+        return self.opacity > 0 and (self.distance > 0 or self.blur > 0)
+
+    @property
+    def offset(self) -> tuple[float, float]:
+        """How far it is moved right and down, in output pixels."""
+        angle = math.radians(self.angle)
+        return round(self.distance * math.cos(angle), 4), round(self.distance * math.sin(angle), 4)
+
+    @property
+    def reach(self) -> int:
+        """How far past its text it can fall, in output pixels (none when it is off): its blur's
+        reach (three sigmas) and its distance."""
+        return math.ceil(1.5 * self.blur + self.distance) if self.on else 0
 
 
 class HookAlign(StrEnum):
