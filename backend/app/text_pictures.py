@@ -3,8 +3,9 @@ drawn once by libass onto a transparent picture, which the render lays over the 
 shows as it is.
 
 The layout (planner.py's `TextLayout`) is written as an ASS script of the picture's size: its Block
-plate as a `\\p1` drawing, and each line centred on its anchor in the layer's style, its stroke as
-the outline, as the hook's lines are. libass draws it as large as the layout's scale says.
+plate as a `\\p1` drawing, and each run of each line centred where the planner placed it, on its
+line's baseline, in the layer's style, its stroke as the outline, as the hook's lines are. A run in
+the fallback Face (CJK) names it with `\\fn`. libass draws it as large as the layout's scale says.
 
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
@@ -13,8 +14,8 @@ twice in one ffmpeg run, over black and over white, and the alpha is recovered f
 (difference matting): where the two differ by d, the picture is 1 − d/255 opaque, and its colour is
 what shows over black divided by that.
 
-The fonts directory libass is given holds just the layout's Face (app/fonts.py's `gather`), so that
-no other font is matched; a render fails clearly when its file is gone.
+The fonts directory libass is given holds just the layout's Faces (app/fonts.py's `gather`), so that
+no other font is matched; a render fails clearly when a file is gone.
 
 Pictures are kept in the Job's TEXTS_DIR, named by their layout's hash, and written under a
 temporary name renamed when complete, so a half-written one is never served. The preview's plan and
@@ -77,7 +78,7 @@ def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
     """`layout` drawn by libass, as straight-alpha RGBA pixels of its raster size."""
     width, height = layout.raster
     with tempfile.TemporaryDirectory(prefix="text-picture-") as work:
-        fonts = registry().gather({layout.style.font}, Path(work, "fonts"))
+        fonts = registry().gather(layout.faces, Path(work, "fonts"))
         script = Path(work, "layout.ass")
         script.write_text(layout_script(layout), encoding="utf-8")
         drawn = f"ass=filename={_filter_value(str(script))}:fontsdir={_filter_value(str(fonts))}"
@@ -107,7 +108,6 @@ def layout_script(layout: TextLayout) -> str:
     """`layout` as an ASS script of its size at scale 1: its plate, then its lines over it. libass
     scales it to the canvas, the stroke with it."""
     style = layout.style
-    metrics = font_metrics(style.font)
     text, edge = _style_colour(style.colour), _style_colour(style.stroke_colour)
     events = []
     if layout.box is not None:
@@ -115,14 +115,19 @@ def layout_script(layout: TextLayout) -> str:
         alpha = f"&H{round(255 * (1 - plate.opacity)):02X}&"
         drawing = _rounded_box(box.width, box.height, layout.radius)
         events.append(f"{{\\an7\\pos({box.x},{box.y})\\p1\\bord0\\shad0\\c{_tag_colour(plate.colour)}\\alpha{alpha}}}{drawing}{{\\p0}}")
-    for line, (x, baseline) in zip(layout.lines, layout.anchors):
-        if not line:
-            continue
-        # Centred (5) on the middle of its height: its ascent above the baseline and its descent
-        # below, which together are the font size.
-        centre_y = baseline - metrics.ascent / metrics.units * layout.size + layout.size / 2
-        size = f"\\fs{layout.size:g}" if layout.size != style.size else ""
-        events.append(f"{{\\an5\\pos({x:.3f},{centre_y:.1f}){size}}}{_ass_text(line)}")
+    size = f"\\fs{layout.size:g}" if layout.size != style.size else ""
+    for runs, (_, baseline) in zip(layout.runs, layout.anchors):
+        for run in runs:
+            if not run.text:
+                continue
+            # Centred (5) on its middle, and on the middle of its height: its Face's ascent above the
+            # baseline and its descent below, which together are the font size, so that every run
+            # stands on the line's baseline. A fallback run names its Face: libass never falls back
+            # on its own.
+            metrics = font_metrics(run.font)
+            centre_y = baseline - metrics.ascent / metrics.units * layout.size + layout.size / 2
+            face = "" if run.font == style.font else f"\\fn{font(run.font).family}"
+            events.append(f"{{\\an5\\pos({run.x + run.width / 2:.3f},{centre_y:.1f}){size}{face}}}{_ass_text(run.text)}")
     return "\n".join([
         "[Script Info]",
         "ScriptType: v4.00+",
