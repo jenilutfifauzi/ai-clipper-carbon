@@ -40,6 +40,8 @@ const MORE = [
   "max_lines",
   "align",
   "uppercase",
+  "line_height",
+  "tracking",
   "box_opacity",
   "radius",
   "outline",
@@ -118,7 +120,7 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
   const { hook, set, marker } = hookFields(style);
   const box = hook.shape !== "none";
   return (
-    <MoreOptions open={open} onToggle={onToggle} contents="Lines, outline, Quote Mark, Kicker colours, animation" changed={countChanged(style, "hook", MORE)}>
+    <MoreOptions open={open} onToggle={onToggle} contents="Lines, spacing, outline, Quote Mark, Kicker colours, animation" changed={countChanged(style, "hook", MORE)}>
       <Group title="Lines">
         <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
           <Segmented
@@ -135,6 +137,27 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
             UPPERCASE {marker("uppercase", "hook uppercase")}
           </span>
         </Switch>
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <Slider
+            label="Line height"
+            value={hook.line_height}
+            min={0.5}
+            max={2.5}
+            step={0.02}
+            format={(v) => `${v.toFixed(2)}×`}
+            onChange={(v) => set("line_height", v)}
+            marker={marker("line_height", "hook line height")}
+          />
+          <Slider
+            label="Tracking"
+            value={hook.tracking}
+            min={-20}
+            max={60}
+            format={(v) => `${v} px`}
+            onChange={(v) => set("tracking", v)}
+            marker={marker("tracking", "hook tracking")}
+          />
+        </div>
       </Group>
 
       <Group title={box ? "Box, outline and shadow" : "Outline and shadow"}>

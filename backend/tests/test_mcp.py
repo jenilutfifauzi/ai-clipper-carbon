@@ -199,6 +199,26 @@ async def test_candidates_are_added_edited_and_dry_run_through_mcp(mcp):
 
 
 @pytest.mark.anyio
+async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry_run(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    # One line untracked; spaced out, too wide for one.
+    hook = {"hook_text": "Jangan lakukan ini"}
+    plain = await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True)
+    assert plain["hook"]["lines"] == ["Jangan lakukan ini"]
+    spaced = await call(mcp, "edit_candidate", **ids, changes={**hook, "style_overrides": {"hook": {"tracking": 12}}}, dry_run=True)
+    assert spaced["hook"]["lines"] == ["Jangan", "lakukan ini"]
+
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"tracking": -2}, "hook": {"tracking": 12, "line_height": 1.2}})
+    assert merged["style_overrides"]["caption"] == {"tracking": -2} and merged["style_overrides"]["hook"] == {"tracking": 12, "line_height": 1.2}
+    assert (await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"] == ["Jangan", "lakukan ini"]
+    assert "tracking" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"tracking": 500}})
+    assert "line_height" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"line_height": 0}})
+
+
+@pytest.mark.anyio
 async def test_candidates_of_a_job_not_in_review_cant_be_edited(mcp, video_source):
     video_source.hold()
     job = await call(mcp, "create_job_from_url", url=URL)

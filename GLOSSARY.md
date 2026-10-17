@@ -28,8 +28,8 @@ Use these terms in code, UI copy, tickets and commit messages.
 ## Clip editor
 
 - **Style Preset:** a named, global look for captions, the hook and the Watermark: a Caption Style, a Hook Style and a Watermark Style. Built-in Presets can't be changed or deleted.
-- **Caption Style:** how captions look and are broken into lines: font, size, colours, outline, shadow, case, highlight, position (one of four, or wherever a line is dragged on the preview: every line goes there), and line limits.
-- **Hook Style:** how the hook looks and moves: Shape, font, size, case, lines, alignment, colours, outline, shadow, Quote Mark, Kicker colours, position (one of three, or wherever it is dragged on the preview), and animations.
+- **Caption Style:** how captions look and are broken into lines: font, size, colours, outline, shadow, tracking, case, highlight, position (one of four, or wherever a line is dragged on the preview: every line goes there), and line limits.
+- **Hook Style:** how the hook looks and moves: Shape, font, size, case, lines, alignment, line height, tracking, colours, outline, shadow, Quote Mark, Kicker colours, position (one of three, or wherever it is dragged on the preview), and animations.
 - **Hook Shape:** how the hook's box is drawn: one block behind all its lines, a strip per line, or none.
 - **Emphasis:** words of the hook text marked `*like this*`, drawn in the Hook Style's Emphasis colour.
 - **Kicker:** an optional short label (at most 24 characters) in a pill above the hook, such as "TERBONGKAR!".

@@ -20,6 +20,7 @@ from app.clips import Clip, ClipStatus
 from app.config import RenderTuning, load_settings
 from app.jobs import JobStatus, JobStore
 from app.main import create_app
+from app.planner import font_metrics
 from app.ports import Ports
 from app.rendering import Renders
 from app.transcript import Word
@@ -787,6 +788,55 @@ def test_captions_and_the_hook_are_burned_in_the_candidates_preset_with_its_over
     assert len(rows) > 5000 and plan["hook"]["area"]["y"] <= rows.min() and rows.max() < 1536
     # No orange highlight in the captions' band (the yellow box's antialiased edge can come near orange).
     assert len(pixels(frame[400:700], ORANGE)[0]) == 0
+
+
+def test_tracking_and_line_height_space_the_burned_hook_and_captions_as_planned(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    start = candidate["start"]
+    green, magenta = np.array([0, 255, 0]), np.array([255, 0, 255])
+    candidate = patch(client, job, candidate, hook_text="HALO HALO", style_overrides={
+        "caption": {"colour": "#FF00FF", "highlight": "none", "outline": 0, "tracking": 24},
+        "hook": {"shape": "none", "colour": "#00FF00", "tracking": 60, "line_height": 1.4},
+    })
+    plan = preview(client, job, candidate)["plan"]
+    hook = plan["hook"]
+    # One line untracked; spaced out, two.
+    assert hook["lines"] == ["HALO", "HALO"]
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 4.2 - start)
+    metrics = font_metrics()
+    cap = metrics.cap_height / metrics.units
+
+    def ink(colour: np.ndarray, top: float, bottom: float) -> tuple[int, int, int]:
+        """The top row, and the left and right columns, of the colour's pixels between two rows."""
+        rows, columns = pixels(frame[round(top):round(bottom)], colour)
+        assert len(rows) > 300
+        return round(top) + rows.min(), columns.min(), columns.max()
+
+    # Each hook line is as wide as its letters and their tracking, centred on its anchor, and the
+    # second line_height sizes below the first.
+    tops = []
+    for line, (x, baseline) in zip(hook["lines"], hook["anchors"]):
+        top, left, right = ink(green, baseline - 1.2 * cap * hook["size"], baseline + 4)
+        width = metrics.width(line, hook["size"], 60)
+        assert width - 20 < right - left + 1 <= width + 2
+        assert (left + right) / 2 == pytest.approx(x, abs=3)
+        tops.append(top)
+    assert tops[1] - tops[0] == pytest.approx(1.4 * hook["size"], abs=2)
+    # So is the caption line, in the middle of its area.
+    [caption] = [event for event in plan["captions"] if event["start"] <= 4.2 - start < event["end"]]
+    area, size = caption["area"], caption["size"]
+    _, left, right = ink(magenta, area["y"], area["y"] + area["height"])
+    width = metrics.width(caption["text"], size, 24)
+    assert width - 20 < right - left + 1 <= width + 2
+    assert (left + right) / 2 == pytest.approx(area["x"] + area["width"] / 2, abs=3)
 
 
 # The clip editor's Preview Plan and preparation (clip-editor ticket 03).

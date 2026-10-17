@@ -140,6 +140,8 @@ export interface CaptionStyle {
   outline_colour: string;
   shadow: number;
   shadow_colour: string;
+  // Added after every character of a line but its last, in output pixels; may be negative.
+  tracking: number;
   uppercase: boolean;
   highlight: Highlight;
   position: CaptionPosition;
@@ -165,6 +167,10 @@ export interface HookStyle {
   max_lines: number;
   uppercase: boolean;
   align: HookAlign;
+  // Added after every character of a line but its last, in output pixels; may be negative. Not the Kicker's.
+  tracking: number;
+  // How far apart its lines' baselines are, in sizes.
+  line_height: number;
   colour: string;
   // Of the words marked *like this*.
   emphasis_colour: string;
