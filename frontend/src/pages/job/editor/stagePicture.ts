@@ -95,10 +95,11 @@ export const fittedOf = (picture: Picture, frame: Size): Size => fittedSize({ wi
 /**
  * A Picture of the plan as drawn by `transform` instead, while a Grip holds it: at its centre, as
  * large as its crop's fitted size makes it, turned and flipped as it says, its bounds turned with it.
- * Its crop and decoration are the plan's. A keyed one is held still, without its motion.
+ * Its crop and decoration are the plan's. A keyed one is held still, without its motion. One whose
+ * size at scale 1 isn't its crop's fitted to the frame (a Text Layer's area) gives it as `fitted`.
  */
-export function heldPicture(picture: Picture, transform: Transform, frame: Size): Picture {
-  const drawn = placed(transform, fittedOf(picture, frame));
+export function heldPicture(picture: Picture, transform: Transform, frame: Size, fitted: Size = fittedOf(picture, frame)): Picture {
+  const drawn = placed(transform, fitted);
   const { motion: _, ...still } = picture;
   return {
     ...still,
@@ -183,16 +184,18 @@ export function gripsOnFrame(picture: Placed, frame: Size, reach: number, inset:
 }
 
 /**
- * Which Grips a picture has: all of them (the Advanced Edit's), or only its corners (the clip
- * editor's), which scale it about its centre with no edge stretch or turn.
+ * Which Grips a picture has: all of them (the Advanced Edit's), only its corners (the clip
+ * editor's), which scale it about its centre with no edge stretch or turn, or its corners and the
+ * rotate handle (a Text Layer's, never stretched).
  */
-export type GripSet = "all" | "corners";
+export type GripSet = "all" | "corners" | "corners-rotate";
 
 const ALL_GRIPS: Grip[] = ["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left", "rotate"];
 const CORNERS = new Set<Grip>(["top-left", "top-right", "bottom-right", "bottom-left"]);
 
 /** The Grips of `set`, clockwise from the top left, the rotate handle last. */
-export const gripsIn = (set: GripSet): Grip[] => (set === "all" ? ALL_GRIPS : ALL_GRIPS.filter((grip) => CORNERS.has(grip)));
+export const gripsIn = (set: GripSet): Grip[] =>
+  set === "all" ? ALL_GRIPS : ALL_GRIPS.filter((grip) => CORNERS.has(grip) || (set === "corners-rotate" && grip === "rotate"));
 
 // Each Grip's way out from the picture's centre, in degrees clockwise from across, unturned.
 const OUTWARD: Record<Exclude<Grip, "rotate">, number> = {

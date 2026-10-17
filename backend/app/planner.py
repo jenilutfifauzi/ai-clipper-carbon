@@ -197,6 +197,10 @@ TEXT_MARGIN = 48
 TEXT_INK_ROOM = 0.5
 # A Text Layer's picture is at most this many pixels on its longest side, whatever its scale.
 MAX_TEXT_PICTURE = 4096
+# A Text Layer's picture is made at the first of these scales its Transform's scale doesn't pass:
+# scaling it within one step is drawing the same picture smaller or larger, and only a scale past
+# it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
+TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
 
 
 # The planner's input, found by app/analysis.py.
@@ -612,8 +616,9 @@ class TextLayout:
     text and its baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its
     Block, or a Strip per line) with corners `radius` pixels round. Its shadow, when on, is its runs
     again moved by `shadow` (right and down), between them and the plate. The picture is rasterised
-    `scale` times as large (app/text_pictures.py), and named by a hash of all of it (`name`), so that
-    the same look is one file wherever the layer is."""
+    `scale` times as large (app/text_pictures.py; its Transform's scale, up to the next of
+    TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same look is one
+    file wherever the layer is."""
 
     style: TextStyle
     size: float
@@ -644,6 +649,12 @@ class TextLayout:
         return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
 
     @property
+    def look(self) -> str:
+        """What its picture shows at any scale: its name at scale 1, without the extension. The
+        pictures of one look are the same words, only larger or smaller."""
+        return replace(self, scale=1.0).name.removesuffix(".png")
+
+    @property
     def faces(self) -> set[str]:
         """The Faces it is drawn in: its style's, and any its runs fall back to."""
         return {self.style.font, *(run.font for line in self.runs for run in line)}
@@ -662,7 +673,9 @@ class TextEvent:
 
     It is drawn as the picture of its `layout` (docs/adr/0010), the file `image`, placed as `picture`
     says with the Overlay's maths: its box and the room round it for its ink, centred about the
-    middle of its area (to within half a pixel). `bounds` holds its area once turned and scaled."""
+    middle of its area (to within half a pixel). `bounds` holds its area once turned and scaled.
+    `look` names its layout at any scale (TextLayout.look): the preview draws a larger picture of
+    the same look it has rather than fetch a smaller one."""
 
     layer: TextLayer
     lines: list[str]
@@ -677,6 +690,7 @@ class TextEvent:
     bounds: Box
     box: Box | None = None
     radius: int = 0
+    look: str = ""
 
 
 @dataclass(frozen=True)
@@ -1437,10 +1451,10 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its lines
     (split at newlines, without emoji, split into runs by Face with what no Face has left out, blank
-    ones at either end left out) centred on its Transform's centre and kept inside the frame, set
-    smaller when the widest, padded and with its tracking, is wider than the frame less TEXT_MARGIN
-    either side (its tracking staying as wide). None when it is blank or would start at or after the
-    Clip's end."""
+    ones at either end left out) centred on its Transform's centre (on the frame, its picture maybe
+    past the edges, as an Overlay's), set smaller when the widest, padded and with its tracking, is
+    wider than the frame less TEXT_MARGIN either side (its tracking staying as wide). None when it is
+    blank or would start at or after the Clip's end."""
     style = layer.style
     runs = [text_runs(without_emoji(line), style.font) for line in layer.text.split("\n")]
     while runs and not runs[0]:
@@ -1469,8 +1483,7 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     width = math.ceil(max(widths) + 2 * pad_x)
     letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
     height = math.ceil(letters + 2 * pad_y)
-    x = min(max(round(layer.transform.x - width / 2), 0), OUTPUT_WIDTH - width)
-    y = min(max(round(layer.transform.y - height / 2), 0), OUTPUT_HEIGHT - height)
+    x, y = round(layer.transform.x - width / 2), round(layer.transform.y - height / 2)
     area = Box(x, y, width, height)
 
     def middle(line: float) -> float:
@@ -1492,7 +1505,7 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     picture = _text_picture(layout, origin, layer.transform)
     return TextEvent(
         layer, lines, start, end, area, size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
-        area if style.plate.shape is HookShape.BLOCK else None, radius,
+        area if style.plate.shape is HookShape.BLOCK else None, radius, layout.look,
     )
 
 
@@ -1543,7 +1556,8 @@ def _text_layout(
     width, height = width + width % 2, height + height % 2
     local = [(round(x - left, 4), round(y - top, 4)) for x, y in anchors]
     local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
-    scale = min(layer.transform.scale, MAX_TEXT_PICTURE / max(width, height))
+    stepped = next((step for step in TEXT_PICTURE_SCALES if layer.transform.scale <= step), TEXT_PICTURE_SCALES[-1])
+    scale = min(stepped, MAX_TEXT_PICTURE / max(width, height))
     plates = [Box(box.x - left, box.y - top, box.width, box.height) for box in plates]
     shadow = style.shadow.offset if style.shadow.on else None
     return (

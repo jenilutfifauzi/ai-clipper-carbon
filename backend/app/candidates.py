@@ -178,8 +178,9 @@ class TextLayer:
     coming on and going off as the hook does."""
 
     # In Timeline time, so that trimming the Clip leaves it where it was in it. It is drawn as a
-    # picture (docs/adr/0010), for now unscaled, unturned and opaque, and its style has no wrap width
-    # nor fixed height (_check_drawn). `id` names it in the editor.
+    # picture (docs/adr/0010), scaled, turned and faded by its Transform as an Overlay is, its centre
+    # on the frame and the picture maybe past its edges. Its style has no wrap width nor fixed height
+    # yet (_check_drawn). `id` names it in the editor.
 
     id: ItemId
     text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
@@ -208,16 +209,12 @@ def _check_text_transform(layer: TextLayer) -> None:
 
 
 def _check_drawn(layer: TextLayer) -> None:
-    """ValueError for what a Text Layer has that isn't drawn yet: a scale, rotation or opacity of its
-    Transform, or its style's wrap width or fixed height. Its picture
-    (docs/adr/0010) will draw each."""
-    transform, style = layer.transform, layer.style
+    """ValueError for what a Text Layer's style has that isn't drawn yet: its wrap width or fixed
+    height. Its picture (docs/adr/0010) will draw each."""
+    style = layer.style
     undrawn = [
         name
         for name, given in (
-            ("transform.scale", transform.scale != 1),
-            ("transform.rotation", transform.rotation != 0),
-            ("transform.opacity", transform.opacity != 1),
             ("style.wrap_width", style.wrap_width != 0),
             ("style.fixed_height", style.fixed_height != 0),
         )
@@ -225,8 +222,8 @@ def _check_drawn(layer: TextLayer) -> None:
     ]
     if undrawn:
         raise ValueError(
-            f"Text Layer {layer.id} can't have {_listed(tuple(undrawn))} yet: a Text Layer is drawn at scale 1, unturned, "
-            "opaque, its lines broken at newlines only"
+            f"Text Layer {layer.id} can't have {_listed(tuple(undrawn))} yet: a Text Layer is drawn "
+            "with its lines broken at newlines only"
         )
 
 
