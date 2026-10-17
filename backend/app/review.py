@@ -21,7 +21,7 @@ from app.candidates import (
     timeline_length,
 )
 from app.config import SelectionTuning
-from app.segment_time import segment_time
+from app.segment_time import SegmentTime, segment_time
 from app.selection import snap
 from app.styles import StyleOverrides
 from app.transcript import Transcript
@@ -162,10 +162,11 @@ def update(
         segments = episode.segments(change.segments)
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
-        # The hull of the Source they play, snapped to Words; one Segment of it is a plain range.
+        # The hull of the Source they play, snapped to Words; one Segment of it played as it was
+        # filmed is a plain range (one at a Speed is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
-        if len(segments) == 1:
+        if len(segments) == 1 and segment_time(segments[0]) == SegmentTime(start, end):
             segments = []
     elif change.transitions is not None:
         episode.check_length(old.main_track(), _joined(transitions, old.segments))

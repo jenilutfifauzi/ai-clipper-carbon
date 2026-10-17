@@ -111,12 +111,14 @@ Edits:
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
-- A video's Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast):
-  it lasts (end - start) / speed in the Clip, `start` and `end` staying seconds into its video. Its
-  sound keeps its pitch; with `pitch` true it rises and falls with the speed instead, as tape. It
-  lasts 0.1 s at least in the Clip, and the Clip the longest clip at most. A Speed change moves the
-  Segments after it, not the layers: the dry run lists each Segment's span in the Clip (`segments`).
-  Its Keyframes stay in seconds from its start, so a Speed that leaves one past its new end is
+- A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
+  lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
+  into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
+  as tape. One of the episode keeps its ends on Words, its captions retimed with its speech; Word
+  Edits and Layout Overrides stay keyed by Source time. A video's lasts 0.1 s at least in the Clip,
+  and the Clip the longest clip at most. A Speed change moves the Segments after it, not the
+  layers: the dry run lists each Segment's span in the Clip (`segments`).
+  A video's Keyframes stay in seconds from its start, so a Speed that leaves one past its new end is
   refused: send its keys too, each `at` times old / new speed to keep the motion on the same frames.
   With `reverse` true it plays its range backwards (then at its speed): its first frame in the Clip
   is the one at `end`. It plays from a reversed copy of its range, which the render makes if the
