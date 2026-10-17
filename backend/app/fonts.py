@@ -1,5 +1,5 @@
-"""Faces: the font files text can be set in (GLOSSARY: Face). The bundled ones come with the app, all
-under the SIL Open Font License, downloaded by `make setup`; the owner imports others, kept for every
+"""Faces: the font files text can be set in (GLOSSARY: Face). The bundled ones come with the app, under
+the SIL Open Font License or the Apache License (THIRD_PARTY_NOTICES.md), downloaded by `make setup`; the owner imports others, kept for every
 Job in DATA_DIR/fonts. Each render gives libass the Faces it needs through one `fontsdir` (`gather`),
 and the browser's preview loads each Face's file from GET /api/fonts/{id}, so that both set the same
 glyphs.
@@ -98,16 +98,63 @@ class MissingFace(RuntimeError):
     """A Face's file is gone from disk."""
 
 
-# The bundled Faces: their ids, which styles store, what the UI calls them, and their files in FONTS_DIR.
+# The bundled Faces, by family: their ids, which styles store forever, and their files in FONTS_DIR
+# (scripts/download_assets.py). A family's only Face has the family's id.
 _BUNDLED = [
-    ("montserrat-extrabold", "Montserrat ExtraBold", "Montserrat-ExtraBold.ttf"),
-    ("anton", "Anton", "Anton-Regular.ttf"),
-    ("bebas-neue", "Bebas Neue", "BebasNeue-Regular.ttf"),
-    ("poppins-black", "Poppins Black", "Poppins-Black.ttf"),
-    ("archivo-black", "Archivo Black", "ArchivoBlack-Regular.ttf"),
-    ("bangers", "Bangers", "Bangers-Regular.ttf"),
+    ("montserrat-regular", "Montserrat-Regular.ttf"),
+    ("montserrat-italic", "Montserrat-Italic.ttf"),
+    ("montserrat-semibold", "Montserrat-SemiBold.ttf"),
+    ("montserrat-bold", "Montserrat-Bold.ttf"),
+    ("montserrat-bold-italic", "Montserrat-BoldItalic.ttf"),
+    ("montserrat-extrabold", "Montserrat-ExtraBold.ttf"),
+    ("montserrat-extrabold-italic", "Montserrat-ExtraBoldItalic.ttf"),
+    ("montserrat-black", "Montserrat-Black.ttf"),
+    ("montserrat-black-italic", "Montserrat-BlackItalic.ttf"),
+    ("anton", "Anton-Regular.ttf"),
+    ("bebas-neue", "BebasNeue-Regular.ttf"),
+    ("poppins-regular", "Poppins-Regular.ttf"),
+    ("poppins-italic", "Poppins-Italic.ttf"),
+    ("poppins-medium", "Poppins-Medium.ttf"),
+    ("poppins-semibold", "Poppins-SemiBold.ttf"),
+    ("poppins-bold", "Poppins-Bold.ttf"),
+    ("poppins-bold-italic", "Poppins-BoldItalic.ttf"),
+    ("poppins-extrabold", "Poppins-ExtraBold.ttf"),
+    ("poppins-black", "Poppins-Black.ttf"),
+    ("poppins-black-italic", "Poppins-BlackItalic.ttf"),
+    ("archivo-black", "ArchivoBlack-Regular.ttf"),
+    ("bangers", "Bangers-Regular.ttf"),
+    ("barlow-condensed-regular", "BarlowCondensed-Regular.ttf"),
+    ("barlow-condensed-semibold", "BarlowCondensed-SemiBold.ttf"),
+    ("barlow-condensed-bold", "BarlowCondensed-Bold.ttf"),
+    ("barlow-condensed-bold-italic", "BarlowCondensed-BoldItalic.ttf"),
+    ("barlow-condensed-extrabold", "BarlowCondensed-ExtraBold.ttf"),
+    ("barlow-condensed-black", "BarlowCondensed-Black.ttf"),
+    ("barlow-condensed-black-italic", "BarlowCondensed-BlackItalic.ttf"),
+    ("kanit-regular", "Kanit-Regular.ttf"),
+    ("kanit-medium", "Kanit-Medium.ttf"),
+    ("kanit-bold", "Kanit-Bold.ttf"),
+    ("kanit-extrabold", "Kanit-ExtraBold.ttf"),
+    ("kanit-black", "Kanit-Black.ttf"),
+    ("kanit-black-italic", "Kanit-BlackItalic.ttf"),
+    ("oswald-regular", "Oswald-Regular.ttf"),
+    ("oswald-medium", "Oswald-Medium.ttf"),
+    ("oswald-semibold", "Oswald-SemiBold.ttf"),
+    ("oswald-bold", "Oswald-Bold.ttf"),
+    ("passion-one-regular", "PassionOne-Regular.ttf"),
+    ("passion-one-bold", "PassionOne-Bold.ttf"),
+    ("passion-one-black", "PassionOne-Black.ttf"),
+    ("dm-serif-display-regular", "DMSerifDisplay-Regular.ttf"),
+    ("dm-serif-display-italic", "DMSerifDisplay-Italic.ttf"),
+    ("abril-fatface", "AbrilFatface-Regular.ttf"),
+    ("lobster", "Lobster-Regular.ttf"),
+    ("pacifico", "Pacifico-Regular.ttf"),
+    ("titan-one", "TitanOne-Regular.ttf"),
+    ("caveat-brush", "CaveatBrush-Regular.ttf"),
+    ("staatliches", "Staatliches-Regular.ttf"),
+    ("permanent-marker", "PermanentMarker-Regular.ttf"),
+    ("luckiest-guy", "LuckiestGuy-Regular.ttf"),
 ]
-BUNDLED_IDS = [face_id for face_id, _, _ in _BUNDLED]
+BUNDLED_IDS = [face_id for face_id, _ in _BUNDLED]
 _FACES = TypeAdapter(list[Face])
 
 
@@ -144,7 +191,8 @@ class Faces:
         """The Face's file; MissingFace when it is gone from disk."""
         face = self.get(face_id)
         if not face.file.is_file():
-            raise MissingFace(f"The font file of {face.label} ({face.id}) is missing: import it again")
+            again = "run make setup" if face.bundled else "import it again"
+            raise MissingFace(f"The font file of {face.label} ({face.id}) is missing: {again}")
         return face.file
 
     def add(self, data: bytes, filename: str) -> FontImport:
@@ -165,7 +213,7 @@ class Faces:
             ids = {face.id for face in faces}
             added: list[tuple[Face, bytes]] = []
             existing = []
-            for static in _statics(data):
+            for static in statics(data):
                 digest = _sha256(static)
                 if digest in known:
                     existing.append(known[digest])
@@ -291,17 +339,36 @@ def font(face_id: str) -> Face:
     return face
 
 
-@cache
 def _bundled(face_id: str) -> Face:
-    label, filename = next((label, filename) for id, label, filename in _BUNDLED if id == face_id)
+    """A bundled Face, read from its file. Until `make setup` has downloaded its file, it is named after
+    the file, isn't listed, and fails a render saying so."""
+    filename = next(filename for id, filename in _BUNDLED if id == face_id)
     file = FONTS_DIR / filename
+    if not file.is_file():
+        name = Path(filename).stem.replace("-", " ")
+        return Face(
+            id=face_id, label=name, family=name, typographic_family=name, weight=400, italic=False, bundled=True,
+            file=file, copyright="", licence="", licence_url="", restricted=False, sha256="",
+        )
+    return _read_bundled(face_id, file)
+
+
+@cache
+def _read_bundled(face_id: str, file: Path) -> Face:
     font = _open(file.read_bytes())
     face = _describe(font, face_id, file, bundled=True)
-    # Hashed as an import of its file would be, so that importing it adds nothing.
-    return replace(face, label=label, family=_name(font, 1), sha256=_sha256(_saved(font)))
+    return replace(
+        face,
+        label=face.label.removesuffix(" Regular"),
+        # A family's Regular is matched by its family (name ID 1), as the first bundled Faces always
+        # were; any other by its full name, which picks exactly it, never another of its family.
+        family=_name(font, 1) if _name(font, 2) == "Regular" else face.family,
+        # Hashed as an import of its file would be, so that importing it adds nothing.
+        sha256=_sha256(_saved(font)),
+    )
 
 
-def _statics(data: bytes) -> list[bytes]:
+def statics(data: bytes) -> list[bytes]:
     """The static fonts `data` holds, as files: its collection's members, or itself; a variable font
     as one per named instance (its default, when it names none). Each is written by fontTools, so
     that one font gives the same file whether it came alone or in a collection. BadFont when

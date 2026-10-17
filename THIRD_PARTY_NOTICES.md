@@ -37,8 +37,9 @@ SOFTWARE.
 
 ## Montserrat
 
-Captions and hooks are burned into clips with Montserrat ExtraBold, downloaded by
-`make setup` from [JulietaUla/Montserrat](https://github.com/JulietaUla/Montserrat) to
+Captions and hooks are burned into clips with Montserrat ExtraBold by default. It and Montserrat's
+Regular, Italic, SemiBold, Bold, Bold Italic, ExtraBold Italic, Black and Black Italic are downloaded
+by `make setup` from [JulietaUla/Montserrat](https://github.com/JulietaUla/Montserrat) to
 `backend/assets/fonts/` together with its licence (`OFL.txt`).
 
 ```text
@@ -137,18 +138,40 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
-## Caption fonts
+## Bundled fonts
 
-The clip editor's other caption and hook fonts are downloaded by `make setup` from
+The other bundled fonts (the Faces every font picker offers) are downloaded by `make setup` from
 [google/fonts](https://github.com/google/fonts) (at a fixed commit) to `backend/assets/fonts/`, each
-with its licence (`OFL-<family>.txt`). All are licensed under the SIL Open Font License 1.1, whose
-text is given in full under Montserrat above.
+with its licence (`OFL-<family>.txt` or `LICENSE-<family>.txt`). They are not stored in this
+repository.
 
+Under the SIL Open Font License 1.1, whose text is given in full under Montserrat above:
+
+- Abril Fatface: Copyright (c) 2011, TypeTogether (www.type-together.com), with Reserved Font Names "Abril" and "Abril Fatface"
 - Anton: Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)
 - Archivo Black: Copyright 2017 The Archivo Black Project Authors (https://github.com/Omnibus-Type/ArchivoBlack)
 - Bangers: Copyright 2010 The Bangers Project Authors (https://github.com/googlefonts/bangers)
+- Barlow Condensed (Regular, SemiBold, Bold, Bold Italic, ExtraBold, Black, Black Italic): Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
 - Bebas Neue: Copyright © 2010 by Dharma Type.
-- Poppins Black: Copyright 2020 The Poppins Project Authors (https://github.com/itfoundry/Poppins)
+- Caveat Brush: Copyright 2015 Google Inc. All Rights Reserved.
+- DM Serif Display (Regular, Italic): Copyright 2014-2018 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. All Rights Reserved. Source is a trademark of Adobe in the United States and/or other countries. Copyright 2019 Google LLC.
+- Kanit (Regular, Medium, Bold, ExtraBold, Black, Black Italic): Copyright 2020 The Kanit Project Authors (https://github.com/cadsondemak/kanit)
+- Lobster: Copyright 2010 The Lobster Project Authors (https://github.com/impallari/The-Lobster-Font), with Reserved Font Name "Lobster".
+- Oswald (Regular, Medium, SemiBold, Bold): Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont).
+  Google Fonts has Oswald only as a variable font: `make setup` writes these four named instances out
+  as static fonts with fontTools' instancer, a Modified Version under the same licence (Oswald has no
+  Reserved Font Name).
+- Pacifico: Copyright 2018 The Pacifico Project Authors (https://github.com/googlefonts/Pacifico)
+- Passion One (Regular, Bold, Black): Copyright (c) 2011 Fontstage (info@fontstage.com), with Reserved Font Names, 'Passion'
+- Poppins (Regular, Italic, Medium, SemiBold, Bold, Bold Italic, ExtraBold, Black, Black Italic): Copyright 2020 The Poppins Project Authors (https://github.com/itfoundry/Poppins)
+- Staatliches: Copyright 2018 The Staatliches Authors (https://github.com/googlefonts/staatliches)
+- Titan One: Copyright (c) 2011, Rodrigo Fuenzalida (www.rfuenzalida.com|hello@rfuenzalida.com), with Reserved Font Name Titan.
+
+Under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), whose text is
+downloaded with each:
+
+- Luckiest Guy: Copyright (c) 2010 by Brian J. Bonislawsky DBA Astigmatic (AOETI). All rights reserved.
+- Permanent Marker: Copyright (c) 2010 by Font Diner, Inc. All rights reserved.
 
 ## Downloaded models
 

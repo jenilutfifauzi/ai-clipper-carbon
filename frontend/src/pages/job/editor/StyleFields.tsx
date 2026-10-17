@@ -1,7 +1,5 @@
 import { RotateCcw } from "lucide-react";
-import type { FontInfo } from "../../../api";
 import { Skeleton } from "../../../components/Skeleton";
-import { fontFamily } from "../../../fonts";
 import type { StyleControls, StylePart } from "./useStyleDraft";
 
 /** The reset button of an overridden style field, after its label; nothing when it is the Preset's. */
@@ -23,14 +21,6 @@ export function StyleMarker({ style, part, field, label }: { style: StyleControl
 // How many of `fields` the Candidate overrides in `part`.
 export function countChanged(style: StyleControls, part: StylePart, fields: readonly string[]) {
   return fields.filter((field) => field in style.overrides[part]).length;
-}
-
-// The font Select's options, each shown in its own font once it is loaded.
-export function fontChoices(fonts: FontInfo[] | null) {
-  return {
-    options: (fonts ?? []).map((font) => ({ value: font.id, label: font.label })),
-    optionStyle: (id: string) => (fonts?.some((font) => font.id === id) ? { fontFamily: fontFamily(id) } : undefined),
-  };
 }
 
 // A titled group of fields.
