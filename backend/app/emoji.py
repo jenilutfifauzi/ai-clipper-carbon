@@ -46,20 +46,20 @@ def is_emoji(char: str) -> bool:
     return any(low <= ord(char) <= high for low, high in _EMOJI)
 
 
-def _regional(char: str) -> bool:
+def regional_indicator(char: str) -> bool:
     return 0x1F1E6 <= ord(char) <= 0x1F1FF
 
 
-def _modifier(char: str) -> bool:
+def emoji_modifier(char: str) -> bool:
     """A character that belongs to the emoji before it: a variation selector, a skin tone, a tag
     (of a subdivision's flag) or the keycap."""
     code = ord(char)
     return char in _VARIATIONS or 0x1F3FB <= code <= 0x1F3FF or 0xE0020 <= code <= 0xE007F or char == KEYCAP
 
 
-def _base(char: str) -> bool:
+def emoji_base(char: str) -> bool:
     """A character an emoji sequence starts with."""
-    return is_emoji(char) and not _modifier(char) and char != ZWJ and not 0xFE00 <= ord(char) <= 0xFE0F
+    return is_emoji(char) and not emoji_modifier(char) and char != ZWJ and not 0xFE00 <= ord(char) <= 0xFE0F
 
 
 def clusters(text: str) -> list[tuple[str, bool]]:
@@ -80,8 +80,8 @@ def clusters(text: str) -> list[tuple[str, bool]]:
 def _sequence_end(text: str, start: int) -> int | None:
     """Where the emoji sequence at `start` in `text` ends; None when no emoji starts there."""
     char, end = text[start], start + 1
-    if _regional(char):
-        return end + 1 if end < len(text) and _regional(text[end]) else end
+    if regional_indicator(char):
+        return end + 1 if end < len(text) and regional_indicator(text[end]) else end
     if char in _KEYCAP_BASES:
         for keycap in (KEYCAP, "️" + KEYCAP):
             if text.startswith(keycap, end):
@@ -89,10 +89,10 @@ def _sequence_end(text: str, start: int) -> int | None:
         return None
     if not is_emoji(char):
         return None
-    while _base(char):
-        while end < len(text) and _modifier(text[end]):
+    while emoji_base(char):
+        while end < len(text) and emoji_modifier(text[end]):
             end += 1
-        if not (end + 1 < len(text) and text[end] == ZWJ and _base(text[end + 1])):
+        if not (end + 1 < len(text) and text[end] == ZWJ and emoji_base(text[end + 1])):
             break
         end += 2
     return end

@@ -23,6 +23,8 @@ import {
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
 import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, pressTogglesPick, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
+import type { BoxEdge } from "./textBox";
+import { TextBoxGrips } from "./TextBoxGrips";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -85,6 +87,9 @@ export interface StagePicture {
   onEdit?: (point?: { x: number; y: number }) => void;
   // Put where a gesture leaves it, once, at its end: one `group` of changes.
   onTransform: (transform: Transform, group: string) => void;
+  // A Text Layer's: its box's wrap width (the sides) or fixed height (the top and bottom) set to
+  // `length` of its own pixels by the box Grip on `edge` (TextBoxGrips), once a drag ends: one `group`.
+  onBox?: (edge: BoxEdge, length: number, group: string) => void;
   // Its Crop as saved, what Crop mode opens on, and where Crop mode leaves it, with the Transform
   // that keeps the kept part in place, together: one `group`. Without them it has no Crop mode.
   crop?: Crop | null;
@@ -695,6 +700,7 @@ export function useStageEdit(
     shown,
     shownPicture,
     transform,
+    at,
     handlers,
     pictureHandlers,
     cropMode,
@@ -709,7 +715,7 @@ export type StageEdit = ReturnType<typeof useStageEdit>;
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
  * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
  * with a corner to resize it by when it has a size. Under them, the pictures' handles (each on its
- * picture as turned), and over everything the Grips of one picked alone. The guides it snaps to
+ * picture as turned), and over everything the Grips of one picked alone (and a Text Layer's box Grips). The guides it snaps to
  * (a picture's Smart Guides), while it does. `scale` is the stage's CSS pixels per output pixel.
  */
 export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan; playback: Playback; edit: StageEdit; scale: number }) {
@@ -781,6 +787,7 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
         );
       })}
       {edit.cropMode ? <CropHandles plan={plan} edit={edit} scale={scale} /> : gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
+      {!edit.cropMode && !edit.moving && gripped?.onBox && <BoxGrips plan={plan} edit={edit} item={gripped} scale={scale} />}
       {edit.guides?.x.map((x) => (
         <div key={`x${x}`} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(x / plan.width) }} />
       ))}
@@ -904,6 +911,26 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
         <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white pointer-coarse:size-5")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
       )}
     </div>
+  );
+}
+
+/**
+ * The box Grips of a Text Layer picked alone (TextBoxGrips), on its area as drawn, pulled in from off
+ * the stage as its other Grips are. `scale` is the stage's CSS pixels per output pixel.
+ */
+function BoxGrips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; scale: number }) {
+  const picture = edit.shownPicture(item.id, item.picture!);
+  const [x, y] = picture.centre;
+  return (
+    <TextBoxGrips
+      key={item.id}
+      plan={plan}
+      box={{ x, y, width: picture.width, height: picture.height, rotation: picture.rotation }}
+      scale={item.transform!.scale}
+      inset={GRIP_INSET_CSS_PX / scale}
+      at={edit.at}
+      onBox={item.onBox!}
+    />
   );
 }
 

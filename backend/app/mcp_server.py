@@ -130,13 +130,14 @@ Edits:
   halo), plate (what is behind its lines: shape "none", "block" behind them all or "strips" behind
   each, colour, opacity, radius, padding_x and padding_y in output pixels), line_height (baselines
   apart, in sizes), tracking (output pixels after each character but a line's last, may be
-  negative) and align (center, left, right). Its lines break at newlines; one wider than the frame
-  is set smaller. It is never stretched or flipped; its style's wrap_width and fixed_height stay 0,
-  as they aren't drawn yet. merge_candidate_items changes only the style, shadow, plate and
-  transform fields given. The dry run lists each Text Layer's lines, its box once scaled and turned
-  (bounds) and its picture: the URL, on this app, of the PNG the Clip burns. Emoji in a Text
-  Layer are drawn in colour (Noto Color Emoji), each 1 em wide; the hook, the Kicker, the
-  Watermark and captions leave emoji out.
+  negative) and align (center, left, right). Its text is never set smaller: its lines break at
+  newlines and between words at its wrap_width (px, plate padding included; 0: the frame less 48 px
+  either side), a word too long between letters, and its box is at least fixed_height px tall (0:
+  its words'), the words centred down it. It is never stretched or flipped. merge_candidate_items
+  changes only the style, shadow, plate and transform fields given. The dry run lists each Text
+  Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
+  app, of the PNG the Clip burns. Emoji in a Text Layer are drawn in colour (Noto Color Emoji),
+  each 1 em wide; the hook, the Kicker, the Watermark and captions leave emoji out.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A

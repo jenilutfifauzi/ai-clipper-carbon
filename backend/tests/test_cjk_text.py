@@ -57,6 +57,20 @@ def test_a_line_mixing_latin_and_japanese_has_a_run_per_face_each_measured_in_it
     assert abs(width - latin.width("HALO 日本語です!", 100)) > 20
 
 
+def test_japanese_wraps_between_its_characters_measured_in_the_fallback_face():
+    # .scratch/text-advanced/issues/03-wrap-width-and-fixed-height.md: no spaces, yet it breaks.
+    text = "今日は良い天気ですね。散歩に行きましょう。"
+    event = text_event(layer(text, wrap_width=400), 10)
+    cjk = font_metrics(FALLBACK_FONT)
+    assert len(event.lines) > 1 and "".join(event.lines) == text
+    assert all(cjk.width(line, 100) <= 400 for line in event.lines)
+    # Each line as full as fits, a stop never starting one.
+    for line, after in zip(event.lines, event.lines[1:]):
+        assert not after.startswith("。")
+        assert cjk.width(line + after[0], 100) > 400 or after[1:2] == "。"
+    assert all(run.font == FALLBACK_FONT for line in event.layout.runs for run in line)
+
+
 def test_a_cjk_run_keeps_the_line_pitch_of_the_styles_face():
     latin = text_event(layer("HALO\nDUNIA"), 10)
     mixed = text_event(layer("HALO\n日本語"), 10)

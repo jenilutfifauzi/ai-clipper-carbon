@@ -128,6 +128,23 @@ def test_a_layer_of_only_emoji_shows_them_and_one_of_only_unknown_characters_sho
     assert text_event(layer("🫨 한"), 10) is None
 
 
+def test_lines_wrap_around_an_emoji_but_never_inside_its_sequence():
+    # Two emoji fit the wrap width, not three: a break may come between any two.
+    assert text_event(layer("🔥🔥🔥🔥🔥", wrap_width=2.5 * em()), 10).lines == ["🔥🔥", "🔥🔥", "🔥"]
+    # Each sequence stays whole however narrow the width, a ZWJ family, a flag pair, a skin tone, a
+    # subdivision's flag and a keycap among them.
+    england = "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"
+    sequences = [FAMILY, "🇮🇩", "🇮🇩", "👍🏽", england, "#️⃣"]
+    narrow = text_event(layer("".join(sequences), wrap_width=20), 10)
+    assert narrow.lines == [sequence for sequence in sequences if sequence != england]
+    # Between an emoji and a word, as between ideographs.
+    metrics = font_metrics(STYLE_FONT)
+    width = metrics.width("WAJIB", 100) + em() + 1
+    assert text_event(layer("WAJIB🔥TONTON", wrap_width=width), 10).lines == ["WAJIB🔥", "TONTON"]
+    # But not before a closing mark.
+    assert text_event(layer("WAJIB🔥!", wrap_width=width), 10).lines == ["WAJIB", "🔥!"]
+
+
 def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
     # A magenta stroke, a cyan shadow and a grey plate: none is drawn on the emoji, which keeps its
     # colours over them.

@@ -194,6 +194,10 @@ export function TextLayerFields({
       <ShadowGroup style={access} />
       <PlateGroup style={access} />
       <SpacingGroup style={access} />
+      <Group title="Box">
+        <BoxField label="Wrap width" value={style.wrap_width} most={FRAME_WIDTH} onChange={(width) => setStyle("wrap_width", width)} />
+        <BoxField label="Fixed height" value={style.fixed_height} most={FRAME_HEIGHT} onChange={(height) => setStyle("fixed_height", height)} />
+      </Group>
       <TextTransformFields transform={layer.transform} onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)} />
       <Group title="Motion">
         <div className="grid grid-cols-2 gap-3">
@@ -214,6 +218,34 @@ export function TextLayerFields({
       </Group>
       <TimingFields item={layer} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>
+  );
+}
+
+// The frame, which a box's slider reaches across (the field itself takes more: 4096 px).
+const FRAME_WIDTH = 1080;
+const FRAME_HEIGHT = 1920;
+
+/**
+ * A Text Layer's wrap width or fixed height: Auto at 0 (the frame less a margin, or the words' own
+ * height), or in output pixels, with Auto to go back to it. Its box Grips on the stage set it too.
+ */
+export function BoxField({ label, value, most, onChange }: { label: string; value: number; most: number; onChange: (value: number) => void }) {
+  return (
+    <Slider
+      label={label}
+      value={value}
+      min={0}
+      max={Math.max(most, value)}
+      format={(v) => (v ? `${Math.round(v)} px` : "Auto")}
+      onChange={onChange}
+      after={
+        value > 0 && (
+          <Button variant="ghost" size="xs" onClick={() => onChange(0)} aria-label={`${label}: back to Auto`}>
+            Auto
+          </Button>
+        )
+      }
+    />
   );
 }
 
