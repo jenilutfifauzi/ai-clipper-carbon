@@ -40,6 +40,7 @@ from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
 from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
+from app.retimed import CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
 from app.segment_time import segment_time
 from app.storage import write_atomic
@@ -490,6 +491,11 @@ class Renders:
                 | {overlay.media for overlay in plan.overlays}
             )
             files = {media_id: self.media.file(media_id) for media_id in used}
+            # A reversed video's Segment reads its full-size Retimed copy, made now if it isn't there.
+            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.media)
+            plan, files = read_from_copies(plan, files, lambda media_id, played: self.media.retimed(media_id).make(
+                self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
+            ))
             encoder = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files
             )

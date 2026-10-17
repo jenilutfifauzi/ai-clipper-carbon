@@ -1,12 +1,12 @@
-import { useEffect, useRef } from "react";
-import { mediaProxyUrl, type AudioEvent, type RenderPlan, type ScenePlan, type SegmentPlan } from "../../../api";
+import { useEffect, useMemo, useRef } from "react";
+import type { AudioEvent, RenderPlan, ScenePlan, SegmentPlan } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./ClipPreview";
 import { follow } from "./follow";
 import { FRAME, panelStyle } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { playable, type Playback } from "./playback";
 import { loudness } from "./loudness";
-import { paceOf } from "./segmentTime";
+import { mediaPlay, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
 
 /**
@@ -42,6 +42,8 @@ export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undef
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed sound follows its volume Keyframes (followCurve).
+ * A reversed one plays its Retimed copy, and shows its first frame held with the copy's progress
+ * until the copy is made (`mediaPlay`).
  */
 export function MediaSegment({
   segment,
@@ -59,9 +61,10 @@ export function MediaSegment({
   const box = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLVideoElement>(null);
   const back = useRef<HTMLVideoElement>(null);
+  const copy = useRetimedCopy(segment.reverse ? segment.media : null, segment.source_start, segment.source_end);
+  const { src, span } = useMemo(() => mediaPlay(segment, end, copy), [segment, end, copy]);
 
   useEffect(() => {
-    const span = { start: segment.start, end, from: segment.source_start, pitch: segment.pitch, ...paceOf(segment) };
     // Its sound: its volume Keyframes when keyed, faded out by the Transition taking it away.
     const sound: AudioEvent = {
       media: segment.media!,
@@ -83,9 +86,8 @@ export function MediaSegment({
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, segment, end, fade]);
+  }, [playback, segment, end, fade, span]);
 
-  const src = mediaProxyUrl(segment.media!);
   const picture = scene?.picture;
   const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
   return (
@@ -110,6 +112,15 @@ export function MediaSegment({
           playback={playback}
           media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
         />
+      )}
+      {copy && !copy.url && (
+        <div
+          aria-live="polite"
+          className="absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full bg-black/70 px-3 py-1 text-white tabular-nums"
+          style={{ fontSize: "max(12px, calc(var(--scale) * 36px))" }}
+        >
+          {copy.error ? "Couldn't reverse this video" : `Reversing… ${Math.round(copy.progress * 100)}%`}
+        </div>
       )}
     </div>
   );

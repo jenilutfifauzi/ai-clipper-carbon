@@ -46,6 +46,7 @@ from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
 from app.planner import Box, Picture, key_times, picture_at
 from app.profile import ChannelProfile
+from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import StyleOverrides
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
@@ -122,6 +123,9 @@ Edits:
   layers: the dry run lists each Segment's span in the Clip (`segments`).
   A video's Keyframes stay in seconds from its start, so a Speed that leaves one past its new end is
   refused: send its keys too, each `at` times old / new speed to keep the motion on the same frames.
+  With `reverse` true it plays its range backwards (then at its speed): its first frame in the Clip
+  is the one at `end`. It plays from a reversed copy of its range, which the render makes if the
+  owner's preview hasn't (the dry run's `copy`). Only a video's Segment can be reversed.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -213,6 +217,11 @@ def build_mcp(app: FastAPI) -> MCPServer:
             except StaleCandidate as stale:
                 current = stale.candidate
         raise ToolError(f"Candidate {candidate_id} kept changing while this edit was saved: try again")
+
+    def copied(segment: dict) -> bool:
+        """Whether a reversed video Segment's full-size Retimed copy, which its render reads, is made."""
+        retimed = app.state.media.retimed(segment["media"])
+        return retimed.find(CopySize.FULL, Retime(segment["source_start"], segment["source_end"])) is not None
 
     def clips(job_id: str, listed: list[dict]) -> list[dict]:
         job_dir = app.state.store.job_dir(job_id).resolve()
@@ -351,7 +360,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         Timeline time, and its Words with the `at` a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         if dry_run:
-            return _plan_view(await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body))
+            return _plan_view(await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body), copied)
         return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body)
 
     @tool()
@@ -658,9 +667,10 @@ def _motion_view(picture: dict) -> dict:
     return {"keys": keys, "bounds_at_keys": bounds}
 
 
-def _plan_view(preview: dict) -> dict:
+def _plan_view(preview: dict, copied: Callable[[dict], bool] = lambda segment: False) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
-    what of the Source or its video it plays, at what Speed), each Scene's Layout and the Framing
+    what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
+    (`copied`)), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
@@ -683,6 +693,8 @@ def _plan_view(preview: dict) -> dict:
             _compact({
                 **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
+                "reverse": segment["reverse"] or None,
+                "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
             })
             for segment in plan["segments"]
         ],
