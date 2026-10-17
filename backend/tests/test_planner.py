@@ -1,6 +1,7 @@
 """Seam B: the Render Planner on synthetic input, without video."""
 
 import math
+from dataclasses import replace
 
 import pytest
 from pydantic import TypeAdapter
@@ -1152,3 +1153,84 @@ def test_caption_lines_are_centred_on_the_styles_x_and_kept_in_the_frame():
         centre = event.area.x + event.area.width / 2
         assert abs(centre + width / 2 - 1080) <= 1
     assert styled(words, 4, CaptionStyle(x=540)) == styled(words, 4, CaptionStyle(x=None)) == styled(words, 4, CaptionStyle())
+
+
+# Tracking and line height on the Hook and Caption Styles (text-advanced 13). At their defaults the
+# tests above hold, and tests/test_styles.py checks that every built-in Preset plans as before.
+
+
+def test_a_tracked_hook_is_fitted_counting_its_tracking():
+    metrics = font_metrics()
+    # One line at 88, 570 px wide; with 12 px after each of its 18 characters but the last, too wide.
+    text = "Jangan lakukan ini"
+    assert hooked(text).lines == [text]
+    spaced = hooked(text, hook_style=HookStyle(tracking=12))
+    assert spaced.lines == ["Jangan", "lakukan ini"] and spaced.size == HOOK_SIZE
+    assert all(metrics.width(line, spaced.size, 12) <= HOOK_WIDTH for line in spaced.lines)
+    assert fit_hook(text, HookStyle(tracking=12)) == (spaced.lines, spaced.size)
+    # The block holds the tracked lines.
+    longest = max(metrics.width(line, spaced.size, 12) for line in spaced.lines)
+    assert spaced.area.width == math.ceil(longest) + 2 * HOOK_PAD_X
+    # On one line at most, it is set smaller, until its tracked line just fits.
+    one = hooked(text, hook_style=HookStyle(tracking=12, max_lines=1))
+    assert one.lines == [text] and one.size < HOOK_SIZE
+    assert HOOK_WIDTH - 1 < metrics.width(text, one.size, 12) <= HOOK_WIDTH
+    # Pulled in, a line too wide untracked fits on one.
+    tight = "Kenapa bisnis kamu gagal?"
+    assert len(hooked(tight).lines) == 2
+    assert hooked(tight, hook_style=HookStyle(tracking=-4)).lines == [tight]
+    # The Kicker isn't tracked.
+    kicked = hooked(text, hook_kicker="EPS 12", hook_style=HookStyle(tracking=12))
+    assert kicked.kicker.box.width == hooked(text, hook_kicker="EPS 12").kicker.box.width
+
+
+def test_line_height_sets_the_pitch_of_the_hooks_lines():
+    default = hooked(HOOK)
+    assert HookStyle().line_height == 0.82
+    for line_height in (0.6, 1.3):
+        hook = hooked(HOOK, hook_style=HookStyle(line_height=line_height))
+        assert hook.lines == default.lines and hook.size == default.size
+        (_, first), (_, second) = hook.anchors
+        assert second - first == pytest.approx(line_height * hook.size)
+        # The block grows or shrinks to hold them.
+        assert hook.area.height - default.area.height == pytest.approx((line_height - 0.82) * hook.size, abs=1)
+        assert hook.boxes == [hook.area]
+    # Strips move apart, or together, by as much; never over each other.
+    strips = HookStyle(shape=HookShape.STRIPS)
+    upper, lower = hooked(HOOK, hook_style=strips).boxes
+    for line_height in (1.3, 0.78):
+        hook = hooked(HOOK, hook_style=replace(strips, line_height=line_height))
+        spaced_upper, spaced_lower = hook.boxes
+        assert (spaced_lower.y - spaced_upper.y) - (lower.y - upper.y) == round((line_height - 0.82) * hook.size)
+        (_, first), (_, second) = hook.anchors
+        assert second - first == spaced_lower.y - spaced_upper.y
+    touching = hooked(HOOK, hook_style=replace(strips, line_height=0.5)).boxes
+    assert touching[1].y == touching[0].y + touching[0].height
+
+
+def test_tracked_caption_lines_break_earlier_and_are_set_to_fit_counting_their_tracking():
+    metrics = font_metrics()
+    talk = "jadi waktu itu kita lagi ngobrol soal bisnis keluarga yang ternyata luar biasa ya"
+    words = said(talk)
+    style = CaptionStyle(max_secs=10)
+    plain = styled(words, 12, style)
+    spaced = styled(words, 12, replace(style, tracking=10))
+    assert " ".join(shown(spaced)) == " ".join(shown(plain)) == talk.upper()
+    assert len(spaced) > len(plain)
+
+    # max_chars counts a line's characters as wide as its tracking makes them.
+    def counted(text: str, tracking: float) -> float:
+        return len(text) * metrics.width(text, style.size, tracking) / metrics.width(text, style.size)
+
+    for line, after in zip(spaced, spaced[1:]):
+        assert counted(line.text, 10) <= style.max_chars < counted(f"{line.text} {after.words[0].text}", 10)
+    # A line too wide for its area is set smaller until it fits, tracking and all.
+    for event in spaced:
+        assert metrics.width(event.text, event.size, 10) + 2 * style.outline <= event.area.width
+    [untracked] = styled(said("ketidakberdayaannya"), 3, style)
+    [tracked] = styled(said("ketidakberdayaannya"), 3, replace(style, tracking=10))
+    assert tracked.size < untracked.size
+    assert tracked.area.width - 1 < metrics.width(tracked.text, tracked.size, 10) + 2 * style.outline <= tracked.area.width
+    # Pulled in, they hold more than max_chars.
+    tight = styled(words, 12, replace(style, tracking=-8))
+    assert len(tight) < len(plain) and max(len(event.text) for event in tight) > style.max_chars

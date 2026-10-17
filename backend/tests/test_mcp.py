@@ -21,7 +21,7 @@ from test_jobs_api import URL
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 61_500
+TOOLS_BUDGET_BYTES = 62_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -196,6 +196,26 @@ async def test_candidates_are_added_edited_and_dry_run_through_mcp(mcp):
     assert "end" in message.lower() or "start" in message.lower()
     assert "hook_kicker" in await fails(mcp, "edit_candidate", **ids, changes={"hook_kicker": "x" * 40})
     assert "has no Candidate nope" in await fails(mcp, "edit_candidate", job_id=job["id"], candidate_id="nope", changes={})
+
+
+@pytest.mark.anyio
+async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry_run(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    # One line untracked; spaced out, too wide for one.
+    hook = {"hook_text": "Jangan lakukan ini"}
+    plain = await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True)
+    assert plain["hook"]["lines"] == ["Jangan lakukan ini"]
+    spaced = await call(mcp, "edit_candidate", **ids, changes={**hook, "style_overrides": {"hook": {"tracking": 12}}}, dry_run=True)
+    assert spaced["hook"]["lines"] == ["Jangan", "lakukan ini"]
+
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"tracking": -2}, "hook": {"tracking": 12, "line_height": 1.2}})
+    assert merged["style_overrides"]["caption"] == {"tracking": -2} and merged["style_overrides"]["hook"] == {"tracking": 12, "line_height": 1.2}
+    assert (await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"] == ["Jangan", "lakukan ini"]
+    assert "tracking" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"tracking": 500}})
+    assert "line_height" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"line_height": 0}})
 
 
 @pytest.mark.anyio

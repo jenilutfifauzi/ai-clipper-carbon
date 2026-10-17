@@ -1,5 +1,6 @@
 """Style Presets, Style Overrides, and how the Renderer writes a Render Plan's styles as ASS."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def plan(**styles):
         FrameFaces(t / 2, [Face(400, 300, 200, 200, 0.9), Face(1300, 300, 200, 200, 0.9)] if t > 6 else [Face(900, 300, 200, 200, 0.9)])
         for t in range(20)
     ]
-    return plan_render(100, 110, SOURCE, [Scene(0, 3), Scene(3, 10)], faces, words=WORDS, hook=HOOK, **styles)
+    return plan_render(100, 110, SOURCE, [Scene(0, 3), Scene(3, 10)], faces, words=WORDS, **{"hook": HOOK, **styles})
 
 
 def test_the_default_styles_write_v1s_ass_byte_for_byte():
@@ -134,6 +135,43 @@ def test_every_builtin_presets_styles_are_valid():
     for preset in BUILTIN_PRESETS:
         assert resolve(preset, StyleOverrides()) == (preset.caption, preset.hook, preset.watermark)
     assert isinstance(plan(caption_style=BUILTIN_PRESETS[2].caption).captions[0].area, Box)
+
+
+# Hooks that a Preset's style sets on one line, on several with a Kicker, and smaller.
+PRESET_HOOKS = {
+    "short": ("Kenapa *gagal*?", ""),
+    "kicked": ("Setetes racun bisa *bunuh perusahaan* kamu sekarang juga?", "TERBONGKAR!"),
+    "long": (
+        "Ini adalah hook yang sangat panjang sekali sehingga harus dipecah menjadi beberapa baris dan mungkin diperkecil ukurannya",
+        "Wow",
+    ),
+}
+
+
+def preset_plan_view(preset, hook: str) -> dict:
+    """The captions and hook of `plan()` in the Preset's styles with the hook PRESET_HOOKS[hook], as
+    JSON, and a digest of its ASS script (fixtures/builtin_preset_plans.json was written by this
+    before tracking and line height)."""
+    from hashlib import sha256
+
+    from pydantic import TypeAdapter
+
+    from app.planner import CaptionEvent, HookEvent
+
+    text, kicker = PRESET_HOOKS[hook]
+    planned = plan(caption_style=preset.caption, hook_style=preset.hook, hook=text, hook_kicker=kicker)
+    return {
+        "captions": TypeAdapter(list[CaptionEvent]).dump_python(planned.captions, mode="json"),
+        "hook": TypeAdapter(HookEvent | None).dump_python(planned.hook, mode="json"),
+        "ass": sha256(_ass(planned).encode()).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize("preset", BUILTIN_PRESETS, ids=[preset.id for preset in BUILTIN_PRESETS])
+@pytest.mark.parametrize("hook", PRESET_HOOKS)
+def test_every_builtin_preset_plans_and_writes_its_captions_and_hook_as_before_tracking_and_line_height(preset, hook):
+    before = json.loads((FIXTURES / "builtin_preset_plans.json").read_text())
+    assert preset_plan_view(preset, hook) == before[f"{preset.id}/{hook}"]
 
 
 def test_each_registered_font_is_the_file_libass_picks_for_its_family(settings, tmp_path):

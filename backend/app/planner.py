@@ -157,14 +157,17 @@ CAPTION_MIN_SECS = 0.2
 # tall), unless it is too long for them.
 HOOK_SECS = 3.0
 HOOK_SIZE = HookStyle().size
-# Its lines' baselines are this many sizes apart.
-HOOK_LEADING = 0.82
+# The smallest a hook or a caption line is set, however much its tracking takes of its width.
+MIN_SIZE = 1.0
+# Its lines' baselines are its style's line_height sizes apart: by default this many.
+HOOK_LEADING = HookStyle().line_height
 # The box's padding, in pixels: either side of the longest line, above the capitals of the first
 # and below the descenders of the last.
 HOOK_PAD_X = 36
 HOOK_PAD_Y = 26
 # A strip's padding, in sizes: either side of its line, and above the capitals and below the
-# descenders; and the gap between one strip and the next.
+# descenders; and the gap between one strip and the next at the default line height (a line height
+# moves them apart, or together until they touch, by as much as it moves a block's lines).
 STRIP_PAD_X = 0.25
 STRIP_PAD_Y = 0.14
 STRIP_GAP = 0.06
@@ -1402,22 +1405,25 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
     """How the hook `text` is set in `style`: its lines (none when it is blank) and their font size.
-    The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size, broken between
-    words where the longest is shortest. Lines still too wide are set smaller, so that the longest
-    just fits: the text fits when the size is the style's."""
+    The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size with its
+    tracking, broken between words where the longest is shortest. Lines still too wide are set
+    smaller (their tracking staying as wide), so that the longest just fits: the text fits when the
+    size is the style's."""
     words = [word for word, _ in _hook_words(text, style.uppercase)]
     if not words:
         return [], style.size
     metrics = font_metrics(style.font)
+    tracking = style.tracking
 
     def widest(lines: list[str]) -> float:
-        return max(metrics.width(line, style.size) for line in lines)
+        return max(metrics.width(line, style.size, tracking) for line in lines)
 
     for count in range(1, min(style.max_lines, len(words)) + 1):
-        lines = _balanced(words, count, metrics)
+        lines = _balanced(words, count, metrics, tracking * metrics.units / style.size)
         if widest(lines) <= HOOK_WIDTH:
             return lines, style.size
-    return lines, math.floor(style.size * HOOK_WIDTH / widest(lines) * 10) / 10
+    size = min(style.size * (HOOK_WIDTH - tracking * (len(line) - 1)) / metrics.width(line, style.size) for line in lines)
+    return lines, max(math.floor(size * 10) / 10, MIN_SIZE)
 
 
 # Emoji (Unicode's Extended_Pictographic, but for ©, ® and ™, which fonts draw as text) and the
@@ -1482,16 +1488,17 @@ def _emphasis(words: list[tuple[str, tuple[bool, ...]]]) -> list[tuple[int, int]
     return spans
 
 
-def _balanced(words: list[str], count: int, metrics: "FontMetrics") -> list[str]:
+def _balanced(words: list[str], count: int, metrics: "FontMetrics", tracking: float = 0.0) -> list[str]:
     """`words` on `count` lines, broken where the widest line is narrowest (of equals, with the
-    earliest breaks)."""
-    space = metrics.advances.get(" ", metrics.units)
-    ends = [0]
+    earliest breaks), with `tracking` (in the font's units) after every character of a line but its
+    last."""
+    space = metrics.advances.get(" ", metrics.units) + tracking
+    ends: list[float] = [0]
     for word in words:
-        ends.append(ends[-1] + sum(metrics.advances.get(char, metrics.units) for char in word))
+        ends.append(ends[-1] + sum(metrics.advances.get(char, metrics.units) + tracking for char in word))
 
-    def units(i: int, j: int) -> int:
-        return ends[j] - ends[i] + (j - i - 1) * space
+    def units(i: int, j: int) -> float:
+        return ends[j] - ends[i] + (j - i - 1) * space - tracking
 
     # best[k][j]: the narrowest widest line of words[:j] on k lines, and where its last line starts.
     best = [{j: (units(0, j), 0) for j in range(1, len(words) + 1)}]
@@ -1518,10 +1525,11 @@ def _hook(
     the style's height (kept inside SAFE_AREA).
     None when the text is blank or it would start at or after the Clip's end.
 
-    A block (or no box) is HOOK_PAD_X wider than the longest line either side, its first line's
-    capitals HOOK_PAD_Y below its top and the baselines HOOK_LEADING sizes apart. Strips are each
-    their line's width, padded by STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart. Left-aligned lines
-    (and strips) start at the left of the longest.
+    A line is as wide as its letters and its tracking. A block (or no box) is HOOK_PAD_X wider than
+    the longest line either side, its first line's capitals HOOK_PAD_Y below its top and the
+    baselines the style's line_height sizes apart. Strips are each their line's width, padded by
+    STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart at the default line height. Left-aligned lines (and
+    strips) start at the left of the longest.
 
     The `kicker`, if any, goes above them in a pill (`_kicker_pill`), centred over them or starting where
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
@@ -1537,13 +1545,13 @@ def _hook(
         emphasis.append(_emphasis(words[:count]))
         words = words[count:]
     metrics = font_metrics(style.font)
-    widths = [metrics.width(line, size) for line in lines]
+    widths = [metrics.width(line, size, style.tracking) for line in lines]
     left = style.align == HookAlign.LEFT
     # Boxes from the hook's top-left corner, and anchors from where it is.
     if style.shape == HookShape.STRIPS:
         pad_x, pad_y = STRIP_PAD_X * size, STRIP_PAD_Y * size
         strip_height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
-        pitch = strip_height + round(STRIP_GAP * size)
+        pitch = max(strip_height + round(STRIP_GAP * size) + round((style.line_height - HOOK_LEADING) * size), strip_height)
         strips = [math.ceil(line + 2 * pad_x) for line in widths]
         width, height = max(strips), (len(lines) - 1) * pitch + strip_height
         offsets = [0 if left else (width - strip) // 2 for strip in strips]
@@ -1555,14 +1563,14 @@ def _hook(
             ]
     else:
         width = math.ceil(max(widths)) + 2 * HOOK_PAD_X
-        letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * HOOK_LEADING * size
+        letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
         height = math.ceil(letters) + 2 * HOOK_PAD_Y
         boxes = [Box(0, 0, width, height)] if style.shape == HookShape.BLOCK else []
 
         def anchors(x: int, y: int) -> list[tuple[float, float]]:
             return [
                 (x + HOOK_PAD_X + line / 2 if left else x + width / 2,
-                 y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * HOOK_LEADING) * size)
+                 y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
                 for i, line in enumerate(widths)
             ]
     # The lines' place in the whole hook, and the pill's.
@@ -1684,9 +1692,11 @@ class FontMetrics:
     cap_height: int
     descent: int
 
-    def width(self, text: str, size: float) -> float:
-        """How wide `text` is at font `size`, in pixels; a character the font hasn't got counts a size wide."""
-        return sum(self.advances.get(char, self.units) for char in text) / self.units * size
+    def width(self, text: str, size: float, tracking: float = 0.0) -> float:
+        """How wide `text` is at font `size`, in pixels, with `tracking` pixels after every character
+        but the last; a character the font hasn't got counts a size wide."""
+        width = sum(self.advances.get(char, self.units) for char in text) / self.units * size
+        return width + tracking * (len(text) - 1) if tracking and text else width
 
 
 @cache
@@ -1783,7 +1793,7 @@ def _captions(
         if (
             line is None
             or word.breaks_before
-            or len(" ".join([*(w.text for w in line), word.text])) > style.max_chars
+            or _caption_length(" ".join([*(w.text for w in line), word.text]), style) > style.max_chars
             or (style.max_words is not None and len(line) >= style.max_words)
             or word.end - line[0].start > style.max_secs
             or word.start - line[-1].end >= style.pause_secs
@@ -1834,12 +1844,21 @@ def _captions(
     return events
 
 
+def _caption_length(text: str, style: CaptionStyle) -> float:
+    """How many characters a caption line counts for against the style's max_chars: its own, as wide
+    as the style's tracking makes them (more when it spaces them out, fewer when it pulls them in)."""
+    if not style.tracking:
+        return len(text)
+    metrics = font_metrics(style.font)
+    return len(text) * metrics.width(text, style.size, style.tracking) / metrics.width(text, style.size)
+
+
 def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle) -> Box:
     """`area` moved to have its middle at the style's x, or as near as keeps the line set in it at
-    `size` (with its outline) in the frame. Without an x, it stays centred."""
+    `size` (with its outline and tracking) in the frame. Without an x, it stays centred."""
     if style.x is None:
         return area
-    half = (font_metrics(style.font).width(text, size) + 2 * style.outline) / 2
+    half = (font_metrics(style.font).width(text, size, style.tracking) + 2 * style.outline) / 2
     centre = min(max(style.x, half), OUTPUT_WIDTH - half)
     return _shifted(area, round(centre - area.width / 2) - area.x)
 
@@ -1862,13 +1881,14 @@ def _caption_area(style: CaptionStyle, layout: SceneLayout) -> Box:
 
 
 def _caption_size(text: str, area: Box, style: CaptionStyle) -> float:
-    """The font size for a caption line: the style's, or smaller if the line (with its outline) would
-    be wider than its area at that size."""
-    outline = style.outline
-    width = font_metrics(style.font).width(text, style.size) + 2 * outline
+    """The font size for a caption line: the style's, or smaller if the line (with its outline and
+    tracking) would be wider than its area at that size. Its tracking stays as wide at any size."""
+    outline, tracking = style.outline, style.tracking * (len(text) - 1)
+    width = font_metrics(style.font).width(text, style.size) + tracking + 2 * outline
     if width <= area.width:
         return style.size
-    return math.floor(style.size * (area.width - 2 * outline) / (width - 2 * outline) * 10) / 10
+    size = math.floor(style.size * (area.width - 2 * outline - tracking) / (width - 2 * outline - tracking) * 10) / 10
+    return max(size, MIN_SIZE)
 
 
 def _caption_text(text: str, uppercase: bool = True) -> tuple[str, bool]:

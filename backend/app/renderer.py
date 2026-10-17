@@ -1033,9 +1033,10 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
     behind the Word (Box), or the line as it is for the whole line's time (None)."""
     area = event.area
     centre_x, centre_y = area.x + area.width / 2, area.y + area.height / 2
-    place = f"\\pos({centre_x:g},{centre_y:g})"
+    place = f"\\pos({_tracked(centre_x, style.tracking):g},{centre_y:g})"
     if event.size != style.size:
         place += f"\\fs{event.size:g}"
+    place += _spacing(style.tracking)
     if style.highlight is Highlight.NONE:
         start, end = _ass_time(event.start), _ass_time(event.end)
         line = " ".join(_ass_text(word.text) for word in event.words)
@@ -1061,12 +1062,14 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
 
 def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
     """An ASS drawing of the box behind the line's Word `index`: the Word's width (measured like the
-    line, from the centred line's left edge) and the capitals' height, padded, with rounded corners."""
-    metrics, size = font_metrics(style.font), event.size
+    line, from the centred line's left edge, with its tracking) and the capitals' height, padded,
+    with rounded corners."""
+    metrics, size, tracking = font_metrics(style.font), event.size, style.tracking
     words = [word.text for word in event.words]
-    line = metrics.width(" ".join(words), size)
-    before = metrics.width(" ".join(words[:index]) + (" " if index else ""), size)
-    word = metrics.width(words[index], size)
+    line = metrics.width(" ".join(words), size, tracking)
+    before = " ".join(words[:index]) + (" " if index else "")
+    before = metrics.width(before, size) + tracking * len(before)
+    word = metrics.width(words[index], size, tracking)
     pad_x, pad_y = HIGHLIGHT_PAD_X * size, HIGHLIGHT_PAD_Y * size
     area = event.area
     # The line is centred on the area's middle: its letters' vertical middle is where the middle of
@@ -1134,8 +1137,8 @@ def _hook_events(hook: HookEvent, style: HookStyle, raised: int = 0) -> list[str
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
-        tags = f"\\fs{size:g}" if size != style.size else ""
-        elements.append((2, 5, x, centre_y, ".1f", None, tags, _emphasised(line, spans, style), first + i))
+        tags = (f"\\fs{size:g}" if size != style.size else "") + _spacing(style.tracking)
+        elements.append((2, 5, _tracked(x, style.tracking), centre_y, ".1f", None, tags, _emphasised(line, spans, style), first + i))
 
     step = _stagger(hook, style, first + len(hook.lines) - 1)
     # By part of the hook's time, then by element, as the parts are in time.
@@ -1267,6 +1270,17 @@ def _hook_motion(
             return f"\\move({below},{here})", f"\\alpha&HFF&\\t(\\alpha{shown})"
         return f"\\move({here},{below})", "\\t(\\alpha&HFF&)"
     return place, ""
+
+
+def _spacing(tracking: float) -> str:
+    """The override tag that sets text `tracking` pixels apart; none for none."""
+    return f"\\fsp{tracking:g}" if tracking else ""
+
+
+def _tracked(x: float, tracking: float) -> float:
+    """Where a centred line with `tracking` is placed for its letters to be centred on `x`: libass
+    adds the tracking after its last letter too, and centres that."""
+    return x + tracking / 2
 
 
 def _rounded_box(width: int, height: int, radius: int) -> str:
