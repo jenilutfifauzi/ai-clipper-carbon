@@ -41,8 +41,8 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips, source_copies
-from app.retimed import RETIMED_DIR, CopySize, Making, Retime, copies_used, sweep
-from app.segment_time import segment_time
+from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
+from app.segment_time import overlay_time, segment_time
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
 from app.storage import DiskUsage, disk_usage
@@ -472,15 +472,8 @@ def job_retimed(job: ExistingJob, body: RetimedRequest, store: Store, settings: 
     source = job.source
     if source is None:
         raise HTTPException(404, f"Job {job.id} has no Source")
-    duration = source.metadata.duration
-    if not body.start < body.end <= duration + 0.05:
-        raise HTTPException(422, f"No range {body.start:g}–{body.end:g} s in the Source ({duration:g} s)")
-    if not body.reverse and body.speed == 1:
-        raise HTTPException(422, "A copy forwards at 1× is the Source itself")
-    retime = Retime(body.start, min(body.end, duration), body.reverse, body.speed, body.pitch)
     copies = source_copies(store.job_dir(job.id), source)
-    making = copies.ask(settings.ffmpeg_bin, CopySize.PREVIEW, retime, threads=lambda: 1 if worker.busy else 0)
-    return _retimed_copy(making, retime, lambda name: f"/media/{job.id}/{RETIMED_DIR}/{name}")
+    return _ask_retimed(copies, source.metadata.duration, "the Source", body, f"/media/{job.id}/{RETIMED_DIR}", settings, worker)
 
 
 @router.get("/jobs/{job_id}/events", response_class=EventSourceResponse)
@@ -917,22 +910,15 @@ def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
 def media_retimed(media_id: str, body: RetimedRequest, library: Media, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
     """The preview-size Retimed copy of a video's range from `start` to `end` seconds, as the editor
     asks for it while it previews a reversed item, or one at a Speed a browser won't play, then polls
-    (app/retimed.py): any copy that serves
-    it, or the one being made, or one queued now and made outside the Worker, on every core unless the
-    Worker is running a Job. 404 for an item that isn't a video; 422 for a range outside it, or one
-    played forwards at 1×."""
+    (app/retimed.py): any copy that serves it, or the one being made, or one queued now and made
+    outside the Worker, on every core unless the Worker is running a Job. 404 for an item that isn't
+    a video; 422 for a range outside it, or one played forwards at 1×."""
     try:
         item = library.get(media_id)
         copies = library.retimed(media_id)
     except MediaNotFound:
         raise HTTPException(404, f"No video {media_id}") from None
-    if not body.start < body.end <= (item.duration or 0) + 0.05:
-        raise HTTPException(422, f"No range {body.start:g}–{body.end:g} s in the video ({item.duration:g} s)")
-    if not body.reverse and body.speed == 1:
-        raise HTTPException(422, "A copy forwards at 1× is the video itself")
-    retime = Retime(body.start, min(body.end, item.duration or body.end), body.reverse, body.speed, body.pitch)
-    making = copies.ask(settings.ffmpeg_bin, CopySize.PREVIEW, retime, threads=lambda: 1 if worker.busy else 0)
-    return _retimed_copy(making, retime, lambda name: f"/api/media/{media_id}/retimed/{name}")
+    return _ask_retimed(copies, item.duration or 0.0, "the video", body, f"/api/media/{media_id}/retimed", settings, worker)
 
 
 @router.get("/media/{media_id}/retimed/{name}")
@@ -948,10 +934,21 @@ def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse
     return FileResponse(file, media_type="video/mp4", headers=_DERIVED)
 
 
-def _retimed_copy(making: Making, retime: Retime, url: Callable[[str], str]) -> RetimedCopy:
+def _ask_retimed(
+    copies: Copies, duration: float, what: str, body: RetimedRequest, folder: str, settings: Settings, worker: Worker
+) -> RetimedCopy:
+    """How the preview-size copy of `body`'s range of `what` (the Source, or a video), `duration`
+    seconds long, is coming along (`Copies.ask`, on one thread while the Worker runs a Job), its file
+    served in `folder` (a URL). 422 for a range outside it, or one played forwards at 1×."""
+    if not body.start < body.end <= duration + 0.05:
+        raise HTTPException(422, f"No range {body.start:g}–{body.end:g} s in {what} ({duration:g} s)")
+    if not body.reverse and body.speed == 1:
+        raise HTTPException(422, f"A copy forwards at 1× is {what} itself")
+    retime = Retime(body.start, min(body.end, duration), body.reverse, body.speed, body.pitch)
+    making = copies.ask(settings.ffmpeg_bin, CopySize.PREVIEW, retime, threads=lambda: 1 if worker.busy else 0)
     if making.copy is None:
         return RetimedCopy(progress=making.progress, error=making.error)
-    return RetimedCopy(progress=1, url=url(making.copy.path.name), at=making.copy.at(retime.start, retime.end))
+    return RetimedCopy(progress=1, url=f"{folder}/{making.copy.path.name}", at=making.copy.at(retime.start, retime.end))
 
 
 @router.delete("/media/{media_id}", status_code=204)
@@ -1011,9 +1008,9 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
         item = library.find(overlay.media)
         if item is None or item.kind is MediaKind.AUDIO:
             raise HTTPException(422, f"Overlay {overlay.id}: no video or image {overlay.media} in the Media Library")
-        if item.duration is not None and overlay.offset + overlay.secs * overlay.speed > item.duration + 0.05:
-            sped = f" at {overlay.speed:g}x" if overlay.speed != 1 else ""
-            raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s){sped}")
+        if item.duration is not None and overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse).end > item.duration + 0.05:
+            at_speed = f" at {overlay.speed:g}x" if overlay.speed != 1 else ""
+            raise HTTPException(422, f"Overlay {overlay.id} runs past the end of its video ({item.duration:g} s){at_speed}")
         if KeyProperty.VOLUME in overlay.keys and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
         if (overlay.speed != 1 or overlay.pitch or overlay.reverse) and item.kind is not MediaKind.VIDEO:

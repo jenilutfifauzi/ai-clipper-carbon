@@ -204,8 +204,8 @@ export function Toolbar({
   onInspect: () => void;
   // Opens the Transform sheet: the picked picture's Transform, Crop and Background or decoration.
   onTransform: () => void;
-  // Opens the Speed sheet of the Segment or video Overlay picked alone (actions.ts' `paced`): null for
-  // any other pick.
+  // Opens the Speed sheet of the Segment or video Overlay picked alone (actions.ts'
+  // `speedSheetItem`): null for any other pick.
   onSpeed: (() => void) | null;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;

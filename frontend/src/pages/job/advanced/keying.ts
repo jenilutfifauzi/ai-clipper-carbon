@@ -3,7 +3,7 @@ import { NO_CROP } from "../editor/cropGestures";
 import { PICTURE_KEYS, valueAt } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
 import { sourceSceneAt, type LayoutEdits } from "../editor/manual";
-import { sceneOverride } from "../editor/ScenesTrack";
+import { firstSceneOf, sceneOverride, segmentOfScene } from "../editor/ScenesTrack";
 import { segmentLength } from "../editor/segmentTime";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
@@ -104,17 +104,12 @@ export function segmentSpan(segments: ClipSegment[], id: string, track?: PlayedS
 }
 
 // The Speed of the Segment of `plan` that shows its Scene `index` (1 in a Clip of one range).
-function sceneSpeed(plan: RenderPlan, index: number): number {
-  let first = 0;
-  for (const segment of plan.segments) {
-    if (index < first + segment.scenes) return segment.speed ?? 1;
-    first += segment.scenes;
-  }
-  return 1;
-}
+const sceneSpeed = (plan: RenderPlan, index: number): number => plan.segments[segmentOfScene(plan, index)]?.speed ?? 1;
 
-// `keys` with every Keyframe's time `by` times as far from its item's start.
-const paced = (keys: Keys, by: number): Keys =>
+// `keys` with every Keyframe's time `by` times as far from its item's start, all of them kept: a
+// Manual Scene's shown in Timeline seconds and written back in the Source's. (A Speed change drops
+// those it crowds: `scaledKeys`.)
+const stretchedKeys = (keys: Keys, by: number): Keys =>
   by === 1
     ? keys
     : Object.fromEntries((Object.entries(keys) as [KeyProperty, Keyframe[]][]).map(([prop, list]) => [prop, list.map((key) => ({ ...key, at: toMillionth(key.at * by) }))]));
@@ -143,7 +138,7 @@ export function manualScene(
     start: from,
     first: toMillionth(scene.start - from),
     secs: toMillionth(scene.end - from),
-    keys: paced(own.keys ?? {}, 1 / speed),
+    keys: stretchedKeys(own.keys ?? {}, 1 / speed),
     transform: framing.transform,
     volume: 1,
     override: own,
@@ -158,7 +153,7 @@ function withSceneKeys<T extends LayoutEdits>(edits: T, plan: RenderPlan, index:
   const found = manualScene(edits.layout_overrides, plan, index);
   if (!found) return edits;
   const { override, framing, speed } = found;
-  const next = { ...override, keys: paced(keys, speed), framing: transform ? { ...framing, transform } : framing };
+  const next = { ...override, keys: stretchedKeys(keys, speed), framing: transform ? { ...framing, transform } : framing };
   return { ...edits, layout_overrides: edits.layout_overrides.map((other) => (other === override ? next : other)) };
 }
 
@@ -365,7 +360,7 @@ function scenesOf(edits: AdvancedEdits, plan: RenderPlan, id: string): number[] 
   const index = edits.segments.findIndex((segment) => segment.id === id);
   if (!plan.segments.length) return index === 0 && edits.segments.length === 1 ? plan.scenes.map((_, i) => i) : [];
   if (index === -1 || plan.segments.length !== edits.segments.length) return [];
-  const first = plan.segments.slice(0, index).reduce((count, segment) => count + segment.scenes, 0);
+  const first = firstSceneOf(plan, index);
   return Array.from({ length: plan.segments[index].scenes }, (_, i) => first + i);
 }
 

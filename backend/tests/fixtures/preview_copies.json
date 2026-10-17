@@ -1,0 +1,45 @@
+{
+  "about": "Which preview Retimed copy an item (a Segment, or a video Overlay) plays from (docs/adr/0009). An item plays its file's range, `start` to `end`, at `speed` (1 by default), backwards with `reverse` (false), its pitch following the Speed with `pitch` (false). Its `copy` is the range a copy plays, how (`reverse`, `speed`, `pitch`), or null for an item played from its own file. A browser plays a video at 0.25–4×. Read by backend/tests/test_preview_copies.py and frontend/src/pages/job/editor/retimedCopy.test.ts, so that the backend's rule and the frontend's can't drift.",
+  "items": [
+    {
+      "name": "forwards at 1x",
+      "item": {"start": 1, "end": 3},
+      "copy": null
+    },
+    {
+      "name": "at 4x, the fastest a browser plays",
+      "item": {"start": 1, "end": 3, "speed": 4},
+      "copy": null
+    },
+    {
+      "name": "at 0.25x, the slowest a browser plays",
+      "item": {"start": 1, "end": 3, "speed": 0.25, "pitch": true},
+      "copy": null
+    },
+    {
+      "name": "at 8x",
+      "item": {"start": 1, "end": 3, "speed": 8},
+      "copy": {"start": 1, "end": 3, "reverse": false, "speed": 8, "pitch": false}
+    },
+    {
+      "name": "at 0.125x, its pitch following",
+      "item": {"start": 1, "end": 3, "speed": 0.125, "pitch": true},
+      "copy": {"start": 1, "end": 3, "reverse": false, "speed": 0.125, "pitch": true}
+    },
+    {
+      "name": "reversed at 1x",
+      "item": {"start": 1, "end": 3, "reverse": true},
+      "copy": {"start": 1, "end": 3, "reverse": true, "speed": 1, "pitch": false}
+    },
+    {
+      "name": "reversed at 2x, played at its Speed from the reversed copy",
+      "item": {"start": 1, "end": 3, "speed": 2, "reverse": true, "pitch": true},
+      "copy": {"start": 1, "end": 3, "reverse": true, "speed": 1, "pitch": false}
+    },
+    {
+      "name": "reversed at 8x",
+      "item": {"start": 1, "end": 3, "speed": 8, "reverse": true},
+      "copy": {"start": 1, "end": 3, "reverse": true, "speed": 8, "pitch": false}
+    }
+  ]
+}

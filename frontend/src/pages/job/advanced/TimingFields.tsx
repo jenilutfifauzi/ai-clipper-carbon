@@ -1,5 +1,7 @@
 import { useState } from "react";
+import type { Retiming } from "../../../api";
 import { Slider } from "../../../components/Slider";
+import { offsetAt, overlayTime } from "../editor/segmentTime";
 import { Group } from "../editor/StyleFields";
 import { gestureRetime, type TimedEdge } from "./actions";
 import { ITEM_MIN_SECS, keptOffset } from "./edits";
@@ -12,7 +14,7 @@ import { ITEM_MIN_SECS, keptOffset } from "./edits";
  * video reaches further back or less far (its offset), its end in the video staying.
  * Each field's changes are one `group` of the history.
  */
-export function TimingFields<T extends { id: string; start: number; secs: number; offset?: number; speed?: number; reverse?: boolean }>({
+export function TimingFields<T extends { id: string; start: number; secs: number; offset?: number } & Omit<Retiming, "hold">>({
   item,
   duration,
   length,
@@ -31,8 +33,9 @@ export function TimingFields<T extends { id: string; start: number; secs: number
   const [retime] = useState(gestureRetime);
   const changed = (next: T, edge: TimedEdge, group: string) => onChange(retime(item, next, edge, group), group);
   const offset = item.offset ?? 0;
-  const speed = item.speed ?? 1;
-  const reach = length === undefined ? Infinity : item.reverse ? item.secs + offset / speed : (length - offset) / speed;
+  // The part of its file it plays; it can last until that reaches the file's start (in Reverse) or end.
+  const time = overlayTime({ ...item, offset });
+  const reach = length === undefined ? Infinity : offsetAt(time, item.reverse ? 0 : length);
   const room = Math.min(duration - item.start, reach);
   const seconds = (v: number) => `${v.toFixed(2)} s`;
   return (
@@ -42,7 +45,7 @@ export function TimingFields<T extends { id: string; start: number; secs: number
           label={labels.offset}
           value={offset}
           min={0}
-          max={Math.max(0, length - item.secs * speed)}
+          max={Math.max(0, length - (time.end - time.start))}
           step={0.1}
           format={(v) => `${v.toFixed(1)} s`}
           onChange={(value) => onChange({ ...item, offset: value }, `${item.id}:offset`)}

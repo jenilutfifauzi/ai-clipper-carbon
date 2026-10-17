@@ -51,7 +51,6 @@ import {
   splitter,
   move,
   nudge,
-  paced,
   pickAll,
   placeAfter,
   placeDropped,
@@ -59,9 +58,10 @@ import {
   setFade,
   setHold,
   setReverse,
+  speedSheetItem,
   type Outcome,
   type SegmentDrag,
-  type SpedRef,
+  type SpeedRef,
 } from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
@@ -526,7 +526,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // A notice told once while the change that makes it keeps coming (a drag), not at every step.
   const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
   // A Segment's or video Overlay's Speed set from the inspector: one change of `group`, its ripple included.
-  function setItemSpeed(item: SpedRef, speed: number, group: string) {
+  function setItemSpeed(item: SpeedRef, speed: number, group: string) {
     const overlay = item.kind === "overlay" ? edits.overlays.find((other) => other.id === item.id) : undefined;
     const video = overlay ? (mediaById.get(overlay.media)?.duration ?? undefined) : undefined;
     const outcome = speedGesture(scene, item, speed, group, { longest, video });
@@ -566,16 +566,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const splits = splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
   // A Segment's or video Overlay's Reverse turned on or off (the inspector's switch, R): one change.
-  function setItemReverse(item: SpedRef, reverse: boolean) {
+  function setItemReverse(item: SpeedRef, reverse: boolean) {
     const outcome = setReverse(scene, item, reverse);
     if (outcome) history.set(outcome.edits);
   }
   // The one picked Segment or video Overlay, which R reverses.
   const reversed = reversible(scene, (media) => mediaById.get(media)?.kind === "video");
   // The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens.
-  const sped = paced(scene, (media) => mediaById.get(media)?.kind === "video");
+  const speedSheet = speedSheetItem(scene, (media) => mediaById.get(media)?.kind === "video");
   // The Retimed copy the preview plays a Segment or Overlay from, as the plan has it (retimedCopy.ts).
-  function copyOf(item: SpedRef): RetimedAsk | null {
+  function copyOf(item: SpeedRef): RetimedAsk | null {
     const plan = preview?.plan;
     if (item.kind === "segment") {
       const shown = plan?.segments.find((segment) => segment.id === item.id);
@@ -1105,7 +1105,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         paste={pasteHere}
         onInspect={() => setSheet("inspector")}
         onTransform={() => setSheet("transform")}
-        onSpeed={sped && (() => setSheet("speed"))}
+        onSpeed={speedSheet && (() => setSheet("speed"))}
         onTracks={() => setSheet("tracks")}
         onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
@@ -1156,9 +1156,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               />
             </KeyingContext.Provider>
           ) : sheet === "speed" ? (
-            sped ? (
+            speedSheet ? (
               <SpeedPanel
-                item={sped}
+                item={speedSheet}
                 edits={edits}
                 mediaById={mediaById}
                 copyOf={copyOf}

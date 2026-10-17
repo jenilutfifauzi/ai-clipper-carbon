@@ -5,7 +5,7 @@ import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
 import { copyProgress, useRetimedCopies, type RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
-import type { SpedRef } from "./actions";
+import type { SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { octaveOf, SPEED_CHIPS, SPEED_OCTAVES, SPEED_RANGE, speedAtOctave, speedLabel, speedOf } from "./speed";
 
@@ -93,8 +93,8 @@ export function SpeedFields({
 }
 
 /**
- * The phone's Speed sheet, of `item` (actions.ts' `paced`): the inspector's Speed section, with each
- * change the same history group as there; a Freeze frame's Duration instead.
+ * The phone's Speed sheet, of `item` (actions.ts' `speedSheetItem`): the inspector's Speed section,
+ * with each change the same history group as there; a Freeze frame's Duration instead.
  */
 export function SpeedPanel({
   item,
@@ -107,12 +107,12 @@ export function SpeedPanel({
   onSegment,
   onOverlay,
 }: {
-  item: SpedRef;
+  item: SpeedRef;
   edits: AdvancedEdits;
   mediaById: Map<string, MediaItem>;
-  copyOf: (item: SpedRef) => RetimedAsk | null;
-  onSpeed: (item: SpedRef, speed: number, group: string) => void;
-  onReverse: (item: SpedRef, reverse: boolean) => void;
+  copyOf: (item: SpeedRef) => RetimedAsk | null;
+  onSpeed: (item: SpeedRef, speed: number, group: string) => void;
+  onReverse: (item: SpeedRef, reverse: boolean) => void;
   onHold: (id: string, hold: number) => void;
   onSegment: (segment: ClipSegment, group: string) => void;
   onOverlay: (overlay: Overlay, group: string) => void;
@@ -122,23 +122,23 @@ export function SpeedPanel({
   if (segment?.hold != null) return <HoldFields key={segment.id} hold={segment.hold} onHold={(hold) => onHold(segment.id, hold)} />;
   const fields = segment
     ? {
-        sped: segment,
+        chosen: segment,
         heard: !segment.media || mediaById.get(segment.media)?.has_audio !== false,
         onPitch: (pitch: boolean) => onSegment({ ...segment, pitch }, `segment:${segment.id}:pitch`),
       }
     : overlay && {
-        sped: overlay,
+        chosen: overlay,
         heard: !!mediaById.get(overlay.media)?.has_audio,
         onPitch: (pitch: boolean) => onOverlay({ ...overlay, pitch }, `overlay:${overlay.id}:pitch`),
       };
   if (!fields) return null;
-  const { sped, heard, onPitch } = fields;
+  const { chosen, heard, onPitch } = fields;
   return (
     <SpeedFields
-      key={sped.id}
-      speed={sped.speed ?? 1}
-      pitch={sped.pitch ?? false}
-      reverse={sped.reverse ?? false}
+      key={chosen.id}
+      speed={chosen.speed ?? 1}
+      pitch={chosen.pitch ?? false}
+      reverse={chosen.reverse ?? false}
       heard={heard}
       group={`${item.kind}:${item.id}:speed`}
       copy={copyOf(item)}

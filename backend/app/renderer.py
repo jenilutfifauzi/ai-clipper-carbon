@@ -625,7 +625,7 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
     chains = [f"{source}volume={volume:g},{form}[m0]"]
     for i, event in enumerate(heard, 1):
         length = round(event.end - event.start, 3)
-        read = round(length * event.speed, 3)
+        read = round(event.time.span, 3)
         sped = speed_filters(event.speed, event.pitch, rate)
         filters = [
             f"atrim=start={event.offset:g}:end={event.offset + read:g}", "asetpts=PTS-STARTPTS",
@@ -680,7 +680,7 @@ def _overlay_inputs(
             inputs += _piped(plan, feed)
         else:
             if not event.image:
-                inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{(event.end - event.start) * event.speed:.3f}"]
+                inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}"]
             inputs += ["-i", str(files[event.media])]
         drawn.append((event, first + len(drawn), feed))
     return inputs, drawn
@@ -790,8 +790,7 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
         event = plan.overlays[i]
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
-            shown = SegmentTime(event.offset, event.offset + (event.end - event.start) * event.speed, event.speed)
-            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, shown, rate)
+            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
         else:
             frames, video = PictureFrames(event.picture, item), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)

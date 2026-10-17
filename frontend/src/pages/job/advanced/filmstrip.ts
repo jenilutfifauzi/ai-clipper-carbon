@@ -1,3 +1,4 @@
+import type { Retiming } from "../../../api";
 import type { Layer } from "./ItemCanvas";
 import type { MediaCache } from "./mediaCache";
 import { CHUNK_SECS, filmstripTiles, tileWidth } from "./timelineView";
@@ -23,10 +24,8 @@ export function filmstripLayer({
   cache: MediaCache;
   url: (start: number) => string;
   mediaStart: number;
-  speed?: number;
-  reverse?: boolean;
   media: { duration: number; width: number; height: number };
-}): Layer {
+} & Pick<Retiming, "speed" | "reverse">): Layer {
   return ({ ctx, span, view, width, height, dpr, pps, now, want }) => {
     const tile = tileWidth(height, media.width, media.height);
     const tiles = filmstripTiles({ width, mediaStart, speed, reverse, frames: Math.ceil(media.duration), tile, pps, view, span });

@@ -7,7 +7,7 @@ import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { restyle, setFade, setVolume, type ItemActions, type SpedRef } from "./actions";
+import { restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -59,11 +59,11 @@ export function Inspector({
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
   // A Segment's or video Overlay's Speed set (actions.ts' setSpeed), a change of `group`.
-  onSpeed: (item: SpedRef, speed: number, group: string) => void;
+  onSpeed: (item: SpeedRef, speed: number, group: string) => void;
   // A Segment's or video Overlay's Reverse turned on or off (actions.ts' setReverse).
-  onReverse: (item: SpedRef, reverse: boolean) => void;
+  onReverse: (item: SpeedRef, reverse: boolean) => void;
   // The Retimed copy the preview plays a Segment or video Overlay from, as the plan has it, if any.
-  copyOf: (item: SpedRef) => RetimedAsk | null;
+  copyOf: (item: SpeedRef) => RetimedAsk | null;
   // A Freeze frame's hold set (actions.ts' setHold).
   onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.

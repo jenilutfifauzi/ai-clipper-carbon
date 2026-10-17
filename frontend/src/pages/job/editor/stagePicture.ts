@@ -8,6 +8,7 @@ import type { Candidate, Crop, Framing, Picture, RenderPlan, Transform } from ".
 import { cropCommitted, tidyCrop, wholePicture, type CropEntry } from "./cropGestures";
 import { framingSource, withSceneFraming } from "./manual";
 import { clamp, fittedSize } from "./picture";
+import { firstSceneOf } from "./ScenesTrack";
 import { boundsOf, gripsOf, placed, type Grip, type Placed, type Point, type Size } from "./pictureGestures";
 
 // What of a Candidate places the pictures of its Main Track.
@@ -23,16 +24,6 @@ export type PictureSource =
   | { kind: "manual"; segment: string; scene: number; transform: Transform }
   | { kind: "auto"; segment: string; scene: number };
 
-/** The plan's Segment that its Scene `scene` is one of: the first of a Clip of one range. */
-export function segmentOfScene(plan: RenderPlan, scene: number): number {
-  let first = 0;
-  for (const [index, segment] of plan.segments.entries()) {
-    first += segment.scenes;
-    if (scene < first) return index;
-  }
-  return Math.max(plan.segments.length - 1, 0);
-}
-
 /**
  * The picture of the plan's Segment `segment` and Scene `scene` (those under the playhead); null
  * while the plan isn't of the edits' Main Track yet, or past its end.
@@ -43,7 +34,7 @@ export function pictureSource(edits: PictureEdits, plan: RenderPlan, segment: nu
   if (!own || planned === undefined || (plan.segments.length || 1) !== edits.segments.length) return null;
   if ((planned?.media ?? null) !== (own.media ?? null) || !plan.scenes[scene]) return null;
   if (own.media) return own.framing ? { kind: "media", segment: own.id, transform: own.framing.transform } : null;
-  const first = plan.segments.slice(0, segment).reduce((count, other) => count + other.scenes, 0);
+  const first = firstSceneOf(plan, segment);
   if (planned && (scene < first || scene >= first + planned.scenes)) return null;
   const kept = framingSource(edits, plan, scene);
   return kept ? { kind: "manual", segment: own.id, scene, transform: kept.framing.transform } : { kind: "auto", segment: own.id, scene };

@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { api, mediaProxyUrl, type AudioEvent, type OverlayEvent, type RetimedCopy, type RetimedRange, type SegmentPlan } from "../../../api";
-import { eventSpan, PLAYABLE_SPEEDS, type follow } from "./follow";
-import { paceOf } from "./segmentTime";
+import { api, mediaProxyUrl, type RetimedCopy, type RetimedRange, type SegmentPlan } from "../../../api";
+import { eventSpan, PLAYABLE_SPEEDS, type follow, type PlannedEvent } from "./follow";
+import { overlayTime, rangeOf, retimingOf, type PlayedRange, type SegmentRange } from "./segmentTime";
 
 /**
  * The preview's Retimed copies (docs/adr/0009) of a Media Library video or of a Job's Source, which
- * the backend makes in the background when asked (app/retimed.py): a reversed item's range played backwards, and an item's range at a Speed a
- * browser won't play (outside 0.25–4×) retimed at it, its sound made as the render makes it. A
- * reversed copy plays forwards at the item's Speed; a retimed one at the preview rate only. Until it
- * is made, the item shows the frame the copy will show first, held, with the copy's progress, while
- * the Timeline time runs on.
+ * the backend makes in the background when asked (app/retimed.py): a reversed item's range played
+ * backwards, and an item's range at a Speed a browser won't play (outside 0.25–4×) retimed at it,
+ * its sound made as the render makes it. A reversed copy plays forwards at the item's Speed; a
+ * retimed one at the preview rate only. Until it is made, the item shows the frame the copy will
+ * show first, held, with the copy's progress, while the Timeline time runs on.
  */
 
 // How often a copy being made is asked after.
@@ -24,36 +24,23 @@ const made = new Map<string, { ask: RetimedAsk; copy: RetimedCopy }>();
 // A copy asked for, not heard of yet.
 const ASKED: RetimedCopy = { progress: 0, url: null, at: null, error: null };
 
-/** A range of an item's file, as it plays: at its Speed, forwards or in Reverse, its pitch following the Speed with `pitch`. */
-interface PlayedItem {
-  start: number;
-  end: number;
-  speed?: number;
-  reverse?: boolean;
-  pitch?: boolean;
-}
-
 /**
- * The preview copy an item playing `played` plays from: at a Speed outside PLAYABLE_SPEEDS, its
- * range retimed at it (and reversed if it is); else in Reverse, its range reversed (played at its
- * Speed); null for an item played from its own file. (The backend's twin: `copies_played` in
- * app/retimed.py.)
+ * The preview copy an item playing `played` (a range of its file) plays from: at a Speed outside
+ * PLAYABLE_SPEEDS, its range retimed at it (and reversed if it is); else in Reverse, its range
+ * reversed (played at its Speed); null for an item played from its own file. Its hold isn't looked
+ * at (`segmentCopy`). The backend's twin is `preview_copy` in app/retimed.py; both are tested on the
+ * cases in backend/tests/fixtures/preview_copies.json.
  */
-export function previewCopyOf({ start, end, speed = 1, reverse = false, pitch = false }: PlayedItem): RetimedRange | null {
+export function previewCopyOf({ start, end, speed = 1, reverse = false, pitch = false }: SegmentRange): RetimedRange | null {
   if (speed < PLAYABLE_SPEEDS.min || speed > PLAYABLE_SPEEDS.max) return { start, end, reverse, speed, pitch };
   return reverse ? { start, end, reverse: true } : null;
 }
 
-/** The preview copy a Segment of the plan plays from (`previewCopyOf`), if any: of its range, unless it is a Freeze frame. */
-export const segmentCopy = (segment: SegmentPlan): RetimedRange | null =>
-  segment.hold != null ? null : previewCopyOf({ ...segment, start: segment.source_start, end: segment.source_end });
+/** The preview copy a Segment as played plays from (`previewCopyOf`), if any: of its range, unless it is a Freeze frame. */
+export const segmentCopy = (segment: PlayedRange): RetimedRange | null => (segment.hold != null ? null : previewCopyOf(rangeOf(segment)));
 
-/** A plan's Overlay video or its sound, as it plays. */
-type PlayedEvent = Pick<OverlayEvent | AudioEvent, "start" | "end" | "offset" | "speed" | "pitch" | "reverse">;
-
-/** The preview copy a plan's Overlay video or its sound plays from (`previewCopyOf`), if any: of `(end − start) × speed` from its offset. */
-export const eventCopy = ({ start, end, offset, speed = 1, pitch, reverse }: PlayedEvent) =>
-  previewCopyOf({ start: offset, end: offset + (end - start) * speed, speed, pitch, reverse });
+/** The preview copy a plan's Overlay video or its sound plays from (`previewCopyOf`), if any: of the range of its item it plays (`overlayTime`). */
+export const eventCopy = (event: PlannedEvent) => previewCopyOf({ ...overlayTime({ ...event, secs: event.end - event.start }), pitch: event.pitch });
 
 /** What a Retimed copy is of: a Media Library video, or a Job's Source. */
 export type RetimedItem = { media: string } | { job: string };
@@ -167,7 +154,7 @@ export interface MediaPlay {
 function fromCopy(
   start: number,
   end: number,
-  played: PlayedItem,
+  played: SegmentRange,
   range: RetimedRange,
   copy: RetimedCopy | null,
   proxy: string,
@@ -188,9 +175,8 @@ function fromCopy(
 export function mediaPlay(segment: SegmentPlan, end: number, copy: RetimedCopy | null): MediaPlay {
   const proxy = mediaProxyUrl(segment.media!);
   const range = segmentCopy(segment);
-  if (!range) return { src: proxy, span: { start: segment.start, end, from: segment.source_start, pitch: segment.pitch, ...paceOf(segment) } };
-  const played = { start: segment.source_start, end: segment.source_end, speed: segment.speed, reverse: segment.reverse, pitch: segment.pitch };
-  return fromCopy(segment.start, end, played, range, copy, proxy);
+  if (!range) return { src: proxy, span: { start: segment.start, end, from: segment.source_start, ...retimingOf(segment) } };
+  return fromCopy(segment.start, end, rangeOf(segment), range, copy, proxy);
 }
 
 /**
@@ -199,15 +185,14 @@ export function mediaPlay(segment: SegmentPlan, end: number, copy: RetimedCopy |
  * `src` held at the frame the copy shows first, a `frame` of the Source long.
  */
 export function sourcePlay(segment: SegmentPlan, end: number, range: RetimedRange, copy: RetimedCopy | null, src: string, frame: number): MediaPlay {
-  const played = { start: segment.source_start, end: segment.source_end, speed: segment.speed, reverse: segment.reverse, pitch: segment.pitch };
-  return fromCopy(segment.start, end, played, range, copy, src, frame);
+  return fromCopy(segment.start, end, rangeOf(segment), range, copy, src, frame);
 }
 
 /**
  * How a plan's Overlay video (or its sound) plays: `file` (its proxy, or for its sound its item) from
  * its offset at its Speed; or, when it plays from a copy (`eventCopy`), from its `copy` (`fromCopy`).
  */
-export function eventPlay(event: PlayedEvent, file: string, copy: RetimedCopy | null): MediaPlay {
+export function eventPlay(event: PlannedEvent, file: string, copy: RetimedCopy | null): MediaPlay {
   const { start, end, speed, pitch, reverse } = event;
   const range = eventCopy(event);
   if (!range) return { src: file, span: eventSpan(event) };

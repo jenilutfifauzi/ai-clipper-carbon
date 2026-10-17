@@ -2,7 +2,7 @@
 // backend's tests read too (backend/tests/fixtures/segment_times.json), so that the two can't drift.
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/segment_times.json";
-import { offsetAt, playedSourceAt, playedTimeAt, playedUntil, segmentLength, sourceAt, trackLength, type SegmentRange } from "./segmentTime";
+import { offsetAt, overlayTime, playedSourceAt, playedTimeAt, playedUntil, segmentLength, sourceAt, trackLength, type SegmentRange } from "./segmentTime";
 
 const close = (actual: number, expected: number) => expect(Math.abs(actual - expected)).toBeLessThan(cases.tolerance);
 
@@ -33,6 +33,17 @@ describe("a Segment", () => {
     expect(playedUntil({ ...played, reverse: true }, 5)).toEqual({ ...played, reverse: true, end: 5, source_start: 12 });
     expect(playedUntil({ start: 4, end: 6, source_start: 10, source_end: 10, hold: 2 }, 5)).toEqual({ start: 4, end: 5, source_start: 10, source_end: 10, hold: 1 });
   });
+});
+
+describe("an Overlay", () => {
+  for (const { name, overlay, range, ...cut } of cases.overlays) {
+    test(`${name}: reads the range of its video the shared cases say`, () => {
+      const time = overlayTime(overlay, "video" in cut ? cut.video : undefined, "shown" in cut ? cut.shown : undefined);
+      close(time.start, range[0]);
+      close(time.end, range[1]);
+      expect([time.speed, time.reverse]).toEqual([overlay.speed ?? 1, overlay.reverse ?? false]);
+    });
+  }
 });
 
 describe("a Main Track", () => {

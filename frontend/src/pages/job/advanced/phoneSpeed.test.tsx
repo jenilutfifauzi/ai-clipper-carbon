@@ -8,7 +8,7 @@ import type { ClipSegment, MediaItem, Overlay } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { IDENTITY } from "../editor/picture";
 import { Playback, playedFrom } from "../editor/playback";
-import { freezer, gestureSpeed, paced, setReverse, splitter, type Outcome, type PickContext, type SpedRef } from "./actions";
+import { freezer, gestureSpeed, setReverse, speedSheetItem, splitter, type Outcome, type PickContext, type SpeedRef } from "./actions";
 import { Toolbar } from "./Chrome";
 import type { AdvancedEdits } from "./edits";
 import { picked, type Pick } from "./pick";
@@ -69,7 +69,7 @@ describe("Speed in the phone's toolbar", () => {
     segments: [segment("s1", 100, 106), segment("s2", 200, 206), segment("f", 103, 103, { hold: 1 })],
     overlays: [overlay("o", "clip"), overlay("still", "png")],
   });
-  const at = (pick: Pick) => paced({ edits: state, pick }, videos);
+  const at = (pick: Pick) => speedSheetItem({ edits: state, pick }, videos);
 
   test("is there for one Segment, a Freeze frame or a video Overlay picked alone", () => {
     expect(at(picked(seg("s1")))).toEqual(seg("s1"));
@@ -120,7 +120,7 @@ describe("the Speed sheet", () => {
     const steps: { edits: AdvancedEdits; group?: string }[] = [{ edits: start }];
     const now = () => steps.at(-1)!.edits;
     const speedGesture = gestureSpeed();
-    const sheet = (item: SpedRef) =>
+    const sheet = (item: SpeedRef) =>
       SpeedPanel({
         item,
         edits: now(),

@@ -8,18 +8,13 @@
  * A Segment plays its range at its Speed, forwards or in Reverse, or holds the frame at its start
  * for its hold (a Freeze frame): forwards, `source = start + offset × speed`; in Reverse,
  * `source = end − offset × speed`; held, `source = start`; `offset` being seconds into it on the
- * Timeline.
+ * Timeline. An Overlay of a video plays the part of the video it shows as a Segment plays its range
+ * (`overlayTime`).
  */
-
-/** How a Segment plays its range: at `speed` (1), forwards or in `reverse`, or its first frame held for `hold` seconds. */
-export interface Pace {
-  speed?: number;
-  reverse?: boolean;
-  hold?: number | null;
-}
+import type { Retiming } from "../../../api";
 
 /** A Segment's range, from `start` to `end` on the Source's timeline (or seconds into its video), and how it plays it. */
-export interface SegmentRange extends Pace {
+export interface SegmentRange extends Retiming {
   start: number;
   end: number;
 }
@@ -28,7 +23,7 @@ export interface SegmentRange extends Pace {
  * A Segment as played: its range from `source_start` to `source_end`, from `start` to `end` seconds
  * into the Clip. Without `source_end`, its range is as long as it plays.
  */
-export interface PlayedRange extends Pace {
+export interface PlayedRange extends Retiming {
   start: number;
   end: number;
   source_start: number;
@@ -63,12 +58,12 @@ export function offsetAt(segment: SegmentRange, source: number): number {
  * left edge.
  */
 export const playingFrom = (from: number, speed?: number, reverse?: boolean): SegmentRange =>
-  reverse ? { start: -Infinity, end: from, ...paceOf({ speed, reverse }) } : { start: from, end: Infinity, ...paceOf({ speed }) };
+  reverse ? { start: -Infinity, end: from, ...retimingOf({ speed, reverse }) } : { start: from, end: Infinity, ...retimingOf({ speed }) };
 
 /** The range of a Segment as played, and how it plays it. */
 export function rangeOf(played: PlayedRange): SegmentRange {
   const end = played.source_end ?? played.source_start + (played.end - played.start) * (played.speed ?? 1);
-  return { start: played.source_start, end, ...paceOf(played) };
+  return { start: played.source_start, end, ...retimingOf(played) };
 }
 
 /** The Source time a Segment as played shows at `time` seconds into the Clip. */
@@ -84,9 +79,34 @@ export function playedUntil<T extends PlayedRange>(played: T, time: number): T {
   return played.reverse ? { ...played, end: time, source_start: cut } : { ...played, end: time, source_end: cut };
 }
 
-/** How `segment` plays: only what it says, so that a Segment forwards at 1× copies as it was. */
-export function paceOf({ speed, reverse, hold }: Pace): Pace {
-  return { ...(speed !== undefined && { speed }), ...(reverse !== undefined && { reverse }), ...(hold !== undefined && { hold }) };
+/** How `item` plays: only what it says, so that a Segment forwards at 1× copies as it was. */
+export function retimingOf({ speed, pitch, reverse, hold }: Retiming): Retiming {
+  return {
+    ...(speed !== undefined && { speed }),
+    ...(pitch !== undefined && { pitch }),
+    ...(reverse !== undefined && { reverse }),
+    ...(hold !== undefined && { hold }),
+  };
+}
+
+/** An item played from `offset` seconds into its file, `secs` long on the Timeline: an Overlay, or a Music Clip at 1×. */
+export interface OverlayPlay extends Omit<Retiming, "hold"> {
+  offset: number;
+  secs: number;
+}
+
+/**
+ * The range of its video an Overlay plays, as a Segment plays its range: `secs × speed` of it from
+ * `offset`, backwards in Reverse. Cut where the video ends, `video` seconds into it, and after the
+ * `shown` seconds of it before the Clip ends, as the planner cuts it: the part it shows first is kept,
+ * which in Reverse is its range's end, so that its range then starts later. Its sound plays alike,
+ * and a Music Clip's song at 1×. (The backend's twin: `overlay_time` in backend/app/segment_time.py.)
+ */
+export function overlayTime({ offset, secs, speed = 1, reverse = false }: OverlayPlay, video = Infinity, shown = Infinity): SegmentRange {
+  const whole = Math.min(offset + secs * speed, video);
+  if (shown >= secs) return { start: offset, end: whole, speed, reverse };
+  const read = Math.max(0, shown) * speed;
+  return reverse ? { start: Math.max(offset, whole - read), end: whole, speed, reverse } : { start: offset, end: Math.min(whole, offset + read), speed, reverse };
 }
 
 /** How long a Transition of `secs` overlaps the Segments either side of its join, `before` and `after` long on the Timeline: half the shorter at most. */

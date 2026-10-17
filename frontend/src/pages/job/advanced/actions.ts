@@ -595,7 +595,7 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
 }
 
 /** A Segment or a video Overlay, which has a Speed. */
-export type SpedRef = { kind: "segment" | "overlay"; id: string };
+export type SpeedRef = { kind: "segment" | "overlay"; id: string };
 
 /**
  * Segment or video Overlay `item`'s Speed set to `speed` (speedOf), a trim at its end (ADR 0009): its
@@ -606,7 +606,7 @@ export type SpedRef = { kind: "segment" | "overlay"; id: string };
  * the `longest` clip. An Overlay keeps its start and shows as much of its video, its end kept within
  * the video (`video` seconds long). Null for a Freeze frame, or an item that isn't there.
  */
-export function setSpeed(scene: PickContext, item: SpedRef, value: number, limits: { longest?: number; video?: number } = {}): Outcome | null {
+export function setSpeed(scene: PickContext, item: SpeedRef, value: number, limits: { longest?: number; video?: number } = {}): Outcome | null {
   const { edits, pick } = scene;
   const speed = speedOf(value);
   if (item.kind === "overlay") {
@@ -615,15 +615,15 @@ export function setSpeed(scene: PickContext, item: SpedRef, value: number, limit
     const by = (overlay.speed ?? 1) / speed;
     const room = limits.video === undefined ? Infinity : (limits.video - overlay.offset) / speed;
     const secs = round(Math.max(Math.min(overlay.secs * by, room), ITEM_MIN_SECS));
-    const sped = rekeyed({ ...overlay, speed, secs, keys: scaledKeys(overlay.keys, by) }, 0, secs);
-    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? sped : other)) }, pick };
+    const atSpeed = rekeyed({ ...overlay, speed, secs, keys: scaledKeys(overlay.keys, by) }, 0, secs);
+    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? atSpeed : other)) }, pick };
   }
   const index = edits.segments.findIndex((other) => other.id === item.id);
   const segment = edits.segments[index];
   if (!segment || segment.hold != null) return null;
   const by = (segment.speed ?? 1) / speed;
-  const sped = { ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) };
-  const [before, after] = [segmentLength(segment), segmentLength(sped)];
+  const atSpeed = { ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) };
+  const [before, after] = [segmentLength(segment), segmentLength(atSpeed)];
   const refused = (notice: string): Outcome => ({ edits, pick, notice });
   if (segment.media && after < MEDIA_MIN_SECS) {
     return refused(`A video's Segment lasts ${MEDIA_MIN_SECS} s at least: at ${speedLabel(speed)} this one would last ${after.toFixed(2)} s.`);
@@ -632,7 +632,7 @@ export function setSpeed(scene: PickContext, item: SpedRef, value: number, limit
   if (limits.longest !== undefined && length > limits.longest + 1e-6) {
     return refused(`A clip can last at most ${limits.longest} s: at ${speedLabel(speed)} this one would last ${Math.round(length)} s.`);
   }
-  const next = { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? sped : other)) };
+  const next = { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? atSpeed : other)) };
   return { ...rippledAtEnd(scene, next, index, before, after), pick };
 }
 
@@ -644,7 +644,7 @@ export function setSpeed(scene: PickContext, item: SpedRef, value: number, limit
  */
 export function gestureSpeed() {
   let last: { group: string; origin: PickContext; made: AdvancedEdits } | null = null;
-  return (scene: PickContext, item: SpedRef, speed: number, group: string, limits?: { longest?: number; video?: number }): Outcome | null => {
+  return (scene: PickContext, item: SpeedRef, speed: number, group: string, limits?: { longest?: number; video?: number }): Outcome | null => {
     const origin = last && last.group === group && last.made === scene.edits ? last.origin : scene;
     const outcome = setSpeed({ ...origin, pick: scene.pick, magnetic: scene.magnetic }, item, speed, limits);
     if (!outcome) return null;
@@ -659,7 +659,7 @@ export function gestureSpeed() {
  * several picked, or for a Freeze frame (it holds one frame), an image Overlay (`video` says whether
  * a Media Library item is a video), a Text Layer or a Music Clip.
  */
-export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpedRef | null {
+export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpeedRef | null {
   const only = onlyItem(scene.pick);
   const { segments, overlays } = scene.edits;
   if (only?.kind === "segment" && segments.some((segment) => segment.id === only.id && segment.hold == null)) return { kind: "segment", id: only.id };
@@ -671,7 +671,7 @@ export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (
  * The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens: as
  * `reversible`, and a Freeze frame too (its sheet shows its Duration).
  */
-export function paced(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpedRef | null {
+export function speedSheetItem(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpeedRef | null {
   const only = onlyItem(scene.pick);
   if (only?.kind === "segment" && scene.edits.segments.some((segment) => segment.id === only.id)) return { kind: "segment", id: only.id };
   return reversible(scene, video);
@@ -683,7 +683,7 @@ export function paced(scene: { edits: AdvancedEdits; pick: Pick }, video: (media
  * mirrored (mirroredKeys), so that its motion stays on the same frames of its video, as a Speed
  * change scales them. Null for a Freeze frame, or an item that isn't there.
  */
-export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: SpedRef, reverse: boolean): Outcome | null {
+export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: SpeedRef, reverse: boolean): Outcome | null {
   const { edits, pick } = scene;
   const turned = <T extends { reverse?: boolean; keys?: Keys }>(other: T, length: number): T =>
     other.keys && reverse !== (other.reverse ?? false) ? { ...other, reverse, keys: mirroredKeys(other.keys, length) } : { ...other, reverse };

@@ -3,13 +3,14 @@
 sweep when a Job is opened, through the API, of copies no Candidate nor Revision uses, of the
 leftovers of copies cut short, but never of a copy being written."""
 
+import json
 import threading
 from pathlib import Path
 
 import pytest
 
 from app.config import load_settings
-from app.retimed import Copies, CopySize, Retime, copies_played, sweep
+from app.retimed import Copies, CopySize, Retime, copies_played, preview_copy, sweep
 from test_media_library import upload
 from test_render import add, reviewed
 from test_retimed_copies import counter, from_source_at_30  # noqa: F401
@@ -26,6 +27,16 @@ def test_an_item_plays_from_a_preview_copy_retimed_at_a_speed_a_browser_wont_pla
     # The render reads the reversed copy at the Speed; the preview, one reversed and retimed.
     assert copies_played(1, 3, 8, reverse=True) == [(CopySize.FULL, Retime(1, 3)), (CopySize.PREVIEW, Retime(1, 3, True, 8))]
     assert Retime(1, 3, False, 8).name(CopySize.PREVIEW) == "retimed-preview-1000-3000-x8.mp4"
+
+
+CASES = json.loads((Path(__file__).parent / "fixtures" / "preview_copies.json").read_text())
+
+
+@pytest.mark.parametrize("case", CASES["items"], ids=lambda case: case["name"])
+def test_the_preview_copy_an_item_plays_from_is_as_the_shared_cases_say(case):
+    item, copy = case["item"], case["copy"]
+    played = preview_copy(item["start"], item["end"], item.get("speed", 1.0), item.get("reverse", False), item.get("pitch", False))
+    assert played == (copy and Retime(copy["start"], copy["end"], copy["reverse"], copy["speed"], copy["pitch"]))
 
 
 def made(folder: Path, *names: str) -> None:

@@ -118,7 +118,7 @@ class Episode:
         (A Media Library video's are checked against it by the API; their Timeline's length against
         the longest clip by `update`, once their Transitions are known.)"""
         if not any(segment.media is None and segment.hold is None for segment in segments):
-            raise InvalidEdit("A clip needs at least one Segment of the episode that plays (not a Freeze frame)")
+            raise InvalidEdit("A clip needs at least one Segment of the episode that plays: a Freeze frame holds one frame")
         snapped = []
         for i, segment in enumerate(segments):
             if (segment.media is None) is not (segment.framing is None):

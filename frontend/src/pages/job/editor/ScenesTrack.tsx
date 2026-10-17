@@ -25,13 +25,23 @@ const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blu
  */
 export function sourceTime(plan: RenderPlan, scene: number, time: number): number | null {
   if (!plan.segments.length) return sourceAt(plan, time);
-  let first = 0;
-  for (const segment of plan.segments) {
-    if (scene < first + segment.scenes) return segment.media ? null : playedSourceAt(segment, time);
-    first += segment.scenes;
-  }
-  return null;
+  const segment = plan.segments[segmentOfScene(plan, scene)];
+  return segment.media ? null : playedSourceAt(segment, time);
 }
+
+/** The plan's Segment that its Scene `scene` is one of: the first of a Clip of one range. */
+export function segmentOfScene(plan: RenderPlan, scene: number): number {
+  let first = 0;
+  for (const [index, segment] of plan.segments.entries()) {
+    first += segment.scenes;
+    if (scene < first) return index;
+  }
+  return Math.max(plan.segments.length - 1, 0);
+}
+
+/** The first of the plan's Scenes that are its Segment `segment`'s. */
+export const firstSceneOf = (plan: RenderPlan, segment: number): number =>
+  plan.segments.slice(0, segment).reduce((count, other) => count + other.scenes, 0);
 
 /**
  * The plan's Scene at `time`: of the Segment `segment` (the one playing), when the Clip is cut, so
@@ -39,7 +49,7 @@ export function sourceTime(plan: RenderPlan, scene: number, time: number): numbe
  */
 export function sceneAt(plan: RenderPlan, time: number, segment = 0): number {
   if (plan.segments.length) {
-    const first = plan.segments.slice(0, segment).reduce((count, other) => count + other.scenes, 0);
+    const first = firstSceneOf(plan, segment);
     const count = plan.segments[segment]?.scenes ?? 1;
     for (let i = first; i < first + count - 1; i++) if (time < plan.scenes[i].end) return i;
     return Math.min(first + count - 1, plan.scenes.length - 1);

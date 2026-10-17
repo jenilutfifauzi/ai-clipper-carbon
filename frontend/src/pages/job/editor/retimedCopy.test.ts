@@ -3,6 +3,7 @@
 // and Segments of the Source played from a copy (.scratch/speed/issues/07-reversed-source-segment.md): `Playback`
 // with the fake videos and clock, the Segment's own videos following it as `mediaPlay` and `sourcePlay` say.
 import { afterEach, describe, expect, test, vi } from "vitest";
+import shared from "../../../../../backend/tests/fixtures/preview_copies.json";
 import { api, type RetimedCopy, type SegmentPlan } from "../../../api";
 import { follow } from "./follow";
 import { onOwnVideos, Playback, playedFrom } from "./playback";
@@ -93,6 +94,15 @@ function spedMedia(range: [number, number], speed: number, copy: RetimedCopy | n
 }
 
 const retimed = (name: string): RetimedCopy => ({ progress: 1, url: `/api/media/intro/retimed/${name}`, at: 0, error: null });
+
+describe("the preview copy an item plays from, on the cases the backend's tests read too", () => {
+  for (const { name, item, copy } of shared.items) {
+    test(name, () => {
+      const range = previewCopyOf(item);
+      expect(range && { reverse: false, speed: 1, pitch: false, ...range }).toEqual(copy);
+    });
+  }
+});
 
 describe("an item at a Speed a browser won't play", () => {
   test("plays from a copy retimed at it outside 0.25–4×, in Reverse from a reversed one, else from its own file", () => {

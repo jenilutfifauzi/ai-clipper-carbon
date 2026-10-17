@@ -49,7 +49,7 @@ from app.derived import _LatestFirst
 from app.library import shrink
 from app.planner import AudioEvent, OverlayEvent, RenderPlan
 from app.renderer import last_lines, speed_filters
-from app.segment_time import SegmentTime
+from app.segment_time import SegmentTime, overlay_time
 
 E = TypeVar("E", OverlayEvent, AudioEvent)
 
@@ -279,35 +279,39 @@ def read_from_copies(
     def forwards(event: E) -> E:
         if not event.reverse:
             return event
-        path, played = read(event.media, SegmentTime(event.offset, event.offset + (event.end - event.start) * event.speed, event.speed, True))
+        path, played = read(event.media, event.time)
         return replace(event, media=path, offset=played.start, reverse=False)
 
     overlays, audio = [forwards(event) for event in plan.overlays], [forwards(event) for event in plan.audio]
     return replace(plan, segments=segments, overlays=overlays, audio=audio), files
 
 
+def preview_copy(start: float, end: float, speed: float = 1.0, reverse: bool = False, pitch: bool = False) -> Retime | None:
+    """What the preview copy of an item (a Segment, or a video Overlay) playing its file's range from
+    `start` to `end` at `speed`, backwards when `reverse`, plays: at a Speed a browser won't play
+    (outside PLAYABLE_SPEEDS), its range retimed at it; else in Reverse, its range reversed, which the
+    preview plays at its Speed. None for an item played from its own file. The editor's twin is
+    `previewCopyOf` in frontend/src/pages/job/editor/retimedCopy.ts; both are tested on the cases in
+    tests/fixtures/preview_copies.json."""
+    if not PLAYABLE_SPEEDS[0] <= speed <= PLAYABLE_SPEEDS[1]:
+        return Retime(start, end, reverse, speed, pitch)
+    return Retime(start, end) if reverse else None
+
+
 def copies_played(start: float, end: float, speed: float = 1.0, reverse: bool = False, pitch: bool = False) -> list[tuple[CopySize, Retime]]:
     """The Retimed copies an item (a Segment, or a video Overlay) playing its file's range from `start`
     to `end` at `speed`, backwards when `reverse`, is played from, by their size: in Reverse, the
-    full-size reversed copy its render reads; and the preview's, at a Speed a browser won't play
-    (outside PLAYABLE_SPEEDS) retimed at it, else in Reverse the reversed one played at its Speed.
-    Empty for an item played from its own file. (The editor's twin is `previewCopyOf` in
-    frontend/src/pages/job/editor/retimedCopy.ts.)"""
-    played = []
-    if reverse:
-        played.append((CopySize.FULL, Retime(start, end)))
-    if not PLAYABLE_SPEEDS[0] <= speed <= PLAYABLE_SPEEDS[1]:
-        played.append((CopySize.PREVIEW, Retime(start, end, reverse, speed, pitch)))
-    elif reverse:
-        played.append((CopySize.PREVIEW, Retime(start, end)))
-    return played
+    full-size reversed copy its render reads; and its `preview_copy`. Empty for an item played from
+    its own file."""
+    played = [(CopySize.FULL, Retime(start, end))] if reverse else []
+    preview = preview_copy(start, end, speed, reverse, pitch)
+    return played if preview is None else [*played, (CopySize.PREVIEW, preview)]
 
 
 def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float]) -> dict[str | None, list[tuple[CopySize, Retime]]]:
     """The Retimed copies `candidates` play from (`copies_played`), by their item: a Media Library
     video's id, or None for the Source. An Overlay is of one of the videos `durations` gives (an
-    image's has none), its range cut where its video and the Clip end as the planner cuts it
-    (`_overlay_event`)."""
+    image's has none), its range cut where its video and the Clip end (`overlay_time`)."""
     used: dict[str | None, list[tuple[CopySize, Retime]]] = defaultdict(list)
     for candidate in candidates:
         for segment in candidate.main_track():
@@ -315,10 +319,9 @@ def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float])
                 used[segment.media] += copies_played(segment.start, segment.end, segment.speed, segment.reverse, segment.pitch)
         for overlay in candidate.overlays:
             if overlay.media in durations:
-                whole = min(overlay.offset + overlay.secs * overlay.speed, durations[overlay.media])
-                shown = max(0.0, min(overlay.secs, candidate.duration - overlay.start)) * overlay.speed
-                start, end = (max(overlay.offset, whole - shown), whole) if overlay.reverse else (overlay.offset, min(whole, overlay.offset + shown))
-                used[overlay.media] += copies_played(start, end, overlay.speed, overlay.reverse, overlay.pitch)
+                shown = candidate.duration - overlay.start
+                time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, durations[overlay.media], shown)
+                used[overlay.media] += copies_played(time.start, time.end, overlay.speed, overlay.reverse, overlay.pitch)
     return used
 
 

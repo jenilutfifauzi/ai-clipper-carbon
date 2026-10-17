@@ -10,9 +10,11 @@ its hold (a Freeze frame):
 - forwards: `source = start + offset × speed`;
 - in Reverse: `source = end − offset × speed`;
 - held: `source = start`;
-`offset` being seconds into it on the Timeline.
+`offset` being seconds into it on the Timeline. An Overlay of a video plays the part of the video
+it shows as a Segment plays its range (`overlay_time`).
 """
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -84,13 +86,37 @@ class _Ranged(Protocol):
     @property
     def end(self) -> float: ...
 
+    @property
+    def speed(self) -> float: ...
+
+    @property
+    def reverse(self) -> bool: ...
+
+    @property
+    def hold(self) -> float | None: ...
+
 
 def segment_time(segment: _Ranged) -> SegmentTime:
     """How a Candidate's Segment plays. One saved before Speed, Reverse and Freeze frames, or without
     them, plays forwards at 1×."""
-    return SegmentTime(
-        segment.start, segment.end, getattr(segment, "speed", 1.0), getattr(segment, "reverse", False), getattr(segment, "hold", None)
-    )
+    return SegmentTime(segment.start, segment.end, segment.speed, segment.reverse, segment.hold)
+
+
+def overlay_time(
+    offset: float, secs: float, speed: float = 1.0, reverse: bool = False, video: float = math.inf, shown: float = math.inf
+) -> SegmentTime:
+    """How an Overlay `secs` long on the Timeline plays its video (docs/adr/0009), as a Segment plays
+    its range: `secs × speed` of it from `offset`, backwards when `reverse`. Cut where the video ends,
+    `video` seconds into it, and after the `shown` seconds of it before the Clip ends, as the planner
+    cuts it: the part it shows first is kept, which in Reverse is its range's end, so that its range
+    then starts later. Its sound plays alike, and a Music Clip's song at 1×."""
+    whole = min(offset + secs * speed, video)
+    if shown >= secs:
+        return SegmentTime(offset, whole, speed, reverse)
+    read = max(0.0, shown) * speed
+    if reverse:
+        return SegmentTime(max(offset, whole - read), whole, speed, True)
+    return SegmentTime(offset, min(whole, offset + read), speed)
 
 
 def transition_overlap(secs: float, before: float, after: float) -> float:

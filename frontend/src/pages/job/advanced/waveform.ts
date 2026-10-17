@@ -1,3 +1,4 @@
+import type { Retiming } from "../../../api";
 import type { Layer } from "./ItemCanvas";
 import type { MediaCache } from "./mediaCache";
 import { offsetAt, playingFrom, sourceAt } from "../editor/segmentTime";
@@ -30,13 +31,11 @@ export function waveformLayer({
   cache: MediaCache;
   url: (start: number) => string;
   mediaStart: number;
-  speed?: number;
-  reverse?: boolean;
   duration: number;
   gain: (time: number) => number;
   color: string;
   band?: number;
-}): Layer {
+} & Pick<Retiming, "speed" | "reverse">): Layer {
   return ({ ctx, span, width, height, dpr, pps, now, want }) => {
     const tall = Math.min(band ?? height, height);
     const middle = height - tall / 2;

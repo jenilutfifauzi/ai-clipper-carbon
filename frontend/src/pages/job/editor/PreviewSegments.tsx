@@ -8,7 +8,7 @@ import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { loudness } from "./loudness";
 import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
-import { sceneAt } from "./ScenesTrack";
+import { firstSceneOf, sceneAt } from "./ScenesTrack";
 
 /**
  * The plan's Segments on videos of their own (`onOwnVideos`), over the Source's panels while they
@@ -35,10 +35,7 @@ export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPl
 }
 
 // Segment `index`'s (first) Scene.
-export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undefined {
-  const first = plan.segments.slice(0, index).reduce((count, segment) => count + segment.scenes, 0);
-  return plan.scenes[first];
-}
+export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undefined => plan.scenes[firstSceneOf(plan, index)];
 
 /**
  * A video's Segment, shown until `end` (where it gives way), or within a Transition when `end` is its

@@ -6,6 +6,7 @@ import type { ClipSegment, Framing, LayoutOverride, Picture, RenderPlan, ScenePl
 import { NO_CROP, wholePicture, type CropEntry } from "./cropGestures";
 import { BLURRED, IDENTITY } from "./picture";
 import { gripsOf } from "./pictureGestures";
+import { segmentOfScene } from "./ScenesTrack";
 import {
   croppedPicture,
   cropKept,
@@ -16,7 +17,6 @@ import {
   pictureCrop,
   pictureSource,
   pressTogglesPick,
-  segmentOfScene,
   tidyTransform,
   wholeOnStage,
   withPictureCrop,

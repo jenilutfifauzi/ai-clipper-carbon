@@ -117,7 +117,7 @@ from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.keyframes import value_at
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
-from app.segment_time import SegmentTime, transition_overlap
+from app.segment_time import SegmentTime, overlay_time, transition_overlap
 from app.styles import (
     CaptionPosition,
     CaptionStyle,
@@ -482,6 +482,11 @@ class AudioEvent:
     pitch: bool = False
     reverse: bool = False
 
+    @property
+    def time(self) -> SegmentTime:
+        """How it plays its item (`overlay_time`), `offset`s being seconds from its `start` into the Clip."""
+        return overlay_time(self.offset, self.end - self.start, self.speed, self.reverse)
+
 
 @dataclass(frozen=True)
 class SegmentPlan:
@@ -588,6 +593,11 @@ class OverlayEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+
+    @property
+    def time(self) -> SegmentTime:
+        """How a video's plays it (`overlay_time`), `offset`s being seconds from its `start` into the Clip."""
+        return overlay_time(self.offset, self.end - self.start, self.speed, self.reverse)
 
 
 @dataclass(frozen=True)
@@ -1213,23 +1223,20 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
 
 def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo]) -> OverlayEvent | None:
     """The Overlay as drawn: its item placed by its Transform (`picture_of`) with its corners, border
-    and shadow, cut where the Clip or its video ends (at its Speed). Its `offset` is where the part of
-    its video it shows begins: in Reverse, which shows that part from its end, a cut at the Clip's end
-    leaves out the start of the part, so it begins later. None when its item is gone or it would start
-    at or after either end."""
+    and shadow, cut where the Clip or its video ends (`overlay_time`). Its `offset` is where the part
+    of its video it shows begins: in Reverse, which shows that part from its end, a cut at the Clip's
+    end leaves out the start of the part, so it begins later. None when its item is gone or it would
+    start at or after either end."""
     item = items.get(overlay.media)
     start = round(overlay.start, 3)
     if item is None or not item.width or not item.height or start >= duration:
         return None
-    whole = start + overlay.secs
-    if item.duration is not None:
-        if overlay.offset >= item.duration:
-            return None
-        whole = min(whole, start + (item.duration - overlay.offset) / overlay.speed)
-    end = round(min(whole, duration), 3)
-    offset = 0.0
-    if item.duration is not None:
-        offset = round(overlay.offset + ((whole - end) * overlay.speed if overlay.reverse else 0.0), 3)
+    if item.duration is not None and overlay.offset >= item.duration:
+        return None
+    video = math.inf if item.duration is None else item.duration
+    time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, video, duration - start)
+    end = round(start + time.length, 3)
+    offset = 0.0 if item.duration is None else round(time.start, 3)
     picture = with_motion(picture_of(item.width, item.height, overlay.transform, overlay.crop), overlay.transform, overlay.keys, start)
     # The radius is a share of the shorter side as drawn, so it scales with the picture; the border
     # and shadow are in output pixels, so they don't.

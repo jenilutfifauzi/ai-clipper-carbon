@@ -421,10 +421,20 @@ export interface MusicClip {
   keys: Keys;
 }
 
+// How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
+// following the Speed with `pitch`, backwards from a Retimed copy with `reverse`; or, a Freeze
+// frame's, its first frame held for `hold` seconds. Left out, they are 1, false, false and null.
+export interface Retiming {
+  speed?: number;
+  pitch?: boolean;
+  reverse?: boolean;
+  hold?: number | null;
+}
+
 // A Music Clip (or an Overlay video's sound, `id` its item's) as heard, cut where the Clip or its
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
-// `volume`; its fades multiply them.
-export interface AudioEvent {
+// `volume`; its fades multiply them. An Overlay's sound plays (end − start) × speed of its item.
+export interface AudioEvent extends Omit<Retiming, "hold"> {
   media: string;
   start: number;
   end: number;
@@ -434,11 +444,6 @@ export interface AudioEvent {
   fade_out: number;
   gain: Keyframe[];
   id: string;
-  // An Overlay's sound plays (end − start) × speed of its item, its pitch following the Speed with
-  // `pitch`, backwards with `reverse` (docs/adr/0009). A plan made by hand may leave them out, at 1 and false.
-  speed?: number;
-  pitch?: boolean;
-  reverse?: boolean;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -520,7 +525,9 @@ export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
 // sound at `volume` (0, muted, by default); its corners rounded `radius` times its drawn shorter
 // side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
 // and opacity over its length, replacing those fields of its Transform, and a video's volume.
-export interface Overlay {
+// A video's shows `secs` × speed of it from `offset` (docs/adr/0009); in Reverse its left edge shows
+// `offset + secs × speed`, its right edge `offset`.
+export interface Overlay extends Omit<Retiming, "hold"> {
   id: string;
   media: string;
   start: number;
@@ -529,11 +536,6 @@ export interface Overlay {
   transform: Transform;
   crop: Crop;
   volume: number;
-  // A video's: it shows `secs` × speed of it from `offset` (docs/adr/0009), its sound's pitch following the Speed with `pitch`;
-  // with `reverse`, backwards from a Retimed copy: its left edge shows `offset + secs × speed`, its right edge `offset`.
-  speed?: number;
-  pitch?: boolean;
-  reverse?: boolean;
   radius: number;
   border: Border | null;
   shadow: Shadow | null;
@@ -565,8 +567,9 @@ export interface Picture {
   unscaled?: [number, number] | null;
 }
 
-// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still.
-export interface OverlayEvent {
+// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still. A video's
+// shows (end − start) × speed of it from `offset` (docs/adr/0009).
+export interface OverlayEvent extends Omit<Retiming, "hold"> {
   id: string;
   media: string;
   picture: Picture;
@@ -574,10 +577,6 @@ export interface OverlayEvent {
   end: number;
   offset: number;
   image: boolean;
-  // A video's Speed: it shows (end − start) × speed of it from `offset` (docs/adr/0009), backwards with `reverse`.
-  speed?: number;
-  pitch?: boolean;
-  reverse?: boolean;
 }
 
 // How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
@@ -608,8 +607,9 @@ export interface TransitionEvent {
 }
 
 // A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,
-// from `start` to `end` seconds into the Clip.
-export interface SegmentPlan {
+// from `start` to `end` seconds into the Clip; a Freeze frame holds its frame at `source_start`. Its
+// Retiming is always sent; a plan made by hand may leave it out.
+export interface SegmentPlan extends Retiming {
   start: number;
   end: number;
   source_start: number;
@@ -624,14 +624,6 @@ export interface SegmentPlan {
   gain: Keyframe[];
   // Its Segment's id.
   id: string;
-  // How it plays its range (docs/adr/0009): at its Speed, forwards or in Reverse, or its frame at
-  // `source_start` held for `hold` seconds. Always sent; a plan made by hand may leave them out, at
-  // 1, false and null.
-  speed?: number;
-  reverse?: boolean;
-  hold?: number | null;
-  // Whether its sound's pitch follows its Speed, as tape's does; kept by default.
-  pitch?: boolean;
 }
 
 export interface RenderPlan {
@@ -702,32 +694,24 @@ export interface FontInfo {
 // from `start` to `end`, snapped to Words; or, with `media`, a Media Library video from `start` to
 // `end` seconds into it, placed by its `framing` (which only it has), its own sound at `volume`.
 // A video's `keys` move its Framing's Transform and shape its volume (ADR 0008), each `at` in
-// seconds from its start; the Source's have none.
-export interface ClipSegment {
+// seconds from its start; the Source's have none. Its range plays in (end − start) ÷ speed on the
+// Timeline (docs/adr/0009), its left edge showing `end` in Reverse; a Freeze frame holds the frame
+// at `start`, silent, and its `end` is `start`.
+export interface ClipSegment extends Retiming {
   id: string;
   start: number;
   end: number;
   media?: string | null;
   framing?: Framing | null;
   volume?: number;
-  // Its range plays in (end − start) ÷ speed on the Timeline (docs/adr/0009); its sound's pitch follows the speed with `pitch`.
-  speed?: number;
-  pitch?: boolean;
-  // Its range played backwards, from a Retimed copy (ADR 0009); its left edge is `end`.
-  reverse?: boolean;
   keys?: Keys;
-  // A Freeze frame's (ADR 0009): how long it holds the frame at `start`, silent; `end` is `start`.
-  hold?: number | null;
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
 // `speed` (1 by default), its pitch following the Speed with `pitch`.
-export interface RetimedRange {
+export interface RetimedRange extends Omit<Retiming, "hold"> {
   start: number;
   end: number;
-  reverse?: boolean;
-  speed?: number;
-  pitch?: boolean;
 }
 
 // A Retimed copy as it is coming along: its `progress` from 0 to 1, then its `url` and where in it

@@ -1,4 +1,5 @@
 import { mainTrackOf, type Candidate } from "../../../api";
+import { overlayTime, sourceAt, type OverlayPlay } from "../editor/segmentTime";
 import { same } from "../editor/merge";
 
 /**
@@ -87,14 +88,16 @@ export const newId = () => crypto.randomUUID().slice(0, 8);
 
 /**
  * Where in its file a song or video Overlay that keeps `from` to `to` seconds of its span (from its
- * start on the Timeline; either may reach outside it) starts, its `offset`: as much further as its
- * start moves, times its Speed. An Overlay in Reverse shows its part of its video from the end, so
- * its `offset`, the part's start, goes as much further as its end moves in (ADR 0009). Never before
- * its file's start; as it was when it doesn't move.
+ * start on the Timeline; either may reach outside it) starts, its `offset`: the start of the part of
+ * its file it shows between them (`overlayTime`). So its offset goes as much further as its start
+ * moves, times its Speed; in Reverse, which shows its part of its video from the end, as much
+ * further as its end moves in (ADR 0009). Never before its file's start; as it was when it doesn't
+ * move.
  */
-export function keptOffset(item: { offset: number; secs: number; speed?: number; reverse?: boolean }, from: number, to: number): number {
-  const moved = item.reverse ? item.secs - to : from;
-  return Math.abs(moved) < 1e-9 ? item.offset : round(Math.max(0, item.offset + moved * (item.speed ?? 1)));
+export function keptOffset(item: OverlayPlay, from: number, to: number): number {
+  const time = overlayTime(item);
+  const kept = Math.min(sourceAt(time, from), sourceAt(time, to));
+  return Math.abs(kept - item.offset) < 1e-9 ? item.offset : round(Math.max(0, kept));
 }
 
 // A Music Clip's longest fade (fade_in and fade_out in backend/app/candidates.py).

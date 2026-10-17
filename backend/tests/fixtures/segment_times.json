@@ -1,5 +1,5 @@
 {
-  "about": "Segments' Timeline lengths and the mapping between Timeline time and Source time (docs/adr/0009). A Segment is its range on the Source (or in its video), `start` to `end`, and how it plays it: `speed` (1 by default), `reverse` (false) and `hold` (none). Each of `at` is [Timeline seconds into the Segment, the Source time shown there]. Read by backend/tests/test_segment_time.py and frontend/src/pages/job/editor/segmentTime.test.ts, so that the backend's and the frontend's mappings can't drift.",
+  "about": "Segments' Timeline lengths and the mapping between Timeline time and Source time (docs/adr/0009). A Segment is its range on the Source (or in its video), `start` to `end`, and how it plays it: `speed` (1 by default), `reverse` (false) and `hold` (none). Each of `at` is [Timeline seconds into the Segment, the Source time shown there]. An Overlay of a video, `secs` long on the Timeline, reads its `range` of the video from its `offset` as a Segment plays its range (at `speed`, in `reverse`), cut where its `video` (seconds long) ends and after the `shown` seconds of it before the Clip ends (both none by default). Read by backend/tests/test_segment_time.py and frontend/src/pages/job/editor/segmentTime.test.ts, so that the backend's and the frontend's mappings can't drift.",
   "tolerance": 1e-9,
   "segments": [
     {
@@ -91,6 +91,60 @@
       ],
       "transitions": [{"after": "a", "secs": 0.5}, {"after": "b", "secs": 0.4}],
       "length": 4.1
+    }
+  ],
+  "overlays": [
+    {
+      "name": "an Overlay reads its length on the Timeline of its video from its offset",
+      "overlay": {"offset": 2, "secs": 3},
+      "range": [2, 5]
+    },
+    {
+      "name": "at 2x, twice its length",
+      "overlay": {"offset": 1, "secs": 2, "speed": 2},
+      "range": [1, 5]
+    },
+    {
+      "name": "in Reverse, the same part, played from its end",
+      "overlay": {"offset": 1, "secs": 2, "speed": 2, "reverse": true},
+      "range": [1, 5]
+    },
+    {
+      "name": "cut where its video ends",
+      "overlay": {"offset": 4, "secs": 3, "speed": 2},
+      "video": 8,
+      "range": [4, 8]
+    },
+    {
+      "name": "in Reverse, cut where its video ends, keeps its offset",
+      "overlay": {"offset": 4, "secs": 3, "speed": 2, "reverse": true},
+      "video": 8,
+      "range": [4, 8]
+    },
+    {
+      "name": "cut where the Clip ends, keeps the part shown first",
+      "overlay": {"offset": 1, "secs": 4, "speed": 2},
+      "shown": 1.5,
+      "range": [1, 4]
+    },
+    {
+      "name": "in Reverse, cut where the Clip ends, keeps the end of its part: it starts later",
+      "overlay": {"offset": 1, "secs": 4, "speed": 2, "reverse": true},
+      "shown": 1.5,
+      "range": [6, 9]
+    },
+    {
+      "name": "in Reverse, cut where its video and the Clip end",
+      "overlay": {"offset": 1, "secs": 4, "speed": 2, "reverse": true},
+      "video": 7,
+      "shown": 1.5,
+      "range": [4, 7]
+    },
+    {
+      "name": "starting after the Clip ends, reads nothing",
+      "overlay": {"offset": 1, "secs": 2},
+      "shown": -0.5,
+      "range": [1, 1]
     }
   ]
 }

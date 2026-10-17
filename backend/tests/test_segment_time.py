@@ -2,12 +2,13 @@
 frontend's tests read too (fixtures/segment_times.json)."""
 
 import json
+import math
 from pathlib import Path
 
 import pytest
 
 from app.candidates import Segment
-from app.segment_time import SegmentTime, segment_time, track_length
+from app.segment_time import SegmentTime, overlay_time, segment_time, track_length
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CASES = json.loads((FIXTURES / "segment_times.json").read_text())
@@ -40,6 +41,15 @@ def test_a_main_tracks_length_is_its_segments_less_their_transitions_overlaps(ca
     by_join = {transition["after"]: transition["secs"] for transition in case["transitions"]}
     joins = [by_join.get(segment["id"]) for segment in segments]
     assert track_length([timed(segment) for segment in segments], joins) == pytest.approx(case["length"], abs=CLOSE)
+
+
+@pytest.mark.parametrize("case", CASES["overlays"], ids=lambda case: case["name"])
+def test_an_overlay_reads_the_range_of_its_video_the_shared_cases_say(case):
+    given = case["overlay"]
+    speed, reverse = given.get("speed", 1.0), given.get("reverse", False)
+    time = overlay_time(given["offset"], given["secs"], speed, reverse, case.get("video", math.inf), case.get("shown", math.inf))
+    assert (time.start, time.end) == pytest.approx(tuple(case["range"]), abs=CLOSE)
+    assert (time.speed, time.reverse) == (speed, reverse)
 
 
 def test_a_part_of_a_segment_plays_the_range_shown_then_in_its_direction():

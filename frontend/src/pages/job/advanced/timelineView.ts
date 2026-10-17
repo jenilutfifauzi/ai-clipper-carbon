@@ -3,7 +3,7 @@
 // chunks an item needs, the frame each tile shows, the Peaks level for a zoom, the gain along an
 // item, and the Volume Line's curve; for .scratch/navigation-playback/spec.md, the Edit Points; and
 // for .scratch/keyframes/spec.md, the ruler's diamonds.
-import type { Keyframe, Keys } from "../../../api";
+import type { Keyframe, Keys, Retiming } from "../../../api";
 import { valueAt } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import { playingFrom, sourceAt } from "../editor/segmentTime";
@@ -233,14 +233,12 @@ export function filmstripTiles({
 }: {
   width: number;
   mediaStart: number;
-  speed?: number;
-  reverse?: boolean;
   frames: number;
   tile: number;
   pps: number;
   view: Span;
   span: Span;
-}): Tile[] {
+} & Omit<Retiming, "pitch" | "hold">): Tile[] {
   const tiles: Tile[] = [];
   const from = Math.max(span.left, 0);
   const to = Math.min(span.right, width);
@@ -306,13 +304,11 @@ export function chunksAcross({
   duration,
 }: {
   mediaStart: number;
-  speed?: number;
-  reverse?: boolean;
   pps: number;
   width: number;
   span: Span;
   duration: number;
-}): number[] {
+} & Omit<Retiming, "pitch" | "hold">): number[] {
   const media = playingFrom(mediaStart, speed, reverse);
   const [left, right] = [sourceAt(media, Math.max(span.left, 0) / pps), sourceAt(media, Math.min(span.right, width) / pps)];
   const from = Math.max(Math.min(left, right), 0);

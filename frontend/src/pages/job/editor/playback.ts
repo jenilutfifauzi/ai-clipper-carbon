@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { previewSpeed } from "./follow";
 import { loopStart, wrapTarget, type LoopRegion } from "./loop";
-import { paceOf, playedSourceAt, playedTimeAt, playedUntil, segmentLength, type Pace, type PlayedRange, type SegmentRange } from "./segmentTime";
+import { segmentCopy } from "./retimedCopy";
+import { playedSourceAt, playedTimeAt, playedUntil, retimingOf, segmentLength, type PlayedRange, type SegmentRange } from "./segmentTime";
 
 type Listener = () => void;
 
@@ -16,11 +17,10 @@ export interface PlayedSegment extends PlayedRange {
   source_end: number;
   media?: string | null;
   volume?: number;
-  pitch?: boolean;
 }
 
 /** A Main Track of these Segments as played, back to back from 0 s. */
-export function playedFrom(segments: (SegmentRange & { media?: string | null; volume?: number; pitch?: boolean })[]): PlayedSegment[] {
+export function playedFrom(segments: (SegmentRange & { media?: string | null; volume?: number })[]): PlayedSegment[] {
   let at = 0;
   return segments.map((segment) => {
     const played = {
@@ -30,8 +30,7 @@ export function playedFrom(segments: (SegmentRange & { media?: string | null; vo
       source_end: segment.end,
       media: segment.media ?? null,
       volume: segment.volume ?? 1,
-      ...paceOf(segment),
-      ...(segment.pitch !== undefined && { pitch: segment.pitch }),
+      ...retimingOf(segment),
     };
     at = played.end;
     return played;
@@ -59,10 +58,9 @@ const SNIPPET_SECS = 0.08;
 
 /**
  * Whether a Segment plays on videos of its own while the decks wait: a video's, or one of the Source
- * played from a Retimed copy (ADR 0009): in Reverse, or at a Speed a browser won't play.
+ * played from a Retimed copy (`segmentCopy`, ADR 0009): in Reverse, or at a Speed a browser won't play.
  */
-export const onOwnVideos = (segment: Pace & { media?: string | null }) =>
-  !!segment.media || (segment.hold == null && (!!segment.reverse || previewSpeed(segment.speed) !== (segment.speed ?? 1)));
+export const onOwnVideos = (segment: PlayedRange & { media?: string | null }) => !!segment.media || segmentCopy(segment) !== null;
 
 // Whether the time runs on a clock through `segment`: one on its own videos, which follow it, or a
 // Freeze frame, whose frame waits paused for its hold.
