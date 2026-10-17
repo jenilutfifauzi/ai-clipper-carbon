@@ -144,6 +144,38 @@ export function TransformFields({
   );
 }
 
+/**
+ * A Text Layer's Transform as numbers (ADR 0007, 0010): its centre, its scale in percent (its words,
+ * stroke and plate drawn larger or smaller as they are, never rewrapped: its size is its Text
+ * Style's), its rotation and opacity; and Reset (unscaled, unturned and opaque, where it is). It is
+ * never stretched nor flipped. Each field's changes are one `group` of the history, named after it.
+ */
+export function TextTransformFields({ transform, onChange }: { transform: Transform; onChange: (transform: Transform, field: string) => void }) {
+  const set = (field: keyof Transform, value: number) => onChange({ ...transform, [field]: value }, field);
+  return (
+    <Group title="Transform">
+      <div className="grid grid-cols-2 gap-3">
+        <NumberField label="X" unit="px" value={transform.x} range={[0, FRAME.width]} onChange={(x) => set("x", x)} />
+        <NumberField label="Y" unit="px" value={transform.y} range={[0, FRAME.height]} onChange={(y) => set("y", y)} />
+        <NumberField label="Scale" unit="%" value={transform.scale * 100} range={percents(SCALE_RANGE)} onChange={(scale) => set("scale", scale / 100)} />
+        <NumberField label="Rotation" unit="°" value={transform.rotation} range={keyedRange("rotation", false)} onChange={(rotation) => set("rotation", rotation)} />
+      </div>
+      <Slider
+        label="Opacity"
+        value={transform.opacity}
+        min={0}
+        max={1}
+        step={0.05}
+        format={(v) => `${Math.round(v * 100)}%`}
+        onChange={(opacity) => set("opacity", opacity)}
+      />
+      <Button size="sm" variant="ghost" className="self-start" onClick={() => onChange({ ...transform, scale: 1, rotation: 0, opacity: 1 }, "reset")}>
+        Reset
+      </Button>
+    </Group>
+  );
+}
+
 const BACKGROUNDS = [
   { value: "blur", label: "Blur" },
   { value: "colour", label: "Colour" },
