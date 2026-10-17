@@ -90,6 +90,7 @@ from app.config import FONTS_DIR, RenderTuning
 from app.fonts import font
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
 from app.keyframes import linear_steps
+from app.segment_time import SegmentTime
 from app.planner import (
     FRAME,
     HOOK_LEADING,
@@ -346,9 +347,8 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
     for segment in plan.segments:
-        length = f"{segment.source_end - segment.source_start:.3f}"
         read = files[segment.media] if segment.media else source
-        inputs += ["-ss", f"{segment.source_start:.3f}", "-t", length, "-i", str(read)]
+        inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{segment.time.span:.3f}", "-i", str(read)]
     count = len(plan.segments)
     plain = all(segment.media is None and segment.volume == 1 for segment in plan.segments)
     if plain and not plan.transitions:
@@ -357,7 +357,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     chains = []
     for i, segment in enumerate(plan.segments):
         if segment.silent:
-            chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.source_end - segment.source_start:.3f}[a{i}]")
+            chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
         elif segment.gain:
             # Its time from 0 at its start, which its Keyframes' are from.
             chains.append(f"[{i}:a:0]asetpts=PTS-STARTPTS,{','.join(_volume(segment.gain, segment.volume))},{form}[a{i}]")
@@ -688,22 +688,23 @@ def _keyed_items(plan: RenderPlan, files: dict[str, Path], source: Path) -> dict
     return items
 
 
-def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, float]]:
+def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]:
     """The plan's Scenes of a keyed picture (a video Segment's, or a Manual Scene's of the Source), by
     their places among its Scenes, each with its video's Media Library id (None: the Source) and
-    where the Scene starts in it, in seconds."""
-    keyed: dict[int, tuple[str | None, float]] = {}
+    how the Scene plays it."""
+    keyed: dict[int, tuple[str | None, SegmentTime]] = {}
     if not plan.segments:
+        whole = SegmentTime(plan.start, plan.end)
         for i, scene in enumerate(plan.scenes):
             if scene.picture is not None and scene.picture.motion:
-                keyed[i] = (None, plan.start + scene.start)
+                keyed[i] = (None, whole.part(scene.start, scene.end))
         return keyed
     first = 0
     for segment in plan.segments:
         for i in range(first, first + segment.scenes):
             scene = plan.scenes[i]
             if scene.picture is not None and scene.picture.motion:
-                keyed[i] = (segment.media, segment.source_start + scene.start - segment.start)
+                keyed[i] = (segment.media, segment.time.part(scene.start - segment.start, scene.end - segment.start))
         first += segment.scenes
     return keyed
 
@@ -727,7 +728,9 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             continue
         event = plan.overlays[i]
         if isinstance(item, Path):
-            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.offset, rate)
+            # An Overlay's video plays forwards from its offset for as long as it shows.
+            shown = SegmentTime(event.offset, event.offset + (event.end - event.start))
+            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, shown, rate)
         else:
             frames, video = PictureFrames(event.picture, item), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)

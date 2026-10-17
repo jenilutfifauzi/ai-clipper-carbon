@@ -40,6 +40,7 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
+from app.segment_time import segment_time
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
 from app.storage import DiskUsage, disk_usage
@@ -380,8 +381,8 @@ def candidate_thumbnail(candidate_id: str, job: ExistingJob, store: Store, setti
     if job.source is None:
         raise HTTPException(404, f"Job {job.id} has no Source")
     job_dir = store.job_dir(job.id)
-    first = candidate.source_segments()[0]
-    at = first.start + min(settings.render.poster_secs, (first.end - first.start) / 2)
+    first = segment_time(candidate.source_segments()[0])
+    at = first.source_at(min(settings.render.poster_secs, first.length / 2))
     still = job_dir / STILLS_DIR / f"{round(at * 1000)}.jpg"
     if not still.is_file():
         try:

@@ -3,6 +3,7 @@ import type { Layout, LayoutOverride, RenderPlan, SceneLayout } from "../../../a
 import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
 import { offeredLayouts, portraitSource, shownLayout } from "./layouts";
+import { playedSourceAt, sourceAt } from "./segmentTime";
 import type { Geometry } from "./Timeline";
 
 const LOOKS: Record<SceneLayout, string> = {
@@ -23,10 +24,10 @@ const NAMES: Record<SceneLayout, string> = { track: "Track", split: "Split", blu
  * no Source time (and no Layout Overrides).
  */
 export function sourceTime(plan: RenderPlan, scene: number, time: number): number | null {
-  if (!plan.segments.length) return plan.start + time;
+  if (!plan.segments.length) return sourceAt(plan, time);
   let first = 0;
   for (const segment of plan.segments) {
-    if (scene < first + segment.scenes) return segment.media ? null : segment.source_start + (time - segment.start);
+    if (scene < first + segment.scenes) return segment.media ? null : playedSourceAt(segment, time);
     first += segment.scenes;
   }
   return null;

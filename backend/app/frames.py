@@ -41,6 +41,7 @@ import numpy as np
 
 from app.candidates import Border, Shadow
 from app.planner import FRAME, Picture, picture_at
+from app.segment_time import SegmentTime
 
 # The transparent margin round a picture before it is turned, in output pixels.
 MARGIN = 2
@@ -272,15 +273,15 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
 class VideoDecode:
     """The frames of a keyed video Overlay's `picture`, from `video` (by `ffmpeg`), one for each of
     the Clip's frames at `fps` (`numbers`) while the Overlay shows, from `start` to `end` seconds
-    into the Clip, `offset` seconds into the video: each cropped and flipped as the picture is, no
+    into the Clip, playing the video as `shown` says: each cropped and flipped as the picture is, no
     larger than it is drawn at its largest over its span (`size`), RGBA. Each is the video's last
-    frame at or before the Clip's frame's time, the video's first frame from its offset at the
+    frame at or before the Clip's frame's time, the video's first frame from `shown`'s start at the
     Overlay's start, as the still chain lays a video Overlay over the frames (renderer.py's
     `_overlay`). When the video ends early, its last frame is held."""
 
-    def __init__(self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, offset: float, fps: float) -> None:
+    def __init__(self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float) -> None:
         self.ffmpeg, self.video, self.picture = ffmpeg, video, picture
-        self.start, self.end, self.offset, self.fps = start, end, offset, fps
+        self.start, self.end, self.shown, self.fps = start, end, shown, fps
         self.numbers = frame_numbers(start, end, fps)
         # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
         # what is sent is no more than what is drawn.
@@ -303,7 +304,7 @@ class VideoDecode:
         ]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
-            "-ss", f"{self.offset:.3f}", "-t", f"{self.end - self.start:.3f}", "-i", str(self.video),
+            "-ss", f"{self.shown.start:.3f}", "-t", f"{self.shown.span:.3f}", "-i", str(self.video),
             "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(len(self.numbers)),
             "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
         ]

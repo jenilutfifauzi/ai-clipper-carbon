@@ -1,5 +1,6 @@
 import type { ClipSegment, Keyframe, MusicClip, Overlay, TextLayer } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
+import { offsetAt, playedSourceAt, rangeOf, segmentLength, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { rekeyed, toMillionth } from "./keyActions";
 import { draggedSegments, SEGMENT_MIN_SECS } from "./MainTrack";
@@ -135,8 +136,6 @@ export const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }
   hook_secs,
 });
 
-const segmentSecs = (segment: ClipSegment) => segment.end - segment.start;
-
 /**
  * The picked items removed and their gaps closed, whatever the Magnetic timeline's switch says (Ripple
  * delete, GLOSSARY.md): the Text Layers, Music Clips and Overlays of a Track after a removed one of
@@ -204,7 +203,7 @@ export function insertSegment(scene: PickContext, segment: ClipSegment, place: n
   const next = { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] };
   const at = scene.played[place]?.start ?? scene.duration;
   return {
-    edits: rippledIf(next, [{ kind: "inserted", at, secs: segmentSecs(segment) }], scene.magnetic ?? false).edits,
+    edits: rippledIf(next, [{ kind: "inserted", at, secs: segmentLength(segment) }], scene.magnetic ?? false).edits,
     pick: picked({ kind: "segment", id: segment.id }),
   };
 }
@@ -240,7 +239,7 @@ export function dragSegment(
   const whole = origin.planned[index];
   if (change.edge === "move" || !whole || !scene.magnetic) return { edits: { ...scene.edits, segments }, pick: scene.pick };
   // Longer (or shorter) by `by` at the trimmed edge, as planned.
-  const by = segments[index].end - segments[index].start - (whole.source_end - whole.source_start);
+  const by = segmentLength(segments[index]) - segmentLength(rangeOf(whole));
   const at = change.edge === "end" ? whole.end + Math.min(by, 0) : whole.start;
   const { edits, notice } = rippledIf(
     origin.edits,
@@ -286,7 +285,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     const last = edits.segments.indexOf(segments.at(-1)!);
     const block = segments.map((segment) => ({ ...segment, id: idOf(scene) }));
     next.segments = [...edits.segments.slice(0, last + 1), ...block, ...edits.segments.slice(last + 1)];
-    added = block.reduce((sum, segment) => sum + segmentSecs(segment), 0);
+    added = block.reduce((sum, segment) => sum + segmentLength(segment), 0);
     const at = scene.played[last + 1]?.start ?? duration;
     Object.assign(next, rippledIf(next, [{ kind: "inserted", at, secs: added }], scene.magnetic ?? false).edits);
     copies.push(...block.map((segment) => ({ kind: "segment" as const, id: segment.id })));
@@ -337,11 +336,15 @@ export function split(scene: PickContext, at: number): Outcome | null {
   for (const segment of segments) {
     if (!inside(scene, { kind: "segment", id: segment.id }, at)) continue;
     const shown = scene.played[edits.segments.indexOf(segment)];
-    const there = shown.source_start + at - shown.start;
+    const there = playedSourceAt(shown, at);
     const cut = Math.round((segment.media ? there : scene.gap(there)) * 1000) / 1000;
     // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start.
-    const second = rekeyed<ClipSegment>({ ...segment, id: idOf(scene), start: cut }, cut - segment.start, segment.end - segment.start);
-    const first = rekeyed<ClipSegment>({ ...segment, start: shown.source_start, end: cut }, shown.source_start - segment.start, cut - segment.start);
+    const second = rekeyed<ClipSegment>({ ...segment, id: idOf(scene), start: cut }, offsetAt(segment, cut), segmentLength(segment));
+    const first = rekeyed<ClipSegment>(
+      { ...segment, start: shown.source_start, end: cut },
+      offsetAt(segment, shown.source_start),
+      offsetAt(segment, cut),
+    );
     next.segments = next.segments.flatMap((other) => (other.id === segment.id ? [first, second] : [other]));
     tails.push({ kind: "segment", id: second.id });
   }
@@ -511,8 +514,13 @@ export type TimedEdge = "move" | "start" | "end";
  */
 export function retimed<T extends { start: number } & ({ secs: number } | { end: number })>(origin: T, next: T, edge: TimedEdge): T {
   if (!("keys" in origin) || !origin.keys) return next;
-  const from = edge === "move" ? 0 : next.start - origin.start;
-  const length = "secs" in next ? next.secs : next.end - next.start;
+  if ("secs" in next) {
+    const from = edge === "move" ? 0 : next.start - origin.start;
+    return rekeyed({ ...next, keys: origin.keys }, from, from + next.secs);
+  }
+  // A Segment's, in seconds into it on the Timeline.
+  const from = edge === "move" ? 0 : offsetAt(origin as SegmentRange, next.start);
+  const length = segmentLength(next);
   return rekeyed({ ...next, keys: origin.keys }, from, from + length);
 }
 

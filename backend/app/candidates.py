@@ -8,6 +8,7 @@ from typing import Annotated, Any, NamedTuple
 from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
 
 from app.fonts import DEFAULT_FONT
+from app.segment_time import segment_time, track_length
 from app.styles import DEFAULT_PRESET, Animation, Colour, FontId, StyleOverrides
 
 # The longest text a Word Edit gives a Word.
@@ -469,7 +470,7 @@ class Segment:
     def __post_init__(self) -> None:
         if self.media is None and any(self.keys.values()):
             raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
-        length = round(self.end - self.start, 6)
+        length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
 
 
@@ -498,20 +499,10 @@ class Transition:
     secs: Annotated[FiniteFloat, Field(ge=0.2, le=1.5)] = 0.5
 
 
-def transition_overlap(secs: float, before: float, after: float) -> float:
-    """How long a Transition of `secs` overlaps the Segments either side of its join, `before` and
-    `after` seconds long: half the shorter of them at most."""
-    return round(min(secs, before / 2, after / 2), 3)
-
-
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:
-    """How long a Main Track of `segments` plays: their lengths, less their Transitions' overlaps."""
-    by_join = {transition.after: transition for transition in transitions}
-    total = sum(segment.end - segment.start for segment in segments)
-    for before, after in zip(segments, segments[1:]):
-        if (transition := by_join.get(before.id)) is not None:
-            total -= transition_overlap(transition.secs, before.end - before.start, after.end - after.start)
-    return round(total, 3)
+    """How long a Main Track of `segments` plays: their Timeline lengths, less their Transitions' overlaps."""
+    by_join = {transition.after: transition.secs for transition in transitions}
+    return track_length([segment_time(segment) for segment in segments], [by_join.get(segment.id) for segment in segments])
 
 
 # The id of a Clip's one Segment when it isn't cut.

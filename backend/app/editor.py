@@ -17,6 +17,7 @@ from app.logos import LogoStore
 from app.media import MediaStore
 from app.planner import RenderPlan, match_edits
 from app.rendering import Analysis, candidate_plan, needed_analysis, saved_analysis, saved_words, transcript_words
+from app.segment_time import segment_time
 from app.styles import PresetStore
 from app.transcript import Transcript, Word
 
@@ -88,19 +89,19 @@ def preview_plan(
     )
     shown, at = [], 0.0
     for segment, heard in zip(segments, words):
-        length = segment.end - segment.start
+        played = segment_time(segment)
         ordered = sorted(heard, key=lambda word: word.start)
         # Matched in the Segment; given back as the Candidate holds them.
         shifted = [replace(edit, at=edit.at - segment.start) for edit in candidate.word_edits]
         original = {id(edit): kept for edit, kept in zip(shifted, candidate.word_edits)}
         shown += [
             PreviewWord(
-                word.text, round(word.start + at, 3), round(word.end + at, 3),
+                word.text, round(played.offset_of(word.start) + at, 3), round(played.offset_of(word.end) + at, 3),
                 None if edit is None else original[id(edit)], round(segment.start + (word.start + word.end) / 2, 3),
             )
             for word, edit in zip(ordered, match_edits(ordered, shifted))
-            if 0 <= (word.start + word.end) / 2 < length
+            if 0 <= (word.start + word.end) / 2 < played.span
         ]
-        at += length
+        at += played.length
     analysed = all(analysis is not None for analysis, wanted in zip(analyses, needed) if wanted is not Analysis.NONE)
     return PreviewPlan(plan, shown, words_source, analysed=analysed)

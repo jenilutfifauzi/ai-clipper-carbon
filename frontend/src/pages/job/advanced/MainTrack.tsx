@@ -9,6 +9,7 @@ import { TranscriptPicker } from "../TranscriptPicker";
 import { FITTED } from "../editor/manual";
 import { IDENTITY, mediaSize } from "../editor/picture";
 import type { Playback, PlayedSegment } from "../editor/playback";
+import { rangeOf, segmentLength, sourceAt } from "../editor/segmentTime";
 import { shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyedVolume, useKeyNotice, useKeyTime } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, resetFraming, type KeySpan } from "./keying";
@@ -44,10 +45,16 @@ export function draggedSegments(
     const others = origin.filter((other) => other.id !== id);
     return [...others.slice(0, place), segment, ...others.slice(place)];
   }
+  // Where the dragged edge now is, in its file.
+  const range = rangeOf(whole);
   const next =
     change.edge === "start"
-      ? { ...segment, start: round(Math.min(Math.max(whole.source_start + change.start - drawn.start, 0), whole.source_end - SEGMENT_MIN_SECS)), end: whole.source_end }
-      : { ...segment, start: whole.source_start, end: round(Math.max(Math.min(whole.source_end + change.end - drawn.end, lengthOf(segment)), whole.source_start + SEGMENT_MIN_SECS)) };
+      ? { ...segment, start: round(Math.min(Math.max(sourceAt(range, change.start - drawn.start), 0), whole.source_end - SEGMENT_MIN_SECS)), end: whole.source_end }
+      : {
+          ...segment,
+          start: whole.source_start,
+          end: round(Math.max(Math.min(sourceAt(range, segmentLength(range) + change.end - drawn.end), lengthOf(segment)), whole.source_start + SEGMENT_MIN_SECS)),
+        };
   return origin.map((other) => (other.id === id ? next : other));
 }
 
@@ -128,7 +135,7 @@ export function SegmentFields({
       {segment.media ? (
         <>
           <Hint more="Drag its edges to trim it, or drag it to another place.">
-            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {(segment.end - segment.start).toFixed(1)} s
+            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {segmentLength(segment).toFixed(1)} s
           </Hint>
           {segment.framing && (
             <FramingFields segment={segment} framing={segment.framing} item={item} playback={playback} span={span} onChange={onChange} onCropMode={onCropMode} />
@@ -151,7 +158,7 @@ export function SegmentFields({
       ) : (
         <>
           <Hint more="Drag its edges to trim it, or drag it to another place. Its ends snap to words.">
-            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {(segment.end - segment.start).toFixed(1)} s
+            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {segmentLength(segment).toFixed(1)} s
           </Hint>
           <Slider
             label="This Segment's sound"

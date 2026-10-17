@@ -4,6 +4,7 @@ import { PICTURE_KEYS, valueAt } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
 import { sourceSceneAt, type LayoutEdits } from "../editor/manual";
 import { sceneOverride } from "../editor/ScenesTrack";
+import { segmentLength } from "../editor/segmentTime";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
 import type { AdvancedEdits } from "./edits";
@@ -93,14 +94,13 @@ const soundOf = (set: Constants) => (set.volume === undefined ? {} : { volume: s
 
 /**
  * Where Segment `id` plays on the Timeline: from where it starts on the Main Track as planned
- * (`track`), for as long as its range; null when there is no such Segment.
+ * (`track`), for its Timeline length; null when there is no such Segment.
  */
 export function segmentSpan(segments: ClipSegment[], id: string, track?: PlayedSegment[]): KeySpan | null {
   const index = segments.findIndex((segment) => segment.id === id);
   if (index === -1) return null;
   const planned = track?.length === segments.length ? track : playedFrom(segments);
-  const { start, end } = segments[index];
-  return { start: planned[index].start, secs: toMillionth(end - start) };
+  return { start: planned[index].start, secs: segmentLength(segments[index]) };
 }
 
 /**

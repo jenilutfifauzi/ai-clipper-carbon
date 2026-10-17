@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
+import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, round } from "./edits";
@@ -59,10 +60,6 @@ export function cut(scene: PickContext, from: Place): { clipboard: Clipboard; ou
   return clipboard && outcome ? { clipboard, outcome } : null;
 }
 
-// How long a Transition of `secs` overlaps Segments `before` and `after` long (transition_overlap in
-// backend/app/candidates.py): at most half the shorter.
-const overlap = (secs: number, before: number, after: number) => Math.min(secs, Math.min(before, after) / 2);
-
 const count = (n: number, one = "item", several = "items") => `${n} ${n === 1 ? one : several}`;
 
 // Which of `words` holds `at` (on the Source's timeline), if one does.
@@ -113,12 +110,10 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
       .filter((transition) => ids.has(transition.after) && ids.has(order[order.indexOf(transition.after) + 1]))
       .map((transition) => ({ ...transition, after: ids.get(transition.after)! }));
     next.transitions = [...edits.transitions, ...transitions];
-    const length = (segment: ClipSegment) => segment.end - segment.start;
-    duration += segments.reduce((sum, segment) => sum + length(segment), 0);
-    for (const transition of transitions) {
-      const index = segments.findIndex((segment) => segment.id === transition.after);
-      duration -= overlap(transition.secs, length(segments[index]), length(segments[index + 1]));
-    }
+    duration += trackLength(
+      segments,
+      segments.map((segment) => transitions.find((transition) => transition.after === segment.id)?.secs ?? null),
+    );
     pasted.push(...segments.map((segment) => ({ kind: "segment" as const, id: segment.id })));
     // On the Magnetic timeline, the layers already there after the join play later.
     if (scene.magnetic) Object.assign(next, ripple(next, [{ kind: "inserted", at: joins[place], secs: duration - scene.duration }]).edits);

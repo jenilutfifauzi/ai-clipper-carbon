@@ -28,6 +28,7 @@ import { useMagnetic } from "./editor/magnetic";
 import { offeredLayouts, portraitSource, shownLayout } from "./editor/layouts";
 import { sceneLayoutOverrides } from "./editor/manual";
 import { Playback, playedFrom, playable } from "./editor/playback";
+import { segmentLength } from "./editor/segmentTime";
 import { sceneAt, SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { pictureSource } from "./editor/stagePicture";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
@@ -202,7 +203,7 @@ export function CandidateEditor({
   const [adding, setAdding] = useState(false);
   const words = transcript.words;
   const duration = job.source?.metadata.duration ?? Infinity;
-  const length = cut ? playback.duration : candidate.end - candidate.start;
+  const length = cut ? playback.duration : segmentLength(candidate);
   const { min_secs, max_secs } = job.options;
   const name = candidateName(candidate, index);
   const magnetic = useMagnetic();

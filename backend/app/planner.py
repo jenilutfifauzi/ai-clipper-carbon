@@ -110,12 +110,12 @@ from app.candidates import (
     Transform,
     TransitionKind,
     WordEdit,
-    transition_overlap,
 )
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, font
 from app.keyframes import value_at
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
+from app.segment_time import SegmentTime, transition_overlap
 from app.styles import (
     CaptionPosition,
     CaptionStyle,
@@ -252,6 +252,14 @@ class SegmentInput:
     # A video's: its Keyframes, in seconds from its start (docs/adr/0008), and its Segment's id.
     keys: Keys = field(default_factory=dict)
     id: str = ""
+    # How it plays its range (docs/adr/0009): at its Speed, forwards or in Reverse, or held.
+    speed: float = 1.0
+    reverse: bool = False
+    hold: float | None = None
+
+    @property
+    def time(self) -> SegmentTime:
+        return SegmentTime(self.start, self.end, self.speed, self.reverse, self.hold)
 
 
 @dataclass(frozen=True)
@@ -467,9 +475,11 @@ class AudioEvent:
 @dataclass(frozen=True)
 class SegmentPlan:
     """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
-    `source_end`, from `start` to `end` seconds into the Clip; a video's own sound at `volume`, or
-    none when it is `silent`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008), in
-    seconds from its start, which set its volume in place of `volume`. `id` is its Segment's."""
+    `source_end`, at `speed`, forwards or in `reverse`, or its frame at `source_start` held for
+    `hold` (docs/adr/0009), from `start` to `end` seconds into the Clip; a video's own sound at
+    `volume`, or none when it is `silent`. A keyed one's `gain` is its volume Keyframes
+    (docs/adr/0008), in seconds from its start, which set its volume in place of `volume`. `id` is
+    its Segment's."""
 
     start: float
     end: float
@@ -482,6 +492,14 @@ class SegmentPlan:
     scenes: int = 1
     gain: list[Keyframe] = field(default_factory=list)
     id: str = ""
+    speed: float = 1.0
+    reverse: bool = False
+    hold: float | None = None
+
+    @property
+    def time(self) -> SegmentTime:
+        """How it plays its range, `offset`s being seconds from its `start` into the Clip."""
+        return SegmentTime(self.source_start, self.source_end, self.speed, self.reverse, self.hold)
 
 
 @dataclass(frozen=True)
@@ -584,7 +602,7 @@ class RenderPlan:
 
     @property
     def duration(self) -> float:
-        return self.segments[-1].end if self.segments else self.end - self.start
+        return self.segments[-1].end if self.segments else SegmentTime(self.start, self.end).length
 
 
 def reframes(source: SourceMetadata) -> bool:
@@ -650,12 +668,11 @@ def plan_render(
     # The frames a keyed picture is drawn at, as the renderer draws them.
     rate = source.fps if source.fps > 0 else 30.0
     if main_track:
-        plans, at, showings = [], 0.0, []
+        plans, at, showings, before = [], 0.0, [], 0.0
         for i, given in enumerate(main_track):
-            length = round(given.end - given.start, 3)
+            length = round(given.time.length, 3)
             if i and given.join is not None:
                 # Overlapping the one before by the Transition's length, half the shorter at most.
-                before = segments[-1].end - segments[-1].start
                 overlap = transition_overlap(given.join.secs, before, length)
                 at = round(at - overlap, 3)
                 transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3)))
@@ -666,7 +683,7 @@ def plan_render(
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             else:
                 framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
-                showings += _manual_showings(framed, given.layout_overrides, length, given.start, len(plans))
+                showings += _manual_showings(framed, given.layout_overrides, length, given.time, len(plans))
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
@@ -674,17 +691,17 @@ def plan_render(
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
-                    given.keys.get(KeyProperty.VOLUME, []), given.id,
+                    given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold,
                 )
             )
-            at = round(at + length, 3)
+            at, before = round(at + length, 3), length
         duration = at
         words, word_edits = _segment_words(main_track, segments, cuts, duration)
         plans = _keyed_manual(plans, showings, rate)
     else:
-        duration = round(end - start, 3)
+        duration = round(SegmentTime(start, end).length, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
-        plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, start, 0), rate)
+        plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
     return RenderPlan(
         start=start,
         end=end,
@@ -719,11 +736,12 @@ def _segment_words(
     words, edits = [], []
     for i, (given, segment) in enumerate(zip(main_track, segments)):
         low, high = edges[i], edges[i + 1]
+        time = given.time
         for word in given.words or []:
-            on, off = word.start + segment.start, word.end + segment.start
+            on, off = time.offset_of(word.start) + segment.start, time.offset_of(word.end) + segment.start
             if low <= (on + off) / 2 < high:
                 words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
-        edits += [replace(edit, at=round(edit.at + segment.start, 3)) for edit in given.word_edits]
+        edits += [replace(edit, at=round(time.offset_of(edit.at) + segment.start, 3)) for edit in given.word_edits]
     return words, sorted(edits, key=lambda edit: edit.at)
 
 
@@ -802,15 +820,17 @@ class _ManualShowing:
 _SAME_OVERRIDE_SECS = 0.002
 
 
-def _manual_showings(framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, start: float, first: int) -> list[_ManualShowing]:
-    """The Manual Scenes among `framed` (a range lasting `duration`, `start` seconds into the Source,
-    its Scenes `first` onwards among the plan's) framed by one of `overrides` (in seconds into the
-    range)."""
+def _manual_showings(
+    framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, time: SegmentTime, first: int
+) -> list[_ManualShowing]:
+    """The Manual Scenes among `framed` (a range lasting `duration` that plays as `time`, its Scenes
+    `first` onwards among the plan's) framed by one of `overrides` (in seconds into the range)."""
     found = []
     for i, scene in enumerate(framed):
         override = _held(overrides, scene.start, scene.end, duration) if scene.layout is SceneLayout.MANUAL else None
         if override is not None and override.layout is Layout.MANUAL:
-            found.append(_ManualShowing(first + i, override, round(start + scene.start, 3), round(start + scene.end, 3), start + override.at))
+            on, off = round(time.source_at(scene.start), 3), round(time.source_at(scene.end), 3)
+            found.append(_ManualShowing(first + i, override, on, off, time.start + override.at))
     return found
 
 

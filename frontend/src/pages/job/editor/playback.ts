@@ -1,34 +1,33 @@
 import { useSyncExternalStore } from "react";
 import { loopStart, wrapTarget, type LoopRegion } from "./loop";
+import { paceOf, playedSourceAt, playedTimeAt, playedUntil, segmentLength, type PlayedRange, type SegmentRange } from "./segmentTime";
 
 type Listener = () => void;
 
 /**
  * A Segment of the Clip as played: the Source from `source_start` to `source_end`, from `start` to
- * `end` seconds into the Clip; or, with `media`, a Media Library video from `source_start` to
- * `source_end` seconds into it, which the preview plays itself while the Source waits. Its own
- * sound is at `volume`.
+ * `end` seconds into the Clip, at its Speed, forwards or in Reverse, or held (segmentTime.ts); or,
+ * with `media`, a Media Library video from `source_start` to `source_end` seconds into it, which the
+ * preview plays itself while the Source waits. Its own sound is at `volume`.
  */
-export interface PlayedSegment {
-  start: number;
-  end: number;
-  source_start: number;
+export interface PlayedSegment extends PlayedRange {
   source_end: number;
   media?: string | null;
   volume?: number;
 }
 
 /** A Main Track of these Segments as played, back to back from 0 s. */
-export function playedFrom(segments: { start: number; end: number; media?: string | null; volume?: number }[]): PlayedSegment[] {
+export function playedFrom(segments: (SegmentRange & { media?: string | null; volume?: number })[]): PlayedSegment[] {
   let at = 0;
   return segments.map((segment) => {
     const played = {
       start: at,
-      end: at + segment.end - segment.start,
+      end: at + segmentLength(segment),
       source_start: segment.start,
       source_end: segment.end,
       media: segment.media ?? null,
       volume: segment.volume ?? 1,
+      ...paceOf(segment),
     };
     at = played.end;
     return played;
@@ -43,7 +42,7 @@ export function playable(segments: PlayedSegment[]): PlayedSegment[] {
   return segments.map((segment, i) => {
     const next = segments[i + 1];
     if (!next || next.start >= segment.end) return segment;
-    return { ...segment, end: next.start, source_end: segment.source_start + (next.start - segment.start) };
+    return playedUntil(segment, next.start);
   });
 }
 
@@ -195,7 +194,7 @@ export class Playback {
 
   // The Clip as one range of the Source.
   setRange(start: number, end: number) {
-    this.setSegments([{ start: 0, end: end - start, source_start: start, source_end: end }]);
+    this.setSegments([{ start: 0, end: segmentLength({ start, end }), source_start: start, source_end: end }]);
   }
 
   setSegments(segments: PlayedSegment[]) {
@@ -298,7 +297,7 @@ export class Playback {
     const segment = this.segment;
     if (segment.media) return this.clock ? this.clock.from + ((performance.now() - this.clock.at) / 1000) * this.pace : this.time;
     const deck = this.decks[this.live];
-    return deck ? segment.start + (deck.master.currentTime - segment.source_start) : this.time;
+    return deck ? playedTimeAt(segment, deck.master.currentTime) : this.time;
   }
 
   // A deck's videos sent to `source` seconds into the Source.
@@ -350,7 +349,7 @@ export class Playback {
     const region = this.wrapping();
     if (region) return wrapTarget(region, this.segments).source;
     const next = this.segments.slice(this.index + 1).find((segment) => !segment.media);
-    return next ? next.source_start : null;
+    return next ? playedSourceAt(next, next.start) : null;
   }
 
   // The parked deck, paused and muted, to where the playback will need it next, unless it is there
@@ -394,7 +393,7 @@ export class Playback {
       }
     } else {
       this.clock = null;
-      const source = next.source_start + (time - next.start);
+      const source = playedSourceAt(next, time);
       const parked = this.decks[1 - this.live];
       if (parked && this.ready(parked, source)) this.swap();
       else if (deck) {
@@ -476,7 +475,7 @@ export class Playback {
       const resume = this.playing && !!this.clock;
       this.clock = null;
       if (deck) {
-        this.cue(deck, segment.source_start + (time - segment.start));
+        this.cue(deck, playedSourceAt(segment, time));
         if (resume) this.run(deck);
       }
     }
@@ -546,7 +545,7 @@ export class Playback {
   private skimSource(): number | null {
     if (!this.skimmed) return null;
     const segment = this.segments[this.skimmed.index];
-    return segment.media ? null : segment.source_start + (this.skimmed.time - segment.start);
+    return segment.media ? null : playedSourceAt(segment, this.skimmed.time);
   }
 
   // The skim's end: the parked deck silenced and parked again.

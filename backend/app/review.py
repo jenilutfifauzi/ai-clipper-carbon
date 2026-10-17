@@ -21,6 +21,7 @@ from app.candidates import (
     timeline_length,
 )
 from app.config import SelectionTuning
+from app.segment_time import segment_time
 from app.selection import snap
 from app.styles import StyleOverrides
 from app.transcript import Transcript
@@ -122,7 +123,7 @@ class Episode:
             if segment.media is None:
                 start, end = self.bounds(segment.start, segment.end)
                 snapped.append(replace(segment, start=start, end=end))
-            elif segment.end - segment.start < MIN_MEDIA_SECS:
+            elif segment_time(segment).length < MIN_MEDIA_SECS:
                 raise InvalidEdit(f"A video's Segment lasts {MIN_MEDIA_SECS:g} s at least")
             else:
                 snapped.append(segment)

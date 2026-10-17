@@ -41,6 +41,7 @@ from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
 from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.review import CandidateNotFound
+from app.segment_time import segment_time
 from app.storage import write_atomic
 from app.styles import PRESETS_FILE, PresetStore
 from app.transcript import Transcript
@@ -197,6 +198,7 @@ def candidate_plan(
     for i, (segment, analysis) in enumerate(zip(candidate.main_track(), analyses)):
         join = joins.get(before) if before is not None else None
         before = segment.id
+        played = segment_time(segment)
         if segment.media is not None:
             item = media.find(segment.media) if media else None
             if item is None or item.width is None or item.height is None:
@@ -206,6 +208,7 @@ def candidate_plan(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else [], join=join, keys=segment.keys, id=segment.id,
+                speed=played.speed, reverse=played.reverse, hold=played.hold,
             ))
             continue
         inputs.append(SegmentInput(
@@ -223,6 +226,7 @@ def candidate_plan(
                 if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
             ],
             join=join,
+            speed=played.speed, reverse=played.reverse, hold=played.hold,
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
 
@@ -523,12 +527,12 @@ class Renders:
     def _all_words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[list[Word]]:
         """Each of the Candidate's Segments' Words (`_words`; none for a video's), the progress shared
         out by their lengths."""
-        total, done, found = sum(p.end - p.start for p in candidate.source_segments()), 0.0, []
+        total, done, found = sum(segment_time(p).length for p in candidate.source_segments()), 0.0, []
         for segment in candidate.main_track():
             if segment.media is not None:
                 found.append([])
                 continue
-            share = (segment.end - segment.start) / total
+            share = segment_time(segment).length / total
             found.append(self._words(job, candidate, segment.start, segment.end, lambda d, done=done, share=share: progress(done + share * d)))
             done += share
         return found
@@ -537,12 +541,12 @@ class Renders:
         """Each of the Candidate's Segments' Scenes and faces, or Scenes only, as it needs
         (`needed_analysis`, `_analysis`; none for a video's), the progress shared out by their lengths."""
         assert job.source is not None
-        total, done, found = sum(p.end - p.start for p in candidate.source_segments()), 0.0, []
+        total, done, found = sum(segment_time(p).length for p in candidate.source_segments()), 0.0, []
         for segment in candidate.main_track():
             if segment.media is not None:
                 found.append(None)
                 continue
-            share = (segment.end - segment.start) / total
+            share = segment_time(segment).length / total
             wanted = needed_analysis(candidate, segment, job.source.metadata)
             if wanted is Analysis.NONE:
                 found.append(None)

@@ -610,6 +610,12 @@ export interface SegmentPlan {
   gain: Keyframe[];
   // Its Segment's id.
   id: string;
+  // How it plays its range (docs/adr/0009): at its Speed, forwards or in Reverse, or its frame at
+  // `source_start` held for `hold` seconds. Always sent; a plan made by hand may leave them out, at
+  // 1, false and null.
+  speed?: number;
+  reverse?: boolean;
+  hold?: number | null;
 }
 
 export interface RenderPlan {

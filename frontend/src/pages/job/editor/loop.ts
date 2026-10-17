@@ -1,6 +1,7 @@
 // The Loop Region (GLOSSARY.md) as the preview plays it: where Play starts with Loop on, and where
 // playback goes back to from Out, worked out from numbers alone. The marks that make it are the
 // Advanced Edit's (../advanced/playhead.ts).
+import { playedSourceAt, type PlayedRange } from "./segmentTime";
 
 /** The stretch playback repeats while Loop is on, in Timeline time: from `in` to `out`. */
 export interface LoopRegion {
@@ -20,10 +21,10 @@ export function loopStart(time: number, region: LoopRegion): number {
  */
 export function wrapTarget(
   region: LoopRegion,
-  segments: { start: number; end: number; source_start: number; media?: string | null }[],
+  segments: (PlayedRange & { media?: string | null })[],
 ): { index: number; time: number; source: number | null } {
   const found = segments.findIndex((segment) => region.in < segment.end);
   const index = found === -1 ? segments.length - 1 : found;
   const segment = segments[index];
-  return { index, time: region.in, source: segment.media ? null : segment.source_start + (region.in - segment.start) };
+  return { index, time: region.in, source: segment.media ? null : playedSourceAt(segment, region.in) };
 }

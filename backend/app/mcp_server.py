@@ -46,6 +46,7 @@ from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
 from app.planner import Box, Picture, key_times, picture_at
 from app.profile import ChannelProfile
+from app.segment_time import SegmentTime
 from app.styles import StyleOverrides
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
@@ -646,7 +647,7 @@ def _plan_view(preview: dict) -> dict:
     plan = preview["plan"]
     hook = plan["hook"]
     return {
-        "duration": round(plan["segments"][-1]["end"] if plan["segments"] else plan["end"] - plan["start"], 2),
+        "duration": round(plan["segments"][-1]["end"] if plan["segments"] else SegmentTime(plan["start"], plan["end"]).length, 2),
         "words_source": preview["words_source"],
         "scenes": [
             {

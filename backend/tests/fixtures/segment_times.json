@@ -1,0 +1,96 @@
+{
+  "about": "Segments' Timeline lengths and the mapping between Timeline time and Source time (docs/adr/0009). A Segment is its range on the Source (or in its video), `start` to `end`, and how it plays it: `speed` (1 by default), `reverse` (false) and `hold` (none). Each of `at` is [Timeline seconds into the Segment, the Source time shown there]. Read by backend/tests/test_segment_time.py and frontend/src/pages/job/editor/segmentTime.test.ts, so that the backend's and the frontend's mappings can't drift.",
+  "tolerance": 1e-9,
+  "segments": [
+    {
+      "name": "forward",
+      "segment": {"start": 10, "end": 12.5},
+      "length": 2.5,
+      "at": [[0, 10], [1, 11], [2.5, 12.5]]
+    },
+    {
+      "name": "forward from a fraction of a second",
+      "segment": {"start": 12.3, "end": 14.7},
+      "length": 2.4,
+      "at": [[0, 12.3], [0.4, 12.7], [2.4, 14.7]]
+    },
+    {
+      "name": "at 2x",
+      "segment": {"start": 10, "end": 14, "speed": 2},
+      "length": 2,
+      "at": [[0, 10], [0.5, 11], [2, 14]]
+    },
+    {
+      "name": "at 0.5x",
+      "segment": {"start": 10, "end": 11, "speed": 0.5},
+      "length": 2,
+      "at": [[0, 10], [1, 10.5], [2, 11]]
+    },
+    {
+      "name": "at a third, its length rounded to 6 decimals",
+      "segment": {"start": 0, "end": 1, "speed": 3},
+      "length": 0.333333,
+      "at": [[0, 0], [0.25, 0.75]]
+    },
+    {
+      "name": "reversed",
+      "segment": {"start": 10, "end": 13, "reverse": true},
+      "length": 3,
+      "at": [[0, 13], [1, 12], [3, 10]]
+    },
+    {
+      "name": "reversed at 2x",
+      "segment": {"start": 10, "end": 14, "speed": 2, "reverse": true},
+      "length": 2,
+      "at": [[0, 14], [0.5, 13], [2, 10]]
+    },
+    {
+      "name": "held",
+      "segment": {"start": 7, "end": 7, "hold": 1.25},
+      "length": 1.25,
+      "at": [[0, 7], [0.6, 7], [1.25, 7]]
+    }
+  ],
+  "main_tracks": [
+    {
+      "name": "without Transitions",
+      "segments": [{"id": "a", "start": 10, "end": 12}, {"id": "b", "start": 20, "end": 23}],
+      "transitions": [],
+      "length": 5
+    },
+    {
+      "name": "a Transition overlaps by its length",
+      "segments": [{"id": "a", "start": 10, "end": 12}, {"id": "b", "start": 20, "end": 23}],
+      "transitions": [{"after": "a", "secs": 0.5}],
+      "length": 4.5
+    },
+    {
+      "name": "a Transition overlaps by half the shorter Segment at most",
+      "segments": [{"id": "a", "start": 10, "end": 10.6}, {"id": "b", "start": 20, "end": 23}],
+      "transitions": [{"after": "a", "secs": 1.5}],
+      "length": 3.3
+    },
+    {
+      "name": "a Transition after the last Segment overlaps nothing",
+      "segments": [{"id": "a", "start": 10, "end": 12}, {"id": "b", "start": 20, "end": 23}],
+      "transitions": [{"after": "b", "secs": 0.5}],
+      "length": 5
+    },
+    {
+      "name": "the half is of the Timeline length, not the range's",
+      "segments": [{"id": "a", "start": 10, "end": 12, "speed": 2}, {"id": "b", "start": 20, "end": 23}],
+      "transitions": [{"after": "a", "secs": 1}],
+      "length": 3.5
+    },
+    {
+      "name": "sped, slowed and held Segments",
+      "segments": [
+        {"id": "a", "start": 10, "end": 14, "speed": 2},
+        {"id": "b", "start": 20, "end": 21, "speed": 0.5, "reverse": true},
+        {"id": "c", "start": 30, "end": 30, "hold": 1}
+      ],
+      "transitions": [{"after": "a", "secs": 0.5}, {"after": "b", "secs": 0.4}],
+      "length": 4.1
+    }
+  ]
+}

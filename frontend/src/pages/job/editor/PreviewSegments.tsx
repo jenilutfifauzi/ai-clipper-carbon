@@ -6,6 +6,7 @@ import { FRAME, panelStyle } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { playable, type Playback } from "./playback";
 import { loudness } from "./loudness";
+import { paceOf } from "./segmentTime";
 import { followCurve, setVolume } from "./PreviewMusic";
 
 /**
@@ -59,7 +60,7 @@ export function MediaSegment({
   const back = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const span = { start: segment.start, end, from: segment.source_start };
+    const span = { start: segment.start, end, from: segment.source_start, ...paceOf(segment) };
     // Its sound: its volume Keyframes when keyed, faded out by the Transition taking it away.
     const sound: AudioEvent = {
       media: segment.media!,
