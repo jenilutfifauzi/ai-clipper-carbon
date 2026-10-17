@@ -29,7 +29,7 @@ and Reference Set) and one file per ticket are in `.scratch/ai-clipper-v1/`.
 
 ```sh
 git clone <this repo> ai-clipper && cd ai-clipper
-make setup        # Python and npm dependencies, the face model, the caption fonts, an ffmpeg check
+make setup        # Python and npm dependencies, the face model, the fonts, the emoji images (~100 MB), an ffmpeg check
 cp .env.example .env
 ```
 

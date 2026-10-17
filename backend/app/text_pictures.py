@@ -8,7 +8,10 @@ line centred where the planner placed it, on its line's baseline, in the layer's
 as the outline and its tracking as `\\fsp`, as the hook's lines are. A run in the fallback Face
 (CJK) names it with `\\fn`. The shadow is each run again, moved and in the shadow's colour, blurred
 with `\\blur`: it can't be the runs' own `\\shad`, since libass would blur their stroke with it.
-libass draws it all as large as the layout's scale says.
+libass draws it all as large as the layout's scale says. An emoji run isn't in the script: its
+image (app/emoji.py) is pasted onto the picture afterwards, in its square (planner.py's
+`emoji_square`), over the plate and the shadow, in its own colours, with none of the text's
+colour, stroke or shadow.
 
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
@@ -40,8 +43,9 @@ import cv2
 import numpy as np
 
 from app.candidates import Candidate
+from app.emoji import image_pixels
 from app.fonts import font, registry
-from app.planner import TextLayout, font_metrics, text_event
+from app.planner import TextLayout, emoji_square, font_metrics, text_event
 from app.renderer import (
     _ass_text, _filter_value, _rounded_box, _shadow_tags, _spacing, _style_colour, _tag_colour, _tracked, last_lines,
 )
@@ -80,7 +84,8 @@ def make_pictures(ffmpeg: Path, layouts: Iterable[TextLayout], folder: Path) -> 
 
 
 def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
-    """`layout` drawn by libass, as straight-alpha RGBA pixels of its raster size."""
+    """`layout` drawn by libass with its emoji pasted in, as straight-alpha RGBA pixels of its raster
+    size."""
     width, height = layout.raster
     with tempfile.TemporaryDirectory(prefix="text-picture-") as work:
         fonts = registry().gather(layout.faces, Path(work, "fonts"))
@@ -97,7 +102,7 @@ def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
     if result.returncode:
         raise RuntimeError(f"ffmpeg couldn't draw a Text Layer: {last_lines(result.stderr.decode(errors='replace'))}")
     both = np.frombuffer(result.stdout, np.uint8).reshape(height, 2 * width, 3).astype(np.int32)
-    return matted(both[:, :width], both[:, width:])
+    return with_emoji(matted(both[:, :width], both[:, width:]), layout)
 
 
 def matted(over_black: np.ndarray, over_white: np.ndarray) -> np.ndarray:
@@ -107,6 +112,47 @@ def matted(over_black: np.ndarray, over_white: np.ndarray) -> np.ndarray:
     colour = np.clip(np.rint(over_black * 255 / np.maximum(alpha, 1)[..., None]), 0, 255)
     colour[alpha == 0] = 0
     return np.dstack([colour, alpha]).astype(np.uint8)
+
+
+def with_emoji(pixels: np.ndarray, layout: TextLayout) -> np.ndarray:
+    """The picture `pixels` of `layout` with each emoji's image laid over it in its square, scaled to
+    fill it across or down and centred in it."""
+    across, down = pixels.shape[1] / layout.width, pixels.shape[0] / layout.height
+    for runs, (_, baseline) in zip(layout.runs, layout.anchors):
+        for run in runs:
+            if run.image is None:
+                continue
+            x, top, side = emoji_square(run, baseline, layout.size)
+            image = image_pixels(run.image)
+            fit = min(side * across / image.shape[1], side * down / image.shape[0])
+            width, height = max(1, round(image.shape[1] * fit)), max(1, round(image.shape[0] * fit))
+            left = round((x + side / 2) * across - width / 2)
+            upper = round((top + side / 2) * down - height / 2)
+            _lay_over(pixels, _resized(image, width, height), left, upper)
+    return pixels
+
+
+def _resized(image: np.ndarray, width: int, height: int) -> np.ndarray:
+    """The straight-alpha RGBA `image` at `width` x `height`, premultiplied (so that no colour of its
+    clear pixels bleeds into its edges), as floats from 0 to 1."""
+    premultiplied = image.astype(np.float32) / 255
+    premultiplied[..., :3] *= premultiplied[..., 3:]
+    shrinking = width < image.shape[1]
+    return cv2.resize(premultiplied, (width, height), interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_CUBIC).clip(0, 1)
+
+
+def _lay_over(pixels: np.ndarray, image: np.ndarray, left: int, top: int) -> None:
+    """Lay the premultiplied `image` over the straight-alpha RGBA `pixels`, its top-left corner at
+    (`left`, `top`), as far as it is on them."""
+    x0, y0 = max(left, 0), max(top, 0)
+    x1, y1 = min(left + image.shape[1], pixels.shape[1]), min(top + image.shape[0], pixels.shape[0])
+    if x1 <= x0 or y1 <= y0:
+        return
+    over = image[y0 - top : y1 - top, x0 - left : x1 - left]
+    under = pixels[y0:y1, x0:x1].astype(np.float32) / 255
+    alpha = over[..., 3:] + under[..., 3:] * (1 - over[..., 3:])
+    colour = (over[..., :3] + under[..., :3] * under[..., 3:] * (1 - over[..., 3:])) / np.maximum(alpha, 1e-6)
+    pixels[y0:y1, x0:x1] = np.rint(np.dstack([colour, alpha]).clip(0, 1) * 255).astype(np.uint8)
 
 
 def layout_script(layout: TextLayout) -> str:
@@ -125,7 +171,7 @@ def layout_script(layout: TextLayout) -> str:
     placed = []
     for runs, (_, baseline) in zip(layout.runs, layout.anchors):
         for run in runs:
-            if not run.text:
+            if not run.text or run.image is not None:
                 continue
             # Centred (5) on its middle, and on the middle of its height: its Face's ascent above the
             # baseline and its descent below, which together are the font size, so that every run

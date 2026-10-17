@@ -125,6 +125,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.config import CameraTuning
+from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
 from app.fonts import DEFAULT_FONT, FALLBACK_FONT, on_change, registry
 from app.keyframes import value_at
 from app.line_breaks import broken_lines
@@ -609,12 +610,16 @@ class OverlayEvent:
 class TextRun:
     """A piece of a Text Layer's line set in one Face (`text_runs`): its `text`, drawn in the Face
     `font` from `x` for `width` pixels at its layout's size. Its text has no space at either end:
-    a space between two runs is only room between them."""
+    a space between two runs is only room between them.
+
+    An emoji run is one emoji sequence, drawn from the emoji `image` (app/emoji.py) as a square 1 em
+    of its line's Face wide (`emoji_square`)."""
 
     text: str
     font: str
     x: float = 0.0
     width: float = 0.0
+    image: str | None = None
 
 
 @dataclass(frozen=True)
@@ -649,10 +654,12 @@ class TextLayout:
     @property
     def name(self) -> str:
         """Its picture's file name: a hash of the layout, of its Faces' files (an id may name another
-        file once its Face is deleted and another imported) and of how pictures are drawn
-        (TEXT_PICTURE_FORMAT)."""
+        file once its Face is deleted and another imported), of how pictures are drawn
+        (TEXT_PICTURE_FORMAT) and, when it has emoji, of their images' set."""
         faces = [registry().find(face_id) for face_id in sorted(self.faces)]
         files = [face and face.sha256 for face in faces]
+        if any(run.image for line in self.runs for run in line):
+            files.append(IMAGE_SET)
         drawn = json.dumps([TEXT_PICTURE_FORMAT, files, asdict(self)], sort_keys=True, default=str)
         return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
 
@@ -1463,7 +1470,7 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its words
-    (without emoji, and what no Face has left out, blank lines at either end left out) broken into
+    (what no Face nor emoji image has left out, blank lines at either end left out) broken into
     lines at its wrap width (`text_lines`), each split into runs by Face (`text_runs`), and set in its
     box (`text_box`), centred on its Transform's centre (on the frame, its picture maybe past the
     edges, as an Overlay's). None when it is blank or would start at or after the Clip's end."""
@@ -1506,11 +1513,11 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
 
 
 def text_lines(text: str, style: TextStyle) -> list[str]:
-    """A Text Layer's `text` as the lines it is set in, in `style`: without emoji and what no Face
-    has (`text_runs`), blank lines at either end left out, broken at its newlines and between its
-    words where a line, measured run by run in its Faces, would be wider than its wrap width less its
-    plate's padding either side (`text_room`). Never set smaller."""
-    paragraphs = ["".join(run.text for run in text_runs(without_emoji(line), style.font)) for line in text.split("\n")]
+    """A Text Layer's `text` as the lines it is set in, in `style`: without what no Face nor emoji
+    image has (`text_runs`), blank lines at either end left out, broken at its newlines and between
+    its words where a line, measured run by run in its Faces (an emoji 1 em), would be wider than its
+    wrap width less its plate's padding either side (`text_room`). Never set smaller."""
+    paragraphs = ["".join(run.text for run in text_runs(line, style.font)) for line in text.split("\n")]
     while paragraphs and not paragraphs[0]:
         paragraphs.pop(0)
     while paragraphs and not paragraphs[-1]:
@@ -1650,24 +1657,37 @@ def text_bounds_at(event: TextEvent, time: float) -> Box:
 
 
 def text_runs(line: str, font_id: str) -> list[TextRun]:
-    """`line` split into runs by Face (docs/adr/0010), not yet placed: each character in the Face
-    `font_id`, or in FALLBACK_FONT (CJK) when only that has it. A character neither has is left out,
-    as emoji are (`without_emoji`): the line closes up round it. A space goes with the run it
-    follows, when that run's Face has it."""
-    kept = " ".join("".join(char for char in line if char.isspace() or _run_face(char, font_id)).split())
+    """`line` split into runs by Face and emoji (docs/adr/0010), not yet placed: each emoji sequence
+    a run of its own, drawn from its image (app/emoji.py's `image_of`) on the line of the Face
+    `font_id`; each other character in that Face, or in FALLBACK_FONT (CJK) when only that has it.
+    An emoji with no image and a character neither Face has are left out: the line closes up round
+    them. A space goes with the run it follows, when that run's Face has it."""
+    kept: list[tuple[str, str | None]] = []
+    for text, emoji in clusters(line):
+        image = image_of(text) if emoji else None
+        if text.isspace():
+            if kept and kept[-1][0] != " ":
+                kept.append((" ", None))
+        elif image is not None or (not emoji and _run_face(text, font_id)):
+            kept.append((text, image))
+    if kept and kept[-1][0] == " ":
+        kept.pop()
     runs: list[TextRun] = []
-    for char in kept:
+    for text, image in kept:
         last = runs[-1] if runs else None
-        if last is not None and char.isspace() and char in font_metrics(last.font).advances:
+        if image is not None:
+            runs.append(TextRun(text, font_id, image=image))
+            continue
+        if last is not None and text == " " and text in font_metrics(last.font).advances:
             face = last.font
         else:
-            face = _run_face(char, font_id)
+            face = _run_face(text, font_id)
         if face is None:
             continue
-        if last is not None and last.font == face:
-            runs[-1] = replace(last, text=last.text + char)
+        if last is not None and last.font == face and (last.image is None or text == " "):
+            runs[-1] = replace(last, text=last.text + text)
         else:
-            runs.append(TextRun(char, face))
+            runs.append(TextRun(text, face))
     return runs
 
 
@@ -1680,10 +1700,10 @@ def _run_face(char: str, font_id: str) -> str | None:
 
 
 def runs_width(runs: list[TextRun], size: float, tracking: float = 0.0) -> float:
-    """How wide a line of `runs` is at font `size`, each measured in its own Face, with `tracking`
-    pixels after every character but the last."""
-    width = sum(font_metrics(run.font).width(run.text, size) for run in runs)
-    count = sum(len(run.text) for run in runs)
+    """How wide a line of `runs` is at font `size`, each measured in its own Face (an emoji 1 em),
+    with `tracking` pixels after every character but the last."""
+    width = sum(_run_width(run, run.text, size) for run in runs)
+    count = sum(_characters(run, run.text) for run in runs)
     return width + tracking * (count - 1) if tracking and count else width
 
 
@@ -1692,11 +1712,42 @@ def placed_runs(runs: list[TextRun], left: float, size: float, tracking: float =
     the last: each placed where the one before ends, and drawn without the spaces at its end."""
     placed, x = [], left
     for run in runs:
-        metrics = font_metrics(run.font)
         drawn = run.text.rstrip()
-        placed.append(replace(run, text=drawn, x=round(x, 4), width=round(metrics.width(drawn, size, tracking), 4)))
-        x += metrics.width(run.text, size, tracking) + tracking
+        placed.append(replace(run, text=drawn, x=round(x, 4), width=round(_run_width(run, drawn, size, tracking), 4)))
+        x += _run_width(run, run.text, size, tracking) + tracking
     return placed
+
+
+def _run_width(run: TextRun, text: str, size: float, tracking: float = 0.0) -> float:
+    """How wide `text`, the whole of `run`'s text or its start, is at font `size` in its Face, with
+    `tracking` pixels after every character but the last. An emoji run's emoji is 1 em wide."""
+    metrics = font_metrics(run.font)
+    if run.image is None:
+        return metrics.width(text, size, tracking)
+    spaces = text[len(text.rstrip()) :]
+    return emoji_size(run.font, size) + metrics.width(spaces, size) + tracking * len(spaces)
+
+
+def _characters(run: TextRun, text: str) -> int:
+    """How many characters `text` of `run` counts for tracking: an emoji sequence is one."""
+    return len(text) if run.image is None else 1 + len(text) - len(text.rstrip())
+
+
+def emoji_size(font_id: str, size: float) -> float:
+    """How wide an emoji is on a line of the Face `font_id` set at font `size`: 1 em of that Face
+    (libass sets its ascent plus descent, not its em, at the size)."""
+    metrics = font_metrics(font_id)
+    return size * metrics.em / metrics.units
+
+
+def emoji_square(run: TextRun, baseline: float, size: float) -> tuple[float, float, float]:
+    """Where the emoji run `run` is drawn on a line set at font `size` with its baseline at
+    `baseline`: the left and top of its square and its side, its width, centred down on the middle
+    of the capitals of its line's Face. Its image fills the square across or down, keeping its
+    shape."""
+    metrics = font_metrics(run.font)
+    middle = baseline - metrics.cap_height / metrics.units * size / 2
+    return run.x, middle - run.width / 2, run.width
 
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
@@ -1742,24 +1793,9 @@ def _hook_padding(style: HookStyle, size: float) -> tuple[float, float]:
     )
 
 
-# Emoji (Unicode's Extended_Pictographic, but for ©, ® and ™, which fonts draw as text) and the
-# characters that join and vary them: no bundled font has them, and libass draws none.
-_EMOJI = (
-    (0x203C, 0x203C), (0x2049, 0x2049), (0x2139, 0x2139), (0x2194, 0x2199), (0x21A9, 0x21AA), (0x231A, 0x231B),
-    (0x2328, 0x2328), (0x2388, 0x2388), (0x23CF, 0x23CF), (0x23E9, 0x23F3), (0x23F8, 0x23FA), (0x24C2, 0x24C2),
-    (0x25AA, 0x25AB), (0x25B6, 0x25B6), (0x25C0, 0x25C0), (0x25FB, 0x25FE), (0x2600, 0x27BF), (0x2934, 0x2935),
-    (0x2B00, 0x2BFF), (0x3030, 0x3030), (0x303D, 0x303D), (0x3297, 0x3297), (0x3299, 0x3299), (0x1F000, 0x1FAFF),
-    (0x1FC00, 0x1FFFD), (0xFE00, 0xFE0F), (0x200D, 0x200D), (0x20E3, 0x20E3), (0xE0020, 0xE007F),
-)
-
-
-def _is_emoji(char: str) -> bool:
-    return any(low <= ord(char) <= high for low, high in _EMOJI)
-
-
 def without_emoji(text: str) -> str:
     """`text` with its emoji left out and its whitespace collapsed."""
-    return " ".join("".join(char for char in text if not _is_emoji(char)).split())
+    return " ".join("".join(char for char in text if not is_emoji(char)).split())
 
 
 def _hook_words(text: str, uppercase: bool) -> list[tuple[str, tuple[bool, ...]]]:
@@ -1774,7 +1810,7 @@ def _hook_words(text: str, uppercase: bool) -> list[tuple[str, tuple[bool, ...]]
     for i, char in enumerate(text):
         if i in marks:
             inside = not inside
-        elif not _is_emoji(char):
+        elif not is_emoji(char):
             # A capital may be more than one letter (ß is SS): each keeps the emphasis.
             chars.extend((shown, inside) for shown in (char.upper() if uppercase else char))
     words, word = [], []
@@ -2215,7 +2251,7 @@ def _caption_text(text: str, uppercase: bool = True) -> tuple[str, bool]:
     def punctuation(char: str) -> bool:
         return unicodedata.category(char)[0] == "P" and char not in _SIGNS
 
-    shown = text.strip()
+    shown = without_emoji(text)
     first, last = 0, len(shown)
     while first < last and punctuation(shown[first]):
         first += 1

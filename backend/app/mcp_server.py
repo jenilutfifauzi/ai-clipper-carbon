@@ -137,7 +137,8 @@ Edits:
   its words'), the words centred down it. It is never stretched or flipped. merge_candidate_items
   changes only the style, shadow, plate and transform fields given. The dry run lists each Text
   Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
-  app, of the PNG the Clip burns.
+  app, of the PNG the Clip burns. Emoji in a Text Layer are drawn in colour (Noto Color Emoji),
+  each 1 em wide; the hook, the Kicker, the Watermark and captions leave emoji out.
 - A Text Preset is a named Text Style a new Text Layer copies, never linked to it: list_presets,
   save_preset and delete_preset with kind "text"; built-in ones can't change. One is used for new
   titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some

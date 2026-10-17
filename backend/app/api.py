@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
-from app import review
+from app import emoji, review
 from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
@@ -891,6 +891,20 @@ def font_file(font_id: str, faces: FaceRegistry, v: str | None = None) -> FileRe
     fresh = v is not None and face.sha256.startswith(v)
     headers = {"Cache-Control": _DERIVED["Cache-Control"] if fresh else "no-cache", "ETag": f'"{face.sha256}"'}
     return FileResponse(path, media_type="font/otf" if path.suffix == ".otf" else "font/ttf", headers=headers)
+
+
+@router.get("/emoji/{codepoints}")
+def emoji_image(codepoints: str) -> FileResponse:
+    """The image Text Layers draw an emoji sequence from (app/emoji.py), by its codepoints in hex
+    joined by dashes (1f468-200d-1f469), for the Face picker's samples: its own, or its first
+    codepoint's."""
+    try:
+        name = emoji.image_of("".join(chr(int(code, 16)) for code in codepoints.split("-")))
+    except ValueError:
+        name = None
+    if name is None:
+        raise HTTPException(404, f"No emoji image for {codepoints}")
+    return FileResponse(emoji.image_path(name), media_type="image/png", headers=_KEEP)
 
 
 @router.delete("/fonts/{font_id}", status_code=204)

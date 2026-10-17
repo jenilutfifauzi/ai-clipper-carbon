@@ -12,12 +12,16 @@ The break opportunities kept from UAX #14:
 - never before closing punctuation, an exclamation or question mark, a comma or a stop, nor a small
   kana or an iteration mark (CL, CP, EX, IS, NS), nor after opening punctuation (OP), even after a
   space ("Halo !" stays whole);
+- before and after an emoji sequence (ID, EB), as between ideographs;
 - never inside a character and the marks, joiners and variation selectors that follow it, nor
-  between two characters a zero width joiner joins.
+  between two characters a zero width joiner joins, nor inside an emoji sequence: before its skin
+  tone or its tags (EM, CM), nor between the regional indicators of a flag (RI).
 """
 
 import unicodedata
 from collections.abc import Callable
+
+from app.emoji import ZWJ, clusters, emoji_modifier, is_emoji, regional_indicator
 
 # A line no wider than the width by this many pixels still fits it: a width set to a line's own,
 # which floating point arithmetic may measure a hair over.
@@ -99,6 +103,14 @@ def _breaks_before(text: str, at: int) -> bool:
     before, after = text[at - 1], text[at]
     if after in _SPACE or after in _NO_BREAK_BEFORE or _joined(after) or before == _ZERO_WIDTH_JOINER:
         return False
+    if emoji_modifier(after):
+        return False
+    if regional_indicator(before) and regional_indicator(after):
+        # A flag is a pair: a break comes only after an even number of them.
+        run = at
+        while run > 0 and regional_indicator(text[run - 1]):
+            run -= 1
+        return (at - run) % 2 == 0
     # After spaces: unless what precedes them opens.
     if before in _SPACE:
         last = text[:at].rstrip(_SPACE)
@@ -109,14 +121,15 @@ def _breaks_before(text: str, at: int) -> bool:
         return True
     if before in _HYPHENS:
         return not (before == "-" and after.isdigit())
-    return _ideographic(before) or _ideographic(after)
+    return _ideographic(before) or _ideographic(after) or _pictographic(before) or _pictographic(after)
 
 
 def _characters(word: str) -> list[str]:
-    """`word`'s characters, each with the marks, joiners and variation selectors after it."""
+    """`word`'s characters, each with the marks, joiners and variation selectors after it, and its
+    emoji sequences whole (app/emoji.py's `clusters`)."""
     characters: list[str] = []
-    for character in word:
-        if characters and (_joined(character) or characters[-1].endswith(_ZERO_WIDTH_JOINER)):
+    for character, _ in clusters(word):
+        if characters and (_joined(character[0]) or characters[-1].endswith(_ZERO_WIDTH_JOINER)):
             characters[-1] += character
         else:
             characters.append(character)
@@ -129,3 +142,8 @@ def _joined(character: str) -> bool:
 
 def _ideographic(character: str) -> bool:
     return any(low <= ord(character) <= high for low, high in _IDEOGRAPHIC)
+
+
+def _pictographic(character: str) -> bool:
+    """An emoji, or a character that ends an emoji sequence (a skin tone, a tag, a keycap)."""
+    return is_emoji(character) and character != ZWJ
