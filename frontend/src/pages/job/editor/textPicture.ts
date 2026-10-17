@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { textPictureUrl, type TextEvent } from "../../../api";
+import { textPictureUrl, type Picture, type TextEvent } from "../../../api";
+import { pictureAt } from "./picture";
 
 // A Text Layer's picture as the preview draws it (docs/adr/0010): its URL, and the size it is drawn
 // at, in output pixels, Transform scale included.
@@ -53,6 +54,28 @@ export function pictureToShow(shown: ShownPicture | null, wanted: WantedPicture,
 }
 
 const loadedLook = (look: string) => largest.get(look);
+
+// Where a Text Layer's picture is drawn, in output pixels: its centre, its size, its turn in degrees
+// clockwise about its centre, and its opacity.
+export interface PlacedText {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  opacity: number;
+}
+
+/**
+ * A Text Layer's `picture` as drawn at `time` seconds into the Clip, its animations' `look` there
+ * being its opacity, scale and drop (hookLook): as its Keyframes have it (pictureAt, ADR 0008), then
+ * faded, scaled about its centre and moved down on top, as the renderer's text_at draws it.
+ */
+export function placedText(picture: Picture, time: number, [opacity, scale, below]: readonly [number, number, number]): PlacedText {
+  const drawn = pictureAt(picture, time);
+  const [x, y] = drawn.centre;
+  return { x, y: y + below, width: drawn.width * scale, height: drawn.height * scale, rotation: drawn.rotation, opacity: drawn.opacity * opacity };
+}
 
 /** The picture a Text Layer draws now (`pictureToShow`), loading the one it wants when it needs to (`needsLoading`). */
 export function useTextPicture(wanted: WantedPicture): ShownPicture | null {

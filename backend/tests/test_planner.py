@@ -12,7 +12,9 @@ from app.styles import CaptionPosition, CaptionStyle, Highlight, HookAlign, Hook
 from app.planner import (
     HOOK_PAD_X,
     HOOK_SIZE,
+    HOOK_PAD_Y,
     HOOK_WIDTH,
+    KICKER_WIDEST,
     LOWER_CAPTIONS,
     SAFE_AREA,
     SEAM_CAPTIONS,
@@ -1234,3 +1236,63 @@ def test_tracked_caption_lines_break_earlier_and_are_set_to_fit_counting_their_t
     # Pulled in, they hold more than max_chars.
     tight = styled(words, 12, replace(style, tracking=-8))
     assert len(tight) < len(plain) and max(len(event.text) for event in tight) > style.max_chars
+
+
+# Box padding on the Hook Style (text-advanced 14). Unset, the Shape's own: the tests above hold, and
+# tests/test_styles.py checks that every built-in Preset plans as before.
+
+
+def test_the_hook_styles_padding_widens_and_heightens_its_block_round_the_same_lines():
+    default = hooked(HOOK)
+    padded = hooked(HOOK, hook_style=HookStyle(padding_x=60, padding_y=40))
+    assert (padded.lines, padded.size) == (default.lines, default.size)
+    assert padded.area.width == default.area.width + 2 * (60 - HOOK_PAD_X)
+    assert padded.area.height == default.area.height + 2 * (40 - HOOK_PAD_Y)
+    assert padded.boxes == [padded.area] and padded.area.x == (1080 - padded.area.width) // 2
+    # Its lines in its middle across; the first's capitals its padding below its top.
+    cap = font_metrics().cap_height / font_metrics().units * padded.size
+    for (x, baseline), (_, default_baseline) in zip(padded.anchors, default.anchors):
+        assert x == padded.area.x + padded.area.width / 2
+        assert baseline - padded.area.y == pytest.approx(default_baseline - default.area.y + 40 - HOOK_PAD_Y)
+    assert padded.anchors[0][1] - cap - padded.area.y == pytest.approx(40)
+    # Left-aligned, they start padding_x in.
+    left = hooked(HOOK, hook_style=HookStyle(padding_x=60, align=HookAlign.LEFT))
+    metrics = font_metrics()
+    assert all(x - metrics.width(line, left.size) / 2 == pytest.approx(left.area.x + 60) for line, (x, _) in zip(left.lines, left.anchors))
+
+
+def test_the_hook_styles_padding_pads_each_strip():
+    metrics = font_metrics()
+    strips = hooked(HOOK, hook_style=HookStyle(shape=HookShape.STRIPS, padding_x=30, padding_y=20))
+    size = strips.size
+    height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 40)
+    for box, line, (x, baseline) in zip(strips.boxes, strips.lines, strips.anchors):
+        assert (box.width, box.height) == (math.ceil(metrics.width(line, size) + 60), height)
+        assert box.x + box.width / 2 == x and baseline - metrics.cap_height / metrics.units * size - box.y == pytest.approx(20)
+    # Unset, a strip's own: a quarter of the size across.
+    default = hooked(HOOK, hook_style=HookStyle(shape=HookShape.STRIPS))
+    assert default.boxes[0].width == math.ceil(metrics.width(default.lines[0], size) + 2 * 0.25 * size)
+
+
+def test_without_a_box_the_hook_styles_padding_changes_nothing():
+    bare = HookStyle(shape=HookShape.NONE)
+    assert hooked(HOOK, hook_style=replace(bare, padding_x=90, padding_y=60)) == hooked(HOOK, hook_style=bare)
+
+
+def test_a_wider_padding_leaves_less_room_for_the_hooks_lines():
+    metrics = font_metrics()
+    # 728 px at 88: within HOOK_WIDTH's 748, the box as wide as the captions' area at 60 px either side.
+    text = "Racun bisa bunuh kamu"
+    assert hooked(text).lines == [text]
+    padded = hooked(text, hook_style=HookStyle(padding_x=60))
+    assert len(padded.lines) == 2 and padded.size == HOOK_SIZE
+    assert padded.area.width <= KICKER_WIDEST
+    # On one line at most it is set smaller, its padding with it, until the box is as wide as that area.
+    one = hooked(text, hook_style=HookStyle(padding_x=60, max_lines=1))
+    assert one.lines == [text] and one.size < HOOK_SIZE
+    assert KICKER_WIDEST - 2 < metrics.width(text, one.size) + 2 * 60 * one.size / HOOK_SIZE <= KICKER_WIDEST
+    assert one.area.width == math.ceil(metrics.width(text, one.size) + 2 * 60 * one.size / HOOK_SIZE)
+    assert fit_hook(text, HookStyle(padding_x=60, max_lines=1)) == (one.lines, one.size)
+    # A narrow padding leaves more.
+    assert len(hooked("Setetes racun bisa bunuh").lines) == 2
+    assert hooked("Setetes racun bisa bunuh", hook_style=HookStyle(padding_x=20)).lines == ["Setetes racun bisa bunuh"]

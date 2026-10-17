@@ -30,7 +30,7 @@ export function AssetPanel({
   // Where the episode's transcript opens: the Clip's first Segment.
   near: ClipSegment;
   transitions: ReactNode;
-  onAddText: (look: Omit<TextLayer, "id" | "start" | "secs">) => void;
+  onAddText: (look: Omit<TextLayer, "id" | "start" | "secs" | "keys">) => void;
   onAddMusic: (item: MediaItem) => void;
   onAddSource: (range: { start: number; end: number }) => void;
   onAddVideo: (item: MediaItem) => void;

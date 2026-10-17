@@ -138,12 +138,17 @@ export interface CaptionStyle {
   active_colour: string;
   outline: number;
   outline_colour: string;
-  shadow: number;
-  shadow_colour: string;
+  // Under the text and its outline, as a Text Layer's.
+  shadow: DropShadow;
   // Added after every character of a line but its last, in output pixels; may be negative.
   tracking: number;
   uppercase: boolean;
   highlight: Highlight;
+  // The highlight box's padding across and down and its corners' radius, in output pixels at the
+  // style's size (smaller on a line set smaller); null: 0.12, 0.08 and 0.12 of the line's size.
+  padding_x: number | null;
+  padding_y: number | null;
+  radius: number | null;
   position: CaptionPosition;
   // The line's centre, for the custom position.
   y: number;
@@ -174,14 +179,17 @@ export interface HookStyle {
   colour: string;
   // Of the words marked *like this*.
   emphasis_colour: string;
-  // Around and behind the text, in output pixels; the box has neither.
+  // Around and under the text, in output pixels; the box has neither.
   outline: number;
   outline_colour: string;
-  shadow: number;
-  shadow_colour: string;
+  shadow: DropShadow;
   box_colour: string;
   box_opacity: number;
+  // The box's corners, and its padding across and down, in output pixels (the padding at the style's
+  // size, smaller with a hook set smaller); null: the Shape's own (backend/app/planner.py's _hook_padding).
   radius: number;
+  padding_x: number | null;
+  padding_y: number | null;
   // A badge with quote marks on the corner of the first line's box.
   quote: boolean;
   quote_colour: string;
@@ -291,7 +299,8 @@ export interface TextPreset {
   default: boolean;
 }
 
-export type StyleValue = string | number | boolean | null;
+// Or, for a field that is a value of several fields (a shadow), those of it to replace.
+export type StyleValue = string | number | boolean | null | Partial<DropShadow>;
 
 // The fields of the Preset's styles a Candidate replaces.
 export interface StyleOverrides {
@@ -441,7 +450,8 @@ export interface TextStyle {
 
 // A free text overlay of the Advanced Edit (backend/app/candidates.py): its text (lines split at
 // newlines) from `start` for `secs` in Timeline time, centred by its Transform (never stretched nor
-// flipped; for now unscaled, unturned and opaque) in its Text Style.
+// flipped) in its Text Style. Its `keys` move its centre, scale, rotation and opacity as an
+// Overlay's do (ADR 0008), its animations stacked on them.
 export interface TextLayer {
   id: string;
   text: string;
@@ -452,6 +462,7 @@ export interface TextLayer {
   animation_in: Animation;
   animation_out: Animation;
   animation_ms: number;
+  keys: Keys;
 }
 
 // A Text Layer as drawn: its lines at font `size`, each placed by its anchor (the middle of its text

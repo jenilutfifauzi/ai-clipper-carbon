@@ -194,12 +194,12 @@ describe("a Pick of several", () => {
 });
 
 describe("the shortcuts' item", () => {
-  test("the item is the Pick when it is one Overlay, Music Clip or Segment", () => {
+  test("the item is the Pick when it is one Overlay, Text Layer, Music Clip or Segment", () => {
     expect(pickedKeyed(picked(O))).toEqual(O);
     expect(pickedKeyed(picked(M))).toEqual(M);
     expect(pickedKeyed(picked({ kind: "segment", id: "s" }))).toEqual({ kind: "segment", id: "s" });
     expect(pickedKeyed(picked(O, M))).toBeNull();
-    expect(pickedKeyed(picked({ kind: "text", id: "t" }))).toBeNull();
+    expect(pickedKeyed(picked({ kind: "text", id: "t" }))).toEqual({ kind: "text", id: "t" });
     expect(pickedKeyed({ kind: "hook" })).toBeNull();
     expect(pickedKeyed(null)).toBeNull();
   });

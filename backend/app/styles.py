@@ -12,13 +12,24 @@ DATA_DIR/presets.json.
 
 import math
 import threading
-from dataclasses import asdict, dataclass, field, fields, replace
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NamedTuple
 from uuid import uuid4
 
-from pydantic import AfterValidator, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import (
+    AfterValidator,
+    BeforeValidator,
+    Field,
+    FiniteFloat,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    WithJsonSchema,
+)
+from pydantic_core import core_schema
 
 from app.fonts import DEFAULT_FONT, registry
 from app.storage import write_atomic
@@ -47,6 +58,8 @@ Height = Annotated[int, Field(ge=0, le=1920)]
 Width = Annotated[int, Field(ge=0, le=1080)]
 # Space between letters in output pixels, as libass's \fsp sets it.
 Tracking = Annotated[float, Field(ge=-20, le=60)]
+# A box's padding or corners' radius, in output pixels.
+Padding = Annotated[FiniteFloat, Field(ge=0, le=200)]
 
 
 class Highlight(StrEnum):
@@ -117,6 +130,43 @@ class DropShadow:
         return math.ceil(1.5 * self.blur + self.distance) if self.on else 0
 
 
+def hard_shadow(offset: float, colour: str = "#000000") -> DropShadow:
+    """The shadow the Caption and Hook Styles had before drop shadows: opaque and unblurred, `offset`
+    output pixels right and down (none for 0)."""
+    return DropShadow(colour=colour, opacity=1.0, distance=offset * math.sqrt(2))
+
+
+def migrated_shadow_fields(fields: dict) -> dict:
+    """A Caption or Hook Style's fields (all or some, as in a Style Override) saved before drop
+    shadows, in today's shape: their `shadow` (an offset right and down) and `shadow_colour` become
+    the fields of a `hard_shadow`, an offset of 0 being none. Fields in today's shape are kept."""
+    old = isinstance(fields, dict) and ("shadow_colour" in fields or isinstance(fields.get("shadow"), int | float))
+    if not old:
+        return fields
+    fields = dict(fields)
+    shadow: dict = {}
+    if isinstance(fields.get("shadow"), int | float):
+        if offset := fields.pop("shadow"):
+            # Its colour is shadow_colour, or the Preset's.
+            shadow = {name: value for name, value in asdict(hard_shadow(offset)).items() if name != "colour"}
+        else:
+            shadow = {"distance": 0.0, "blur": 0.0}
+    elif isinstance(fields.get("shadow"), dict):
+        shadow = fields.pop("shadow")
+    if "shadow_colour" in fields:
+        shadow = {**shadow, "colour": fields.pop("shadow_colour")}
+    return {**fields, "shadow": shadow}
+
+
+class _ReadsOldShadow:
+    """A style whose stored or sent fields may be in the shape of before drop shadows: read in
+    today's (migrated_shadow_fields)."""
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: type, handler: Callable[[type], core_schema.CoreSchema]) -> core_schema.CoreSchema:
+        return core_schema.no_info_before_validator_function(migrated_shadow_fields, handler(source))
+
+
 class HookAlign(StrEnum):
     """How the hook's lines line up with each other. The hook itself is centred in the frame."""
 
@@ -157,7 +207,7 @@ class WatermarkPosition(StrEnum):
 
 
 @dataclass(frozen=True)
-class CaptionStyle:
+class CaptionStyle(_ReadsOldShadow):
     font: FontId = DEFAULT_FONT
     # In libass's units (see app/planner.py's FontMetrics): a line too wide for its area is set smaller.
     size: Annotated[int, Field(ge=40, le=200)] = 110
@@ -166,13 +216,20 @@ class CaptionStyle:
     # In output pixels.
     outline: Annotated[int, Field(ge=0, le=20)] = 7
     outline_colour: Colour = "#000000"
-    shadow: Annotated[int, Field(ge=0, le=20)] = 0
-    shadow_colour: Colour = "#000000"
+    # Under the text and its outline, as a Text Layer's.
+    shadow: DropShadow = DropShadow()
     # Added after every character of a line but its last, in output pixels (pulled in when negative).
     tracking: Tracking = 0.0
     # In capitals, or in the Words' own case.
     uppercase: bool = True
     highlight: Highlight = Highlight.COLOUR
+    # The highlight box's padding either side of its Word and above the capitals and below the
+    # baseline, and its corners' radius (at most half its height), in output pixels at the style's
+    # size (smaller on a line set smaller). None: HIGHLIGHT_PAD_X, HIGHLIGHT_PAD_Y and
+    # HIGHLIGHT_RADIUS of the line's size (app/renderer.py).
+    padding_x: Padding | None = None
+    padding_y: Padding | None = None
+    radius: Padding | None = None
     position: CaptionPosition = CaptionPosition.AUTO
     y: Height = 1396
     # Each line's centre, in output pixels, at any position (the planner keeps the line in the
@@ -188,7 +245,7 @@ class CaptionStyle:
 
 
 @dataclass(frozen=True)
-class HookStyle:
+class HookStyle(_ReadsOldShadow):
     shape: HookShape = HookShape.BLOCK
     font: FontId = DEFAULT_FONT
     # The size its lines are set at when they fit; smaller when even max_lines lines are too wide.
@@ -208,12 +265,20 @@ class HookStyle:
     # In output pixels, around and behind the text (not the box).
     outline: Annotated[int, Field(ge=0, le=20)] = 0
     outline_colour: Colour = "#000000"
-    shadow: Annotated[int, Field(ge=0, le=20)] = 0
-    shadow_colour: Colour = "#000000"
+    # Under the text and its outline (not the box), as a Text Layer's.
+    shadow: DropShadow = DropShadow()
     box_colour: Colour = "#000000"
     # 0 draws no box, whatever the shape.
     box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.6
+    # The corners of the block or of each strip, in output pixels (at most half its height).
     radius: Annotated[int, Field(ge=0, le=80)] = 24
+    # The box's padding either side of the lines (of each line, for Strips) and above the capitals of
+    # the first and below the descenders of the last (of each), in output pixels at the style's size
+    # (smaller with a hook set smaller). None: the Shape's own (app/planner.py's HOOK_PAD_X and
+    # HOOK_PAD_Y round a block, STRIP_PAD_X and STRIP_PAD_Y of the size round a strip). Lines with no
+    # box are placed as in a block of the Shape's own.
+    padding_x: Padding | None = None
+    padding_y: Padding | None = None
     # A badge with quote marks on the corner of the first line's box.
     quote: bool = False
     quote_colour: Colour = "#22C55E"
@@ -253,8 +318,13 @@ class WatermarkStyle:
 
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
-# A Style Override's value: what a style field holds.
-StyleValue = bool | int | float | str | None
+# A Style Override's value: what a style field holds, or, for a field that is itself a value of
+# several fields (a shadow), some of those by name, which replace the Preset's. Its schema is short,
+# for the MCP tools' list.
+StyleValue = Annotated[
+    bool | int | float | str | None | dict[str, float | str],
+    WithJsonSchema({"type": ["boolean", "number", "string", "object", "null"]}),
+]
 
 
 @dataclass(frozen=True)
@@ -271,8 +341,8 @@ class StylePreset:
 class StyleOverrides:
     """The fields of the Preset's styles a Candidate replaces, by name."""
 
-    caption: dict[str, StyleValue] = field(default_factory=dict)
-    hook: dict[str, StyleValue] = field(default_factory=dict)
+    caption: Annotated[dict[str, StyleValue], BeforeValidator(migrated_shadow_fields)] = field(default_factory=dict)
+    hook: Annotated[dict[str, StyleValue], BeforeValidator(migrated_shadow_fields)] = field(default_factory=dict)
     watermark: dict[str, StyleValue] = field(default_factory=dict)
 
 
@@ -304,7 +374,7 @@ BUILTIN_PRESETS = [
         "minimal",
         "Minimal",
         CaptionStyle(
-            font="poppins-black", size=90, uppercase=False, outline=0, shadow=4, highlight=Highlight.NONE,
+            font="poppins-black", size=90, uppercase=False, outline=0, shadow=hard_shadow(4), highlight=Highlight.NONE,
             max_chars=24, max_secs=2.0,
         ),
         HookStyle(font="poppins-black", size=72, box_opacity=0.4, radius=16),
@@ -336,7 +406,7 @@ BUILTIN_PRESETS = [
     StylePreset(
         "quote-card",
         "Quote card",
-        CaptionStyle(font="poppins-black", size=90, uppercase=False, outline=0, shadow=4, max_chars=24, max_secs=2.0,
+        CaptionStyle(font="poppins-black", size=90, uppercase=False, outline=0, shadow=hard_shadow(4), max_chars=24, max_secs=2.0,
                      position=CaptionPosition.TOP),
         HookStyle(
             font="poppins-black", size=84, max_lines=3, colour="#000000", emphasis_colour="#16A34A",
@@ -349,7 +419,7 @@ BUILTIN_PRESETS = [
         "Kicker over bare text",
         CaptionStyle(position=CaptionPosition.BOTTOM),
         HookStyle(
-            shape=HookShape.NONE, size=80, max_lines=4, uppercase=True, align=HookAlign.LEFT, shadow=4,
+            shape=HookShape.NONE, size=80, max_lines=4, uppercase=True, align=HookAlign.LEFT, shadow=hard_shadow(4),
             emphasis_colour="#FFE600", kicker_colour="#000000", kicker_box_colour="#FFE600", position=HookPosition.MIDDLE,
         ),
         builtin=True,
@@ -386,14 +456,31 @@ def resolve(preset: StylePreset, overrides: StyleOverrides) -> Styles:
 
 
 def _apply[T](style: T, changes: dict[str, StyleValue], adapter: TypeAdapter[T]) -> T:
-    names = {f.name for f in fields(style)}  # type: ignore[arg-type]
-    if unknown := sorted(set(changes) - names):
-        raise InvalidStyle(f"No style field {', '.join(map(repr, unknown))}; the fields are {', '.join(sorted(names))}")
+    changes = migrated_shadow_fields(changes)
+    _check_names(style, changes)
+    values = asdict(style)  # type: ignore[call-overload]
+    for name, value in changes.items():
+        if isinstance(value, dict):
+            part = getattr(style, name)
+            if not is_dataclass(part):
+                raise InvalidStyle(f"{name}: is one value, not several")
+            _check_names(part, value, f"{name}.")
+            values[name] = {**values[name], **value}
+        else:
+            values[name] = value
     try:
-        return adapter.validate_python({**asdict(style), **changes})  # type: ignore[call-overload]
+        return adapter.validate_python(values)  # type: ignore[call-overload]
     except ValidationError as exc:
         problems = "; ".join(f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in exc.errors())
         raise InvalidStyle(problems) from None
+
+
+def _check_names(style: object, changes: dict[str, StyleValue], prefix: str = "") -> None:
+    names = {f.name for f in fields(style)}  # type: ignore[arg-type]
+    if unknown := sorted(set(changes) - names):
+        raise InvalidStyle(
+            f"No style field {', '.join(repr(prefix + name) for name in unknown)}; the fields are {', '.join(sorted(names))}"
+        )
 
 
 class PresetStore:

@@ -73,7 +73,7 @@ export function useStyleDraft(
   function setMany(part: StylePart, values: Record<string, StyleValue>) {
     const fields = { ...draft.style_overrides[part] } as Record<string, StyleValue>;
     for (const [field, value] of Object.entries(values)) {
-      if (base(part)[field] === value) delete fields[field];
+      if (sameValue(base(part)[field], value)) delete fields[field];
       else fields[field] = value;
     }
     change({ ...draft, style_overrides: { ...draft.style_overrides, [part]: fields } });
@@ -86,9 +86,9 @@ export function useStyleDraft(
     controls: {
       presets,
       preset,
-      caption: { ...preset.caption, ...draft.style_overrides.caption } as CaptionStyle,
-      hook: { ...preset.hook, ...draft.style_overrides.hook } as HookStyle,
-      watermark: { ...preset.watermark, ...draft.style_overrides.watermark } as WatermarkStyle,
+      caption: overridden(preset.caption, draft.style_overrides.caption),
+      hook: overridden(preset.hook, draft.style_overrides.hook),
+      watermark: overridden(preset.watermark, draft.style_overrides.watermark),
       overrides: draft.style_overrides,
       set,
       setMany,
@@ -106,3 +106,24 @@ export function useStyleDraft(
     },
   };
 }
+
+type Fields = Record<string, StyleValue>;
+
+/** A Preset's style with a Candidate's overrides: a field that is a value of several (a shadow) takes those it names. */
+export function overridden<S extends object>(style: S, overrides: Partial<Record<keyof S, StyleValue>>): S {
+  const fields: Fields = { ...(style as unknown as Fields) };
+  for (const [field, value] of Object.entries(overrides) as [string, StyleValue][]) {
+    const base = fields[field];
+    fields[field] = isFields(value) && isFields(base) ? { ...base, ...value } : value;
+  }
+  return fields as unknown as S;
+}
+
+/** Whether two style values are the same: a shadow's by its fields. */
+export function sameValue(a: StyleValue, b: StyleValue): boolean {
+  if (!isFields(a) || !isFields(b)) return a === b;
+  const keys = Object.keys(a) as (keyof typeof a)[];
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+const isFields = (value: StyleValue): value is Exclude<StyleValue, string | number | boolean | null> => typeof value === "object" && value !== null;

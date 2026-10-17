@@ -48,6 +48,7 @@ function layer(id: string, start: number, secs: number, { x = 540, y = 960, styl
     animation_in: "none",
     animation_out: "none",
     animation_ms: 300,
+    keys: {},
     ...changes,
   };
 }

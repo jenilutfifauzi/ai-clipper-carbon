@@ -1,10 +1,11 @@
 import { Pause, Play, Repeat, SkipForward } from "lucide-react";
-import { createRef, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { createRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
   logoUrl,
   type Box,
   type CaptionEvent,
   type CaptionStyle,
+  type DropShadow,
   type Crop,
   type FontInfo,
   type HookEvent,
@@ -26,20 +27,20 @@ import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
-import { useTextPicture, wantedPicture } from "./textPicture";
-import { heldTextEvent, textStagePicture } from "./textStage";
+import { placedText, useTextPicture, wantedPicture, type PlacedText } from "./textPicture";
+import { heldTextEvent, textEventAt, textsAt, textStagePicture } from "./textStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { highlightShape, shadowLook } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
-// how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
-// and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
+// how far a sliding hook moves; and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 const SLIDE_PX = 60;
 // In a staggered entrance, each element of the hook comes on this long after the one before.
 const HOOK_STAGGER_SECS = 0.08;
@@ -51,9 +52,6 @@ const QUOTE_DOTS = [
   [35, 58.8],
   [65, 58.8],
 ];
-const HIGHLIGHT_PAD_X = 0.12;
-const HIGHLIGHT_PAD_Y = 0.08;
-const HIGHLIGHT_RADIUS = 0.12;
 export const BLUR_SIGMA = 40;
 export const BLUR_BRIGHTNESS = 0.9;
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
@@ -158,7 +156,16 @@ export function ClipPreview({
   // time while paused, and left where they were while playing, which doesn't draw the stage again.
   const keyedAt = useKeyedTime(plan, playback);
   const pictures =
-    plan && controls ? stagePictures(keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt) }, controls, behind, sceneIndex, keyedAt ?? playback.time, startEditing) : [];
+    plan && controls
+      ? stagePictures(
+          keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt), texts: textsAt(plan, keyedAt) },
+          controls,
+          behind,
+          sceneIndex,
+          keyedAt ?? playback.time,
+          startEditing,
+        )
+      : [];
   // What is picked on the stage: moving one of several moves them all.
   const picked: string[] = [...(controls?.selected ?? []), ...(behind?.picked ? [behindId(sceneIndex)] : [])];
   const edit = useStageEdit(
@@ -174,7 +181,7 @@ export function ClipPreview({
     { asked: controls?.cropAsked, onOpen: () => playback.pause() },
   );
   // The plan as drawn: a picture held or moved with one is drawn where it is being put.
-  const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex) : plan;
+  const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex, keyedAt) : plan;
   const scene = drawn?.scenes[sceneIndex];
 
   const frame = (
@@ -265,7 +272,14 @@ export function ClipPreview({
       )}
       {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} scale={scale} />}
       {preview && editing && retype && (
-        <InlineText preview={preview} fontById={fontById} editing={editing} retype={retype} onClose={() => setEditing(null)} />
+        <InlineText
+          // A keyed Text Layer is retyped where it is at the playhead.
+          preview={keyedAt === null ? preview : { ...preview, plan: { ...preview.plan, texts: textsAt(preview.plan, keyedAt) } }}
+          fontById={fontById}
+          editing={editing}
+          retype={retype}
+          onClose={() => setEditing(null)}
+        />
       )}
       <PreviewMusic plan={plan} playback={playback} masters={masters} />
     </div>
@@ -307,7 +321,8 @@ const behindId = (scene: number): StageId => `picture:${scene}`;
 /**
  * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
  * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at
- * `time`, then the Text Layers, by their areas (textStage.ts), each retyped by `edit` when given.
+ * `time`, then the Text Layers, by their areas (textStage.ts) as they are at `time`, each retyped by
+ * `edit` when given.
  */
 function stagePictures(
   plan: RenderPlan,
@@ -361,9 +376,9 @@ function stagePictures(
       end: event.end,
       picture,
       fitted,
-      transform: event.layer.transform,
+      transform: texts!.transformOf(event.layer.id, time) ?? event.layer.transform,
       grips: "corners-rotate",
-      onTransform: (next, group) => texts!.onTransform(event.layer.id, next, group),
+      onTransform: (next, group) => texts!.onTransform(event.layer.id, next, group, time),
       onBox: texts!.onBox && ((edge, length, group) => texts!.onBox!(event.layer.id, edge, length, group)),
       onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
     });
@@ -371,8 +386,9 @@ function stagePictures(
   return pictures;
 }
 
-// The plan with its Overlays, Text Layers and the Scene `scene`'s picture drawn where the stage holds them.
-function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number): RenderPlan {
+// The plan with its Overlays, Text Layers and the Scene `scene`'s picture drawn where the stage holds
+// them; a keyed Text Layer held where the stage has it at `keyedAt` (useKeyedTime), still.
+function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: number | null): RenderPlan {
   const overlays = plan.overlays.map((event) => {
     const picture = edit.shownPicture(`overlay:${event.id}`, event.picture);
     return picture === event.picture ? event : { ...event, picture };
@@ -382,8 +398,10 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number): RenderPlan
     return picture === each.picture ? each : { ...each, picture };
   });
   const texts = plan.texts.map((event) => {
-    const { picture } = textStagePicture(event);
-    return heldTextEvent(event, picture, edit.shownPicture(`text:${event.layer.id}`, picture));
+    const at = keyedAt === null ? event : textEventAt(event, keyedAt);
+    const { picture } = textStagePicture(at);
+    const shown = edit.shownPicture(`text:${event.layer.id}`, picture);
+    return shown === picture ? event : heldTextEvent(at, picture, shown);
   });
   return { ...plan, overlays, scenes, texts };
 }
@@ -526,10 +544,12 @@ export interface StageControls {
   onPlace: (id: "hook" | "captions", place: Place, group: string) => void;
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
-  // The Text Layers (their Track unlocked), pictures with corners and a rotate handle: where a
-  // gesture puts one's Transform, once, as one `group`.
+  // The Text Layers (their Track unlocked), pictures with corners and a rotate handle: each one's
+  // Transform as shown at `time` (a keyed one's at the playhead, as an Overlay's), and where a
+  // gesture made from it there puts it, once, as one `group`.
   texts?: {
-    onTransform: (id: string, transform: Transform, group: string) => void;
+    transformOf: (id: string, time: number) => Transform | undefined;
+    onTransform: (id: string, transform: Transform, group: string, time: number) => void;
     // Its box's wrap width or fixed height set by the box Grip on `edge` (`length`, its own pixels).
     onBox?: (id: string, edge: BoxEdge, length: number, group: string) => void;
   };
@@ -628,40 +648,59 @@ function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): 
 /**
  * A Text Layer while it is on screen: the picture the backend made of it (docs/adr/0010), the same
  * pixels the Clip burns, placed, scaled, turned and faded as its plan's `picture` says (or as the
- * stage holds it: `heldTextEvent`), and animated on and off as the hook is. While a changed look's
- * picture loads, the last one stays. A `still` one (selected in the Advanced Edit) is shown whole
- * while paused in its time, so that it can be seen while it is edited, even on a frame its
- * animation hasn't reached.
+ * stage holds it: `heldTextEvent`), and animated on and off as the hook is, on top of its Keyframes
+ * (`placedText`). While a changed look's picture loads, the last one stays. A `still` one (selected
+ * in the Advanced Edit) is shown whole while paused in its time, so that it can be seen while it is
+ * edited, even on a frame its animation hasn't reached.
+ *
+ * A keyed one (ADR 0008) moves with the playback as PicturePanel moves a keyed picture: on every
+ * frame of its clock it is sampled at the time shown and written to its elements directly.
  */
 function TextLayerView({ event, jobId, playback, still = false }: { event: TextEvent; jobId: string; playback: Playback; still?: boolean }) {
   const shown = useTextPicture(wantedPicture(jobId, event));
-  const key = useShown(playback, (time, p) => {
-    if (still && !p.playing && event.start <= time && time < event.end) return "1 1 0";
-    const look = hookLook(time, event, event.layer, 0);
-    return look && look.map((value) => value.toFixed(3)).join(" ");
-  });
+  const key = useShown(playback, (time, p) => textLook(event, still, time, p)?.map((value) => value.toFixed(3)).join(" ") ?? null);
+  const group = useRef<SVGGElement>(null);
+  const image = useRef<SVGImageElement>(null);
+  const moving = isKeyed(event.picture);
+
+  useLayoutEffect(() => {
+    if (!moving) return;
+    const paint = () => {
+      const time = playback.shownTime;
+      const look = textLook(event, still, time, playback);
+      if (!look || !group.current || !image.current) return;
+      const placed = placedText(event.picture, time, look);
+      group.current.setAttribute("opacity", String(placed.opacity));
+      for (const [name, value] of Object.entries(textBox(placed))) image.current.setAttribute(name, String(value));
+    };
+    paint();
+    return playback.subscribe(paint);
+  }, [moving, event, still, playback]);
+
   if (!key || !shown) return null;
-  const [opacity, scale, below] = key.split(" ").map(Number);
-  const { picture } = event;
-  const [x, y] = picture.centre;
+  const placed = placedText(event.picture, playback.shownTime, key.split(" ").map(Number) as [number, number, number]);
   return (
-    <g opacity={opacity * picture.opacity}>
-      <g transform={below ? `translate(0 ${below})` : undefined}>
-        <g style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box", transformOrigin: "center" }}>
-          <image
-            href={shown.url}
-            x={x - shown.width / 2}
-            y={y - shown.height / 2}
-            width={shown.width}
-            height={shown.height}
-            preserveAspectRatio="none"
-            transform={picture.rotation ? `rotate(${picture.rotation} ${x} ${y})` : undefined}
-          />
-        </g>
-      </g>
+    <g ref={group} opacity={placed.opacity}>
+      <image ref={image} href={shown.url} preserveAspectRatio="none" {...textBox(placed)} />
     </g>
   );
 }
+
+// A Text Layer's opacity, scale and drop at `time` (hookLook): whole while paused in its time when
+// `still`; null while it is off screen.
+function textLook(event: TextEvent, still: boolean, time: number, playback: Playback): [number, number, number] | null {
+  if (still && !playback.playing && event.start <= time && time < event.end) return [1, 1, 0];
+  return hookLook(time, event, event.layer, 0);
+}
+
+// The SVG <image> attributes that draw a Text Layer's picture where it is `placed`.
+const textBox = (placed: PlacedText) => ({
+  x: placed.x - placed.width / 2,
+  y: placed.y - placed.height / 2,
+  width: placed.width,
+  height: placed.height,
+  transform: `rotate(${placed.rotation} ${placed.x} ${placed.y})`,
+});
 
 const boxKey = (box: Box) => `${box.x},${box.y},${box.width},${box.height}`;
 
@@ -880,31 +919,35 @@ function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; activ
     </text>
   );
   const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
+  const shadow = style.shadow.colour;
   return (
     <g>
-      {style.shadow > 0 &&
-        text(
-          {
-            transform: `translate(${style.shadow} ${style.shadow})`,
-            fill: style.shadow_colour,
-            stroke: style.outline > 0 ? style.shadow_colour : undefined,
-            strokeWidth: 2 * style.outline,
-          },
-          false,
-        )}
       {style.highlight === "box" && active >= 0 && (
-        <HighlightBox
-          words={words}
-          active={active}
-          centreX={centreX}
-          baseline={baseline}
-          size={size}
-          font={font}
-          tracking={style.tracking}
-          colour={style.active_colour}
-        />
+        <HighlightBox words={words} active={active} centreX={centreX} baseline={baseline} size={size} font={font} style={style} />
       )}
+      <Shadow shadow={style.shadow}>{text({ fill: shadow, stroke: style.outline > 0 ? shadow : undefined, strokeWidth: 2 * style.outline }, false)}</Shadow>
       {text({ fill: style.colour, ...outline }, true)}
+    </g>
+  );
+}
+
+/**
+ * A line's drop `shadow` under it, as the renderer draws it: `children` (the line in the shadow's
+ * colour, its stroke too) moved, faded and blurred. Nothing when it is off.
+ */
+function Shadow({ shadow, children }: { shadow: DropShadow; children: ReactNode }) {
+  const id = `shadow${useId().replace(/[^\w-]/g, "")}`;
+  const look = shadowLook(shadow);
+  if (!look) return null;
+  return (
+    <g transform={`translate(${look.x} ${look.y})`} opacity={look.opacity} filter={look.sigma ? `url(#${id})` : undefined}>
+      {look.sigma > 0 && (
+        // Over the whole frame, wherever the line is.
+        <filter id={id} filterUnits="userSpaceOnUse" x={-1080} y={-1920} width={3 * 1080} height={3 * 1920}>
+          <feGaussianBlur stdDeviation={look.sigma} />
+        </filter>
+      )}
+      {children}
     </g>
   );
 }
@@ -919,8 +962,7 @@ function HighlightBox({
   baseline,
   size,
   font,
-  tracking,
-  colour,
+  style,
 }: {
   words: string[];
   active: number;
@@ -928,14 +970,12 @@ function HighlightBox({
   baseline: number;
   size: number;
   font: FontInfo;
-  tracking: number;
-  colour: string;
+  style: CaptionStyle;
 }) {
   if (!measure) return null;
   measure.font = `${cssFontSize(font, size)}px "${fontFamily(font.id)}"`;
-  const { before, word, line } = wordSpan(words, active, (text) => measure.measureText(text).width, tracking);
-  const padX = HIGHLIGHT_PAD_X * size;
-  const padY = HIGHLIGHT_PAD_Y * size;
+  const { before, word, line } = wordSpan(words, active, (text) => measure.measureText(text).width, style.tracking);
+  const { padX, padY, radius } = highlightShape(style, size);
   const cap = (font.cap_height / font.units) * size;
   const height = cap + 2 * padY;
   return (
@@ -944,8 +984,8 @@ function HighlightBox({
       y={baseline - cap - padY}
       width={word + 2 * padX}
       height={height}
-      rx={Math.min(HIGHLIGHT_RADIUS * size, height / 2)}
-      fill={colour}
+      rx={Math.min(Math.round(radius), Math.floor(height / 2))}
+      fill={style.active_colour}
     />
   );
 }
@@ -1113,14 +1153,12 @@ function Hook({
         moved(
           first + i,
           <>
-            {style.shadow > 0 && (
-              <g transform={`translate(${style.shadow} ${style.shadow})`}>
-                {text(i, style.shadow_colour, style.shadow_colour, {
-                  stroke: style.outline > 0 ? style.shadow_colour : undefined,
-                  strokeWidth: 2 * style.outline,
-                })}
-              </g>
-            )}
+            <Shadow shadow={style.shadow}>
+              {text(i, style.shadow.colour, style.shadow.colour, {
+                stroke: style.outline > 0 ? style.shadow.colour : undefined,
+                strokeWidth: 2 * style.outline,
+              })}
+            </Shadow>
             {text(i, style.colour, style.emphasis_colour, outline)}
           </>,
           i,

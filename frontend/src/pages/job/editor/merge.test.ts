@@ -20,6 +20,7 @@ function layer(id: string, { y = 960, ...changes }: Partial<Omit<TextLayer, "tra
     animation_in: "none",
     animation_out: "none",
     animation_ms: 300,
+    keys: {},
     ...changes,
   };
 }
