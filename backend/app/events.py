@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -10,6 +10,7 @@ from fastapi.sse import ServerSentEvent
 from pydantic import TypeAdapter
 
 from app.candidates import Candidate
+from app.fonts import Faces
 from app.jobs import Job, JobNotFound, JobStatus, JobStore, JobWarning
 from app.revisions import changed_parts
 
@@ -94,7 +95,9 @@ def _read(store: JobStore, job_id: str) -> Job | None:
 _CANDIDATE = TypeAdapter(Candidate)
 
 
-async def candidate_events(store: JobStore, job_id: str, recheck_secs: float = RECHECK_SECS) -> AsyncIterator[ServerSentEvent]:
+async def candidate_events(
+    store: JobStore, job_id: str, recheck_secs: float = RECHECK_SECS, faces: Faces | None = None
+) -> AsyncIterator[ServerSentEvent]:
     """The Job's Candidates as they are saved, for as long as the Job exists (ADR 0003).
 
     First a `ready` event with the Candidates as they are now, so that an editor can catch up with
@@ -103,16 +106,23 @@ async def candidate_events(store: JobStore, job_id: str, recheck_secs: float = R
     with the id of one that is gone; and `deleted`, which ends the stream, when the Job is deleted.
     Saves made by another process (a CLI run) are found when the Candidates are read again, at the
     latest every `recheck_secs`, with source unknown.
+
+    With `faces`, a `fonts` event each time Faces are imported or deleted, so that an editor lists
+    them again in its font pickers.
     """
     loop = asyncio.get_running_loop()
-    changes: asyncio.Queue[None] = asyncio.Queue()
+    changes: asyncio.Queue[str] = asyncio.Queue()
 
     def changed(changed_id: str, _job: Job | None) -> None:
         if changed_id == job_id:
             with suppress(RuntimeError):  # the event loop has closed: the app is stopping
-                loop.call_soon_threadsafe(changes.put_nowait, None)
+                loop.call_soon_threadsafe(changes.put_nowait, "candidates")
 
-    with store.watch(changed):
+    def fonts_changed() -> None:
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(changes.put_nowait, "fonts")
+
+    with store.watch(changed), faces.watch(fonts_changed) if faces is not None else nullcontext():
         # Read after subscribing, so that no change falls between the two.
         candidates = _candidates(store, job_id)
         if candidates is None:
@@ -122,7 +132,8 @@ async def candidate_events(store: JobStore, job_id: str, recheck_secs: float = R
         sent = {candidate.id: candidate for candidate in candidates}
         while True:
             with suppress(TimeoutError):
-                await asyncio.wait_for(changes.get(), recheck_secs)
+                if await asyncio.wait_for(changes.get(), recheck_secs) == "fonts":
+                    yield ServerSentEvent(event="fonts", data={"ids": faces.ids() if faces is not None else []})
             candidates = _candidates(store, job_id)
             if candidates is None:
                 yield ServerSentEvent(event="deleted", data=job_id)

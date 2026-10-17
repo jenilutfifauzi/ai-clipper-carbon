@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import AfterValidator, Field, StringConstraints, TypeAdapter, ValidationError
 
-from app.fonts import DEFAULT_FONT, FONTS
+from app.fonts import DEFAULT_FONT, registry
 from app.storage import write_atomic
 
 # In DATA_DIR.
@@ -28,11 +28,13 @@ DEFAULT_PRESET = "default"
 
 
 def _known_font(font_id: str) -> str:
-    if font_id not in FONTS:
-        raise ValueError(f"No font {font_id!r}; the fonts are {', '.join(FONTS)}")
+    ids = registry().ids()
+    if font_id not in ids:
+        raise ValueError(f"No font {font_id!r}; the fonts are {', '.join(ids)}")
     return font_id
 
 
+# A Face's id (app/fonts.py): a bundled Face's or an imported one's.
 FontId = Annotated[str, AfterValidator(_known_font)]
 # An opaque #RRGGBB colour, kept in capitals.
 Colour = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$", to_upper=True)]
@@ -42,6 +44,8 @@ LogoId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,32}$")]
 Height = Annotated[int, Field(ge=0, le=1920)]
 # A distance from the frame's left edge in output pixels.
 Width = Annotated[int, Field(ge=0, le=1080)]
+# Space between letters in output pixels, as libass's \fsp sets it.
+Tracking = Annotated[float, Field(ge=-20, le=60)]
 
 
 class Highlight(StrEnum):
@@ -132,6 +136,8 @@ class CaptionStyle:
     outline_colour: Colour = "#000000"
     shadow: Annotated[int, Field(ge=0, le=20)] = 0
     shadow_colour: Colour = "#000000"
+    # Added after every character of a line but its last, in output pixels (pulled in when negative).
+    tracking: Tracking = 0.0
     # In capitals, or in the Words' own case.
     uppercase: bool = True
     highlight: Highlight = Highlight.COLOUR
@@ -140,9 +146,9 @@ class CaptionStyle:
     # Each line's centre, in output pixels, at any position (the planner keeps the line in the
     # frame); None centres it in the frame.
     x: Width | None = None
-    # A line ends before a Word that would make it longer than max_chars characters (a single longer
-    # Word stands alone), hold more than max_words Words, or last more than max_secs, and after a
-    # pause of pause_secs.
+    # A line ends before a Word that would make it longer than max_chars characters, counted as wide
+    # as its tracking makes them (a single longer Word stands alone), hold more than max_words Words,
+    # or last more than max_secs, and after a pause of pause_secs.
     max_chars: Annotated[int, Field(ge=4, le=60)] = 16
     max_words: Annotated[int, Field(ge=1, le=12)] | None = None
     max_secs: Annotated[float, Field(ge=0.3, le=10)] = 1.4
@@ -159,6 +165,11 @@ class HookStyle:
     # In capitals, or as written.
     uppercase: bool = False
     align: HookAlign = HookAlign.CENTER
+    # Added after every character of a line but its last, in output pixels (pulled in when
+    # negative); the Kicker's isn't.
+    tracking: Tracking = 0.0
+    # How far apart its lines' baselines are, in sizes.
+    line_height: Annotated[float, Field(ge=0.5, le=2.5)] = 0.82
     colour: Colour = "#FFFFFF"
     # Of the words marked *like this* in the hook text.
     emphasis_colour: Colour = "#FFE600"

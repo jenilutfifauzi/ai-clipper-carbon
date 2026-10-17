@@ -30,9 +30,9 @@ class Index[T: Identified]:
     def find(self, item_id: str) -> T | None:
         return next((item for item in self.all() if item.id == item_id), None)
 
-    def add(self, item: T) -> None:
+    def add(self, *items: T) -> None:
         with self._lock:
-            self._save([*self.all(), item])
+            self._save([*self.all(), *items])
 
     def remove(self, item_id: str) -> bool:
         """Take the item out; False when there was no such item."""

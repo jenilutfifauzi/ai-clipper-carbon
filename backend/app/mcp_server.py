@@ -4,7 +4,8 @@ the app itself (streamable HTTP), in the same process as the API and its Worker.
 A tool calls the API's route in this process, so the API's rules and messages are the tools': a
 failed call is a tool error carrying the API's `detail`. Three tools call services directly, where no
 route fits: `wait_for_job` follows the Job's changes as its events route does, `create_job_from_file`
-stages a file on this Mac as an upload, and `add_asset` gives one to the Logo or Media store.
+stages a file on this Mac as an upload, and `add_asset` gives one to the Logo or Media store (a font
+it posts to the fonts route).
 """
 
 import asyncio
@@ -42,6 +43,7 @@ from app.candidates import (
 from app.config import REPO_ROOT
 from app.events import SETTLED, JobProgress, job_events
 from app.jobs import Job, JobNotFound, JobOptions, JobStatus
+from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
 from app.planner import Box, Picture, key_times, picture_at
@@ -65,6 +67,8 @@ WAIT_MAX_SECS = 600
 STALE_RETRIES = 5
 # Who makes the edits the tools save (ADR 0003): the editors send their own.
 EDIT_SOURCE = {"X-Edit-Source": "agent"}
+# The API's routes of each kind of asset.
+ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
 
 INSTRUCTIONS = f"""\
 AI Clipper turns a long video (a podcast episode) into vertical short Clips. Words are those of
@@ -101,6 +105,10 @@ Edits:
   with the cut while their Magnetic timeline is on; move them yourself when they should follow.
 - Music, Overlays and Segments of other videos name Media Library items: add_asset adds a song,
   video or image from a file on this Mac, list_assets lists them.
+- A style's font (captions, hook, Watermark, Text Layer) names a Face by its id: list_assets
+  kind "fonts" lists them, with their family, weight, italic and licence. add_asset kind "font"
+  imports a TTF, OTF or TTC file from this Mac for every Job (a variable font as a Face per named
+  instance), with a warning when its licence says it may not be embedded.
 - An Overlay is placed by its transform. x, y: its centre in output pixels (clamped to 0..1080,
   0..1920; the picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
   1080x1920 frame keeping its aspect (1 fits; a 16:9 picture at 0.5 is 540 px wide). stretch_x,
@@ -200,11 +208,11 @@ def build_mcp(app: FastAPI) -> MCPServer:
             annotations=ToolAnnotations(readOnlyHint=read_only, destructiveHint=destructive),
         )
 
-    async def api(method: str, path: str, *, json: Any = None, params: dict | None = None) -> Any:
+    async def api(method: str, path: str, *, json: Any = None, params: dict | None = None, files: dict | None = None) -> Any:
         """The API route's response (None for 204), or a ToolError with its message."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://ai-clipper") as client:
-            response = await client.request(method, f"/api{path}", json=json, params=params, headers=EDIT_SOURCE)
+            response = await client.request(method, f"/api{path}", json=json, params=params, files=files, headers=EDIT_SOURCE)
         if response.is_success:
             return None if response.status_code == 204 else response.json()
         if (current := _stale_candidate(response)) is not None:
@@ -519,11 +527,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool(read_only=True)
     async def list_assets(kind: Literal["fonts", "logos", "media"] | None = None) -> dict:
-        """The fonts text can be set in, the Logos a Watermark can show, and the Media Library (songs,
-        videos and images for Music Clips, Overlays and Segments): all, or one `kind`."""
+        """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, and the
+        Media Library (songs, videos and images for Music Clips, Overlays and Segments): all, or one
+        `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
-            listed["fonts"] = [{key: f[key] for key in ("id", "label", "family")} for f in await api("GET", "/fonts")]
+            listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
         if kind in (None, "logos"):
             listed["logos"] = await api("GET", "/logos")
         if kind in (None, "media"):
@@ -531,12 +540,18 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return listed
 
     @tool()
-    async def add_asset(kind: Literal["logo", "media"], path: str) -> dict:
-        """Add a file on this Mac as a Logo (PNG, JPEG or WebP) or to the Media Library (a video of 3
-        minutes at most, a song or an image), by its path. The file is left where it is."""
+    async def add_asset(kind: Literal["logo", "media", "font"], path: str) -> dict:
+        """Add a file on this Mac, by its path, as a Logo (PNG, JPEG or WebP), to the Media Library (a
+        video of 3 minutes at most, a song or an image), or as a font (TTF, OTF or TTC). The file is
+        left where it is. A font gives the Faces added, those already there (existing) and warnings."""
         file = Path(path).expanduser()
         if not file.is_file():
             raise ToolError(f"No file {file}")
+        if kind == "font":
+            with file.open("rb") as data:
+                font = data.read(MAX_FONT_BYTES + 1)
+            imported = await api("POST", "/fonts", files={"file": (file.name, font)})
+            return {key: [_face(face) for face in imported[key]] for key in ("faces", "existing")} | {"warnings": imported["warnings"]}
 
         def add() -> Any:
             with file.open("rb") as data:
@@ -551,9 +566,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return TypeAdapter(type(item)).dump_python(item, mode="json")
 
     @tool(destructive=True)
-    async def delete_asset(kind: Literal["logo", "media"], asset_id: str) -> dict:
-        """Delete a Logo, or a Media Library item that no Candidate uses."""
-        await api("DELETE", f"/{'logos' if kind == 'logo' else 'media'}/{asset_id}")
+    async def delete_asset(kind: Literal["logo", "media", "font"], asset_id: str) -> dict:
+        """Delete a Logo, or a Media Library item or an imported font's Face that nothing uses."""
+        await api("DELETE", f"/{ASSET_ROUTES[kind]}/{asset_id}")
         return {"deleted": asset_id}
 
     @tool(read_only=True)
@@ -608,10 +623,18 @@ def _message(response: httpx.Response) -> str:
         return "; ".join(f"{'.'.join(str(part) for part in error['loc'][1:])}: {error['msg']}" for error in detail)
     if (current := _stale_candidate(response)) is not None:
         return f"{detail['message']}. The Candidate now: {json.dumps(current)}"
+    if isinstance(detail, dict) and any("where" in use for use in detail.get("uses", [])):  # a Face in use
+        return str(detail.get("message"))
     if isinstance(detail, dict):  # a Media Library item in use
         uses = ", ".join(f"{use['title']} (Job {use['job_id']}, Candidate {use['candidate_id']})" for use in detail.get("uses", []))
         return f"{detail.get('message')}: {uses}" if uses else str(detail.get("message"))
     return str(detail)
+
+
+def _face(face: dict) -> dict:
+    """A Face as the tools list it: without its measures and URL, and without licence fields its font leaves empty."""
+    keys = ("id", "label", "typographic_family", "weight", "italic", "bundled", "restricted", "copyright", "licence", "licence_url")
+    return {key: face[key] for key in keys if face[key] != ""}
 
 
 def _dump(kind: type, value: Any) -> Any:

@@ -140,6 +140,8 @@ export interface CaptionStyle {
   outline_colour: string;
   shadow: number;
   shadow_colour: string;
+  // Added after every character of a line but its last, in output pixels; may be negative.
+  tracking: number;
   uppercase: boolean;
   highlight: Highlight;
   position: CaptionPosition;
@@ -165,6 +167,10 @@ export interface HookStyle {
   max_lines: number;
   uppercase: boolean;
   align: HookAlign;
+  // Added after every character of a line but its last, in output pixels; may be negative. Not the Kicker's.
+  tracking: number;
+  // How far apart its lines' baselines are, in sizes.
+  line_height: number;
   colour: string;
   // Of the words marked *like this*.
   emphasis_colour: string;
@@ -700,17 +706,38 @@ export interface NewPreset {
   watermark?: Partial<WatermarkStyle>;
 }
 
-// A bundled font and its measures in its units.
+// A Face (GLOSSARY): a bundled or imported font file of one weight and slant, with what its font says
+// of its licence, and its measures in its units.
 export interface FontInfo {
   id: string;
   label: string;
+  // The name libass matches it by.
   family: string;
+  // The family the picker groups it in.
+  typographic_family: string;
+  weight: number;
+  italic: boolean;
+  bundled: boolean;
+  copyright: string;
+  licence: string;
+  licence_url: string;
+  // Its font says it may not be embedded.
+  restricted: boolean;
+  // Its file, at a URL that changes with it.
+  url: string;
   // Windows ascent plus descent: libass's font size. A browser's is the em.
   units: number;
   em: number;
   ascent: number;
   cap_height: number;
   descent: number;
+}
+
+// What importing a font file added, the Faces it holds that were there already, and its warnings.
+export interface FontImported {
+  faces: FontInfo[];
+  existing: FontInfo[];
+  warnings: string[];
 }
 
 // A piece of a Candidate's Main Track (docs/adr/0002-segments-and-timeline-time.md): the Source
@@ -1031,6 +1058,11 @@ export const api = {
     }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   listFonts: () => request<FontInfo[]>("/fonts"),
+  importFont: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<FontImported>("/fonts", { method: "POST", body: form });
+  },
   // The Candidate's Render Plan, or that of an unsaved draft of its edits.
   previewPlan: (jobId: string, id: string, draft?: CandidateChange, signal?: AbortSignal) =>
     request<PreviewPlan>(`/jobs/${jobId}/candidates/${id}/preview-plan`, {
@@ -1064,7 +1096,6 @@ export const api = {
   deleteMedia: (id: string) => request<void>(`/media/${id}`, { method: "DELETE" }),
 };
 
-export const fontUrl = (id: string) => `/api/fonts/${encodeURIComponent(id)}`;
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
 // A Media Library item's normalized file, a video's small copy for the preview, and its still.
 export const mediaItemUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`;

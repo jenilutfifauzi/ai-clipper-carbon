@@ -13,7 +13,8 @@ twice in one ffmpeg run, over black and over white, and the alpha is recovered f
 (difference matting): where the two differ by d, the picture is 1 − d/255 opaque, and its colour is
 what shows over black divided by that.
 
-The fonts directory libass is given holds just the layout's Face, so that no other font is matched.
+The fonts directory libass is given holds just the layout's Face (app/fonts.py's `gather`), so that
+no other font is matched; a render fails clearly when its file is gone.
 
 Pictures are kept in the Job's TEXTS_DIR, named by their layout's hash, and written under a
 temporary name renamed when complete, so a half-written one is never served. The preview's plan and
@@ -35,7 +36,7 @@ import cv2
 import numpy as np
 
 from app.candidates import Candidate
-from app.fonts import font
+from app.fonts import font, registry
 from app.planner import TextLayout, font_metrics, text_event
 from app.renderer import _ass_text, _filter_value, _rounded_box, _style_colour, _tag_colour, last_lines
 
@@ -76,10 +77,7 @@ def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
     """`layout` drawn by libass, as straight-alpha RGBA pixels of its raster size."""
     width, height = layout.raster
     with tempfile.TemporaryDirectory(prefix="text-picture-") as work:
-        fonts = Path(work, "fonts")
-        fonts.mkdir()
-        face = font(layout.style.font).file
-        (fonts / face.name).symlink_to(face.resolve())
+        fonts = registry().gather({layout.style.font}, Path(work, "fonts"))
         script = Path(work, "layout.ass")
         script.write_text(layout_script(layout), encoding="utf-8")
         drawn = f"ass=filename={_filter_value(str(script))}:fontsdir={_filter_value(str(fonts))}"

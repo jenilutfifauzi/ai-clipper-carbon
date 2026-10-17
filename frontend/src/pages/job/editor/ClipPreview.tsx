@@ -4,6 +4,7 @@ import {
   logoUrl,
   type Box,
   type CaptionEvent,
+  type CaptionStyle,
   type Crop,
   type FontInfo,
   type HookEvent,
@@ -30,6 +31,7 @@ import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
@@ -541,7 +543,7 @@ function stageItems(
     items.push({
       id: "captions",
       label: "Captions (every line moves together)",
-      shows: plan.captions.map((event) => ({ start: event.start, end: event.end, area: captionGrab(event, captionFont, style.outline) })),
+      shows: plan.captions.map((event) => ({ start: event.start, end: event.end, area: captionGrab(event, captionFont, style) })),
       size: { now: style.size, ...CAPTION_SIZES },
       centreY: CAPTION_CENTRES,
       onPlace: (area, size, group) => controls.onPlace("captions", { ...middle(area), size }, group),
@@ -587,12 +589,13 @@ function stageItems(
   return items;
 }
 
-// What can be grabbed of a caption line: its letters (and outline) as set, padded, around its middle.
-function captionGrab(event: CaptionEvent, font: FontInfo, outline: number): Box {
+// What can be grabbed of a caption line: its letters (and outline and tracking) as set, padded, around its middle.
+function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): Box {
   let width = event.area.width;
   if (measure) {
     measure.font = `${cssFontSize(font, event.size)}px "${fontFamily(font.id)}"`;
-    width = Math.min(measure.measureText(event.text).width + 2 * outline + 2 * CAPTION_GRAB_PAD, event.area.width);
+    const letters = trackedWidth(event.text, (text) => measure.measureText(text).width, style.tracking);
+    width = Math.min(letters + 2 * style.outline + 2 * CAPTION_GRAB_PAD, event.area.width);
   }
   const height = event.size + 2 * CAPTION_GRAB_PAD;
   const { x, y } = { x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 };
@@ -870,11 +873,12 @@ function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; activ
     ));
   const text = (props: React.SVGProps<SVGTextElement>, colours: boolean) => (
     <text
-      x={centreX}
+      x={trackedX(centreX, style.tracking)}
       y={baseline}
       textAnchor="middle"
       fontFamily={family}
       fontSize={fontSize}
+      letterSpacing={style.tracking || undefined}
       strokeLinejoin="round"
       paintOrder="stroke"
       style={{ whiteSpace: "pre" }}
@@ -897,7 +901,16 @@ function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; activ
           false,
         )}
       {style.highlight === "box" && active >= 0 && (
-        <HighlightBox words={words} active={active} centreX={centreX} baseline={baseline} size={size} font={font} colour={style.active_colour} />
+        <HighlightBox
+          words={words}
+          active={active}
+          centreX={centreX}
+          baseline={baseline}
+          size={size}
+          font={font}
+          tracking={style.tracking}
+          colour={style.active_colour}
+        />
       )}
       {text({ fill: style.colour, ...outline }, true)}
     </g>
@@ -914,6 +927,7 @@ function HighlightBox({
   baseline,
   size,
   font,
+  tracking,
   colour,
 }: {
   words: string[];
@@ -922,13 +936,12 @@ function HighlightBox({
   baseline: number;
   size: number;
   font: FontInfo;
+  tracking: number;
   colour: string;
 }) {
   if (!measure) return null;
   measure.font = `${cssFontSize(font, size)}px "${fontFamily(font.id)}"`;
-  const width = (text: string) => measure.measureText(text).width;
-  const line = width(words.join(" "));
-  const before = active ? width(`${words.slice(0, active).join(" ")} `) : 0;
+  const { before, word, line } = wordSpan(words, active, (text) => measure.measureText(text).width, tracking);
   const padX = HIGHLIGHT_PAD_X * size;
   const padY = HIGHLIGHT_PAD_Y * size;
   const cap = (font.cap_height / font.units) * size;
@@ -937,7 +950,7 @@ function HighlightBox({
     <rect
       x={centreX - line / 2 + before - padX}
       y={baseline - cap - padY}
-      width={width(words[active]) + 2 * padX}
+      width={word + 2 * padX}
       height={height}
       rx={Math.min(HIGHLIGHT_RADIUS * size, height / 2)}
       fill={colour}
@@ -1035,11 +1048,12 @@ function Hook({
     const [x, baseline] = hook.anchors[i];
     return (
       <text
-        x={x}
+        x={trackedX(x, style.tracking)}
         y={baseline}
         textAnchor="middle"
         fontFamily={fontFamily(font.id)}
         fontSize={cssFontSize(font, hook.size)}
+        letterSpacing={style.tracking || undefined}
         fill={fill}
         strokeLinejoin="round"
         paintOrder="stroke"

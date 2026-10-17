@@ -19,6 +19,7 @@ from mcp import Client
 from app.jobs import CANDIDATES_FILE
 from app.main import create_app
 from app.ports import Ports
+from fontfiles import font_file
 from test_events import events, wait_until
 from test_jobs_api import create_job
 from test_selection import clip
@@ -109,6 +110,20 @@ def test_a_save_by_another_process_is_found_when_the_candidates_are_read_again(s
     path.write_text(json.dumps([stored | {"hook_text": "From the CLI", "revision": 2}]))
     name, data = next(stream)
     assert (name, data["source"], data["parts"], data["candidate"]["hook_text"]) == ("candidate", "unknown", ["Hook"], "From the CLI")
+
+
+def test_fonts_imported_or_deleted_are_told(served, llm):
+    client, _ = served
+    job, _ = in_review(client, llm)
+
+    stream = candidate_events(client, job["id"])
+    assert next(stream)[0] == "ready"
+    response = client.post("/api/fonts", files={"file": ("Brand.ttf", font_file("Brand"))})
+    assert response.status_code == 201
+    name, data = next(stream)
+    assert name == "fonts" and data["ids"][-1] == "brand-regular"
+    assert client.delete("/api/fonts/brand-regular").status_code == 204
+    assert next(stream) == ("fonts", {"ids": data["ids"][:-1]})
 
 
 def test_deleting_the_job_ends_the_stream(served, llm):

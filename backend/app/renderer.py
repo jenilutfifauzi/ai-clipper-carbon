@@ -18,8 +18,9 @@ Captions are burned into the joined frames by libass (the `ass` filter, on the C
 an ASS file written for the render: one Dialogue event per Word of each caption line, showing the
 whole line with that Word highlighted (in the active colour, or on a box of it) while it is spoken,
 so the line never moves as the highlight does. The look is the plan's Caption Style. Its font is
-one of the bundled ones (app/fonts.py), given to libass through `fontsdir`, so no system font is
-needed. A line too wide for its area is set at the smaller size the plan gives it.
+a Face (app/fonts.py), bundled or imported: the Faces the script sets text in are given to libass
+through a `fontsdir` made for the render, so no system font is needed. A line too wide for its area
+is set at the smaller size the plan gives it.
 
 The hook is drawn by the same `ass` filter, in the same encode: a semi-transparent rounded box
 drawn as an ASS vector shape, and over it each of its lines as its own event, placed where the
@@ -90,6 +91,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -100,7 +102,7 @@ from pathlib import Path
 import numpy as np
 
 from app.config import FONTS_DIR, RenderTuning
-from app.fonts import font
+from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
@@ -179,18 +181,21 @@ class Renderer:
             for name, suffix, script in (("below", "", below), ("above", "-above", above))
             if script is not None and (script.captions or script.hook or _text_watermark(script))
         }
+        fonts = video.with_name(f".{video.stem}.part.fonts")
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
         keyed = _keyed_items(plan, files, source, pictures)
         failures = []
         try:
+            if scripts:
+                registry().gather(_faces(plan), fonts)
             for path, script in scripts.values():
                 path.write_text(_ass(script), encoding="utf-8")
             subtitles, over = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
             for encoder in self.tuning.encoders:
                 feeds = _feeds(plan, keyed, self.ffmpeg)
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, pictures, over)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over)
                 stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
@@ -202,6 +207,7 @@ class Renderer:
         finally:
             for part in (*parts, *(path for path, _ in scripts.values())):
                 part.unlink(missing_ok=True)
+            shutil.rmtree(fonts, ignore_errors=True)
         raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
     def stop(self) -> None:
@@ -247,13 +253,15 @@ class Renderer:
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
         feeds: "Feeds | None" = None,
+        fonts: Path = FONTS_DIR,
         pictures: dict[str, Path] | None = None,
         above: Path | None = None,
     ) -> list[str]:
         """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
         Overlays', its keyed Scenes' and its animated Text Layers', by their places among them); a
-        keyed one without is drawn still, at its constants. `subtitles` is burned under the Text
-        Layers (drawn from `pictures`, by their names) and `above` over them."""
+        keyed one without is drawn still, at its constants. `fonts` holds the Faces the `subtitles`
+        set text in, burned under the Text Layers (drawn from `pictures`, by their names), and `above`
+        over them."""
         tuning = self.tuning
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
@@ -281,13 +289,13 @@ class Renderer:
         # timeline; the Text Layers between them.
         if written:
             if subtitles is not None:
-                frame += f";{joined}{_burned(subtitles)}[captioned]"
+                frame += f";{joined}{_burned(subtitles, fonts)}[captioned]"
                 joined = "[captioned]"
             for i, (event, number, feed) in enumerate(written):
                 frame += f";{_text_layer(event, joined, f'[text{i}]', number, i, feed)}"
                 joined = f"[text{i}]"
             subtitles = above
-        burned = "" if subtitles is None else f"{_burned(subtitles)},"
+        burned = "" if subtitles is None else f"{_burned(subtitles, fonts)},"
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         mix = _audio_mix(plan, index, tuning.audio_rate, sound)
         heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
@@ -800,9 +808,9 @@ def _animated(animation: Animation, shown: float) -> tuple[float, float, float]:
     return shown, 1.0, 0.0
 
 
-def _burned(subtitles: Path) -> str:
-    """The filter that burns the ASS script `subtitles` into the frames, in the bundled fonts."""
-    return f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(FONTS_DIR))}"
+def _burned(subtitles: Path, fonts: Path) -> str:
+    """The filter that burns the ASS script `subtitles` into the frames, in the Faces in `fonts`."""
+    return f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(fonts))}"
 
 
 def _scene_inputs(plan: RenderPlan, first: int, feeds: "Feeds") -> tuple[list[str], dict[int, int]]:
@@ -1028,6 +1036,18 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
     return f",pad={plan.width}:{plan.height}:{area.x}:{area.y}:black"
 
 
+def _faces(plan: RenderPlan) -> set[str]:
+    """The Faces the plan's ASS script (_ass) sets text in."""
+    faces = set()
+    if plan.captions:
+        faces.add(plan.caption_style.font)
+    if plan.hook:
+        faces.add(plan.hook_style.font)
+    if _text_watermark(plan):
+        faces.add(plan.watermark_style.font)
+    return faces
+
+
 def _ass(plan: RenderPlan) -> str:
     """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
     for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events).
@@ -1100,9 +1120,10 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
     behind the Word (Box), or the line as it is for the whole line's time (None)."""
     area = event.area
     centre_x, centre_y = area.x + area.width / 2, area.y + area.height / 2
-    place = f"\\pos({centre_x:g},{centre_y:g})"
+    place = f"\\pos({_tracked(centre_x, style.tracking):g},{centre_y:g})"
     if event.size != style.size:
         place += f"\\fs{event.size:g}"
+    place += _spacing(style.tracking)
     if style.highlight is Highlight.NONE:
         start, end = _ass_time(event.start), _ass_time(event.end)
         line = " ".join(_ass_text(word.text) for word in event.words)
@@ -1128,12 +1149,14 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
 
 def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
     """An ASS drawing of the box behind the line's Word `index`: the Word's width (measured like the
-    line, from the centred line's left edge) and the capitals' height, padded, with rounded corners."""
-    metrics, size = font_metrics(style.font), event.size
+    line, from the centred line's left edge, with its tracking) and the capitals' height, padded,
+    with rounded corners."""
+    metrics, size, tracking = font_metrics(style.font), event.size, style.tracking
     words = [word.text for word in event.words]
-    line = metrics.width(" ".join(words), size)
-    before = metrics.width(" ".join(words[:index]) + (" " if index else ""), size)
-    word = metrics.width(words[index], size)
+    line = metrics.width(" ".join(words), size, tracking)
+    before = " ".join(words[:index]) + (" " if index else "")
+    before = metrics.width(before, size) + tracking * len(before)
+    word = metrics.width(words[index], size, tracking)
     pad_x, pad_y = HIGHLIGHT_PAD_X * size, HIGHLIGHT_PAD_Y * size
     area = event.area
     # The line is centred on the area's middle: its letters' vertical middle is where the middle of
@@ -1201,8 +1224,8 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
         # A line is centred (5) on the middle of its height: its ascent above the baseline and its
         # descent below, which together are the font size.
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
-        tags = f"\\fs{size:g}" if size != style.size else ""
-        elements.append((2, 5, x, centre_y, ".1f", None, tags, _emphasised(line, spans, style), first + i))
+        tags = (f"\\fs{size:g}" if size != style.size else "") + _spacing(style.tracking)
+        elements.append((2, 5, _tracked(x, style.tracking), centre_y, ".1f", None, tags, _emphasised(line, spans, style), first + i))
 
     step = _stagger(hook, style, first + len(hook.lines) - 1)
     # By part of the hook's time, then by element, as the parts are in time.
@@ -1334,6 +1357,17 @@ def _hook_motion(
             return f"\\move({below},{here})", f"\\alpha&HFF&\\t(\\alpha{shown})"
         return f"\\move({here},{below})", "\\t(\\alpha&HFF&)"
     return place, ""
+
+
+def _spacing(tracking: float) -> str:
+    """The override tag that sets text `tracking` pixels apart; none for none."""
+    return f"\\fsp{tracking:g}" if tracking else ""
+
+
+def _tracked(x: float, tracking: float) -> float:
+    """Where a centred line with `tracking` is placed for its letters to be centred on `x`: libass
+    adds the tracking after its last letter too, and centres that."""
+    return x + tracking / 2
 
 
 def _rounded_box(width: int, height: int, radius: int) -> str:

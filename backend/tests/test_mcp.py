@@ -15,6 +15,7 @@ from app import uploads
 from app.config import load_settings
 from app.main import create_app
 from app.ports import Ports
+from fontfiles import RESTRICTED, font_file
 from test_jobs_api import URL
 
 # tests/fixtures/captions.json3's Words "halo" to "kabar", and "kita" to "soal" (Source time).
@@ -199,6 +200,26 @@ async def test_candidates_are_added_edited_and_dry_run_through_mcp(mcp):
 
 
 @pytest.mark.anyio
+async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry_run(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    # One line untracked; spaced out, too wide for one.
+    hook = {"hook_text": "Jangan lakukan ini"}
+    plain = await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True)
+    assert plain["hook"]["lines"] == ["Jangan lakukan ini"]
+    spaced = await call(mcp, "edit_candidate", **ids, changes={**hook, "style_overrides": {"hook": {"tracking": 12}}}, dry_run=True)
+    assert spaced["hook"]["lines"] == ["Jangan", "lakukan ini"]
+
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"tracking": -2}, "hook": {"tracking": 12, "line_height": 1.2}})
+    assert merged["style_overrides"]["caption"] == {"tracking": -2} and merged["style_overrides"]["hook"] == {"tracking": 12, "line_height": 1.2}
+    assert (await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"] == ["Jangan", "lakukan ini"]
+    assert "tracking" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"tracking": 500}})
+    assert "line_height" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"line_height": 0}})
+
+
+@pytest.mark.anyio
 async def test_candidates_of_a_job_not_in_review_cant_be_edited(mcp, video_source):
     video_source.hold()
     job = await call(mcp, "create_job_from_url", url=URL)
@@ -262,7 +283,7 @@ async def test_logos_and_media_are_added_from_files_and_media_in_use_is_kept(mcp
     assets = await call(mcp, "list_assets")
     assert [m["id"] for m in assets["media"]] == [item["id"]]
     assert [l["id"] for l in assets["logos"]] == [added["id"]]
-    assert assets["fonts"] and set(assets["fonts"][0]) == {"id", "label", "family"}
+    assert assets["fonts"][0]["id"] == "montserrat-extrabold" and assets["fonts"][0]["weight"] == 800
     assert "PNG, JPEG or WebP" in await fails(mcp, "add_asset", kind="logo", path=str(text))
     assert await fails(mcp, "add_asset", kind="media", path=str(text))
 
@@ -273,6 +294,31 @@ async def test_logos_and_media_are_added_from_files_and_media_in_use_is_kept(mcp
     message = await fails(mcp, "delete_asset", kind="media", asset_id=item["id"])
     assert "Used by clips" in message and candidate["id"] in message
     assert await call(mcp, "delete_asset", kind="logo", asset_id=added["id"]) == {"deleted": added["id"]}
+
+
+@pytest.mark.anyio
+async def test_a_font_is_imported_from_a_file_listed_with_its_licence_and_kept_while_a_style_names_it(mcp, tmp_path):
+    font = tmp_path / "Brand[wght].ttf"
+    font.write_bytes(font_file("Brand", variable=True, fs_type=RESTRICTED))
+
+    added = await call(mcp, "add_asset", kind="font", path=str(font))
+    assert [(face["id"], face["weight"]) for face in added["faces"]] == [("brand-regular", 400), ("brand-bold", 700)]
+    assert len(added["warnings"]) == 2 and "may not be embedded" in added["warnings"][0]
+    assert (await call(mcp, "add_asset", kind="font", path=str(font)))["faces"] == []
+    listed = (await call(mcp, "list_assets", kind="fonts"))["fonts"]
+    bold = next(face for face in listed if face["id"] == "brand-bold")
+    assert bold["typographic_family"] == "Brand" and bold["restricted"] and bold["licence"] == "Brand is licensed under the Test Licence"
+    text = tmp_path / "notes.txt"
+    text.write_text("not a font")
+    assert "TTF, OTF or TTC" in await fails(mcp, "add_asset", kind="font", path=str(text))
+
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    await call(mcp, "merge_candidate_items", job_id=job["id"], candidate_id=candidate["id"], style_overrides={"caption": {"font": "brand-bold"}})
+    message = await fails(mcp, "delete_asset", kind="font", asset_id="brand-bold")
+    assert candidate["id"] in message and "caption style" in message
+    assert await call(mcp, "delete_asset", kind="font", asset_id="brand-regular") == {"deleted": "brand-regular"}
+    assert "comes with the app" in await fails(mcp, "delete_asset", kind="font", asset_id="anton")
 
 
 @pytest.mark.anyio

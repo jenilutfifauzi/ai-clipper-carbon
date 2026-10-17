@@ -7,7 +7,6 @@ import {
   type Candidate,
   type CandidateChange,
   type ClipSegment,
-  type FontInfo,
   type JobDetail,
   type JobProgress,
   type Layout,
@@ -17,7 +16,7 @@ import { Button, buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
-import { loadFonts } from "../../fonts";
+import { useFonts } from "../../fonts";
 import { cx, formatPrecise } from "../../format";
 import { clipTrimmed, layersOf } from "./advanced/actions";
 import { cutNote } from "./advanced/speed";
@@ -131,7 +130,7 @@ export function CandidateEditor({
   const [mode, setMode] = useState<Mode>("start");
   const [view, setView] = useState<"clip" | "source">("clip");
   const [tab, setTab] = useState<Tab>("text");
-  const [fonts, setFonts] = useState<FontInfo[] | null>(null);
+  const fonts = useFonts();
   const [hookDraft, setHookDraft] = useState<string | null>(null);
   const [kickerDraft, setKickerDraft] = useState<string | null>(null);
   // The drafts of this Candidate as last taken from elsewhere.
@@ -161,9 +160,6 @@ export function CandidateEditor({
   const clickMode: Mode = cut ? "new" : mode;
   const advanced = `/jobs/${job.id}/candidates/${candidate.id}/advanced`;
 
-  useEffect(() => {
-    loadFonts().then(setFonts, () => setFonts([]));
-  }, []);
   useEffect(() => {
     setCaptionFocus(null);
     setScene(null);

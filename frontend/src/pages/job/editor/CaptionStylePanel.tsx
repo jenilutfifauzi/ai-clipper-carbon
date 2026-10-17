@@ -28,10 +28,10 @@ const MAX_WORDS = [
 ];
 
 // The fields behind More options.
-const MORE = ["outline", "outline_colour", "shadow", "shadow_colour", "max_chars", "max_words", "max_secs", "pause_secs"] as const;
+const MORE = ["outline", "outline_colour", "shadow", "shadow_colour", "tracking", "max_chars", "max_words", "max_secs", "pause_secs"] as const;
 
 /**
- * The Caption Style: the controls used most, then More options (outline, shadow and line breaks).
+ * The Caption Style: the controls used most, then More options (outline, shadow, tracking and line breaks).
  * Each control shows the resolved value, with a reset button when it overrides the Preset.
  */
 export function CaptionStylePanel({
@@ -90,7 +90,7 @@ export function CaptionStylePanel({
         </span>
       </Switch>
 
-      <MoreOptions open={more} onToggle={onMore} contents="Outline, shadow, line breaks" changed={countChanged(style, "caption", MORE)}>
+      <MoreOptions open={more} onToggle={onMore} contents="Outline, shadow, tracking, line breaks" changed={countChanged(style, "caption", MORE)}>
         <Group title="Outline and shadow">
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <Slider label="Outline" value={caption.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("outline", v)} marker={marker("outline", "outline")} />
@@ -99,8 +99,19 @@ export function CaptionStylePanel({
             <ColorField label="Shadow colour" value={caption.shadow_colour} onChange={(v) => set("shadow_colour", v)} marker={marker("shadow_colour", "shadow colour")} />
           </div>
         </Group>
-        <Group title="Line breaks">
+        <Group title="Tracking and line breaks">
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            {/* Counted by Most characters: a spaced-out line holds fewer. */}
+            <Slider
+              label="Tracking"
+              value={caption.tracking}
+              min={-20}
+              max={60}
+              format={(v) => `${v} px`}
+              onChange={(v) => set("tracking", v)}
+              marker={marker("tracking", "tracking")}
+              className="sm:col-span-2"
+            />
             <Slider label="Most characters" value={caption.max_chars} min={4} max={60} onChange={(v) => set("max_chars", v)} marker={marker("max_chars", "most characters")} />
             <Select
               label="Most words"
