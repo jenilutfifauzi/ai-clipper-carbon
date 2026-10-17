@@ -469,6 +469,8 @@ class Segment:
     # It plays its range in (end − start) ÷ speed on the Timeline; its sound keeps its pitch unless `pitch`.
     speed: Speed = 1.0
     pitch: bool = False
+    # It plays its range backwards, from a Retimed copy (docs/adr/0009): its left edge on the Timeline is its `end`.
+    reverse: bool = False
     # They move its Framing's centre, scale, rotation and opacity, and shape its sound's volume,
     # over its length, each `at` in seconds from its start (where it starts on the Timeline, which
     # is `start` seconds into its video). A Segment of the Source has none: its Layouts frame it.
@@ -481,17 +483,18 @@ class Segment:
             raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
         if self.hold is not None:
             _check_held(self)
+        if self.reverse and self.media is None:
+            raise ValueError(f"Segment {self.id} shows the episode, which can't be reversed: only a video's Segment can")
         length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
 
 
 def _check_held(segment: Segment) -> None:
     """ValueError unless a Freeze frame's other fields are a held frame's: its `end` at its `start`,
-    at 1x, forwards, and no volume Keyframes (it is silent). Reverse is read with its default, so
-    that this holds before and after the Segment has it."""
+    at 1x, forwards, and no volume Keyframes (it is silent)."""
     if segment.end != segment.start:
         raise ValueError(f"Segment {segment.id} holds the frame at its start for {segment.hold:g} s: its end must equal its start")
-    if segment.speed != 1 or segment.pitch or getattr(segment, "reverse", False):
+    if segment.speed != 1 or segment.pitch or segment.reverse:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold): it has no Speed, pitch or Reverse")
     if KeyProperty.VOLUME in segment.keys:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no volume Keyframes")

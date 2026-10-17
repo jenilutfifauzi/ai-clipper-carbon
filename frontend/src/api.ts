@@ -699,9 +699,27 @@ export interface ClipSegment {
   // Its range plays in (end − start) ÷ speed on the Timeline (docs/adr/0009); its sound's pitch follows the speed with `pitch`.
   speed?: number;
   pitch?: boolean;
+  // A video's (ADR 0009): its range played backwards, from a Retimed copy; its left edge is `end`.
+  reverse?: boolean;
   keys?: Keys;
   // A Freeze frame's (ADR 0009): how long it holds the frame at `start`, silent; `end` is `start`.
   hold?: number | null;
+}
+
+// A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`.
+export interface RetimedRange {
+  start: number;
+  end: number;
+  reverse?: boolean;
+}
+
+// A Retimed copy as it is coming along: its `progress` from 0 to 1, then its `url` and where in it
+// the range asked for starts (`at`, seconds); or the `error` that stopped it.
+export interface RetimedCopy {
+  progress: number;
+  url: string | null;
+  at: number | null;
+  error: string | null;
 }
 
 export interface Candidate {
@@ -1012,6 +1030,9 @@ export const api = {
   },
   deleteLogo: (id: string) => request<void>(`/logos/${id}`, { method: "DELETE" }),
   listMedia: () => request<MediaItem[]>("/media"),
+  // Asks for the preview Retimed copy of a video's range (made in the background), and how it is coming along: poll it until it has a `url`.
+  retimedCopy: (mediaId: string, range: RetimedRange, signal?: AbortSignal) =>
+    request<RetimedCopy>(`/media/${encodeURIComponent(mediaId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),
   // Rejects with an ApiError of 409 whose detail lists the clips using it.
   deleteMedia: (id: string) => request<void>(`/media/${id}`, { method: "DELETE" }),
 };

@@ -37,6 +37,7 @@ from app.derived import (
 )
 from app.library import Index, shrink
 from app.renderer import last_lines
+from app.retimed import Copies, CopySize
 
 # In DATA_DIR, with its index.
 MEDIA_DIR = "media"
@@ -99,9 +100,9 @@ MEDIA_TYPES = {MediaKind.VIDEO: "video/mp4", MediaKind.AUDIO: "audio/mp4", Media
 
 
 class MediaStore:
-    """The Media Library, in `folder`: per item <id>.mp4 (and <id>.proxy.mp4, <id>.jpg and the
-    Filmstrip's chunks in <id>.strips), <id>.m4a or <id>.png, the Peaks' chunks of one with sound in
-    <id>.peaks, and their index."""
+    """The Media Library, in `folder`: per item <id>.mp4 (and <id>.proxy.mp4, <id>.jpg, the
+    Filmstrip's chunks in <id>.strips and Retimed copies in <id>.retimed), <id>.m4a or <id>.png, the
+    Peaks' chunks of one with sound in <id>.peaks, and their index."""
 
     def __init__(self, folder: Path, ffmpeg: Path, ffprobe: Path) -> None:
         self.folder = folder
@@ -164,6 +165,14 @@ class MediaStore:
         if item.kind is MediaKind.IMAGE or not item.has_audio or not frames_in(start, item.duration or 0):
             raise MediaNotFound(media_id)
         return make_peaks(self.ffmpeg, self.file(media_id), start, self._peaks(media_id) / f"{start}.peaks")
+
+    def retimed(self, media_id: str) -> Copies:
+        """A video's Retimed copies (app/retimed.py), in <id>.retimed; MediaNotFound for any other item."""
+        item = self.get(media_id)
+        if item.kind is not MediaKind.VIDEO or not item.width or not item.height:
+            raise MediaNotFound(media_id)
+        videos = {CopySize.PREVIEW: self.proxy(media_id), CopySize.FULL: self.file(media_id)}
+        return Copies(self.folder / f"{media_id}.retimed", videos, (item.width, item.height, FPS))
 
     def add(self, upload: BinaryIO, filename: str) -> MediaItem:
         """Keep what `upload` holds, uploaded as `filename`, as an item. BadMedia when it is too large

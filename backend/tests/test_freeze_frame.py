@@ -142,7 +142,7 @@ def test_freeze_frames_are_saved_unsnapped_and_validated(client):
     # Between two Words, where no edge would snap.
     still = {"id": "still", "start": 0.777, "end": 0.777, "hold": 1}
     saved = patch(client, job, candidate, segments=[head, still, tail])
-    assert saved["segments"][1] == still | {"media": None, "framing": None, "volume": 1, "speed": 1, "pitch": False, "keys": {}}
+    assert saved["segments"][1] == still | {"media": None, "framing": None, "volume": 1, "speed": 1, "pitch": False, "reverse": False, "keys": {}}
     # The hull is of the Segments that play.
     assert (saved["start"], saved["end"]) == (saved["segments"][0]["start"], saved["segments"][2]["end"])
     planned = preview(client, job, saved)
@@ -167,8 +167,7 @@ def test_a_freeze_frame_has_no_speed_pitch_or_reverse(client):
     words = {word["text"]: word for word in job["transcript"]["words"]}
     head = {"id": "head", "start": words["halo"]["start"], "end": words["kabar"]["end"]}
     still = {"id": "still", "start": 0.777, "end": 0.777, "hold": 1}
-    # Reverse comes with ticket 06.
-    for bad in ({"speed": 2}, {"pitch": True}, *([{"reverse": True}] if "reverse" in Segment.__dataclass_fields__ else [])):
+    for bad in ({"speed": 2}, {"pitch": True}, {"reverse": True}):
         response = client.patch(candidate_url(job, candidate), json={"segments": [head, still | bad]})
         assert response.status_code == 422 and "Freeze frame" in response.text, bad
 

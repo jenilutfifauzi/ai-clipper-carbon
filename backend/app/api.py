@@ -22,6 +22,7 @@ from app.candidates import (
     MusicClip,
     Overlay,
     Segment,
+    Speed,
     TextLayer,
     Transition,
     Volume,
@@ -40,6 +41,7 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips
+from app.retimed import CopySize, Making, Retime
 from app.segment_time import segment_time
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
@@ -261,6 +263,30 @@ class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_ids: list[str] | None = None
+
+
+class RetimedRequest(BaseModel):
+    """A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
+    `speed`, its pitch following it with `pitch`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: Annotated[FiniteFloat, Field(ge=0)]
+    end: FiniteFloat
+    reverse: bool = True
+    speed: Speed = 1.0
+    pitch: bool = False
+
+
+class RetimedCopy(BaseModel):
+    """How a preview Retimed copy asked for is coming along: its `progress` from 0 to 1; once made,
+    its `url` and where in it the range asked for starts (`at`, in seconds); or the `error` that
+    stopped it, after which the next ask tries again."""
+
+    progress: float
+    url: str | None = None
+    at: float | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -864,6 +890,46 @@ def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
     return FileResponse(chunk, media_type="application/octet-stream", headers=_DERIVED)
 
 
+@router.post("/media/{media_id}/retimed")
+def media_retimed(media_id: str, body: RetimedRequest, library: Media, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
+    """The preview-size Retimed copy of a video's range from `start` to `end` seconds, as the editor
+    asks for it while it previews a reversed Segment, then polls (app/retimed.py): any copy that serves
+    it, or the one being made, or one queued now and made outside the Worker, on every core unless the
+    Worker is running a Job. 404 for an item that isn't a video; 422 for a range outside it, or one
+    played forwards at 1×."""
+    try:
+        item = library.get(media_id)
+        copies = library.retimed(media_id)
+    except MediaNotFound:
+        raise HTTPException(404, f"No video {media_id}") from None
+    if not body.start < body.end <= (item.duration or 0) + 0.05:
+        raise HTTPException(422, f"No range {body.start:g}–{body.end:g} s in the video ({item.duration:g} s)")
+    if not body.reverse and body.speed == 1:
+        raise HTTPException(422, "A copy forwards at 1× is the video itself")
+    retime = Retime(body.start, min(body.end, item.duration or body.end), body.reverse, body.speed, body.pitch)
+    making = copies.ask(settings.ffmpeg_bin, CopySize.PREVIEW, retime, threads=lambda: 1 if worker.busy else 0)
+    return _retimed_copy(making, retime, lambda name: f"/api/media/{media_id}/retimed/{name}")
+
+
+@router.get("/media/{media_id}/retimed/{name}")
+def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse:
+    """A video's Retimed copy, by the name its `url` gives."""
+    try:
+        copies = library.retimed(media_id)
+    except MediaNotFound:
+        raise HTTPException(404, f"No video {media_id}") from None
+    file = copies.folder / name
+    if Retime.named(name) is None or not file.is_file():
+        raise HTTPException(404, f"No copy {name} of {media_id}")
+    return FileResponse(file, media_type="video/mp4", headers=_DERIVED)
+
+
+def _retimed_copy(making: Making, retime: Retime, url: Callable[[str], str]) -> RetimedCopy:
+    if making.copy is None:
+        return RetimedCopy(progress=making.progress, error=making.error)
+    return RetimedCopy(progress=1, url=url(making.copy.path.name), at=making.copy.at(retime.start, retime.end))
+
+
 @router.delete("/media/{media_id}", status_code=204)
 def delete_media(media_id: str, library: Media, store: Store) -> None:
     """Delete an item and its files. 409 while a Candidate uses it, naming them."""
@@ -913,7 +979,8 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
 
 # Media Library files never change under their id.
 _KEEP = {"Cache-Control": "public, max-age=604800"}
-# Nor do Filmstrips and Peaks, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md).
+# Nor do Filmstrips and Peaks, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md),
+# nor Retimed copies, named by their range (docs/adr/0009).
 _DERIVED = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 
