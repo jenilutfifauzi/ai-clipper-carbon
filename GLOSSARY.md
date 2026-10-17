@@ -54,7 +54,16 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Music Clip:** part of a song (or of a video's sound) from the Media Library, heard under the Clip from a time in Timeline time, at its volume, faded in and out. The Clip's own sound has a volume too.
 - **Overlay:** a video or image from the Media Library laid over the Clip (picture in picture), in Timeline time: its Transform and Crop, its corners (a radius as a fraction of its shorter side), border and shadow, and a video's sound (muted by default). A video's may have a Speed and play in Reverse. Drawn over the Segments and under the Watermark.
 - **Transition:** how one Segment gives way to the next at their join (a fade, a dip, a slide, a wipe, a zoom, a circle): the two overlap for its length (at most half the shorter), so the Clip is that much shorter. Not the Job's status history (`StatusChange`).
-- **Text Layer:** a free text overlay added in the Advanced Edit: its words (lines split at newlines), its time in Timeline time, its centre on the frame, and its own look and in/out animation. Drawn over the captions and under the hook.
+- **Text Layer:** a free text overlay added in the Advanced Edit: its words (lines split at newlines and wrapped at its Text Style's wrap width), its time in Timeline time, its Transform (position, scale, rotation and opacity, which Keyframes can move), its Text Style and its in/out animation. Rendered as a picture (docs/adr/0010-text-layers-are-rasterised-pictures.md). Drawn over the captions and under the hook.
+- **Text Style:** how a Text Layer's words look:
+  - its face, size and colour;
+  - its stroke and drop shadow (colour, opacity, blur, distance, angle);
+  - its plate (a Block or Strips, with colour, opacity, radius and padding);
+  - its line height, tracking, alignment, wrap width and fixed height.
+
+  The box grows to hold the words; they are never shrunk to fit.
+- **Text Preset:** a named Text Style that a new Text Layer starts from. It is copied into the layer, never linked to it. Built-in Presets can't be changed or deleted; the owner saves, renames and deletes their own. One Preset is used for new titles, by the editor and the agent. Not a Style Preset.
+- **Face:** one font file of a family, at one weight and slant. A style names a Face; weight and italic choose another Face of the same family. Bundled Faces come with the app. Imported Faces are added by the owner for every Job: a variable font is split into a Face per named instance, and a Face can't be deleted while anything uses it.
 - **Speed:** the constant rate a Segment or a video Overlay plays at, 0.0625–16× (1 by default). The pitch is kept unless "Change pitch with speed" is on. Words of a Source Segment are retimed with it. Not the preview rate, a viewing aid. See docs/adr/0009-speed-keeps-the-range-and-reverse-is-a-derived-copy.md.
 - **Reverse:** a Segment or a video Overlay playing its range backwards, from a Retimed copy. A reversed Segment of the Source has no captions.
 - **Retimed copy:** a file derived from a range of the Source or a media item, reversed (or, for the preview, retimed at a Speed outside 0.25–4×), kept on this Mac beside its Job or item. Any copy of a wider range of the same item serves.

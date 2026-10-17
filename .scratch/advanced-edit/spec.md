@@ -167,7 +167,7 @@ Add these terms to `GLOSSARY.md`: **Advanced Edit**, **Media Library**, **Text L
 
 - A built-in music or stock library (licensing).
 - Auto-ducking.
-- Keyframes, masks, rotation, stickers, filters and effects.
+- Keyframes, masks, rotation, stickers, filters and effects. (Keyframes and rotation overturned for Overlays and Segments by ADR 0007 and 0008, and for Text Layers by ADR 0010.)
 - Text styles in Style Presets (duplicate a layer instead).
 - Transcribing uploaded videos for captions.
 - Face tracking or Layouts on uploaded videos.
