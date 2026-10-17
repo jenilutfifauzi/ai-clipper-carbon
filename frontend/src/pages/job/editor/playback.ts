@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { previewSpeed } from "./follow";
 import { loopStart, wrapTarget, type LoopRegion } from "./loop";
-import { paceOf, playedSourceAt, playedTimeAt, playedUntil, segmentLength, type PlayedRange, type SegmentRange } from "./segmentTime";
+import { paceOf, playedSourceAt, playedTimeAt, playedUntil, segmentLength, type Pace, type PlayedRange, type SegmentRange } from "./segmentTime";
 
 type Listener = () => void;
 
@@ -59,9 +59,10 @@ const SNIPPET_SECS = 0.08;
 
 /**
  * Whether a Segment plays on videos of its own while the decks wait: a video's, or one of the Source
- * in Reverse, from its Retimed copy (ADR 0009).
+ * played from a Retimed copy (ADR 0009): in Reverse, or at a Speed a browser won't play.
  */
-export const onOwnVideos = (segment: { media?: string | null; reverse?: boolean }) => !!segment.media || !!segment.reverse;
+export const onOwnVideos = (segment: Pace & { media?: string | null }) =>
+  !!segment.media || (segment.hold == null && (!!segment.reverse || previewSpeed(segment.speed) !== (segment.speed ?? 1)));
 
 // Whether the time runs on a clock through `segment`: one on its own videos, which follow it, or a
 // Freeze frame, whose frame waits paused for its hold.
@@ -96,9 +97,9 @@ interface Deck {
  * (docs/adr/0002-segments-and-timeline-time.md). The live deck plays and is heard; the other waits,
  * paused and muted, where the next Source Segment starts, and at the join the two swap, so that the
  * join doesn't wait for a seek. When the parked deck isn't ready there (its seek hasn't landed),
- * the live deck seeks instead. Through a Segment of a Media Library video, or one of the Source in
- * Reverse (ADR 0009: its Retimed copy on a master and follower of its own, so that every panel of its
- * Scenes draws from the copy), the decks wait at the next Segment they play and the time runs on a
+ * the live deck seeks instead. Through a Segment of a Media Library video, or one of the Source played
+ * from a Retimed copy (`onOwnVideos`, ADR 0009: on a master and follower of its own, so that every
+ * panel of its Scenes draws from the copy), the decks wait at the next Segment they play and the time runs on a
  * clock of its own, which those videos follow. Through a Freeze frame
  * (ADR 0009) the time runs on the clock too, for its hold, while its frame waits paused: a deck
  * parked at it for the Source's, its video for a video's. The preview, its other

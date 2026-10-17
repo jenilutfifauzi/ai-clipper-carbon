@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { AudioEvent, RenderPlan, RetimedCopy, ScenePlan, SegmentPlan } from "../../../api";
+import type { AudioEvent, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { loudness } from "./loudness";
-import { mediaPlay, reversedPlay, useRetimedCopy } from "./retimedCopy";
+import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
 import { sceneAt } from "./ScenesTrack";
 
@@ -14,9 +14,9 @@ import { sceneAt } from "./ScenesTrack";
  * The plan's Segments on videos of their own (`onOwnVideos`), over the Source's panels while they
  * play, in step with the playback: a Media Library video's, its video's small copy drawn as the Scene
  * the plan gives it (its picture over its Background), its sound at its volume; and one of the Source
- * in Reverse, its Scenes drawn from its Retimed copy of the Source (`src`, the decks' video, of Job
- * `jobId`). One that a Transition overlaps with the next gives way where the Transition starts
- * (PreviewTransitions draws the rest of it).
+ * played from a Retimed copy (reversed, or at a Speed a browser won't play), its Scenes drawn from the
+ * copy (of the Source `src`, the decks' video, of Job `jobId`). One that a Transition overlaps with
+ * the next gives way where the Transition starts (PreviewTransitions draws the rest of it).
  */
 export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
   if (!plan || !plan.segments.some(onOwnVideos)) return null;
@@ -26,8 +26,8 @@ export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPl
       {plan.segments.map((segment, i) =>
         segment.media ? (
           <MediaSegment key={`${i}:${segment.start}`} segment={segment} end={played[i].end} scene={segmentScene(plan, i)} playback={playback} />
-        ) : segment.reverse ? (
-          <ReversedSourceSegment key={`${i}:${segment.start}`} plan={plan} index={i} end={played[i].end} playback={playback} src={src} jobId={jobId} />
+        ) : onOwnVideos(segment) ? (
+          <CopiedSourceSegment key={`${i}:${segment.start}`} plan={plan} index={i} end={played[i].end} playback={playback} src={src} jobId={jobId} />
         ) : null,
       )}
     </>
@@ -47,8 +47,8 @@ export function segmentScene(plan: RenderPlan, index: number): ScenePlan | undef
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed sound follows its volume Keyframes (followCurve).
- * A reversed one plays its Retimed copy, and shows its first frame held with the copy's progress
- * until the copy is made (`mediaPlay`).
+ * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
+ * frame held with the copy's progress until the copy is made (`mediaPlay`).
  */
 export function MediaSegment({
   segment,
@@ -66,7 +66,8 @@ export function MediaSegment({
   const box = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLVideoElement>(null);
   const back = useRef<HTMLVideoElement>(null);
-  const copy = useRetimedCopy(segment.reverse ? { media: segment.media! } : null, segment.source_start, segment.source_end);
+  const range = useMemo(() => segmentCopy(segment), [segment]);
+  const copy = useRetimedCopy(segment.media, range);
   const { src, span } = useMemo(() => mediaPlay(segment, end, copy), [segment, end, copy]);
 
   useEffect(() => {
@@ -118,20 +119,21 @@ export function MediaSegment({
           media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
         />
       )}
-      <Reversing copy={copy} failed="Couldn't reverse this video" />
+      <CopyProgress range={range} copy={copy} what="video" />
     </div>
   );
 }
 
 /**
- * Segment `index` of `plan`, of the Source in Reverse, shown until `end`, or within a Transition when
- * `end` is its own, its sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a
- * Blur's background and shot, a Manual Scene's picture) drawn as the decks draw them, from a master
- * and a follower of its own playing the Source's Retimed copy at its Speed, at the Clip's own volume
- * times its own. Outside its span they wait at its start. Until the copy is made they hold the
- * Source's `src` at the frame the copy shows first, with its progress (`reversedPlay`).
+ * Segment `index` of `plan`, of the Source played from a Retimed copy (`segmentCopy`: reversed, or at
+ * a Speed a browser won't play), shown until `end`, or within a Transition when `end` is its own, its
+ * sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a Blur's background and
+ * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
+ * own playing the copy (`sourcePlay`), at the Clip's own volume times its own. Outside its span they
+ * wait at its start. Until the copy is made they hold the Source's `src` at the frame the copy shows
+ * first, with its progress.
  */
-export function ReversedSourceSegment({
+export function CopiedSourceSegment({
   plan,
   index,
   end,
@@ -152,9 +154,11 @@ export function ReversedSourceSegment({
   const box = useRef<HTMLDivElement>(null);
   const master = useRef<HTMLVideoElement>(null);
   const follower = useRef<HTMLVideoElement>(null);
-  const copy = useRetimedCopy({ job: jobId }, segment.source_start, segment.source_end);
+  // It plays from a copy: that is why it is drawn here.
+  const range = useMemo(() => segmentCopy(segment)!, [segment]);
+  const [copy] = useRetimedCopies([{ job: jobId, range }]);
   const frame = 1 / (plan.fps > 0 ? plan.fps : 30);
-  const { src: shown, span } = useMemo(() => reversedPlay(segment, end, copy, src, frame), [segment, end, copy, src, frame]);
+  const { src: shown, span } = useMemo(() => sourcePlay(segment, end, range, copy, src, frame), [segment, end, range, copy, src, frame]);
   const sceneIndex = useShown(playback, (time) => sceneAt(plan, time, index));
   const scene = plan.scenes[sceneIndex];
 
@@ -185,21 +189,21 @@ export function ReversedSourceSegment({
       {[master, follower].map((ref, slot) => (
         <PanelView key={slot} videoRef={ref} src={shown} plan={plan} {...slotView(scene, slot)} playback={playback} muted={slot > 0} />
       ))}
-      <Reversing copy={copy} failed="Couldn't reverse this Segment" />
+      <CopyProgress range={range} copy={copy} what="Segment" />
     </div>
   );
 }
 
-// A Retimed copy's progress while it is made, or why it couldn't be.
-function Reversing({ copy, failed }: { copy: RetimedCopy | null; failed: string }) {
-  if (!copy || copy.url) return null;
+// A Retimed copy's progress while it is made, or why it couldn't be (`copyProgress`).
+function CopyProgress({ range, copy, what }: { range: RetimedRange | null; copy: RetimedCopy | null; what: string }) {
+  if (!range || !copy || copy.url) return null;
   return (
     <div
       aria-live="polite"
       className="absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full bg-black/70 px-3 py-1 text-white tabular-nums"
       style={{ fontSize: "max(12px, calc(var(--scale) * 36px))" }}
     >
-      {copy.error ? failed : `Reversing… ${Math.round(copy.progress * 100)}%`}
+      {copyProgress(range, copy, what)}
     </div>
   );
 }

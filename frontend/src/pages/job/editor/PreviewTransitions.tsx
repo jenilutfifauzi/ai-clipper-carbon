@@ -5,7 +5,7 @@ import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
-import { MediaSegment, ReversedSourceSegment, segmentScene } from "./PreviewSegments";
+import { MediaSegment, CopiedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
@@ -106,7 +106,7 @@ function Ghost({
         {segment.media ? (
           <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
         ) : own ? (
-          <ReversedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
+          <CopiedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
         ) : (
           [master, follower].map((ref, slot) => (
             <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />

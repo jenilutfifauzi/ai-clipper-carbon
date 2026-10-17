@@ -716,11 +716,14 @@ export interface ClipSegment {
   hold?: number | null;
 }
 
-// A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`.
+// A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
+// `speed` (1 by default), its pitch following the Speed with `pitch`.
 export interface RetimedRange {
   start: number;
   end: number;
   reverse?: boolean;
+  speed?: number;
+  pitch?: boolean;
 }
 
 // A Retimed copy as it is coming along: its `progress` from 0 to 1, then its `url` and where in it

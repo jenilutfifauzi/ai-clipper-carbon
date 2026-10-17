@@ -137,6 +137,8 @@ def test_the_editor_asks_for_a_preview_copy_of_a_range_of_the_source_served_from
     served = client.get(made["url"])
     assert served.status_code == 200 and served.headers["content-type"] == "video/mp4"
     assert client.post(url, json={"start": 1, "end": 1.5}).json()["at"] == 0.5
+    # Retimed at a Speed a browser won't play, for a sped Segment of the Source.
+    assert wait_for(client, url, {"start": 0, "end": 1.6, "reverse": False, "speed": 8})["url"].endswith("/retimed-preview-0-1600-x8.mp4")
     for body in ({"start": 1, "end": SOURCE_SECS + 1}, {"start": 1, "end": 0.5}, {"start": 0, "end": 1, "reverse": False}):
         assert client.post(url, json=body).status_code == 422, body
     assert client.post("/api/jobs/nope/retimed", json={"start": 0, "end": 1}).status_code == 404

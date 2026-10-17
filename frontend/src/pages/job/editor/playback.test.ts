@@ -523,14 +523,17 @@ describe("speed", () => {
     expect(second.master.playbackRate).toBe(2);
   });
 
-  test("a Source Segment past 4× plays at 4× on its deck until it has a copy", () => {
+  test("a Source Segment past 4× plays from its copy on videos of its own, its time on a clock, the decks left alone", () => {
     const stage = harness();
     const playback = new Playback();
     playback.setSegments(playedFrom([{ start: 200, end: 240, speed: 8 }]));
     const [first] = stage.decks(playback);
     playback.seek(1);
-    expect(first.master.currentTime).toBe(208);
-    expect(first.master.playbackRate).toBe(4);
+    expect(first.master.currentTime).toBe(0);
+    playback.play();
+    stage.advance(0.5);
+    expect(playback.time).toBeCloseTo(1.5, 5);
+    expect(first.master.paused).toBe(true);
   });
 
   test("a Transition's ghost, one deck playing the Segment it takes away, plays it at its Speed", () => {

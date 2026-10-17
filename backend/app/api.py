@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -41,7 +41,7 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips, source_copies
-from app.retimed import RETIMED_DIR, CopySize, Making, Retime
+from app.retimed import RETIMED_DIR, CopySize, Making, Retime, copies_used, sweep
 from app.segment_time import segment_time
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
@@ -366,12 +366,15 @@ def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, store: Store) -> JobDetail:
+def get_job(job_id: str, store: Store, library: Media, background: BackgroundTasks) -> JobDetail:
+    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies are swept
+    (`sweep_retimed`)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     candidates = store.load_candidates(job_id)
+    background.add_task(sweep_retimed, store, library, job_id)
     return JobDetail(
         **vars(job),
         transcript=store.load_transcript(job_id),
@@ -913,7 +916,8 @@ def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
 @router.post("/media/{media_id}/retimed")
 def media_retimed(media_id: str, body: RetimedRequest, library: Media, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
     """The preview-size Retimed copy of a video's range from `start` to `end` seconds, as the editor
-    asks for it while it previews a reversed Segment, then polls (app/retimed.py): any copy that serves
+    asks for it while it previews a reversed item, or one at a Speed a browser won't play, then polls
+    (app/retimed.py): any copy that serves
     it, or the one being made, or one queued now and made outside the Worker, on every core unless the
     Worker is running a Job. 404 for an item that isn't a video; 422 for a range outside it, or one
     played forwards at 1×."""
@@ -960,6 +964,21 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
     if uses := media_uses(store, media_id):
         raise HTTPException(409, {"message": "Used by clips: remove it from them first", "uses": [use.model_dump() for use in uses]})
     library.delete(media_id)
+
+
+def sweep_retimed(store: JobStore, library: MediaStore, job_id: str) -> None:
+    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
+    Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
+    History plays from."""
+    states = []
+    for candidate in store.load_candidates(job_id) or []:
+        states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
+    videos = {item.id: item.duration or 0.0 for item in library.all() if item.kind is MediaKind.VIDEO}
+    used = copies_used(states, videos)
+    sweep(store.job_dir(job_id) / RETIMED_DIR, used.get(None, []))
+    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & videos.keys()):
+        if all(use.job_id == job_id for use in media_uses(store, media_id)):
+            sweep(library.retimed(media_id).folder, used.get(media_id, []))
 
 
 def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:

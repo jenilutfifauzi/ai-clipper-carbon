@@ -25,6 +25,10 @@ The editor's copies are made outside the Worker, one at a time under a lock of t
 ffmpeg at low priority, latest request first (`Copies.ask`), with their progress kept for the editor
 to poll, as ADR 0005's chunks made on request are. A render makes the full-size copy it needs itself,
 in the Worker (`Copies.make`).
+
+When a Job is opened, the copies none of its Candidates, nor any state in their Revision History,
+plays from (`copies_used`) are removed (`sweep`), with what copies cut short left behind; never what
+a copy being made is writing.
 """
 
 import math
@@ -33,11 +37,13 @@ import shutil
 import subprocess
 import threading
 import uuid
-from collections.abc import Callable, Mapping
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
+from app.candidates import Candidate
 from app.derived import _LatestFirst
 from app.library import shrink
 from app.planner import RenderPlan
@@ -46,6 +52,9 @@ from app.segment_time import SegmentTime
 
 # In a Job's directory.
 RETIMED_DIR = "retimed"
+# The Speeds a browser plays a video at; the preview plays an item at any other from a copy retimed at
+# it (docs/adr/0009).
+PLAYABLE_SPEEDS = (0.25, 4.0)
 # The longest side of a preview copy.
 PREVIEW_SIDE = 1280
 # What `reverse` may hold of a piece's decoded frames (yuv420p), and the pieces' shortest and longest.
@@ -171,9 +180,8 @@ class Copies:
         if found is not None:
             return found
         path = self.folder / retime.name(size)
-        _reverse_in_pieces(
-            ffmpeg, self.videos[size], retime, size, path, piece_secs(*self._frame(size)), progress, threads(), nice
-        )
+        frame = self._frame(size)
+        _reverse_in_pieces(ffmpeg, self.videos[size], retime, size, path, frame[2], piece_secs(*frame), progress, threads(), nice)
         named = Retime.named(path.name)
         assert named is not None
         return Copy(path, size, named[1])
@@ -228,6 +236,10 @@ _asked: dict[Path, Making] = {}
 _asked_lock = threading.Lock()
 # One ffmpeg at a time for the editor's copies.
 _retiming = _LatestFirst()
+# What copies being made are writing now, by the editor or a render: their final names, the parts
+# they are written under and the folders of their pieces, which the sweep leaves.
+_writing: set[Path] = set()
+_writing_lock = threading.Lock()
 
 
 def piece_secs(width: int, height: int, fps: float) -> float:
@@ -259,12 +271,70 @@ def read_from_copies(
     return replace(plan, segments=segments), files
 
 
+def copies_played(start: float, end: float, speed: float = 1.0, reverse: bool = False, pitch: bool = False) -> list[tuple[CopySize, Retime]]:
+    """The Retimed copies an item (a Segment, or a video Overlay) playing its file's range from `start`
+    to `end` at `speed`, backwards when `reverse`, is played from, by their size: in Reverse, the
+    full-size reversed copy its render reads; and the preview's, at a Speed a browser won't play
+    (outside PLAYABLE_SPEEDS) retimed at it, else in Reverse the reversed one played at its Speed.
+    Empty for an item played from its own file. (The editor's twin is `previewCopyOf` in
+    frontend/src/pages/job/editor/retimedCopy.ts.)"""
+    played = []
+    if reverse:
+        played.append((CopySize.FULL, Retime(start, end)))
+    if not PLAYABLE_SPEEDS[0] <= speed <= PLAYABLE_SPEEDS[1]:
+        played.append((CopySize.PREVIEW, Retime(start, end, reverse, speed, pitch)))
+    elif reverse:
+        played.append((CopySize.PREVIEW, Retime(start, end)))
+    return played
+
+
+def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float]) -> dict[str | None, list[tuple[CopySize, Retime]]]:
+    """The Retimed copies `candidates` play from (`copies_played`), by their item: a Media Library
+    video's id, or None for the Source. An Overlay is of one of the videos `durations` gives (an
+    image's has none), its range cut at the video's end as the planner cuts it."""
+    used: dict[str | None, list[tuple[CopySize, Retime]]] = defaultdict(list)
+    for candidate in candidates:
+        for segment in candidate.main_track():
+            if segment.hold is None:
+                used[segment.media] += copies_played(segment.start, segment.end, segment.speed, segment.reverse, segment.pitch)
+        for overlay in candidate.overlays:
+            if overlay.media in durations:
+                end = min(overlay.offset + overlay.secs * overlay.speed, durations[overlay.media])
+                used[overlay.media] += copies_played(overlay.offset, end, overlay.speed, pitch=overlay.pitch)
+    return used
+
+
+def sweep(folder: Path, used: Iterable[tuple[CopySize, Retime]]) -> list[Path]:
+    """Remove the copies in `folder` that serve none of `used`, and the parts and pieces copies cut
+    short (by a process stopped mid-copy) left there, but nothing a copy being made is writing now.
+    The paths removed."""
+    used = list(used)
+    removed = []
+    with _writing_lock:
+        for path in sorted(folder.iterdir()) if folder.is_dir() else ():
+            if path in _writing:
+                continue
+            named = Retime.named(path.name)
+            if named is None:
+                if not (path.name.startswith(".") and path.name.endswith((".part.mp4", ".pieces"))):
+                    continue
+            elif any(size is named[0] and named[1].covers(retime) for size, retime in used):
+                continue
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+            removed.append(path)
+    return removed
+
+
 def _reverse_in_pieces(
     ffmpeg: Path,
     video: Path,
     retime: Retime,
     size: CopySize,
     target: Path,
+    fps: float,
     piece: float,
     progress: Callable[[float], None],
     threads: int,
@@ -272,13 +342,15 @@ def _reverse_in_pieces(
 ) -> None:
     """Write the copy of `video` that `retime` says to `target`: its range cut into pieces of about
     `piece` seconds, each reversed (when `retime.reverse`) and played at its Speed, then joined last to
-    first (or first to last), under a temporary name renamed when complete."""
+    first (or first to last), under a temporary name renamed when complete. At a Speed, its picture is
+    brought back to `fps` frames a second, as a render's is (every 8th frame at 8×, each frame 8
+    times at 0.125×), and each piece's sound, made by the render's filters, is cut or padded to the
+    piece's length (`atempo` drops a little of a sound's end), so that the joins keep in step."""
     span = retime.end - retime.start
     count = max(1, math.ceil(span / piece - 1e-9))
     length = span / count
     target.parent.mkdir(parents=True, exist_ok=True)
     work = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.pieces")
-    work.mkdir()
     part = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.part.mp4")
     run = ["nice", "-n", "10"] if nice else []
     base = [str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y", "-threads", str(threads)]
@@ -288,9 +360,15 @@ def _reverse_in_pieces(
         picture.append("reverse")
         sound.append("areverse")
     if retime.speed != 1:
-        picture.append(f"setpts=PTS/{retime.speed:.6g}")
-        sound += speed_filters(retime.speed, retime.pitch, AUDIO_RATE)
+        # Each frame of the copy is the last of the item's at or before its time: a frame landing on
+        # one of the copy's (a thousandth of a frame early, against rounding) is that one.
+        picture += ["settb=AVTB", f"setpts=PTS/{retime.speed:.6g}-{0.001 / fps:.6g}/TB", f"fps={fps:.6g}:round=up"]
+        played = length / retime.speed
+        sound += [*speed_filters(retime.speed, retime.pitch, AUDIO_RATE), f"apad=whole_dur={played:.6f}", f"atrim=duration={played:.6f}"]
+    with _writing_lock:
+        _writing.update((target, work, part))
     try:
+        work.mkdir()
         pieces = []
         for i in range(count):
             out = work / f"{i}.mov"
@@ -321,6 +399,8 @@ def _reverse_in_pieces(
     finally:
         part.unlink(missing_ok=True)
         shutil.rmtree(work, ignore_errors=True)
+        with _writing_lock:
+            _writing.difference_update((target, work, part))
 
 
 def _run(command: list[str], what: str) -> None:
