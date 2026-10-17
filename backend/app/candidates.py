@@ -9,7 +9,7 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
-from app.styles import DEFAULT_PRESET, Animation, Colour, FontId, HookShape, StyleOverrides
+from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, HookShape, StyleOverrides
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -132,10 +132,12 @@ class TextAlign(StrEnum):
 
 @dataclass(frozen=True)
 class Plate:
-    """What is drawn behind a Text Style's words: nothing, or a Block behind all its lines."""
+    """What is drawn behind a Text Style's words: nothing, a Block behind all its lines, or Strips,
+    one behind each line, in `colour` at `opacity`."""
 
-    # In output pixels at the style's size: its corners' radius, and how far it reaches either side
-    # of the widest line and above the capitals of the first line and below the descenders of the last.
+    # In output pixels at the style's size: its corners' radius (at most half its height), and how far
+    # it reaches either side of the widest line (of each line, for Strips) and above the capitals of
+    # the first line and below the descenders of the last (of each line).
     shape: HookShape = HookShape.NONE
     colour: Colour = "#000000"
     opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 0.7
@@ -156,11 +158,12 @@ class TextStyle:
     # None at 0.
     stroke_width: Annotated[int, Field(ge=0, le=20)] = 0
     stroke_colour: Colour = "#000000"
+    # Under the words, over the plate; off by default.
+    shadow: DropShadow = DropShadow()
     plate: Plate = Plate()
     # Its lines' baselines this many sizes apart.
     line_height: Annotated[FiniteFloat, Field(ge=0.5, le=3)] = 1.1
-    # Added after each character but a line's last; 0 until a Text Layer's picture draws it
-    # (docs/adr/0010-text-layers-are-rasterised-pictures.md).
+    # Added after each character but a line's last (pulled in when negative).
     tracking: Annotated[FiniteFloat, Field(ge=-50, le=200)] = 0.0
     align: TextAlign = TextAlign.CENTER
     # Its box's least size, plate and padding and all: its words break into lines no wider than the
@@ -178,8 +181,7 @@ class TextLayer:
 
     # In Timeline time, so that trimming the Clip leaves it where it was in it. It is drawn as a
     # picture (docs/adr/0010), scaled, turned and faded by its Transform as an Overlay is, its centre
-    # on the frame and the picture maybe past its edges. Its style has no tracking nor Strips yet
-    # (_check_drawn). `id` names it in the editor.
+    # on the frame and the picture maybe past its edges. `id` names it in the editor.
 
     id: ItemId
     text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
@@ -193,7 +195,6 @@ class TextLayer:
 
     def __post_init__(self) -> None:
         _check_text_transform(self)
-        _check_drawn(self)
 
 
 def _check_text_transform(layer: TextLayer) -> None:
@@ -205,25 +206,6 @@ def _check_text_transform(layer: TextLayer) -> None:
         )
     if transform.flip_h or transform.flip_v:
         raise ValueError(f"Text Layer {layer.id} can't be flipped: its transform's flip_h and flip_v stay false")
-
-
-def _check_drawn(layer: TextLayer) -> None:
-    """ValueError for what a Text Layer's style has that isn't drawn yet: its tracking or Strips. Its
-    picture (docs/adr/0010) will draw each."""
-    style = layer.style
-    undrawn = [
-        name
-        for name, given in (
-            ("style.tracking", style.tracking != 0),
-            ("style.plate.shape strips", style.plate.shape is HookShape.STRIPS),
-        )
-        if given
-    ]
-    if undrawn:
-        raise ValueError(
-            f"Text Layer {layer.id} can't have {_listed(tuple(undrawn))} yet: a Text Layer is drawn "
-            "without tracking, on a Block plate or none"
-        )
 
 
 class Ease(NamedTuple):

@@ -123,17 +123,20 @@ Edits:
   (source_start, source_end).
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
   may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
-  are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the captions', in output
-  pixels), colour, stroke_width (output pixels, 0 for none) and stroke_colour, plate (what is behind
-  its lines: shape "none" or "block", colour, opacity, radius, padding_x and padding_y in output
-  pixels), line_height (baselines apart, in sizes) and align (center, left, right). Its text is
-  never set smaller: its lines break at newlines and between words at its wrap_width (px, plate
-  padding included; 0: the frame less 48 px either side), a word too long between letters, and its
-  box is at least fixed_height px tall (0: its words'), the words centred down it. It is never
-  stretched or flipped; its style's tracking stays 0, as it isn't drawn yet. merge_candidate_items
-  changes only the style, plate and transform fields given. The dry run lists each Text Layer's
-  wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this app, of
-  the PNG the Clip burns.
+  are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the
+  captions', in output pixels), colour, stroke_width (output pixels, 0 for none) and stroke_colour,
+  shadow (colour, opacity, blur and distance in output pixels, angle in degrees clockwise from the
+  right: 45 falls down and right; off at opacity 0 or with no distance nor blur; a blur alone is a
+  halo), plate (what is behind its lines: shape "none", "block" behind them all or "strips" behind
+  each, colour, opacity, radius, padding_x and padding_y in output pixels), line_height (baselines
+  apart, in sizes), tracking (output pixels after each character but a line's last, may be
+  negative) and align (center, left, right). Its text is never set smaller: its lines break at
+  newlines and between words at its wrap_width (px, plate padding included; 0: the frame less 48 px
+  either side), a word too long between letters, and its box is at least fixed_height px tall (0:
+  its words'), the words centred down it. It is never stretched or flipped. merge_candidate_items
+  changes only the style, shadow, plate and transform fields given. The dry run lists each Text
+  Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
+  app, of the PNG the Clip burns.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A

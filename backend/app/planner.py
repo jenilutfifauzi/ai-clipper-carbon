@@ -50,9 +50,10 @@ sits WATERMARK_MARGIN inside SAFE_AREA's corners, edges or middle; at the Custom
 centred where the owner dragged it, kept inside the frame.
 
 Text Layers (the Advanced Edit's free text) are centred where the owner put them, as Overlays are
-(their pictures may go past the frame's edges), each in its own look. Their words are never set smaller: they break into lines at their wrap
-width, or the frame less TEXT_MARGIN either side (app/line_breaks.py), and their box grows to hold
-them, at least their wrap width wide and their fixed height tall. They are drawn over the captions
+(their pictures may go past the frame's edges), each in its own look. Their words are never set
+smaller: they break into lines at their wrap width, or the frame less TEXT_MARGIN either side
+(app/line_breaks.py), and their box grows to hold them, at least their wrap width wide and their
+fixed height tall. They are drawn over the captions
 and under the hook, in their order, each as a picture (docs/adr/0010): its layout (`TextLayout`)
 holds its box and room round it for its ink, its lines placed from its corner, so that moving it
 keeps the same picture, named by a hash of what it shows.
@@ -616,10 +617,12 @@ class TextRun:
 class TextLayout:
     """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
     scale 1: its `lines` in `style` set at font `size`, each placed by its anchor (the middle of its
-    text and its baseline) and drawn as its `runs`, over its Block plate `box` with corners `radius`
-    pixels round. The picture is rasterised `scale` times as large (app/text_pictures.py; its
-    Transform's scale, up to the next of TEXT_PICTURE_SCALES), and named by a hash of all of it
-    (`name`), so that the same look is one file wherever the layer is."""
+    text and its baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its
+    Block, or a Strip per line) with corners `radius` pixels round. Its shadow, when on, is its runs
+    again moved by `shadow` (right and down), between them and the plate. The picture is rasterised
+    `scale` times as large (app/text_pictures.py; its Transform's scale, up to the next of
+    TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same look is one
+    file wherever the layer is."""
 
     style: TextStyle
     size: float
@@ -630,8 +633,9 @@ class TextLayout:
     width: int
     height: int
     scale: float = 1.0
-    box: Box | None = None
+    plates: list[Box] = field(default_factory=list)
     radius: int = 0
+    shadow: tuple[float, float] | None = None
 
     @property
     def raster(self) -> tuple[int, int]:
@@ -668,8 +672,9 @@ TEXT_PICTURE_FORMAT = "v1-libass-matte"
 class TextEvent:
     """A Text Layer as drawn: its `lines` (broken at its wrap width) set at font `size` (its
     style's), on screen from `start` to `end` (seconds into the Clip). `area` is its box, padded when
-    it has a Block plate, which is `box` (the area), its corners `radius` pixels round. Each line is
-    placed by its anchor: the middle of its text and its baseline.
+    it has a plate: a Block plate is `box` (the area), Strips are its layout's. Its plate's corners
+    are `radius` pixels round. Each line is placed by its anchor: the middle of its text and its
+    baseline.
 
     It is drawn as the picture of its `layout` (docs/adr/0010), the file `image`, placed as `picture`
     says with the Overlay's maths: its box and the room round it for its ink, centred about the
@@ -1464,7 +1469,6 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     runs = [text_runs(line, style.font) for line in lines]
     metrics = font_metrics(style.font)
     widths = [runs_width(line, style.size, style.tracking) for line in runs]
-    block = style.plate if style.plate.shape is HookShape.BLOCK else None
     width, height, (pad_x, top) = text_box(style, widths)
     x, y = round(layer.transform.x - width / 2), round(layer.transform.y - height / 2)
     area = Box(x, y, width, height)
@@ -1481,13 +1485,14 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
         for i, line in enumerate(widths)
     ]
     end = round(min(start + layer.secs, duration), 3)
-    radius = 0 if block is None else min(round(block.radius), height // 2)
+    plates = _plates(style, area, lines, widths, anchors, style.size)
+    radius = min(round(style.plate.radius), min(box.height for box in plates) // 2) if plates else 0
     placed = [placed_runs(line, x - width / 2, style.size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
-    layout, origin = _text_layout(layer, lines, placed, style.size, area, anchors, radius if block else None)
+    layout, origin = _text_layout(layer, lines, placed, style.size, area, anchors, plates, radius)
     picture = _text_picture(layout, origin, layer.transform)
     return TextEvent(
         layer, lines, start, end, area, style.size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
-        None if block is None else area, radius, layout.look,
+        area if style.plate.shape is HookShape.BLOCK else None, radius, layout.look,
     )
 
 
@@ -1495,7 +1500,7 @@ def text_lines(text: str, style: TextStyle) -> list[str]:
     """A Text Layer's `text` as the lines it is set in, in `style`: without emoji and what no Face
     has (`text_runs`), blank lines at either end left out, broken at its newlines and between its
     words where a line, measured run by run in its Faces, would be wider than its wrap width less its
-    Block plate's padding either side (`text_room`). Never set smaller."""
+    plate's padding either side (`text_room`). Never set smaller."""
     paragraphs = ["".join(run.text for run in text_runs(without_emoji(line), style.font)) for line in text.split("\n")]
     while paragraphs and not paragraphs[0]:
         paragraphs.pop(0)
@@ -1510,37 +1515,68 @@ def text_lines(text: str, style: TextStyle) -> list[str]:
 
 def text_room(style: TextStyle) -> float:
     """How wide a Text Layer's lines in `style` may be: its wrap width, or the frame less TEXT_MARGIN
-    either side when it has none, less its Block plate's padding either side."""
-    pad_x = style.plate.padding_x if style.plate.shape is HookShape.BLOCK else 0.0
+    either side when it has none, less its plate's padding either side."""
+    pad_x = style.plate.padding_x if style.plate.shape is not HookShape.NONE else 0.0
     return (style.wrap_width or OUTPUT_WIDTH - 2 * TEXT_MARGIN) - 2 * pad_x
 
 
 def text_box(style: TextStyle, widths: list[float]) -> tuple[int, int, tuple[float, float]]:
     """The box of a Text Layer's lines `widths` wide in `style`, in whole pixels: as wide as its
     widest line and as tall as its lines (capitals to descenders, `line_height` apart), plus its
-    Block plate's padding either side; and at least its wrap width wide and its fixed height tall,
+    plate's padding either side; and at least its wrap width wide and its fixed height tall,
     its padding then inside them, its lines centred down it. With where its lines start inside it:
     how far in from either side they are aligned, and how far down the first's capitals are."""
     metrics = font_metrics(style.font)
-    block = style.plate.shape is HookShape.BLOCK
-    pad_x, pad_y = (style.plate.padding_x, style.plate.padding_y) if block else (0.0, 0.0)
+    plated = style.plate.shape is not HookShape.NONE
+    pad_x, pad_y = (style.plate.padding_x, style.plate.padding_y) if plated else (0.0, 0.0)
     letters = (metrics.cap_height + metrics.descent) / metrics.units * style.size + (len(widths) - 1) * style.line_height * style.size
     width = math.ceil(max(max(widths) + 2 * pad_x, style.wrap_width))
     height = math.ceil(max(letters + 2 * pad_y, style.fixed_height))
     return width, height, (pad_x, pad_y + max(style.fixed_height - letters - 2 * pad_y, 0) / 2)
 
 
+def _plates(
+    style: TextStyle, area: Box, lines: list[str], widths: list[float], anchors: list[tuple[float, float]], size: float
+) -> list[Box]:
+    """The rectangles of a Text Layer's plate on the frame, its lines (`widths` wide, at `anchors`)
+    set at `size` in `area`: none, its Block (the area), or a Strip round each line but a blank one,
+    padded as the area is round the widest and from the capitals down to the descenders."""
+    plate = style.plate
+    if plate.shape is HookShape.NONE:
+        return []
+    if plate.shape is HookShape.BLOCK:
+        return [area]
+    metrics = font_metrics(style.font)
+    pad_x, pad_y = plate.padding_x / style.size * size, plate.padding_y / style.size * size
+    height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
+    strips = []
+    for line, line_width, (x, baseline) in zip(lines, widths, anchors):
+        if not line:
+            continue
+        width = min(math.ceil(line_width + 2 * pad_x), area.width)
+        left = min(max(round(x - width / 2), area.x), area.x + area.width - width)
+        strips.append(Box(left, round(baseline - metrics.cap_height / metrics.units * size - pad_y), width, height))
+    return strips
+
+
 def _text_layout(
-    layer: TextLayer, lines: list[str], runs: list[list[TextRun]], size: float, area: Box,
-    anchors: list[tuple[float, float]], radius: int | None,
+    layer: TextLayer,
+    lines: list[str],
+    runs: list[list[TextRun]],
+    size: float,
+    area: Box,
+    anchors: list[tuple[float, float]],
+    plates: list[Box],
+    radius: int,
 ) -> tuple[TextLayout, tuple[int, int]]:
     """A Text Layer's layout, set at `size` in `area` with its lines at `anchors` drawn as `runs`
-    (placed on the frame; a Block plate's corners `radius` round, None without one), and where its
-    picture's top-left corner is on the frame: its area and TEXT_INK_ROOM round it, made even across
-    and down. Its anchors and runs are kept from that corner, so that the layout (and its picture) is
-    the same wherever the layer is."""
+    (placed on the frame) over its `plates` (their corners `radius` round), and where its picture's
+    top-left corner is on the frame: its area and TEXT_INK_ROOM round it, and its shadow's reach,
+    made even across and down. Its anchors, runs and plates are kept from that corner, so that the
+    layout (and its picture) is the same wherever the layer is; the area stays in the picture's
+    middle, which the Transform turns it about."""
     style = layer.style
-    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size)
+    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size) + style.shadow.reach
     left, top = area.x - room, area.y - room
     width, height = area.width + 2 * room, area.height + 2 * room
     width, height = width + width % 2, height + height % 2
@@ -1548,8 +1584,12 @@ def _text_layout(
     local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
     stepped = next((step for step in TEXT_PICTURE_SCALES if layer.transform.scale <= step), TEXT_PICTURE_SCALES[-1])
     scale = min(stepped, MAX_TEXT_PICTURE / max(width, height))
-    box = None if radius is None else Box(room, room, area.width, area.height)
-    return TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), box, radius or 0), (left, top)
+    plates = [Box(box.x - left, box.y - top, box.width, box.height) for box in plates]
+    shadow = style.shadow.offset if style.shadow.on else None
+    return (
+        TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), plates, radius, shadow),
+        (left, top),
+    )
 
 
 def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:

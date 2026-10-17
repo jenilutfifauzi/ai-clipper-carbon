@@ -267,3 +267,101 @@ def test_a_text_layer_is_turned_scaled_and_faded_as_its_plan_says_and_sharp_at_a
     (scaled_edges, scaled_ink), (sized_edges, sized_ink) = edges(first, scaled), edges(second, sized)
     assert sized_ink > 5000 and scaled_ink == pytest.approx(sized_ink, rel=0.08), (scaled_ink, sized_ink)
     assert scaled_edges < 1.5 * sized_edges, (scaled_edges, sized_edges)
+
+
+def test_tracking_spaces_a_pictures_letters_as_planned_about_its_middle(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    style = {"size": 120, "colour": "#FFFFFF"}
+    plain, spaced, tight = preview(client, job, candidate, {"text_layers": [
+        title(id="plain", style=style), title(id="spaced", style=style | {"tracking": 40}), title(id="tight", style=style | {"tracking": -8}),
+    ]})["plan"]["texts"]
+
+    def ink(event: dict) -> tuple[int, float]:
+        """How wide the picture's letters are, and how far their middle is from the picture's."""
+        columns = np.nonzero(picture_of(client, job, event)[..., 3].max(axis=0) > 128)[0]
+        return columns.max() + 1 - columns.min(), (columns.min() + columns.max() + 1) / 2 - event["picture"]["item_size"][0] / 2
+
+    (width, middle), (wider, spaced_middle), (narrower, tight_middle) = ink(plain), ink(spaced), ink(tight)
+    # HALO: three gaps.
+    assert wider - width == pytest.approx(3 * 40, abs=3) and narrower - width == pytest.approx(-3 * 8, abs=3)
+    assert spaced["area"]["width"] - plain["area"]["width"] == pytest.approx(3 * 40, abs=1)
+    assert spaced_middle == pytest.approx(middle, abs=2) and tight_middle == pytest.approx(middle, abs=2)
+
+
+def test_a_shadow_falls_towards_its_angle_by_its_distance_softened_by_its_blur_and_strips_plate_each_line(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    letters = {"size": 160, "colour": "#00FF00"}
+    red = {"colour": "#FF0000", "opacity": 1, "angle": 45, "distance": 30}
+    strips = {"shape": "strips", "colour": "#0000FF", "opacity": 1, "padding_x": 30, "padding_y": 12, "radius": 10}
+    candidate = patch(client, job, candidate, text_layers=[
+        title(id="hard", text="HI", start=0, secs=2.5, transform={"x": 300, "y": 400}, style=letters | {"shadow": red}),
+        title(id="soft", text="HI", start=0, secs=2.5, transform={"x": 780, "y": 400}, style=letters | {"shadow": red | {"blur": 24}}),
+        title(id="halo", text="HI", start=0, secs=2.5, transform={"x": 540, "y": 800}, style=letters | {"shadow": red | {"distance": 0, "blur": 24}}),
+        title(id="strips", text="A\nPANJANG", start=0, secs=2.5, transform={"x": 540, "y": 1100},
+              style={"size": 90, "colour": "#FFFFFF", "line_height": 1.4, "plate": strips}),
+    ])
+    hard, soft, halo, stripped = preview(client, job, candidate)["plan"]["texts"]
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    frame = full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 1.5)
+
+    def around(event: dict, reach: int = 90) -> np.ndarray:
+        area = event["area"]
+        return frame[area["y"] - reach : area["y"] + area["height"] + reach, area["x"] - reach : area["x"] + area["width"] + reach]
+
+    def extent(mask: np.ndarray) -> tuple[int, int, int, int]:
+        rows, columns = np.nonzero(mask)
+        return columns.min(), rows.min(), columns.max(), rows.max()
+
+    def green(shown: np.ndarray) -> np.ndarray:
+        return (shown[..., 1] > 200) & (shown[..., 0] < 60)
+
+    def reddish(shown: np.ndarray, by: int = 24) -> np.ndarray:
+        """Red over the grey behind, at any strength."""
+        return (shown[..., 0] - shown[..., 1] > by) & (shown[..., 1] < 150)
+
+    def edge(shown: np.ndarray) -> float:
+        """The share of the red that is part way between red and the grey behind."""
+        return (reddish(shown) & ~reddish(shown, 140)).sum() / reddish(shown).sum()
+
+    # Down and to the right by 30 px at 45°: 21 px each way past the letters, none left of or above them.
+    shown = around(hard)
+    letters_box, shadow_box = extent(green(shown)), extent(reddish(shown))
+    assert shadow_box[2] - letters_box[2] == pytest.approx(21, abs=3) and shadow_box[3] - letters_box[3] == pytest.approx(21, abs=3)
+    assert shadow_box[0] >= letters_box[0] + 15 and shadow_box[1] >= letters_box[1] + 15
+    assert edge(shown) < 0.2
+
+    # Blurred, it reaches further and mostly fades.
+    shown = around(soft)
+    assert extent(reddish(shown))[2] - extent(green(shown))[2] > shadow_box[2] - letters_box[2] + 8
+    assert edge(shown) > 0.6
+
+    # At no distance, a halo as far round the letters on every side.
+    shown = around(halo)
+    letters_box, halo_box = extent(green(shown)), extent(reddish(shown))
+    reaches = [letters_box[0] - halo_box[0], letters_box[1] - halo_box[1], halo_box[2] - letters_box[2], halo_box[3] - letters_box[3]]
+    assert min(reaches) >= 8 and max(reaches) - min(reaches) <= 6, reaches
+
+    # Strips: one blue plate round each line, as wide as it, where the layout puts them.
+    picture = stripped["picture"]
+    corner = (picture["centre"][0] - picture["width"] / 2, picture["centre"][1] - picture["height"] / 2)
+    plates = [
+        {"x": round(corner[0] + box["x"]), "y": round(corner[1] + box["y"]), "width": box["width"], "height": box["height"]}
+        for box in stripped["layout"]["plates"]
+    ]
+    assert len(plates) == 2 and plates[0]["width"] < plates[1]["width"] - 200
+    rows, columns = pixels(frame, np.array([0, 0, 255]))
+    for box in plates:
+        inside = (rows >= box["y"] + 3) & (rows <= box["y"] + box["height"] - 3)
+        assert columns[inside].min() == pytest.approx(box["x"], abs=3)
+        assert columns[inside].max() == pytest.approx(box["x"] + box["width"], abs=3)
+    # The video shows between them.
+    between = frame[plates[0]["y"] + plates[0]["height"] + 3 : plates[1]["y"] - 3, plates[1]["x"] + 10 : plates[1]["x"] + plates[1]["width"] - 10]
+    assert between.size and len(pixels(between, np.array([0, 0, 255]))[0]) == 0
