@@ -134,12 +134,15 @@ async def test_the_agent_speeds_a_segment_up_with_its_keys_and_moves_a_text_laye
     # Its keys sent with it, at old / new speed: the zoom ends on the same frame of its video.
     halved = {"scale": [{"at": 0, "value": 1}, {"at": 0.75, "value": 2}]}
     saved = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "speed": 2, "pitch": True, "keys": halved}])
-    shown = saved["segments"][1]["end"] - saved["segments"][1]["start"]
+    shown = saved["segments"][1]
 
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
     sped, played = plan["segments"]
-    assert sped == {"id": "v", "media": item["id"], "start": 0, "end": 1, "speed": 2, "pitch": True}
-    assert played == {"id": "e", "start": 1, "end": round(1 + shown, 2)}
+    assert sped == {"id": "v", "media": item["id"], "start": 0, "end": 1, "source_start": 0, "source_end": 2, "speed": 2, "pitch": True}
+    assert played == {
+        "id": "e", "start": 1, "end": round(1 + shown["end"] - shown["start"], 2),
+        "source_start": round(shown["start"], 2), "source_end": round(shown["end"], 2),
+    }
     assert plan["scenes"][0]["keys"]["scale"][1]["at"] == 0.75
     # The Text Layer over the episode is moved to where it starts now, a second earlier.
     await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "t", "start": played["start"]}])

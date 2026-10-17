@@ -38,7 +38,8 @@ its colour) and then its Picture over it, as Overlays are drawn, only the part o
 scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of the Source is drawn
 the same way from its own frames. With videos among them (or a Segment's own volume), each Segment's sound is set to its
 volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
-silence. A join with a Transition is an
+silence. A Freeze frame (docs/adr/0009) reads a moment of its video at its frame and holds the
+first frame for its hold (`tpad`), in silence. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
@@ -341,6 +342,8 @@ def _check(plan: RenderPlan) -> None:
 
 # How many arguments read one input: -ss, its start, -t, its length, -i, the file.
 _INPUT_ARGS = 6
+# How much of its video a Freeze frame reads, of which it holds the first frame: a frame at any rate.
+_HELD_READ_SECS = 0.5
 
 
 def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate: int) -> tuple[list[str], str, str]:
@@ -349,21 +352,25 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
     the Segments, a Segment's own volume or Speed, or Transitions, each Segment's sound is first
     played at its Speed (`speed_filters`) and set to its volume (a Source Segment's also to the
-    Clip's own, which the mix then leaves) in one format, and a video without sound gives silence."""
+    Clip's own, which the mix then leaves) in one format, and a video without sound, and a Freeze
+    frame, give silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
     for segment in plan.segments:
         read = files[segment.media] if segment.media else source
-        inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{segment.time.span:.3f}", "-i", str(read)]
+        span = _HELD_READ_SECS if segment.hold is not None else segment.time.span
+        inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{span:.3f}", "-i", str(read)]
     count = len(plan.segments)
-    plain = all(segment.media is None and segment.volume == 1 and segment.speed == 1 for segment in plan.segments)
+    plain = all(
+        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None for segment in plan.segments
+    )
     if plain and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = []
     for i, segment in enumerate(plan.segments):
-        if segment.silent:
+        if segment.silent or segment.hold is not None:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
             continue
         sped = speed_filters(segment.speed, segment.pitch, rate)
@@ -425,17 +432,21 @@ def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
 
 def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
-    input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment), and the Segments
-    joined back to back. A keyed Scene's picture is the input `drawn` gives by its place among the
-    plan's Scenes, from its frame process."""
+    input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
+    from its first frame, held), and the Segments joined back to back. A keyed Scene's picture is
+    the input `drawn` gives by its place among the plan's Scenes, from its frame process."""
     chains, first = [], 0
     for i, segment in enumerate(plan.segments):
         scenes = plan.scenes[first : first + segment.scenes]
         keyed = {j: number for j in range(segment.scenes) if (number := (drawn or {}).get(first + j)) is not None}
         first += segment.scenes
-        # At a Speed, its frames are moved onto the Timeline, then dropped or repeated to the Clip's frame rate.
-        sped = "" if segment.speed == 1 else f"setpts=(PTS-STARTPTS)/{segment.speed:.6g},fps={_rate(plan)},"
-        chains.append(_scenes(plan, tuning, scenes, f"[{i}:v]{sped}", f"[g{i}]", f"g{i}s", segment.start, keyed))
+        given = f"[{i}:v]"
+        if segment.hold is not None:
+            given += _held(segment.hold)
+        elif segment.speed != 1:
+            # Its frames moved onto the Timeline, then dropped or repeated to the Clip's frame rate.
+            given += f"setpts=(PTS-STARTPTS)/{segment.speed:.6g},fps={_rate(plan)},"
+        chains.append(_scenes(plan, tuning, scenes, given, f"[g{i}]", f"g{i}s", segment.start, keyed))
     count = len(plan.segments)
     if not plan.transitions:
         chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
@@ -445,6 +456,11 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
     chains += [f"[g{i}]fps={rate:g},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
     chains.append(_joins(plan, [f"[n{i}]" for i in range(count)], "v", "[frame]"))
     return ";".join(chains)
+
+
+def _held(hold: float) -> str:
+    """Filters that make a Freeze frame's picture of its input: the first frame, held `hold` seconds."""
+    return f"trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={hold:.3f},trim=duration={hold:.3f},"
 
 
 def _scenes(

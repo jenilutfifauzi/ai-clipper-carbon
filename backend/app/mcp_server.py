@@ -141,6 +141,15 @@ Edits:
   Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
   leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
   the picture's bounds at each (an Overlay's or a Scene's); a keyed volume's under `sounds`.
+- A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
+  (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
+  to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
+  holding its frame, as that Scene is at that moment, and has no captions nor Keyframes; one of a
+  video by its framing, and may have picture Keyframes (a slow zoom into the still), not volume. To
+  freeze a moment of a Segment: split it there into two Segments, the first ending and the second
+  starting at the moment, put a held Segment of that moment between them, then move the Text Layers,
+  Music Clips, Overlays and hook after the moment later by its hold. The dry run lists each Segment's
+  span in the Clip under `segments`.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.
@@ -645,24 +654,18 @@ def _motion_view(picture: dict) -> dict:
 
 
 def _plan_view(preview: dict) -> dict:
-    """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span
-    there, with its Speed), each Scene's Layout and the Framing that draws its first frame (a Manual
-    Scene's own), where the picture of a Manual Scene, of a video's Scene and of each Overlay is
-    drawn (`_picture_view`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a
-    Manual Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
+    """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
+    what of the Source or its video it plays, at what Speed), each Scene's Layout and the Framing
+    that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
+    video's Scene and of each Overlay is drawn (`_picture_view`), a keyed one's Keyframes and its
+    bounds at each (`_motion_view`), a Manual Scene's Keyframes past its end (`ignored`), the keyed
+    sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else SegmentTime(plan["start"], plan["end"]).length, 2),
         "words_source": preview["words_source"],
-        "segments": [
-            _compact({
-                "id": segment["id"], "media": segment["media"], **_times(segment, "start", "end"),
-                "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
-            })
-            for segment in plan["segments"]
-        ],
         "scenes": [
             {
                 **_times(scene, "start", "end", "layout", "framing"),
@@ -670,6 +673,13 @@ def _plan_view(preview: dict) -> dict:
                 **({"ignored": _keys_view(scene["ignored"])} if scene["ignored"] else {}),
             }
             for scene in plan["scenes"]
+        ],
+        "segments": [
+            _compact({
+                **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
+                "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
+            })
+            for segment in plan["segments"]
         ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {

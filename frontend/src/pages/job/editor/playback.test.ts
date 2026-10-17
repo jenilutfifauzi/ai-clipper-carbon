@@ -754,3 +754,95 @@ describe("loop", () => {
     expect(first.master.paused).toBe(true);
   });
 });
+
+describe("Freeze frame", () => {
+  // 0–5 s from 100 s of the Source, 5–6 s the frame at 150 s held, 6–10 s from 200 s.
+  const frozen = () =>
+    playedFrom([
+      { start: 100, end: 105 },
+      { start: 150, end: 150, hold: 1 },
+      { start: 200, end: 204 },
+    ]);
+
+  test("its frame shows paused on the deck parked there while the time runs on a clock, then the next Segment plays on time", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(frozen());
+    const [first, second] = stage.decks(playback);
+    playback.seek(1);
+    expect(second.master.currentTime).toBe(150);
+    stage.settle();
+    playback.play();
+    // Past the handover into the Freeze frame: the parked deck shows its frame, paused.
+    stage.advance(3.98);
+    expect(playback.segmentIndex).toBe(1);
+    expect(playback.shownDeck).toBe(1);
+    expect(second.master.currentTime).toBe(150);
+    expect(second.master.paused).toBe(true);
+    expect(first.master.paused).toBe(true);
+    expect(playback.playing).toBe(true);
+    // The old live deck parks for the next join meanwhile; the frame stays.
+    expect(first.master.currentTime).toBe(200);
+    stage.settle();
+    stage.advance(0.5);
+    expect(playback.time).toBeCloseTo(5.5, 5);
+    expect(second.master.currentTime).toBe(150);
+    expect(second.master.paused).toBe(true);
+    // Its hold over, the deck waiting at 200 s plays on, on time.
+    stage.advance(0.5);
+    expect(playback.shownDeck).toBe(0);
+    expect(first.master.paused).toBe(false);
+    stage.advance(1);
+    expect(playback.time).toBeCloseTo(7, 1);
+    expect(first.master.currentTime).toBeCloseTo(201, 1);
+    expect(second.master.paused).toBe(true);
+  });
+
+  test("seeking into it shows its frame on the live deck; played from there, it holds for the rest of its hold", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(frozen());
+    const [first, second] = stage.decks(playback);
+    playback.seek(5.4);
+    expect(first.master.currentTime).toBe(150);
+    expect(second.master.currentTime).toBe(200);
+    stage.settle();
+    playback.play();
+    expect(first.master.paused).toBe(true);
+    expect(playback.playing).toBe(true);
+    stage.advance(0.4);
+    expect(playback.time).toBeCloseTo(5.8, 5);
+    expect(first.master.currentTime).toBe(150);
+    stage.advance(0.2);
+    expect(playback.segmentIndex).toBe(2);
+    expect(second.master.paused).toBe(false);
+    playback.pause();
+    expect(playback.playing).toBe(false);
+  });
+
+  test("a video's Freeze frame keeps its video paused at its frame while the clock runs", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(
+      playedFrom([
+        { start: 100, end: 105 },
+        { start: 12, end: 12, hold: 1, media: "intro" },
+        { start: 200, end: 204 },
+      ]),
+    );
+    stage.decks(playback);
+    const media = stage.video();
+    playback.subscribe(() => follow(media.element, playback, { start: 5, end: 6, from: 12, hold: 1 }, true));
+    playback.seek(1);
+    expect(media.currentTime).toBe(12);
+    stage.settle();
+    playback.play();
+    stage.advance(4.5);
+    expect(playback.current.media).toBe("intro");
+    expect(playback.time).toBeCloseTo(5.5, 1);
+    expect(media.paused).toBe(true);
+    expect(media.currentTime).toBe(12);
+    stage.advance(0.5);
+    expect(playback.segmentIndex).toBe(2);
+  });
+});

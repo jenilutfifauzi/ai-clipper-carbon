@@ -700,6 +700,8 @@ export interface ClipSegment {
   speed?: number;
   pitch?: boolean;
   keys?: Keys;
+  // A Freeze frame's (ADR 0009): how long it holds the frame at `start`, silent; `end` is `start`.
+  hold?: number | null;
 }
 
 export interface Candidate {

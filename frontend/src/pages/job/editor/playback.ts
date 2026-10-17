@@ -53,6 +53,10 @@ const MAX_DRIFT_SECS = 0.12;
 // A skim's snippet of sound lasts this long.
 const SNIPPET_SECS = 0.08;
 
+// Whether the time runs on a clock through `segment`: a video's, which its own player follows, or a
+// Freeze frame, whose frame waits paused for its hold.
+const clocked = (segment: PlayedSegment) => !!segment.media || segment.hold != null;
+
 /** The rates the preview plays at: a viewing aid, not a Clip's speed. */
 export const RATES = [0.5, 1, 1.5, 2] as const;
 
@@ -81,7 +85,9 @@ interface Deck {
  * paused and muted, where the next Source Segment starts, and at the join the two swap, so that the
  * join doesn't wait for a seek. When the parked deck isn't ready there (its seek hasn't landed),
  * the live deck seeks instead. Through a Segment of a Media Library video, the Source decks wait and
- * the time runs on a clock of its own, which that video's player follows. The preview, its other
+ * the time runs on a clock of its own, which that video's player follows. Through a Freeze frame
+ * (ADR 0009) the time runs on the clock too, for its hold, while its frame waits paused: a deck
+ * parked at it for the Source's, its video for a video's. The preview, its other
  * media and the timeline all read and set the time through it. Playing stops at the Clip's end,
  * checked every frame; started outside the Clip (before its start), it plays freely. With a Loop
  * Region set (`setLoop`), it plays from In when started outside the Region, and at Out goes back to
@@ -238,7 +244,7 @@ export class Playback {
     };
     const onSeeked = (event: Event) => {
       deck.landing.delete(event.target as HTMLVideoElement);
-      if (!live() || event.target !== master || this.segment.media) return;
+      if (!live() || event.target !== master || clocked(this.segment)) return;
       this.time = this.read();
       this.emit();
     };
@@ -295,7 +301,7 @@ export class Playback {
 
   private read() {
     const segment = this.segment;
-    if (segment.media) return this.clock ? this.clock.from + ((performance.now() - this.clock.at) / 1000) * this.pace : this.time;
+    if (clocked(segment)) return this.clock ? this.clock.from + ((performance.now() - this.clock.at) / 1000) * this.pace : this.time;
     const deck = this.decks[this.live];
     return deck ? playedTimeAt(segment, deck.master.currentTime) : this.time;
   }
@@ -385,20 +391,26 @@ export class Playback {
     const next = this.segment;
     this.time = time;
     const deck = this.decks[this.live];
-    if (next.media) {
+    const parked = this.decks[1 - this.live];
+    if (clocked(next)) {
       this.clock = { at: performance.now(), from: time };
-      if (!from.media && deck && !deck.master.paused) {
-        this.handing = true;
-        this.halt(deck);
+      // A Freeze frame of the Source shows its frame on a deck, paused: the parked one when it waits there.
+      const frame = next.media ? null : next.source_start;
+      if (frame !== null && parked && this.ready(parked, frame)) this.swap(false);
+      else {
+        if (!clocked(from) && deck && !deck.master.paused) {
+          this.handing = true;
+          this.halt(deck);
+        }
+        if (frame !== null && deck) this.cue(deck, frame);
       }
     } else {
       this.clock = null;
       const source = playedSourceAt(next, time);
-      const parked = this.decks[1 - this.live];
       if (parked && this.ready(parked, source)) this.swap();
       else if (deck) {
         this.cue(deck, source);
-        if (from.media) this.run(deck);
+        if (clocked(from)) this.run(deck);
       }
     }
     this.park();
@@ -409,15 +421,15 @@ export class Playback {
     return deck.parked === source && deck.landing.size === 0;
   }
 
-  // The parked deck goes live, playing from where it waits and heard; the old live deck is paused,
-  // muted, and parked again by the caller.
-  private swap() {
+  // The parked deck goes live, playing from where it waits and heard (or, not `playing`, paused
+  // there: a Freeze frame); the old live deck is paused, muted, and parked again by the caller.
+  private swap(playing = true) {
     const old = this.decks[this.live];
     this.live = this.live === 0 ? 1 : 0;
     const deck = this.decks[this.live]!;
     deck.parked = null;
     deck.master.muted = false;
-    this.run(deck);
+    if (playing) this.run(deck);
     if (old) {
       this.halt(old);
       old.master.muted = true;
@@ -458,19 +470,21 @@ export class Playback {
 
   // To `time` seconds into the Clip, a skim kept showing its own time.
   private moveTo(time: number) {
-    const wasMedia = !!this.segment.media;
+    const wasClocked = clocked(this.segment);
     this.index = this.indexAt(time);
     this.time = time;
     const segment = this.segment;
     const deck = this.decks[this.live];
-    if (segment.media) {
+    if (clocked(segment)) {
       if (this.playing) {
         this.clock = { at: performance.now(), from: time };
-        if (!wasMedia && deck && !deck.master.paused) {
+        if (!wasClocked && deck && !deck.master.paused) {
           this.handing = true;
           this.halt(deck);
         }
       }
+      // A Freeze frame of the Source shows its frame on the live deck, paused.
+      if (!segment.media && deck) this.cue(deck, segment.source_start);
     } else {
       const resume = this.playing && !!this.clock;
       this.clock = null;
@@ -490,7 +504,7 @@ export class Playback {
     if (from !== undefined) this.seek(from);
     else if (this.region && loopStart(this.time, this.region) !== this.time) this.seek(this.region.in);
     const deck = this.decks[this.live];
-    if (this.segment.media) {
+    if (clocked(this.segment)) {
       this.armed = this.time >= -0.05 && this.time < this.duration;
       this.clock = { at: performance.now(), from: this.time };
       this.start();
