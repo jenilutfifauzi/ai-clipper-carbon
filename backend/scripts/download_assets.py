@@ -20,6 +20,9 @@ GOOGLE_FONT_FILES = [
     ("archivoblack", "ArchivoBlack-Regular"),
     ("bangers", "Bangers-Regular"),
 ]
+# The Face Text Layers fall back to for Chinese and Japanese (app/fonts.py's FALLBACK_FONT), from Noto
+# CJK's release Sans2.004.
+NOTO_CJK = "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004"
 
 ASSETS = {
     BLAZE_FACE_MODEL: "https://storage.googleapis.com/mediapipe-models/face_detector/"
@@ -31,6 +34,8 @@ ASSETS = {
         FONTS_DIR / f"{font}.ttf": f"{GOOGLE_FONTS}/{family}/{font}.ttf" for family, font in GOOGLE_FONT_FILES
     },
     **{FONTS_DIR / f"OFL-{family}.txt": f"{GOOGLE_FONTS}/{family}/OFL.txt" for family, _ in GOOGLE_FONT_FILES},
+    FONTS_DIR / "NotoSansSC-Bold.otf": f"{NOTO_CJK}/Sans/SubsetOTF/SC/NotoSansSC-Bold.otf",
+    FONTS_DIR / "OFL-notosanssc.txt": f"{NOTO_CJK}/LICENSE",
 }
 
 

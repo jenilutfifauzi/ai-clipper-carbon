@@ -54,6 +54,9 @@ frame, each in its own look; one wider than the frame less TEXT_MARGIN either si
 They are drawn over the captions and under the hook, in their order, each as a picture
 (docs/adr/0010): its layout (`TextLayout`) holds its box and room round it for its ink, its lines
 placed from its corner, so that moving it keeps the same picture, named by a hash of what it shows.
+Each line is split into runs by Face (`text_runs`): a character its Face hasn't got is set in the
+bundled CJK Face (FALLBACK_FONT) when that has it, and measured with it, or else left out. The line
+pitch stays its own Face's.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes
@@ -119,7 +122,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.config import CameraTuning
-from app.fonts import DEFAULT_FONT, on_change, registry
+from app.fonts import DEFAULT_FONT, FALLBACK_FONT, on_change, registry
 from app.keyframes import value_at
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
@@ -591,17 +594,31 @@ class OverlayEvent:
 
 
 @dataclass(frozen=True)
+class TextRun:
+    """A piece of a Text Layer's line set in one Face (`text_runs`): its `text`, drawn in the Face
+    `font` from `x` for `width` pixels at its layout's size. Its text has no space at either end:
+    a space between two runs is only room between them."""
+
+    text: str
+    font: str
+    x: float = 0.0
+    width: float = 0.0
+
+
+@dataclass(frozen=True)
 class TextLayout:
     """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
     scale 1: its `lines` in `style` set at font `size`, each placed by its anchor (the middle of its
-    text and its baseline), over its Block plate `box` with corners `radius` pixels round. The
-    picture is rasterised `scale` times as large (app/text_pictures.py), and named by a hash of all
-    of it (`name`), so that the same look is one file wherever the layer is."""
+    text and its baseline) and drawn as its `runs`, over its Block plate `box` with corners `radius`
+    pixels round. The picture is rasterised `scale` times as large (app/text_pictures.py), and named
+    by a hash of all of it (`name`), so that the same look is one file wherever the layer is."""
 
     style: TextStyle
     size: float
     lines: list[str]
     anchors: list[tuple[float, float]]
+    # Each line's, placed from the picture's left edge.
+    runs: list[list[TextRun]]
     width: int
     height: int
     scale: float = 1.0
@@ -615,12 +632,18 @@ class TextLayout:
 
     @property
     def name(self) -> str:
-        """Its picture's file name: a hash of the layout, of its Face's file (an id may name another
+        """Its picture's file name: a hash of the layout, of its Faces' files (an id may name another
         file once its Face is deleted and another imported) and of how pictures are drawn
         (TEXT_PICTURE_FORMAT)."""
-        face = registry().find(self.style.font)
-        drawn = json.dumps([TEXT_PICTURE_FORMAT, face and face.sha256, asdict(self)], sort_keys=True, default=str)
+        faces = [registry().find(face_id) for face_id in sorted(self.faces)]
+        files = [face and face.sha256 for face in faces]
+        drawn = json.dumps([TEXT_PICTURE_FORMAT, files, asdict(self)], sort_keys=True, default=str)
         return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
+
+    @property
+    def faces(self) -> set[str]:
+        """The Faces it is drawn in: its style's, and any its runs fall back to."""
+        return {self.style.font, *(run.font for line in self.runs for run in line)}
 
 
 # How Text Layers' pictures are drawn: a new one is new pictures, under new names.
@@ -1410,31 +1433,32 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its lines
-    (split at newlines, without emoji, blank ones at either end left out) centred on its
-    Transform's centre and kept inside the frame, set smaller when the widest, padded, is wider than
-    the frame less TEXT_MARGIN either side. None when it is blank or would start at or after the
-    Clip's end."""
-    lines = [without_emoji(line) for line in layer.text.split("\n")]
-    while lines and not lines[0]:
-        lines.pop(0)
-    while lines and not lines[-1]:
-        lines.pop()
-    start = round(layer.start, 3)
-    if not lines or start >= duration:
-        return None
+    (split at newlines, without emoji, split into runs by Face with what no Face has left out, blank
+    ones at either end left out) centred on its Transform's centre and kept inside the frame, set
+    smaller when the widest, padded, is wider than the frame less TEXT_MARGIN either side. None when
+    it is blank or would start at or after the Clip's end."""
     style = layer.style
+    runs = [text_runs(without_emoji(line), style.font) for line in layer.text.split("\n")]
+    while runs and not runs[0]:
+        runs.pop(0)
+    while runs and not runs[-1]:
+        runs.pop()
+    start = round(layer.start, 3)
+    if not runs or start >= duration:
+        return None
+    lines = ["".join(run.text for run in line) for line in runs]
     metrics = font_metrics(style.font)
     block = style.plate if style.plate.shape is HookShape.BLOCK else None
     # Its width, padding and corners grow with the size (the plate's are given at the style's), so a
     # size that fits scales them alike.
     pad = (block.padding_x / style.size, block.padding_y / style.size) if block else (0.0, 0.0)
-    widest = max(metrics.width(line, 1) for line in lines) + 2 * pad[0]
+    widest = max(runs_width(line, 1) for line in runs) + 2 * pad[0]
     size = float(style.size)
     room = OUTPUT_WIDTH - 2 * TEXT_MARGIN
     if widest * size > room:
         size = math.floor(room / widest * 10) / 10
     pad_x, pad_y = pad[0] * size, pad[1] * size
-    widths = [metrics.width(line, size) for line in lines]
+    widths = [runs_width(line, size) for line in runs]
     width = math.ceil(max(widths) + 2 * pad_x)
     letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
     height = math.ceil(letters + 2 * pad_y)
@@ -1455,7 +1479,8 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     ]
     end = round(min(start + layer.secs, duration), 3)
     radius = 0 if block is None else min(round(block.radius / style.size * size), height // 2)
-    layout, origin = _text_layout(layer, lines, size, area, anchors, radius if block else None)
+    placed = [placed_runs(line, x - width / 2, size) for line, width, (x, _) in zip(runs, widths, anchors)]
+    layout, origin = _text_layout(layer, lines, placed, size, area, anchors, radius if block else None)
     picture = _text_picture(layout, origin, layer.transform)
     return TextEvent(
         layer, lines, start, end, area, size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
@@ -1464,21 +1489,24 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
 
 
 def _text_layout(
-    layer: TextLayer, lines: list[str], size: float, area: Box, anchors: list[tuple[float, float]], radius: int | None
+    layer: TextLayer, lines: list[str], runs: list[list[TextRun]], size: float, area: Box,
+    anchors: list[tuple[float, float]], radius: int | None,
 ) -> tuple[TextLayout, tuple[int, int]]:
-    """A Text Layer's layout, set at `size` in `area` with its lines at `anchors` (a Block plate's
-    corners `radius` round; None without one), and where its picture's top-left corner is on the
-    frame: its area and TEXT_INK_ROOM round it, made even across and down. Its anchors are kept from
-    that corner, so that the layout (and its picture) is the same wherever the layer is."""
+    """A Text Layer's layout, set at `size` in `area` with its lines at `anchors` drawn as `runs`
+    (placed on the frame; a Block plate's corners `radius` round, None without one), and where its
+    picture's top-left corner is on the frame: its area and TEXT_INK_ROOM round it, made even across
+    and down. Its anchors and runs are kept from that corner, so that the layout (and its picture) is
+    the same wherever the layer is."""
     style = layer.style
     room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size)
     left, top = area.x - room, area.y - room
     width, height = area.width + 2 * room, area.height + 2 * room
     width, height = width + width % 2, height + height % 2
     local = [(round(x - left, 4), round(y - top, 4)) for x, y in anchors]
+    local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
     scale = min(layer.transform.scale, MAX_TEXT_PICTURE / max(width, height))
     box = None if radius is None else Box(room, room, area.width, area.height)
-    return TextLayout(style, size, lines, local, width, height, round(scale, 4), box, radius or 0), (left, top)
+    return TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), box, radius or 0), (left, top)
 
 
 def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:
@@ -1507,6 +1535,56 @@ def _turned_box(area: Box, centre: tuple[float, float], transform: Transform) ->
     ys = [centre[1] + u * sin + v * cos for u, v in corners]
     left, top = math.floor(min(xs) + 1e-6), math.floor(min(ys) + 1e-6)
     return Box(left, top, math.ceil(max(xs) - 1e-6) - left, math.ceil(max(ys) - 1e-6) - top)
+
+
+def text_runs(line: str, font_id: str) -> list[TextRun]:
+    """`line` split into runs by Face (docs/adr/0010), not yet placed: each character in the Face
+    `font_id`, or in FALLBACK_FONT (CJK) when only that has it. A character neither has is left out,
+    as emoji are (`without_emoji`): the line closes up round it. A space goes with the run it
+    follows, when that run's Face has it."""
+    kept = " ".join("".join(char for char in line if char.isspace() or _run_face(char, font_id)).split())
+    runs: list[TextRun] = []
+    for char in kept:
+        last = runs[-1] if runs else None
+        if last is not None and char.isspace() and char in font_metrics(last.font).advances:
+            face = last.font
+        else:
+            face = _run_face(char, font_id)
+        if face is None:
+            continue
+        if last is not None and last.font == face:
+            runs[-1] = replace(last, text=last.text + char)
+        else:
+            runs.append(TextRun(char, face))
+    return runs
+
+
+def _run_face(char: str, font_id: str) -> str | None:
+    """The Face a Text Layer in the Face `font_id` sets `char` in: its own, the fallback, or None."""
+    for face in (font_id, FALLBACK_FONT):
+        if char in font_metrics(face).advances:
+            return face
+    return None
+
+
+def runs_width(runs: list[TextRun], size: float, tracking: float = 0.0) -> float:
+    """How wide a line of `runs` is at font `size`, each measured in its own Face, with `tracking`
+    pixels after every character but the last."""
+    width = sum(font_metrics(run.font).width(run.text, size) for run in runs)
+    count = sum(len(run.text) for run in runs)
+    return width + tracking * (count - 1) if tracking and count else width
+
+
+def placed_runs(runs: list[TextRun], left: float, size: float, tracking: float = 0.0) -> list[TextRun]:
+    """A line of `runs` set at font `size` from `left`, `tracking` pixels after every character but
+    the last: each placed where the one before ends, and drawn without the spaces at its end."""
+    placed, x = [], left
+    for run in runs:
+        metrics = font_metrics(run.font)
+        drawn = run.text.rstrip()
+        placed.append(replace(run, text=drawn, x=round(x, 4), width=round(metrics.width(drawn, size, tracking), 4)))
+        x += metrics.width(run.text, size, tracking) + tracking
+    return placed
 
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
