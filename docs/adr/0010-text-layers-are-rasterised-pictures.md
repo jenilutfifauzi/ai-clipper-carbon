@@ -26,7 +26,7 @@ Today:
 
 - **A Text Layer is planned as text and rendered as a picture.**
   - The planner lays it out: it breaks lines at newlines and between words at the wrap width (UAX #14), measures runs per face, and works out the plate and the box.
-  - libass draws the layout once onto a transparent canvas (ffmpeg's `ass` filter with `alpha=1`) into a PNG.
+  - libass draws the layout once into a PNG with straight alpha, by difference matting: one ffmpeg run burns it over black and over white; alpha is 1 − (white − black) ÷ 255, and colour is the black render ÷ alpha. ffmpeg's `ass` with `alpha=1` was tried first (ffmpeg 9.0.2, libass 0.17.5) and gives colour multiplied by coverage with alpha squared, which fringes light strokes.
   - Emoji are pasted into that PNG from Noto Color Emoji's images, at the places the planner gave them.
   - The PNG goes into the filter graph by the Overlay's path, placed by the layer's Transform and Keyframes. Fade, Pop and Slide become operations on that transform, stacked on the keyed values.
 - **The picture is rasterised at the largest scale the layer reaches,** constant or keyed, at most 4096 px on its longest side, so the render only ever scales it down. Pictures are cached by a hash of their layout and style, as derived files are (ADR 0005).
