@@ -22,6 +22,8 @@ import {
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
 import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, pressTogglesPick, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
+import type { BoxEdge } from "./textBox";
+import { TextBoxGrips } from "./TextBoxGrips";
 
 // How far an arrow key nudges, in output pixels (with Shift, five times as far).
 export const NUDGE_PX = 8;
@@ -34,7 +36,8 @@ const percent = (value: number) => `${value * 100}%`;
 
 /**
  * Something drawn on the stage that can be selected, moved and nudged, resized from a corner when it
- * has a `size`, and edited (a double-click or double-tap, or Enter) when it has `onEdit`.
+ * has a `size`, its box shaped by the Grips on its edges when it has `onBox` (a Text Layer's), and
+ * edited (a double-click or double-tap, or Enter) when it has `onEdit`.
  */
 export interface StageItem {
   id: string;
@@ -51,6 +54,8 @@ export interface StageItem {
   // Moved to `area` (as drawn), and resized to `size` (null: the size kept). Each gesture is one
   // `group`.
   onPlace: (area: Box, size: number | null, group: string) => void;
+  // Its box set to `box` by the Grip on its `edge` (TextBoxGrips): one `group` per drag.
+  onBox?: (edge: BoxEdge, box: Box, group: string) => void;
   // Edited where it was double-tapped (output pixels), or from the keyboard (no point).
   onEdit?: (point?: { x: number; y: number }) => void;
 }
@@ -676,6 +681,7 @@ export function useStageEdit(
     shown,
     shownPicture,
     transform,
+    at,
     handlers,
     pictureHandlers,
     cropMode,
@@ -689,7 +695,7 @@ export type StageEdit = ReturnType<typeof useStageEdit>;
 /**
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
  * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
- * with a corner to resize it by when it has a size. Under them, the pictures' handles (each on its
+ * with a corner to resize it by when it has a size, and the Grips on its edges when it has a box. Under them, the pictures' handles (each on its
  * picture as turned), and over everything the Grips of one picked alone. The guides it snaps to
  * (a picture's Smart Guides), while it does. `scale` is the stage's CSS pixels per output pixel.
  */
@@ -704,6 +710,16 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
   const picturesOn = shownAt.splice(0, edit.pictures.length);
   // The one picture picked alone, with a Transform to set: its Grips.
   const gripped = edit.picked.length === 1 ? edit.pictures.find((picture) => picture.id === edit.picked[0] && picture.transform && picture.picture) : undefined;
+  // Where item `i` is shown now: on screen, or (faded) picked with one place while off it.
+  const showOf = (item: StageItem, i: number) => {
+    const index = shownAt[i] ?? -1;
+    const show = index >= 0 ? item.shows[index] : edit.picked.includes(item.id) && item.shows.length === 1 ? item.shows[0] : null;
+    return show && { index, show };
+  };
+  // The one item picked alone with a box to shape, where it is drawn: its box Grips.
+  const boxedAt = edit.picked.length === 1 ? edit.items.findIndex((item) => item.id === edit.picked[0] && item.onBox) : -1;
+  const boxedShow = boxedAt >= 0 ? showOf(edit.items[boxedAt], boxedAt) : null;
+  const boxed = boxedShow && { item: edit.items[boxedAt], area: edit.shown(edit.items[boxedAt].id, boxedShow.show.area) };
   return (
     <>
       {edit.pictures.map((picture, i) => (
@@ -712,9 +728,9 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
       ))}
       {edit.items.map((item, i) => {
         const selected = edit.picked.includes(item.id);
-        const index = shownAt[i] ?? -1;
-        const show = index >= 0 ? item.shows[index] : selected && item.shows.length === 1 ? item.shows[0] : null;
-        if (!show) return null;
+        const shown = showOf(item, i);
+        if (!shown) return null;
+        const { index, show } = shown;
         const area = edit.shown(item.id, show.area);
         const { move, size } = edit.handlers(item, show.area);
         const hints = ["drag to move it, or use the arrow keys", item.onEdit && "double-click or press Enter to edit its words"];
@@ -761,6 +777,7 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
           </div>
         );
       })}
+      {boxed && !edit.moving && <TextBoxGrips key={boxed.item.id} plan={plan} area={boxed.area} at={edit.at} onBox={boxed.item.onBox!} />}
       {edit.cropMode ? <CropHandles plan={plan} edit={edit} scale={scale} /> : gripped && <Grips plan={plan} edit={edit} item={gripped} scale={scale} />}
       {edit.guides?.x.map((x) => (
         <div key={`x${x}`} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: percent(x / plan.width) }} />

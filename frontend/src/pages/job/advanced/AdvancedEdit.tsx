@@ -30,6 +30,7 @@ import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
 import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
+import { boxStyle } from "../editor/textBox";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
@@ -805,6 +806,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const { transform, style } = layer;
           if (place.size == null && placedTogether("text", layer.id)) moveOnFrame(place.x - transform.x, place.y - transform.y, group);
           else updateText({ ...layer, transform: { ...transform, x: place.x, y: place.y }, style: atSize(style, place.size ?? style.size) }, group);
+        },
+        onBox: (id, edge, box, group) => {
+          const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
+          if (layer) updateText({ ...layer, style: boxStyle(layer.style, edge, box) }, group);
         },
         retype: {
           textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),

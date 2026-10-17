@@ -34,6 +34,7 @@ import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
+import type { BoxEdge } from "./textBox";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -494,6 +495,8 @@ export interface StageControls {
   // Moved to (x, y) in output pixels: the middle of a Text Layer or a caption line, the middle and the
   // top of the hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
   onPlace: (id: StageId, place: Place, group: string) => void;
+  // A Text Layer's box set by the Grip on its `edge` to `box` (output pixels): one `group` per drag.
+  onBox?: (id: StageId, edge: BoxEdge, box: Box, group: string) => void;
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
   texts?: boolean;
@@ -565,6 +568,7 @@ function stageItems(
         shows: [{ start: event.start, end: event.end, area: event.area }],
         size: { now: event.layer.style.size, ...TEXT_SIZES },
         onPlace: (area, size, group) => controls.onPlace(id, { ...middle(area), size }, group),
+        onBox: controls.onBox && ((edge, box, group) => controls.onBox!(id, edge, box, group)),
         onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
       });
     }

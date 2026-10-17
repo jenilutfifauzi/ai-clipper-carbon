@@ -136,7 +136,7 @@ def layout_script(layout: TextLayout) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
         "MarginR, MarginV, Encoding",
-        f"Style: Text,{font(style.font).family},{style.size},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
+        f"Style: Text,{font(style.font).family},{style.size:g},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
         f"{style.stroke_width},0,5,0,0,0,1",
         "",
         "[Events]",
