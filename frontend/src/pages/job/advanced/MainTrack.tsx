@@ -9,11 +9,11 @@ import { TranscriptPicker } from "../TranscriptPicker";
 import { FITTED } from "../editor/manual";
 import { IDENTITY, mediaSize } from "../editor/picture";
 import type { Playback, PlayedSegment } from "../editor/playback";
-import { rangeOf, segmentLength, sourceAt } from "../editor/segmentTime";
+import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyedVolume, useKeyNotice, useKeyTime } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, resetFraming, type KeySpan } from "./keying";
-import { SpeedFields } from "./SpeedFields";
+import { HoldFields, SpeedFields } from "./SpeedFields";
 import { BackgroundFields, TransformFields } from "./TransformFields";
 
 // The shortest Segment the editor makes; the backend snaps each to Words.
@@ -52,6 +52,8 @@ export function draggedSegments(
   }
   // Where the dragged edge now is, in its file.
   const range = rangeOf(whole);
+  // A Freeze frame's edges change its hold.
+  if (segment.hold != null) return origin.map((other) => (other.id === id ? { ...segment, hold: draggedHold(change, drawn, range, shown, longest) } : other));
   // The least and the most of its file it can show.
   const least = SEGMENT_MIN_SECS * (range.speed ?? 1);
   const most = segment.media ? Infinity : longest;
@@ -73,6 +75,22 @@ export function draggedSegments(
 }
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+// A Freeze frame's hold once either edge is dragged (the frame stays): longer by as much as the edge
+// went out, at least MEDIA_MIN_SECS, and no longer than keeps the Main Track (as `shown`) within the
+// `longest` clip.
+function draggedHold(
+  change: { start: number; end: number; edge: "move" | "start" | "end" },
+  drawn: PlayedSegment,
+  held: SegmentRange,
+  shown: PlayedSegment[],
+  longest: number,
+): number {
+  const was = segmentLength(held);
+  const by = change.edge === "start" ? drawn.start - change.start : change.end - drawn.end;
+  const most = longest - ((shown.at(-1)?.end ?? was) - was);
+  return round(Math.max(Math.min(was + by, most), MEDIA_MIN_SECS));
+}
 
 // The longest video Segment: the longest video the Media Library takes (MAX_SECS in backend/app/media.py).
 const VIDEO_MAX_SECS = 180;
@@ -105,6 +123,7 @@ export function SegmentFields({
   onSourceVolume,
   onVolume,
   onSpeed,
+  onHold,
   onChange,
   onCropMode,
   scene,
@@ -126,6 +145,8 @@ export function SegmentFields({
   onVolume: (volume: number, group: string) => void;
   // Its Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (speed: number, group: string) => void;
+  // A Freeze frame's hold set (actions.ts' setHold).
+  onHold: (hold: number) => void;
   onChange: (segment: ClipSegment, group: string) => void;
   // A video's Segment's Crop mode on the stage, when it can be opened there.
   onCropMode?: () => void;
@@ -136,8 +157,15 @@ export function SegmentFields({
   span: KeySpan | null;
 }) {
   const Icon = segment.media ? Clapperboard : Film;
-  // A Freeze frame holds one frame: no Speed.
-  const speed = segment.hold == null && (
+  // A Freeze frame holds one frame, silent: its Duration instead of a Speed, and no sound.
+  const held = segment.hold != null;
+  const range = (of: string) =>
+    held
+      ? `Holds ${formatPrecise(segment.start)} of ${of} · ${segmentLength(segment).toFixed(1)} s`
+      : `${formatPrecise(segment.start)} – ${formatPrecise(segment.end)} of ${of} · ${segmentLength(segment).toFixed(1)} s`;
+  const speed = held ? (
+    <HoldFields hold={segment.hold!} onHold={onHold} />
+  ) : (
     <SpeedFields
       speed={segment.speed ?? 1}
       pitch={segment.pitch ?? false}
@@ -168,14 +196,12 @@ export function SegmentFields({
       </div>
       {segment.media ? (
         <>
-          <Hint more="Drag its edges to trim it, or drag it to another place.">
-            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the video · {segmentLength(segment).toFixed(1)} s
-          </Hint>
+          <Hint more="Drag its edges to trim it, or drag it to another place.">{range("the video")}</Hint>
           {speed}
           {segment.framing && (
             <FramingFields segment={segment} framing={segment.framing} item={item} playback={playback} span={span} onChange={onChange} onCropMode={onCropMode} />
           )}
-          {item?.has_audio === false ? (
+          {held ? null : item?.has_audio === false ? (
             <p className="text-sm text-muted">This video has no sound.</p>
           ) : (
             <KeyedVolume
@@ -192,28 +218,38 @@ export function SegmentFields({
         </>
       ) : (
         <>
-          <Hint more="Drag its edges to trim it, or drag it to another place. Its ends snap to words.">
-            {formatPrecise(segment.start)} – {formatPrecise(segment.end)} of the episode · {segmentLength(segment).toFixed(1)} s
+          <Hint
+            more={
+              held
+                ? "Drag its edges to hold it longer or shorter, or drag it to another place."
+                : "Drag its edges to trim it, or drag it to another place. Its ends snap to words."
+            }
+          >
+            {range("the episode")}
           </Hint>
           {speed}
-          <Slider
-            label="This Segment's sound"
-            value={segment.volume ?? 1}
-            min={0}
-            max={2}
-            step={0.05}
-            format={(v) => `${Math.round(v * 100)}%`}
-            onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
-          />
-          <Slider
-            label="The episode's sound, in every Segment"
-            value={sourceVolume}
-            min={0}
-            max={2}
-            step={0.05}
-            format={(v) => `${Math.round(v * 100)}%`}
-            onChange={onSourceVolume}
-          />
+          {!held && (
+            <>
+              <Slider
+                label="This Segment's sound"
+                value={segment.volume ?? 1}
+                min={0}
+                max={2}
+                step={0.05}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
+              />
+              <Slider
+                label="The episode's sound, in every Segment"
+                value={sourceVolume}
+                min={0}
+                max={2}
+                step={0.05}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={onSourceVolume}
+              />
+            </>
+          )}
           {scene}
         </>
       )}

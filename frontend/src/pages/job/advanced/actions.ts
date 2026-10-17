@@ -1,8 +1,8 @@
-import type { ClipSegment, Keyframe, MusicClip, Overlay, TextLayer } from "../../../api";
+import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, TextLayer, Transform } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
-import { offsetAt, playedSourceAt, rangeOf, segmentLength, type SegmentRange } from "../editor/segmentTime";
+import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, newId, round, type AdvancedEdits } from "./edits";
-import { rekeyed, scaledKeys, toMillionth } from "./keyActions";
+import { rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, itemsOf, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
@@ -312,10 +312,13 @@ export function duplicate(scene: PickContext): Outcome | null {
   return { edits: next, pick: picked(...copies) };
 }
 
-// Whether the playhead at `time` is inside picked item `ref`, so that it can be split there.
+// Whether the playhead at `time` is inside picked item `ref`, so that it can be split there. A Freeze
+// frame isn't split: it holds one frame.
 function inside(scene: PickContext, ref: ItemRef, time: number): boolean {
   if (ref.kind === "segment") {
-    const shown = scene.played[scene.edits.segments.findIndex((segment) => segment.id === ref.id)];
+    const index = scene.edits.segments.findIndex((segment) => segment.id === ref.id);
+    const shown = scene.played[index];
+    if (scene.edits.segments[index]?.hold != null) return false;
     return !!shown && time > shown.start + SEGMENT_MIN_SECS && time < shown.end - SEGMENT_MIN_SECS;
   }
   const item = (scene.edits[KINDS[ref.kind].list] as Timed[]).find((other) => other.id === ref.id);
@@ -386,6 +389,117 @@ export function splitAt(scene: PickContext, at: number): Outcome | null {
   if (scene.pick !== null) return split(scene, at);
   const items = under(scene, at);
   return items.length ? split({ ...scene, pick: picked(...items) }, at) : null;
+}
+
+/** How long a new Freeze frame holds its frame. */
+export const FREEZE_SECS = 1;
+
+// The index of the Segment a Freeze frame can be made of at `time`: the one the playhead is inside,
+// SEGMENT_MIN_SECS from its edges, not itself a Freeze frame and not on a locked Track; else -1.
+function freezable(scene: PickContext, time: number): number {
+  if (scene.locked?.includes(TRACK_OF.segment)) return -1;
+  return scene.edits.segments.findIndex((segment) => inside(scene, { kind: "segment", id: segment.id }, time));
+}
+
+/** Whether Freeze frame can be made at `time`: the playhead inside a Segment, SEGMENT_MIN_SECS from its edges. */
+export const canFreezeAt = (scene: PickContext, time: number) => freezable(scene, time) !== -1;
+
+/**
+ * Freeze frame at the playhead (`at`, docs/adr/0009): the Segment there split into a head, a Freeze
+ * frame of FREEZE_SECS holding the frame shown at the playhead (at any Speed, in Reverse), and a
+ * tail, the Freeze frame picked. The cut is split's (between Words for the Source). Keyframes are
+ * re-anchored on head and tail; a video's Freeze frame takes its Framing as shown there, its
+ * Keyframes sampled into constants. A Transition after the Segment stays after the tail. The Main
+ * Track gets FREEZE_SECS longer where the Freeze frame goes, and on the Magnetic timeline the layers
+ * after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
+ */
+export function freezeFrame(scene: PickContext, at: number, limits: { longest?: number } = {}): Outcome | null {
+  const { edits } = scene;
+  const index = freezable(scene, at);
+  if (index === -1) return null;
+  if (limits.longest !== undefined && scene.duration + FREEZE_SECS > limits.longest + 1e-6) {
+    const notice = `A clip can last at most ${limits.longest} s: a Freeze frame would make this one ${Math.round(scene.duration + FREEZE_SECS)} s.`;
+    return { edits, pick: scene.pick, notice };
+  }
+  const segment = edits.segments[index];
+  const shown = scene.played[index];
+  const there = playedSourceAt(shown, at);
+  const cut = Math.round((segment.media ? there : scene.gap(there)) * 1000) / 1000;
+  const length = segmentLength(segment);
+  const into = offsetAt(segment, cut);
+  // Where the cut is on the Timeline, which the Freeze frame goes in at.
+  const cutAt = playedTimeAt(shown, cut);
+  // On the Timeline the head plays first: in Reverse, the later part of the range.
+  const [headRange, tailRange] = segment.reverse
+    ? [{ start: cut, end: segment.end }, { start: segment.start, end: cut }]
+    : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
+  const head = rekeyed<ClipSegment>({ ...segment, ...headRange }, into - (cutAt - shown.start), into);
+  const tail = rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length);
+  const frame = Math.round(there * 1000) / 1000;
+  const held: ClipSegment = { id: idOf(scene), start: frame, end: frame, hold: FREEZE_SECS };
+  if (segment.media) {
+    held.media = segment.media;
+    held.volume = segment.volume;
+    if (segment.framing) held.framing = { ...segment.framing, transform: heldTransform(segment.framing.transform, segment.keys ?? {}, at - shown.start) };
+  }
+  const next = {
+    ...edits,
+    segments: edits.segments.flatMap((other) => (other.id === segment.id ? [head, held, tail] : [other])),
+    transitions: edits.transitions.map((transition) => (transition.after === segment.id ? { ...transition, after: tail.id } : transition)),
+  };
+  return {
+    edits: rippledIf(next, [{ kind: "inserted", at: cutAt, secs: FREEZE_SECS }], scene.magnetic ?? false).edits,
+    pick: picked({ kind: "segment", id: held.id }),
+  };
+}
+
+// A video's Transform as it is shown `at` seconds into its Segment, its Keyframes sampled into
+// constants; a turn past ±360° (a Keyframe's may be) as the same turn within it.
+function heldTransform(transform: Transform, keys: Keys, at: number): Transform {
+  const shown = shownTransform(transform, keys, at);
+  return Math.abs(shown.rotation) > 360 ? { ...shown, rotation: shown.rotation % 360 } : shown;
+}
+
+/**
+ * A Freeze frame's hold set to `secs` (its Duration field), a change at its end: at least
+ * MEDIA_MIN_SECS, and no longer than keeps the Clip within the `longest` clip. Its Keyframes past a
+ * shorter end are re-anchored away. The Main Track closes up or opens out after it, and on the
+ * Magnetic timeline the layers follow. Null for a Segment that isn't one.
+ */
+export function setHold(scene: PickContext, id: string, secs: number, limits: { longest?: number } = {}): Outcome | null {
+  const { edits, pick } = scene;
+  const index = edits.segments.findIndex((other) => other.id === id);
+  const segment = edits.segments[index];
+  if (!segment || segment.hold == null) return null;
+  const most = limits.longest === undefined ? Infinity : limits.longest - (scene.duration - segment.hold);
+  const hold = Math.round(Math.max(Math.min(secs, most), MEDIA_MIN_SECS) * 1000) / 1000;
+  const next = { ...edits, segments: edits.segments.map((other) => (other.id === id ? rekeyed({ ...segment, hold }, 0, hold) : other)) };
+  return { ...rippledAtEnd(scene, next, index, segment.hold, hold), pick };
+}
+
+// `next`, Segment `index` of the scene's edits `before` long on the Timeline and `after` long now,
+// with the layers following its end on the Magnetic timeline, and what to tell of those its cut took.
+function rippledAtEnd(scene: PickContext, next: AdvancedEdits, index: number, before: number, after: number): { edits: AdvancedEdits; notice?: string } {
+  const end = (scene.played[index]?.start ?? 0) + before;
+  const change: TrackChange = after < before ? { kind: "removed", at: end - (before - after), secs: before - after } : { kind: "inserted", at: end, secs: after - before };
+  return rippledIf(next, [change], (scene.magnetic ?? false) && Math.abs(after - before) > 1e-6, scene.duration);
+}
+
+/** Freeze frame at the playhead, from the item tools and Shift+F: see freezeFrame. */
+export interface Freezer {
+  canFreeze: (time: number) => boolean;
+  freeze: () => void;
+}
+
+/** Freeze frame at the playhead (`now`), its outcome applied (`apply`) as one change. */
+export function freezer(scene: PickContext, now: () => number, apply: (outcome: Outcome) => void, limits: { longest?: number } = {}): Freezer {
+  return {
+    canFreeze: (time) => canFreezeAt(scene, time),
+    freeze: () => {
+      const outcome = freezeFrame(scene, now(), limits);
+      if (outcome) apply(outcome);
+    },
+  };
 }
 
 /**
@@ -511,11 +625,7 @@ export function setSpeed(scene: PickContext, item: SpedRef, value: number, limit
     return refused(`A clip can last at most ${limits.longest} s: at ${speedLabel(speed)} this one would last ${Math.round(length)} s.`);
   }
   const next = { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? sped : other)) };
-  // Its end on the Main Track, which moves.
-  const end = (scene.played[index]?.start ?? 0) + before;
-  const change: TrackChange = after < before ? { kind: "removed", at: end - (before - after), secs: before - after } : { kind: "inserted", at: end, secs: after - before };
-  const { edits: rippled, notice } = rippledIf(next, [change], (scene.magnetic ?? false) && Math.abs(after - before) > 1e-6, scene.duration);
-  return { edits: rippled, pick, ...(notice ? { notice } : {}) };
+  return { ...rippledAtEnd(scene, next, index, before, after), pick };
 }
 
 /**

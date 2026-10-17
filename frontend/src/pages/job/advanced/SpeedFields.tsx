@@ -107,3 +107,50 @@ function SpeedNumber({ speed, onChange }: { speed: number; onChange: (speed: num
     </div>
   );
 }
+
+/**
+ * A Freeze frame's Duration, in place of the Speed section: how long it holds its frame, typed in
+ * seconds and set when the field is left or Enter is pressed (one change, its ripple included). The
+ * edit keeps it within 0.1 s and the longest clip.
+ */
+export function HoldFields({ hold, onHold }: { hold: number; onHold: (hold: number) => void }) {
+  const id = useId();
+  const [typed, setTyped] = useState<string | null>(null);
+  const commit = () => {
+    const number = Number(typed);
+    if (typed !== null && typed.trim() !== "" && Number.isFinite(number) && number !== hold) onHold(number);
+    setTyped(null);
+  };
+  return (
+    <Group title="Freeze frame">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor={id} className="text-sm font-medium">
+          Duration
+        </label>
+        <div className="relative w-28">
+          <input
+            id={id}
+            type="number"
+            inputMode="decimal"
+            min={0.1}
+            step="any"
+            value={typed ?? String(hold)}
+            onChange={(event) => setTyped(event.target.value)}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit();
+            }}
+            className={cx(
+              "w-full min-w-0 rounded-control border border-border bg-fill py-2 pr-8 pl-3 text-base text-text tabular-nums",
+              "user-invalid:border-danger",
+            )}
+          />
+          <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">
+            s
+          </span>
+        </div>
+      </div>
+      <p className="text-xs text-pretty text-muted">It holds one frame, silent, while the music plays on. Drag either of its edges to change it too.</p>
+    </Group>
+  );
+}
