@@ -57,9 +57,15 @@ const MAX_DRIFT_SECS = 0.12;
 // A skim's snippet of sound lasts this long.
 const SNIPPET_SECS = 0.08;
 
-// Whether the time runs on a clock through `segment`: a video's, which its own player follows, or a
+/**
+ * Whether a Segment plays on videos of its own while the decks wait: a video's, or one of the Source
+ * in Reverse, from its Retimed copy (ADR 0009).
+ */
+export const onOwnVideos = (segment: { media?: string | null; reverse?: boolean }) => !!segment.media || !!segment.reverse;
+
+// Whether the time runs on a clock through `segment`: one on its own videos, which follow it, or a
 // Freeze frame, whose frame waits paused for its hold.
-const clocked = (segment: PlayedSegment) => !!segment.media || segment.hold != null;
+const clocked = (segment: PlayedSegment) => onOwnVideos(segment) || segment.hold != null;
 
 /** The rates the preview plays at: a viewing aid, not a Clip's speed. */
 export const RATES = [0.5, 1, 1.5, 2] as const;
@@ -90,8 +96,10 @@ interface Deck {
  * (docs/adr/0002-segments-and-timeline-time.md). The live deck plays and is heard; the other waits,
  * paused and muted, where the next Source Segment starts, and at the join the two swap, so that the
  * join doesn't wait for a seek. When the parked deck isn't ready there (its seek hasn't landed),
- * the live deck seeks instead. Through a Segment of a Media Library video, the Source decks wait and
- * the time runs on a clock of its own, which that video's player follows. Through a Freeze frame
+ * the live deck seeks instead. Through a Segment of a Media Library video, or one of the Source in
+ * Reverse (ADR 0009: its Retimed copy on a master and follower of its own, so that every panel of its
+ * Scenes draws from the copy), the decks wait at the next Segment they play and the time runs on a
+ * clock of its own, which those videos follow. Through a Freeze frame
  * (ADR 0009) the time runs on the clock too, for its hold, while its frame waits paused: a deck
  * parked at it for the Source's, its video for a video's. The preview, its other
  * media and the timeline all read and set the time through it. Playing stops at the Clip's end,
@@ -361,15 +369,16 @@ export class Playback {
   }
 
   // Where the parked deck waits, in the Source, and for which Segment: In when the Loop Region wraps
-  // before the next join (nowhere when In is in a media Segment, whose video waits by itself);
-  // otherwise the start of the next Source Segment after the time's, or nowhere when none is left.
+  // before the next join (nowhere when In is in a Segment on its own videos, which wait by
+  // themselves); otherwise the start of the next Segment after the time's that plays on the decks,
+  // or nowhere when none is left.
   private parkTarget(): { source: number; segment: PlayedSegment } | null {
     const region = this.wrapping();
     if (region) {
       const { index, source } = wrapTarget(region, this.segments);
       return source === null ? null : { source, segment: this.segments[index] };
     }
-    const next = this.segments.slice(this.index + 1).find((segment) => !segment.media);
+    const next = this.segments.slice(this.index + 1).find((segment) => !onOwnVideos(segment));
     return next ? { source: playedSourceAt(next, next.start), segment: next } : null;
   }
 
@@ -416,7 +425,7 @@ export class Playback {
     if (clocked(next)) {
       this.clock = { at: performance.now(), from: time };
       // A Freeze frame of the Source shows its frame on a deck, paused: the parked one when it waits there.
-      const frame = next.media ? null : next.source_start;
+      const frame = onOwnVideos(next) ? null : next.source_start;
       if (frame !== null && parked && this.ready(parked, frame)) this.swap(false);
       else {
         if (!clocked(from) && deck && !deck.master.paused) {
@@ -508,7 +517,7 @@ export class Playback {
         }
       }
       // A Freeze frame of the Source shows its frame on the live deck, paused.
-      if (!segment.media && deck) this.cue(deck, segment.source_start, segment);
+      if (!onOwnVideos(segment) && deck) this.cue(deck, segment.source_start, segment);
     } else {
       const resume = this.playing && !!this.clock;
       this.clock = null;
@@ -579,11 +588,11 @@ export class Playback {
     this.emit();
   }
 
-  // Where in the Source the skimmed time is, and its Segment, or null when it is in a video's Segment.
+  // Where in the Source the skimmed time is, and its Segment, or null when it is in a Segment on its own videos.
   private skimSource(): { source: number; segment: PlayedSegment } | null {
     if (!this.skimmed) return null;
     const segment = this.segments[this.skimmed.index];
-    return segment.media ? null : { source: playedSourceAt(segment, this.skimmed.time), segment };
+    return onOwnVideos(segment) ? null : { source: playedSourceAt(segment, this.skimmed.time), segment };
   }
 
   // The skim's end: the parked deck silenced and parked again.

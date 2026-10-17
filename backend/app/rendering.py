@@ -40,7 +40,7 @@ from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
 from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
-from app.retimed import CopySize, Retime, read_from_copies
+from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
 from app.segment_time import segment_time
 from app.storage import write_atomic
@@ -48,7 +48,7 @@ from app.styles import PRESETS_FILE, PresetStore
 from app.transcript import Transcript
 from app.transcriber import Transcriber, TranscriptionStalled, TranscriptionStopped, Watchdog
 from app.transcript import Word
-from app.video_source import SourceMetadata, probe
+from app.video_source import Source, SourceMetadata, probe
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,13 @@ class Analysis(StrEnum):
     SCENES = "scenes"
     # Its Scenes and faces, for the Scenes framed by them.
     FACES = "faces"
+
+
+def source_copies(job_dir: Path, source: Source) -> Copies:
+    """The Retimed copies (app/retimed.py) of the Job's Source, in `job_dir`'s RETIMED_DIR: the preview
+    size from its proxy (or the video itself, when the browser plays it), the full size from its video."""
+    videos = {CopySize.PREVIEW: job_dir / (source.preview or source.video), CopySize.FULL: job_dir / source.video}
+    return Copies(job_dir / RETIMED_DIR, videos, (source.metadata.width, source.metadata.height, source.metadata.fps))
 
 
 def analysed_range(candidate: Candidate, segment: Segment, duration: float) -> tuple[float, float]:
@@ -348,7 +355,7 @@ class Renders:
         words = not job.options.captions or all(
             saved_words(job_dir, segment.start, segment.end, job.options.language, self.settings.whisper_model) is not None
             for segment in segments
-            if segment.hold is None
+            if segment.hold is None and not segment.reverse
         )
         tuning, model = self.analyzer.tuning, self.analyzer.model.name
         needed = [(segment, needed_analysis(candidate, segment, job.source.metadata)) for segment in segments]
@@ -491,9 +498,11 @@ class Renders:
                 | {overlay.media for overlay in plan.overlays}
             )
             files = {media_id: self.media.file(media_id) for media_id in used}
-            # A reversed video's Segment reads its full-size Retimed copy, made now if it isn't there.
-            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.media)
-            plan, files = read_from_copies(plan, files, lambda media_id, played: self.media.retimed(media_id).make(
+            # A reversed Segment reads its full-size Retimed copy, made now if it isn't there.
+            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None)
+            plan, files = read_from_copies(plan, files, lambda media_id, played: (
+                self.media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
+            ).make(
                 self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
             ))
             encoder = self.renderer.render(
@@ -555,11 +564,11 @@ class Renders:
         return self.store.change_clips(job.id, finish)
 
     def _all_words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[list[Word]]:
-        """Each of the Candidate's Segments' Words (`_words`; none for a video's or a Freeze frame's),
-        the progress shared out by their lengths."""
+        """Each of the Candidate's Segments' Words (`_words`; none for a video's, a Freeze frame's or
+        a reversed one's), the progress shared out by their lengths."""
         total, done, found = sum(segment_time(p).length for p in candidate.source_segments()), 0.0, []
         for segment in candidate.main_track():
-            if segment.media is not None or segment.hold is not None:
+            if segment.media is not None or segment.hold is not None or segment.reverse:
                 found.append([])
                 continue
             share = segment_time(segment).length / total

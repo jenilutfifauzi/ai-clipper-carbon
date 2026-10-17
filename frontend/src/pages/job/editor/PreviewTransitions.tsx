@@ -3,9 +3,9 @@ import type { RenderPlan, TransitionEvent, TransitionKind } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
-import { Playback, usePlayback, useShown } from "./playback";
+import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
-import { MediaSegment, segmentScene } from "./PreviewSegments";
+import { MediaSegment, ReversedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
@@ -14,11 +14,11 @@ const READY_SECS = 2;
 /**
  * The plan's Transitions, imitated: the preview's main playback goes on into the next Segment where
  * a Transition starts (playback.ts's `playable`), and over it the Segment before keeps playing on
- * a playback of its own (its "ghost": its panels, or its video), taken away as the Transition's kind
+ * a playback of its own (its "ghost": its panels, or its own videos), taken away as the Transition's kind
  * does it, its sound fading out, over exactly the Transition's time. Near xfade's look and
  * acrossfade's sound, not the same.
  */
-export function PreviewTransitions({ plan, playback, src }: { plan: RenderPlan | null; playback: Playback; src: string }) {
+export function PreviewTransitions({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
   const transitions = plan?.transitions ?? [];
   const near = useShown(playback, (time) => transitions.findIndex((t) => time >= t.start - READY_SECS && time < t.end));
   if (!plan || near === -1) return null;
@@ -26,7 +26,7 @@ export function PreviewTransitions({ plan, playback, src }: { plan: RenderPlan |
   // The Segment it takes away: the one it ends, which started before it.
   const index = plan.segments.findIndex((segment) => segment.start < transition.start && Math.abs(segment.end - transition.end) < 0.01);
   if (index === -1) return null;
-  return <Ghost key={`${near}:${transition.start}`} plan={plan} transition={transition} index={index} playback={playback} src={src} />;
+  return <Ghost key={`${near}:${transition.start}`} plan={plan} transition={transition} index={index} playback={playback} src={src} jobId={jobId} />;
 }
 
 function Ghost({
@@ -35,12 +35,14 @@ function Ghost({
   index,
   playback,
   src,
+  jobId,
 }: {
   plan: RenderPlan;
   transition: TransitionEvent;
   index: number;
   playback: Playback;
   src: string;
+  jobId: string;
 }) {
   const layer = useRef<HTMLDivElement>(null);
   const veil = useRef<HTMLDivElement>(null);
@@ -51,12 +53,13 @@ function Ghost({
   ghost.setSegments([{ ...segment, media: segment.media ?? null }]);
   const sceneIndex = usePlayback(ghost, (time) => sceneAt(plan, time, index));
   const scene = plan.scenes[sceneIndex];
+  const own = onOwnVideos(segment);
 
   useEffect(() => {
-    if (segment.media) return;
+    if (own) return;
     ghost.attachDeck(0, master.current);
     return () => ghost.attachDeck(0, null);
-  }, [ghost, segment.media]);
+  }, [ghost, own]);
 
   useEffect(() => {
     const sync = () => {
@@ -68,7 +71,7 @@ function Ghost({
         if (inside) look(transition.kind, share, layer.current, veil.current);
         else veil.current.style.opacity = "0";
       }
-      if (segment.media) return;
+      if (own) return;
       // The ghost plays at the main playback's rate, and its deck its Segment at its Speed.
       ghost.setRate(playback.rate);
       const video = master.current;
@@ -95,13 +98,15 @@ function Ghost({
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, ghost, transition, segment, plan.source_volume]);
+  }, [playback, ghost, transition, segment, own, plan.source_volume]);
 
   return (
     <>
       <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
         {segment.media ? (
           <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
+        ) : own ? (
+          <ReversedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
         ) : (
           [master, follower].map((ref, slot) => (
             <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />

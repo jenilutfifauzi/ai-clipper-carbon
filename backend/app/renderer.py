@@ -48,7 +48,9 @@ Clip's frame rate (frames dropped or repeated, none blended); its sound is playe
 kept by a chain of `atempo` stages or changed with it by `asetrate`, before its volume and volume
 Keyframes, which are in Timeline seconds. The Clip's sound is resampled once more before its
 loudness is measured and normalized: that keeps `atempo`'s fractional timestamps from cutting it
-short, as Concat found.
+short, as Concat found. A reversed Segment is read forwards from its Retimed copy (app/retimed.py's
+`read_from_copies`): a video's as its video, the Source's (`read_from`) in place of the Source, still
+drawn in its Scenes' panels and heard at the Clip's own volume.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
 drawn as its Picture (`_picture`: cropped, scaled, flipped, rounded and bordered, turned with a
@@ -358,7 +360,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
     for segment in plan.segments:
-        read = files[segment.media] if segment.media else source
+        read = files[file] if (file := segment.media or segment.read_from) else source
         span = _HELD_READ_SECS if segment.hold is not None else segment.time.span
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{span:.3f}", "-i", str(read)]
     count = len(plan.segments)
@@ -746,8 +748,8 @@ def _keyed_items(plan: RenderPlan, files: dict[str, Path], source: Path) -> dict
 
 def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]:
     """The plan's Scenes of a keyed picture (a video Segment's, or a Manual Scene's of the Source), by
-    their places among its Scenes, each with its video's Media Library id (None: the Source) and
-    how the Scene plays it."""
+    their places among its Scenes, each with its video's Media Library id or the file its Segment is
+    read from (None: the Source) and how the Scene plays it."""
     keyed: dict[int, tuple[str | None, SegmentTime]] = {}
     if not plan.segments:
         whole = SegmentTime(plan.start, plan.end)
@@ -760,7 +762,7 @@ def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]
         for i in range(first, first + segment.scenes):
             scene = plan.scenes[i]
             if scene.picture is not None and scene.picture.motion:
-                keyed[i] = (segment.media, segment.time.part(scene.start - segment.start, scene.end - segment.start))
+                keyed[i] = (segment.media or segment.read_from, segment.time.part(scene.start - segment.start, scene.end - segment.start))
         first += segment.scenes
     return keyed
 

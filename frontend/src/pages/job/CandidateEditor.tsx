@@ -337,6 +337,7 @@ export function CandidateEditor({
               {view === "clip" || cut ? (
                 <ClipPreview
                   src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
+                  jobId={job.id}
                   preview={preview}
                   fonts={fonts}
                   playback={playback}

@@ -729,6 +729,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const player = (
     <ClipPreview
       src={mediaUrl(job.id, source.preview ?? source.video)}
+      jobId={job.id}
       preview={shown}
       blank={tracks.hidden.includes("video")}
       fonts={fonts}

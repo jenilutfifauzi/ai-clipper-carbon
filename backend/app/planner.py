@@ -95,11 +95,13 @@ from app.candidates import (
     BackgroundKind,
     Border,
     Crop,
+    Ease,
     Framing,
     Keyframe,
     KeyProperty,
     Keys,
     Layout,
+    LINEAR,
     LayoutOverride,
     MAX_SCALE,
     MusicClip,
@@ -505,6 +507,9 @@ class SegmentPlan:
     hold: float | None = None
     # Whether its sound's pitch follows its Speed, as tape does; kept by default.
     pitch: bool = False
+    # The renderer's (app/retimed.py's `read_from_copies`): a Segment of the Source read from this
+    # file of the render's, its Retimed copy, in place of the Source.
+    read_from: str | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -697,11 +702,11 @@ def plan_render(
             elif given.hold is not None:
                 framed = [_still(given, length, source, layout, camera, framing)]
             else:
-                # Framed over its range as at 1×, then put on the Timeline at its Speed.
+                # Framed over its range as at 1×, then put on the Timeline at its Speed (in Reverse, mirrored).
                 reach = round(given.time.span, 3)
                 framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
                 showings += _manual_showings(framed, given.layout_overrides, reach, given.time, len(plans))
-                framed = _retimed(framed, given.speed, length)
+                framed = _retimed(framed, given.time, length, source)
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
@@ -754,8 +759,8 @@ def _segment_words(
     words, edits = [], []
     for i, (given, segment) in enumerate(zip(main_track, segments)):
         low, high = edges[i], edges[i + 1]
-        if given.hold is not None:
-            # A Freeze frame is silent: nothing to caption.
+        if given.hold is not None or given.reverse:
+            # A Freeze frame is silent, and speech played backwards can't be read: nothing to caption.
             continue
         time = given.time
         for word in given.words or []:
@@ -847,8 +852,9 @@ class _ManualShowing:
     start: float
     end: float
     at: float
-    # The Speed of the Segment showing it.
+    # The Speed of the Segment showing it, and whether it shows it backwards.
     speed: float = 1.0
+    reverse: bool = False
 
     def same_scene_as(self, other: "_ManualShowing") -> bool:
         """Whether `other` shows the same override's Scene (in another Segment, or the same piece
@@ -866,14 +872,15 @@ def _manual_showings(
     framed: list[ScenePlan], overrides: list[LayoutOverride], duration: float, time: SegmentTime, first: int
 ) -> list[_ManualShowing]:
     """The Manual Scenes among `framed` (a range lasting `duration` that plays as `time`, its Scenes
-    `first` onwards among the plan's, in seconds into the range) framed by one of `overrides` (in
-    seconds into the range too)."""
+    `first` onwards among the plan's, in seconds into the range; in Reverse, in the opposite order)
+    framed by one of `overrides` (in seconds into the range too)."""
     found = []
     for i, scene in enumerate(framed):
         override = _held(overrides, scene.start, scene.end, duration) if scene.layout is SceneLayout.MANUAL else None
         if override is not None and override.layout is Layout.MANUAL:
             on, off = round(time.start + scene.start, 3), round(time.start + scene.end, 3)
-            found.append(_ManualShowing(first + i, override, on, off, time.start + override.at, time.speed))
+            index = first + (len(framed) - 1 - i if time.reverse else i)
+            found.append(_ManualShowing(index, override, on, off, time.start + override.at, time.speed, time.reverse))
     return found
 
 
@@ -883,13 +890,25 @@ def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: f
     Segments showing that Scene starts it, so that a Segment starting part way into it (the tail of
     a split) shows the motion from there on, and a piece of it shown twice moves alike both times.
     In a sped Segment they are divided by its Speed, on the same frames. Those past the latest end
-    any of them shows are ignored."""
+    any of them shows are ignored. In a reversed Segment the motion is run backwards on the same
+    frames (`_keys_backwards`); it has no `keys_from`, so the editor keys the Scene where it plays
+    forwards."""
     plans = list(plans)
     for showing in showings:
         alike = [other for other in showings if showing.same_scene_as(other)]
         start, end = min(other.start for other in alike), max(other.end for other in alike)
         scene = plans[showing.index]
         speed = showing.speed
+        assert showing.override.framing is not None
+        if showing.reverse:
+            reach = end - start + 1e-3
+            backwards = {
+                prop: _keys_backwards(within, showing.end - start, speed)
+                for prop, given in showing.override.keys.items()
+                if (within := [key for key in given if key.at <= reach])
+            }
+            plans[showing.index] = keyed_scene(scene, showing.override.framing.transform, backwards, scene.start, fps)
+            continue
         keys_from = round(scene.start - (showing.start - start) / speed, 3)
         kept: Keys = {}
         ignored: Keys = {}
@@ -898,10 +917,20 @@ def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: f
                 kept[prop] = within
             if past := [replace(key, at=round(keys_from + key.at / speed, 4)) for key in given if key.at > end - start + 1e-3]:
                 ignored[prop] = past
-        assert showing.override.framing is not None
         keyed = keyed_scene(scene, showing.override.framing.transform, kept, keys_from, fps)
         plans[showing.index] = replace(keyed, keys_from=keys_from, ignored=ignored)
     return plans
+
+
+def _keys_backwards(keys: list[Keyframe], until: float, speed: float) -> list[Keyframe]:
+    """`keys` (in seconds from a Scene's start on the Source's timeline) as a Segment playing the
+    Source backwards at `speed` from `until` seconds into that Scene shows them: in seconds into it,
+    last first, each span eased as it was, run backwards."""
+    turned = [replace(key, at=round((until - key.at) / speed, 6)) for key in reversed(keys)]
+    for i in range(1, len(turned)):
+        x1, y1, x2, y2 = turned[i - 1].ease
+        turned[i] = replace(turned[i], ease=Ease(*(round(1 - value, 6) for value in (x2, y2, x1, y1))))
+    return [replace(turned[0], ease=LINEAR), *turned[1:]] if turned else turned
 
 
 def _passed_through(start: float, end: float, source: SourceMetadata) -> ScenePlan:
@@ -1001,10 +1030,15 @@ def covers(picture: Picture) -> bool:
     return True
 
 
-def _retimed(framed: list[ScenePlan], speed: float, length: float) -> list[ScenePlan]:
-    """The Scenes `framed` of a range (in seconds into it) as a Segment playing it at `speed` shows
-    them, `length` long on the Timeline: their times and their crops' change points divided by it."""
-    if speed == 1:
+def _retimed(framed: list[ScenePlan], time: SegmentTime, length: float, source: SourceMetadata) -> list[ScenePlan]:
+    """The Scenes `framed` of a range of `source` (in seconds into it) as a Segment playing it as
+    `time` says shows them, `length` long on the Timeline: their times and their crops' change points
+    divided by its Speed; in Reverse, first mirrored (`_mirrored_scene`), the last Scene first."""
+    speed = time.speed
+    if time.reverse:
+        span = framed[-1].end
+        framed = [_mirrored_scene(scene, span, source) for scene in reversed(framed)]
+    if speed == 1 and not time.reverse:
         return framed
 
     def on_timeline(scene: ScenePlan) -> ScenePlan:
@@ -1014,6 +1048,21 @@ def _retimed(framed: list[ScenePlan], speed: float, length: float) -> list[Scene
     retimed = [on_timeline(scene) for scene in framed]
     retimed[-1] = replace(retimed[-1], end=length)
     return retimed
+
+
+def _mirrored_scene(scene: ScenePlan, span: float, source: SourceMetadata) -> ScenePlan:
+    """`scene`, of a range `span` long (in seconds into it), as the range played backwards shows it:
+    from `span − end` to `span − start`, each crop held over the mirror of the time it was held
+    (its camera path run backwards), its first frame the forward Scene's last (`framing`)."""
+
+    def mirrored(panel: Panel) -> Panel:
+        ends = [point.at for point in panel.path[1:]] + [scene.end]
+        path = [replace(point, at=round(span - until, 3)) for point, until in zip(reversed(panel.path), reversed(ends))]
+        return replace(panel, path=path)
+
+    panels = [mirrored(panel) for panel in scene.panels]
+    shown = _first_framing(scene.layout, panels, source) if scene.layout is SceneLayout.TRACK else scene.framing
+    return replace(scene, start=round(span - scene.end, 3), end=round(span - scene.start, 3), panels=panels, framing=shown)
 
 
 def _moved(scene: ScenePlan, by: float) -> ScenePlan:

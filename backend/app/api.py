@@ -40,8 +40,8 @@ from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
-from app.rendering import NothingToRender, ranked_clips
-from app.retimed import CopySize, Making, Retime
+from app.rendering import NothingToRender, ranked_clips, source_copies
+from app.retimed import RETIMED_DIR, CopySize, Making, Retime
 from app.segment_time import segment_time
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
@@ -458,6 +458,26 @@ def job_peaks(start: int, job: ExistingJob, store: Store, settings: AppSettings)
         # A Source without sound, or gone from the disk.
         raise HTTPException(404, str(exc)) from None
     return FileResponse(chunk, media_type="application/octet-stream", headers=_DERIVED)
+
+
+@router.post("/jobs/{job_id}/retimed")
+def job_retimed(job: ExistingJob, body: RetimedRequest, store: Store, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
+    """The preview-size Retimed copy of the Source's range from `start` to `end` seconds, as the
+    editor asks for it while it previews a reversed Segment of the Source, then polls, as a video's
+    (`media_retimed`); served from the Job's directory (`/media/<job>/retimed/<name>`). 404 for a Job
+    without its Source yet; 422 for a range outside it, or one played forwards at 1×."""
+    source = job.source
+    if source is None:
+        raise HTTPException(404, f"Job {job.id} has no Source")
+    duration = source.metadata.duration
+    if not body.start < body.end <= duration + 0.05:
+        raise HTTPException(422, f"No range {body.start:g}–{body.end:g} s in the Source ({duration:g} s)")
+    if not body.reverse and body.speed == 1:
+        raise HTTPException(422, "A copy forwards at 1× is the Source itself")
+    retime = Retime(body.start, min(body.end, duration), body.reverse, body.speed, body.pitch)
+    copies = source_copies(store.job_dir(job.id), source)
+    making = copies.ask(settings.ffmpeg_bin, CopySize.PREVIEW, retime, threads=lambda: 1 if worker.busy else 0)
+    return _retimed_copy(making, retime, lambda name: f"/media/{job.id}/{RETIMED_DIR}/{name}")
 
 
 @router.get("/jobs/{job_id}/events", response_class=EventSourceResponse)

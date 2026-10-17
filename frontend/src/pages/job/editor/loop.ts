@@ -1,6 +1,7 @@
 // The Loop Region (GLOSSARY.md) as the preview plays it: where Play starts with Loop on, and where
 // playback goes back to from Out, worked out from numbers alone. The marks that make it are the
 // Advanced Edit's (../advanced/playhead.ts).
+import { onOwnVideos } from "./playback";
 import { playedSourceAt, type PlayedRange } from "./segmentTime";
 
 /** The stretch playback repeats while Loop is on, in Timeline time: from `in` to `out`. */
@@ -16,8 +17,8 @@ export function loopStart(time: number, region: LoopRegion): number {
 
 /**
  * Where playback goes from Out: In, in the Segment it is in (as played, back to back from 0 s; at a
- * join, the Segment after it), and In's time in the Source, or null in a media Segment, whose video
- * the preview plays itself.
+ * join, the Segment after it), and In's time in the Source, or null in a Segment on its own videos
+ * (a video's, or one in Reverse), which the preview plays apart from the decks.
  */
 export function wrapTarget(
   region: LoopRegion,
@@ -26,5 +27,5 @@ export function wrapTarget(
   const found = segments.findIndex((segment) => region.in < segment.end);
   const index = found === -1 ? segments.length - 1 : found;
   const segment = segments[index];
-  return { index, time: region.in, source: segment.media ? null : playedSourceAt(segment, region.in) };
+  return { index, time: region.in, source: onOwnVideos(segment) ? null : playedSourceAt(segment, region.in) };
 }

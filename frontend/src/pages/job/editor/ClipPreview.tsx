@@ -80,6 +80,7 @@ const percent = (value: number) => `${value * 100}%`;
  */
 export function ClipPreview({
   src,
+  jobId,
   preview,
   fonts,
   playback,
@@ -93,6 +94,8 @@ export function ClipPreview({
   hideBar = false,
 }: {
   src: string;
+  // The Job whose Source `src` is: a reversed Segment of it plays from its Retimed copy.
+  jobId: string;
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
   playback: Playback;
@@ -199,8 +202,8 @@ export function ClipPreview({
             />
           )),
         )}
-        <PreviewSegments plan={drawn} playback={playback} />
-        <PreviewTransitions plan={drawn} playback={playback} src={src} />
+        <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} />
       </div>
       <PreviewOverlays
         plan={drawn}

@@ -46,6 +46,7 @@ from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
 from app.planner import Box, Picture, key_times, picture_at
 from app.profile import ChannelProfile
+from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import StyleOverrides
@@ -125,7 +126,8 @@ Edits:
   refused: send its keys too, each `at` times old / new speed to keep the motion on the same frames.
   With `reverse` true it plays its range backwards (then at its speed): its first frame in the Clip
   is the one at `end`. It plays from a reversed copy of its range, which the render makes if the
-  owner's preview hasn't (the dry run's `copy`). Only a video's Segment can be reversed.
+  owner's preview hasn't (the dry run's `copy`). One of the episode has no captions; its Scenes and
+  Layout Overrides are the forward ones, mirrored.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -218,9 +220,13 @@ def build_mcp(app: FastAPI) -> MCPServer:
                 current = stale.candidate
         raise ToolError(f"Candidate {candidate_id} kept changing while this edit was saved: try again")
 
-    def copied(segment: dict) -> bool:
-        """Whether a reversed video Segment's full-size Retimed copy, which its render reads, is made."""
-        retimed = app.state.media.retimed(segment["media"])
+    def copied(job_id: str, segment: dict) -> bool:
+        """Whether a reversed Segment's full-size Retimed copy, which its render reads, is made."""
+        if segment["media"] is not None:
+            retimed = app.state.media.retimed(segment["media"])
+        else:
+            job = app.state.store.get(job_id)
+            retimed = source_copies(app.state.store.job_dir(job_id), job.source)
         return retimed.find(CopySize.FULL, Retime(segment["source_start"], segment["source_end"])) is not None
 
     def clips(job_id: str, listed: list[dict]) -> list[dict]:
@@ -360,7 +366,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         Timeline time, and its Words with the `at` a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         if dry_run:
-            return _plan_view(await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body), copied)
+            return _plan_view(await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body), lambda segment: copied(job_id, segment))
         return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body)
 
     @tool()

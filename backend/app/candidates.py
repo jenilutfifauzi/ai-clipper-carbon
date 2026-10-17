@@ -487,8 +487,6 @@ class Segment:
             raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
         if self.hold is not None:
             _check_held(self)
-        if self.reverse and self.media is None:
-            raise ValueError(f"Segment {self.id} shows the episode, which can't be reversed: only a video's Segment can")
         length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
 

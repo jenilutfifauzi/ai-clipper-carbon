@@ -237,20 +237,25 @@ def piece_secs(width: int, height: int, fps: float) -> float:
     return min(PIECE_SECS[1], max(PIECE_SECS[0], round(held, 3)))
 
 
-def read_from_copies(plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str, SegmentTime], Copy]) -> tuple[RenderPlan, dict[str, Path]]:
-    """The Render Plan as the renderer reads it, and its files: each reversed media Segment played
-    forwards from the full-size copy `copy_of` gives for its video and range, at its Speed. The copy
-    stands in for its video in `files`, under its own path."""
+def read_from_copies(
+    plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str | None, SegmentTime], Copy]
+) -> tuple[RenderPlan, dict[str, Path]]:
+    """The Render Plan as the renderer reads it, and its files: each reversed Segment played forwards
+    from the full-size copy `copy_of` gives for its video (None: the Source) and range, at its Speed.
+    The copy is in `files` under its own path: a media Segment's stands in for its video; a Source
+    Segment's is its `read_from`, still a Segment of the Source (its Scenes' panels, the Clip's own
+    volume)."""
     segments = []
     files = dict(files)
     for segment in plan.segments:
-        if not segment.reverse or segment.media is None or segment.hold is not None:
+        if not segment.reverse or segment.hold is not None:
             segments.append(segment)
             continue
         copy = copy_of(segment.media, segment.time)
         read = copy.read(segment.time)
         files[str(copy.path)] = copy.path
-        segments.append(replace(segment, media=str(copy.path), source_start=read.start, source_end=read.end, reverse=False))
+        reads = {"media": str(copy.path)} if segment.media is not None else {"read_from": str(copy.path)}
+        segments.append(replace(segment, **reads, source_start=read.start, source_end=read.end, reverse=False))
     return replace(plan, segments=segments), files
 
 

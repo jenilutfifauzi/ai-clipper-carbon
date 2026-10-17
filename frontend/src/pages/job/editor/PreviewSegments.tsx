@@ -1,28 +1,33 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { AudioEvent, RenderPlan, ScenePlan, SegmentPlan } from "../../../api";
-import { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./ClipPreview";
+import type { AudioEvent, RenderPlan, RetimedCopy, ScenePlan, SegmentPlan } from "../../../api";
+import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
-import { FRAME, panelStyle } from "./picture";
+import { FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
-import { playable, type Playback } from "./playback";
+import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { loudness } from "./loudness";
-import { mediaPlay, useRetimedCopy } from "./retimedCopy";
+import { mediaPlay, reversedPlay, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
+import { sceneAt } from "./ScenesTrack";
 
 /**
- * The plan's Segments of Media Library videos, over the Source's panels while they play: each its
- * video's small copy, in step with the playback, drawn as the Scene the plan gives it (its picture
- * over its Background), its sound at its volume. One that a Transition overlaps with the next gives
- * way where the Transition starts (PreviewTransitions draws the rest of it).
+ * The plan's Segments on videos of their own (`onOwnVideos`), over the Source's panels while they
+ * play, in step with the playback: a Media Library video's, its video's small copy drawn as the Scene
+ * the plan gives it (its picture over its Background), its sound at its volume; and one of the Source
+ * in Reverse, its Scenes drawn from its Retimed copy of the Source (`src`, the decks' video, of Job
+ * `jobId`). One that a Transition overlaps with the next gives way where the Transition starts
+ * (PreviewTransitions draws the rest of it).
  */
-export function PreviewSegments({ plan, playback }: { plan: RenderPlan | null; playback: Playback }) {
-  if (!plan || !plan.segments.some((segment) => segment.media)) return null;
+export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
+  if (!plan || !plan.segments.some(onOwnVideos)) return null;
   const played = playable(plan.segments);
   return (
     <>
       {plan.segments.map((segment, i) =>
         segment.media ? (
           <MediaSegment key={`${i}:${segment.start}`} segment={segment} end={played[i].end} scene={segmentScene(plan, i)} playback={playback} />
+        ) : segment.reverse ? (
+          <ReversedSourceSegment key={`${i}:${segment.start}`} plan={plan} index={i} end={played[i].end} playback={playback} src={src} jobId={jobId} />
         ) : null,
       )}
     </>
@@ -61,7 +66,7 @@ export function MediaSegment({
   const box = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLVideoElement>(null);
   const back = useRef<HTMLVideoElement>(null);
-  const copy = useRetimedCopy(segment.reverse ? segment.media : null, segment.source_start, segment.source_end);
+  const copy = useRetimedCopy(segment.reverse ? { media: segment.media! } : null, segment.source_start, segment.source_end);
   const { src, span } = useMemo(() => mediaPlay(segment, end, copy), [segment, end, copy]);
 
   useEffect(() => {
@@ -113,15 +118,88 @@ export function MediaSegment({
           media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
         />
       )}
-      {copy && !copy.url && (
-        <div
-          aria-live="polite"
-          className="absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full bg-black/70 px-3 py-1 text-white tabular-nums"
-          style={{ fontSize: "max(12px, calc(var(--scale) * 36px))" }}
-        >
-          {copy.error ? "Couldn't reverse this video" : `Reversing… ${Math.round(copy.progress * 100)}%`}
-        </div>
-      )}
+      <Reversing copy={copy} failed="Couldn't reverse this video" />
+    </div>
+  );
+}
+
+/**
+ * Segment `index` of `plan`, of the Source in Reverse, shown until `end`, or within a Transition when
+ * `end` is its own, its sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a
+ * Blur's background and shot, a Manual Scene's picture) drawn as the decks draw them, from a master
+ * and a follower of its own playing the Source's Retimed copy at its Speed, at the Clip's own volume
+ * times its own. Outside its span they wait at its start. Until the copy is made they hold the
+ * Source's `src` at the frame the copy shows first, with its progress (`reversedPlay`).
+ */
+export function ReversedSourceSegment({
+  plan,
+  index,
+  end,
+  playback,
+  src,
+  jobId,
+  fade,
+}: {
+  plan: RenderPlan;
+  index: number;
+  end: number;
+  playback: Playback;
+  src: string;
+  jobId: string;
+  fade?: { start: number; end: number };
+}) {
+  const segment = plan.segments[index];
+  const box = useRef<HTMLDivElement>(null);
+  const master = useRef<HTMLVideoElement>(null);
+  const follower = useRef<HTMLVideoElement>(null);
+  const copy = useRetimedCopy({ job: jobId }, segment.source_start, segment.source_end);
+  const frame = 1 / (plan.fps > 0 ? plan.fps : 30);
+  const { src: shown, span } = useMemo(() => reversedPlay(segment, end, copy, src, frame), [segment, end, copy, src, frame]);
+  const sceneIndex = useShown(playback, (time) => sceneAt(plan, time, index));
+  const scene = plan.scenes[sceneIndex];
+
+  useEffect(() => {
+    const sound: AudioEvent = {
+      media: "",
+      start: segment.start,
+      end: fade ? fade.end : segment.end,
+      offset: segment.source_start,
+      volume: plan.source_volume * segment.volume,
+      fade_in: 0,
+      fade_out: fade ? fade.end - fade.start : 0,
+      gain: [],
+      id: segment.id,
+    };
+    const sync = () => {
+      const inside = master.current ? follow(master.current, playback, span, true) : false;
+      if (follower.current) follow(follower.current, playback, span, true);
+      if (master.current) setVolume(master.current, loudness(sound, playback.shownTime));
+      if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
+    };
+    sync();
+    return playback.subscribe(sync);
+  }, [playback, segment, fade, span, plan.source_volume]);
+
+  return (
+    <div ref={box} className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden" }}>
+      {[master, follower].map((ref, slot) => (
+        <PanelView key={slot} videoRef={ref} src={shown} plan={plan} {...slotView(scene, slot)} playback={playback} muted={slot > 0} />
+      ))}
+      <Reversing copy={copy} failed="Couldn't reverse this Segment" />
+    </div>
+  );
+}
+
+// A Retimed copy's progress while it is made, or why it couldn't be.
+function Reversing({ copy, failed }: { copy: RetimedCopy | null; failed: string }) {
+  if (!copy || copy.url) return null;
+  return (
+    <div
+      aria-live="polite"
+      className="absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full bg-black/70 px-3 py-1 text-white tabular-nums"
+      style={{ fontSize: "max(12px, calc(var(--scale) * 36px))" }}
+    >
+      {copy.error ? failed : `Reversing… ${Math.round(copy.progress * 100)}%`}
     </div>
   );
 }

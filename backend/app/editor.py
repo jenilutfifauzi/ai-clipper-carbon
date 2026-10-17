@@ -68,9 +68,9 @@ def preview_plan(
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
-    # A video's Segment has neither Words nor analysis, and a Freeze frame no Words.
+    # A video's Segment has neither Words nor analysis, and a Freeze frame and a reversed Segment no Words.
     saved = [
-        [] if segment.media or segment.hold is not None
+        [] if segment.media or segment.hold is not None or segment.reverse
         else saved_words(job_dir, segment.start, segment.end, job.options.language, settings.whisper_model)
         for segment in segments
     ]

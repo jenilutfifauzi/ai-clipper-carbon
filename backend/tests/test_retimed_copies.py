@@ -17,7 +17,7 @@ from app.segment_time import SegmentTime
 from test_keyed_volume import tone_level
 from test_keyframes import clip_of
 from test_media_library import make, upload
-from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
+from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
 from test_render import add, preview, probe, reviewed
 from test_review import candidate_url, patch
@@ -255,7 +255,7 @@ def test_the_editor_asks_for_a_preview_copy_of_a_videos_range_and_gets_its_url_o
     assert not (settings.data_dir / "media" / f"{video['id']}.retimed").exists()
 
 
-def test_reverse_is_saved_on_a_video_segment_and_refused_on_the_episodes_and_a_freeze_frames(client, counter):
+def test_reverse_is_saved_on_a_video_segment_and_the_episodes_and_refused_on_a_freeze_frame(client, counter):
     video = upload(client, counter.read_bytes(), "counter.mp4").json()
     job = reviewed(client)
     candidate = add(client, job, "halo", "ya")
@@ -266,8 +266,11 @@ def test_reverse_is_saved_on_a_video_segment_and_refused_on_the_episodes_and_a_f
     assert (saved["segments"][0]["reverse"], saved["segments"][1]["reverse"]) == (True, False)
     reversed_plan = preview(client, job, saved)["plan"]["segments"][0]
     assert (reversed_plan["end"], reversed_plan["reverse"], reversed_plan["source_start"], reversed_plan["source_end"]) == (0.75, True, 0.5, 2)
-    response = client.patch(candidate_url(job, saved), json={"segments": [backwards, episode | {"reverse": True}]})
-    assert response.status_code == 422 and "only a video's Segment can" in response.text
+    saved = patch(client, job, saved, segments=[backwards, episode | {"reverse": True}])
+    assert saved["segments"][1]["reverse"] is True
+    frozen = {"id": "f", "start": 1, "end": 1, "hold": 1, "media": video["id"], "framing": {}, "reverse": True}
+    response = client.patch(candidate_url(job, saved), json={"segments": [frozen, episode]})
+    assert response.status_code == 422 and "no Speed, pitch or Reverse" in response.text
 
 
 @pytest.mark.anyio
@@ -279,8 +282,6 @@ async def test_the_agent_reverses_a_video_segment_and_the_dry_run_says_whether_i
     episode = {"id": "e", "start": HALO_KABAR[0], "end": HALO_KABAR[1]}
     video = {"id": "v", "start": 0.5, "end": 2, "media": item["id"], "framing": {}}
     await call(mcp, "edit_candidate", **ids, changes={"segments": [video, episode]})
-    message = await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "reverse": True}])
-    assert "only a video's Segment can" in message, message
     saved = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "reverse": True}])
     assert saved["segments"][0]["reverse"] is True
 

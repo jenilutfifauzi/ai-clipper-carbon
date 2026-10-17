@@ -1043,6 +1043,9 @@ export const api = {
   // Asks for the preview Retimed copy of a video's range (made in the background), and how it is coming along: poll it until it has a `url`.
   retimedCopy: (mediaId: string, range: RetimedRange, signal?: AbortSignal) =>
     request<RetimedCopy>(`/media/${encodeURIComponent(mediaId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),
+  // The same, of a range of the Job's Source.
+  sourceRetimedCopy: (jobId: string, range: RetimedRange, signal?: AbortSignal) =>
+    request<RetimedCopy>(`/jobs/${encodeURIComponent(jobId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),
   // Rejects with an ApiError of 409 whose detail lists the clips using it.
   deleteMedia: (id: string) => request<void>(`/media/${id}`, { method: "DELETE" }),
 };
