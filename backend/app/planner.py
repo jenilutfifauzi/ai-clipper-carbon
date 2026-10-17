@@ -173,13 +173,14 @@ HOOK_SIZE = HookStyle().size
 MIN_SIZE = 1.0
 # Its lines' baselines are its style's line_height sizes apart: by default this many.
 HOOK_LEADING = HookStyle().line_height
-# The box's padding, in pixels: either side of the longest line, above the capitals of the first
-# and below the descenders of the last.
+# The box's padding, in pixels, unless its Hook Style gives its own: either side of the longest line,
+# above the capitals of the first and below the descenders of the last.
 HOOK_PAD_X = 36
 HOOK_PAD_Y = 26
-# A strip's padding, in sizes: either side of its line, and above the capitals and below the
-# descenders; and the gap between one strip and the next at the default line height (a line height
-# moves them apart, or together until they touch, by as much as it moves a block's lines).
+# A strip's padding, in sizes, unless its Hook Style gives its own: either side of its line, and
+# above the capitals and below the descenders; and the gap between one strip and the next at the
+# default line height (a line height moves them apart, or together until they touch, by as much as
+# it moves a block's lines).
 STRIP_PAD_X = 0.25
 STRIP_PAD_Y = 0.14
 STRIP_GAP = 0.06
@@ -1701,24 +1702,44 @@ def placed_runs(runs: list[TextRun], left: float, size: float, tracking: float =
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
     """How the hook `text` is set in `style`: its lines (none when it is blank) and their font size.
     The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size with its
-    tracking, broken between words where the longest is shortest. Lines still too wide are set
-    smaller (their tracking staying as wide), so that the longest just fits: the text fits when the
-    size is the style's."""
+    tracking (or, with the style's own padding across, whose box is as wide as the captions' area),
+    broken between words where the longest is shortest. Lines still too wide are set smaller (their
+    tracking staying as wide, the style's padding shrinking with them), so that the longest just
+    fits: the text fits when the size is the style's."""
     words = [word for word, _ in _hook_words(text, style.uppercase)]
     if not words:
         return [], style.size
     metrics = font_metrics(style.font)
     tracking = style.tracking
+    own = style.padding_x is not None and style.shape != HookShape.NONE
+    room, padding = (KICKER_WIDEST, 2 * style.padding_x) if own else (HOOK_WIDTH, 0.0)
 
     def widest(lines: list[str]) -> float:
         return max(metrics.width(line, style.size, tracking) for line in lines)
 
     for count in range(1, min(style.max_lines, len(words)) + 1):
         lines = _balanced(words, count, metrics, tracking * metrics.units / style.size)
-        if widest(lines) <= HOOK_WIDTH:
+        if widest(lines) + padding <= room:
             return lines, style.size
-    size = min(style.size * (HOOK_WIDTH - tracking * (len(line) - 1)) / metrics.width(line, style.size) for line in lines)
+    size = min(style.size * (room - tracking * (len(line) - 1)) / (metrics.width(line, style.size) + padding) for line in lines)
     return lines, max(math.floor(size * 10) / 10, MIN_SIZE)
+
+
+def _hook_padding(style: HookStyle, size: float) -> tuple[float, float]:
+    """The hook's box padding across and down, in output pixels, set at `size`: the style's (given at
+    its size), or its Shape's own: HOOK_PAD_X and HOOK_PAD_Y round a block (and round lines with no
+    box, which the style's don't change), STRIP_PAD_X and STRIP_PAD_Y of the size round a strip."""
+    if style.shape == HookShape.STRIPS:
+        own = STRIP_PAD_X * size, STRIP_PAD_Y * size
+    else:
+        own = HOOK_PAD_X, HOOK_PAD_Y
+    if style.shape == HookShape.NONE:
+        return own
+    scale = size / style.size
+    return (
+        own[0] if style.padding_x is None else style.padding_x * scale,
+        own[1] if style.padding_y is None else style.padding_y * scale,
+    )
 
 
 # Emoji (Unicode's Extended_Pictographic, but for ©, ® and ™, which fonts draw as text) and the
@@ -1820,10 +1841,10 @@ def _hook(
     the style's height (kept inside SAFE_AREA).
     None when the text is blank or it would start at or after the Clip's end.
 
-    A line is as wide as its letters and its tracking. A block (or no box) is HOOK_PAD_X wider than
-    the longest line either side, its first line's capitals HOOK_PAD_Y below its top and the
-    baselines the style's line_height sizes apart. Strips are each their line's width, padded by
-    STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart at the default line height. Left-aligned lines (and
+    A line is as wide as its letters and its tracking. A block (or no box) is its padding
+    (_hook_padding) wider than the longest line either side, its first line's capitals its padding
+    down below its top and the baselines the style's line_height sizes apart. Strips are each their
+    line's width, padded, STRIP_GAP apart at the default line height. Left-aligned lines (and
     strips) start at the left of the longest.
 
     The `kicker`, if any, goes above them in a pill (`_kicker_pill`), centred over them or starting where
@@ -1842,9 +1863,9 @@ def _hook(
     metrics = font_metrics(style.font)
     widths = [metrics.width(line, size, style.tracking) for line in lines]
     left = style.align == HookAlign.LEFT
+    pad_x, pad_y = _hook_padding(style, size)
     # Boxes from the hook's top-left corner, and anchors from where it is.
     if style.shape == HookShape.STRIPS:
-        pad_x, pad_y = STRIP_PAD_X * size, STRIP_PAD_Y * size
         strip_height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
         pitch = max(strip_height + round(STRIP_GAP * size) + round((style.line_height - HOOK_LEADING) * size), strip_height)
         strips = [math.ceil(line + 2 * pad_x) for line in widths]
@@ -1857,15 +1878,16 @@ def _hook(
                 (x + box.x + box.width / 2, y + box.y + pad_y + metrics.cap_height / metrics.units * size) for box in boxes
             ]
     else:
-        width = math.ceil(max(widths)) + 2 * HOOK_PAD_X
+        # The letters and the padding (whole pixels when it is the Shape's own), rounded up.
+        width = math.ceil(max(widths) + 2 * pad_x)
         letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
-        height = math.ceil(letters) + 2 * HOOK_PAD_Y
+        height = math.ceil(letters + 2 * pad_y)
         boxes = [Box(0, 0, width, height)] if style.shape == HookShape.BLOCK else []
 
         def anchors(x: int, y: int) -> list[tuple[float, float]]:
             return [
-                (x + HOOK_PAD_X + line / 2 if left else x + width / 2,
-                 y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
+                (x + pad_x + line / 2 if left else x + width / 2,
+                 y + pad_y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
                 for i, line in enumerate(widths)
             ]
     # The lines' place in the whole hook, and the pill's.
@@ -1885,11 +1907,7 @@ def _hook(
         width = full_width
     badge = round(QUOTE_SCALE * size) if style.quote else 0
     # How far it reaches into the first line's box: into its padding.
-    box_pad_x, box_pad_y = {
-        HookShape.BLOCK: (HOOK_PAD_X, HOOK_PAD_Y),
-        HookShape.STRIPS: (STRIP_PAD_X * size, STRIP_PAD_Y * size),
-        HookShape.NONE: (0, 0),
-    }[style.shape]
+    box_pad_x, box_pad_y = (0, 0) if style.shape == HookShape.NONE else (pad_x, pad_y)
     inset_x, inset_y = math.floor(QUOTE_INSET * box_pad_x), math.floor(QUOTE_INSET * box_pad_y)
     if badge:
         lines_y += badge - inset_y

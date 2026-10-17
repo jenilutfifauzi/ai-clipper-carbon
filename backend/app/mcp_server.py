@@ -137,6 +137,10 @@ Edits:
   changes only the style, shadow, plate and transform fields given. The dry run lists each Text
   Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
   app, of the PNG the Clip burns.
+- The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
+  names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
+  have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
+  null is the default.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -426,8 +430,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
         one the Candidate has (id; a Transition's `after`; a Word Edit's or Layout Override's `at`)
         changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
-        watermark), and framing (the Candidate's, for Layout manual) field by field. The Candidate is
-        saved once, through the same checks as edit_candidate."""
+        watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
+        field by field. The Candidate is saved once, through the same checks as edit_candidate."""
         given = {
             "text_layers": text_layers, "music": music, "overlays": overlays, "segments": segments,
             "transitions": transitions, "word_edits": word_edits, "layout_overrides": layout_overrides,
@@ -440,7 +444,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
                     body[kind] = _merge(current[kind], [p.model_dump(mode="json", exclude_unset=True) for p in patches], _KEYS[kind])
             if style_overrides is not None:
                 new = _dump(StyleOverrides, style_overrides)
-                body["style_overrides"] = {section: {**fields, **new[section]} for section, fields in current["style_overrides"].items()}
+                body["style_overrides"] = {
+                    section: _merged_fields(fields, new[section]) for section, fields in current["style_overrides"].items()
+                }
             if framing is not None:
                 patch = framing.model_dump(mode="json", exclude_unset=True)
                 body["framing"] = _merged_fields(current["framing"], patch) if current["framing"] else patch
