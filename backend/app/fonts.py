@@ -1,8 +1,8 @@
 """Faces: the font files text can be set in (GLOSSARY: Face). The bundled ones come with the app, under
-the SIL Open Font License or the Apache License (THIRD_PARTY_NOTICES.md), downloaded by `make setup`; the owner imports others, kept for every
-Job in DATA_DIR/fonts. Each render gives libass the Faces it needs through one `fontsdir` (`gather`),
-and the browser's preview loads each Face's file from GET /api/fonts/{id}, so that both set the same
-glyphs.
+the SIL Open Font License or the Apache License (THIRD_PARTY_NOTICES.md), downloaded by `make setup`;
+the owner imports others, kept for every Job in DATA_DIR/fonts. Each render gives libass the Faces it
+needs through one `fontsdir` (`gather`), and the browser's preview loads each Face's file from
+GET /api/fonts/{id}, so that both set the same glyphs.
 
 Each Face is a static font of one weight and slant: libass sets only a variable font's default
 instance. So an imported variable font is split into a Face per named instance (fontTools' instancer),

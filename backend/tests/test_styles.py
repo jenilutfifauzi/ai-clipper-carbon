@@ -198,9 +198,13 @@ def test_each_registered_font_is_the_file_libass_picks_for_its_family(settings, 
          "-vf", f"ass={script}:fontsdir={FONTS_DIR}", "-f", "null", "-"],
         capture_output=True, text=True, check=True,
     )
-    # libass says which file it set each family in; a family it hasn't got falls back to a system font.
+    # libass says which font it set each family in, by its PostScript name; a family it hasn't got falls
+    # back to a system font.
+    from fontTools.ttLib import TTFont
+
     for font in FONTS.values():
-        assert f"fontselect: ({font.family}, 400, 0) -> {font.file.stem}, 0," in result.stderr, font
+        postscript = TTFont(font.file, lazy=True)["name"].getDebugName(6)
+        assert f"fontselect: ({font.family}, 400, 0) -> {postscript}, 0," in result.stderr, font
 
 
 def test_fonts_are_listed_with_their_measures_and_served(client):
@@ -208,10 +212,11 @@ def test_fonts_are_listed_with_their_measures_and_served(client):
 
     fonts = client.get("/api/fonts").json()
     assert [font["id"] for font in fonts] == BUNDLED_IDS
-    montserrat = fonts[0]
+    by_id = {font["id"]: font for font in fonts}
+    montserrat = by_id["montserrat-extrabold"]
     assert (montserrat["family"], montserrat["em"], montserrat["units"], montserrat["cap_height"]) == ("Montserrat ExtraBold", 1000, 1562, 700)
     assert (montserrat["typographic_family"], montserrat["weight"], montserrat["italic"]) == ("Montserrat", 800, False)
-    response = client.get(fonts[1]["url"])
+    response = client.get(by_id["anton"]["url"])
     assert response.status_code == 200 and response.headers["content-type"] == "font/ttf"
     assert response.content == font("anton").file.read_bytes()
     assert "max-age" in response.headers["cache-control"]
