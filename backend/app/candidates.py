@@ -9,7 +9,7 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
-from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, HookShape, StyleOverrides
+from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -135,15 +135,19 @@ class Plate:
     """What is drawn behind a Text Style's words: nothing, a Block behind all its lines, or Strips,
     one behind each line, in `colour` at `opacity`."""
 
-    # In output pixels at the style's size: its corners' radius (at most half its height), and how far
-    # it reaches either side of the widest line (of each line, for Strips) and above the capitals of
-    # the first line and below the descenders of the last (of each line).
     shape: HookShape = HookShape.NONE
     colour: Colour = "#000000"
     opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 0.7
-    radius: Annotated[FiniteFloat, Field(ge=0, le=200)] = 20.0
-    padding_x: Annotated[FiniteFloat, Field(ge=0, le=200)] = 28.0
-    padding_y: Annotated[FiniteFloat, Field(ge=0, le=200)] = 17.6
+    # In output pixels: its corners' radius (at most half its height), and how far it reaches either
+    # side of the widest line (of each line, for Strips) and above the capitals of the first line and
+    # below the descenders of the last (of each line).
+    radius: Padding = 20.0
+    padding_x: Padding = 28.0
+    padding_y: Padding = 17.6
+
+
+# The smallest font size of a Text Style.
+MIN_TEXT_SIZE = 16
 
 
 @dataclass(frozen=True)
@@ -153,7 +157,7 @@ class TextStyle:
     # Its Face, at libass's size (a fraction where a Text Layer saved before Text Styles was set
     # smaller to fit the frame).
     font: FontId = DEFAULT_FONT
-    size: Annotated[FiniteFloat, Field(ge=16, le=320)] = 80
+    size: Annotated[FiniteFloat, Field(ge=MIN_TEXT_SIZE, le=320)] = 80
     colour: Colour = "#FFFFFF"
     # None at 0.
     stroke_width: Annotated[int, Field(ge=0, le=20)] = 0
@@ -164,7 +168,7 @@ class TextStyle:
     # Its lines' baselines this many sizes apart.
     line_height: Annotated[FiniteFloat, Field(ge=0.5, le=3)] = 1.1
     # Added after each character but a line's last (pulled in when negative).
-    tracking: Annotated[FiniteFloat, Field(ge=-50, le=200)] = 0.0
+    tracking: Tracking = 0.0
     align: TextAlign = TextAlign.CENTER
     # Its box's least size, plate and padding and all: its words break into lines no wider than the
     # wrap width less the padding (0: the frame less TEXT_MARGIN either side, the box as wide as its
@@ -180,14 +184,14 @@ class TextLayer:
     coming on and going off as the hook does. Its `keys` move its centre, scale, rotation and opacity
     over its length as an Overlay's do (docs/adr/0008); its animations are stacked on them."""
 
-    # In Timeline time, so that trimming the Clip leaves it where it was in it. It is drawn as a
-    # picture (docs/adr/0010), scaled, turned and faded by its Transform as an Overlay is, its centre
-    # on the frame and the picture maybe past its edges. `id` names it in the editor.
-
+    # Names it in the editor.
     id: ItemId
     text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
+    # In Timeline time, so that trimming the Clip leaves it where it was in it.
     start: TimelineStart
     secs: TimelineSecs
+    # It is drawn as a picture (docs/adr/0010), scaled, turned and faded by its Transform as an
+    # Overlay is, its centre on the frame and the picture maybe past its edges.
     transform: Transform = Transform()
     style: TextStyle = TextStyle()
     animation_in: Animation = Animation.NONE

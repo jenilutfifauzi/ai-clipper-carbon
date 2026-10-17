@@ -58,7 +58,7 @@ and under the hook, in their order, each as a picture (docs/adr/0010): its layou
 holds its box and room round it for its ink, its lines placed from its corner, so that moving it
 keeps the same picture, named by a hash of what it shows.
 Each line is split into runs by Face (`text_runs`): a character its Face hasn't got is set in the
-bundled CJK Face (FALLBACK_FONT) when that has it, and measured with it, or else left out. The line
+bundled CJK Face (FALLBACK_FACE) when that has it, and measured with it, or else left out. The line
 pitch stays its own Face's.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
@@ -98,6 +98,8 @@ from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from functools import cache
 
+from pydantic import computed_field
+
 from app.candidates import (
     KEY_RANGES,
     PICTURE_KEYS,
@@ -126,7 +128,7 @@ from app.candidates import (
 )
 from app.config import CameraTuning
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
-from app.fonts import DEFAULT_FONT, FALLBACK_FONT, on_change, registry
+from app.fonts import DEFAULT_FONT, FALLBACK_FACE, on_change, registry
 from app.keyframes import value_at
 from app.line_breaks import broken_lines
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
@@ -207,9 +209,6 @@ MAX_TEXT_PICTURE = 4096
 # (`reached_scale`): scaling it within one step is drawing the same picture smaller or larger, and
 # only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
 TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
-# Pop grows a Text Layer to its full size, never past it (app/renderer.py's POP_FROM): the most it
-# multiplies the layer's scale by.
-POP_PEAK = 1.0
 
 
 # The planner's input, found by app/analysis.py.
@@ -609,14 +608,14 @@ class OverlayEvent:
 @dataclass(frozen=True)
 class TextRun:
     """A piece of a Text Layer's line set in one Face (`text_runs`): its `text`, drawn in the Face
-    `font` from `x` for `width` pixels at its layout's size. Its text has no space at either end:
+    `face` from `x` for `width` pixels at its style's size. Its text has no space at either end:
     a space between two runs is only room between them.
 
     An emoji run is one emoji sequence, drawn from the emoji `image` (app/emoji.py) as a square 1 em
     of its line's Face wide (`emoji_square`)."""
 
     text: str
-    font: str
+    face: str
     x: float = 0.0
     width: float = 0.0
     image: str | None = None
@@ -625,16 +624,15 @@ class TextRun:
 @dataclass(frozen=True)
 class TextLayout:
     """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
-    scale 1: its `lines` in `style` set at font `size`, each placed by its anchor (the middle of its
-    text and its baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its
-    Block, or a Strip per line) with corners `radius` pixels round. Its shadow, when on, is its runs
-    again moved by `shadow` (right and down), between them and the plate. The picture is rasterised
-    `scale` times as large (app/text_pictures.py; the largest scale the layer is drawn at, up to the
-    next of TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same look
-    is one file wherever the layer is."""
+    scale 1: its `lines` set in `style`, each placed by its anchor (the middle of its text and its
+    baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its Block, or a Strip
+    per line) with corners `radius` pixels round. Its shadow, when on, is its runs again moved by
+    `shadow` (right and down), between them and the plate. The picture is rasterised `scale` times
+    as large (app/text_pictures.py; the largest scale the layer is drawn at, up to the next of
+    TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same picture is one
+    file wherever the layer is."""
 
     style: TextStyle
-    size: float
     lines: list[str]
     anchors: list[tuple[float, float]]
     # Each line's, placed from the picture's left edge.
@@ -664,15 +662,15 @@ class TextLayout:
         return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
 
     @property
-    def look(self) -> str:
+    def picture_key(self) -> str:
         """What its picture shows at any scale: its name at scale 1, without the extension. The
-        pictures of one look are the same words, only larger or smaller."""
+        pictures of one key are the same words, only larger or smaller."""
         return replace(self, scale=1.0).name.removesuffix(".png")
 
     @property
     def faces(self) -> set[str]:
         """The Faces it is drawn in: its style's, and any its runs fall back to."""
-        return {self.style.font, *(run.font for line in self.runs for run in line)}
+        return {self.style.font, *(run.face for line in self.runs for run in line)}
 
 
 # How Text Layers' pictures are drawn: a new one is new pictures, under new names.
@@ -681,32 +679,42 @@ TEXT_PICTURE_FORMAT = "v1-libass-matte"
 
 @dataclass(frozen=True)
 class TextEvent:
-    """A Text Layer as drawn: its `lines` (broken at its wrap width) set at font `size` (its
-    style's), on screen from `start` to `end` (seconds into the Clip). `area` is its box, padded when
-    it has a plate: a Block plate is `box` (the area), Strips are its layout's. Its plate's corners
-    are `radius` pixels round. Each line is placed by its anchor: the middle of its text and its
-    baseline.
+    """A Text Layer as drawn, on screen from `start` to `end` (seconds into the Clip). `area` is its
+    box, padded when it has a plate: a Block plate is `box` (the area), Strips are its layout's. Its
+    lines are placed on the frame by `anchors`: the middle of each one's text and its baseline (its
+    layout has them from its picture's corner).
 
-    It is drawn as the picture of its `layout` (docs/adr/0010), the file `image`, placed as `picture`
-    says with the Overlay's maths: its box and the room round it for its ink, centred about the
-    middle of its area (to within half a pixel). `bounds` holds its area once turned and scaled.
-    `look` names its layout at any scale (TextLayout.look): the preview draws a larger picture of
-    the same look it has rather than fetch a smaller one."""
+    It is drawn as the picture of its `layout` (docs/adr/0010), placed as `picture` says with the
+    Overlay's maths: its box and the room round it for its ink, centred about the middle of its area
+    (to within half a pixel). `bounds` holds its area once turned and scaled. Its layout gives the
+    rest, in its JSON too: its `lines` (broken at its wrap width), its picture's file `image`, and
+    `picture_key`, which names its pictures at every scale (TextLayout.picture_key): the preview
+    draws a larger picture of the same key it has rather than fetch a smaller one."""
 
     layer: TextLayer
-    lines: list[str]
     start: float
     end: float
     area: Box
-    size: float
     anchors: list[tuple[float, float]]
     layout: TextLayout
-    image: str
     picture: Picture
     bounds: Box
     box: Box | None = None
-    radius: int = 0
-    look: str = ""
+
+    @computed_field
+    @property
+    def lines(self) -> list[str]:
+        return self.layout.lines
+
+    @computed_field
+    @property
+    def image(self) -> str:
+        return self.layout.name
+
+    @computed_field
+    @property
+    def picture_key(self) -> str:
+        return self.layout.picture_key
 
 
 @dataclass(frozen=True)
@@ -1500,15 +1508,15 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
         for i, line in enumerate(widths)
     ]
     end = round(min(start + layer.secs, duration), 3)
-    plates = _plates(style, area, lines, widths, anchors, style.size)
+    plates = _plates(style, area, lines, widths, anchors)
     radius = min(round(style.plate.radius), min(box.height for box in plates) // 2) if plates else 0
     placed = [placed_runs(line, x - width / 2, style.size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
-    layout, origin = _text_layout(layer, lines, placed, style.size, area, anchors, plates, radius)
+    layout, origin = _text_layout(layer, lines, placed, area, anchors, plates, radius)
     # Keyed, it moves as an Overlay does, its whole picture scaled from its size at scale 1.
     picture = with_motion(_text_picture(layout, origin, layer.transform), layer.transform, layer.keys, start, (layout.width, layout.height))
     return TextEvent(
-        layer, lines, start, end, area, style.size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
-        area if style.plate.shape is HookShape.BLOCK else None, radius, layout.look,
+        layer, start, end, area, anchors, layout, picture, _turned_box(area, picture.centre, layer.transform),
+        area if style.plate.shape is HookShape.BLOCK else None,
     )
 
 
@@ -1545,33 +1553,31 @@ def text_box(style: TextStyle, widths: list[float]) -> tuple[int, int, tuple[flo
     metrics = font_metrics(style.font)
     plated = style.plate.shape is not HookShape.NONE
     pad_x, pad_y = (style.plate.padding_x, style.plate.padding_y) if plated else (0.0, 0.0)
-    letters = (metrics.cap_height + metrics.descent) / metrics.units * style.size + (len(widths) - 1) * style.line_height * style.size
+    letters = metrics.letters_height(style.size) + (len(widths) - 1) * style.line_height * style.size
     width = math.ceil(max(max(widths) + 2 * pad_x, style.wrap_width))
     height = math.ceil(max(letters + 2 * pad_y, style.fixed_height))
     return width, height, (pad_x, pad_y + max(style.fixed_height - letters - 2 * pad_y, 0) / 2)
 
 
-def _plates(
-    style: TextStyle, area: Box, lines: list[str], widths: list[float], anchors: list[tuple[float, float]], size: float
-) -> list[Box]:
+def _plates(style: TextStyle, area: Box, lines: list[str], widths: list[float], anchors: list[tuple[float, float]]) -> list[Box]:
     """The rectangles of a Text Layer's plate on the frame, its lines (`widths` wide, at `anchors`)
-    set at `size` in `area`: none, its Block (the area), or a Strip round each line but a blank one,
-    padded as the area is round the widest and from the capitals down to the descenders."""
+    set in `area`: none, its Block (the area), or a Strip round each line but a blank one, padded as
+    the area is round the widest and from the capitals down to the descenders."""
     plate = style.plate
     if plate.shape is HookShape.NONE:
         return []
     if plate.shape is HookShape.BLOCK:
         return [area]
     metrics = font_metrics(style.font)
-    pad_x, pad_y = plate.padding_x / style.size * size, plate.padding_y / style.size * size
-    height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
+    pad_x, pad_y = plate.padding_x, plate.padding_y
+    height = math.ceil(metrics.letters_height(style.size) + 2 * pad_y)
     strips = []
     for line, line_width, (x, baseline) in zip(lines, widths, anchors):
         if not line:
             continue
         width = min(math.ceil(line_width + 2 * pad_x), area.width)
         left = min(max(round(x - width / 2), area.x), area.x + area.width - width)
-        strips.append(Box(left, round(baseline - metrics.cap_height / metrics.units * size - pad_y), width, height))
+        strips.append(Box(left, round(baseline - metrics.cap_height / metrics.units * style.size - pad_y), width, height))
     return strips
 
 
@@ -1579,20 +1585,19 @@ def _text_layout(
     layer: TextLayer,
     lines: list[str],
     runs: list[list[TextRun]],
-    size: float,
     area: Box,
     anchors: list[tuple[float, float]],
     plates: list[Box],
     radius: int,
 ) -> tuple[TextLayout, tuple[int, int]]:
-    """A Text Layer's layout, set at `size` in `area` with its lines at `anchors` drawn as `runs`
-    (placed on the frame) over its `plates` (their corners `radius` round), and where its picture's
+    """A Text Layer's layout, set in `area` with its lines at `anchors` drawn as `runs` (placed on
+    the frame) over its `plates` (their corners `radius` round), and where its picture's
     top-left corner is on the frame: its area and TEXT_INK_ROOM round it, and its shadow's reach,
     made even across and down. Its anchors, runs and plates are kept from that corner, so that the
     layout (and its picture) is the same wherever the layer is; the area stays in the picture's
     middle, which the Transform turns it about."""
     style = layer.style
-    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size) + style.shadow.reach
+    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * style.size) + style.shadow.reach
     left, top = area.x - room, area.y - room
     width, height = area.width + 2 * room, area.height + 2 * room
     width, height = width + width % 2, height + height % 2
@@ -1603,16 +1608,17 @@ def _text_layout(
     plates = [Box(box.x - left, box.y - top, box.width, box.height) for box in plates]
     shadow = style.shadow.offset if style.shadow.on else None
     return (
-        TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), plates, radius, shadow),
+        TextLayout(style, lines, local, local_runs, width, height, round(scale, 4), plates, radius, shadow),
         (left, top),
     )
 
 
 def reached_scale(layer: TextLayer) -> float:
     """The largest scale a Text Layer is drawn at: its Transform's, or its largest scale Keyframe's
-    while its scale is keyed (the Keyframes replace it), times Pop's peak."""
+    while its scale is keyed (the Keyframes replace it). Pop grows it to its scale, never past it
+    (app/renderer.py's POP_FROM)."""
     keyed = layer.keys.get(KeyProperty.SCALE)
-    return (max(key.value for key in keyed) if keyed else layer.transform.scale) * POP_PEAK
+    return max(key.value for key in keyed) if keyed else layer.transform.scale
 
 
 def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:
@@ -1656,10 +1662,10 @@ def text_bounds_at(event: TextEvent, time: float) -> Box:
     return _turned_box(event.area, picture.centre, replace(event.layer.transform, scale=scale, rotation=drawn.rotation), drawn.centre)
 
 
-def text_runs(line: str, font_id: str) -> list[TextRun]:
+def text_runs(line: str, face_id: str) -> list[TextRun]:
     """`line` split into runs by Face and emoji (docs/adr/0010), not yet placed: each emoji sequence
     a run of its own, drawn from its image (app/emoji.py's `image_of`) on the line of the Face
-    `font_id`; each other character in that Face, or in FALLBACK_FONT (CJK) when only that has it.
+    `face_id`; each other character in that Face, or in FALLBACK_FACE (CJK) when only that has it.
     An emoji with no image and a character neither Face has are left out: the line closes up round
     them. A space goes with the run it follows, when that run's Face has it."""
     kept: list[tuple[str, str | None]] = []
@@ -1668,7 +1674,7 @@ def text_runs(line: str, font_id: str) -> list[TextRun]:
         if text.isspace():
             if kept and kept[-1][0] != " ":
                 kept.append((" ", None))
-        elif image is not None or (not emoji and _run_face(text, font_id)):
+        elif image is not None or (not emoji and _run_face(text, face_id)):
             kept.append((text, image))
     if kept and kept[-1][0] == " ":
         kept.pop()
@@ -1676,24 +1682,24 @@ def text_runs(line: str, font_id: str) -> list[TextRun]:
     for text, image in kept:
         last = runs[-1] if runs else None
         if image is not None:
-            runs.append(TextRun(text, font_id, image=image))
+            runs.append(TextRun(text, face_id, image=image))
             continue
-        if last is not None and text == " " and text in font_metrics(last.font).advances:
-            face = last.font
+        if last is not None and text == " " and text in font_metrics(last.face).advances:
+            face = last.face
         else:
-            face = _run_face(text, font_id)
+            face = _run_face(text, face_id)
         if face is None:
             continue
-        if last is not None and last.font == face and (last.image is None or text == " "):
+        if last is not None and last.face == face and (last.image is None or text == " "):
             runs[-1] = replace(last, text=last.text + text)
         else:
             runs.append(TextRun(text, face))
     return runs
 
 
-def _run_face(char: str, font_id: str) -> str | None:
-    """The Face a Text Layer in the Face `font_id` sets `char` in: its own, the fallback, or None."""
-    for face in (font_id, FALLBACK_FONT):
+def _run_face(char: str, face_id: str) -> str | None:
+    """The Face a Text Layer in the Face `face_id` sets `char` in: its own, the fallback, or None."""
+    for face in (face_id, FALLBACK_FACE):
         if char in font_metrics(face).advances:
             return face
     return None
@@ -1703,7 +1709,7 @@ def runs_width(runs: list[TextRun], size: float, tracking: float = 0.0) -> float
     """How wide a line of `runs` is at font `size`, each measured in its own Face (an emoji 1 em),
     with `tracking` pixels after every character but the last."""
     width = sum(_run_width(run, run.text, size) for run in runs)
-    count = sum(_characters(run, run.text) for run in runs)
+    count = sum(_character_count(run, run.text) for run in runs)
     return width + tracking * (count - 1) if tracking and count else width
 
 
@@ -1721,22 +1727,22 @@ def placed_runs(runs: list[TextRun], left: float, size: float, tracking: float =
 def _run_width(run: TextRun, text: str, size: float, tracking: float = 0.0) -> float:
     """How wide `text`, the whole of `run`'s text or its start, is at font `size` in its Face, with
     `tracking` pixels after every character but the last. An emoji run's emoji is 1 em wide."""
-    metrics = font_metrics(run.font)
+    metrics = font_metrics(run.face)
     if run.image is None:
         return metrics.width(text, size, tracking)
     spaces = text[len(text.rstrip()) :]
-    return emoji_size(run.font, size) + metrics.width(spaces, size) + tracking * len(spaces)
+    return emoji_size(run.face, size) + metrics.width(spaces, size) + tracking * len(spaces)
 
 
-def _characters(run: TextRun, text: str) -> int:
+def _character_count(run: TextRun, text: str) -> int:
     """How many characters `text` of `run` counts for tracking: an emoji sequence is one."""
     return len(text) if run.image is None else 1 + len(text) - len(text.rstrip())
 
 
-def emoji_size(font_id: str, size: float) -> float:
-    """How wide an emoji is on a line of the Face `font_id` set at font `size`: 1 em of that Face
+def emoji_size(face_id: str, size: float) -> float:
+    """How wide an emoji is on a line of the Face `face_id` set at font `size`: 1 em of that Face
     (libass sets its ascent plus descent, not its em, at the size)."""
-    metrics = font_metrics(font_id)
+    metrics = font_metrics(face_id)
     return size * metrics.em / metrics.units
 
 
@@ -1745,7 +1751,7 @@ def emoji_square(run: TextRun, baseline: float, size: float) -> tuple[float, flo
     `baseline`: the left and top of its square and its side, its width, centred down on the middle
     of the capitals of its line's Face. Its image fills the square across or down, keeping its
     shape."""
-    metrics = font_metrics(run.font)
+    metrics = font_metrics(run.face)
     middle = baseline - metrics.cap_height / metrics.units * size / 2
     return run.x, middle - run.width / 2, run.width
 
@@ -1902,7 +1908,7 @@ def _hook(
     pad_x, pad_y = _hook_padding(style, size)
     # Boxes from the hook's top-left corner, and anchors from where it is.
     if style.shape == HookShape.STRIPS:
-        strip_height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
+        strip_height = math.ceil(metrics.letters_height(size) + 2 * pad_y)
         pitch = max(strip_height + round(STRIP_GAP * size) + round((style.line_height - HOOK_LEADING) * size), strip_height)
         strips = [math.ceil(line + 2 * pad_x) for line in widths]
         width, height = max(strips), (len(lines) - 1) * pitch + strip_height
@@ -1916,7 +1922,7 @@ def _hook(
     else:
         # The letters and the padding (whole pixels when it is the Shape's own), rounded up.
         width = math.ceil(max(widths) + 2 * pad_x)
-        letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
+        letters = metrics.letters_height(size) + (len(lines) - 1) * style.line_height * size
         height = math.ceil(letters + 2 * pad_y)
         boxes = [Box(0, 0, width, height)] if style.shape == HookShape.BLOCK else []
 
@@ -2021,7 +2027,7 @@ def _kicker_pill(text: str, size: float, style: HookStyle) -> _KickerPill | None
         pill_size = math.floor(pill_size * KICKER_WIDEST / padded * 10) / 10
     pad_y = KICKER_PAD_Y * pill_size
     width = math.ceil(metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size)
-    height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * pill_size + 2 * pad_y)
+    height = math.ceil(metrics.letters_height(pill_size) + 2 * pad_y)
     return _KickerPill(text, pill_size, width, height, pad_y)
 
 
@@ -2046,6 +2052,17 @@ class FontMetrics:
         but the last; a character the font hasn't got counts a size wide."""
         width = sum(self.advances.get(char, self.units) for char in text) / self.units * size
         return width + tracking * (len(text) - 1) if tracking and text else width
+
+    def letters_height(self, size: float) -> float:
+        """How tall a line's letters are at font `size`, in pixels: from the top of its capitals to the
+        bottom of its descenders."""
+        return (self.cap_height + self.descent) / self.units * size
+
+    def centre_y(self, baseline: float, size: float) -> float:
+        """Where libass centres a line set at font `size` down (\\an5) for its baseline to be at
+        `baseline`: the middle of its ascent above the baseline and its descent below, which together
+        are the font size."""
+        return baseline - self.ascent / self.units * size + size / 2
 
 
 @cache

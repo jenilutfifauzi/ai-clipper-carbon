@@ -12,8 +12,8 @@ titles: built-in Text at first, and again when the one chosen is deleted.
 
 import json
 import threading
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, field, fields, replace
 from functools import cache
 from pathlib import Path
@@ -24,8 +24,9 @@ from pydantic import Field, StringConstraints, TypeAdapter
 
 from app.candidates import TextStyle
 from app.config import TEXT_PRESETS_DIR
+from app.listeners import Listeners
 from app.storage import write_atomic
-from app.styles import BuiltinPreset, Name, PresetNotFound
+from app.styles import Name, laid_over
 
 # In DATA_DIR.
 TEXT_PRESETS_FILE = "text-presets.json"
@@ -35,6 +36,14 @@ DEFAULT_TEXT_PRESET = "text"
 MINE = "Mine"
 
 TextPresetId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,40}$")]
+
+
+class TextPresetNotFound(LookupError):
+    pass
+
+
+class BuiltinTextPreset(ValueError):
+    """A built-in Text Preset can't be changed, renamed or deleted."""
 
 
 @dataclass(frozen=True)
@@ -77,7 +86,7 @@ def builtin_text_presets(folder: Path = TEXT_PRESETS_DIR) -> list[TextPreset]:
             given = json.loads(path.read_bytes())
             if unknown := sorted(given.keys() - {f.name for f in fields(TextPreset)} - {"builtin"}):
                 raise ValueError(f"no field {', '.join(unknown)}")
-            style = _laid_over(_DEFAULT_STYLE, given.get("style", {}), "style")
+            style = laid_over(_DEFAULT_STYLE, given.get("style", {}), "style.")
             presets.append(_PRESET.validate_python({**given, "style": style, "builtin": True}))
         except ValueError as exc:
             raise ValueError(f"Built-in Text Preset {path.name}: {exc}") from None
@@ -85,17 +94,6 @@ def builtin_text_presets(folder: Path = TEXT_PRESETS_DIR) -> list[TextPreset]:
     if twice := sorted({preset_id for preset_id in ids if ids.count(preset_id) > 1}):
         raise ValueError(f"Two built-in Text Presets have the id {', '.join(twice)}")
     return sorted(presets, key=lambda preset: (preset.order, preset.id))
-
-
-def _laid_over(defaults: dict, given: dict, at: str) -> dict:
-    """`given`'s fields over `defaults`, a field that is an object (the shadow, the plate) field by
-    field. ValueError for a field `defaults` hasn't got."""
-    if unknown := sorted(given.keys() - defaults.keys()):
-        raise ValueError(f"no field {', '.join(f'{at}.{name}' for name in unknown)}")
-    return defaults | {
-        name: _laid_over(defaults[name], value, f"{at}.{name}") if isinstance(value, dict) and isinstance(defaults[name], dict) else value
-        for name, value in given.items()
-    }
 
 
 @cache
@@ -112,7 +110,7 @@ class TextPresetStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
-        self._listeners: tuple[Callable[[], None], ...] = ()
+        self._listeners = Listeners()
 
     def all(self) -> list[TextPreset]:
         """The built-in Presets by their order, then the owner's in the order they were made."""
@@ -122,13 +120,13 @@ class TextPresetStore:
         for preset in self.all():
             if preset.id == preset_id:
                 return preset
-        raise PresetNotFound(preset_id)
+        raise TextPresetNotFound(preset_id)
 
     def default(self) -> TextPreset:
         """The Preset used for new titles: the one chosen, or built-in Text once it is deleted."""
         try:
             return self.get(self._saved().default)
-        except PresetNotFound:
+        except TextPresetNotFound:
             return self.get(DEFAULT_TEXT_PRESET)
 
     def create(self, name: str, style: TextStyle) -> TextPreset:
@@ -138,7 +136,7 @@ class TextPresetStore:
             preset_id = next(new for new in iter(lambda: uuid4().hex[:8], None) if new not in builtin)
             preset = TextPreset(preset_id, name, style, sample=name)
             self._save(replace(saved, presets=[*saved.presets, preset]))
-        self._notify()
+        self._listeners.notify()
         return preset
 
     def change(self, preset_id: str, name: str | None = None, style: TextStyle | None = None) -> TextPreset:
@@ -152,7 +150,7 @@ class TextPresetStore:
             if style is not None:
                 preset = replace(preset, style=style)
             self._save(replace(saved, presets=[*saved.presets[:i], preset, *saved.presets[i + 1 :]]))
-        self._notify()
+        self._listeners.notify()
         return preset
 
     def delete(self, preset_id: str) -> None:
@@ -162,35 +160,28 @@ class TextPresetStore:
             i = self._index(saved, preset_id)
             default = DEFAULT_TEXT_PRESET if saved.default == preset_id else saved.default
             self._save(_Saved(default, [*saved.presets[:i], *saved.presets[i + 1 :]]))
-        self._notify()
+        self._listeners.notify()
 
     def use_for_new_titles(self, preset_id: str) -> TextPreset:
         """Make the Preset, built-in or the owner's, the one used for new titles."""
         with self._lock:
             preset = self.get(preset_id)
             self._save(replace(self._saved(), default=preset.id))
-        self._notify()
+        self._listeners.notify()
         return preset
 
-    @contextmanager
-    def watch(self, listener: Callable[[], None]) -> Iterator[None]:
+    def watch(self, listener: Callable[[], None]) -> AbstractContextManager[None]:
         """Call `listener` each time the Presets or the one used for new titles change, until the block
         ends. It is called on the thread making the change, and must return quickly."""
-        with self._lock:
-            self._listeners = (*self._listeners, listener)
-        try:
-            yield
-        finally:
-            with self._lock:
-                self._listeners = tuple(other for other in self._listeners if other is not listener)
+        return self._listeners.watching(listener)
 
     def _index(self, saved: _Saved, preset_id: str) -> int:
         if any(preset.id == preset_id for preset in _builtins()):
-            raise BuiltinPreset(preset_id)
+            raise BuiltinTextPreset(preset_id)
         for i, preset in enumerate(saved.presets):
             if preset.id == preset_id:
                 return i
-        raise PresetNotFound(preset_id)
+        raise TextPresetNotFound(preset_id)
 
     def _saved(self) -> _Saved:
         return _SAVED.validate_json(self.path.read_bytes()) if self.path.is_file() else _Saved()
@@ -198,7 +189,3 @@ class TextPresetStore:
     def _save(self, saved: _Saved) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         write_atomic(self.path, _SAVED.dump_json(saved, indent=2))
-
-    def _notify(self) -> None:
-        for listener in self._listeners:
-            listener()

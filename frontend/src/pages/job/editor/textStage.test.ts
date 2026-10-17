@@ -39,14 +39,12 @@ function event(transform: Partial<Transform> = {}): TextEvent {
     start: 0,
     end: 2,
     area: { x: 390, y: 550, width: 300, height: 100 },
-    size: 80,
     anchors: [[540, 620]],
     image: "abc.png",
-    look: "abc",
+    picture_key: "abc",
     picture,
     bounds: picture.bounds,
     box: null,
-    radius: 0,
   };
 }
 

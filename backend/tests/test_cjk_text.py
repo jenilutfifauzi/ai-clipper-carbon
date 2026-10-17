@@ -1,5 +1,5 @@
 """CJK in Text Layers (.scratch/text-advanced/issues/10-cjk-in-text-layers.md, docs/adr/0010): a
-character a Text Layer's Face hasn't got is set in the bundled CJK Face, FALLBACK_FONT, and measured
+character a Text Layer's Face hasn't got is set in the bundled CJK Face, FALLBACK_FACE, and measured
 with it; one neither has is left out.
 
 Seam B on the planner's runs, then the picture libass draws of them and a Seam A render with the
@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 
 from app.candidates import TextLayer
 from app.config import load_settings
-from app.fonts import FALLBACK_FONT, registry
+from app.fonts import FALLBACK_FACE, registry
 from app.planner import TextEvent, TextRun, font_metrics, text_event
 from app.text_pictures import rasterised
 from test_render import HEARD, add, full_frame, preview, render, rendered, reviewed
@@ -29,7 +29,7 @@ def layer(text: str, **style) -> TextLayer:
 
 
 def runs(event: TextEvent) -> list[list[tuple[str, str]]]:
-    return [[(run.text, run.font) for run in line] for line in event.layout.runs]
+    return [[(run.text, run.face) for run in line] for line in event.layout.runs]
 
 
 def ink_columns(pixels: np.ndarray) -> np.ndarray:
@@ -41,8 +41,8 @@ def test_a_line_mixing_latin_and_japanese_has_a_run_per_face_each_measured_in_it
     event = text_event(layer("HALO 日本語です!"), 10)
     assert event.lines == ["HALO 日本語です!"]
     # The space goes with the run it follows, and is not drawn at its end.
-    assert runs(event) == [[("HALO", STYLE_FONT), ("日本語です", FALLBACK_FONT), ("!", STYLE_FONT)]]
-    latin, cjk = font_metrics(STYLE_FONT), font_metrics(FALLBACK_FONT)
+    assert runs(event) == [[("HALO", STYLE_FONT), ("日本語です", FALLBACK_FACE), ("!", STYLE_FONT)]]
+    latin, cjk = font_metrics(STYLE_FONT), font_metrics(FALLBACK_FACE)
     [[halo, japanese, bang]] = event.layout.runs
     assert halo.width == pytest.approx(latin.width("HALO", 100), abs=0.01)
     assert japanese.width == pytest.approx(cjk.width("日本語です", 100), abs=0.01)
@@ -61,14 +61,14 @@ def test_japanese_wraps_between_its_characters_measured_in_the_fallback_face():
     # .scratch/text-advanced/issues/03-wrap-width-and-fixed-height.md: no spaces, yet it breaks.
     text = "今日は良い天気ですね。散歩に行きましょう。"
     event = text_event(layer(text, wrap_width=400), 10)
-    cjk = font_metrics(FALLBACK_FONT)
+    cjk = font_metrics(FALLBACK_FACE)
     assert len(event.lines) > 1 and "".join(event.lines) == text
     assert all(cjk.width(line, 100) <= 400 for line in event.lines)
     # Each line as full as fits, a stop never starting one.
     for line, after in zip(event.lines, event.lines[1:]):
         assert not after.startswith("。")
         assert cjk.width(line + after[0], 100) > 400 or after[1:2] == "。"
-    assert all(run.font == FALLBACK_FONT for line in event.layout.runs for run in line)
+    assert all(run.face == FALLBACK_FACE for line in event.layout.runs for run in line)
 
 
 def test_a_cjk_run_keeps_the_line_pitch_of_the_styles_face():
@@ -91,11 +91,11 @@ def test_a_character_neither_face_has_is_left_out_and_the_line_closes_up():
 
 
 def test_the_fallback_face_is_bundled_but_not_offered():
-    face = registry().get(FALLBACK_FONT)
+    face = registry().get(FALLBACK_FACE)
     assert face.bundled and face.licence
-    assert FALLBACK_FONT not in registry().ids() and FALLBACK_FONT not in {face.id for face in registry().all()}
+    assert FALLBACK_FACE not in registry().ids() and FALLBACK_FACE not in {face.id for face in registry().all()}
     with pytest.raises(ValueError):
-        layer("HALO", font=FALLBACK_FONT)
+        layer("HALO", font=FALLBACK_FACE)
 
 
 def test_a_layers_picture_draws_each_run_in_its_face_where_it_is_planned():
@@ -159,7 +159,7 @@ def test_a_rendered_frame_has_ink_where_each_cjk_run_is_planned(client, settings
         "style": {"size": 120, "colour": "#00FF00"},
     }])
     [event] = preview(client, job, candidate)["plan"]["texts"]
-    assert [[run["font"] for run in line] for line in event["layout"]["runs"]] == [[STYLE_FONT, FALLBACK_FONT, STYLE_FONT, FALLBACK_FONT]]
+    assert [[run["face"] for run in line] for line in event["layout"]["runs"]] == [[STYLE_FONT, FALLBACK_FACE, STYLE_FONT, FALLBACK_FACE]]
     render(client, job)
     [clip] = rendered(client, job)["clips"]
     assert clip["status"] == "done", clip["error"]

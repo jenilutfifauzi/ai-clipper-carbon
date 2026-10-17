@@ -46,7 +46,7 @@ from app.rendering import NothingToRender, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_pictures import TEXTS_DIR, pictures_used, sweep as sweep_pictures
-from app.text_presets import TextPreset, TextPresetStore
+from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
 from app.storage import DiskUsage, disk_usage
@@ -975,7 +975,7 @@ def use_text_preset_for_new_titles(body: TextPresetChoice, text_presets: TextPre
     a Text Layer the agent adds without a style. 404 for an unknown one."""
     try:
         preset = text_presets.use_for_new_titles(body.id)
-    except PresetNotFound:
+    except TextPresetNotFound:
         raise HTTPException(404, f"No Text Preset {body.id}") from None
     return TextPresetInfo.of(preset, preset)
 
@@ -986,9 +986,9 @@ def change_text_preset(preset_id: str, body: TextPresetChange, text_presets: Tex
     their look. 409 for a built-in Preset."""
     try:
         preset = text_presets.change(preset_id, body.name, body.style)
-    except PresetNotFound:
+    except TextPresetNotFound:
         raise HTTPException(404, f"No Text Preset {preset_id}") from None
-    except BuiltinPreset:
+    except BuiltinTextPreset:
         raise HTTPException(409, f"Text Preset {preset_id} is built in: save a copy instead") from None
     return TextPresetInfo.of(preset, text_presets.default())
 
@@ -999,9 +999,9 @@ def delete_text_preset(preset_id: str, text_presets: TextPresets) -> None:
     titles, built-in Text is used again. 409 for a built-in Preset."""
     try:
         text_presets.delete(preset_id)
-    except PresetNotFound:
+    except TextPresetNotFound:
         raise HTTPException(404, f"No Text Preset {preset_id}") from None
-    except BuiltinPreset:
+    except BuiltinTextPreset:
         raise HTTPException(409, f"Text Preset {preset_id} is built in and can't be deleted") from None
 
 

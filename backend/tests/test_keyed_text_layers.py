@@ -68,7 +68,7 @@ def test_a_keyed_text_layers_picture_moves_in_clip_time_as_an_overlays_does():
         assert drawn.width == pytest.approx(event.layout.width * scale) and drawn.height == pytest.approx(event.layout.height * scale)
         assert drawn.centre[1] == picture.centre[1]
     # The same words and layout as the layer unkeyed.
-    assert (event.lines, event.area, event.layout.look) == (still.lines, still.area, still.look)
+    assert (event.lines, event.area, event.picture_key) == (still.lines, still.area, still.picture_key)
     assert still.picture.motion == {}
 
 

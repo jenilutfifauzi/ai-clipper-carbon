@@ -129,7 +129,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
         rotation,
         initial: event.layer.text,
         font: fontById.get(event.layer.style.font),
-        size: event.size * scale,
+        size: event.layer.style.size * scale,
         uppercase: false,
         maxLength: TEXT_MAX_CHARS,
         label: "Text",

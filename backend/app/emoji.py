@@ -37,6 +37,8 @@ _EMOJI = (
 )
 ZWJ = "‍"
 KEYCAP = "⃣"
+# The variation selectors, which choose how the character before them is drawn (text or emoji).
+VARIATION_SELECTORS = frozenset(map(chr, range(0xFE00, 0xFE10)))
 _VARIATIONS = {"︎", "️"}
 _KEYCAP_BASES = set("#*0123456789")
 
@@ -59,7 +61,7 @@ def emoji_modifier(char: str) -> bool:
 
 def emoji_base(char: str) -> bool:
     """A character an emoji sequence starts with."""
-    return is_emoji(char) and not emoji_modifier(char) and char != ZWJ and not 0xFE00 <= ord(char) <= 0xFE0F
+    return is_emoji(char) and not emoji_modifier(char) and char != ZWJ and char not in VARIATION_SELECTORS
 
 
 def clusters(text: str) -> list[tuple[str, bool]]:

@@ -42,13 +42,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.ass import ass_alpha, ass_filter, ass_text, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.candidates import Candidate
 from app.emoji import image_pixels
 from app.fonts import font, registry
 from app.planner import TextLayout, emoji_square, font_metrics, text_event
-from app.renderer import (
-    _ass_text, _filter_value, _rounded_box, _shadow_tags, _spacing, _style_colour, _tag_colour, _tracked, last_lines,
-)
+from app.renderer import last_lines
 
 # In a Job's directory.
 TEXTS_DIR = "texts"
@@ -91,7 +90,7 @@ def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
         fonts = registry().gather(layout.faces, Path(work, "fonts"))
         script = Path(work, "layout.ass")
         script.write_text(layout_script(layout), encoding="utf-8")
-        drawn = f"ass=filename={_filter_value(str(script))}:fontsdir={_filter_value(str(fonts))}"
+        drawn = ass_filter(script, fonts)
         canvas = f"s={width}x{height}:r=1,format=rgb24"
         graph = f"color=c=black:{canvas},{drawn}[black];color=c=white:{canvas},{drawn}[white];[black][white]hstack"
         command = [
@@ -122,7 +121,7 @@ def with_emoji(pixels: np.ndarray, layout: TextLayout) -> np.ndarray:
         for run in runs:
             if run.image is None:
                 continue
-            x, top, side = emoji_square(run, baseline, layout.size)
+            x, top, side = emoji_square(run, baseline, layout.style.size)
             image = image_pixels(run.image)
             fit = min(side * across / image.shape[1], side * down / image.shape[0])
             width, height = max(1, round(image.shape[1] * fit)), max(1, round(image.shape[0] * fit))
@@ -159,34 +158,30 @@ def layout_script(layout: TextLayout) -> str:
     """`layout` as an ASS script of its size at scale 1: its plate, its lines' shadow over it, then its
     lines over that. libass scales it to the canvas, the stroke, tracking and blur with it."""
     style = layout.style
-    text, edge = _style_colour(style.colour), _style_colour(style.stroke_colour)
+    text, edge = style_colour(style.colour), style_colour(style.stroke_colour)
     events = []
     if layout.plates:
         plate = style.plate
-        alpha = f"&H{round(255 * (1 - plate.opacity)):02X}&"
         # One drawing, so that Strips that overlap are drawn once.
-        drawing = " ".join(_moved(_rounded_box(box.width, box.height, layout.radius), box.x, box.y) for box in layout.plates)
-        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{_tag_colour(plate.colour)}\\alpha{alpha}}}{drawing}{{\\p0}}")
-    size = f"\\fs{layout.size:g}" if layout.size != style.size else ""
+        drawing = " ".join(_moved(rounded_box(box.width, box.height, layout.radius), box.x, box.y) for box in layout.plates)
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(plate.colour)}\\alpha{ass_alpha(plate.opacity)}}}{drawing}{{\\p0}}")
     placed = []
     for runs, (_, baseline) in zip(layout.runs, layout.anchors):
         for run in runs:
             if not run.text or run.image is not None:
                 continue
-            # Centred (5) on its middle, and on the middle of its height: its Face's ascent above the
-            # baseline and its descent below, which together are the font size, so that every run
-            # stands on the line's baseline. A fallback run names its Face: libass never falls back
-            # on its own. libass centres its tracking after its last letter too (`_tracked`).
-            metrics = font_metrics(run.font)
-            centre_y = baseline - metrics.ascent / metrics.units * layout.size + layout.size / 2
-            face = "" if run.font == style.font else f"\\fn{font(run.font).family}"
-            x = _tracked(run.x + run.width / 2, style.tracking)
-            placed.append((x, centre_y, f"{size}{face}{_spacing(style.tracking)}", _ass_text(run.text)))
+            # Centred (5) on its middle, and on the middle of its height (`centre_y`), so that every
+            # run stands on the line's baseline. A fallback run names its Face: libass never falls
+            # back on its own. libass centres its tracking after its last letter too (`tracked`).
+            centre_y = font_metrics(run.face).centre_y(baseline, style.size)
+            face = "" if run.face == style.font else f"\\fn{font(run.face).family}"
+            x = tracked(run.x + run.width / 2, style.tracking)
+            placed.append((x, centre_y, f"{face}{spacing(style.tracking)}", ass_text(run.text)))
     if layout.shadow is not None:
         dx, dy = layout.shadow
-        tags = _shadow_tags(style.shadow, style.stroke_width)
-        events += [f"{{\\an5\\pos({x + dx:.3f},{y + dy:.1f}){look}{tags}}}{words}" for x, y, look, words in placed]
-    events += [f"{{\\an5\\pos({x:.3f},{y:.1f}){look}}}{words}" for x, y, look, words in placed]
+        tags = shadow_tags(style.shadow, style.stroke_width)
+        events += [f"{{\\an5\\pos({x + dx:.3f},{y + dy:.1f}){run_tags}{tags}}}{words}" for x, y, run_tags, words in placed]
+    events += [f"{{\\an5\\pos({x:.3f},{y:.1f}){run_tags}}}{words}" for x, y, run_tags, words in placed]
     return "\n".join([
         "[Script Info]",
         "ScriptType: v4.00+",

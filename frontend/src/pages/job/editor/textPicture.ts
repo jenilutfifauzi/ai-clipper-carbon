@@ -10,17 +10,17 @@ export interface ShownPicture {
   height: number;
 }
 
-// The picture a Text Layer's plan names: what it shows at any scale (`look`, by its Job) and how many
-// pixels wide it was made (`made`). Pictures of one look differ only in size.
+// The picture a Text Layer's plan names: what it shows at any scale (`key`, its picture_key by its
+// Job) and how many pixels wide it was made (`made`). Pictures of one key differ only in size.
 export interface WantedPicture extends ShownPicture {
-  look: string;
+  key: string;
   made: number;
 }
 
-// A picture the browser has loaded: the largest of its look.
+// A picture the browser has loaded: the largest of its key.
 export type Loaded = { url: string; made: number };
 
-// The largest picture of each look the browser has loaded in this page.
+// The largest picture of each key the browser has loaded in this page.
 const largest = new Map<string, Loaded>();
 
 /** The picture of `event`, by its name alone: moving, turning or fading the layer asks for no new one. */
@@ -30,30 +30,30 @@ export function wantedPicture(jobId: string, event: TextEvent): WantedPicture {
     url: textPictureUrl(jobId, event.image),
     width: picture.width,
     height: picture.height,
-    look: `${jobId}/${event.look}`,
+    key: `${jobId}/${event.picture_key}`,
     made: picture.item_size[0],
   };
 }
 
-/** Whether `wanted` has to be loaded: no picture of its look as large has been (`loaded`). */
-export function needsLoading(wanted: WantedPicture, loaded: (look: string) => Loaded | undefined): boolean {
-  const best = loaded(wanted.look);
+/** Whether `wanted` has to be loaded: no picture of its key as large has been (`loaded`). */
+export function needsLoading(wanted: WantedPicture, loaded: (key: string) => Loaded | undefined): boolean {
+  const best = loaded(wanted.key);
   return !best || best.made < wanted.made;
 }
 
 /**
  * What to draw for a Text Layer that wants `wanted`, `shown` being what it drew last: the largest
- * picture of its look loaded (`loaded`), drawn at the wanted size, so that scaling the layer down
+ * picture of its key loaded (`loaded`), drawn at the wanted size, so that scaling the layer down
  * draws the larger picture it has, and scaling it up draws that one larger until the sharper one has
  * loaded; else the last one, so that the preview never blinks or goes blank while a changed look is
  * made and fetched (null before any has loaded).
  */
-export function pictureToShow(shown: ShownPicture | null, wanted: WantedPicture, loaded: (look: string) => Loaded | undefined): ShownPicture | null {
-  const best = loaded(wanted.look);
+export function pictureToShow(shown: ShownPicture | null, wanted: WantedPicture, loaded: (key: string) => Loaded | undefined): ShownPicture | null {
+  const best = loaded(wanted.key);
   return best ? { url: best.url, width: wanted.width, height: wanted.height } : shown;
 }
 
-const loadedLook = (look: string) => largest.get(look);
+const loadedPicture = (key: string) => largest.get(key);
 
 // Where a Text Layer's picture is drawn, in output pixels: its centre, its size, its turn in degrees
 // clockwise about its centre, and its opacity.
@@ -79,24 +79,24 @@ export function placedText(picture: Picture, time: number, [opacity, scale, belo
 
 /** The picture a Text Layer draws now (`pictureToShow`), loading the one it wants when it needs to (`needsLoading`). */
 export function useTextPicture(wanted: WantedPicture): ShownPicture | null {
-  const [shown, setShown] = useState<ShownPicture | null>(() => pictureToShow(null, wanted, loadedLook));
-  const { url, width, height, look, made } = wanted;
+  const [shown, setShown] = useState<ShownPicture | null>(() => pictureToShow(null, wanted, loadedPicture));
+  const { url, width, height, key, made } = wanted;
   useEffect(() => {
-    const want = { url, width, height, look, made };
-    if (!needsLoading(want, loadedLook)) {
-      setShown(pictureToShow(null, want, loadedLook));
+    const want = { url, width, height, key, made };
+    if (!needsLoading(want, loadedPicture)) {
+      setShown(pictureToShow(null, want, loadedPicture));
       return;
     }
     let current = true;
     const image = new Image();
     image.onload = () => {
-      if (needsLoading(want, loadedLook)) largest.set(look, { url, made });
-      if (current) setShown(pictureToShow(null, want, loadedLook));
+      if (needsLoading(want, loadedPicture)) largest.set(key, { url, made });
+      if (current) setShown(pictureToShow(null, want, loadedPicture));
     };
     image.src = url;
     return () => {
       current = false;
     };
-  }, [url, width, height, look, made]);
-  return pictureToShow(shown, wanted, loadedLook);
+  }, [url, width, height, key, made]);
+  return pictureToShow(shown, wanted, loadedPicture);
 }

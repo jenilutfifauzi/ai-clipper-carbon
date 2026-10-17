@@ -21,7 +21,7 @@ The break opportunities kept from UAX #14:
 import unicodedata
 from collections.abc import Callable
 
-from app.emoji import ZWJ, clusters, emoji_modifier, is_emoji, regional_indicator
+from app.emoji import VARIATION_SELECTORS, ZWJ, clusters, emoji_modifier, is_emoji, regional_indicator
 
 # A line no wider than the width by this many pixels still fits it: a width set to a line's own,
 # which floating point arithmetic may measure a hair over.
@@ -47,10 +47,9 @@ _IDEOGRAPHIC = (
     (0x2E80, 0x2FFF), (0x3040, 0x30FF), (0x3100, 0x31FF), (0x3200, 0x33FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
     (0xF900, 0xFAFF), (0xFF00, 0xFFEF), (0x20000, 0x3FFFD),
 )
-# Kept with the character before them: zero width joiners and variation selectors (marks are found
-# by their category); and after a zero width joiner, the character it joins.
-_ZERO_WIDTH_JOINER = "\u200d"
-_JOINED = {"\u200c", _ZERO_WIDTH_JOINER, *map(chr, range(0xFE00, 0xFE10))}
+# Kept with the character before them: zero width joiners and non-joiners and variation selectors
+# (marks are found by their category); and after a zero width joiner, the character it joins.
+_JOINED = {"\u200c", ZWJ, *VARIATION_SELECTORS}
 
 
 def broken_lines(text: str, width: float, measure: Callable[[str], float]) -> list[str]:
@@ -77,7 +76,7 @@ def _wrapped(paragraph: str, width: float, measure: Callable[[str], float]) -> l
         if fits(word):
             line = word
             continue
-        for character in _characters(word):
+        for character in _character_clusters(word):
             if line and not fits(line + character):
                 lines.append(line.rstrip(_SPACE))
                 line = ""
@@ -101,7 +100,7 @@ def _words(paragraph: str) -> list[str]:
 def _breaks_before(text: str, at: int) -> bool:
     """Whether a line may break between `text[at - 1]` and `text[at]`."""
     before, after = text[at - 1], text[at]
-    if after in _SPACE or after in _NO_BREAK_BEFORE or _joined(after) or before == _ZERO_WIDTH_JOINER:
+    if after in _SPACE or after in _NO_BREAK_BEFORE or _joined(after) or before == ZWJ:
         return False
     if emoji_modifier(after):
         return False
@@ -124,12 +123,12 @@ def _breaks_before(text: str, at: int) -> bool:
     return _ideographic(before) or _ideographic(after) or _pictographic(before) or _pictographic(after)
 
 
-def _characters(word: str) -> list[str]:
+def _character_clusters(word: str) -> list[str]:
     """`word`'s characters, each with the marks, joiners and variation selectors after it, and its
     emoji sequences whole (app/emoji.py's `clusters`)."""
     characters: list[str] = []
     for character, _ in clusters(word):
-        if characters and (_joined(character[0]) or characters[-1].endswith(_ZERO_WIDTH_JOINER)):
+        if characters and (_joined(character[0]) or characters[-1].endswith(ZWJ)):
             characters[-1] += character
         else:
             characters.append(character)

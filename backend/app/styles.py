@@ -13,7 +13,7 @@ DATA_DIR/presets.json.
 import math
 import threading
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NamedTuple
@@ -56,8 +56,9 @@ LogoId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,32}$")]
 Height = Annotated[int, Field(ge=0, le=1920)]
 # A distance from the frame's left edge in output pixels.
 Width = Annotated[int, Field(ge=0, le=1080)]
-# Space between letters in output pixels, as libass's \fsp sets it.
-Tracking = Annotated[float, Field(ge=-20, le=60)]
+# Space between letters in output pixels, as libass's \fsp sets it: the captions', the hook's and
+# a Text Style's.
+Tracking = Annotated[FiniteFloat, Field(ge=-50, le=200)]
 # A box's padding or corners' radius, in output pixels.
 Padding = Annotated[FiniteFloat, Field(ge=0, le=200)]
 
@@ -456,18 +457,7 @@ def resolve(preset: StylePreset, overrides: StyleOverrides) -> Styles:
 
 
 def _apply[T](style: T, changes: dict[str, StyleValue], adapter: TypeAdapter[T]) -> T:
-    changes = migrated_shadow_fields(changes)
-    _check_names(style, changes)
-    values = asdict(style)  # type: ignore[call-overload]
-    for name, value in changes.items():
-        if isinstance(value, dict):
-            part = getattr(style, name)
-            if not is_dataclass(part):
-                raise InvalidStyle(f"{name}: is one value, not several")
-            _check_names(part, value, f"{name}.")
-            values[name] = {**values[name], **value}
-        else:
-            values[name] = value
+    values = laid_over(asdict(style), migrated_shadow_fields(changes))  # type: ignore[call-overload]
     try:
         return adapter.validate_python(values)  # type: ignore[call-overload]
     except ValidationError as exc:
@@ -475,12 +465,22 @@ def _apply[T](style: T, changes: dict[str, StyleValue], adapter: TypeAdapter[T])
         raise InvalidStyle(problems) from None
 
 
-def _check_names(style: object, changes: dict[str, StyleValue], prefix: str = "") -> None:
-    names = {f.name for f in fields(style)}  # type: ignore[arg-type]
-    if unknown := sorted(set(changes) - names):
+def laid_over(defaults: dict, given: dict, at: str = "") -> dict:
+    """`given`'s fields over a style's `defaults` (its fields, as JSON), a field that is several (a
+    shadow, a plate) field by field. InvalidStyle for a field `defaults` hasn't got, or several values
+    given for one; `at` names where `given` is, for the message."""
+    if unknown := sorted(given.keys() - defaults.keys()):
         raise InvalidStyle(
-            f"No style field {', '.join(repr(prefix + name) for name in unknown)}; the fields are {', '.join(sorted(names))}"
+            f"No style field {', '.join(repr(at + name) for name in unknown)}; the fields are {', '.join(sorted(defaults))}"
         )
+    laid = dict(defaults)
+    for name, value in given.items():
+        if isinstance(value, dict):
+            if not isinstance(defaults[name], dict):
+                raise InvalidStyle(f"{at}{name}: is one value, not several")
+            value = laid_over(defaults[name], value, f"{at}{name}.")
+        laid[name] = value
+    return laid
 
 
 class PresetStore:

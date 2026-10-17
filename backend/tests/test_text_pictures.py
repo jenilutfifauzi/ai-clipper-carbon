@@ -56,7 +56,7 @@ def test_a_picture_is_clean_transparency_round_its_ink_and_made_once_for_its_loo
     # Nor does turning or fading it, or scaling it down.
     turned = {"x": 300, "y": 1500, "rotation": 30, "opacity": 0.5, "scale": 0.6}
     [faded] = preview(client, job, moved, {"text_layers": [title(text="Halo Ägypten", style=white, transform=turned)]})["plan"]["texts"]
-    assert faded["image"] == event["image"] and faded["look"] == event["look"]
+    assert faded["image"] == event["image"] and faded["picture_key"] == event["picture_key"]
     # Another colour is another picture.
     [red] = preview(client, job, moved, {"text_layers": [title(text="Halo Ägypten", style=white | {"colour": "#FF0000"})]})["plan"]["texts"]
     assert red["image"] != event["image"]

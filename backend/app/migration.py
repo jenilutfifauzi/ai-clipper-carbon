@@ -28,7 +28,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from app.candidates import MAX_SCALE, MIN_SCALE, TextLayer
+from app.candidates import MAX_SCALE, MIN_SCALE, MIN_TEXT_SIZE, TextLayer
 from app.pictures import cover_scale, fitted
 from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, font_metrics, text_event, without_emoji
 
@@ -47,8 +47,6 @@ TEXT_PAD_Y = 0.22
 TEXT_RADIUS = 0.25
 # The font it was set in when it had none saved: the default Face's.
 _OLD_TEXT_FONT = "montserrat-extrabold"
-# The least size a Text Style has (app/candidates.py).
-_MIN_TEXT_SIZE = 16
 # Its size when it had none saved, and its look's fields by the Text Style's (and its plate's) names.
 _OLD_TEXT_SIZE = 80
 _OLD_TEXT_STYLE = {
@@ -151,7 +149,7 @@ def _shrunk_text(data: dict[str, Any], size: float) -> tuple[float, float] | Non
     if (widest + padded) * size <= room:
         return None
     # Never under the least size a Text Style has (as it was, it would be wider than the frame).
-    shrunk = max(math.floor(room / (widest + padded) * 10) / 10, _MIN_TEXT_SIZE)
+    shrunk = max(math.floor(room / (widest + padded) * 10) / 10, MIN_TEXT_SIZE)
     return shrunk, widest * shrunk
 
 

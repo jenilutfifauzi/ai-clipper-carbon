@@ -4,7 +4,7 @@ the owner imports others, kept for every Job in DATA_DIR/fonts. Each render give
 needs through one `fontsdir` (`gather`), and the browser's preview loads each Face's file from
 GET /api/fonts/{id}, so that both set the same glyphs.
 
-One more bundled Face, FALLBACK_FONT (CJK), is never offered for a style to name: a Text Layer's
+One more bundled Face, FALLBACK_FACE (CJK), is never offered for a style to name: a Text Layer's
 characters its own Face hasn't got are set in it (docs/adr/0010), so that libass's own fallback to
 the system's fonts is never used.
 
@@ -21,8 +21,8 @@ planner's cache of measures) are called whenever its Faces change.
 import hashlib
 import re
 import threading
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from functools import cache
 from io import BytesIO
@@ -32,6 +32,7 @@ from pydantic import TypeAdapter
 
 from app.config import FONTS_DIR
 from app.library import Index
+from app.listeners import Listeners
 from app.storage import write_atomic
 
 # In DATA_DIR, with its index.
@@ -161,8 +162,8 @@ _BUNDLED = [
 BUNDLED_IDS = [face_id for face_id, _ in _BUNDLED]
 # The bundled Face a Text Layer's characters its Face hasn't got are set in: Chinese, and Japanese
 # kana and kanji. Not one a style names, nor listed.
-FALLBACK_FONT = "noto-sans-sc-bold"
-_FALLBACK = (FALLBACK_FONT, "NotoSansSC-Bold.otf")
+FALLBACK_FACE = "noto-sans-sc-bold"
+_FALLBACK = (FALLBACK_FACE, "NotoSansSC-Bold.otf")
 _FACES = TypeAdapter(list[Face])
 
 
@@ -174,7 +175,7 @@ class Faces:
         self.folder = folder
         self._index = None if folder is None else Index(folder / INDEX_FILE, _FACES)
         self._lock = threading.Lock()
-        self._listeners: tuple[Callable[[], None], ...] = ()
+        self._listeners = Listeners()
         # The imported Faces as last read, and the index's state they were read at.
         self._read: tuple[tuple[int, int] | None, list[Face]] = (None, [])
 
@@ -185,8 +186,8 @@ class Faces:
         return [*(_bundled(face_id) for face_id in BUNDLED_IDS), *self._imported()]
 
     def find(self, face_id: str) -> Face | None:
-        """The Face `face_id`, FALLBACK_FONT's too, or None."""
-        if face_id in BUNDLED_IDS or face_id == FALLBACK_FONT:
+        """The Face `face_id`, FALLBACK_FACE's too, or None."""
+        if face_id in BUNDLED_IDS or face_id == FALLBACK_FACE:
             return _bundled(face_id)
         return next((face for face in self._imported() if face.id == face_id), None)
 
@@ -254,7 +255,7 @@ class Faces:
     def delete(self, face_id: str) -> None:
         """Remove an imported Face and its file. BundledFace for a bundled one. (Whether anything still
         names it is for the caller to check.)"""
-        if face_id in BUNDLED_IDS or face_id == FALLBACK_FONT:
+        if face_id in BUNDLED_IDS or face_id == FALLBACK_FACE:
             raise BundledFace(face_id)
         with self._lock:
             face = self.get(face_id)
@@ -277,17 +278,10 @@ class Faces:
             (folder / f"{face_id}{file.suffix}").symlink_to(file.resolve())
         return folder
 
-    @contextmanager
-    def watch(self, listener: Callable[[], None]) -> Iterator[None]:
+    def watch(self, listener: Callable[[], None]) -> AbstractContextManager[None]:
         """Call `listener` each time this process adds or removes Faces, until the block ends. It is
         called on the thread making the change, and must return quickly."""
-        with self._lock:
-            self._listeners = (*self._listeners, listener)
-        try:
-            yield
-        finally:
-            with self._lock:
-                self._listeners = tuple(other for other in self._listeners if other is not listener)
+        return self._listeners.watching(listener)
 
     def _imported(self) -> list[Face]:
         """The imported Faces, read again when the index has changed since they were last read."""
@@ -304,17 +298,16 @@ class Faces:
             faces = [replace(face, file=folder / face.file.name) for face in self._index.all()]
             self._read = (state, faces)
             if seen is not None or faces:
-                _notify()
+                _changes.notify()
         return faces
 
     def _changed(self) -> None:
-        _notify()
-        for listener in self._listeners:
-            listener()
+        _changes.notify()
+        self._listeners.notify()
 
 
 _registry = Faces()
-_on_change: list[Callable[[], None]] = []
+_changes = Listeners()
 
 
 def registry() -> Faces:
@@ -326,18 +319,13 @@ def use(folder: Path) -> Faces:
     """Make the registry the bundled Faces and those imported into `folder`, and return it."""
     global _registry
     _registry = Faces(folder)
-    _notify()
+    _changes.notify()
     return _registry
 
 
 def on_change(listener: Callable[[], None]) -> None:
     """Call `listener` (which clears a cache) whenever the Faces change."""
-    _on_change.append(listener)
-
-
-def _notify() -> None:
-    for listener in _on_change:
-        listener()
+    _changes.add(listener)
 
 
 def font(face_id: str) -> Face:
@@ -367,7 +355,7 @@ def _read_bundled(face_id: str, file: Path) -> Face:
     data = file.read_bytes()
     font = _open(data)
     face = _describe(font, face_id, file, bundled=True)
-    fallback = face_id == FALLBACK_FONT
+    fallback = face_id == FALLBACK_FACE
     return replace(
         face,
         label=face.label.removesuffix(" Regular"),

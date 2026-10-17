@@ -54,7 +54,9 @@ def drawn(event: TextEvent) -> dict:
 
 def as_before(event: dict, before: dict, keys: tuple[str, ...]) -> None:
     """`event` (as JSON) plans `keys` as `before` did: the same, its anchors to within a hundredth of a
-    pixel (a layer once set smaller has its plate's padding saved to the hundredth at its size)."""
+    pixel (a layer once set smaller has its plate's padding saved to the hundredth at its size), and
+    its size, now its style's, as the size it was set at."""
+    event = event | {"size": event["layout"]["style"]["size"]}
     assert {key: event[key] for key in keys if key != "anchors"} == {key: before[key] for key in keys if key != "anchors"}, event
     for anchor, old in zip(event["anchors"], before["anchors"], strict=True):
         assert anchor == pytest.approx(old, abs=0.01), event
@@ -111,7 +113,7 @@ def test_without_text_layers_the_plan_and_the_script_are_unchanged():
 def test_a_text_layer_is_centred_on_its_transform_and_measured_in_its_face():
     event = text_event(layer({"x": 400, "y": 700}, {"size": 80}, text="Halo dunia"), 10)
     width = font_metrics(event.layer.style.font).width("Halo dunia", 80)
-    assert event.size == 80 and event.lines == ["Halo dunia"]
+    assert event.layout.style.size == 80 and event.lines == ["Halo dunia"]
     assert event.area.width == pytest.approx(width, abs=1)
     assert event.area.x + event.area.width / 2 == pytest.approx(400, abs=1)
     assert event.area.y + event.area.height / 2 == pytest.approx(700, abs=1)
@@ -139,7 +141,7 @@ def test_a_block_plate_pads_the_text_by_its_pixels():
     plain = text_event(layer(style={"size": 80}), 10)
     block = {"shape": "block", "padding_x": 30, "padding_y": 10, "radius": 12}
     boxed = text_event(layer(style={"size": 80, "plate": block}), 10)
-    assert boxed.box == boxed.area and boxed.radius == 12
+    assert boxed.box == boxed.area and boxed.layout.radius == 12
     assert boxed.area.width - plain.area.width in (60, 61) and boxed.area.height - plain.area.height in (20, 21)
 
 
@@ -147,7 +149,7 @@ def test_a_sentence_wider_than_the_frame_breaks_between_words_at_its_size_inside
     text = "Ini adalah kalimat yang sangat panjang sekali"
     wide = text_event(layer(style={"size": 200, "plate": {"shape": "block", "padding_x": 30}}, text=text), 10)
     metrics = font_metrics(wide.layer.style.font)
-    assert wide.size == 200 and len(wide.lines) > 1
+    assert len(wide.lines) > 1
     assert " ".join(wide.lines) == text
     # Each line as long as fits the frame less TEXT_MARGIN and the padding either side: the next
     # word would not.
@@ -163,7 +165,7 @@ def test_a_wrap_width_breaks_lines_at_it_keeps_newlines_and_breaks_an_over_long_
     style = {"size": 60, "wrap_width": 400}
     wrapped = text_event(layer(style=style, text="Satu dua tiga empat lima enam\nTujuh"), 10)
     metrics = font_metrics(wrapped.layer.style.font)
-    assert wrapped.size == 60 and len(wrapped.lines) > 2 and wrapped.lines[-1] == "Tujuh"
+    assert len(wrapped.lines) > 2 and wrapped.lines[-1] == "Tujuh"
     assert " ".join(wrapped.lines[:-1]) == "Satu dua tiga empat lima enam"
     assert all(metrics.width(line, 60) <= 400 for line in wrapped.lines)
     # The box is the wrap width wide, its lines aligned inside it.
@@ -213,9 +215,9 @@ def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_wraps
     # It wraps only once its tracked width is too wide for the frame, never set smaller.
     words = "Kalimat yang cukup panjang"
     fits = text_event(layer(style={"size": 70}, text=words), 10)
-    assert fits.size == 70 and fits.lines == [words]
+    assert fits.lines == [words]
     wrapped = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10)
-    assert wrapped.size == 70 and len(wrapped.lines) == 2 and " ".join(wrapped.lines) == words
+    assert len(wrapped.lines) == 2 and " ".join(wrapped.lines) == words
     assert all(metrics.width(line, 70, 20) <= OUTPUT_WIDTH - 2 * TEXT_MARGIN for line in wrapped.lines)
     assert wrapped.layout.style.tracking == 20
 
@@ -398,7 +400,7 @@ def test_a_scaled_and_turned_text_layer_keeps_its_layout_and_turns_its_bounds_ab
     plain = text_event(layer({"x": 500, "y": 900}, text="Halo dunia"), 10)
     turned = text_event(layer({"x": 500, "y": 900, "scale": 2, "rotation": 90, "opacity": 0.4}, text="Halo dunia"), 10)
     # The same lines, size and area: scaling neither rewraps nor resizes it.
-    assert (turned.lines, turned.size, turned.area) == (plain.lines, plain.size, plain.area)
+    assert (turned.lines, turned.area) == (plain.lines, plain.area)
     assert turned.layout.anchors == plain.layout.anchors
     picture = turned.picture
     assert (picture.rotation, picture.opacity) == (90, 0.4)
@@ -416,10 +418,10 @@ def test_a_text_layers_picture_is_made_at_the_next_scale_up_and_is_one_picture_w
         return text_event(layer({"scale": scale}, {"size": 60}), 10)
 
     assert [made(scale).layout.scale for scale in (0.3, 1, 1.2, 1.5, 2.5, 3, 5, 8)] == [1, 1, 1.5, 1.5, 3, 3, 6, 8]
-    # Scaled within one step, it is the same picture; past it, another of the same look.
+    # Scaled within one step, it is the same picture; past it, another of the same key.
     assert made(2.2).image == made(2.9).image != made(3.1).image
-    assert made(2.2).look == made(3.1).look == made(0.5).look
-    assert text_event(layer({"scale": 2.2}, {"size": 61}), 10).look != made(2.2).look
+    assert made(2.2).picture_key == made(3.1).picture_key == made(0.5).picture_key
+    assert text_event(layer({"scale": 2.2}, {"size": 61}), 10).picture_key != made(2.2).picture_key
     # Drawn at its own scale whatever its picture's.
     assert made(2.2).picture.width == pytest.approx(2.2 * made(1).picture.width, abs=2)
     assert made(2.2).picture.item_size == made(2.9).picture.item_size

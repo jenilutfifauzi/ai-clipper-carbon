@@ -80,7 +80,7 @@ GOOGLE_VARIABLE_FONTS = [
 ]
 # Each licence directory's licence file, and the prefix it is saved under with its family's name.
 LICENCES = {"ofl": ("OFL.txt", "OFL"), "apache": ("LICENSE.txt", "LICENSE")}
-# The Face Text Layers fall back to for Chinese and Japanese (app/fonts.py's FALLBACK_FONT), from Noto
+# The Face Text Layers fall back to for Chinese and Japanese (app/fonts.py's FALLBACK_FACE), from Noto
 # CJK's release Sans2.004.
 NOTO_CJK = "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004"
 # The emoji Text Layers draw (app/emoji.py): Noto Color Emoji's 512 px images, from its release

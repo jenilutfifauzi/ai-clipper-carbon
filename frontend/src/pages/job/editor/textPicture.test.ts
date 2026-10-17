@@ -24,18 +24,18 @@ const picture = (centre: [number, number], changes: Partial<Picture> = {}): Pict
   ...changes,
 });
 
-// The plan's event of a layer whose look is the picture `image` of `look`, centred at `centre`.
-const event = (image: string, centre: [number, number] = [540, 960], changes: Partial<Picture> = {}, look = image.slice(0, 3)) =>
-  ({ image, look, picture: picture(centre, changes) }) as TextEvent;
+// The plan's event of a layer drawn as the picture `image` of the key `key`, centred at `centre`.
+const event = (image: string, centre: [number, number] = [540, 960], changes: Partial<Picture> = {}, key = image.slice(0, 3)) =>
+  ({ image, picture_key: key, picture: picture(centre, changes) }) as TextEvent;
 
-// The pictures loaded, the largest of each look.
-const loadedOf = (...loaded: { look: string; url: string; made: number }[]) => {
-  const largest = new Map(loaded.map((each) => [each.look, { url: each.url, made: each.made }]));
-  return (look: string): Loaded | undefined => largest.get(look);
+// The pictures loaded, the largest of each key.
+const loadedOf = (...loaded: { key: string; url: string; made: number }[]) => {
+  const largest = new Map(loaded.map((each) => [each.key, { url: each.url, made: each.made }]));
+  return (key: string): Loaded | undefined => largest.get(key);
 };
 
 describe("a Text Layer's picture in the preview", () => {
-  test("is asked for by its look alone: moving, turning or fading the layer keeps it, a new colour is another", () => {
+  test("is asked for by its picture alone: moving, turning or fading the layer keeps it, a new colour is another", () => {
     const here = wantedPicture("job 1", event("abc.png"));
     expect(here).toMatchObject({ url: "/api/jobs/job%201/texts/abc.png", width: 300, height: 160 });
     for (const changes of [{}, { rotation: 30 }, { opacity: 0.4 }]) {
@@ -47,21 +47,21 @@ describe("a Text Layer's picture in the preview", () => {
   test("keeps the last picture on screen until the new one has loaded", () => {
     const before = wantedPicture("j", event("abc.png"));
     const after = wantedPicture("j", event("def.png"));
-    const loaded = loadedOf({ look: before.look, url: before.url, made: 300 });
+    const loaded = loadedOf({ key: before.key, url: before.url, made: 300 });
     expect(pictureToShow(null, before, loaded)).toEqual({ url: before.url, width: 300, height: 160 });
     expect(needsLoading(after, loaded)).toBe(true);
     const shown = pictureToShow(null, before, loaded);
     expect(pictureToShow(shown, after, loaded)).toEqual(shown);
-    const both = loadedOf({ look: before.look, url: before.url, made: 300 }, { look: after.look, url: after.url, made: 300 });
+    const both = loadedOf({ key: before.key, url: before.url, made: 300 }, { key: after.key, url: after.url, made: 300 });
     expect(pictureToShow(shown, after, both)).toEqual({ url: after.url, width: 300, height: 160 });
     // Nothing is drawn before the first has loaded.
     expect(pictureToShow(null, after, () => undefined)).toBeNull();
   });
 
-  test("scaled down, it draws the larger picture of its look it has; scaled up past it, it asks for a larger one", () => {
+  test("scaled down, it draws the larger picture of its key it has; scaled up past it, it asks for a larger one", () => {
     // Made at scale 3 (900 px wide), the layer now at scale 2.5.
     const large = wantedPicture("j", event("abc-3.png", [540, 960], { width: 750, height: 400, item_size: [900, 480] }, "abc"));
-    const loaded = loadedOf({ look: large.look, url: large.url, made: 900 });
+    const loaded = loadedOf({ key: large.key, url: large.url, made: 900 });
     // Scaled down to 1.2: its picture would be made at 1.5, but the one at 3 is drawn, smaller.
     const smaller = wantedPicture("j", event("abc-1.5.png", [540, 960], { width: 360, height: 192, item_size: [450, 240] }, "abc"));
     expect(needsLoading(smaller, loaded)).toBe(false);

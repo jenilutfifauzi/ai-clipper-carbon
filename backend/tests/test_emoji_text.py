@@ -46,7 +46,7 @@ def em(size: float = 100) -> float:
 def squares(event: TextEvent) -> list[tuple[str, tuple[float, float, float]]]:
     """Each emoji's image and square in the layer's picture, at scale 1."""
     return [
-        (run.image, emoji_square(run, baseline, event.layout.size))
+        (run.image, emoji_square(run, baseline, event.layout.style.size))
         for line, (_, baseline) in zip(event.layout.runs, event.layout.anchors)
         for run in line
         if run.image
@@ -79,7 +79,7 @@ def test_an_emoji_is_a_run_of_its_own_one_em_wide_followed_by_the_text():
     assert runs(event) == [[("🔥", FIRE), ("WAJIB TONTON", None)]]
     [[fire, text]] = event.layout.runs
     metrics = font_metrics(STYLE_FONT)
-    assert fire.font == STYLE_FONT
+    assert fire.face == STYLE_FONT
     assert fire.width == pytest.approx(em(), abs=0.01)
     # The space after it is room between the two.
     assert text.x - fire.x == pytest.approx(em() + metrics.width(" ", 100), abs=0.01)
@@ -183,7 +183,7 @@ def test_a_picture_made_larger_draws_its_emoji_as_large_as_its_text():
     layout = replace(text_event(layer("🔥"), 10).layout, scale=3.0)
     pixels = rasterised(load_settings().ffmpeg_bin, layout)
     [[run]] = layout.runs
-    _, top, side = emoji_square(run, layout.anchors[0][1], layout.size)
+    _, top, side = emoji_square(run, layout.anchors[0][1], layout.style.size)
     drawn = np.nonzero(pixels[..., 3] > 128)
     # The disc is 3 times its square at scale 1, less the stand-in's edge of transparency.
     assert drawn[1].max() - drawn[1].min() + 1 == pytest.approx(3 * side * 124 / 128, abs=3)
@@ -213,7 +213,7 @@ def test_a_rendered_frame_and_the_preview_show_the_emoji_where_the_plan_places_i
     # The preview's picture (at scale 1) has it in its colours, in its square.
     picture = picture_of(client, job, event).astype(np.uint8)
     baseline = event["layout"]["anchors"][0][1]
-    x, top, side = emoji_square(TextRun(**fire), baseline, event["layout"]["size"])
+    x, top, side = emoji_square(TextRun(**fire), baseline, event["layout"]["style"]["size"])
     for quarter, colour in zip(quarters(picture, x, top, side), QUARTERS[FIRE]):
         assert share(quarter, colour) > 0.9, colour
 
