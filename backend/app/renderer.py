@@ -79,9 +79,12 @@ delayed to where it is heard, then mixed with the Clip's own sound (at its volum
 loudness is measured and normalized, so that the mix lands at −14 LUFS.
 Without music, and at its own volume, the Clip's sound goes as it did.
 
-Text Layers are drawn by the same script too, each in its own style and its own pair of ASS layers
-(its box, then its lines) above the captions' and the one before's, animated as the hook is. With
-any, the hook's layers move above theirs, so that it stays on top; without, the script is as before.
+Text Layers are pictures (docs/adr/0010): each one's, made by app/text_pictures.py before the render,
+is one more input, drawn as an Overlay's image is (`_picture`) while it shows, over the captions and
+under the hook, in their order. With any, the script is cut in two: the Watermark's text and the
+captions are burned before them, and the hook after. One that comes on or goes off as the hook does
+(Fade, Pop, Slide) is drawn by a frame process, as a keyed Overlay is, its picture faded, scaled and
+moved by the hook's curves (`text_at`). Without Text Layers, the command is as it was.
 """
 
 import json
@@ -120,7 +123,7 @@ from app.planner import (
     font_metrics,
     on_frame,
 )
-from app.candidates import Keyframe, Shadow, TextLayer, TextStyle
+from app.candidates import Keyframe, Shadow, TextLayer
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -152,35 +155,47 @@ class Renderer:
         progress: Callable[[float], None] = lambda done: None,
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
+        pictures: dict[str, Path] | None = None,
     ) -> str:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
         (JPEG), and return the video encoder that made them: the first of RenderTuning.encoders that
         succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1. `logo`
         is the PNG of the plan's Logo Watermark, which isn't drawn without it; `files` has the file of
-        each Media Library item the plan plays (songs and videos), by its id.
+        each Media Library item the plan plays (songs and videos), by its id; `pictures` the picture of
+        each of its Text Layers (app/text_pictures.py), by its name.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
         """
         _check(plan)
         files = files or {}
+        pictures = pictures or {}
+        if missing := [event.layer.id for event in plan.texts if event.image not in pictures]:
+            raise RuntimeError(f"The pictures of Text Layers {', '.join(missing)} weren't made")
         loudness = self._measure(source, plan, files)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
-        drawn = plan.captions or plan.hook or plan.texts or _text_watermark(plan)
-        subtitles = video.with_name(f".{video.stem}.part.ass") if drawn else None
+        # With Text Layers, the script is cut in two about them: what they are drawn over, then the hook.
+        below, above = (replace(plan, hook=None), replace(plan, captions=[], watermark=None)) if plan.texts else (plan, None)
+        scripts = {
+            name: (video.with_name(f".{video.stem}.part{suffix}.ass"), script)
+            for name, suffix, script in (("below", "", below), ("above", "-above", above))
+            if script is not None and (script.captions or script.hook or _text_watermark(script))
+        }
         fonts = video.with_name(f".{video.stem}.part.fonts")
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
-        keyed = _keyed_items(plan, files, source)
+        keyed = _keyed_items(plan, files, source, pictures)
         failures = []
         try:
-            if subtitles is not None:
+            if scripts:
                 registry().gather(_faces(plan), fonts)
-                subtitles.write_text(_ass(plan), encoding="utf-8")
+            for path, script in scripts.values():
+                path.write_text(_ass(script), encoding="utf-8")
+            subtitles, over = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
             for encoder in self.tuning.encoders:
                 feeds = _feeds(plan, keyed, self.ffmpeg)
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over)
                 stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
@@ -190,9 +205,8 @@ class Renderer:
                 logger.warning("Rendering with %s failed: %s", encoder, stderr)
                 failures.append(f"{encoder}: {last_lines(stderr)}")
         finally:
-            for part in (*parts, subtitles):
-                if part is not None:
-                    part.unlink(missing_ok=True)
+            for part in (*parts, *(path for path, _ in scripts.values())):
+                part.unlink(missing_ok=True)
             shutil.rmtree(fonts, ignore_errors=True)
         raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
@@ -240,10 +254,14 @@ class Renderer:
         files: dict[str, Path] | None = None,
         feeds: "Feeds | None" = None,
         fonts: Path = FONTS_DIR,
+        pictures: dict[str, Path] | None = None,
+        above: Path | None = None,
     ) -> list[str]:
         """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
-        Overlays', and its keyed Scenes', by their places among them); a keyed one without
-        is drawn still, at its constants. `fonts` holds the Faces the `subtitles` set text in."""
+        Overlays', its keyed Scenes' and its animated Text Layers', by their places among them); a
+        keyed one without is drawn still, at its constants. `fonts` holds the Faces the `subtitles`
+        set text in, burned under the Text Layers (drawn from `pictures`, by their names), and `above`
+        over them."""
         tuning = self.tuning
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
@@ -252,11 +270,12 @@ class Renderer:
         before_music = count + (1 if logo is not None else 0)
         inputs, index = _music_inputs(plan, files or {}, first=before_music)
         layers, layered = _overlay_inputs(plan, files or {}, before_music + len(index), feeds)
-        pictures, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
+        scene_inputs, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
+        texts, written = _text_inputs(plan, pictures or {}, before_music + len(index) + len(layered) + len(drawn), feeds)
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
-        if any(feed is not None for _, _, feed in layered):
+        if any(feed is not None for _, _, feed in layered + written):
             # At n / fps exactly, the times the Overlays' frame processes draw their frames at.
             frame += f";[frame]fps={_rate(plan)}[timed]"
             joined = "[timed]"
@@ -266,10 +285,17 @@ class Renderer:
         if logo is not None and plan.watermark is not None:
             frame += f";{_logo_overlay(plan.watermark, joined, '[marked]', count)}"
             joined = "[marked]"
-        # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's timeline.
-        burned = "" if subtitles is None else (
-            f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(fonts))},"
-        )
+        # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's
+        # timeline; the Text Layers between them.
+        if written:
+            if subtitles is not None:
+                frame += f";{joined}{_burned(subtitles, fonts)}[captioned]"
+                joined = "[captioned]"
+            for i, (event, number, feed) in enumerate(written):
+                frame += f";{_text_layer(event, joined, f'[text{i}]', number, i, feed)}"
+                joined = f"[text{i}]"
+            subtitles = above
+        burned = "" if subtitles is None else f"{_burned(subtitles, fonts)},"
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         mix = _audio_mix(plan, index, tuning.audio_rate, sound)
         heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
@@ -290,7 +316,7 @@ class Renderer:
             codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *pictures,
+            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *texts,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
@@ -706,6 +732,87 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}")
 
 
+def _text_inputs(
+    plan: RenderPlan, pictures: dict[str, Path], first: int, feeds: "Feeds"
+) -> tuple[list[str], list[tuple[TextEvent, int, FrameFeed | None]]]:
+    """The input options of the plan's Text Layers, one each, numbered from `first` (its picture, or
+    an animated one's frames, from the pipe of its frame process in `feeds`), and each Text Layer
+    with its input's number and its frame process."""
+    inputs: list[str] = []
+    drawn = []
+    for i, event in enumerate(plan.texts):
+        feed = feeds.get(("text", i))
+        inputs += _piped(plan, feed) if feed is not None else ["-i", str(pictures[event.image])]
+        drawn.append((event, first + i, feed))
+    return inputs, drawn
+
+
+def _text_layer(event: TextEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
+    """Filters that draw a Text Layer (input `index`) as its picture over the frames `below` while it
+    shows, into `out`: its one picture held, or an animated one's frames, drawn whole by its frame
+    process `feed`, laid at 0, 0. An unturned picture whose corner is at an odd pixel is padded by a
+    transparent one, since an overlay onto 4:2:0 frames moves a picture to the even pixel before."""
+    shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
+    name = f"text{number}"
+    if feed is not None:
+        return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}[{name}];{below}[{name}]overlay=0:0:{shows}:eof_action=pass{out}"
+    picture = event.picture
+    padded = ""
+    if picture.rotation % 360 == 0:
+        across = round(picture.centre[0] - picture.width / 2) % 2
+        down = round(picture.centre[1] - picture.height / 2) % 2
+        if across or down:
+            padded = f",format=rgba,pad=iw+{2 * across}:ih+{2 * down}:{across}:{down}:color=black@0"
+    return _picture(picture, f"[{index}:v]", below, out, name, padded, f"{shows}:eof_action=repeat")
+
+
+def text_at(event: TextEvent, time: float) -> Picture:
+    """A Text Layer's picture as drawn at `time` seconds into the Clip: faded, scaled about its centre
+    and moved down as its animations have it then (`text_look`)."""
+    opacity, scale, below = text_look(event, time)
+    picture = event.picture
+    x, y = picture.centre
+    return replace(
+        picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below), opacity=picture.opacity * opacity
+    )
+
+
+def text_look(event: TextEvent, time: float) -> tuple[float, float, float]:
+    """A Text Layer's opacity, scale and how far below its place it is at `time` seconds into the
+    Clip, coming on and going off as the hook does (_hook_phases, _hook_motion): faded in and out
+    over its animation_ms (Fade alone), or for _hook_ends' time grown from POP_FROM percent (Pop) or
+    risen SLIDE_PX (Slide) as it fades, each in a straight line. The preview's twin is hookLook in
+    frontend/src/pages/job/editor/ClipPreview.tsx."""
+    layer = event.layer
+    moving = {Animation.POP, Animation.SLIDE}
+    if layer.animation_in not in moving and layer.animation_out not in moving:
+        ms = layer.animation_ms / 1000
+        on = (time - event.start) / ms if layer.animation_in == Animation.FADE else 1.0
+        off = (event.end - time) / ms if layer.animation_out == Animation.FADE else 1.0
+        return min(max(min(on, off), 0.0), 1.0), 1.0, 0.0
+    on, off = _hook_ends(event, layer)
+    if on and time < event.start + on:
+        return _animated(layer.animation_in, (time - event.start) / on)
+    if off and time >= event.end - off:
+        return _animated(layer.animation_out, (event.end - time) / off)
+    return 1.0, 1.0, 0.0
+
+
+def _animated(animation: Animation, shown: float) -> tuple[float, float, float]:
+    """The opacity, scale and drop of an element `shown` of the way on by `animation`."""
+    shown = min(max(shown, 0.0), 1.0)
+    if animation == Animation.POP:
+        return shown, (POP_FROM + (100 - POP_FROM) * shown) / 100, 0.0
+    if animation == Animation.SLIDE:
+        return shown, 1.0, SLIDE_PX * (1 - shown)
+    return shown, 1.0, 0.0
+
+
+def _burned(subtitles: Path, fonts: Path) -> str:
+    """The filter that burns the ASS script `subtitles` into the frames, in the Faces in `fonts`."""
+    return f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(fonts))}"
+
+
 def _scene_inputs(plan: RenderPlan, first: int, feeds: "Feeds") -> tuple[list[str], dict[int, int]]:
     """The input options of the frame processes in `feeds` of the plan's keyed Scenes, numbered from
     `first`, and each one's input number by the Scene's place among the plan's Scenes."""
@@ -731,16 +838,19 @@ def _rate(plan: RenderPlan) -> str:
     return f"{plan.fps if plan.fps > 0 else 30:.6g}"
 
 
-# A keyed picture of the plan: ("overlay", its place among the Overlays) or ("scene", its Scene's
-# place among the Scenes); and each one's frame process.
+# A keyed picture of the plan: ("overlay", its place among the Overlays), ("scene", its Scene's
+# place among the Scenes) or ("text", an animated Text Layer's place among them); and each one's
+# frame process.
 Keyed = tuple[str, int]
 Feeds = dict[Keyed, FrameFeed]
 
 
-def _keyed_items(plan: RenderPlan, files: dict[str, Path], source: Path) -> dict[Keyed, np.ndarray | Path]:
+def _keyed_items(
+    plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None
+) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
     an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's), or the `source`
-    for a Manual Scene."""
+    for a Manual Scene; and an animated Text Layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {
         ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
@@ -751,7 +861,15 @@ def _keyed_items(plan: RenderPlan, files: dict[str, Path], source: Path) -> dict
             items[("scene", i)] = source
         elif media in files:
             items[("scene", i)] = files[media]
+    for i, event in enumerate(plan.texts):
+        if _animated_text(event) and pictures and event.image in pictures:
+            items[("text", i)] = read_image(pictures[event.image])
     return items
+
+
+def _animated_text(event: TextEvent) -> bool:
+    """Whether a Text Layer comes on or goes off animated, so that a frame process draws it."""
+    return event.layer.animation_in != Animation.NONE or event.layer.animation_out != Animation.NONE
 
 
 def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]:
@@ -791,6 +909,12 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             length = scene.end - scene.start
             video = VideoDecode(ffmpeg, item, picture, 0.0, length, scenes[i][1], rate)
             feeds[(kind, i)] = FrameFeed(PictureFrames(picture), 0.0, length, rate, video)
+            continue
+        if kind == "text":
+            text = plan.texts[i]
+            assert isinstance(item, np.ndarray)
+            frames = PictureFrames(text.picture, item, sampled=lambda time, text=text: text_at(text, time))
+            feeds[(kind, i)] = FrameFeed(frames, text.start, text.end, rate)
             continue
         event = plan.overlays[i]
         if isinstance(item, Path):
@@ -914,7 +1038,7 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
 
 def _faces(plan: RenderPlan) -> set[str]:
     """The Faces the plan's ASS script (_ass) sets text in."""
-    faces = {event.layer.style.font for event in plan.texts}
+    faces = set()
     if plan.captions:
         faces.add(plan.caption_style.font)
     if plan.hook:
@@ -927,7 +1051,7 @@ def _faces(plan: RenderPlan) -> set[str]:
 def _ass(plan: RenderPlan) -> str:
     """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
     for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events).
-    A text Watermark comes first, under them; Text Layers come between them (_text_events)."""
+    A text Watermark comes first, under them."""
     caption, hook = plan.caption_style, plan.hook_style
     watermark = _text_watermark(plan)
     script = [
@@ -951,7 +1075,6 @@ def _ass(plan: RenderPlan) -> str:
         f"{_style_colour(hook.outline_colour)},{_style_colour(hook.shadow_colour)},0,0,0,0,100,100,0,0,1,"
         f"{hook.outline},{hook.shadow},5,0,0,0,1",
         *([_watermark_style(plan.watermark_style)] if watermark else []),
-        *(_text_style(f"Text{i}", event.layer.style) for i, event in enumerate(plan.texts)),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -960,63 +1083,9 @@ def _ass(plan: RenderPlan) -> str:
         script.append(_watermark_event(watermark, plan.watermark_style, plan.duration))
     for event in plan.captions:
         script.extend(_caption_events(event, caption))
-    for i, event in enumerate(plan.texts):
-        script.extend(_text_events(event, f"Text{i}", TEXT_LAYER_BASE + 2 * i))
     if plan.hook:
-        # Above every Text Layer's layers.
-        script.extend(_hook_events(plan.hook, hook, 2 * len(plan.texts) + 1 if plan.texts else 0))
+        script.extend(_hook_events(plan.hook, hook))
     return "\n".join(script) + "\n"
-
-
-# The ASS layer of the first Text Layer's box (its lines are one above), above the captions' 0 and 1.
-TEXT_LAYER_BASE = 2
-
-
-def _text_style(name: str, style: TextStyle) -> str:
-    text, edge = _style_colour(style.colour), _style_colour(style.stroke_colour)
-    return (
-        f"Style: {name},{font(style.font).family},{style.size},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
-        f"{style.stroke_width},0,5,0,0,0,1"
-    )
-
-
-def _text_events(event: TextEvent, style: str, base: int) -> list[str]:
-    """A Text Layer's Dialogue events in its `style`: its plate drawn on ASS layer `base` and its
-    lines, each centred on its anchor, on the layer above; animated on and off as the hook is
-    (_hook_phases)."""
-    layer = event.layer
-    metrics = font_metrics(layer.style.font)
-    size = event.size
-    elements: list[tuple[int, int, float, float, str, str | None, str, str]] = []
-    if event.box is not None:
-        box, plate = event.box, layer.style.plate
-        alpha = f"&H{round(255 * (1 - plate.opacity)):02X}&"
-        tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(plate.colour)}\\alpha{alpha}"
-        drawing = f"{_rounded_box(box.width, box.height, event.radius)}{{\\p0}}"
-        if Animation.POP in (layer.animation_in, layer.animation_out):
-            elements.append((base, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
-        else:
-            elements.append((base, 7, box.x, box.y, "g", alpha, tags, drawing))
-    for line, (x, baseline) in zip(event.lines, event.anchors):
-        if not line:
-            continue
-        centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
-        tags = f"\\fs{size:g}" if size != layer.style.size else ""
-        elements.append((base + 1, 5, x, centre_y, ".1f", None, tags, _ass_text(line)))
-    events = []
-    for order, (ass_layer, align, x, y, y_format, alpha, tags, body) in enumerate(elements):
-        for part, (begin, finish, phase) in enumerate(_hook_phases(event, layer)):
-            start, end = _ass_time(begin), _ass_time(finish)
-            if start >= end:
-                continue
-            place, motion = _hook_motion(phase, round((finish - begin) * 1000), x, y, y_format, alpha, layer)
-            # A box's tags (its own alpha) come before the motion's, as the hook's boxes do.
-            if ass_layer == base:
-                text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
-            else:
-                text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
-            events.append((part, order, f"Dialogue: {ass_layer},{start},{end},{style},,0,0,0,,{text}"))
-    return [event for _, _, event in sorted(events)]
 
 
 def _caption_style(style: CaptionStyle) -> str:
@@ -1104,10 +1173,10 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
     )
 
 
-def _hook_events(hook: HookEvent, style: HookStyle, raised: int = 0) -> list[str]:
+def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
     """The hook's Dialogue events: its boxes and its Kicker's pill, drawn, and over them each line and
     the Kicker's text centred on its anchor; then its Quote Mark's badge and marks over everything.
-    All animated on and off as the style says (_hook_phases), on ASS layers 1 to 4, `raised` higher."""
+    All animated on and off as the style says (_hook_phases), on ASS layers 1 to 4."""
     metrics = font_metrics(style.font)
     size = hook.size
     # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
@@ -1172,7 +1241,7 @@ def _hook_events(hook: HookEvent, style: HookStyle, raised: int = 0) -> list[str
                 text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
             else:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
-            events.append((part, order, f"Dialogue: {layer + raised},{start},{end},Hook,,0,0,0,,{text}"))
+            events.append((part, order, f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}"))
     return [event for _, _, event in sorted(events)]
 
 

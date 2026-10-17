@@ -63,10 +63,19 @@ def shadow_room(shadow: Shadow) -> int:
 class PictureFrames:
     """The frames of one keyed `picture`, each drawn into one reused frame of the output's size, of
     an item whose pixels are `image` (RGBA, its whole size), or of a video's frames, each cropped
-    and flipped already (and maybe scaled), `show`n before it is drawn."""
+    and flipped already (and maybe scaled), `show`n before it is drawn. The picture at a time is
+    `sampled` from it: by its motion (`picture_at`) unless another rule is given (a Text Layer's
+    animations, app/renderer.py's `text_at`)."""
 
-    def __init__(self, picture: Picture, image: np.ndarray | None = None, frame: tuple[int, int] = FRAME) -> None:
+    def __init__(
+        self,
+        picture: Picture,
+        image: np.ndarray | None = None,
+        frame: tuple[int, int] = FRAME,
+        sampled: Callable[[float], Picture] | None = None,
+    ) -> None:
         self.picture = picture
+        self.sampled = sampled or (lambda time: picture_at(picture, time))
         self.canvas = np.zeros((frame[1], frame[0], 4), np.uint8)
         # Where the frame before drew, cleared before the next is drawn.
         self.drawn: tuple[int, int, int, int] | None = None
@@ -95,7 +104,7 @@ class PictureFrames:
             x0, y0, x1, y1 = self.drawn
             self.canvas[y0:y1, x0:x1] = 0
             self.drawn = None
-        at = picture_at(self.picture, time)
+        at = self.sampled(time)
         if at.opacity <= 0 or at.width < 0.5 or at.height < 0.5:
             return self.canvas
         frame_width, frame_height = self.canvas.shape[1], self.canvas.shape[0]

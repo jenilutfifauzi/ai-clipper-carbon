@@ -369,7 +369,7 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
 
 
 @pytest.mark.anyio
-async def test_a_text_layers_style_and_transform_are_merged_field_by_field(mcp):
+async def test_a_text_layers_style_and_transform_are_merged_field_by_field_and_the_dry_run_lists_its_picture(mcp, client):
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)
     ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
@@ -386,6 +386,13 @@ async def test_a_text_layers_style_and_transform_are_merged_field_by_field(mcp):
     [changed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {"plate": {"opacity": 0.5}}}]))["text_layers"]
     assert changed["style"]["plate"] == made["style"]["plate"] | {"opacity": 0.5}
     assert changed["transform"] == made["transform"]
+    # The dry run lists its lines, its box and the picture the Clip burns.
+    [shown] = (await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True))["text_layers"]
+    assert shown["lines"] == ["Judul"]
+    bounds = shown["bounds"]
+    assert abs(bounds["x"] + bounds["width"] / 2 - 300) <= 1 and abs(bounds["y"] + bounds["height"] / 2 - 400) <= 1
+    picture = client.get(shown["picture"])
+    assert picture.status_code == 200 and picture.headers["content-type"] == "image/png"
 
     assert "stretched" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"stretch_x": 2}}])
     assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"flip_v": True}}])

@@ -26,6 +26,7 @@ import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
+import { useTextPicture, wantedPicture } from "./textPicture";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
@@ -222,7 +223,7 @@ export function ClipPreview({
                 <TextLayerView
                   key={event.layer.id}
                   event={event}
-                  font={fontById.get(event.layer.style.font)}
+                  jobId={jobId}
                   playback={playback}
                   moving={edit.transform(`text:${event.layer.id}`, event.area)}
                   still={controls?.selected.includes(`text:${event.layer.id}`)}
@@ -603,69 +604,49 @@ function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): 
 }
 
 /**
- * A Text Layer while it is on screen, animated on and off as the hook is, moved by `moving` while
- * dragged. A `still` one (selected in the Advanced Edit) is shown whole while paused in its time, so
- * that it can be seen while it is edited, even on a frame its animation hasn't reached.
+ * A Text Layer while it is on screen: the picture the backend made of it (docs/adr/0010), the same
+ * pixels the Clip burns, placed, turned and faded as its plan's `picture` says, and animated on and
+ * off as the hook is; moved by `moving` while dragged. While a changed look's picture loads, the last
+ * one stays. A `still` one (selected in the Advanced Edit) is shown whole while paused in its time,
+ * so that it can be seen while it is edited, even on a frame its animation hasn't reached.
  */
 function TextLayerView({
   event,
-  font,
+  jobId,
   playback,
   moving,
   still = false,
 }: {
   event: TextEvent;
-  font: FontInfo | undefined;
+  jobId: string;
   playback: Playback;
   moving: string | undefined;
   still?: boolean;
 }) {
-  const layer = event.layer;
-  const { style } = layer;
+  const shown = useTextPicture(wantedPicture(jobId, event));
   const key = useShown(playback, (time, p) => {
     if (still && !p.playing && event.start <= time && time < event.end) return "1 1 0";
-    const look = hookLook(time, event, layer, 0);
+    const look = hookLook(time, event, event.layer, 0);
     return look && look.map((value) => value.toFixed(3)).join(" ");
   });
-  if (!key || !font) return null;
+  if (!key || !shown) return null;
   const [opacity, scale, below] = key.split(" ").map(Number);
-  const { box, area, size } = event;
+  const { picture } = event;
+  const [x, y] = picture.centre;
   return (
-    <g opacity={opacity} transform={moving}>
+    <g opacity={opacity * picture.opacity} transform={moving}>
       <g transform={below ? `translate(0 ${below})` : undefined}>
-      <g style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box", transformOrigin: "center" }}>
-        {/* What the scale grows from: the whole area, as libass grows the box and lines from its middle. */}
-        <rect x={area.x} y={area.y} width={area.width} height={area.height} fill="none" />
-        {box && (
-          <rect
-            x={box.x}
-            y={box.y}
-            width={box.width}
-            height={box.height}
-            rx={event.radius}
-            fill={style.plate.colour}
-            fillOpacity={style.plate.opacity}
+        <g style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformBox: "fill-box", transformOrigin: "center" }}>
+          <image
+            href={shown.url}
+            x={x - shown.width / 2}
+            y={y - shown.height / 2}
+            width={shown.width}
+            height={shown.height}
+            preserveAspectRatio="none"
+            transform={picture.rotation ? `rotate(${picture.rotation} ${x} ${y})` : undefined}
           />
-        )}
-        {event.lines.map((line, i) => (
-          <text
-            key={i}
-            x={event.anchors[i][0]}
-            y={event.anchors[i][1]}
-            textAnchor="middle"
-            fontFamily={fontFamily(font.id)}
-            fontSize={cssFontSize(font, size)}
-            fill={style.colour}
-            stroke={style.stroke_width > 0 ? style.stroke_colour : undefined}
-            strokeWidth={2 * style.stroke_width}
-            strokeLinejoin="round"
-            paintOrder="stroke"
-            style={{ whiteSpace: "pre" }}
-          >
-            {line}
-          </text>
-        ))}
-      </g>
+        </g>
       </g>
     </g>
   );

@@ -52,6 +52,7 @@ from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import StyleOverrides
+from app.text_pictures import TEXTS_DIR
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
 GLOSSARY = REPO_ROOT / "GLOSSARY.md"
@@ -128,7 +129,8 @@ Edits:
   at newlines; one wider than the frame is set smaller. It is never stretched or flipped; its
   transform's scale, rotation and opacity stay 1, 0 and 1, and its style's tracking, wrap_width and
   fixed_height 0, as they aren't drawn yet. merge_candidate_items changes only the style, plate and
-  transform fields given.
+  transform fields given. The dry run lists each Text Layer's lines, its box (bounds) and its
+  picture: the URL, on this app, of the PNG the Clip burns.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -384,7 +386,11 @@ def build_mcp(app: FastAPI) -> MCPServer:
         Timeline time, and its Words with the `at` a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         if dry_run:
-            return _plan_view(await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body), lambda segment: copied(job_id, segment))
+            return _plan_view(
+                await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),
+                lambda segment: copied(job_id, segment),
+                lambda name: f"/api/jobs/{job_id}/{TEXTS_DIR}/{name}",
+            )
         return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body)
 
     @tool()
@@ -706,7 +712,9 @@ def _motion_view(picture: dict) -> dict:
     return {"keys": keys, "bounds_at_keys": bounds}
 
 
-def _plan_view(preview: dict, copied: Callable[[dict], bool] = lambda segment: False) -> dict:
+def _plan_view(
+    preview: dict, copied: Callable[[dict], bool] = lambda segment: False, picture_url: Callable[[str], str] = lambda name: name
+) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
     (`copied`)), each Scene's Layout and the Framing
@@ -714,7 +722,8 @@ def _plan_view(preview: dict, copied: Callable[[dict], bool] = lambda segment: F
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
-    Segment's, a Music Clip's, an Overlay's), and the Words."""
+    Segment's, a Music Clip's, an Overlay's), each Text Layer's box and its picture's URL
+    (`picture_url`, by its name), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -742,7 +751,10 @@ def _plan_view(preview: dict, copied: Callable[[dict], bool] = lambda segment: F
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
         },
-        "text_layers": [{"id": text["layer"]["id"], **_times(text, "start", "end", "lines")} for text in plan["texts"]],
+        "text_layers": [
+            {"id": text["layer"]["id"], **_times(text, "start", "end", "lines"), "bounds": text["bounds"], "picture": picture_url(text["image"])}
+            for text in plan["texts"]
+        ],
         "overlays": [
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
