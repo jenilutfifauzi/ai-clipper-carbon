@@ -686,6 +686,18 @@ class Candidate:
             | {overlay.media for overlay in self.overlays}
         )
 
+    def faces(self) -> dict[str, list[str]]:
+        """The Faces it names (app/fonts.py), each with the parts that name it: its Text Layers, and
+        its Style Overrides by section."""
+        named: dict[str, list[str]] = {}
+        for layer in self.text_layers:
+            named.setdefault(layer.style.font, []).append(f"Text Layer {layer.id}")
+        for section in ("caption", "hook", "watermark"):
+            face = getattr(self.style_overrides, section).get("font")
+            if isinstance(face, str):
+                named.setdefault(face, []).append(f"{section} style")
+        return named
+
     @property
     def reviewed(self) -> bool:
         """Whether it holds the owner's review work, which a new run of Selection must keep."""

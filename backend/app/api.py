@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -33,7 +33,7 @@ from app.config import Settings
 from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
 from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
-from app.fonts import FONTS
+from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
@@ -116,6 +116,10 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _faces(request: Request) -> Faces:
+    return request.app.state.faces
+
+
 def _edit(request: Request) -> Edit:
     """Who makes an edit: the editor and tab its request names (X-Edit-Source, X-Edit-Tab)."""
     return Edit.of(request.headers.get("X-Edit-Source"), request.headers.get("X-Edit-Tab"))
@@ -136,6 +140,7 @@ Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
+FaceRegistry = Annotated[Faces, Depends(_faces)]
 EditBy = Annotated[Edit, Depends(_edit)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
@@ -257,17 +262,68 @@ class ManualCandidate(BaseModel):
 
 
 class FontInfo(BaseModel):
-    """A bundled font, and its measures in its units: what the preview needs to set text as libass
-    does, which sizes a font by its Windows ascent plus descent (`units`) rather than its em."""
+    """A Face (app/fonts.py), with what its font says of its licence, and its measures in its units:
+    what the preview needs to set text as libass does, which sizes a font by its Windows ascent plus
+    descent (`units`) rather than its em."""
 
     id: str
     label: str
+    # The name libass matches it by.
     family: str
+    # The family the picker groups it in.
+    typographic_family: str
+    weight: int
+    italic: bool
+    bundled: bool
+    copyright: str
+    licence: str
+    licence_url: str
+    # Its font says it may not be embedded.
+    restricted: bool
+    # Its file, at a URL that changes with it.
+    url: str
     units: int
     em: int
     ascent: int
     cap_height: int
     descent: int
+
+    @classmethod
+    def of(cls, face: Face) -> "FontInfo":
+        metrics = font_metrics(face.id)
+        return cls(
+            id=face.id, label=face.label, family=face.family, typographic_family=face.typographic_family,
+            weight=face.weight, italic=face.italic, bundled=face.bundled, copyright=face.copyright,
+            licence=face.licence, licence_url=face.licence_url, restricted=face.restricted,
+            url=f"/api/fonts/{face.id}?v={face.sha256[:16]}", units=metrics.units, em=metrics.em,
+            ascent=metrics.ascent, cap_height=metrics.cap_height, descent=metrics.descent,
+        )
+
+
+class FontImported(BaseModel):
+    """What a font file added (`faces`), the Faces it holds that were there already, and warnings,
+    such as a font that says it may not be embedded."""
+
+    faces: list[FontInfo]
+    existing: list[FontInfo]
+    warnings: list[str]
+
+
+class FaceUse(BaseModel):
+    """What names a Face: a Candidate, as it is or in its Revision History, or a Preset."""
+
+    kind: Literal["candidate", "style_preset"]
+    # The Candidate's or the Preset's.
+    id: str
+    # The Candidate's Job.
+    job_id: str | None = None
+    # The Clip's title, or the Preset's name.
+    title: str
+    # The parts that name it: such as "Text Layer t1", "hook style" or "Revision 3" (a state in its
+    # Revision History).
+    parts: list[str]
+    # All of it, as one line.
+    where: str
 
 
 class RenderRequest(BaseModel):
@@ -499,11 +555,11 @@ async def stream_job_events(job: ExistingJob, store: Store) -> AsyncIterator[Ser
 
 
 @router.get("/jobs/{job_id}/candidates/events", response_class=EventSourceResponse)
-async def stream_candidate_events(job: ExistingJob, store: Store) -> AsyncIterator[ServerSentEvent]:
+async def stream_candidate_events(job: ExistingJob, store: Store, faces: FaceRegistry) -> AsyncIterator[ServerSentEvent]:
     """The Job's Candidates as they are saved (ADR 0003): `ready` with them as they are now, then a
     `candidate` event per new Revision (with who saved it and the parts it changed), `removed` for
-    one that is gone, and `deleted` once the Job is."""
-    async for event in candidate_events(store, job.id):
+    one that is gone, and `deleted` once the Job is. A `fonts` event says the Faces have changed."""
+    async for event in candidate_events(store, job.id, faces=faces):
         yield event
 
 
@@ -742,24 +798,84 @@ def list_clips(job_id: str, store: Store) -> list[Clip]:
 
 
 @router.get("/fonts")
-def list_fonts() -> list[FontInfo]:
-    """The fonts captions and the hook can be set in."""
-    fonts = []
-    for font in FONTS.values():
-        metrics = font_metrics(font.id)
-        fonts.append(FontInfo(
-            id=font.id, label=font.label, family=font.family, units=metrics.units, em=metrics.em,
-            ascent=metrics.ascent, cap_height=metrics.cap_height, descent=metrics.descent,
-        ))
-    return fonts
+def list_fonts(faces: FaceRegistry) -> list[FontInfo]:
+    """The Faces text can be set in: the bundled ones, then the imported ones in the order they were
+    imported. One whose file is gone from disk isn't listed."""
+    return [FontInfo.of(face) for face in faces.all() if face.file.is_file()]
+
+
+@router.post("/fonts", status_code=201)
+def import_font(file: UploadFile, faces: FaceRegistry) -> FontImported:
+    """Import an uploaded font (a multipart/form-data `file`: TTF, OTF or TTC) for every Job: a
+    collection gives a Face per member, a variable font one per named instance. Faces already there
+    aren't added again. A font that says it may not be embedded is imported with a warning. 422 for
+    a file that isn't a font. (Not async: the font is split in a worker thread.)"""
+    try:
+        imported = faces.add(file.file.read(MAX_FONT_BYTES + 1), file.filename or "Font")
+    except BadFont as exc:
+        raise HTTPException(422, str(exc)) from None
+    return FontImported(
+        faces=[FontInfo.of(face) for face in imported.faces],
+        existing=[FontInfo.of(face) for face in imported.existing],
+        warnings=imported.warnings,
+    )
 
 
 @router.get("/fonts/{font_id}")
-def font_file(font_id: str) -> FileResponse:
-    """A bundled font's file, for the preview to set text in."""
-    if font_id not in FONTS:
+def font_file(font_id: str, faces: FaceRegistry, v: str | None = None) -> FileResponse:
+    """A Face's file, for the preview to set text in. At its listed URL, whose `v` changes with the
+    file, it is kept for good."""
+    try:
+        face = faces.get(font_id)
+        path = faces.file(font_id)
+    except (FaceNotFound, MissingFace):
+        raise HTTPException(404, f"No font {font_id}") from None
+    fresh = v is not None and face.sha256.startswith(v)
+    headers = {"Cache-Control": _DERIVED["Cache-Control"] if fresh else "no-cache", "ETag": f'"{face.sha256}"'}
+    return FileResponse(path, media_type="font/otf" if path.suffix == ".otf" else "font/ttf", headers=headers)
+
+
+@router.delete("/fonts/{font_id}", status_code=204)
+def delete_font(font_id: str, faces: FaceRegistry, store: Store, presets: Presets) -> None:
+    """Delete an imported Face and its file. 409 for a bundled one, and while a Candidate (as it is,
+    or in its Revision History) or a Style Preset names it, listing where."""
+    if faces.find(font_id) is None:
         raise HTTPException(404, f"No font {font_id}")
-    return FileResponse(FONTS[font_id].file, media_type="font/ttf", headers={"Cache-Control": "public, max-age=604800"})
+    if uses := face_uses(store, presets, font_id):
+        message = f"Font {font_id} is used by {'; '.join(use.where for use in uses)}: change them first"
+        raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
+    try:
+        faces.delete(font_id)
+    except BundledFace:
+        raise HTTPException(409, f"Font {font_id} comes with the app and can't be deleted") from None
+    except FaceNotFound:
+        raise HTTPException(404, f"No font {font_id}") from None
+
+
+def face_uses(store: JobStore, presets: PresetStore, face_id: str) -> list[FaceUse]:
+    """The Candidates of every Job (with their Revision Histories) and the Style Presets that name
+    the Face."""
+    uses = []
+    for job in store.all():
+        for candidate in store.load_candidates(job.id) or []:
+            parts = list(candidate.faces().get(face_id, []))
+            for entry in store.revision_history(job.id, candidate.id):
+                if entry.revision != candidate.revision and face_id in entry.candidate.faces():
+                    parts.append(f"Revision {entry.revision}")
+            if parts:
+                title = candidate.title or f"Clip {candidate.id}"
+                uses.append(FaceUse(
+                    kind="candidate", id=candidate.id, job_id=job.id, title=title, parts=parts,
+                    where=f"{title} (Job {job.id}, Candidate {candidate.id}: {', '.join(parts)})",
+                ))
+    for preset in presets.all():
+        parts = [section for section in ("caption", "hook", "watermark") if getattr(preset, section).font == face_id]
+        if parts and not preset.builtin:
+            uses.append(FaceUse(
+                kind="style_preset", id=preset.id, title=preset.name, parts=parts,
+                where=f"Style Preset {preset.name} ({', '.join(parts)})",
+            ))
+    return uses
 
 
 @router.get("/presets")

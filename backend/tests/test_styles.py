@@ -176,8 +176,10 @@ def test_every_builtin_preset_plans_and_writes_its_captions_and_hook_as_before_t
 
 def test_each_registered_font_is_the_file_libass_picks_for_its_family(settings, tmp_path):
     from app.config import FONTS_DIR
-    from app.fonts import FONTS
+    from app.fonts import Faces
 
+    # The bundled ones, whatever an app made earlier imported.
+    FONTS = {face.id: face for face in Faces().all()}
     styles = [
         f"Style: {font.id},{font.family},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1"
         for font in FONTS.values()
@@ -202,16 +204,18 @@ def test_each_registered_font_is_the_file_libass_picks_for_its_family(settings, 
 
 
 def test_fonts_are_listed_with_their_measures_and_served(client):
-    from app.fonts import FONTS
+    from app.fonts import BUNDLED_IDS, font
 
     fonts = client.get("/api/fonts").json()
-    assert [font["id"] for font in fonts] == list(FONTS)
+    assert [font["id"] for font in fonts] == BUNDLED_IDS
     montserrat = fonts[0]
     assert (montserrat["family"], montserrat["em"], montserrat["units"], montserrat["cap_height"]) == ("Montserrat ExtraBold", 1000, 1562, 700)
-    response = client.get("/api/fonts/anton")
+    assert (montserrat["typographic_family"], montserrat["weight"], montserrat["italic"]) == ("Montserrat", 800, False)
+    response = client.get(fonts[1]["url"])
     assert response.status_code == 200 and response.headers["content-type"] == "font/ttf"
-    assert response.content == FONTS["anton"].file.read_bytes()
+    assert response.content == font("anton").file.read_bytes()
     assert "max-age" in response.headers["cache-control"]
+    assert client.get("/api/fonts/anton").headers["cache-control"] == "no-cache"
     assert client.get("/api/fonts/nope").status_code == 404
     assert client.get("/api/fonts/..%2Fconfig.py").status_code == 404
 

@@ -12,6 +12,7 @@ import { fontFamily } from "../../../fonts";
 import { IDENTITY } from "../editor/picture";
 import { fontChoices, Group } from "../editor/StyleFields";
 import { DRAG_TEXT } from "./drag";
+import { ImportFont } from "./ImportFont";
 import { shared } from "./actions";
 import { newId, round } from "./edits";
 import { styled, textStyle } from "./textStyle";
@@ -70,7 +71,10 @@ export function newTextLayer(look: TextLook, at: number, duration: number): Text
   return { ...look, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)) };
 }
 
-/** The Text tab: a button per look, each adding a Text Layer at the playhead, or where it is dropped on the timeline. */
+/**
+ * The Text tab: a button per look, each adding a Text Layer at the playhead, or where it is dropped on
+ * the timeline; and Import font, whose Faces every font picker then lists.
+ */
 export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (look: TextLook) => void }) {
   return (
     <div className="flex flex-col gap-3">
@@ -102,6 +106,7 @@ export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: 
           </button>
         ))}
       </div>
+      <ImportFont />
     </div>
   );
 }

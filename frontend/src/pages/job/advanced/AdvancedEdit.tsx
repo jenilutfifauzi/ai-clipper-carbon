@@ -8,7 +8,6 @@ import {
   type Candidate,
   type CandidateChange,
   type ClipSegment,
-  type FontInfo,
   type JobDetail,
   type KeyProperty,
   type SavedBy,
@@ -23,7 +22,7 @@ import {
 import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Panel } from "../../../components/Panel";
-import { loadFonts } from "../../../fonts";
+import { useFonts } from "../../../fonts";
 import { cx } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
@@ -179,7 +178,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saving, setSaving] = useState(0);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [fonts, setFonts] = useState<FontInfo[] | null>(null);
+  const fonts = useFonts();
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
@@ -427,9 +426,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // The Timeline's zoom in (1) or out (-1) about the playhead, for its keys.
   const zoomTimeline = useRef<(direction: 1 | -1) => void>(null);
 
-  useEffect(() => {
-    loadFonts().then(setFonts, () => setFonts([]));
-  }, []);
 
   function change(next: Partial<AdvancedEdits>, group?: string) {
     history.set({ ...edits, ...next }, group);

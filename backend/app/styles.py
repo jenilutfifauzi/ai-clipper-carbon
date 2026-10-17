@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import AfterValidator, Field, StringConstraints, TypeAdapter, ValidationError
 
-from app.fonts import DEFAULT_FONT, FONTS
+from app.fonts import DEFAULT_FONT, registry
 from app.storage import write_atomic
 
 # In DATA_DIR.
@@ -28,11 +28,13 @@ DEFAULT_PRESET = "default"
 
 
 def _known_font(font_id: str) -> str:
-    if font_id not in FONTS:
-        raise ValueError(f"No font {font_id!r}; the fonts are {', '.join(FONTS)}")
+    ids = registry().ids()
+    if font_id not in ids:
+        raise ValueError(f"No font {font_id!r}; the fonts are {', '.join(ids)}")
     return font_id
 
 
+# A Face's id (app/fonts.py): a bundled Face's or an imported one's.
 FontId = Annotated[str, AfterValidator(_known_font)]
 # An opaque #RRGGBB colour, kept in capitals.
 Colour = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$", to_upper=True)]

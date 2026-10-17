@@ -114,7 +114,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.config import CameraTuning
-from app.fonts import DEFAULT_FONT, font
+from app.fonts import DEFAULT_FONT, on_change, registry
 from app.keyframes import value_at
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
@@ -1703,10 +1703,11 @@ class FontMetrics:
 
 @cache
 def font_metrics(font_id: str = DEFAULT_FONT) -> FontMetrics:
-    """A bundled font's measures (app/fonts.py), read with fontTools."""
+    """A Face's measures (app/fonts.py), read with fontTools; cleared whenever the Faces change.
+    MissingFace when its file is gone."""
     from fontTools.ttLib import TTFont
 
-    file = TTFont(font(font_id).file, lazy=True)
+    file = TTFont(registry().file(font_id), lazy=True)
     widths = file["hmtx"]
     os2 = file["OS/2"]
     return FontMetrics(
@@ -1717,6 +1718,9 @@ def font_metrics(font_id: str = DEFAULT_FONT) -> FontMetrics:
         cap_height=os2.sCapHeight,
         descent=-os2.sTypoDescender,
     )
+
+
+on_change(font_metrics.cache_clear)
 
 
 @dataclass(frozen=True)

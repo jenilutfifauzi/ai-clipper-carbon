@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, candidateEventsUrl, TAB_ID, type Candidate, type CandidateEvent, type EditSource, type SavedBy } from "../../../api";
+import { reloadFonts } from "../../../fonts";
 
 export interface CandidateEventHandlers {
   // On (re)connecting: the Candidates as they are now, to catch up with what was saved meanwhile.
@@ -12,7 +13,8 @@ export interface CandidateEventHandlers {
 
 /**
  * The Job's Candidates as other editors save them (ADR 0003). EventSource reconnects by itself;
- * `lost` is true until it has, and the `ready` that follows catches up.
+ * `lost` is true until it has, and the `ready` that follows catches up. Faces imported or deleted
+ * anywhere are listed again for the font pickers.
  */
 export function useCandidateEvents(jobId: string, handlers: CandidateEventHandlers): { lost: boolean } {
   const latest = useRef(handlers);
@@ -42,6 +44,7 @@ export function useCandidateEvents(jobId: string, handlers: CandidateEventHandle
       if (saved.tab !== TAB_ID) latest.current.onCandidate(saved);
     });
     source.addEventListener("removed", (event) => latest.current.onRemoved(JSON.parse(event.data).id));
+    source.addEventListener("fonts", () => void reloadFonts().catch(() => {}));
     source.addEventListener("deleted", () => {
       source.close();
       setLost(false);

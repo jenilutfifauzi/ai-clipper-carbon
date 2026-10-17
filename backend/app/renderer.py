@@ -18,8 +18,9 @@ Captions are burned into the joined frames by libass (the `ass` filter, on the C
 an ASS file written for the render: one Dialogue event per Word of each caption line, showing the
 whole line with that Word highlighted (in the active colour, or on a box of it) while it is spoken,
 so the line never moves as the highlight does. The look is the plan's Caption Style. Its font is
-one of the bundled ones (app/fonts.py), given to libass through `fontsdir`, so no system font is
-needed. A line too wide for its area is set at the smaller size the plan gives it.
+a Face (app/fonts.py), bundled or imported: the Faces the script sets text in are given to libass
+through a `fontsdir` made for the render, so no system font is needed. A line too wide for its area
+is set at the smaller size the plan gives it.
 
 The hook is drawn by the same `ass` filter, in the same encode: a semi-transparent rounded box
 drawn as an ASS vector shape, and over it each of its lines as its own event, placed where the
@@ -87,6 +88,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -97,7 +99,7 @@ from pathlib import Path
 import numpy as np
 
 from app.config import FONTS_DIR, RenderTuning
-from app.fonts import font
+from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
@@ -166,6 +168,7 @@ class Renderer:
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
         drawn = plan.captions or plan.hook or plan.texts or _text_watermark(plan)
         subtitles = video.with_name(f".{video.stem}.part.ass") if drawn else None
+        fonts = video.with_name(f".{video.stem}.part.fonts")
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
@@ -173,10 +176,11 @@ class Renderer:
         failures = []
         try:
             if subtitles is not None:
+                registry().gather(_faces(plan), fonts)
                 subtitles.write_text(_ass(plan), encoding="utf-8")
             for encoder in self.tuning.encoders:
                 feeds = _feeds(plan, keyed, self.ffmpeg)
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds)
+                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts)
                 stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
@@ -189,6 +193,7 @@ class Renderer:
             for part in (*parts, subtitles):
                 if part is not None:
                     part.unlink(missing_ok=True)
+            shutil.rmtree(fonts, ignore_errors=True)
         raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
     def stop(self) -> None:
@@ -234,10 +239,11 @@ class Renderer:
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
         feeds: "Feeds | None" = None,
+        fonts: Path = FONTS_DIR,
     ) -> list[str]:
         """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
         Overlays', and its keyed Scenes', by their places among them); a keyed one without
-        is drawn still, at its constants."""
+        is drawn still, at its constants. `fonts` holds the Faces the `subtitles` set text in."""
         tuning = self.tuning
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
@@ -262,7 +268,7 @@ class Renderer:
             joined = "[marked]"
         # Captions and the hook are burned after the Scenes are joined, so that they follow the Clip's timeline.
         burned = "" if subtitles is None else (
-            f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(FONTS_DIR))},"
+            f"ass=filename={_filter_value(str(subtitles))}:fontsdir={_filter_value(str(fonts))},"
         )
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         mix = _audio_mix(plan, index, tuning.audio_rate, sound)
@@ -904,6 +910,18 @@ def _pad(plan: RenderPlan, panel: Panel) -> str:
     if (area.width, area.height) == (plan.width, plan.height):
         return ""
     return f",pad={plan.width}:{plan.height}:{area.x}:{area.y}:black"
+
+
+def _faces(plan: RenderPlan) -> set[str]:
+    """The Faces the plan's ASS script (_ass) sets text in."""
+    faces = {event.layer.style.font for event in plan.texts}
+    if plan.captions:
+        faces.add(plan.caption_style.font)
+    if plan.hook:
+        faces.add(plan.hook_style.font)
+    if _text_watermark(plan):
+        faces.add(plan.watermark_style.font)
+    return faces
 
 
 def _ass(plan: RenderPlan) -> str:
