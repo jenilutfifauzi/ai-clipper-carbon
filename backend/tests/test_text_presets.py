@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.fonts import BUNDLED_IDS
 from app.main import create_app
 from app.ports import Ports
-from app.fonts import BUNDLED_IDS
 from app.text_presets import builtin_text_presets
 from fontfiles import font_file
 from test_fonts import imported
