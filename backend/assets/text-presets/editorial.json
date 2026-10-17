@@ -1,0 +1,17 @@
+{
+  "id": "editorial",
+  "name": "Editorial",
+  "category": "Titles",
+  "order": 140,
+  "sample": "Kisah Nyata",
+  "style": {
+    "font": "dm-serif-display-italic",
+    "size": 124,
+    "shadow": {
+      "opacity": 0.6,
+      "blur": 24,
+      "distance": 4,
+      "angle": 90
+    }
+  }
+}

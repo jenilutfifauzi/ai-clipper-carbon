@@ -1,0 +1,17 @@
+{
+  "id": "script",
+  "name": "Script",
+  "category": "Stickers",
+  "order": 430,
+  "sample": "Terima kasih",
+  "style": {
+    "font": "pacifico",
+    "size": 110,
+    "shadow": {
+      "colour": "#FF2D87",
+      "opacity": 1,
+      "distance": 6,
+      "angle": 90
+    }
+  }
+}

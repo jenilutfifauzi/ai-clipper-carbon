@@ -1,0 +1,20 @@
+{
+  "id": "bold-caption",
+  "name": "Bold Caption",
+  "category": "Subtitles",
+  "order": 310,
+  "sample": "KAMU HARUS TAHU",
+  "style": {
+    "font": "poppins-black",
+    "size": 68,
+    "stroke_width": 6,
+    "tracking": 2,
+    "wrap_width": 900,
+    "line_height": 1.05,
+    "shadow": {
+      "opacity": 1,
+      "distance": 6,
+      "angle": 90
+    }
+  }
+}

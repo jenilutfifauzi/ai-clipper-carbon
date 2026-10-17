@@ -1,0 +1,23 @@
+{
+  "id": "quote-card",
+  "name": "Quote Card",
+  "category": "Quotes",
+  "order": 500,
+  "sample": "“Gagal itu bagian dari proses.”",
+  "style": {
+    "font": "dm-serif-display-italic",
+    "size": 64,
+    "colour": "#1A1A1A",
+    "wrap_width": 820,
+    "line_height": 1.25,
+    "align": "left",
+    "plate": {
+      "shape": "block",
+      "colour": "#FFFFFF",
+      "opacity": 1,
+      "radius": 28,
+      "padding_x": 56,
+      "padding_y": 44
+    }
+  }
+}

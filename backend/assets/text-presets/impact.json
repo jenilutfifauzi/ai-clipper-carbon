@@ -1,0 +1,18 @@
+{
+  "id": "impact",
+  "name": "Impact",
+  "category": "Titles",
+  "order": 120,
+  "sample": "GILA!",
+  "style": {
+    "font": "luckiest-guy",
+    "size": 150,
+    "colour": "#FFD60A",
+    "stroke_width": 10,
+    "shadow": {
+      "opacity": 1,
+      "distance": 12,
+      "angle": 60
+    }
+  }
+}

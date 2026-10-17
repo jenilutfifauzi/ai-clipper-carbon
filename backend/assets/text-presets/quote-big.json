@@ -1,0 +1,20 @@
+{
+  "id": "quote-big",
+  "name": "Big Quote",
+  "category": "Quotes",
+  "order": 520,
+  "sample": "“Mulai dari yang kecil.”",
+  "style": {
+    "font": "abril-fatface",
+    "size": 92,
+    "colour": "#FFF4E0",
+    "wrap_width": 860,
+    "line_height": 1.1,
+    "shadow": {
+      "opacity": 0.7,
+      "blur": 26,
+      "distance": 4,
+      "angle": 90
+    }
+  }
+}

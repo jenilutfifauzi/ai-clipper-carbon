@@ -1,0 +1,21 @@
+{
+  "id": "comic",
+  "name": "Comic",
+  "category": "Titles",
+  "order": 130,
+  "sample": "BOOM!",
+  "style": {
+    "font": "bangers",
+    "size": 150,
+    "colour": "#FFE14D",
+    "stroke_width": 8,
+    "stroke_colour": "#141414",
+    "tracking": 4,
+    "shadow": {
+      "colour": "#E63946",
+      "opacity": 1,
+      "distance": 12,
+      "angle": 45
+    }
+  }
+}

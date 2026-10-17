@@ -1,0 +1,20 @@
+{
+  "id": "neon",
+  "name": "Neon",
+  "category": "Titles",
+  "order": 150,
+  "sample": "MALAM INI",
+  "style": {
+    "font": "kanit-medium",
+    "size": 110,
+    "colour": "#FFF0FB",
+    "stroke_width": 3,
+    "stroke_colour": "#FF2BD6",
+    "tracking": 6,
+    "shadow": {
+      "colour": "#FF2BD6",
+      "opacity": 1,
+      "blur": 36
+    }
+  }
+}

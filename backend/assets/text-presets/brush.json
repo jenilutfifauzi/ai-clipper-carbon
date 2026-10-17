@@ -1,0 +1,18 @@
+{
+  "id": "brush",
+  "name": "Brush",
+  "category": "Stickers",
+  "order": 420,
+  "sample": "Mantap!",
+  "style": {
+    "font": "caveat-brush",
+    "size": 120,
+    "colour": "#FFE14D",
+    "stroke_width": 5,
+    "shadow": {
+      "opacity": 0.8,
+      "distance": 6,
+      "angle": 90
+    }
+  }
+}

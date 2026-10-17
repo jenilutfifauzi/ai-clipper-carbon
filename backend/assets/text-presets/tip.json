@@ -1,0 +1,23 @@
+{
+  "id": "tip",
+  "name": "Tip",
+  "category": "Callouts",
+  "order": 620,
+  "sample": "Tips: mulai dari 10 menit sehari",
+  "style": {
+    "font": "montserrat-bold",
+    "size": 54,
+    "colour": "#0B3D2E",
+    "wrap_width": 560,
+    "line_height": 1.25,
+    "align": "left",
+    "plate": {
+      "shape": "block",
+      "colour": "#A7F3D0",
+      "opacity": 1,
+      "radius": 24,
+      "padding_x": 40,
+      "padding_y": 28
+    }
+  }
+}

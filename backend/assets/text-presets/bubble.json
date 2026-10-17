@@ -1,0 +1,19 @@
+{
+  "id": "bubble",
+  "name": "Bubble",
+  "category": "Stickers",
+  "order": 410,
+  "sample": "LUCU BANGET",
+  "style": {
+    "font": "titan-one",
+    "size": 96,
+    "stroke_width": 12,
+    "stroke_colour": "#FF4D9D",
+    "shadow": {
+      "colour": "#7A0045",
+      "opacity": 1,
+      "distance": 8,
+      "angle": 90
+    }
+  }
+}

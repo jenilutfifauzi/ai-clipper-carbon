@@ -1,0 +1,20 @@
+{
+  "id": "viral",
+  "name": "Viral",
+  "category": "Labels",
+  "order": 210,
+  "sample": "VIRAL",
+  "style": {
+    "font": "montserrat-black",
+    "size": 60,
+    "tracking": 3,
+    "plate": {
+      "shape": "block",
+      "colour": "#E11D48",
+      "opacity": 1,
+      "radius": 10,
+      "padding_x": 28,
+      "padding_y": 14
+    }
+  }
+}

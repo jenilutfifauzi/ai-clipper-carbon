@@ -1,0 +1,18 @@
+{
+  "id": "headline",
+  "name": "Headline",
+  "category": "Titles",
+  "order": 110,
+  "sample": "WAJIB TONTON",
+  "style": {
+    "font": "bebas-neue",
+    "size": 160,
+    "tracking": 4,
+    "shadow": {
+      "opacity": 0.7,
+      "blur": 28,
+      "distance": 6,
+      "angle": 90
+    }
+  }
+}

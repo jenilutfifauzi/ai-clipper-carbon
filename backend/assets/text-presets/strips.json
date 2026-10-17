@@ -1,0 +1,20 @@
+{
+  "id": "strips",
+  "name": "Strips",
+  "category": "Subtitles",
+  "order": 320,
+  "sample": "Jadi intinya, jangan menyerah dulu",
+  "style": {
+    "font": "poppins-semibold",
+    "size": 56,
+    "wrap_width": 480,
+    "line_height": 1.35,
+    "plate": {
+      "shape": "strips",
+      "opacity": 0.75,
+      "radius": 10,
+      "padding_x": 18,
+      "padding_y": 8
+    }
+  }
+}

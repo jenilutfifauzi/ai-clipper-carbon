@@ -1,0 +1,17 @@
+{
+  "id": "stack",
+  "name": "Stack",
+  "category": "Titles",
+  "order": 160,
+  "sample": "3 KESALAHAN FATAL",
+  "style": {
+    "font": "anton",
+    "size": 150,
+    "line_height": 0.88,
+    "wrap_width": 600,
+    "shadow": {
+      "opacity": 0.75,
+      "blur": 30
+    }
+  }
+}

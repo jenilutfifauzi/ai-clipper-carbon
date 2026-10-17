@@ -1,0 +1,21 @@
+{
+  "id": "warning",
+  "name": "Warning",
+  "category": "Callouts",
+  "order": 610,
+  "sample": "AWAS SALAH PAHAM",
+  "style": {
+    "font": "oswald-bold",
+    "size": 64,
+    "colour": "#111111",
+    "tracking": 2,
+    "plate": {
+      "shape": "block",
+      "colour": "#FACC15",
+      "opacity": 1,
+      "radius": 8,
+      "padding_x": 32,
+      "padding_y": 18
+    }
+  }
+}

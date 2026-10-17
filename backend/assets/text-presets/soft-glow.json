@@ -1,0 +1,15 @@
+{
+  "id": "soft-glow",
+  "name": "Soft Glow",
+  "category": "Basic",
+  "order": 20,
+  "sample": "Teks bersih",
+  "style": {
+    "font": "poppins-semibold",
+    "size": 72,
+    "shadow": {
+      "opacity": 0.9,
+      "blur": 18
+    }
+  }
+}
