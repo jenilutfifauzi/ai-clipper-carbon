@@ -3,8 +3,8 @@
 // shadow names some of its fields.
 import { describe, expect, test } from "vitest";
 import type { DropShadow } from "../../../api";
-import { NO_SHADOW } from "../advanced/textStyle";
-import { highlightShape, hookPadding, shadowLook } from "./styleShape";
+import { NO_SHADOW } from "./shadow";
+import { highlightShape, hookPadding, drawnShadow } from "./styleShape";
 import { overridden, sameValue } from "./useStyleDraft";
 
 describe("the hook's and captions' box shape", () => {
@@ -31,18 +31,18 @@ describe("the hook's and captions' drop shadow", () => {
   const shadow: DropShadow = { colour: "#000000", opacity: 0.5, blur: 12, distance: 10, angle: 45 };
 
   test("falls its distance towards its angle, clockwise from the right, blurred by half its blur", () => {
-    const look = shadowLook(shadow)!;
-    expect([look.x, look.y]).toEqual([expect.closeTo(7.071, 3), expect.closeTo(7.071, 3)]);
-    expect([look.opacity, look.sigma]).toEqual([0.5, 6]);
-    const down = shadowLook({ ...shadow, angle: 90 })!;
+    const drawn = drawnShadow(shadow)!;
+    expect([drawn.x, drawn.y]).toEqual([expect.closeTo(7.071, 3), expect.closeTo(7.071, 3)]);
+    expect([drawn.opacity, drawn.sigma]).toEqual([0.5, 6]);
+    const down = drawnShadow({ ...shadow, angle: 90 })!;
     expect([down.x, down.y]).toEqual([expect.closeTo(0, 6), 10]);
     // A halo: blurred, not moved.
-    expect(shadowLook({ ...shadow, distance: 0 })).toEqual({ x: 0, y: 0, opacity: 0.5, sigma: 6 });
+    expect(drawnShadow({ ...shadow, distance: 0 })).toEqual({ x: 0, y: 0, opacity: 0.5, sigma: 6 });
   });
 
   test("is off when transparent, or neither moved nor blurred", () => {
-    expect(shadowLook(NO_SHADOW)).toBeNull();
-    expect(shadowLook({ ...shadow, opacity: 0 })).toBeNull();
+    expect(drawnShadow(NO_SHADOW)).toBeNull();
+    expect(drawnShadow({ ...shadow, opacity: 0 })).toBeNull();
   });
 
   test("an override names some of the Preset's shadow's fields, and one equal to the Preset's is none", () => {

@@ -33,6 +33,11 @@ export function Group({ title, children }: { title: string; children: React.Reac
   );
 }
 
+// A field the picked Text Layers differ in.
+export function Mixed() {
+  return <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-normal text-muted">Mixed</span>;
+}
+
 // A section of fields, while the Presets load.
 export function StyleFieldsSkeleton() {
   return (

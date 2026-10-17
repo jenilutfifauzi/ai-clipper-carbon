@@ -4,6 +4,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { HOOK_MAX, KICKER_MAX } from "../HookEditor";
 import type { StageId } from "./ClipPreview";
 import { toggledEmphasis } from "./emphasis";
+import { textStagePicture } from "./textStage";
 import { lineWords, retypedLine } from "./wordEdits";
 
 // The longest a Text Layer can be (candidates.py's TEXT_LAYER_MAX_CHARS), and a caption line as typed.
@@ -120,16 +121,15 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
     case "text": {
       const event = plan.texts.find((other) => other.layer.id === editing.id);
       if (!event) return null;
-      // Its area as its Transform scales and turns it about its picture's centre.
-      const { scale, rotation } = event.layer.transform;
-      const [x, y] = event.picture.centre;
-      const [width, height] = [event.area.width * scale, event.area.height * scale];
+      // Its area as its Transform scales and turns it about its picture's centre, as its Grips have it.
+      const { picture } = textStagePicture(event);
+      const [x, y] = picture.centre;
       return {
-        area: { x: x - width / 2, y: y - height / 2, width, height },
-        rotation,
+        area: { x: x - picture.width / 2, y: y - picture.height / 2, width: picture.width, height: picture.height },
+        rotation: picture.rotation,
         initial: event.layer.text,
         font: fontById.get(event.layer.style.font),
-        size: event.layer.style.size * scale,
+        size: event.layer.style.size * event.layer.transform.scale,
         uppercase: false,
         maxLength: TEXT_MAX_CHARS,
         label: "Text",

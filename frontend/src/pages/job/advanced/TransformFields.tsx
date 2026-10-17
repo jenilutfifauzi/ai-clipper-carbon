@@ -10,9 +10,28 @@ import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
 import { PICTURE_KEYS, type PictureKey } from "../editor/keyframes";
 import { clamp, FRAME, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
+import type { Playback } from "../editor/playback";
 import { keyedRange, shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyCluster, KeyingContext, useKeyNotice, useKeyTime, useTouch, type Keying } from "./KeyCluster";
-import { heldKeyTime, keyedGroup, keyTime, resetTextLayer, type KeyedRef } from "./keying";
+import { heldKeyTime, keyedGroup, keyTime, resetTextLayer, type KeyedRef, type KeySpan } from "./keying";
+
+// A picture's fields that a Text Layer's Transform hasn't: its Crop, Fit, Fill and its stretch and flips.
+interface PictureFields {
+  crop: Crop;
+  // Its item's picture, in pixels; undefined while the Media Library loads.
+  size: { width: number; height: number } | undefined;
+  // What Reset puts the Transform back to: a new Overlay's placement, or a Framing's fit (the identity).
+  defaults: Transform;
+  // The Crop set, with the Transform too when it is given (Reset): one change.
+  onCrop: (crop: Crop, field: string, transform?: Transform) => void;
+  onCropMode?: () => void;
+}
+
+type TransformFieldsProps = {
+  transform: Transform;
+  onChange: (transform: Transform, field: string) => void;
+  keyed?: { item: KeyedRef; keys: Keys; inside: boolean };
+} & (PictureFields | { onReset: () => void });
 
 /**
  * A picture's Transform as numbers (ADR 0007): its centre, its scale in percent of its fitted size
@@ -23,33 +42,19 @@ import { heldKeyTime, keyedGroup, keyTime, resetTextLayer, type KeyedRef } from 
  * with `onCropMode` a Crop button that opens Crop mode on the stage. Each field's changes are one
  * `group` of the history, named after it.
  *
+ * A Text Layer's (ADR 0010), with `onReset` instead of a Crop, has its centre, scale, rotation and
+ * opacity alone: its words, stroke and plate are drawn larger or smaller as they are, never
+ * rewrapped, and it is never stretched, flipped nor cropped. Its Reset is `onReset`.
+ *
  * With `keyed`, the item's X, Y, Scale, Rotation and Opacity have a ‹ ◆ › each (KeyCluster), and
- * `transform` is what is shown at the playhead (ADR 0008); a keyed field, and Fit and Fill when they
- * would change one, are off while the playhead is outside the item, with a note. A keyed Rotation
- * takes ±3600°, as its Keyframes may; its constant, ±360°.
+ * `transform` is what is shown at the playhead (ADR 0008, useKeyedTransform); a keyed field, and Fit
+ * and Fill when they would change one, are off while the playhead is outside the item, with a note.
+ * A keyed Rotation takes ±3600°, as its Keyframes may; its constant, ±360°.
  */
-export function TransformFields({
-  transform,
-  crop,
-  size,
-  defaults,
-  onChange,
-  onCrop,
-  onCropMode,
-  keyed,
-}: {
-  transform: Transform;
-  crop: Crop;
-  // Its item's picture, in pixels; undefined while the Media Library loads.
-  size: { width: number; height: number } | undefined;
-  // What Reset puts the Transform back to: a new Overlay's placement, or a Framing's fit (the identity).
-  defaults: Transform;
-  onChange: (transform: Transform, field: string) => void;
-  // The Crop set, with the Transform too when it is given (Reset): one change.
-  onCrop: (crop: Crop, field: string, transform?: Transform) => void;
-  onCropMode?: () => void;
-  keyed?: { item: KeyedRef; keys: Keys; inside: boolean };
-}) {
+export function TransformFields(props: TransformFieldsProps) {
+  const { transform, onChange, keyed } = props;
+  // A picture's, not a Text Layer's.
+  const picture = "crop" in props;
   // A keyable field's cluster, and whether it is off.
   const cluster = (prop: PictureKey, label: string): ReactNode => keyed && <KeyCluster item={keyed.item} property={prop} label={label} />;
   const off = (prop: PictureKey) => !!keyed && !keyed.inside && !!keyed.keys[prop]?.length;
@@ -59,9 +64,6 @@ export function TransformFields({
     if (keyed && (PICTURE_KEYS as readonly string[]).includes(field)) touch(field as PictureKey);
     onChange({ ...transform, [field]: value }, field);
   };
-  const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);
-  const kept = size && croppedSize(size, crop);
-  const centred = { x: FRAME.width / 2, y: FRAME.height / 2, stretch_x: 1, stretch_y: 1 };
   return (
     <Group title="Transform">
       {PICTURE_KEYS.some(off) && <p className="text-sm text-pretty text-muted">Its keyed fields change with the playhead on it.</p>}
@@ -86,19 +88,25 @@ export function TransformFields({
           cluster={cluster("rotation", "Rotation")}
           disabled={off("rotation")}
         />
-        <NumberField label="Stretch ↔" unit="%" value={transform.stretch_x * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_x", stretch / 100)} />
-        <NumberField label="Stretch ↕" unit="%" value={transform.stretch_y * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_y", stretch / 100)} />
+        {picture && (
+          <>
+            <NumberField label="Stretch ↔" unit="%" value={transform.stretch_x * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_x", stretch / 100)} />
+            <NumberField label="Stretch ↕" unit="%" value={transform.stretch_y * 100} range={percents(STRETCH_RANGE)} onChange={(stretch) => set("stretch_y", stretch / 100)} />
+          </>
+        )}
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" aria-pressed={transform.flip_h} className="aria-pressed:text-accent-text" onClick={() => set("flip_h", !transform.flip_h)}>
-          <FlipHorizontal2 aria-hidden size={16} />
-          Flip ↔
-        </Button>
-        <Button size="sm" aria-pressed={transform.flip_v} className="aria-pressed:text-accent-text" onClick={() => set("flip_v", !transform.flip_v)}>
-          <FlipVertical2 aria-hidden size={16} />
-          Flip ↕
-        </Button>
-      </div>
+      {picture && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" aria-pressed={transform.flip_h} className="aria-pressed:text-accent-text" onClick={() => set("flip_h", !transform.flip_h)}>
+            <FlipHorizontal2 aria-hidden size={16} />
+            Flip ↔
+          </Button>
+          <Button size="sm" aria-pressed={transform.flip_v} className="aria-pressed:text-accent-text" onClick={() => set("flip_v", !transform.flip_v)}>
+            <FlipVertical2 aria-hidden size={16} />
+            Flip ↕
+          </Button>
+        </div>
+      )}
       <Slider
         label="Opacity"
         value={transform.opacity}
@@ -110,6 +118,35 @@ export function TransformFields({
         after={cluster("opacity", "Opacity")}
         disabled={off("opacity")}
       />
+      {"crop" in props ? (
+        <CropAndFit picture={props} transform={transform} fitOff={fitOff} onChange={onChange} />
+      ) : (
+        <Button size="sm" variant="ghost" className="self-start" onClick={props.onReset}>
+          Reset
+        </Button>
+      )}
+    </Group>
+  );
+}
+
+// A picture's Crop, and its Fit, Fill and Reset.
+function CropAndFit({
+  picture,
+  transform,
+  fitOff,
+  onChange,
+}: {
+  picture: PictureFields;
+  transform: Transform;
+  fitOff: boolean;
+  onChange: (transform: Transform, field: string) => void;
+}) {
+  const { crop, size, defaults, onCrop, onCropMode } = picture;
+  const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);
+  const kept = size && croppedSize(size, crop);
+  const centred = { x: FRAME.width / 2, y: FRAME.height / 2, stretch_x: 1, stretch_y: 1 };
+  return (
+    <>
       <fieldset className="flex min-w-0 flex-col gap-1.5">
         <legend className="mb-1.5 text-sm font-medium">Crop</legend>
         {onCropMode && (
@@ -140,16 +177,53 @@ export function TransformFields({
           Reset
         </Button>
       </div>
-    </Group>
+    </>
   );
 }
 
 /**
- * A Text Layer's Transform as numbers (ADR 0007, 0010): its centre, its scale in percent (its words,
- * stroke and plate drawn larger or smaller as they are, never rewrapped: its size is its Text
- * Style's), its rotation and opacity; and Reset (unscaled, unturned and opaque, where it is:
- * `resetTextLayer`). It is never stretched nor flipped. Each field's changes are one `group` of the
- * history, named after it.
+ * TransformFields' `transform`, `onChange` and `keyed` for an item whose Transform may be keyed (ADR
+ * 0008), playing over `span` (none: shown as at its start): its Transform as it is at the playhead
+ * (held at its ends outside it), and each change written there as a Keyframe of a keyed property
+ * (writtenTransform), or refused with a notice when that would make too many. `onWritten` is given
+ * its constants and Keyframes as written, and the change's history `group` with its field: a
+ * Keyframe written at another time is a step of its own.
+ */
+export function useKeyedTransform({
+  item,
+  span,
+  transform,
+  keys,
+  playback,
+  group,
+  onWritten,
+}: {
+  item: KeyedRef;
+  span: KeySpan | null;
+  transform: Transform;
+  keys: Keys;
+  playback: Playback;
+  group: string;
+  onWritten: (written: { transform: Transform; keys: Keys }, group: string) => void;
+}): Pick<TransformFieldsProps, "transform" | "onChange" | "keyed"> {
+  const time = useKeyTime(playback);
+  const at = span && keyTime(span, time);
+  const shown = shownTransform(transform, keys, at ?? (span ? heldKeyTime(span, time) : 0));
+  const notify = useKeyNotice();
+  return {
+    transform: shown,
+    onChange: (next, field) => {
+      const written = writtenTransform(transform, keys, next, at, shown);
+      if (written.full) return notify(tooManyKeys(written.full));
+      onWritten({ transform: written.transform, keys: written.keys }, keyedGroup(`${group}.${field}`, written.keys !== keys, at));
+    },
+    keyed: { item, keys, inside: at !== null },
+  };
+}
+
+/**
+ * A Text Layer's Transform as numbers (ADR 0007, 0010): TransformFields without a Crop, and Reset
+ * unscaled, unturned and opaque, where it is (`resetTextLayer`).
  *
  * In the Advanced Edit (KeyingContext), its fields have a ‹ ◆ › each, as an Overlay's do: they show
  * the Transform at the playhead, a keyed field writes a Keyframe there (auto-key), and is off while
@@ -159,7 +233,7 @@ export function TextTransformFields({ layer, onChange }: { layer: TextLayer; onC
   const keying = useContext(KeyingContext);
   if (keying) return <KeyedTextTransform keying={keying} layer={layer} onChange={onChange} />;
   return (
-    <TextFields
+    <TransformFields
       transform={layer.transform}
       onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)}
       onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)}
@@ -168,83 +242,16 @@ export function TextTransformFields({ layer, onChange }: { layer: TextLayer; onC
 }
 
 function KeyedTextTransform({ keying, layer, onChange }: { keying: Keying; layer: TextLayer; onChange: (layer: TextLayer, group: string) => void }) {
-  const time = useKeyTime(keying.playback);
-  const at = keyTime(layer, time);
-  const shown = shownTransform(layer.transform, layer.keys, at ?? heldKeyTime(layer, time));
-  const notify = useKeyNotice();
-  return (
-    <TextFields
-      transform={shown}
-      onChange={(next, field) => {
-        const written = writtenTransform(layer.transform, layer.keys, next, at, shown);
-        if (written.full) return notify(tooManyKeys(written.full));
-        onChange({ ...layer, ...written }, keyedGroup(`text:${layer.id}:transform.${field}`, written.keys !== layer.keys, at));
-      }}
-      onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)}
-      keyed={{ item: { kind: "text", id: layer.id }, keys: layer.keys, inside: at !== null }}
-    />
-  );
-}
-
-function TextFields({
-  transform,
-  onChange,
-  onReset,
-  keyed,
-}: {
-  transform: Transform;
-  onChange: (transform: Transform, field: string) => void;
-  onReset: () => void;
-  keyed?: { item: KeyedRef; keys: Keys; inside: boolean };
-}) {
-  const cluster = (prop: PictureKey, label: string): ReactNode => keyed && <KeyCluster item={keyed.item} property={prop} label={label} />;
-  const off = (prop: PictureKey) => !!keyed && !keyed.inside && !!keyed.keys[prop]?.length;
-  const touch = useTouch();
-  const set = (field: PictureKey, value: number) => {
-    if (keyed) touch(field);
-    onChange({ ...transform, [field]: value }, field);
-  };
-  return (
-    <Group title="Transform">
-      {PICTURE_KEYS.some(off) && <p className="text-sm text-pretty text-muted">Its keyed fields change with the playhead on it.</p>}
-      <div className="grid grid-cols-2 gap-3">
-        <NumberField label="X" unit="px" value={transform.x} range={[0, FRAME.width]} onChange={(x) => set("x", x)} cluster={cluster("x", "X")} disabled={off("x")} />
-        <NumberField label="Y" unit="px" value={transform.y} range={[0, FRAME.height]} onChange={(y) => set("y", y)} cluster={cluster("y", "Y")} disabled={off("y")} />
-        <NumberField
-          label="Scale"
-          unit="%"
-          value={transform.scale * 100}
-          range={percents(SCALE_RANGE)}
-          onChange={(scale) => set("scale", scale / 100)}
-          cluster={cluster("scale", "Scale")}
-          disabled={off("scale")}
-        />
-        <NumberField
-          label="Rotation"
-          unit="°"
-          value={transform.rotation}
-          range={keyedRange("rotation", !!keyed?.keys.rotation?.length)}
-          onChange={(rotation) => set("rotation", rotation)}
-          cluster={cluster("rotation", "Rotation")}
-          disabled={off("rotation")}
-        />
-      </div>
-      <Slider
-        label="Opacity"
-        value={transform.opacity}
-        min={0}
-        max={1}
-        step={0.05}
-        format={(v) => `${Math.round(v * 100)}%`}
-        onChange={(opacity) => set("opacity", opacity)}
-        after={cluster("opacity", "Opacity")}
-        disabled={off("opacity")}
-      />
-      <Button size="sm" variant="ghost" className="self-start" onClick={onReset}>
-        Reset
-      </Button>
-    </Group>
-  );
+  const fields = useKeyedTransform({
+    item: { kind: "text", id: layer.id },
+    span: layer,
+    transform: layer.transform,
+    keys: layer.keys,
+    playback: keying.playback,
+    group: `text:${layer.id}:transform`,
+    onWritten: (written, group) => onChange({ ...layer, ...written }, group),
+  });
+  return <TransformFields {...fields} onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)} />;
 }
 
 const BACKGROUNDS = [

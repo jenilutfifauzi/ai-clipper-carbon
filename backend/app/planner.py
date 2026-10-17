@@ -1636,19 +1636,16 @@ def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transf
 
 def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to: tuple[float, float] | None = None) -> Box:
     """What holds `area` once scaled and turned by `transform` about `centre`, and moved for `centre`
-    to be at `to` when that is given."""
+    to be at `to` when that is given: rounded to the pixel as a picture's bounds are."""
     angle = math.radians(transform.rotation)
     cos, sin = math.cos(angle), math.sin(angle)
-    corners = [
-        ((x - centre[0]) * transform.scale, (y - centre[1]) * transform.scale)
-        for x in (area.x, area.x + area.width)
-        for y in (area.y, area.y + area.height)
-    ]
+    # The area's middle, off `centre` by up to half a pixel, scaled and turned with it.
+    u = (area.x + area.width / 2 - centre[0]) * transform.scale
+    v = (area.y + area.height / 2 - centre[1]) * transform.scale
     x, y = to or centre
-    xs = [x + u * cos - v * sin for u, v in corners]
-    ys = [y + u * sin + v * cos for u, v in corners]
-    left, top = math.floor(min(xs) + 1e-6), math.floor(min(ys) + 1e-6)
-    return Box(left, top, math.ceil(max(xs) - 1e-6) - left, math.ceil(max(ys) - 1e-6) - top)
+    x, y = x + u * cos - v * sin, y + u * sin + v * cos
+    across, down = turned_size(area.width * transform.scale, area.height * transform.scale, transform.rotation)
+    return Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
 
 
 def text_bounds_at(event: TextEvent, time: float) -> Box:

@@ -8,12 +8,12 @@ import type { RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
-import { shownTransform, tooManyKeys, writeKey, writtenTransform } from "./keyActions";
-import { KeyedVolume, useKeyNotice, useKeyTime, useTouch } from "./KeyCluster";
-import { heldKeyTime, keyedGroup, keyTime, resetOverlay } from "./keying";
+import { tooManyKeys, writeKey } from "./keyActions";
+import { KeyedVolume, useKeyNotice, useTouch } from "./KeyCluster";
+import { keyedGroup, resetOverlay } from "./keying";
 import { SpeedFields } from "./SpeedFields";
 import { TimingFields } from "./TimingFields";
-import { TransformFields } from "./TransformFields";
+import { TransformFields, useKeyedTransform } from "./TransformFields";
 
 // A new still shows this long, or to the Clip's end.
 const STILL_SECS = 3;
@@ -62,28 +62,26 @@ export function OverlayTransform({
   onChange: (overlay: Overlay, group: string) => void;
   onCropMode?: () => void;
 }) {
-  const time = useKeyTime(playback);
-  const at = keyTime(overlay, time);
-  const shown = shownTransform(overlay.transform, overlay.keys, at ?? heldKeyTime(overlay, time));
+  const fields = useKeyedTransform({
+    item: { kind: "overlay", id: overlay.id },
+    span: overlay,
+    transform: overlay.transform,
+    keys: overlay.keys,
+    playback,
+    group: `overlay:${overlay.id}:transform`,
+    onWritten: (written, group) => onChange({ ...overlay, ...written }, group),
+  });
   const size = mediaSize(item);
-  const defaults = overlayPlacement(size);
-  const notify = useKeyNotice();
   return (
     <TransformFields
-      transform={shown}
+      {...fields}
       crop={overlay.crop}
       size={size}
-      defaults={defaults}
-      onChange={(next, field) => {
-        const written = writtenTransform(overlay.transform, overlay.keys, next, at, shown);
-        if (written.full) return notify(tooManyKeys(written.full));
-        onChange({ ...overlay, ...written }, keyedGroup(`overlay:${overlay.id}:transform.${field}`, written.keys !== overlay.keys, at));
-      }}
+      defaults={overlayPlacement(size)}
       onCrop={(crop, field, transform) =>
         onChange(transform ? resetOverlay(overlay, transform) : { ...overlay, crop }, `overlay:${overlay.id}:crop.${field}`)
       }
       onCropMode={onCropMode}
-      keyed={{ item: { kind: "overlay", id: overlay.id }, keys: overlay.keys, inside: at !== null }}
     />
   );
 }

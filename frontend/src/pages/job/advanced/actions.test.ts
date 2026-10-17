@@ -16,7 +16,7 @@ import {
   placeAfter,
   placeDropped,
   remove,
-  applyLook,
+  applyTextStyle,
   restyle,
   rippleRemove,
   setFade,
@@ -456,7 +456,7 @@ describe("editing several Text Layers", () => {
     const look = textStyle({ font: "anton", size: 130, colour: "#FFE600", stroke_width: 6 });
 
     // One Outcome, so one step of undo takes both back.
-    expect(applyLook(scene(before, pick), look)).toEqual({ edits: { ...before, text_layers: [{ ...a, style: look }, { ...keyed, style: look }, c] }, pick });
+    expect(applyTextStyle(scene(before, pick), look)).toEqual({ edits: { ...before, text_layers: [{ ...a, style: look }, { ...keyed, style: look }, c] }, pick });
   });
 });
 

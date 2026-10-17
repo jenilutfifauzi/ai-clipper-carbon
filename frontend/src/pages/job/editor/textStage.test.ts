@@ -130,6 +130,18 @@ describe("a keyed Text Layer on the stage", () => {
     expect(at.picture).toMatchObject({ centre: [500, 600], width: 600, height: 300, rotation: 45, motion: {} });
   });
 
+  test("its bounds at the playhead are rounded to the pixel as a picture's are, the backend's", () => {
+    // Halfway along x 540 to 542 and scale 1 to 1.002: its 300×100 area 300.3×100.1 about (541, 600).
+    const planned = event();
+    const motion = {
+      x: [{ at: 0, value: 540, ease: LINEAR }, { at: 1, value: 542, ease: LINEAR }],
+      scale: [{ at: 0, value: 1, ease: LINEAR }, { at: 1, value: 1.002, ease: LINEAR }],
+    };
+    const at = textEventAt({ ...planned, picture: { ...planned.picture, motion, unscaled: [400, 200] } }, 0.5);
+    // To the nearest pixel (390.85, 549.95, 300.3, 100.1), not out to whole ones (390, 549, 301, 101).
+    expect(at.bounds).toEqual({ x: 391, y: 550, width: 300, height: 100 });
+  });
+
   test("a Grip held draws the same picture where the gesture puts it", () => {
     const at = textEventAt(keyed(), 2);
     const { picture, fitted } = textStagePicture(at);

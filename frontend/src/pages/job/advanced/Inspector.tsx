@@ -7,7 +7,7 @@ import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { applyLook, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
+import { applyTextStyle, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -93,7 +93,7 @@ export function Inspector({
           layers={edits.text_layers.filter((layer) => items.some((item) => item.id === layer.id))}
           fonts={fonts}
           onChange={(change, group) => onEdits(restyle({ edits, pick }, change).edits, group)}
-          onApplyLook={(style) => onEdits(applyLook({ edits, pick }, style).edits)}
+          onApplyTextStyle={(style) => onEdits(applyTextStyle({ edits, pick }, style).edits)}
           onDuplicate={actions.duplicate}
           onCopy={actions.copy}
           onDelete={actions.remove}
@@ -157,7 +157,7 @@ export function Inspector({
         duration={duration}
         fonts={fonts}
         onChange={onText}
-        onApplyLook={(style) => onEdits(applyLook({ edits, pick }, style).edits)}
+        onApplyTextStyle={(style) => onEdits(applyTextStyle({ edits, pick }, style).edits)}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
       />

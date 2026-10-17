@@ -61,9 +61,9 @@ export interface TrackHandlers {
   onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
-  // A Media Library item (its id) or a Text Layer's look (its name) dropped at `time`.
+  // A Media Library item (its id) or a Text Preset (its id) dropped at `time`.
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
-  onDropText: (look: string, time: number) => void;
+  onDropText: (preset: string, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
 }

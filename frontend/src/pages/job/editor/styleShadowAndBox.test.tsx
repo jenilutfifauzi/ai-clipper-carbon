@@ -6,7 +6,7 @@ import { describe, expect, test } from "vitest";
 import type { CaptionStyle, DropShadow, HookStyle, StyleValue } from "../../../api";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { NO_SHADOW } from "../advanced/textStyle";
+import { NO_SHADOW } from "./shadow";
 import { CaptionStylePanel } from "./CaptionStylePanel";
 import { HookMoreOptions } from "./HookStylePanel";
 import { ShadowFields } from "./ShadowFields";

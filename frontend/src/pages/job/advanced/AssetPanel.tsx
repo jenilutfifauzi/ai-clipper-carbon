@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
-import type { ClipSegment, FontInfo, MediaItem, TextLayer, Transcript } from "../../../api";
+import type { ClipSegment, FontInfo, MediaItem, Transcript } from "../../../api";
 import type { AssetTab } from "./Chrome";
 import { SourcePicker } from "./MainTrack";
 import { MediaAssets, type MediaLibrary } from "./MediaLibrary";
+import type { UntimedTextLayer } from "./TextLayers";
 import { TextAssets } from "./TextPresets";
 
 /**
- * An asset tab's content: the Text Layers' looks; the episode's moments and the Media Library's
+ * An asset tab's content: the Text Presets; the episode's moments and the Media Library's
  * videos and images; its songs; or the Transitions. Each added at the playhead by a click, or where
  * it is dropped on the timeline.
  */
@@ -30,7 +31,7 @@ export function AssetPanel({
   // Where the episode's transcript opens: the Clip's first Segment.
   near: ClipSegment;
   transitions: ReactNode;
-  onAddText: (look: Omit<TextLayer, "id" | "start" | "secs" | "keys">) => void;
+  onAddText: (made: UntimedTextLayer) => void;
   onAddMusic: (item: MediaItem) => void;
   onAddSource: (range: { start: number; end: number }) => void;
   onAddVideo: (item: MediaItem) => void;

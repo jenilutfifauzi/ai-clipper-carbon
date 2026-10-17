@@ -8,6 +8,7 @@ are tested in test_text_pictures.py.
 """
 
 import json
+import math
 import subprocess
 import tempfile
 from pathlib import Path
@@ -20,7 +21,7 @@ from app.candidates import TextAlign, TextLayer
 from app.jobs import CANDIDATES_FILE, REVISIONS_DIR
 from app.migration import migrated_candidate, migrated_clip, migrated_text_layer
 from app.config import FONTS_DIR, load_settings
-from app.planner import MAX_TEXT_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, TextEvent, font_metrics, plan_render, text_event
+from app.planner import MAX_TEXT_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
 from app.renderer import _ass
 from app.text_pictures import rasterised
 from app.video_source import SourceMetadata
@@ -411,6 +412,21 @@ def test_a_scaled_and_turned_text_layer_keeps_its_layout_and_turns_its_bounds_ab
     assert turned.bounds.width == pytest.approx(2 * area.height, abs=2) and turned.bounds.height == pytest.approx(2 * area.width, abs=2)
     assert turned.bounds.x + turned.bounds.width / 2 == pytest.approx(500, abs=1)
     assert turned.bounds.y + turned.bounds.height / 2 == pytest.approx(900, abs=1)
+
+
+def test_a_text_layers_bounds_are_rounded_to_the_pixel_as_a_pictures_are():
+    turned = text_event(layer({"x": 500, "y": 900, "scale": 1.37, "rotation": 30}, text="Halo dunia"), 10)
+    # Its area's corners, scaled and turned about its picture's centre, in fractions of a pixel.
+    area, (x, y) = turned.area, turned.picture.centre
+    angle = math.radians(30)
+    corners = [((u - x) * 1.37, (v - y) * 1.37) for u in (area.x, area.x + area.width) for v in (area.y, area.y + area.height)]
+    xs = [x + u * math.cos(angle) - v * math.sin(angle) for u, v in corners]
+    ys = [y + u * math.sin(angle) + v * math.cos(angle) for u, v in corners]
+    # To the nearest pixel, as the editor's preview rounds a picture's (and a keyed Text Layer's) bounds,
+    # not out to whole pixels.
+    nearest = Box(round(min(xs)), round(min(ys)), round(max(xs) - min(xs)), round(max(ys) - min(ys)))
+    outward = Box(math.floor(min(xs)), math.floor(min(ys)), math.ceil(max(xs)) - math.floor(min(xs)), math.ceil(max(ys)) - math.floor(min(ys)))
+    assert turned.bounds == nearest != outward
 
 
 def test_a_text_layers_picture_is_made_at_the_next_scale_up_and_is_one_picture_within_it():

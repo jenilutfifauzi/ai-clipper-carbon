@@ -109,8 +109,8 @@ import {
   unlockedPick,
   type Pick,
 } from "./pick";
-import { newTextLayer } from "./TextLayers";
-import { lookOf } from "./TextPresets";
+import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
+import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
@@ -452,9 +452,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     setTracks((old) => toggledTrack(old, control, kind));
   }
 
-  function addText(look: Omit<TextLayer, "id" | "start" | "secs" | "keys">, at = playback.time) {
+  function addText(made: UntimedTextLayer, at = playback.time) {
     if (refused("text")) return;
-    const layer = newTextLayer(look, at, duration);
+    const layer = newTextLayer(made, at, duration);
     change({ text_layers: [...edits.text_layers, layer] });
     added(picked({ kind: "text", id: layer.id }), true);
   }
@@ -945,7 +945,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onDropMedia: dropMedia,
             onDropText: (id, time) => {
               const preset = textPresets?.find((p) => p.id === id);
-              if (preset) addText(lookOf(preset), time);
+              if (preset) addText(fromPreset(preset), time);
             },
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
           }}
@@ -986,7 +986,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
-      onAddText={(look) => addText(look)}
+      onAddText={(made) => addText(made)}
       onAddMusic={(item) => addMusic(item)}
       onAddSource={(range) => addSegment({ id: newId(), ...range })}
       onAddVideo={(item) => addSegment(newMediaSegment(item, newId()))}
