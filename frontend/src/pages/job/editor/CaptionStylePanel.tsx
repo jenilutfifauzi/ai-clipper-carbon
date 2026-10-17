@@ -5,7 +5,8 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { countChanged, fontChoices, Group, StyleMarker } from "./StyleFields";
+import { FacePicker } from "./FacePicker";
+import { countChanged, Group, StyleMarker } from "./StyleFields";
 import type { StyleControls } from "./useStyleDraft";
 
 const HIGHLIGHTS = [
@@ -52,7 +53,7 @@ export function CaptionStylePanel({
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-        <Select label="Font" value={caption.font} {...fontChoices(fonts)} onChange={(v) => set("font", v)} marker={marker("font", "font")} />
+        <FacePicker value={caption.font} fonts={fonts} onChange={(v) => set("font", v)} marker={marker("font", "font")} className="sm:col-span-2" />
         <Slider label="Size" value={caption.size} min={40} max={200} onChange={(v) => set("size", v)} marker={marker("size", "size")} />
         <ColorField label="Text colour" value={caption.colour} onChange={(v) => set("colour", v)} marker={marker("colour", "text colour")} />
         <ColorField

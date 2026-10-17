@@ -11,8 +11,11 @@ export function importedText(imported: FontImported): string {
   return `Already imported: ${imported.existing.map((face) => face.label).join(", ")}.`;
 }
 
-/** The Text tab's Import font: a TTF, OTF or TTC file becomes Faces every Job's font pickers list. */
-export function ImportFont() {
+/**
+ * Import font: a TTF, OTF or TTC file becomes Faces every Job's font pickers list. `onImported` is
+ * told what it added, as the Face picker is, which then picks it.
+ */
+export function ImportFont({ onImported }: { onImported?: (imported: FontImported) => void }) {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<FontImported | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +27,9 @@ export function ImportFont() {
     setError(null);
     setResult(null);
     try {
-      setResult(await importFont(file));
+      const imported = await importFont(file);
+      setResult(imported);
+      onImported?.(imported);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "The font couldn't be imported.");
     } finally {

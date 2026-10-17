@@ -9,7 +9,8 @@ import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { fontFamily } from "../../../fonts";
 import { IDENTITY } from "../editor/picture";
-import { fontChoices, Group } from "../editor/StyleFields";
+import { FacePicker } from "../editor/FacePicker";
+import { Group } from "../editor/StyleFields";
 import { DRAG_TEXT } from "./drag";
 import { ImportFont } from "./ImportFont";
 import { shared } from "./actions";
@@ -176,7 +177,7 @@ export function TextLayerFields({
         />
       </div>
       <Group title="Look">
-        <Select label="Font" value={style.font} onChange={(font) => setStyle("font", font)} {...fontChoices(fonts)} />
+        <FacePicker value={style.font} fonts={fonts} onChange={(font) => setStyle("font", font)} />
         <Slider label="Size" value={style.size} min={16} max={320} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={style.colour} onChange={(colour) => setStyle("colour", colour)} />
         <Slider
@@ -279,7 +280,7 @@ export function TextLayersFields({
       </div>
       <Hint more="Their words, places and times stay each one's own: change those one at a time.">A change here applies to every picked text.</Hint>
       <Group title="Look">
-        <Select label="Font" value={value("font")} onChange={(font) => setStyle("font", font)} marker={marker("font")} {...fontChoices(fonts)} />
+        <FacePicker value={value("font")} fonts={fonts} onChange={(font) => setStyle("font", font)} marker={marker("font")} />
         <Slider label="Size" value={value("size")} min={16} max={320} format={shown("size", String)} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={value("colour")} onChange={(colour) => setStyle("colour", colour)} marker={marker("colour")} />
         <Slider
