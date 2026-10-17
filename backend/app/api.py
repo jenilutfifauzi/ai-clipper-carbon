@@ -37,6 +37,7 @@ from app.fonts import FONTS
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
@@ -155,6 +156,18 @@ def no_old_overlays(overlays: Any) -> Any:
     return overlays
 
 
+def no_old_text_layers(layers: Any) -> Any:
+    """Text Layers in the shape before Text Styles, refused with what replaced it."""
+    for layer in layers if isinstance(layers, list) else []:
+        if isinstance(layer, dict) and (old := [key for key in OLD_TEXT_LAYER if key in layer]):
+            raise ValueError(
+                f"{', '.join(old)} of a Text Layer are now in its transform (x and y, its centre) and its style, a Text "
+                "Style: font, size, colour, stroke_width and stroke_colour (the outline), plate (the box: shape none or "
+                "block, colour, opacity, radius, padding_x, padding_y), line_height and align"
+            )
+    return layers
+
+
 def no_old_segments(segments: Any) -> Any:
     """Segments in the shape before Framings (docs/adr/0007), refused with what replaced it."""
     for segment in segments if isinstance(segments, list) else []:
@@ -198,7 +211,7 @@ class CandidateUpdate(BaseModel):
     # Saved with its whitespace collapsed; "" for none.
     hook_kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] | None = None
     # Replaces the Candidate's Text Layers as a whole.
-    text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX)] | None = None
+    text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX), BeforeValidator(no_old_text_layers)] | None = None
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None

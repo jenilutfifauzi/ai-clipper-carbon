@@ -1,0 +1,351 @@
+{
+  "layers": [
+    {
+      "id": "bare",
+      "text": "Halo",
+      "start": 0.0,
+      "secs": 2.0
+    },
+    {
+      "id": "plain",
+      "text": "Halo dunia",
+      "start": 0.5,
+      "secs": 3.0,
+      "x": 400,
+      "y": 700,
+      "size": 80,
+      "colour": "#FF0000",
+      "outline": 0,
+      "outline_colour": "#000000",
+      "box": false,
+      "box_colour": "#000000",
+      "box_opacity": 0.7,
+      "align": "center",
+      "animation_in": "none",
+      "animation_out": "none",
+      "animation_ms": 300
+    },
+    {
+      "id": "title",
+      "text": "Satu\nDua yang lebih panjang",
+      "start": 1.0,
+      "secs": 4.0,
+      "x": 540,
+      "y": 700,
+      "font": "anton",
+      "size": 130,
+      "colour": "#FFE600",
+      "outline": 6,
+      "outline_colour": "#112233",
+      "box": false,
+      "align": "left",
+      "animation_in": "pop"
+    },
+    {
+      "id": "label",
+      "text": "Label\nkanan",
+      "start": 0.0,
+      "secs": 5.0,
+      "x": 700,
+      "y": 1100,
+      "size": 64,
+      "colour": "#000000",
+      "outline": 0,
+      "box": true,
+      "box_colour": "#FFFFFF",
+      "box_opacity": 1.0,
+      "align": "right",
+      "animation_in": "slide",
+      "animation_out": "slide",
+      "animation_ms": 500
+    },
+    {
+      "id": "subtitle",
+      "text": "Subtitle",
+      "start": 2.0,
+      "secs": 3.0,
+      "y": 1400,
+      "size": 56,
+      "outline": 0,
+      "box": true,
+      "box_opacity": 0.6,
+      "animation_in": "fade",
+      "animation_out": "fade"
+    },
+    {
+      "id": "wide",
+      "text": "Ini adalah kalimat yang sangat panjang sekali",
+      "start": 0.0,
+      "secs": 6.0,
+      "size": 200,
+      "box": true,
+      "box_colour": "#123456",
+      "box_opacity": 0.8,
+      "outline": 3,
+      "animation_out": "pop",
+      "animation_ms": 800
+    },
+    {
+      "id": "corner",
+      "text": "Pojok",
+      "start": 3.0,
+      "secs": 2.0,
+      "x": 1080,
+      "y": 1920,
+      "size": 120,
+      "font": "bebas-neue",
+      "align": "right"
+    },
+    {
+      "id": "narrow",
+      "text": "Kalimat panjang tanpa kotak di kiri\nbaris dua",
+      "start": 1.0,
+      "secs": 2.0,
+      "size": 150,
+      "align": "left",
+      "outline": 2,
+      "box": false,
+      "box_colour": "#00FF00",
+      "box_opacity": 0.3,
+      "animation_in": "pop",
+      "animation_out": "fade"
+    },
+    {
+      "id": "odd",
+      "text": "Kotak ganjil",
+      "start": 0.0,
+      "secs": 3.0,
+      "x": 300,
+      "y": 300,
+      "size": 53,
+      "box": true,
+      "align": "left"
+    }
+  ],
+  "events": [
+    {
+      "lines": [
+        "Halo"
+      ],
+      "start": 0.0,
+      "end": 2.0,
+      "area": {
+        "x": 478,
+        "y": 936,
+        "width": 124,
+        "height": 49
+      },
+      "size": 80.0,
+      "anchors": [
+        [
+          540.0,
+          971.8514724711907
+        ]
+      ],
+      "box": null
+    },
+    {
+      "lines": [
+        "Halo dunia"
+      ],
+      "start": 0.5,
+      "end": 3.5,
+      "area": {
+        "x": 253,
+        "y": 676,
+        "width": 294,
+        "height": 49
+      },
+      "size": 80.0,
+      "anchors": [
+        [
+          400.0,
+          711.8514724711907
+        ]
+      ],
+      "box": null
+    },
+    {
+      "lines": [
+        "Satu",
+        "Dua yang lebih panjang"
+      ],
+      "start": 1.0,
+      "end": 5.0,
+      "area": {
+        "x": 190,
+        "y": 584,
+        "width": 701,
+        "height": 233
+      },
+      "size": 130.0,
+      "anchors": [
+        [
+          255.58591549295775,
+          648.4507042253521
+        ],
+        [
+          540.3774647887324,
+          791.4507042253522
+        ]
+      ],
+      "box": null
+    },
+    {
+      "lines": [
+        "Label",
+        "kanan"
+      ],
+      "start": 0.0,
+      "end": 5.0,
+      "area": {
+        "x": 609,
+        "y": 1031,
+        "width": 182,
+        "height": 138
+      },
+      "size": 64.0,
+      "anchors": [
+        [
+          709.4348271446863,
+          1073.7611779769525
+        ],
+        [
+          700.4822023047375,
+          1144.1611779769526
+        ]
+      ],
+      "box": {
+        "x": 609,
+        "y": 1031,
+        "width": 182,
+        "height": 138
+      }
+    },
+    {
+      "lines": [
+        "Subtitle"
+      ],
+      "start": 2.0,
+      "end": 5.0,
+      "area": {
+        "x": 445,
+        "y": 1370,
+        "width": 190,
+        "height": 59
+      },
+      "size": 56.0,
+      "anchors": [
+        [
+          540.0,
+          1407.4160307298334
+        ]
+      ],
+      "box": {
+        "x": 445,
+        "y": 1370,
+        "width": 190,
+        "height": 59
+      }
+    },
+    {
+      "lines": [
+        "Ini adalah kalimat yang sangat panjang sekali"
+      ],
+      "start": 0.0,
+      "end": 6.0,
+      "area": {
+        "x": 48,
+        "y": 928,
+        "width": 983,
+        "height": 63
+      },
+      "size": 59.9,
+      "anchors": [
+        [
+          539.5,
+          968.0217900128041
+        ]
+      ],
+      "box": {
+        "x": 48,
+        "y": 928,
+        "width": 983,
+        "height": 63
+      }
+    },
+    {
+      "lines": [
+        "Pojok"
+      ],
+      "start": 3.0,
+      "end": 5.0,
+      "area": {
+        "x": 907,
+        "y": 1827,
+        "width": 173,
+        "height": 93
+      },
+      "size": 120.0,
+      "anchors": [
+        [
+          993.9230769230769,
+          1891.6153846153845
+        ]
+      ],
+      "box": null
+    },
+    {
+      "lines": [
+        "Kalimat panjang tanpa kotak di kiri",
+        "baris dua"
+      ],
+      "start": 1.0,
+      "end": 3.0,
+      "area": {
+        "x": 48,
+        "y": 890,
+        "width": 984,
+        "height": 139
+      },
+      "size": 81.3,
+      "anchors": [
+        [
+          539.7296734955185,
+          926.4340588988476
+        ],
+        [
+          176.4300576184379,
+          1015.8640588988476
+        ]
+      ],
+      "box": null
+    },
+    {
+      "lines": [
+        "Kotak ganjil"
+      ],
+      "start": 0.0,
+      "end": 3.0,
+      "area": {
+        "x": 172,
+        "y": 272,
+        "width": 256,
+        "height": 56
+      },
+      "size": 53.0,
+      "anchors": [
+        [
+          299.7395006402049,
+          307.41160051216394
+        ]
+      ],
+      "box": {
+        "x": 172,
+        "y": 272,
+        "width": 256,
+        "height": 56
+      }
+    }
+  ]
+}

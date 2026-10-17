@@ -6,24 +6,17 @@ import type { Candidate, ClipSegment, LayoutOverride, Overlay, TextLayer, Transf
 import { NO_CROP } from "./cropGestures";
 import { collidedParts, fieldsOf, mergeEdits, rebaseHistory } from "./merge";
 import { BLURRED, IDENTITY } from "./picture";
+import { textStyle } from "../advanced/textStyle";
 
-function layer(id: string, changes: Partial<TextLayer> = {}): TextLayer {
+// A Text Layer, its centre's height `y` when given.
+function layer(id: string, { y = 960, ...changes }: Partial<Omit<TextLayer, "transform">> & { y?: number } = {}): TextLayer {
   return {
     id,
     text: id,
     start: 0,
     secs: 2,
-    x: 540,
-    y: 960,
-    font: "Montserrat ExtraBold",
-    size: 56,
-    colour: "#FFFFFF",
-    outline: 0,
-    outline_colour: "#000000",
-    box: false,
-    box_colour: "#000000",
-    box_opacity: 0.6,
-    align: "center",
+    transform: { ...IDENTITY, y },
+    style: textStyle({ size: 56, plate: { opacity: 0.6 } }),
     animation_in: "none",
     animation_out: "none",
     animation_ms: 300,

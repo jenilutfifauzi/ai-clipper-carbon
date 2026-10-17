@@ -109,6 +109,7 @@ import {
   type Pick,
 } from "./pick";
 import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
+import { atSize } from "./textStyle";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
@@ -805,8 +806,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           }
           const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
           if (!layer) return;
-          if (place.size == null && placedTogether("text", layer.id)) moveOnFrame(place.x - layer.x, place.y - layer.y, group);
-          else updateText({ ...layer, x: place.x, y: place.y, size: place.size ?? layer.size }, group);
+          const { transform, style } = layer;
+          if (place.size == null && placedTogether("text", layer.id)) moveOnFrame(place.x - transform.x, place.y - transform.y, group);
+          else updateText({ ...layer, transform: { ...transform, x: place.x, y: place.y }, style: atSize(style, place.size ?? style.size) }, group);
         },
         retype: {
           textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),

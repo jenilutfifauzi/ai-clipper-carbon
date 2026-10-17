@@ -121,7 +121,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
       return {
         area: event.area,
         initial: event.layer.text,
-        font: fontById.get(event.layer.font),
+        font: fontById.get(event.layer.style.font),
         size: event.size,
         uppercase: false,
         maxLength: TEXT_MAX_CHARS,

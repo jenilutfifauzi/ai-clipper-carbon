@@ -9,7 +9,7 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
-from app.styles import DEFAULT_PRESET, Animation, Colour, FontId, StyleOverrides
+from app.styles import DEFAULT_PRESET, Animation, Colour, FontId, HookShape, StyleOverrides
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -74,44 +74,6 @@ class WordEdit:
     break_before: bool = False
 
 
-class TextAlign(StrEnum):
-    """How a Text Layer's lines line up with each other."""
-
-    CENTER = "center"
-    LEFT = "left"
-    RIGHT = "right"
-
-
-@dataclass(frozen=True)
-class TextLayer:
-    """A free text overlay of the Advanced Edit: `text` (its lines split at newlines) on screen from
-    `start` for `secs`, in Timeline time (seconds into the Clip, so that trimming the Clip leaves it
-    where it was in it), centred on (x, y) in output pixels. Its look is its own: the font at `size`
-    (libass's), its colour and outline, an optional box behind it, and the hook's animations. `id`
-    names it in the editor."""
-
-    id: ItemId
-    text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
-    start: TimelineStart
-    secs: TimelineSecs
-    x: Annotated[FiniteFloat, Field(ge=0, le=1080)] = 540
-    y: Annotated[FiniteFloat, Field(ge=0, le=1920)] = 960
-    font: FontId = DEFAULT_FONT
-    size: Annotated[int, Field(ge=16, le=320)] = 80
-    colour: Colour = "#FFFFFF"
-    # In output pixels; none at 0.
-    outline: Annotated[int, Field(ge=0, le=20)] = 0
-    outline_colour: Colour = "#000000"
-    # A rounded box behind the lines.
-    box: bool = False
-    box_colour: Colour = "#000000"
-    box_opacity: Annotated[float, Field(ge=0, le=1)] = 0.7
-    align: TextAlign = TextAlign.CENTER
-    animation_in: Animation = Animation.NONE
-    animation_out: Animation = Animation.NONE
-    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
-
-
 # A Media Library item's id (app/media.py).
 MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
@@ -158,6 +120,112 @@ class Transform:
 # A new Overlay's: half its fitted size at the frame's centre, 540 px wide for any item wider than
 # 9:16 (the editor works out the scale that makes any item 540 px wide).
 OVERLAY_TRANSFORM = Transform(scale=0.5)
+
+
+class TextAlign(StrEnum):
+    """How a Text Layer's lines line up with each other."""
+
+    CENTER = "center"
+    LEFT = "left"
+    RIGHT = "right"
+
+
+@dataclass(frozen=True)
+class Plate:
+    """What is drawn behind a Text Style's words: nothing, or a Block behind all its lines."""
+
+    # In output pixels at the style's size: its corners' radius, and how far it reaches either side
+    # of the widest line and above the capitals of the first line and below the descenders of the last.
+    shape: HookShape = HookShape.NONE
+    colour: Colour = "#000000"
+    opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 0.7
+    radius: Annotated[FiniteFloat, Field(ge=0, le=200)] = 20.0
+    padding_x: Annotated[FiniteFloat, Field(ge=0, le=200)] = 28.0
+    padding_y: Annotated[FiniteFloat, Field(ge=0, le=200)] = 17.6
+
+
+@dataclass(frozen=True)
+class TextStyle:
+    """How a Text Layer's words look. Lengths in output pixels."""
+
+    # Its Face, at libass's size.
+    font: FontId = DEFAULT_FONT
+    size: Annotated[int, Field(ge=16, le=320)] = 80
+    colour: Colour = "#FFFFFF"
+    # None at 0.
+    stroke_width: Annotated[int, Field(ge=0, le=20)] = 0
+    stroke_colour: Colour = "#000000"
+    plate: Plate = Plate()
+    # Its lines' baselines this many sizes apart.
+    line_height: Annotated[FiniteFloat, Field(ge=0.5, le=3)] = 1.1
+    # Added after each character but a line's last; 0 until Text Layers are drawn as pictures
+    # (docs/adr/0010-text-layers-are-rasterised-pictures.md), as are the wrap width (0: the frame less
+    # TEXT_MARGIN either side) and the fixed height (0: the words' own height).
+    tracking: Annotated[FiniteFloat, Field(ge=-50, le=200)] = 0.0
+    align: TextAlign = TextAlign.CENTER
+    wrap_width: Annotated[FiniteFloat, Field(ge=0, le=4096)] = 0.0
+    fixed_height: Annotated[FiniteFloat, Field(ge=0, le=4096)] = 0.0
+
+
+@dataclass(frozen=True)
+class TextLayer:
+    """A free text overlay of the Advanced Edit: `text` (lines split at newlines) from `start` for
+    `secs` in Timeline time, centred by its `transform` (never stretched nor flipped) in its `style`,
+    coming on and going off as the hook does."""
+
+    # In Timeline time, so that trimming the Clip leaves it where it was in it. Until it is drawn as a
+    # picture (docs/adr/0010) it is unscaled, unturned and opaque, and its style has no tracking,
+    # wrap width, fixed height nor Strips (_check_drawn). `id` names it in the editor.
+
+    id: ItemId
+    text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
+    start: TimelineStart
+    secs: TimelineSecs
+    transform: Transform = Transform()
+    style: TextStyle = TextStyle()
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
+
+    def __post_init__(self) -> None:
+        _check_text_transform(self)
+        _check_drawn(self)
+
+
+def _check_text_transform(layer: TextLayer) -> None:
+    """ValueError for a Text Layer's Transform that stretches or flips it."""
+    transform = layer.transform
+    if transform.stretch_x != 1 or transform.stretch_y != 1:
+        raise ValueError(
+            f"Text Layer {layer.id} can't be stretched: its transform's stretch_x and stretch_y stay 1 (scale it, or set its style's size)"
+        )
+    if transform.flip_h or transform.flip_v:
+        raise ValueError(f"Text Layer {layer.id} can't be flipped: its transform's flip_h and flip_v stay false")
+
+
+def _check_drawn(layer: TextLayer) -> None:
+    """ValueError for what a Text Layer has that its ASS events don't draw: a scale, rotation or
+    opacity of its Transform, or its style's tracking, wrap width, fixed height or Strips. Each
+    comes with its picture (docs/adr/0010)."""
+    transform, style = layer.transform, layer.style
+    undrawn = [
+        name
+        for name, given in (
+            ("transform.scale", transform.scale != 1),
+            ("transform.rotation", transform.rotation != 0),
+            ("transform.opacity", transform.opacity != 1),
+            ("style.tracking", style.tracking != 0),
+            ("style.wrap_width", style.wrap_width != 0),
+            ("style.fixed_height", style.fixed_height != 0),
+            ("style.plate.shape strips", style.plate.shape is HookShape.STRIPS),
+        )
+        if given
+    ]
+    if undrawn:
+        raise ValueError(
+            f"Text Layer {layer.id} can't have {_listed(tuple(undrawn))} yet: a Text Layer is drawn at scale 1, unturned, "
+            "opaque, its lines broken at newlines only, on a Block plate or none"
+        )
 
 
 class Ease(NamedTuple):

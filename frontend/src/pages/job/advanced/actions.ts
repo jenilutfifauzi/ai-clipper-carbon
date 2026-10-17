@@ -52,7 +52,10 @@ const KINDS: {
 } = {
   text: {
     list: "text_layers",
-    aside: (item) => ({ y: Math.min((item as TextLayer).y + 80, 1920) }),
+    aside: (item) => {
+      const { transform } = item as TextLayer;
+      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+    },
     cut: () => ({ first: {}, second: {} }),
   },
   music: {
@@ -531,11 +534,10 @@ export function move(scene: PickContext, delta: number): Outcome | null {
 // The output's size, in pixels: where the middles of Text Layers and Overlays can be.
 const FRAME = { width: 1080, height: 1920 };
 
-// Where a Text Layer's or an Overlay's middle is on the frame (an Overlay's Transform has it), and the
-// item with its middle at (x, y).
-const middleOf = (item: TextLayer | Overlay) => ("transform" in item ? item.transform : item);
-const middledAt = <T extends TextLayer | Overlay>(item: T, x: number, y: number): T =>
-  "transform" in item ? { ...item, transform: { ...item.transform, x, y } } : { ...item, x, y };
+// Where a Text Layer's or an Overlay's middle is on the frame (its Transform has it), and the item with
+// its middle at (x, y).
+const middleOf = (item: TextLayer | Overlay) => item.transform;
+const middledAt = <T extends TextLayer | Overlay>(item: T, x: number, y: number): T => ({ ...item, transform: { ...item.transform, x, y } });
 
 // Where a keyed Overlay's middle goes along `axis`: its Keyframes' values (none for a Text Layer).
 const keyedMiddles = (item: TextLayer | Overlay, axis: "x" | "y") => ("keys" in item ? (item.keys[axis] ?? []).map((key) => key.value) : []);
@@ -569,15 +571,15 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   return { edits: next, pick: scene.pick };
 }
 
-/** The value `field` has in every one of `layers`, or undefined where they differ (mixed). */
-export function shared<K extends keyof TextLayer>(layers: TextLayer[], field: K): TextLayer[K] | undefined {
+/** The value `read` gives of every one of `layers`, or undefined where they differ (mixed). */
+export function shared<V>(layers: TextLayer[], read: (layer: TextLayer) => V): V | undefined {
   const [first, ...rest] = layers;
-  return first && rest.every((layer) => layer[field] === first[field]) ? first[field] : undefined;
+  return first && rest.every((layer) => read(layer) === read(first)) ? read(first) : undefined;
 }
 
-/** `field` of every picked Text Layer set to `value`. */
-export function restyle<K extends keyof TextLayer>(scene: { edits: AdvancedEdits; pick: Pick }, field: K, value: TextLayer[K]): Outcome {
-  const text_layers = scene.edits.text_layers.map((layer) => (isPicked(scene.pick, "text", layer.id) ? { ...layer, [field]: value } : layer));
+/** Every picked Text Layer changed by `change` (its style's colour set, say). */
+export function restyle(scene: { edits: AdvancedEdits; pick: Pick }, change: (layer: TextLayer) => TextLayer): Outcome {
+  const text_layers = scene.edits.text_layers.map((layer) => (isPicked(scene.pick, "text", layer.id) ? change(layer) : layer));
   return { edits: { ...scene.edits, text_layers }, pick: scene.pick };
 }
 

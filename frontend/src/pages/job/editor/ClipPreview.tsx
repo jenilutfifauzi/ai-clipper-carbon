@@ -53,8 +53,6 @@ export const BLUR_SIGMA = 40;
 export const BLUR_BRIGHTNESS = 0.9;
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
 const NUDGE_PX = 8;
-// A Text Layer's box has corners this many of its sizes round (planner.py's TEXT_RADIUS).
-const TEXT_RADIUS = 0.25;
 // How much of the ending "Play ending" plays.
 const ENDING_SECS = 3;
 
@@ -222,7 +220,7 @@ export function ClipPreview({
                 <TextLayerView
                   key={event.layer.id}
                   event={event}
-                  font={fontById.get(event.layer.font)}
+                  font={fontById.get(event.layer.style.font)}
                   playback={playback}
                   moving={edit.transform(`text:${event.layer.id}`, event.area)}
                   still={controls?.selected.includes(`text:${event.layer.id}`)}
@@ -562,7 +560,7 @@ function stageItems(
         id,
         label: `Text: ${event.lines.join(" ")}`,
         shows: [{ start: event.start, end: event.end, area: event.area }],
-        size: { now: event.layer.size, ...TEXT_SIZES },
+        size: { now: event.layer.style.size, ...TEXT_SIZES },
         onPlace: (area, size, group) => controls.onPlace(id, { ...middle(area), size }, group),
         onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
       });
@@ -620,6 +618,7 @@ function TextLayerView({
   still?: boolean;
 }) {
   const layer = event.layer;
+  const { style } = layer;
   const key = useShown(playback, (time, p) => {
     if (still && !p.playing && event.start <= time && time < event.end) return "1 1 0";
     const look = hookLook(time, event, layer, 0);
@@ -640,9 +639,9 @@ function TextLayerView({
             y={box.y}
             width={box.width}
             height={box.height}
-            rx={Math.min(Math.round(TEXT_RADIUS * size), Math.floor(box.height / 2))}
-            fill={layer.box_colour}
-            fillOpacity={layer.box_opacity}
+            rx={event.radius}
+            fill={style.plate.colour}
+            fillOpacity={style.plate.opacity}
           />
         )}
         {event.lines.map((line, i) => (
@@ -653,9 +652,9 @@ function TextLayerView({
             textAnchor="middle"
             fontFamily={fontFamily(font.id)}
             fontSize={cssFontSize(font, size)}
-            fill={layer.colour}
-            stroke={layer.outline > 0 ? layer.outline_colour : undefined}
-            strokeWidth={2 * layer.outline}
+            fill={style.colour}
+            stroke={style.stroke_width > 0 ? style.stroke_colour : undefined}
+            strokeWidth={2 * style.stroke_width}
             strokeLinejoin="round"
             paintOrder="stroke"
             style={{ whiteSpace: "pre" }}

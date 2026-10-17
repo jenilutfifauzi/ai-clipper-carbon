@@ -179,14 +179,8 @@ KICKER_GAP = 0.25
 # box, just above and left of the first line's text.
 QUOTE_SCALE = 0.9
 QUOTE_INSET = 0.75
-# A Text Layer is at most as wide as the frame less this many pixels either side. Its lines'
-# baselines are TEXT_LEADING sizes apart; its box is padded by TEXT_PAD_X and TEXT_PAD_Y sizes
-# either side and above its capitals and below its descenders, its corners TEXT_RADIUS sizes round.
+# A Text Layer is at most as wide as the frame less this many pixels either side.
 TEXT_MARGIN = 48
-TEXT_LEADING = 1.1
-TEXT_PAD_X = 0.35
-TEXT_PAD_Y = 0.22
-TEXT_RADIUS = 0.25
 
 
 # The planner's input, found by app/analysis.py.
@@ -445,10 +439,10 @@ class WatermarkEvent:
 
 @dataclass(frozen=True)
 class TextEvent:
-    """A Text Layer as drawn: its `lines` set at font `size` (its own, or smaller for one too wide),
-    on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it has a
-    `box` (then the box is the area). Each line is placed by its anchor: the middle of its text and
-    its baseline."""
+    """A Text Layer as drawn: its `lines` set at font `size` (its style's, or smaller for one too
+    wide), on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it
+    has a Block plate, which is `box` (the area), its corners `radius` pixels round. Each line is
+    placed by its anchor: the middle of its text and its baseline."""
 
     layer: TextLayer
     lines: list[str]
@@ -458,6 +452,7 @@ class TextEvent:
     size: float
     anchors: list[tuple[float, float]]
     box: Box | None = None
+    radius: int = 0
 
 
 @dataclass(frozen=True)
@@ -1357,9 +1352,10 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its lines
-    (split at newlines, without emoji, blank ones at either end left out) centred on its place and
-    kept inside the frame, set smaller when the widest, padded, is wider than the frame less
-    TEXT_MARGIN either side. None when it is blank or would start at or after the Clip's end."""
+    (split at newlines, without emoji, blank ones at either end left out) centred on its
+    Transform's centre and kept inside the frame, set smaller when the widest, padded, is wider than
+    the frame less TEXT_MARGIN either side. None when it is blank or would start at or after the
+    Clip's end."""
     lines = [without_emoji(line) for line in layer.text.split("\n")]
     while lines and not lines[0]:
         lines.pop(0)
@@ -1368,36 +1364,42 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     start = round(layer.start, 3)
     if not lines or start >= duration:
         return None
-    metrics = font_metrics(layer.font)
-    # Its width and padding grow with the size, so a size that fits scales them alike.
-    pad = (TEXT_PAD_X, TEXT_PAD_Y) if layer.box else (0.0, 0.0)
+    style = layer.style
+    metrics = font_metrics(style.font)
+    block = style.plate if style.plate.shape is HookShape.BLOCK else None
+    # Its width, padding and corners grow with the size (the plate's are given at the style's), so a
+    # size that fits scales them alike.
+    pad = (block.padding_x / style.size, block.padding_y / style.size) if block else (0.0, 0.0)
     widest = max(metrics.width(line, 1) for line in lines) + 2 * pad[0]
-    size = float(layer.size)
+    size = float(style.size)
     room = OUTPUT_WIDTH - 2 * TEXT_MARGIN
     if widest * size > room:
         size = math.floor(room / widest * 10) / 10
     pad_x, pad_y = pad[0] * size, pad[1] * size
     widths = [metrics.width(line, size) for line in lines]
     width = math.ceil(max(widths) + 2 * pad_x)
-    letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * TEXT_LEADING * size
+    letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
     height = math.ceil(letters + 2 * pad_y)
-    x = min(max(round(layer.x - width / 2), 0), OUTPUT_WIDTH - width)
-    y = min(max(round(layer.y - height / 2), 0), OUTPUT_HEIGHT - height)
+    x = min(max(round(layer.transform.x - width / 2), 0), OUTPUT_WIDTH - width)
+    y = min(max(round(layer.transform.y - height / 2), 0), OUTPUT_HEIGHT - height)
     area = Box(x, y, width, height)
 
     def middle(line: float) -> float:
-        if layer.align is TextAlign.LEFT:
+        if style.align is TextAlign.LEFT:
             return x + pad_x + line / 2
-        if layer.align is TextAlign.RIGHT:
+        if style.align is TextAlign.RIGHT:
             return x + width - pad_x - line / 2
         return x + width / 2
 
     anchors = [
-        (middle(line), y + pad_y + (metrics.cap_height / metrics.units + i * TEXT_LEADING) * size)
+        (middle(line), y + pad_y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
         for i, line in enumerate(widths)
     ]
     end = round(min(start + layer.secs, duration), 3)
-    return TextEvent(layer, lines, start, end, area, size, anchors, area if layer.box else None)
+    if block is None:
+        return TextEvent(layer, lines, start, end, area, size, anchors)
+    radius = min(round(block.radius / style.size * size), height // 2)
+    return TextEvent(layer, lines, start, end, area, size, anchors, area, radius)
 
 
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:

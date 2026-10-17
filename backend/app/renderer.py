@@ -107,7 +107,6 @@ from app.planner import (
     HOOK_PAD_Y,
     Box,
     CaptionEvent,
-    TEXT_RADIUS,
     HookEvent,
     Panel,
     RenderPlan,
@@ -119,7 +118,7 @@ from app.planner import (
     font_metrics,
     on_frame,
 )
-from app.candidates import Keyframe, Shadow, TextLayer
+from app.candidates import Keyframe, Shadow, TextLayer, TextStyle
 from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -934,7 +933,7 @@ def _ass(plan: RenderPlan) -> str:
         f"{_style_colour(hook.outline_colour)},{_style_colour(hook.shadow_colour)},0,0,0,0,100,100,0,0,1,"
         f"{hook.outline},{hook.shadow},5,0,0,0,1",
         *([_watermark_style(plan.watermark_style)] if watermark else []),
-        *(_text_style(f"Text{i}", event.layer) for i, event in enumerate(plan.texts)),
+        *(_text_style(f"Text{i}", event.layer.style) for i, event in enumerate(plan.texts)),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -955,26 +954,27 @@ def _ass(plan: RenderPlan) -> str:
 TEXT_LAYER_BASE = 2
 
 
-def _text_style(name: str, layer: TextLayer) -> str:
-    text, edge = _style_colour(layer.colour), _style_colour(layer.outline_colour)
+def _text_style(name: str, style: TextStyle) -> str:
+    text, edge = _style_colour(style.colour), _style_colour(style.stroke_colour)
     return (
-        f"Style: {name},{font(layer.font).family},{layer.size},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
-        f"{layer.outline},0,5,0,0,0,1"
+        f"Style: {name},{font(style.font).family},{style.size},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
+        f"{style.stroke_width},0,5,0,0,0,1"
     )
 
 
 def _text_events(event: TextEvent, style: str, base: int) -> list[str]:
-    """A Text Layer's Dialogue events in its `style`: its box drawn on ASS layer `base` and its lines,
-    each centred on its anchor, on the layer above; animated on and off as the hook is (_hook_phases)."""
+    """A Text Layer's Dialogue events in its `style`: its plate drawn on ASS layer `base` and its
+    lines, each centred on its anchor, on the layer above; animated on and off as the hook is
+    (_hook_phases)."""
     layer = event.layer
-    metrics = font_metrics(layer.font)
+    metrics = font_metrics(layer.style.font)
     size = event.size
     elements: list[tuple[int, int, float, float, str, str | None, str, str]] = []
     if event.box is not None:
-        box = event.box
-        alpha = f"&H{round(255 * (1 - layer.box_opacity)):02X}&"
-        tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(layer.box_colour)}\\alpha{alpha}"
-        drawing = f"{_rounded_box(box.width, box.height, min(round(TEXT_RADIUS * size), box.height // 2))}{{\\p0}}"
+        box, plate = event.box, layer.style.plate
+        alpha = f"&H{round(255 * (1 - plate.opacity)):02X}&"
+        tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(plate.colour)}\\alpha{alpha}"
+        drawing = f"{_rounded_box(box.width, box.height, event.radius)}{{\\p0}}"
         if Animation.POP in (layer.animation_in, layer.animation_out):
             elements.append((base, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing))
         else:
@@ -983,7 +983,7 @@ def _text_events(event: TextEvent, style: str, base: int) -> list[str]:
         if not line:
             continue
         centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
-        tags = f"\\fs{size:g}" if size != layer.size else ""
+        tags = f"\\fs{size:g}" if size != layer.style.size else ""
         elements.append((base + 1, 5, x, centre_y, ".1f", None, tags, _ass_text(line)))
     events = []
     for order, (ass_layer, align, x, y, y_format, alpha, tags, body) in enumerate(elements):

@@ -25,7 +25,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
 
-from app.api import CandidateUpdate, PresetBody, no_framing_keys, no_old_overlays, no_old_segments
+from app.api import CandidateUpdate, PresetBody, no_framing_keys, no_old_overlays, no_old_segments, no_old_text_layers
 from app.candidates import (
     KICKER_MAX_CHARS,
     Ease,
@@ -112,6 +112,15 @@ Edits:
   secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
   (source_start, source_end).
+- A Text Layer is placed by its transform: x, y its centre, as an Overlay's, the text kept inside the
+  frame. Its look is its style, a Text Style: font (a font id), size (as the captions', in output
+  pixels), colour, stroke_width (output pixels, 0 for none) and stroke_colour, plate (what is behind
+  its lines: shape "none" or "block", colour, opacity, radius, padding_x and padding_y in output
+  pixels), line_height (baselines apart, in sizes) and align (center, left, right). Its lines break
+  at newlines; one wider than the frame is set smaller. It is never stretched or flipped; its
+  transform's scale, rotation and opacity stay 1, 0 and 1, and its style's tracking, wrap_width and
+  fixed_height 0, as they aren't drawn yet. merge_candidate_items changes only the style, plate and
+  transform fields given.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -381,7 +390,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def merge_candidate_items(
         job_id: str,
         candidate_id: str,
-        text_layers: list[_PATCHES["text_layers"]] | None = None,  # type: ignore[valid-type]
+        text_layers: Annotated[list[_PATCHES["text_layers"]], BeforeValidator(no_old_text_layers)] | None = None,  # type: ignore[valid-type]
         music: list[_PATCHES["music"]] | None = None,  # type: ignore[valid-type]
         overlays: Annotated[list[_PATCHES["overlays"]], BeforeValidator(no_old_overlays)] | None = None,  # type: ignore[valid-type]
         segments: Annotated[list[_PATCHES["segments"]], BeforeValidator(no_old_segments)] | None = None,  # type: ignore[valid-type]

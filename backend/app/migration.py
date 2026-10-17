@@ -11,6 +11,11 @@ can't happen as an item in use can't be deleted, is taken as 16:9.
 A Segment saved before Framings had a `fit`. A video's filled one (a centred crop filling the frame)
 gets the scale that covers the frame, and a fitted one (whole, over a blurred copy of itself) scale
 1, both over a blurred Background: each draws what it did. A Segment of the Source just loses it.
+
+A Text Layer saved before Text Styles had its look in flat fields beside its centre (x, y). Its centre
+moves into its Transform and its look into its Text Style: its outline becomes the stroke, its box a
+Block plate padded and rounded as the planner did, in pixels at its size, and its leading the line
+height. It draws what it did.
 """
 
 from collections.abc import Mapping
@@ -26,10 +31,27 @@ Sizes = Mapping[str, tuple[int, int]]
 FALLBACK_SIZE = (1920, 1080)
 # The fields of an Overlay before Transforms, which its Transform replaces.
 _OLD_OVERLAY = ("x", "y", "size", "opacity")
+# The look of a Text Layer before Text Styles, in sizes: its lines' baselines this many apart, its box
+# padded this many either side and above its capitals and below its descenders, its corners this
+# many round.
+TEXT_LEADING = 1.1
+TEXT_PAD_X = 0.35
+TEXT_PAD_Y = 0.22
+TEXT_RADIUS = 0.25
+# Its size when it had none saved, and its look's fields by the Text Style's (and its plate's) names.
+_OLD_TEXT_SIZE = 80
+_OLD_TEXT_STYLE = {
+    "font": "font", "size": "size", "colour": "colour", "outline": "stroke_width", "outline_colour": "stroke_colour", "align": "align",
+}
+_OLD_TEXT_PLATE = {"box_colour": "colour", "box_opacity": "opacity"}
+# The fields of a Text Layer before Text Styles, which its Transform and Text Style replace.
+OLD_TEXT_LAYER = ("x", "y", "box", *_OLD_TEXT_STYLE, *_OLD_TEXT_PLATE)
 
 
 def migrated_candidate(data: dict[str, Any], sizes: Sizes) -> dict[str, Any]:
     """A stored Candidate's JSON in today's shape."""
+    if data.get("text_layers"):
+        data = data | {"text_layers": [migrated_text_layer(layer) for layer in data["text_layers"]]}
     if data.get("overlays"):
         data = data | {"overlays": [migrated_overlay(overlay, sizes.get(overlay["media"])) for overlay in data["overlays"]]}
     if data.get("segments"):
@@ -38,9 +60,10 @@ def migrated_candidate(data: dict[str, Any], sizes: Sizes) -> dict[str, Any]:
 
 
 def migrated_clip(data: dict[str, Any], sizes: Sizes) -> dict[str, Any]:
-    """A stored Clip's JSON in today's shape: its finished render's Overlays and Segments, as rendered."""
+    """A stored Clip's JSON in today's shape: its finished render's Text Layers, Overlays and
+    Segments, as rendered."""
     output = data.get("output")
-    if not output or not (output.get("overlays") or output.get("segments")):
+    if not output or not (output.get("text_layers") or output.get("overlays") or output.get("segments")):
         return data
     return data | {"output": migrated_candidate(output, sizes)}
 
@@ -76,3 +99,19 @@ def migrated_overlay(data: dict[str, Any], size: tuple[int, int] | None) -> dict
     scale = min(max(width / fitted(item_width, item_height, FRAME)[0], MIN_SCALE), MAX_SCALE)
     transform = {"x": left + width / 2, "y": top + height / 2, "scale": scale, "opacity": data.get("opacity", 1.0)}
     return {key: value for key, value in data.items() if key not in _OLD_OVERLAY} | {"transform": transform}
+
+
+def migrated_text_layer(data: dict[str, Any]) -> dict[str, Any]:
+    """A Text Layer's JSON in today's shape."""
+    if not any(key in data for key in OLD_TEXT_LAYER):
+        return data
+    size = data.get("size", _OLD_TEXT_SIZE)
+    plate = {new: data[old] for old, new in _OLD_TEXT_PLATE.items() if old in data} | {
+        "shape": "block" if data.get("box") else "none",
+        "radius": round(TEXT_RADIUS * size, 2),
+        "padding_x": round(TEXT_PAD_X * size, 2),
+        "padding_y": round(TEXT_PAD_Y * size, 2),
+    }
+    style = {new: data[old] for old, new in _OLD_TEXT_STYLE.items() if old in data} | {"plate": plate, "line_height": TEXT_LEADING}
+    layer = {key: value for key, value in data.items() if key not in OLD_TEXT_LAYER}
+    return layer | {"transform": {axis: data[axis] for axis in ("x", "y") if axis in data}, "style": style}

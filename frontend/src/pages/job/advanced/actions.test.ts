@@ -1,7 +1,7 @@
 // Seam D (.scratch/multi-select-clipboard/spec.md): what is done to a Pick (remove, duplicate, split,
 // move, select all, copy and paste), as worked examples of the edits before and after.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, LayoutOverride, MusicClip, Overlay, TextLayer } from "../../../api";
+import type { ClipSegment, LayoutOverride, MusicClip, Overlay, TextLayer, TextStyle } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { EASE_IN, LINEAR } from "../editor/keyframes";
 import { BLURRED, IDENTITY } from "../editor/picture";
@@ -30,25 +30,20 @@ import {
 } from "./actions";
 import { copy, cut, paste } from "./clipboard";
 import { fadesWithin, type AdvancedEdits } from "./edits";
+import { textStyle } from "./textStyle";
 import { bandPick, picked, prunedPick, stageIdsOf, stageItem, unlockedPick, type Pick } from "./pick";
 
-function layer(id: string, start: number, secs: number, changes: Partial<TextLayer> = {}): TextLayer {
+// A Text Layer, its centre at (x, y) when given and its style's fields as given.
+type LayerChanges = Partial<Omit<TextLayer, "transform" | "style">> & { x?: number; y?: number; style?: Partial<TextStyle> };
+
+function layer(id: string, start: number, secs: number, { x = 540, y = 960, style, ...changes }: LayerChanges = {}): TextLayer {
   return {
     id,
     text: id,
     start,
     secs,
-    x: 540,
-    y: 960,
-    font: "Montserrat ExtraBold",
-    size: 56,
-    colour: "#FFFFFF",
-    outline: 0,
-    outline_colour: "#000000",
-    box: false,
-    box_colour: "#000000",
-    box_opacity: 0.6,
-    align: "center",
+    transform: { ...IDENTITY, x, y },
+    style: { ...textStyle({ font: "montserrat-extrabold", size: 56, plate: { opacity: 0.6 } }), ...style },
     animation_in: "none",
     animation_out: "none",
     animation_ms: 300,
@@ -430,12 +425,12 @@ describe("moving a Pick on the preview", () => {
 });
 
 describe("editing several Text Layers", () => {
-  const a = layer("a", 0, 2, { font: "anton", colour: "#FF0000" });
-  const b = layer("b", 3, 2, { font: "anton", colour: "#00FF00" });
+  const a = layer("a", 0, 2, { style: { font: "anton", colour: "#FF0000" } });
+  const b = layer("b", 3, 2, { style: { font: "anton", colour: "#00FF00" } });
 
   test("a field they all have the same shows its value, one they differ in shows as mixed", () => {
-    expect(shared([a, b], "font")).toBe("anton");
-    expect(shared([a, b], "colour")).toBeUndefined();
+    expect(shared([a, b], (layer) => layer.style.font)).toBe("anton");
+    expect(shared([a, b], (layer) => layer.style.colour)).toBeUndefined();
   });
 
   test("setting a field sets it on every picked Text Layer, and changes nothing else", () => {
@@ -443,8 +438,9 @@ describe("editing several Text Layers", () => {
     const before = edits({ text_layers: [a, b, c] });
     const pick = picked(text("a"), text("b"));
 
-    expect(restyle(scene(before, pick), "colour", "#0000FF")).toEqual({
-      edits: { ...before, text_layers: [{ ...a, colour: "#0000FF" }, { ...b, colour: "#0000FF" }, c] },
+    const blue = (layer: TextLayer) => ({ ...layer, style: { ...layer.style, colour: "#0000FF" } });
+    expect(restyle(scene(before, pick), blue)).toEqual({
+      edits: { ...before, text_layers: [blue(a), blue(b), c] },
       pick,
     });
   });

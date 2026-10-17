@@ -21,7 +21,7 @@ from test_jobs_api import URL
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 61_500
+TOOLS_BUDGET_BYTES = 65_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -292,13 +292,13 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
     ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
 
     merged = await call(mcp, "merge_candidate_items", **ids, text_layers=[
-        {"id": "title", "text": "Judul", "start": 0, "secs": 1, "y": 300},
+        {"id": "title", "text": "Judul", "start": 0, "secs": 1, "transform": {"y": 300}},
         {"id": "label", "text": "Label", "start": 0.5, "secs": 0.5},
     ])
     assert [(layer["id"], layer["text"]) for layer in merged["text_layers"]] == [("title", "Judul"), ("label", "Label")]
     merged = await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "text": "Judul baru"}])
     title = merged["text_layers"][0]
-    assert (title["id"], title["text"], title["y"]) == ("title", "Judul baru", 300)  # the rest kept
+    assert (title["id"], title["text"], title["transform"]["y"]) == ("title", "Judul baru", 300)  # the rest kept
     assert "secs" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "new", "text": "x"}])
 
     await call(mcp, "merge_candidate_items", **ids, word_edits=[{"at": 0.1, "text": "Halo"}])
@@ -320,6 +320,32 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
 
     message = await fails(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "media": "0" * 32, "start": 0, "secs": 1}])
     assert f"no song or video with sound {"0" * 32}" in message
+
+
+@pytest.mark.anyio
+async def test_a_text_layers_style_and_transform_are_merged_field_by_field(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    style = {
+        "font": "anton", "size": 120, "colour": "#FFE600", "stroke_width": 6, "stroke_colour": "#112233", "line_height": 1.3, "align": "left",
+        "plate": {"shape": "block", "colour": "#FFFFFF", "opacity": 0.9, "radius": 30, "padding_x": 40, "padding_y": 20},
+    }
+    [made] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[
+        {"id": "title", "text": "Judul", "start": 0, "secs": 1, "transform": {"x": 300, "y": 400}, "style": style},
+    ]))["text_layers"]
+
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {"colour": "#ff0000"}}]))["text_layers"]
+    assert changed == made | {"style": made["style"] | {"colour": "#FF0000"}}
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {"plate": {"opacity": 0.5}}}]))["text_layers"]
+    assert changed["style"]["plate"] == made["style"]["plate"] | {"opacity": 0.5}
+    assert changed["transform"] == made["transform"]
+
+    assert "stretched" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"stretch_x": 2}}])
+    assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "transform": {"flip_v": True}}])
+    # The shape before Text Styles is refused with what replaced it.
+    assert "style" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "outline": 2}])
+    assert "style" in await fails(mcp, "edit_candidate", **ids, changes={"text_layers": [made | {"box": True}]})
 
 
 @pytest.mark.anyio

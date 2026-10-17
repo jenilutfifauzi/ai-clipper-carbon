@@ -92,7 +92,7 @@ export function Inspector({
         <TextLayersFields
           layers={edits.text_layers.filter((layer) => items.some((item) => item.id === layer.id))}
           fonts={fonts}
-          onChange={(field, value, group) => onEdits(restyle({ edits, pick }, field, value).edits, group)}
+          onChange={(change, group) => onEdits(restyle({ edits, pick }, change).edits, group)}
           onDuplicate={actions.duplicate}
           onCopy={actions.copy}
           onDelete={actions.remove}

@@ -369,32 +369,54 @@ export interface WatermarkEvent {
 
 export type TextAlign = "center" | "left" | "right";
 
+// What is drawn behind a Text Style's words (backend/app/candidates.py): nothing, or a Block behind
+// all its lines, in `colour` at `opacity`, its corners `radius` round, reaching `padding_x` either
+// side of the widest line and `padding_y` above the capitals and below the descenders. Lengths in
+// output pixels, at the style's size. Strips are refused until Text Layers are pictures.
+export interface Plate {
+  shape: HookShape;
+  colour: string;
+  opacity: number;
+  radius: number;
+  padding_x: number;
+  padding_y: number;
+}
+
+// How a Text Layer's words look (backend/app/candidates.py): its Face at `size` (libass's, as the
+// captions') in `colour`, stroked `stroke_width` px (none at 0), over its plate; its baselines
+// `line_height` sizes apart. `tracking`, `wrap_width` and `fixed_height` stay 0 until Text Layers are
+// pictures (ADR 0010).
+export interface TextStyle {
+  font: string;
+  size: number;
+  colour: string;
+  stroke_width: number;
+  stroke_colour: string;
+  plate: Plate;
+  line_height: number;
+  tracking: number;
+  align: TextAlign;
+  wrap_width: number;
+  fixed_height: number;
+}
+
 // A free text overlay of the Advanced Edit (backend/app/candidates.py): its text (lines split at
-// newlines) from `start` for `secs` in Timeline time, centred on (x, y) in output pixels.
+// newlines) from `start` for `secs` in Timeline time, centred by its Transform (never stretched nor
+// flipped; unscaled, unturned and opaque until Text Layers are pictures) in its Text Style.
 export interface TextLayer {
   id: string;
   text: string;
   start: number;
   secs: number;
-  x: number;
-  y: number;
-  font: string;
-  // libass's, as the captions'.
-  size: number;
-  colour: string;
-  outline: number;
-  outline_colour: string;
-  box: boolean;
-  box_colour: string;
-  box_opacity: number;
-  align: TextAlign;
+  transform: Transform;
+  style: TextStyle;
   animation_in: Animation;
   animation_out: Animation;
   animation_ms: number;
 }
 
 // A Text Layer as drawn: its lines at font `size`, each placed by its anchor (the middle of its text
-// and its baseline), in `area`; `box` is the area when it has one.
+// and its baseline), in `area`; `box` is the area when it has a Block plate, its corners `radius` px round.
 export interface TextEvent {
   layer: TextLayer;
   lines: string[];
@@ -404,6 +426,7 @@ export interface TextEvent {
   size: number;
   anchors: [number, number][];
   box: Box | null;
+  radius: number;
 }
 
 // A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`

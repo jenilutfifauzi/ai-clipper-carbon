@@ -1,0 +1,39 @@
+Style: Text0,Montserrat ExtraBold,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Text1,Montserrat ExtraBold,80,&H000000FF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Text2,Anton,130,&H0000E6FF,&H0000E6FF,&H00332211,&H00332211,0,0,0,0,100,100,0,0,1,6,0,5,0,0,0,1
+Style: Text3,Montserrat ExtraBold,64,&H00000000,&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Text4,Montserrat ExtraBold,56,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Text5,Montserrat ExtraBold,200,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,5,0,0,0,1
+Style: Text6,Bebas Neue,120,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Text7,Montserrat ExtraBold,150,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,5,0,0,0,1
+Style: Text8,Montserrat ExtraBold,53,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Dialogue: 3,0:00:00.00,0:00:02.00,Text0,,0,0,0,,{\an5\pos(540,955.1)}Halo
+Dialogue: 5,0:00:00.50,0:00:03.50,Text1,,0,0,0,,{\an5\pos(400,695.1)}Halo dunia
+Dialogue: 7,0:00:01.00,0:00:01.30,Text2,,0,0,0,,{\an5\pos(255.586,608.1)\fscx70\fscy70\alpha&HFF&\t(\fscx100\fscy100\alpha&H00&)}Satu
+Dialogue: 7,0:00:01.00,0:00:01.30,Text2,,0,0,0,,{\an5\pos(540.377,751.1)\fscx70\fscy70\alpha&HFF&\t(\fscx100\fscy100\alpha&H00&)}Dua yang lebih panjang
+Dialogue: 7,0:00:01.30,0:00:05.00,Text2,,0,0,0,,{\an5\pos(255.586,608.1)}Satu
+Dialogue: 7,0:00:01.30,0:00:05.00,Text2,,0,0,0,,{\an5\pos(540.377,751.1)}Dua yang lebih panjang
+Dialogue: 8,0:00:00.00,0:00:00.50,Text3,,0,0,0,,{\an7\move(609,1091,609,1031)\p1\bord0\shad0\c&HFFFFFF&\alpha&H00&\alpha&HFF&\t(\alpha&H00&)}m 16 0 l 166 0 b 174.84 0 182 7.16 182 16 l 182 122 b 182 130.84 174.84 138 166 138 l 16 138 b 7.16 138 0 130.84 0 122 l 0 16 b 0 7.16 7.16 0 16 0{\p0}
+Dialogue: 9,0:00:00.00,0:00:00.50,Text3,,0,0,0,,{\an5\move(709.435,1120.3,709.435,1060.3)\alpha&HFF&\t(\alpha&H00&)}Label
+Dialogue: 9,0:00:00.00,0:00:00.50,Text3,,0,0,0,,{\an5\move(700.482,1190.7,700.482,1130.7)\alpha&HFF&\t(\alpha&H00&)}kanan
+Dialogue: 8,0:00:00.50,0:00:04.50,Text3,,0,0,0,,{\an7\pos(609,1031)\p1\bord0\shad0\c&HFFFFFF&\alpha&H00&}m 16 0 l 166 0 b 174.84 0 182 7.16 182 16 l 182 122 b 182 130.84 174.84 138 166 138 l 16 138 b 7.16 138 0 130.84 0 122 l 0 16 b 0 7.16 7.16 0 16 0{\p0}
+Dialogue: 9,0:00:00.50,0:00:04.50,Text3,,0,0,0,,{\an5\pos(709.435,1060.3)}Label
+Dialogue: 9,0:00:00.50,0:00:04.50,Text3,,0,0,0,,{\an5\pos(700.482,1130.7)}kanan
+Dialogue: 8,0:00:04.50,0:00:05.00,Text3,,0,0,0,,{\an7\move(609,1031,609,1091)\p1\bord0\shad0\c&HFFFFFF&\alpha&H00&\t(\alpha&HFF&)}m 16 0 l 166 0 b 174.84 0 182 7.16 182 16 l 182 122 b 182 130.84 174.84 138 166 138 l 16 138 b 7.16 138 0 130.84 0 122 l 0 16 b 0 7.16 7.16 0 16 0{\p0}
+Dialogue: 9,0:00:04.50,0:00:05.00,Text3,,0,0,0,,{\an5\move(709.435,1060.3,709.435,1120.3)\t(\alpha&HFF&)}Label
+Dialogue: 9,0:00:04.50,0:00:05.00,Text3,,0,0,0,,{\an5\move(700.482,1130.7,700.482,1190.7)\t(\alpha&HFF&)}kanan
+Dialogue: 10,0:00:02.00,0:00:05.00,Text4,,0,0,0,,{\an7\pos(445,1370)\p1\bord0\shad0\c&H000000&\alpha&H66&\fad(300,300)}m 14 0 l 176 0 b 183.73 0 190 6.27 190 14 l 190 45 b 190 52.73 183.73 59 176 59 l 14 59 b 6.27 59 0 52.73 0 45 l 0 14 b 0 6.27 6.27 0 14 0{\p0}
+Dialogue: 11,0:00:02.00,0:00:05.00,Text4,,0,0,0,,{\an5\pos(540,1395.7)\fad(300,300)}Subtitle
+Dialogue: 12,0:00:00.00,0:00:05.20,Text5,,0,0,0,,{\an5\pos(539.5,959.5)\p1\bord0\shad0\c&H563412&\alpha&H33&}m 15 0 l 968 0 b 976.28 0 983 6.72 983 15 l 983 48 b 983 56.28 976.28 63 968 63 l 15 63 b 6.72 63 0 56.28 0 48 l 0 15 b 0 6.72 6.72 0 15 0{\p0}
+Dialogue: 13,0:00:00.00,0:00:05.20,Text5,,0,0,0,,{\an5\pos(539.5,955.4)\fs59.9}Ini adalah kalimat yang sangat panjang sekali
+Dialogue: 12,0:00:05.20,0:00:06.00,Text5,,0,0,0,,{\an5\pos(539.5,959.5)\p1\bord0\shad0\c&H563412&\alpha&H33&\t(\fscx70\fscy70\alpha&HFF&)}m 15 0 l 968 0 b 976.28 0 983 6.72 983 15 l 983 48 b 983 56.28 976.28 63 968 63 l 15 63 b 6.72 63 0 56.28 0 48 l 0 15 b 0 6.72 6.72 0 15 0{\p0}
+Dialogue: 13,0:00:05.20,0:00:06.00,Text5,,0,0,0,,{\an5\pos(539.5,955.4)\t(\fscx70\fscy70\alpha&HFF&)\fs59.9}Ini adalah kalimat yang sangat panjang sekali
+Dialogue: 15,0:00:03.00,0:00:05.00,Text6,,0,0,0,,{\an5\pos(993.923,1863.9)}Pojok
+Dialogue: 17,0:00:01.00,0:00:01.30,Text7,,0,0,0,,{\an5\pos(539.73,909.4)\fscx70\fscy70\alpha&HFF&\t(\fscx100\fscy100\alpha&H00&)\fs81.3}Kalimat panjang tanpa kotak di kiri
+Dialogue: 17,0:00:01.00,0:00:01.30,Text7,,0,0,0,,{\an5\pos(176.43,998.8)\fscx70\fscy70\alpha&HFF&\t(\fscx100\fscy100\alpha&H00&)\fs81.3}baris dua
+Dialogue: 17,0:00:01.30,0:00:02.70,Text7,,0,0,0,,{\an5\pos(539.73,909.4)\fs81.3}Kalimat panjang tanpa kotak di kiri
+Dialogue: 17,0:00:01.30,0:00:02.70,Text7,,0,0,0,,{\an5\pos(176.43,998.8)\fs81.3}baris dua
+Dialogue: 17,0:00:02.70,0:00:03.00,Text7,,0,0,0,,{\an5\pos(539.73,909.4)\fad(0,300)\fs81.3}Kalimat panjang tanpa kotak di kiri
+Dialogue: 17,0:00:02.70,0:00:03.00,Text7,,0,0,0,,{\an5\pos(176.43,998.8)\fad(0,300)\fs81.3}baris dua
+Dialogue: 18,0:00:00.00,0:00:03.00,Text8,,0,0,0,,{\an7\pos(172,272)\p1\bord0\shad0\c&H000000&\alpha&H4D&}m 13 0 l 243 0 b 250.18 0 256 5.82 256 13 l 256 43 b 256 50.18 250.18 56 243 56 l 13 56 b 5.82 56 0 50.18 0 43 l 0 13 b 0 5.82 5.82 0 13 0{\p0}
+Dialogue: 19,0:00:00.00,0:00:03.00,Text8,,0,0,0,,{\an5\pos(299.74,296.3)}Kotak ganjil
