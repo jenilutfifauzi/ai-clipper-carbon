@@ -1,6 +1,6 @@
 import { Crop as CropIcon, FlipHorizontal2, FlipVertical2 } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
-import type { Background, Crop, Keys, Transform } from "../../../api";
+import { useContext, useId, useState, type ReactNode } from "react";
+import type { Background, Crop, Keys, TextLayer, Transform } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
@@ -10,9 +10,9 @@ import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
 import { Group } from "../editor/StyleFields";
 import { PICTURE_KEYS, type PictureKey } from "../editor/keyframes";
 import { clamp, FRAME, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
-import { keyedRange } from "./keyActions";
-import { KeyCluster, useTouch } from "./KeyCluster";
-import type { KeyedRef } from "./keying";
+import { keyedRange, shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
+import { KeyCluster, KeyingContext, useKeyNotice, useKeyTime, useTouch, type Keying } from "./KeyCluster";
+import { heldKeyTime, keyedGroup, keyTime, resetTextLayer, type KeyedRef } from "./keying";
 
 /**
  * A picture's Transform as numbers (ADR 0007): its centre, its scale in percent of its fitted size
@@ -147,18 +147,87 @@ export function TransformFields({
 /**
  * A Text Layer's Transform as numbers (ADR 0007, 0010): its centre, its scale in percent (its words,
  * stroke and plate drawn larger or smaller as they are, never rewrapped: its size is its Text
- * Style's), its rotation and opacity; and Reset (unscaled, unturned and opaque, where it is). It is
- * never stretched nor flipped. Each field's changes are one `group` of the history, named after it.
+ * Style's), its rotation and opacity; and Reset (unscaled, unturned and opaque, where it is:
+ * `resetTextLayer`). It is never stretched nor flipped. Each field's changes are one `group` of the
+ * history, named after it.
+ *
+ * In the Advanced Edit (KeyingContext), its fields have a ‹ ◆ › each, as an Overlay's do: they show
+ * the Transform at the playhead, a keyed field writes a Keyframe there (auto-key), and is off while
+ * the playhead is outside the layer (ADR 0008).
  */
-export function TextTransformFields({ transform, onChange }: { transform: Transform; onChange: (transform: Transform, field: string) => void }) {
-  const set = (field: keyof Transform, value: number) => onChange({ ...transform, [field]: value }, field);
+export function TextTransformFields({ layer, onChange }: { layer: TextLayer; onChange: (layer: TextLayer, group: string) => void }) {
+  const keying = useContext(KeyingContext);
+  if (keying) return <KeyedTextTransform keying={keying} layer={layer} onChange={onChange} />;
+  return (
+    <TextFields
+      transform={layer.transform}
+      onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)}
+      onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)}
+    />
+  );
+}
+
+function KeyedTextTransform({ keying, layer, onChange }: { keying: Keying; layer: TextLayer; onChange: (layer: TextLayer, group: string) => void }) {
+  const time = useKeyTime(keying.playback);
+  const at = keyTime(layer, time);
+  const shown = shownTransform(layer.transform, layer.keys, at ?? heldKeyTime(layer, time));
+  const notify = useKeyNotice();
+  return (
+    <TextFields
+      transform={shown}
+      onChange={(next, field) => {
+        const written = writtenTransform(layer.transform, layer.keys, next, at, shown);
+        if (written.full) return notify(tooManyKeys(written.full));
+        onChange({ ...layer, ...written }, keyedGroup(`text:${layer.id}:transform.${field}`, written.keys !== layer.keys, at));
+      }}
+      onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)}
+      keyed={{ item: { kind: "text", id: layer.id }, keys: layer.keys, inside: at !== null }}
+    />
+  );
+}
+
+function TextFields({
+  transform,
+  onChange,
+  onReset,
+  keyed,
+}: {
+  transform: Transform;
+  onChange: (transform: Transform, field: string) => void;
+  onReset: () => void;
+  keyed?: { item: KeyedRef; keys: Keys; inside: boolean };
+}) {
+  const cluster = (prop: PictureKey, label: string): ReactNode => keyed && <KeyCluster item={keyed.item} property={prop} label={label} />;
+  const off = (prop: PictureKey) => !!keyed && !keyed.inside && !!keyed.keys[prop]?.length;
+  const touch = useTouch();
+  const set = (field: PictureKey, value: number) => {
+    if (keyed) touch(field);
+    onChange({ ...transform, [field]: value }, field);
+  };
   return (
     <Group title="Transform">
+      {PICTURE_KEYS.some(off) && <p className="text-sm text-pretty text-muted">Its keyed fields change with the playhead on it.</p>}
       <div className="grid grid-cols-2 gap-3">
-        <NumberField label="X" unit="px" value={transform.x} range={[0, FRAME.width]} onChange={(x) => set("x", x)} />
-        <NumberField label="Y" unit="px" value={transform.y} range={[0, FRAME.height]} onChange={(y) => set("y", y)} />
-        <NumberField label="Scale" unit="%" value={transform.scale * 100} range={percents(SCALE_RANGE)} onChange={(scale) => set("scale", scale / 100)} />
-        <NumberField label="Rotation" unit="°" value={transform.rotation} range={keyedRange("rotation", false)} onChange={(rotation) => set("rotation", rotation)} />
+        <NumberField label="X" unit="px" value={transform.x} range={[0, FRAME.width]} onChange={(x) => set("x", x)} cluster={cluster("x", "X")} disabled={off("x")} />
+        <NumberField label="Y" unit="px" value={transform.y} range={[0, FRAME.height]} onChange={(y) => set("y", y)} cluster={cluster("y", "Y")} disabled={off("y")} />
+        <NumberField
+          label="Scale"
+          unit="%"
+          value={transform.scale * 100}
+          range={percents(SCALE_RANGE)}
+          onChange={(scale) => set("scale", scale / 100)}
+          cluster={cluster("scale", "Scale")}
+          disabled={off("scale")}
+        />
+        <NumberField
+          label="Rotation"
+          unit="°"
+          value={transform.rotation}
+          range={keyedRange("rotation", !!keyed?.keys.rotation?.length)}
+          onChange={(rotation) => set("rotation", rotation)}
+          cluster={cluster("rotation", "Rotation")}
+          disabled={off("rotation")}
+        />
       </div>
       <Slider
         label="Opacity"
@@ -168,8 +237,10 @@ export function TextTransformFields({ transform, onChange }: { transform: Transf
         step={0.05}
         format={(v) => `${Math.round(v * 100)}%`}
         onChange={(opacity) => set("opacity", opacity)}
+        after={cluster("opacity", "Opacity")}
+        disabled={off("opacity")}
       />
-      <Button size="sm" variant="ghost" className="self-start" onClick={() => onChange({ ...transform, scale: 1, rotation: 0, opacity: 1 }, "reset")}>
+      <Button size="sm" variant="ghost" className="self-start" onClick={onReset}>
         Reset
       </Button>
     </Group>

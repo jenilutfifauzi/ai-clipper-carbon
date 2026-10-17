@@ -4,7 +4,8 @@
 // scaling it down asks for no new picture; scaling it up past what its picture was made at does.
 import { describe, expect, test } from "vitest";
 import type { Picture, TextEvent } from "../../../api";
-import { needsLoading, pictureToShow, wantedPicture, type Loaded } from "./textPicture";
+import { EASE_OUT, LINEAR, valueAt } from "./keyframes";
+import { needsLoading, pictureToShow, placedText, wantedPicture, type Loaded } from "./textPicture";
 
 const picture = (centre: [number, number], changes: Partial<Picture> = {}): Picture => ({
   crop: { x: 0, y: 0, width: 300, height: 160 },
@@ -69,5 +70,31 @@ describe("a Text Layer's picture in the preview", () => {
     const larger = wantedPicture("j", event("abc-4.png", [540, 960], { width: 1200, height: 640, item_size: [1200, 640] }, "abc"));
     expect(needsLoading(larger, loaded)).toBe(true);
     expect(pictureToShow(null, larger, loaded)).toEqual({ url: large.url, width: 1200, height: 640 });
+  });
+});
+
+// 12: Keyframes on Text Layers.
+describe("a keyed Text Layer's picture in the preview", () => {
+  // 300×160 at scale 1, keyed from x 200 to 880 and from scale 1 to 2 over 1 s from 2 s into the Clip.
+  const keyed = picture([540, 960], {
+    motion: {
+      x: [{ at: 2, value: 200, ease: LINEAR }, { at: 3, value: 880, ease: EASE_OUT }],
+      scale: [{ at: 2, value: 1, ease: LINEAR }, { at: 3, value: 2, ease: LINEAR }],
+      opacity: [{ at: 2, value: 0.8, ease: LINEAR }],
+    },
+    unscaled: [300, 160],
+  });
+
+  test("is drawn where its Keyframes have it, as the render draws it", () => {
+    const at = placedText(keyed, 2.5, [1, 1, 0]);
+    expect(at.x).toBeCloseTo(valueAt(keyed.motion!.x!, 2.5, 0));
+    expect([at.y, at.width, at.height, at.opacity]).toEqual([960, 450, 240, 0.8]);
+  });
+
+  test("its Fade, Pop and Slide are stacked on its keyed values: opacity and scale multiplied, the drop added", () => {
+    const at = placedText(keyed, 3.5, [0.5, 0.85, 30]);
+    expect(at).toEqual({ x: 880, y: 990, width: 600 * 0.85, height: 320 * 0.85, rotation: 0, opacity: 0.4 });
+    // Unkeyed, its plan's picture, animated.
+    expect(placedText(picture([540, 960]), 3.5, [0.5, 0.85, 30])).toEqual({ x: 540, y: 990, width: 255, height: 136, rotation: 0, opacity: 0.5 });
   });
 });

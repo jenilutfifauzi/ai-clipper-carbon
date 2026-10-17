@@ -82,9 +82,10 @@ Without music, and at its own volume, the Clip's sound goes as it did.
 Text Layers are pictures (docs/adr/0010): each one's, made by app/text_pictures.py before the render,
 is one more input, drawn as an Overlay's image is (`_picture`) while it shows, over the captions and
 under the hook, in their order. With any, the script is cut in two: the Watermark's text and the
-captions are burned before them, and the hook after. One that comes on or goes off as the hook does
-(Fade, Pop, Slide) is drawn by a frame process, as a keyed Overlay is, its picture faded, scaled and
-moved by the hook's curves (`text_at`). Without Text Layers, the command is as it was.
+captions are burned before them, and the hook after. One that is keyed (docs/adr/0008), or comes on
+or goes off as the hook does (Fade, Pop, Slide), is drawn by a frame process, as a keyed Overlay is:
+its picture sampled from its Keyframes, then faded, scaled and moved by the hook's curves on top
+(`text_at`). Without Text Layers, the command is as it was.
 """
 
 import json
@@ -98,6 +99,7 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -122,13 +124,15 @@ from app.planner import (
     WatermarkEvent,
     font_metrics,
     on_frame,
+    picture_at,
 )
 from app.candidates import Keyframe, Shadow, TextLayer
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
 
-# The highlight box's padding around its Word, in sizes of the line's font, and its corners' radius.
+# The highlight box's padding around its Word, in sizes of the line's font, and its corners' radius,
+# unless its Caption Style gives its own.
 HIGHLIGHT_PAD_X = 0.12
 HIGHLIGHT_PAD_Y = 0.08
 HIGHLIGHT_RADIUS = 0.12
@@ -767,10 +771,13 @@ def _text_layer(event: TextEvent, below: str, out: str, index: int, number: int,
 
 
 def text_at(event: TextEvent, time: float) -> Picture:
-    """A Text Layer's picture as drawn at `time` seconds into the Clip: faded, scaled about its centre
-    and moved down as its animations have it then (`text_look`)."""
+    """A Text Layer's picture as drawn at `time` seconds into the Clip: as its Keyframes have it then
+    (`picture_at`), and on top of that faded, scaled about its centre and moved down as its
+    animations have it (`text_look`): its keyed opacity and scale multiplied, its drop added."""
     opacity, scale, below = text_look(event, time)
-    picture = event.picture
+    picture = picture_at(event.picture, time)
+    if (opacity, scale, below) == (1.0, 1.0, 0.0):
+        return picture
     x, y = picture.centre
     return replace(
         picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below), opacity=picture.opacity * opacity
@@ -839,7 +846,7 @@ def _rate(plan: RenderPlan) -> str:
 
 
 # A keyed picture of the plan: ("overlay", its place among the Overlays), ("scene", its Scene's
-# place among the Scenes) or ("text", an animated Text Layer's place among them); and each one's
+# place among the Scenes) or ("text", a keyed or animated Text Layer's place among them); and each one's
 # frame process.
 Keyed = tuple[str, int]
 Feeds = dict[Keyed, FrameFeed]
@@ -850,7 +857,7 @@ def _keyed_items(
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
     an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's), or the `source`
-    for a Manual Scene; and an animated Text Layer's picture's pixels, from `pictures`."""
+    for a Manual Scene; and a keyed or animated Text Layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {
         ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
@@ -862,7 +869,7 @@ def _keyed_items(
         elif media in files:
             items[("scene", i)] = files[media]
     for i, event in enumerate(plan.texts):
-        if _animated_text(event) and pictures and event.image in pictures:
+        if (_animated_text(event) or event.picture.motion) and pictures and event.image in pictures:
             items[("text", i)] = read_image(pictures[event.image])
     return items
 
@@ -1072,8 +1079,8 @@ def _ass(plan: RenderPlan) -> str:
         # Centred (5) on \pos.
         _caption_style(caption),
         f"Style: Hook,{font(hook.font).family},{hook.size},{_style_colour(hook.colour)},{_style_colour(hook.colour)},"
-        f"{_style_colour(hook.outline_colour)},{_style_colour(hook.shadow_colour)},0,0,0,0,100,100,0,0,1,"
-        f"{hook.outline},{hook.shadow},5,0,0,0,1",
+        f"{_style_colour(hook.outline_colour)},{_back_colour(hook.shadow)},0,0,0,0,100,100,0,0,1,"
+        f"{hook.outline},{_plain_shadow(hook.shadow):g},5,0,0,0,1",
         *([_watermark_style(plan.watermark_style)] if watermark else []),
         "",
         "[Events]",
@@ -1089,11 +1096,30 @@ def _ass(plan: RenderPlan) -> str:
 
 
 def _caption_style(style: CaptionStyle) -> str:
-    text, edge, shadow = _style_colour(style.colour), _style_colour(style.outline_colour), _style_colour(style.shadow_colour)
+    text, edge, shadow = _style_colour(style.colour), _style_colour(style.outline_colour), _back_colour(style.shadow)
     return (
         f"Style: Caption,{font(style.font).family},{style.size},{text},{text},{edge},{shadow},0,0,0,0,100,100,0,0,1,"
-        f"{style.outline},{style.shadow},5,0,0,0,1"
+        f"{style.outline},{_plain_shadow(style.shadow):g},5,0,0,0,1"
     )
+
+
+def _plain_shadow(shadow: DropShadow) -> float:
+    """How far right and down libass draws the shadow of a caption or hook line as its own (\\shad):
+    when it is on, unblurred and at 45°, as these styles' shadows were before drop shadows. 0
+    otherwise: none, or one drawn as its own events (_drawn_shadow)."""
+    x, y = shadow.offset
+    return x if shadow.on and not shadow.blur and x == y > 0 else 0.0
+
+
+def _drawn_shadow(shadow: DropShadow) -> DropShadow | None:
+    """The shadow of a caption or hook line when it is drawn as an event of its own under the line
+    (with _shadow_tags): one that is on and not a plain \\shad (blurred, or at another angle)."""
+    return shadow if shadow.on and not _plain_shadow(shadow) else None
+
+
+def _back_colour(shadow: DropShadow) -> str:
+    """An ASS style's BackColour, the colour of its \\shad: the shadow's, at its opacity when drawn so."""
+    return _style_colour(shadow.colour, shadow.opacity if _plain_shadow(shadow) else 1.0)
 
 
 def _watermark_style(style: WatermarkStyle) -> str:
@@ -1117,25 +1143,33 @@ def _watermark_event(event: WatermarkEvent, style: WatermarkStyle, duration: flo
 def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
     """A caption line's Dialogue events: one per Word, while it is highlighted, showing the whole line
     with that Word in the active colour (Colour), the line as it is over a box of the active colour
-    behind the Word (Box), or the line as it is for the whole line's time (None)."""
+    behind the Word (Box), or the line as it is for the whole line's time (None). A shadow that isn't
+    the style's plain one (_drawn_shadow) is the line again under each of these, over the box."""
     area = event.area
     centre_x, centre_y = area.x + area.width / 2, area.y + area.height / 2
-    place = f"\\pos({_tracked(centre_x, style.tracking):g},{centre_y:g})"
-    if event.size != style.size:
-        place += f"\\fs{event.size:g}"
-    place += _spacing(style.tracking)
+    sized = (f"\\fs{event.size:g}" if event.size != style.size else "") + _spacing(style.tracking)
+    place = f"\\pos({_tracked(centre_x, style.tracking):g},{centre_y:g})" + sized
+    plain = " ".join(_ass_text(word.text) for word in event.words)
+    shadow = _drawn_shadow(style.shadow)
+
+    def shadowed(layer: int, start: str, end: str) -> list[str]:
+        if shadow is None:
+            return []
+        dx, dy = shadow.offset
+        under = f"\\pos({_tracked(centre_x, style.tracking) + dx:g},{centre_y + dy:g}){sized}{_shadow_tags(shadow, style.outline)}"
+        return [f"Dialogue: {layer},{start},{end},Caption,,0,0,0,,{{{under}}}{plain}"]
+
     if style.highlight is Highlight.NONE:
         start, end = _ass_time(event.start), _ass_time(event.end)
-        line = " ".join(_ass_text(word.text) for word in event.words)
-        return [f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{line}"] if start < end else []
+        return [*shadowed(0, start, end), f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{plain}"] if start < end else []
     events = []
-    plain = " ".join(_ass_text(word.text) for word in event.words)
     for i, word in enumerate(event.words):
         start, end = _ass_time(word.start), _ass_time(word.end)
         if start >= end:
             continue
         if style.highlight is Highlight.BOX:
             events.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{_highlight_box(event, i, style)}")
+            events.extend(shadowed(1, start, end))
             events.append(f"Dialogue: 1,{start},{end},Caption,,0,0,0,,{{{place}}}{plain}")
             continue
         text = " ".join(
@@ -1143,6 +1177,7 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
             if j == i else _ass_text(other.text)
             for j, other in enumerate(event.words)
         )
+        events.extend(shadowed(0, start, end))
         events.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{text}")
     return events
 
@@ -1150,14 +1185,14 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
 def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
     """An ASS drawing of the box behind the line's Word `index`: the Word's width (measured like the
     line, from the centred line's left edge, with its tracking) and the capitals' height, padded,
-    with rounded corners."""
+    with rounded corners (_highlight_shape)."""
     metrics, size, tracking = font_metrics(style.font), event.size, style.tracking
     words = [word.text for word in event.words]
     line = metrics.width(" ".join(words), size, tracking)
     before = " ".join(words[:index]) + (" " if index else "")
     before = metrics.width(before, size) + tracking * len(before)
     word = metrics.width(words[index], size, tracking)
-    pad_x, pad_y = HIGHLIGHT_PAD_X * size, HIGHLIGHT_PAD_Y * size
+    pad_x, pad_y, radius = _highlight_shape(style, size)
     area = event.area
     # The line is centred on the area's middle: its letters' vertical middle is where the middle of
     # its ascent-plus-descent box is, and capitals sit on the baseline below the ascent's top.
@@ -1166,78 +1201,114 @@ def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
     left = area.x + area.width / 2 - line / 2 + before - pad_x
     top = baseline - cap - pad_y
     width, height = round(word + 2 * pad_x), round(cap + 2 * pad_y)
-    radius = round(HIGHLIGHT_RADIUS * size)
     return (
         f"{{\\an7\\pos({left:.1f},{top:.1f})\\p1\\bord0\\shad0\\c{_tag_colour(style.active_colour)}}}"
-        f"{_rounded_box(width, height, min(radius, height // 2))}{{\\p0}}"
+        f"{_rounded_box(width, height, min(round(radius), height // 2))}{{\\p0}}"
     )
+
+
+def _highlight_shape(style: CaptionStyle, size: float) -> tuple[float, float, float]:
+    """The highlight box's padding across and down and its corners' radius on a line set at `size`,
+    in output pixels: the style's, given at its size, or HIGHLIGHT_PAD_X, HIGHLIGHT_PAD_Y and
+    HIGHLIGHT_RADIUS of the size."""
+    scale = size / style.size
+    return (
+        HIGHLIGHT_PAD_X * size if style.padding_x is None else style.padding_x * scale,
+        HIGHLIGHT_PAD_Y * size if style.padding_y is None else style.padding_y * scale,
+        HIGHLIGHT_RADIUS * size if style.radius is None else style.radius * scale,
+    )
+
+
+class _Element(NamedTuple):
+    """One of the hook's Dialogue events before it is timed and animated: its ASS layer, its
+    position as alignment and point with the y's format, its alpha (None: opaque), its tags, what
+    follows its tags, its step in a staggered entrance, and the alpha tag its animation changes."""
+
+    layer: int
+    align: int
+    x: float
+    y: float
+    y_format: str
+    alpha: str | None
+    tags: str
+    body: str
+    step: int
+    alpha_tag: str = "\\alpha"
 
 
 def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
     """The hook's Dialogue events: its boxes and its Kicker's pill, drawn, and over them each line and
-    the Kicker's text centred on its anchor; then its Quote Mark's badge and marks over everything.
-    All animated on and off as the style says (_hook_phases), on ASS layers 1 to 4."""
+    the Kicker's text centred on its anchor (a shadow that isn't the style's plain one, _drawn_shadow,
+    under the lines); then its Quote Mark's badge and marks over everything. All animated on and off
+    as the style says (_hook_phases), on ASS layers 1 to 4."""
     metrics = font_metrics(style.font)
     size = hook.size
-    # (layer, its position as alignment and point with the y's format, its alpha, its tags, what
-    # follows its tags, its step in a staggered entrance), for each box and each line. A box that
-    # pops is placed by its centre, so that it grows from there. The Kicker comes on first, then
-    # the lines one by one, each strip with its line and a block and a Quote Mark with the first.
-    elements: list[tuple[int, int, float, float, str, str | None, str, str, int]] = []
+    # For each box and each line. A box that pops is placed by its centre, so that it grows from
+    # there. The Kicker comes on first, then the lines one by one, each strip and shadow with its
+    # line and a block and a Quote Mark with the first.
+    elements: list[_Element] = []
     first = 1 if hook.kicker is not None else 0
     strips = len(hook.boxes) > 1
     if style.box_opacity > 0:
         alpha = f"&H{round(255 * (1 - style.box_opacity)):02X}&"
         # The text's outline and shadow are the style's; a box has neither.
-        bare = "\\bord0\\shad0" if style.outline or style.shadow else ""
+        bare = "\\bord0\\shad0" if style.outline or _plain_shadow(style.shadow) else ""
         tags = f"\\p1{bare}\\c{_tag_colour(style.box_colour)}\\alpha{alpha}"
         for i, box in enumerate(hook.boxes):
             drawing = f"{_rounded_box(box.width, box.height, min(style.radius, box.height // 2))}{{\\p0}}"
             step = first + i if strips else first
             if Animation.POP in (style.animation_in, style.animation_out):
-                elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing, step))
+                elements.append(_Element(1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing, step))
             else:
-                elements.append((1, 7, box.x, box.y, "g", alpha, tags, drawing, step))
+                elements.append(_Element(1, 7, box.x, box.y, "g", alpha, tags, drawing, step))
     if hook.kicker is not None:
         kicker = hook.kicker
         box = kicker.box
         drawing = f"{_rounded_box(box.width, box.height, box.height // 2)}{{\\p0}}"
         tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(style.kicker_box_colour)}\\alpha&H00&"
         if Animation.POP in (style.animation_in, style.animation_out):
-            elements.append((1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", None, tags, drawing, 0))
+            elements.append(_Element(1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", None, tags, drawing, 0))
         else:
-            elements.append((1, 7, box.x, box.y, "g", None, tags, drawing, 0))
+            elements.append(_Element(1, 7, box.x, box.y, "g", None, tags, drawing, 0))
         x, baseline = kicker.anchor
         centre_y = baseline - metrics.ascent / metrics.units * kicker.size + kicker.size / 2
         tags = f"\\fs{kicker.size:g}\\bord0\\shad0\\c{_tag_colour(style.kicker_colour)}"
-        elements.append((2, 5, x, centre_y, ".1f", None, tags, _ass_text(kicker.text), 0))
+        elements.append(_Element(2, 5, x, centre_y, ".1f", None, tags, _ass_text(kicker.text), 0))
     if hook.quote is not None:
         # Both by the badge's top-left corner (a drawing is placed by its origin there, the marks'
         # being on the badge's grid), so that a pop grows them together from it.
         badge = hook.quote
         drawing = f"{_rounded_box(badge.width, badge.height, round(QUOTE_RADIUS * badge.width))}{{\\p0}}"
         tags = f"\\p1\\bord0\\shad0\\c{_tag_colour(style.quote_colour)}"
-        elements.append((3, 7, badge.x, badge.y, "g", None, tags, drawing, first))
+        elements.append(_Element(3, 7, badge.x, badge.y, "g", None, tags, drawing, first))
         marks = f"{_quote_marks(badge.width)}{{\\p0}}"
-        elements.append((4, 7, badge.x, badge.y, "g", None, "\\p1\\bord0\\shad0\\c&HFFFFFF&", marks, first))
-    for i, (line, (x, baseline), spans) in enumerate(zip(hook.lines, hook.anchors, hook.emphasis)):
-        # A line is centred (5) on the middle of its height: its ascent above the baseline and its
-        # descent below, which together are the font size.
-        centre_y = baseline - metrics.ascent / metrics.units * size + size / 2
-        tags = (f"\\fs{size:g}" if size != style.size else "") + _spacing(style.tracking)
-        elements.append((2, 5, _tracked(x, style.tracking), centre_y, ".1f", None, tags, _emphasised(line, spans, style), first + i))
+        elements.append(_Element(4, 7, badge.x, badge.y, "g", None, "\\p1\\bord0\\shad0\\c&HFFFFFF&", marks, first))
+    sized = (f"\\fs{size:g}" if size != style.size else "") + _spacing(style.tracking)
+    # A line is centred (5) on the middle of its height: its ascent above the baseline and its
+    # descent below, which together are the font size.
+    centres = [(_tracked(x, style.tracking), baseline - metrics.ascent / metrics.units * size + size / 2) for x, baseline in hook.anchors]
+    if (shadow := _drawn_shadow(style.shadow)) is not None:
+        dx, dy = shadow.offset
+        # Faded and popped by its own alpha, so that a stroked shadow's letters stay hidden.
+        alpha_tag, alpha = ("\\3a" if style.outline else "\\1a"), _alpha(shadow.opacity)
+        tags = sized + _shadow_tags(shadow, style.outline)
+        for i, (line, (x, y)) in enumerate(zip(hook.lines, centres)):
+            elements.append(_Element(2, 5, x + dx, y + dy, ".1f", alpha, tags, _ass_text(line), first + i, alpha_tag))
+    for i, (line, (x, y), spans) in enumerate(zip(hook.lines, centres, hook.emphasis)):
+        elements.append(_Element(2, 5, x, y, ".1f", None, sized, _emphasised(line, spans, style), first + i))
 
     step = _stagger(hook, style, first + len(hook.lines) - 1)
     # By part of the hook's time, then by element, as the parts are in time.
     events = []
-    for order, (layer, align, x, y, y_format, alpha, tags, body, rank) in enumerate(elements):
+    for order, (layer, align, x, y, y_format, alpha, tags, body, rank, alpha_tag) in enumerate(elements):
         for part, (begin, finish, phase) in enumerate(_hook_phases(hook, style, rank * step)):
             start, end = _ass_time(begin), _ass_time(finish)
             if start >= end:
                 continue
             length = round((finish - begin) * 1000)
-            place, motion = _hook_motion(phase, length, x, y, y_format, alpha, style)
-            if layer == 1:
+            place, motion = _hook_motion(phase, length, x, y, y_format, alpha, style, alpha_tag)
+            # A box's (and a shadow's) own alpha is in its tags, which its animation then changes.
+            if layer == 1 or alpha_tag != "\\alpha":
                 text = f"{{\\an{align}{place}{tags}{motion}}}{body}"
             else:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
@@ -1334,11 +1405,13 @@ def _hook_phases(hook: _Shown, style: _Motion, delay: float = 0.0) -> list[tuple
 
 
 def _hook_motion(
-    phase: str, length: int, x: float, y: float, y_format: str, alpha: str | None, style: _Motion
+    phase: str, length: int, x: float, y: float, y_format: str, alpha: str | None, style: _Motion, alpha_tag: str = "\\alpha"
 ) -> tuple[str, str]:
     """The position tag and the animation tags of a hook element at (x, y) (y written in `y_format`)
-    in a part of `length` ms (see _hook_phases), its own alpha being `alpha` (None: opaque)."""
+    in a part of `length` ms (see _hook_phases), its own alpha being `alpha` (None: opaque), set by
+    `alpha_tag` (all of its alphas, or one)."""
     shown = alpha or "&H00&"
+    a = alpha_tag
     place = f"\\pos({x:g},{y:{y_format}})"
     if phase == "fade":
         on = style.animation_ms if style.animation_in == Animation.FADE else 0
@@ -1349,13 +1422,13 @@ def _hook_motion(
         return place, f"\\fad({length},0)" if phase == "in" else f"\\fad(0,{length})"
     if animation == Animation.POP:
         if phase == "in":
-            return place, f"\\fscx{POP_FROM}\\fscy{POP_FROM}\\alpha&HFF&\\t(\\fscx100\\fscy100\\alpha{shown})"
-        return place, f"\\t(\\fscx{POP_FROM}\\fscy{POP_FROM}\\alpha&HFF&)"
+            return place, f"\\fscx{POP_FROM}\\fscy{POP_FROM}{a}&HFF&\\t(\\fscx100\\fscy100{a}{shown})"
+        return place, f"\\t(\\fscx{POP_FROM}\\fscy{POP_FROM}{a}&HFF&)"
     if animation == Animation.SLIDE:
         here, below = f"{x:g},{y:{y_format}}", f"{x:g},{y + SLIDE_PX:{y_format}}"
         if phase == "in":
-            return f"\\move({below},{here})", f"\\alpha&HFF&\\t(\\alpha{shown})"
-        return f"\\move({here},{below})", "\\t(\\alpha&HFF&)"
+            return f"\\move({below},{here})", f"{a}&HFF&\\t({a}{shown})"
+        return f"\\move({here},{below})", f"\\t({a}&HFF&)"
     return place, ""
 
 
@@ -1379,7 +1452,7 @@ def _shadow_tags(shadow: DropShadow, stroke: float) -> str:
     included: in the shadow's colour at its opacity, blurred as a CSS shadow of its blur is. With a
     stroke, only the stroke is drawn, over where the letters are too: a translucent fill would show
     where it meets the stroke, and libass blurs only the stroke of stroked text."""
-    colour, alpha = _tag_colour(shadow.colour), f"&H{round(255 * (1 - shadow.opacity)):02X}&"
+    colour, alpha = _tag_colour(shadow.colour), _alpha(shadow.opacity)
     blur = f"\\blur{shadow.blur / 2 / LIBASS_BLUR_SIGMA:.3g}" if shadow.blur else ""
     if stroke:
         return f"\\1a&HFF&\\3c{colour}\\3a{alpha}\\bord{stroke:g}\\shad0{blur}"
@@ -1398,9 +1471,14 @@ def _rounded_box(width: int, height: int, radius: int) -> str:
     )
 
 
-def _style_colour(hex_colour: str) -> str:
-    """An #RRGGBB colour as an ASS style gives it, opaque: &H00BBGGRR."""
-    return f"&H00{_tag_colour(hex_colour)[2:-1]}"
+def _style_colour(hex_colour: str, opacity: float = 1.0) -> str:
+    """An #RRGGBB colour as an ASS style gives it, at `opacity`: &HAABBGGRR (AA 00 when opaque)."""
+    return f"{_alpha(opacity)[:-1]}{_tag_colour(hex_colour)[2:-1]}"
+
+
+def _alpha(opacity: float) -> str:
+    """An opacity as an ASS alpha tag gives it: &HAA&, 00 opaque and FF transparent."""
+    return f"&H{round(255 * (1 - opacity)):02X}&"
 
 
 def _tag_colour(hex_colour: str) -> str:

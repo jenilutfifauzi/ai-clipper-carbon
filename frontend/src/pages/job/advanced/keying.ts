@@ -1,4 +1,4 @@
-import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, Transform } from "../../../api";
+import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, TextLayer, Transform } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { PICTURE_KEYS, valueAt } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
@@ -14,7 +14,7 @@ import type { TrackKind } from "./trackState";
 
 /**
  * Keyframe edits on the items of the edits (ADR 0008): the pure Keyframe actions of
- * ./keyActions.ts done to an Overlay, a Music Clip, a video's Segment or a Manual Scene at
+ * ./keyActions.ts done to an Overlay, a Text Layer, a Music Clip, a video's Segment or a Manual Scene at
  * the playhead, each one change of the edits, so one step of undo. A Keyframe is set at the playhead
  * minus the item's start on the Timeline (a Manual Scene's: the playhead's Source time minus its
  * Scene's start, which the plan gives as `keys_from`), and only with the playhead inside the item;
@@ -24,10 +24,16 @@ import type { TrackKind } from "./trackState";
  */
 
 /**
- * An item that can have Keyframes: an Overlay, a Music Clip, a video's Segment, or a Manual Scene of
- * a Layout Override's (`index` its place among the plan's Scenes, `sceneRef`: that Segment's showing of it).
+ * An item that can have Keyframes: an Overlay, a Text Layer, a Music Clip, a video's Segment, or a
+ * Manual Scene of a Layout Override's (`index` its place among the plan's Scenes, `sceneRef`: that
+ * Segment's showing of it).
  */
-export type KeyedRef = { kind: "overlay"; id: string } | { kind: "music"; id: string } | { kind: "segment"; id: string } | { kind: "scene"; index: number };
+export type KeyedRef =
+  | { kind: "overlay"; id: string }
+  | { kind: "text"; id: string }
+  | { kind: "music"; id: string }
+  | { kind: "segment"; id: string }
+  | { kind: "scene"; index: number };
 
 /** The Manual Scene that is the plan's Scene `index`, as a KeyedRef. */
 export const sceneRef = (index: number): KeyedRef => ({ kind: "scene", index });
@@ -190,6 +196,19 @@ const KINDS: { [K in KeyedRef["kind"]]: Kind<RefOf<K>> } = {
       overlays: edits.overlays.map((overlay) => (overlay.id === ref.id ? { ...overlay, keys, transform: set.transform ?? overlay.transform, ...soundOf(set) } : overlay)),
     }),
   },
+  // Its Transform only: it has no sound.
+  text: {
+    track: "text",
+    find: (edits, ref) => {
+      const layer = edits.text_layers.find((other) => other.id === ref.id);
+      return layer ? asKeyed({ start: layer.start, secs: layer.secs, keys: layer.keys, transform: layer.transform, volume: 1 }) : null;
+    },
+    keyable: () => [...PICTURE_KEYS],
+    write: (edits, ref, keys, set) => ({
+      ...edits,
+      text_layers: edits.text_layers.map((layer) => (layer.id === ref.id ? { ...layer, keys, transform: set.transform ?? layer.transform } : layer)),
+    }),
+  },
   music: {
     track: "music",
     find: (edits, ref) => {
@@ -341,14 +360,13 @@ export function moveItemKeys(scene: KeyScene, ref: KeyedRef, from: number, to: n
 }
 
 /**
- * Whether some item of the Pick has Keyframes: an Overlay, a Music Clip, a video's Segment, or a
- * Segment of the Source one of whose Scenes (of `plan`; none without it) is a Manual Scene with them.
- * Keyframes are edited with one item picked.
+ * Whether some item of the Pick has Keyframes: an Overlay, a Text Layer, a Music Clip, a video's
+ * Segment, or a Segment of the Source one of whose Scenes (of `plan`; none without it) is a Manual
+ * Scene with them. Keyframes are edited with one item picked.
  */
 export function keyedInPick(edits: AdvancedEdits, pick: Pick, plan?: RenderPlan | null): boolean {
   const keyed = (ref: KeyedRef) => Object.keys(keyedItem(edits, ref, undefined, plan)?.keys ?? {}).length > 0;
   return itemsOf(pick).some(({ kind, id }) => {
-    if (kind === "text") return false;
     if (keyed({ kind, id })) return true;
     return kind === "segment" && !!plan && scenesOf(edits, plan, id).some((index) => keyed(sceneRef(index)));
   });
@@ -374,7 +392,7 @@ function scenesOf(edits: AdvancedEdits, plan: RenderPlan, id: string): number[] 
 export function pickedKeyed(pick: Pick, scene: number | null = null): KeyedRef | null {
   const item = onlyItem(pick);
   if (item?.kind === "segment" && scene !== null) return sceneRef(scene);
-  return item && item.kind !== "text" ? { kind: item.kind, id: item.id } : null;
+  return item ? { kind: item.kind, id: item.id } : null;
 }
 
 /**
@@ -414,6 +432,13 @@ export const resetOverlay = (overlay: Overlay, defaults: Transform): Overlay => 
   keys: clearKeys(overlay.keys, PICTURE_KEYS),
 });
 
+/** Text Layer `layer` Reset: unscaled, unturned and opaque where it is, and none of those fields' Keyframes (its centre's kept). */
+export const resetTextLayer = (layer: TextLayer): TextLayer => ({
+  ...layer,
+  transform: { ...layer.transform, scale: 1, rotation: 0, opacity: 1 },
+  keys: clearKeys(layer.keys, ["scale", "rotation", "opacity"]),
+});
+
 /**
  * A Transform keyed by `keys`, of an item playing over `span` of the Timeline, as the stage's Grips
  * hold it at `time`: its keyed fields at the playhead (held at its ends outside it), tidied as the
@@ -427,7 +452,7 @@ export function heldTransform(transform: Transform, keys: Keys, span: KeySpan, t
 /**
  * What item `ref` can key, in the Keyframes pane's order: a picture's Transform fields (an Overlay's,
  * a video Segment's Framing's) and, for a video with sound (`media`, its Media Library item), its
- * volume; a Music Clip's volume; a Manual Scene's Transform fields only.
+ * volume; a Music Clip's volume; a Text Layer's and a Manual Scene's Transform fields only.
  */
 export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_audio: boolean }): KeyProperty[] {
   return kindOf(ref).keyable(media);

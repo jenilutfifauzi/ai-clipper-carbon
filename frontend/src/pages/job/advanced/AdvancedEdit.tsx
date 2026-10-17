@@ -449,7 +449,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     setTracks((old) => toggledTrack(old, control, kind));
   }
 
-  function addText(look: Omit<TextLayer, "id" | "start" | "secs">, at = playback.time) {
+  function addText(look: Omit<TextLayer, "id" | "start" | "secs" | "keys">, at = playback.time) {
     if (refused("text")) return;
     const layer = newTextLayer(look, at, duration);
     change({ text_layers: [...edits.text_layers, layer] });
@@ -716,15 +716,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         },
       };
   // The Text Layers on the preview, moved, scaled and turned there; on a locked Track, only drawn.
-  // One of several picked moves them all; scaling or turning one leaves its words and size as they are.
+  // One of several picked moves them all; scaling or turning one leaves its words and size as they
+  // are. A keyed one is held where it is at the playhead, and its keyed fields are written there as
+  // Keyframes (auto-key), as an Overlay's are.
   const textControls: StageControls["texts"] = tracks.locked.includes("text")
     ? undefined
     : {
-        onTransform: (id, transform, group) => {
+        transformOf: (id, time) => {
+          const layer = edits.text_layers.find((other) => other.id === id);
+          return layer && heldTransform(layer.transform, layer.keys, layer, time);
+        },
+        onTransform: (id, transform, group, time) => {
           const layer = edits.text_layers.find((other) => other.id === id);
           if (!layer) return;
-          if (placedTogether("text", id)) moveOnFrame(transform.x - layer.transform.x, transform.y - layer.transform.y, group);
-          else updateText({ ...layer, transform }, group);
+          const old = heldTransform(layer.transform, layer.keys, layer, time);
+          if (placedTogether("text", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
+          else applyKeyed(writeItemTransform(scene, { kind: "text", id }, transform, time, old), group);
         },
         // Its box Grips: its wrap width or fixed height, its words rewrapped by the next plan.
         onBox: (id, edge, length, group) => {

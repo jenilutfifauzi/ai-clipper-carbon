@@ -21,6 +21,7 @@ const layer = (id: string, style: Parameters<typeof textStyle>[0] = {}): TextLay
   animation_in: "none",
   animation_out: "none",
   animation_ms: 300,
+  keys: {},
 });
 
 // The elements of `types` in the element tree `node`, in its order, without rendering the components in it.

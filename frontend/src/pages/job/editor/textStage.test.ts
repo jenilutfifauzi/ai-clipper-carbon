@@ -8,7 +8,8 @@ import { fingersHeld, fingerMoved, fingersOn, gripsOf, placed } from "./pictureG
 import { heldPicture } from "./stagePicture";
 import { snapScaled } from "./smartGuides";
 import { wantedPicture } from "./textPicture";
-import { heldTextEvent, textStagePicture } from "./textStage";
+import { heldTextEvent, textEventAt, textStagePicture } from "./textStage";
+import { LINEAR } from "./keyframes";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -102,5 +103,44 @@ describe("a Text Layer on the stage", () => {
     const planned = event({ scale: 1.5, rotation: 20 });
     const { picture } = textStagePicture(planned);
     expect(heldTextEvent(planned, picture, picture)).toBe(planned);
+  });
+});
+
+// 12: Keyframes on Text Layers.
+describe("a keyed Text Layer on the stage", () => {
+  // Keyed from x 200 to 800, scale 1 to 2 and upright to a quarter turn over its 2 s.
+  const keyed = (): TextEvent => {
+    const planned = event();
+    const motion = {
+      x: [{ at: 0, value: 200, ease: LINEAR }, { at: 2, value: 800, ease: LINEAR }],
+      scale: [{ at: 0, value: 1, ease: LINEAR }, { at: 2, value: 2, ease: LINEAR }],
+      rotation: [{ at: 0, value: 0, ease: LINEAR }, { at: 2, value: 90, ease: LINEAR }],
+    };
+    return { ...planned, picture: { ...planned.picture, motion, unscaled: [400, 200] } };
+  };
+
+  test("is gripped where its Keyframes have it at the playhead: its area scaled and turned about its sampled centre", () => {
+    const at = textEventAt(keyed(), 1);
+    expect(at.layer.transform).toMatchObject({ x: 500, y: 600, scale: 1.5, rotation: 45 });
+    const { picture, fitted } = textStagePicture(at);
+    expect(fitted).toEqual({ width: 300, height: 100 });
+    expect(picture).toMatchObject({ centre: [500, 600], width: 450, height: 150, rotation: 45 });
+    const across = (450 + 150) * Math.SQRT1_2;
+    expect(Math.abs(at.bounds.width - across)).toBeLessThanOrEqual(1);
+    expect(Math.abs(at.bounds.x + at.bounds.width / 2 - 500)).toBeLessThanOrEqual(1);
+    // Its picture as drawn then, still: what a gesture holds and moves.
+    expect(at.picture).toMatchObject({ centre: [500, 600], width: 600, height: 300, rotation: 45, motion: {} });
+  });
+
+  test("a Grip held draws the same picture where the gesture puts it", () => {
+    const at = textEventAt(keyed(), 2);
+    const { picture, fitted } = textStagePicture(at);
+    const moved = heldTextEvent(at, picture, heldPicture(picture, { ...at.layer.transform, x: 300 }, FRAME, fitted));
+    expect(moved.picture).toMatchObject({ centre: [300, 600], width: 800, height: 400, rotation: 90 });
+  });
+
+  test("unkeyed, is as planned", () => {
+    const planned = event({ scale: 2 });
+    expect(textEventAt(planned, 1)).toBe(planned);
   });
 });

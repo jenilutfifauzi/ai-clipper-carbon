@@ -22,7 +22,7 @@ from test_jobs_api import URL
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 67_500
+TOOLS_BUDGET_BYTES = 68_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -217,6 +217,28 @@ async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry
     assert (await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"] == ["Jangan", "lakukan ini"]
     assert "tracking" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"tracking": 500}})
     assert "line_height" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"line_height": 0}})
+
+
+@pytest.mark.anyio
+async def test_the_hook_and_caption_shadow_and_box_padding_are_style_overrides(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    # 728 px wide: one line, but not inside a box padded 60 px either side.
+    hook = {"hook_text": "Racun bisa bunuh kamu"}
+    assert (await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"] == [hook["hook_text"]]
+    padded = await call(mcp, "edit_candidate", **ids, changes={**hook, "style_overrides": {"hook": {"padding_x": 60}}}, dry_run=True)
+    assert len(padded["hook"]["lines"]) == 2
+
+    # A shadow is merged by its fields; old-shaped ones are read in today's.
+    await call(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"shadow": {"blur": 8, "distance": 6}, "padding_x": 60}})
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"shadow": {"angle": 90}}, "caption": {"shadow": 3}})
+    assert merged["style_overrides"]["hook"] == {"shadow": {"blur": 8, "distance": 6, "angle": 90}, "padding_x": 60}
+    assert merged["style_overrides"]["caption"]["shadow"]["distance"] == pytest.approx(3 * 2**0.5)
+    assert len((await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"]) == 2
+    assert "blur" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"shadow": {"blur": 500}}})
+    assert "padding_y" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"padding_y": -1}})
 
 
 @pytest.mark.anyio

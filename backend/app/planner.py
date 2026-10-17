@@ -174,13 +174,14 @@ HOOK_SIZE = HookStyle().size
 MIN_SIZE = 1.0
 # Its lines' baselines are its style's line_height sizes apart: by default this many.
 HOOK_LEADING = HookStyle().line_height
-# The box's padding, in pixels: either side of the longest line, above the capitals of the first
-# and below the descenders of the last.
+# The box's padding, in pixels, unless its Hook Style gives its own: either side of the longest line,
+# above the capitals of the first and below the descenders of the last.
 HOOK_PAD_X = 36
 HOOK_PAD_Y = 26
-# A strip's padding, in sizes: either side of its line, and above the capitals and below the
-# descenders; and the gap between one strip and the next at the default line height (a line height
-# moves them apart, or together until they touch, by as much as it moves a block's lines).
+# A strip's padding, in sizes, unless its Hook Style gives its own: either side of its line, and
+# above the capitals and below the descenders; and the gap between one strip and the next at the
+# default line height (a line height moves them apart, or together until they touch, by as much as
+# it moves a block's lines).
 STRIP_PAD_X = 0.25
 STRIP_PAD_Y = 0.14
 STRIP_GAP = 0.06
@@ -202,10 +203,13 @@ TEXT_MARGIN = 48
 TEXT_INK_ROOM = 0.5
 # A Text Layer's picture is at most this many pixels on its longest side, whatever its scale.
 MAX_TEXT_PICTURE = 4096
-# A Text Layer's picture is made at the first of these scales its Transform's scale doesn't pass:
-# scaling it within one step is drawing the same picture smaller or larger, and only a scale past
-# it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
+# A Text Layer's picture is made at the first of these scales the largest it is drawn at doesn't pass
+# (`reached_scale`): scaling it within one step is drawing the same picture smaller or larger, and
+# only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
 TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
+# Pop grows a Text Layer to its full size, never past it (app/renderer.py's POP_FROM): the most it
+# multiplies the layer's scale by.
+POP_PEAK = 1.0
 
 
 # The planner's input, found by app/analysis.py.
@@ -625,9 +629,9 @@ class TextLayout:
     text and its baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its
     Block, or a Strip per line) with corners `radius` pixels round. Its shadow, when on, is its runs
     again moved by `shadow` (right and down), between them and the plate. The picture is rasterised
-    `scale` times as large (app/text_pictures.py; its Transform's scale, up to the next of
-    TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same look is one
-    file wherever the layer is."""
+    `scale` times as large (app/text_pictures.py; the largest scale the layer is drawn at, up to the
+    next of TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same look
+    is one file wherever the layer is."""
 
     style: TextStyle
     size: float
@@ -1352,16 +1356,20 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     )
 
 
-def with_motion(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:
+def with_motion(
+    picture: Picture, transform: Transform, keys: Keys, start: float, unscaled: tuple[float, float] | None = None
+) -> Picture:
     """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
-    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1. Unkeyed (a volume
-    isn't the picture's), as it is."""
+    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1 (`unscaled` when
+    given, else its crop's fitted size stretched). Unkeyed (a volume isn't the picture's), as it is."""
     keys = {prop: given for prop, given in keys.items() if prop in PICTURE_KEYS}
     if not keys:
         return picture
     motion = {prop: [replace(key, at=round(start + key.at, 4)) for key in given] for prop, given in keys.items()}
-    across, down = fitted(picture.crop.width, picture.crop.height, FRAME)
-    return replace(picture, motion=motion, unscaled=(across * transform.stretch_x, down * transform.stretch_y))
+    if unscaled is None:
+        across, down = fitted(picture.crop.width, picture.crop.height, FRAME)
+        unscaled = (across * transform.stretch_x, down * transform.stretch_y)
+    return replace(picture, motion=motion, unscaled=unscaled)
 
 
 def picture_at(picture: Picture, time: float) -> Picture:
@@ -1496,7 +1504,8 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     radius = min(round(style.plate.radius), min(box.height for box in plates) // 2) if plates else 0
     placed = [placed_runs(line, x - width / 2, style.size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
     layout, origin = _text_layout(layer, lines, placed, style.size, area, anchors, plates, radius)
-    picture = _text_picture(layout, origin, layer.transform)
+    # Keyed, it moves as an Overlay does, its whole picture scaled from its size at scale 1.
+    picture = with_motion(_text_picture(layout, origin, layer.transform), layer.transform, layer.keys, start, (layout.width, layout.height))
     return TextEvent(
         layer, lines, start, end, area, style.size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
         area if style.plate.shape is HookShape.BLOCK else None, radius, layout.look,
@@ -1589,7 +1598,7 @@ def _text_layout(
     width, height = width + width % 2, height + height % 2
     local = [(round(x - left, 4), round(y - top, 4)) for x, y in anchors]
     local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
-    stepped = next((step for step in TEXT_PICTURE_SCALES if layer.transform.scale <= step), TEXT_PICTURE_SCALES[-1])
+    stepped = next((step for step in TEXT_PICTURE_SCALES if reached_scale(layer) <= step), TEXT_PICTURE_SCALES[-1])
     scale = min(stepped, MAX_TEXT_PICTURE / max(width, height))
     plates = [Box(box.x - left, box.y - top, box.width, box.height) for box in plates]
     shadow = style.shadow.offset if style.shadow.on else None
@@ -1597,6 +1606,13 @@ def _text_layout(
         TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), plates, radius, shadow),
         (left, top),
     )
+
+
+def reached_scale(layer: TextLayer) -> float:
+    """The largest scale a Text Layer is drawn at: its Transform's, or its largest scale Keyframe's
+    while its scale is keyed (the Keyframes replace it), times Pop's peak."""
+    keyed = layer.keys.get(KeyProperty.SCALE)
+    return (max(key.value for key in keyed) if keyed else layer.transform.scale) * POP_PEAK
 
 
 def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:
@@ -1612,8 +1628,9 @@ def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transf
     )
 
 
-def _turned_box(area: Box, centre: tuple[float, float], transform: Transform) -> Box:
-    """What holds `area` once scaled and turned by `transform` about `centre`."""
+def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to: tuple[float, float] | None = None) -> Box:
+    """What holds `area` once scaled and turned by `transform` about `centre`, and moved for `centre`
+    to be at `to` when that is given."""
     angle = math.radians(transform.rotation)
     cos, sin = math.cos(angle), math.sin(angle)
     corners = [
@@ -1621,10 +1638,22 @@ def _turned_box(area: Box, centre: tuple[float, float], transform: Transform) ->
         for x in (area.x, area.x + area.width)
         for y in (area.y, area.y + area.height)
     ]
-    xs = [centre[0] + u * cos - v * sin for u, v in corners]
-    ys = [centre[1] + u * sin + v * cos for u, v in corners]
+    x, y = to or centre
+    xs = [x + u * cos - v * sin for u, v in corners]
+    ys = [y + u * sin + v * cos for u, v in corners]
     left, top = math.floor(min(xs) + 1e-6), math.floor(min(ys) + 1e-6)
     return Box(left, top, math.ceil(max(xs) - 1e-6) - left, math.ceil(max(ys) - 1e-6) - top)
+
+
+def text_bounds_at(event: TextEvent, time: float) -> Box:
+    """What holds a Text Layer's area at `time` seconds into the Clip, as its Keyframes have it then
+    (`picture_at`): scaled and turned about its picture's sampled centre. Unkeyed, its `bounds`."""
+    picture = event.picture
+    if not picture.motion or picture.unscaled is None:
+        return event.bounds
+    drawn = picture_at(picture, time)
+    scale = drawn.width / picture.unscaled[0] if KeyProperty.SCALE in picture.motion else event.layer.transform.scale
+    return _turned_box(event.area, picture.centre, replace(event.layer.transform, scale=scale, rotation=drawn.rotation), drawn.centre)
 
 
 def text_runs(line: str, font_id: str) -> list[TextRun]:
@@ -1724,24 +1753,44 @@ def emoji_square(run: TextRun, baseline: float, size: float) -> tuple[float, flo
 def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
     """How the hook `text` is set in `style`: its lines (none when it is blank) and their font size.
     The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size with its
-    tracking, broken between words where the longest is shortest. Lines still too wide are set
-    smaller (their tracking staying as wide), so that the longest just fits: the text fits when the
-    size is the style's."""
+    tracking (or, with the style's own padding across, whose box is as wide as the captions' area),
+    broken between words where the longest is shortest. Lines still too wide are set smaller (their
+    tracking staying as wide, the style's padding shrinking with them), so that the longest just
+    fits: the text fits when the size is the style's."""
     words = [word for word, _ in _hook_words(text, style.uppercase)]
     if not words:
         return [], style.size
     metrics = font_metrics(style.font)
     tracking = style.tracking
+    own = style.padding_x is not None and style.shape != HookShape.NONE
+    room, padding = (KICKER_WIDEST, 2 * style.padding_x) if own else (HOOK_WIDTH, 0.0)
 
     def widest(lines: list[str]) -> float:
         return max(metrics.width(line, style.size, tracking) for line in lines)
 
     for count in range(1, min(style.max_lines, len(words)) + 1):
         lines = _balanced(words, count, metrics, tracking * metrics.units / style.size)
-        if widest(lines) <= HOOK_WIDTH:
+        if widest(lines) + padding <= room:
             return lines, style.size
-    size = min(style.size * (HOOK_WIDTH - tracking * (len(line) - 1)) / metrics.width(line, style.size) for line in lines)
+    size = min(style.size * (room - tracking * (len(line) - 1)) / (metrics.width(line, style.size) + padding) for line in lines)
     return lines, max(math.floor(size * 10) / 10, MIN_SIZE)
+
+
+def _hook_padding(style: HookStyle, size: float) -> tuple[float, float]:
+    """The hook's box padding across and down, in output pixels, set at `size`: the style's (given at
+    its size), or its Shape's own: HOOK_PAD_X and HOOK_PAD_Y round a block (and round lines with no
+    box, which the style's don't change), STRIP_PAD_X and STRIP_PAD_Y of the size round a strip."""
+    if style.shape == HookShape.STRIPS:
+        own = STRIP_PAD_X * size, STRIP_PAD_Y * size
+    else:
+        own = HOOK_PAD_X, HOOK_PAD_Y
+    if style.shape == HookShape.NONE:
+        return own
+    scale = size / style.size
+    return (
+        own[0] if style.padding_x is None else style.padding_x * scale,
+        own[1] if style.padding_y is None else style.padding_y * scale,
+    )
 
 
 def without_emoji(text: str) -> str:
@@ -1828,10 +1877,10 @@ def _hook(
     the style's height (kept inside SAFE_AREA).
     None when the text is blank or it would start at or after the Clip's end.
 
-    A line is as wide as its letters and its tracking. A block (or no box) is HOOK_PAD_X wider than
-    the longest line either side, its first line's capitals HOOK_PAD_Y below its top and the
-    baselines the style's line_height sizes apart. Strips are each their line's width, padded by
-    STRIP_PAD_X and STRIP_PAD_Y, STRIP_GAP apart at the default line height. Left-aligned lines (and
+    A line is as wide as its letters and its tracking. A block (or no box) is its padding
+    (_hook_padding) wider than the longest line either side, its first line's capitals its padding
+    down below its top and the baselines the style's line_height sizes apart. Strips are each their
+    line's width, padded, STRIP_GAP apart at the default line height. Left-aligned lines (and
     strips) start at the left of the longest.
 
     The `kicker`, if any, goes above them in a pill (`_kicker_pill`), centred over them or starting where
@@ -1850,9 +1899,9 @@ def _hook(
     metrics = font_metrics(style.font)
     widths = [metrics.width(line, size, style.tracking) for line in lines]
     left = style.align == HookAlign.LEFT
+    pad_x, pad_y = _hook_padding(style, size)
     # Boxes from the hook's top-left corner, and anchors from where it is.
     if style.shape == HookShape.STRIPS:
-        pad_x, pad_y = STRIP_PAD_X * size, STRIP_PAD_Y * size
         strip_height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
         pitch = max(strip_height + round(STRIP_GAP * size) + round((style.line_height - HOOK_LEADING) * size), strip_height)
         strips = [math.ceil(line + 2 * pad_x) for line in widths]
@@ -1865,15 +1914,16 @@ def _hook(
                 (x + box.x + box.width / 2, y + box.y + pad_y + metrics.cap_height / metrics.units * size) for box in boxes
             ]
     else:
-        width = math.ceil(max(widths)) + 2 * HOOK_PAD_X
+        # The letters and the padding (whole pixels when it is the Shape's own), rounded up.
+        width = math.ceil(max(widths) + 2 * pad_x)
         letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
-        height = math.ceil(letters) + 2 * HOOK_PAD_Y
+        height = math.ceil(letters + 2 * pad_y)
         boxes = [Box(0, 0, width, height)] if style.shape == HookShape.BLOCK else []
 
         def anchors(x: int, y: int) -> list[tuple[float, float]]:
             return [
-                (x + HOOK_PAD_X + line / 2 if left else x + width / 2,
-                 y + HOOK_PAD_Y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
+                (x + pad_x + line / 2 if left else x + width / 2,
+                 y + pad_y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
                 for i, line in enumerate(widths)
             ]
     # The lines' place in the whole hook, and the pill's.
@@ -1893,11 +1943,7 @@ def _hook(
         width = full_width
     badge = round(QUOTE_SCALE * size) if style.quote else 0
     # How far it reaches into the first line's box: into its padding.
-    box_pad_x, box_pad_y = {
-        HookShape.BLOCK: (HOOK_PAD_X, HOOK_PAD_Y),
-        HookShape.STRIPS: (STRIP_PAD_X * size, STRIP_PAD_Y * size),
-        HookShape.NONE: (0, 0),
-    }[style.shape]
+    box_pad_x, box_pad_y = (0, 0) if style.shape == HookShape.NONE else (pad_x, pad_y)
     inset_x, inset_y = math.floor(QUOTE_INSET * box_pad_x), math.floor(QUOTE_INSET * box_pad_y)
     if badge:
         lines_y += badge - inset_y

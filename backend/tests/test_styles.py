@@ -2,9 +2,12 @@
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+from pydantic import TypeAdapter
 
 from app.planner import Box, Face, FrameFaces, Scene, plan_render
 from app.renderer import _ass
@@ -13,13 +16,16 @@ from app.styles import (
     DEFAULT,
     BuiltinPreset,
     CaptionStyle,
+    DropShadow,
     Highlight,
     HookStyle,
     InvalidStyle,
     PresetNotFound,
     PresetStore,
     StyleOverrides,
+    StylePreset,
     WatermarkStyle,
+    hard_shadow,
     resolve,
 )
 from app.transcript import Word
@@ -53,8 +59,8 @@ def test_the_default_styles_write_v1s_ass_byte_for_byte():
 
 def test_the_caption_style_sets_the_ass_style_and_highlight():
     ass = _ass(plan(caption_style=CaptionStyle(
-        size=120, colour="#ffe600", active_colour="#00FF00", outline=3, outline_colour="#112233", shadow=4,
-        shadow_colour="#445566",
+        size=120, colour="#ffe600", active_colour="#00FF00", outline=3, outline_colour="#112233",
+        shadow=hard_shadow(4, "#445566"),
     )))
     assert "Style: Caption,Montserrat ExtraBold,120,&H0000E6FF,&H0000E6FF,&H00332211,&H00665544,0,0,0,0,100,100,0,0,1,3,4,5,0,0,0,1" in ass
     assert "{\\c&H00FF00&}HALO{\\c&H00E6FF&} SEMUA APA" in ass
@@ -306,14 +312,14 @@ def test_strips_draw_a_box_behind_each_line_and_each_line_on_its_anchor():
 
 
 def test_a_hook_without_a_box_draws_only_its_text_with_its_outline_and_shadow():
-    lines = hook_lines(shape="none", outline=4, outline_colour="#112233", shadow=3, shadow_colour="#445566")
+    lines = hook_lines(shape="none", outline=4, outline_colour="#112233", shadow=hard_shadow(3, "#445566"))
     assert not hook_boxes(lines) and len(lines) == 2
-    ass = _ass(plan(hook_style=HookStyle(shape="none", outline=4, outline_colour="#112233", shadow=3, shadow_colour="#445566")))
+    ass = _ass(plan(hook_style=HookStyle(shape="none", outline=4, outline_colour="#112233", shadow=hard_shadow(3, "#445566"))))
     assert "Style: Hook,Montserrat ExtraBold,88,&H00FFFFFF,&H00FFFFFF,&H00332211,&H00665544,0,0,0,0,100,100,0,0,1,4,3,5,0,0,0,1" in ass
 
 
 def test_an_outlined_hooks_box_has_no_outline_or_shadow_of_its_own():
-    [box] = hook_boxes(hook_lines(outline=4, shadow=3))
+    [box] = hook_boxes(hook_lines(outline=4, shadow=hard_shadow(3)))
     assert "\\p1\\bord0\\shad0\\c&H000000&" in box
 
 
@@ -418,3 +424,153 @@ def test_a_short_hook_staggers_less_so_that_everything_is_on_before_it_goes():
     entrances = [line for line in events if "\\fscx70\\fscy70\\alpha&HFF&\\t(" in line]
     # The Kicker's pill and text, three strips and three lines.
     assert len(entrances) == 2 + 3 + 3 and all(line.split(",")[2] <= "0:00:00.35" for line in entrances)
+
+
+# Shadow and box shape on the Hook and Caption Styles (text-advanced 14). At their defaults every
+# built-in Preset plans and writes its ASS as before (above).
+
+
+def dialogue(ass: str, style: str) -> list[str]:
+    return [line for line in ass.splitlines() if line.startswith("Dialogue") and f",{style}," in line]
+
+
+def pos(line: str) -> tuple[float, float]:
+    x, y = line.split("\\pos(")[1].split(")")[0].split(",")
+    return float(x), float(y)
+
+
+def test_the_old_shadow_fields_are_read_as_a_hard_drop_shadow(tmp_path):
+    # A Preset saved before drop shadows: a shadow (an offset right and down) and its colour.
+    saved = json.loads(TypeAdapter(list[StylePreset]).dump_json([StylePreset("mine", "Mine")]))
+    for part, offset in (("caption", 4), ("hook", 0)):
+        del saved[0][part]["shadow"]
+        saved[0][part] |= {"shadow": offset, "shadow_colour": "#445566"}
+    (tmp_path / "presets.json").write_text(json.dumps(saved))
+    store = PresetStore(tmp_path / "presets.json")
+    mine = store.get("mine")
+    assert mine.caption.shadow == hard_shadow(4, "#445566") == DropShadow("#445566", 1.0, 0.0, 4 * 2**0.5, 45.0)
+    assert mine.caption.shadow.offset == (4.0, 4.0)
+    # None was none: off, its colour kept.
+    assert not mine.hook.shadow.on and mine.hook.shadow == DropShadow(colour="#445566")
+    # Written back in today's shape.
+    store.update("mine", "Mine", mine.caption, mine.hook)
+    assert json.loads((tmp_path / "presets.json").read_text())[0]["caption"]["shadow"]["colour"] == "#445566"
+    # Overrides saved before them change those fields of the Preset's shadow.
+    minimal = next(preset for preset in BUILTIN_PRESETS if preset.id == "minimal")
+    overrides = TypeAdapter(StyleOverrides).validate_python({"caption": {"shadow": 0}, "hook": {"shadow": 3, "shadow_colour": "#FF0000"}})
+    assert overrides.hook == {"shadow": {"opacity": 1.0, "blur": 0.0, "distance": 3 * 2**0.5, "angle": 45.0, "colour": "#FF0000"}}
+    caption, hook, _ = resolve(minimal, overrides)
+    assert not caption.shadow.on and hook.shadow == hard_shadow(3, "#FF0000")
+    assert resolve(minimal, StyleOverrides(caption={"shadow_colour": "#112233"})).caption.shadow == hard_shadow(4, "#112233")
+    # As are a Clip's styles, rendered before them.
+    assert TypeAdapter(CaptionStyle).validate_python({"shadow": 2, "shadow_colour": "#00FF00"}).shadow == hard_shadow(2, "#00FF00")
+
+
+def test_a_migrated_shadow_is_written_as_before():
+    # The Style line test_the_caption_style_sets_the_ass_style_and_highlight checks, from the old fields.
+    old = TypeAdapter(CaptionStyle).validate_python({
+        "size": 120, "colour": "#ffe600", "outline": 3, "outline_colour": "#112233", "shadow": 4, "shadow_colour": "#445566",
+    })
+    ass = _ass(plan(caption_style=old))
+    assert "Style: Caption,Montserrat ExtraBold,120,&H0000E6FF,&H0000E6FF,&H00332211,&H00665544,0,0,0,0,100,100,0,0,1,3,4,5,0,0,0,1" in ass
+    # No events of its own.
+    assert len(dialogue(ass, "Caption")) == len(dialogue(_ass(plan(caption_style=CaptionStyle(size=120))), "Caption"))
+
+
+def test_a_shadow_override_changes_only_the_shadows_fields_it_names():
+    minimal = next(preset for preset in BUILTIN_PRESETS if preset.id == "minimal")
+    caption, _, _ = resolve(minimal, StyleOverrides(caption={"shadow": {"blur": 6, "angle": 90}}))
+    assert caption.shadow == DropShadow("#000000", 1.0, 6.0, minimal.caption.shadow.distance, 90.0)
+    for overrides, message in (
+        (StyleOverrides(hook={"shadow": {"blur": 500}}), "blur"),
+        (StyleOverrides(hook={"shadow": {"glow": 1}}), "shadow.glow"),
+        (StyleOverrides(caption={"size": {"blur": 1}}), "size"),
+        (StyleOverrides(caption={"padding_x": -1}), "padding_x"),
+        (StyleOverrides(hook={"padding_y": 500}), "padding_y"),
+    ):
+        with pytest.raises(InvalidStyle, match=message):
+            resolve(DEFAULT, overrides)
+
+
+def test_a_semi_transparent_hard_shadow_is_the_styles_own_shadow_at_its_opacity():
+    shadow = DropShadow("#445566", 0.5, 0.0, 6 * 2**0.5, 45.0)
+    ass = _ass(plan(hook_style=HookStyle(shape="none", shadow=shadow), caption_style=CaptionStyle(shadow=shadow)))
+    for style in ("Caption", "Hook"):
+        [line] = [line for line in ass.splitlines() if line.startswith(f"Style: {style},")]
+        fields = line.split(",")
+        assert (fields[6], fields[17]) == ("&H80665544", "6"), style
+    assert len(dialogue(ass, "Hook")) == 2
+
+
+SOFT = DropShadow("#0000FF", 0.5, 8.0, 10.0, 45.0)
+
+
+def test_a_blurred_or_turned_shadow_is_an_event_under_each_hook_line():
+    for shadow in (SOFT, DropShadow("#0000FF", 0.5, 0.0, 10.0, 135.0)):
+        planned = plan(hook_style=HookStyle(shadow=shadow))
+        ass = _ass(planned)
+        [style] = [line for line in ass.splitlines() if line.startswith("Style: Hook,")]
+        assert style.split(",")[17] == "0"
+        events = dialogue(ass, "Hook")
+        shadows = [line for line in events if "\\1c&HFF0000&" in line]
+        lines = [line for line in events if line.startswith("Dialogue: 2,") and line not in shadows]
+        assert len(lines) == len(shadows) == len(planned.hook.lines) == 2
+        dx, dy = shadow.offset
+        for line, under in zip(lines, shadows):
+            # Under its line on the same layer, written before it: the line again, in one colour.
+            assert under.startswith("Dialogue: 2,") and events.index(under) < events.index(line)
+            assert under.split("}", 1)[1] == line.split("}", 1)[1]
+            (x, y), (shadow_x, shadow_y) = pos(line), pos(under)
+            assert (shadow_x - x, shadow_y - y) == (pytest.approx(dx, abs=0.06), pytest.approx(dy, abs=0.06))
+            assert "\\1a&H80&\\bord0\\shad0" in under and ("\\blur" in under) == bool(shadow.blur)
+        # Over the box.
+        assert all(events.index(box) < events.index(shadows[0]) for box in hook_boxes(events))
+
+
+def test_a_blurred_shadow_is_an_event_under_each_caption_line_in_every_highlight():
+    for highlight, layer in ((Highlight.COLOUR, 0), (Highlight.BOX, 1), (Highlight.NONE, 0)):
+        ass = _ass(plan(caption_style=CaptionStyle(highlight=highlight, shadow=SOFT, outline=4)))
+        events = dialogue(ass, "Caption")
+        shadows = [line for line in events if "\\blur" in line]
+        texts = [line for line in events if "\\blur" not in line and "\\p1" not in line]
+        assert len(shadows) == len(texts) > 0, highlight
+        for under, text in zip(shadows, texts):
+            # The same times and layer, just before it; stroked, so only its stroke shows, over the letters too.
+            assert under.split(",")[:3] == text.split(",")[:3] and text.startswith(f"Dialogue: {layer},")
+            assert events.index(under) == events.index(text) - 1
+            assert "\\1a&HFF&\\3c&HFF0000&\\3a&H80&\\bord4" in under and "\\c&" not in under.split("}", 1)[1]
+            assert pos(under)[0] - pos(text)[0] == pytest.approx(SOFT.offset[0], abs=0.06)
+
+
+def test_a_popping_hooks_shadow_fades_in_with_its_line_its_letters_hidden_under_a_stroke():
+    shadow = DropShadow(opacity=0.5, blur=6, distance=8)
+    events = hook_events("Kenapa?", shape="none", outline=4, shadow=shadow, animation_in="pop", animation_out="slide")
+    [shadow_in] = [line for line in events if line.startswith("Dialogue: 2,0:00:00.00") and "\\blur" in line]
+    assert shadow_in.index("\\1a&HFF&") < shadow_in.index("\\3a&HFF&\\t(\\fscx100\\fscy100\\3a&H80&)")
+    [shadow_out] = [line for line in events if line.startswith("Dialogue: 2,0:00:02.80") and "\\blur" in line]
+    assert "\\t(\\3a&HFF&)" in shadow_out and "\\alpha" not in shadow_out
+    # Without a stroke, its letters are what shows.
+    plain = hook_events("Kenapa?", shape="none", shadow=shadow, animation_in="pop")
+    [shadow_in] = [line for line in plain if line.startswith("Dialogue: 2,0:00:00.00") and "\\blur" in line]
+    assert "\\1a&HFF&\\t(\\fscx100\\fscy100\\1a&H80&)" in shadow_in
+
+
+def test_the_highlight_boxs_padding_and_radius_are_the_caption_styles():
+    def boxes(style: CaptionStyle) -> list[tuple[float, float, list[str]]]:
+        drawn = [line for line in dialogue(_ass(plan(caption_style=style)), "Caption") if "\\p1" in line]
+        return [(*pos(line), line.split("}")[1].split()) for line in drawn]
+
+    style = CaptionStyle(highlight=Highlight.BOX)
+    default = boxes(style)
+    padded = boxes(replace(style, padding_x=30, padding_y=20, radius=0))
+    # Each box's line's size: a line too wide is set smaller, and so is the padding given at the style's.
+    sizes = [event.size for event in plan(caption_style=style).captions for word in event.words if round(word.start * 100) < round(word.end * 100)]
+    assert len(default) == len(padded) == len(sizes) and min(sizes) < style.size
+    for (x, y, path), (padded_x, padded_y, padded_path), size in zip(default, padded, sizes):
+        across, down = 30 * size / style.size, 20 * size / style.size
+        assert padded_x == pytest.approx(x - (across - 0.12 * size), abs=0.1)
+        assert padded_y == pytest.approx(y - (down - 0.08 * size), abs=0.1)
+        # "m r 0 l (width - r) 0 ...": square corners, and wider by the padding.
+        radius = round(0.12 * size)
+        assert padded_path[1] == "0" and path[1] == str(radius)
+        assert float(padded_path[4]) - (float(path[4]) + radius) == pytest.approx(2 * (across - 0.12 * size), abs=1)

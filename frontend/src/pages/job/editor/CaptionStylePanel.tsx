@@ -1,4 +1,4 @@
-import type { FontInfo } from "../../../api";
+import type { FontInfo, StyleValue } from "../../../api";
 import { ColorField } from "../../../components/ColorField";
 import { MoreOptions } from "../../../components/MoreOptions";
 import { Segmented } from "../../../components/Segmented";
@@ -6,6 +6,8 @@ import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { FacePicker } from "./FacePicker";
+import { ShadowFields } from "./ShadowFields";
+import { highlightShape } from "./styleShape";
 import { countChanged, Group, StyleMarker } from "./StyleFields";
 import type { StyleControls } from "./useStyleDraft";
 
@@ -29,10 +31,23 @@ const MAX_WORDS = [
 ];
 
 // The fields behind More options.
-const MORE = ["outline", "outline_colour", "shadow", "shadow_colour", "tracking", "max_chars", "max_words", "max_secs", "pause_secs"] as const;
+const MORE = [
+  "outline",
+  "outline_colour",
+  "shadow",
+  "padding_x",
+  "padding_y",
+  "radius",
+  "tracking",
+  "max_chars",
+  "max_words",
+  "max_secs",
+  "pause_secs",
+] as const;
 
 /**
- * The Caption Style: the controls used most, then More options (outline, shadow, tracking and line breaks).
+ * The Caption Style: the controls used most, then More options (outline, shadow, the highlight box,
+ * tracking and line breaks).
  * Each control shows the resolved value, with a reset button when it overrides the Preset.
  */
 export function CaptionStylePanel({
@@ -47,8 +62,11 @@ export function CaptionStylePanel({
   onMore: (open: boolean) => void;
 }) {
   const caption = style.caption;
-  const set = (field: string, value: string | number | boolean | null) => style.set("caption", field, value);
+  const set = (field: string, value: StyleValue) => style.set("caption", field, value);
   const marker = (field: string, label: string) => <StyleMarker style={style} part="caption" field={field} label={label} />;
+  // The highlight box drawn round a line at the style's size, its own until it is set.
+  const box = highlightShape(caption, caption.size);
+  const px = (v: number) => `${Math.round(v)} px`;
 
   return (
     <div className="flex flex-col gap-5">
@@ -91,15 +109,23 @@ export function CaptionStylePanel({
         </span>
       </Switch>
 
-      <MoreOptions open={more} onToggle={onMore} contents="Outline, shadow, tracking, line breaks" changed={countChanged(style, "caption", MORE)}>
+      <MoreOptions open={more} onToggle={onMore} contents="Outline, shadow, highlight box, tracking, line breaks" changed={countChanged(style, "caption", MORE)}>
         <Group title="Outline and shadow">
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             <Slider label="Outline" value={caption.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("outline", v)} marker={marker("outline", "outline")} />
             <ColorField label="Outline colour" value={caption.outline_colour} onChange={(v) => set("outline_colour", v)} marker={marker("outline_colour", "outline colour")} />
-            <Slider label="Shadow" value={caption.shadow} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("shadow", v)} marker={marker("shadow", "shadow")} />
-            <ColorField label="Shadow colour" value={caption.shadow_colour} onChange={(v) => set("shadow_colour", v)} marker={marker("shadow_colour", "shadow colour")} />
           </div>
+          <ShadowFields shadow={caption.shadow} onChange={(v) => set("shadow", v)} marker={marker("shadow", "shadow")} />
         </Group>
+        {caption.highlight === "box" && (
+          <Group title="Highlight box">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+              <Slider label="Padding across" value={box.padX} min={0} max={200} format={px} onChange={(v) => set("padding_x", v)} marker={marker("padding_x", "box padding across")} />
+              <Slider label="Padding down" value={box.padY} min={0} max={200} format={px} onChange={(v) => set("padding_y", v)} marker={marker("padding_y", "box padding down")} />
+              <Slider label="Corner radius" value={box.radius} min={0} max={200} format={px} onChange={(v) => set("radius", v)} marker={marker("radius", "box corner radius")} />
+            </div>
+          </Group>
+        )}
         <Group title="Tracking and line breaks">
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
             {/* Counted by Most characters: a spaced-out line holds fewer. */}

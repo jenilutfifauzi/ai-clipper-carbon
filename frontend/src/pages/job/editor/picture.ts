@@ -138,9 +138,11 @@ export function scenesAt(plan: RenderPlan, time: number): RenderPlan["scenes"] {
   return plan.scenes.map((scene) => (scene.picture && isKeyed(scene.picture) ? { ...scene, picture: pictureAt(scene.picture, time) } : scene));
 }
 
-/** Whether any picture of the plan moves: an Overlay's or a Scene's. */
+/** Whether any picture of the plan moves: an Overlay's, a Scene's or a Text Layer's. */
 export const hasKeyedPictures = (plan: RenderPlan) =>
-  plan.overlays.some((event) => isKeyed(event.picture)) || plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture));
+  plan.overlays.some((event) => isKeyed(event.picture)) ||
+  plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture)) ||
+  plan.texts.some((event) => isKeyed(event.picture));
 
 export interface PanelStyle {
   box: { left: string; top: string; width: string; height: string };
