@@ -237,7 +237,7 @@ A Text Style has:
 - `line_height`, a multiple of the size.
 - `tracking`, in px, which may be negative.
 - `align`.
-- `wrap_width` (px, 0 means the frame less TEXT_MARGIN each side) and `fixed_height` (px, 0 means the words' own height).
+- `wrap_width` (px, 0 means the frame less TEXT_MARGIN each side) and `fixed_height` (px, 0 means the words' own height). Both are the box's outer size, the plate's padding included: lines break at `wrap_width − 2 × padding_x` (decided at the code review, 2026-10-17, so that a side grip drags the edge the owner sees).
 
 Every length is in output pixels, as every other field of a Candidate is.
 
@@ -258,7 +258,7 @@ Opacity is the Transform's only. A Text Preset carries no opacity of the layer; 
 - Each line is split into runs by Face. A character the style's Face lacks is given to the bundled CJK Face if that Face has it. An emoji (the existing Extended_Pictographic set, sequences with ZWJ, variation selectors and keycaps kept whole) becomes an emoji run of advance 1.0 em at the style's size. Anything else is left out, as emoji are today.
 - Line pitch comes from the style's Face only, so a fallback run doesn't change it.
 - Tracking is added after every character but the last of a line.
-- The box is `max(words, fixed_height)` high and `max(widest line, wrap width if set)` wide, plus padding on an axis the words size. Words are centred vertically within it.
+- The box is `max(words + padding, fixed_height)` high and `max(widest line + padding, wrap width if set)` wide: padding is added on an axis the words size, and a set width or height already holds it. Words are centred vertically within it.
 - The planner works out:
   - each line's runs and anchors;
   - each emoji's place and size;
