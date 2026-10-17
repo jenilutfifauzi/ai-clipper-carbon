@@ -75,3 +75,5 @@
 - **A hard 45° shadow stays `\shad`** (with its opacity in BackColour) rather than becoming an event, so stored looks write the same bytes.
 - **Known small difference:** while popping, a hook's event shadow scales about its own centre, so for those 200 ms its offset isn't scaled with the text. It is exact once on screen.
 - **The preview now draws the caption shadow over the highlight box,** as the render always has (`\shad` belongs to the text event on layer 1). Before, it drew it under the box.
+
+**Merged with main** after ticket 03 (wrapping). The only conflict was in the MCP instructions, and both texts were kept. Full suites after the merge: backend 747 passed and 1 failed. The failure, `test_resilience.py::test_other_jobs_run_while_a_job_waits_for_quota`, is the timing test ticket 04 noted, and it passes alone. Frontend: 692 passed, and `tsc` is clean.
