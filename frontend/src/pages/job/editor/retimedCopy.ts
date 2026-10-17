@@ -1,72 +1,147 @@
 import { useEffect, useState } from "react";
-import { api, mediaProxyUrl, type RetimedCopy, type SegmentPlan } from "../../../api";
-import type { follow } from "./follow";
+import { api, mediaProxyUrl, type AudioEvent, type OverlayEvent, type RetimedCopy, type RetimedRange, type SegmentPlan } from "../../../api";
+import { eventSpan, PLAYABLE_SPEEDS, type follow } from "./follow";
 import { paceOf } from "./segmentTime";
 
 /**
- * A reversed Segment's preview: its range played backwards from a preview-size Retimed copy
- * (docs/adr/0009), which the backend makes in the background when asked (app/retimed.py). The copy
- * plays forwards at the Segment's Speed; until it is made, the Segment shows the frame the copy will
- * show first, held, with the copy's progress, while the Timeline time runs on.
+ * The preview's Retimed copies (docs/adr/0009), which the backend makes in the background when asked
+ * (app/retimed.py): a reversed item's range played backwards, and an item's range at a Speed a
+ * browser won't play (outside 0.25–4×) retimed at it, its sound made as the render makes it. A
+ * reversed copy plays forwards at the item's Speed; a retimed one at the preview rate only. Until it
+ * is made, the item shows the frame the copy will show first, held, with the copy's progress, while
+ * the Timeline time runs on.
  */
 
 // How often a copy being made is asked after.
 const POLL_MS = 500;
 // A frame of a Media Library video (normalized to 30 fps).
 const FRAME_SECS = 1 / 30;
-// Copies made, by video and range: a Segment shown again plays from its copy at once.
+// Copies made, by item and range: an item shown again plays from its copy at once.
 const made = new Map<string, RetimedCopy>();
 // A copy asked for, not heard of yet.
 const ASKED: RetimedCopy = { progress: 0, url: null, at: null, error: null };
 
-/** The preview copy of `media`'s range from `start` to `end`, backwards, asked for and polled until it is made; null for no `media`. */
-export function useRetimedCopy(media: string | null, start: number, end: number): RetimedCopy | null {
-  const key = media ? `${media}:${start}:${end}` : null;
-  const [copy, setCopy] = useState<{ key: string; copy: RetimedCopy } | null>(null);
-  useEffect(() => {
-    if (!media || !key || made.has(key)) return;
-    const abort = new AbortController();
-    let timer: number | undefined;
-    const ask = () =>
-      api.retimedCopy(media, { start, end, reverse: true }, abort.signal).then(
-        (answer) => {
-          if (answer.url) made.set(key, answer);
-          setCopy({ key, copy: answer });
-          if (!answer.url && !answer.error) timer = window.setTimeout(ask, POLL_MS);
-        },
-        (reason: Error) => {
-          if (!abort.signal.aborted) setCopy({ key, copy: { ...ASKED, error: reason.message } });
-        },
-      );
-    void ask();
-    return () => {
-      abort.abort();
-      window.clearTimeout(timer);
-    };
-  }, [media, key, start, end]);
-  if (!key) return null;
-  return made.get(key) ?? (copy?.key === key ? copy.copy : ASKED);
+/** A range of an item's file, as it plays: at its Speed, forwards or in Reverse, its pitch following the Speed with `pitch`. */
+interface PlayedItem {
+  start: number;
+  end: number;
+  speed?: number;
+  reverse?: boolean;
+  pitch?: boolean;
 }
 
-/** What a media Segment's video plays (its proxy, or its copy) and how it follows the playback (`follow`). */
+/**
+ * The preview copy an item playing `played` plays from: at a Speed outside PLAYABLE_SPEEDS, its
+ * range retimed at it (and reversed if it is); else in Reverse, its range reversed (played at its
+ * Speed); null for an item played from its own file. (The backend's twin: `copies_played` in
+ * app/retimed.py.)
+ */
+export function previewCopyOf({ start, end, speed = 1, reverse = false, pitch = false }: PlayedItem): RetimedRange | null {
+  if (speed < PLAYABLE_SPEEDS.min || speed > PLAYABLE_SPEEDS.max) return { start, end, reverse, speed, pitch };
+  return reverse ? { start, end, reverse: true } : null;
+}
+
+/** The preview copy a Segment of the plan plays from (`previewCopyOf`), if any: of its range, unless it is a Freeze frame. */
+export const segmentCopy = (segment: SegmentPlan): RetimedRange | null =>
+  segment.hold != null ? null : previewCopyOf({ ...segment, start: segment.source_start, end: segment.source_end });
+
+/** The preview copy a plan's Overlay video or its sound plays from (`previewCopyOf`), if any: of `(end − start) × speed` from its offset. */
+export const eventCopy = ({ start, end, offset, speed = 1, pitch }: Pick<OverlayEvent | AudioEvent, "start" | "end" | "offset" | "speed" | "pitch">) =>
+  previewCopyOf({ start: offset, end: offset + (end - start) * speed, speed, pitch });
+
+/** A copy of a Media Library video's range to ask for. */
+export interface RetimedAsk {
+  media: string;
+  range: RetimedRange;
+}
+
+const keyOf = ({ media, range }: RetimedAsk) =>
+  `${media}:${range.start}:${range.end}:${range.reverse ? "reversed" : "forwards"}:${range.speed ?? 1}:${range.pitch ? "pitch" : ""}`;
+
+/** The preview copies `asks` name, each asked for and polled until it is made; null for a null ask. */
+export function useRetimedCopies(asks: (RetimedAsk | null)[]): (RetimedCopy | null)[] {
+  const keys = asks.map((ask) => (ask ? keyOf(ask) : null));
+  const [heard, setHeard] = useState<ReadonlyMap<string, RetimedCopy>>(new Map());
+  const wanted = keys.join("|");
+  useEffect(() => {
+    const abort = new AbortController();
+    const timers: number[] = [];
+    const pending = new Map(asks.flatMap((ask) => (ask && !made.has(keyOf(ask)) ? [[keyOf(ask), ask] as const] : [])));
+    for (const [key, { media, range }] of pending) {
+      const ask = () =>
+        api.retimedCopy(media, range, abort.signal).then(
+          (answer) => {
+            if (answer.url) made.set(key, answer);
+            setHeard((before) => new Map(before).set(key, answer));
+            if (!answer.url && !answer.error) timers.push(window.setTimeout(ask, POLL_MS));
+          },
+          (reason: Error) => {
+            if (!abort.signal.aborted) setHeard((before) => new Map(before).set(key, { ...ASKED, error: reason.message }));
+          },
+        );
+      void ask();
+    }
+    return () => {
+      abort.abort();
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+    // `asks` is new on each render: `wanted` names what it asks for.
+  }, [wanted]);
+  return keys.map((key) => (key === null ? null : (made.get(key) ?? heard.get(key) ?? ASKED)));
+}
+
+/** The preview copy of `media`'s `range`, asked for and polled until it is made; null for no `media` or `range`. */
+export function useRetimedCopy(media: string | null, range: RetimedRange | null): RetimedCopy | null {
+  return useRetimedCopies([media && range ? { media, range } : null])[0];
+}
+
+/** What a copy being made, or that failed, says over its item. */
+export function copyProgress(range: RetimedRange, copy: RetimedCopy): string {
+  const verb = (range.speed ?? 1) === 1 ? "reverse" : "retime";
+  if (copy.error) return `Couldn't ${verb} this video`;
+  return `${verb === "reverse" ? "Reversing" : "Retiming"}… ${Math.round(copy.progress * 100)}%`;
+}
+
+/** What a media element plays (its proxy, or a copy) and how it follows the playback (`follow`). */
 export interface MediaPlay {
   src: string;
   span: Parameters<typeof follow>[2];
 }
 
 /**
- * How a media Segment, shown until `end`, plays: forwards, its proxy over its range at its Speed; in
- * Reverse, its `copy` forwards from where it shows the range, at its Speed, or, until the copy is
- * made, its proxy held at the frame the copy shows first (the last before its range's end).
+ * How an item shown from `start` to `end` on the Timeline, playing `played` of `media`, plays from
+ * `range`'s `copy`: forwards from where the copy shows its range, at the item's Speed when the copy
+ * is only reversed, at the preview rate when it is retimed; or, until it is made, `proxy` held at the
+ * frame the copy shows first (in Reverse, the last before its range's end).
+ */
+function fromCopy(start: number, end: number, played: PlayedItem, range: RetimedRange, copy: RetimedCopy | null, proxy: string): MediaPlay {
+  if (copy?.url && copy.at != null) {
+    const retimed = (range.speed ?? 1) !== 1;
+    return { src: copy.url, span: { start, end, from: copy.at, ...(retimed ? {} : { pitch: played.pitch, speed: played.speed }) } };
+  }
+  const first = played.reverse ? Math.max(played.start, played.end - FRAME_SECS) : played.start;
+  return { src: proxy, span: { start, end, from: first, hold: end - start } };
+}
+
+/**
+ * How a media Segment, shown until `end`, plays: its proxy over its range at its Speed; or, when it
+ * plays from a copy (`segmentCopy`), from its `copy` (`fromCopy`).
  */
 export function mediaPlay(segment: SegmentPlan, end: number, copy: RetimedCopy | null): MediaPlay {
   const proxy = mediaProxyUrl(segment.media!);
-  if (!segment.reverse) {
-    return { src: proxy, span: { start: segment.start, end, from: segment.source_start, pitch: segment.pitch, ...paceOf(segment) } };
-  }
-  if (copy?.url && copy.at != null) {
-    return { src: copy.url, span: { start: segment.start, end, from: copy.at, pitch: segment.pitch, speed: segment.speed } };
-  }
-  const first = Math.max(segment.source_start, segment.source_end - FRAME_SECS);
-  return { src: proxy, span: { start: segment.start, end, from: first, hold: end - segment.start } };
+  const range = segmentCopy(segment);
+  if (!range) return { src: proxy, span: { start: segment.start, end, from: segment.source_start, pitch: segment.pitch, ...paceOf(segment) } };
+  const played = { start: segment.source_start, end: segment.source_end, speed: segment.speed, reverse: segment.reverse, pitch: segment.pitch };
+  return fromCopy(segment.start, end, played, range, copy, proxy);
+}
+
+/**
+ * How a plan's Overlay video (or its sound) plays: `file` (its proxy, or for its sound its item) from
+ * its offset at its Speed; or, when it plays from a copy (`eventCopy`), from its `copy` (`fromCopy`).
+ */
+export function eventPlay(event: Pick<OverlayEvent | AudioEvent, "start" | "end" | "offset" | "speed" | "pitch">, file: string, copy: RetimedCopy | null): MediaPlay {
+  const { start, end, speed, pitch } = event;
+  const range = eventCopy(event);
+  if (!range) return { src: file, span: eventSpan(event) };
+  return fromCopy(start, end, { start: range.start, end: range.end, speed, pitch }, range, copy, file);
 }

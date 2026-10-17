@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
-import { eventSpan, follow, MAX_DRIFT_SECS } from "./follow";
+import { follow, MAX_DRIFT_SECS } from "./follow";
 import { CURVE_RATE, loudness, loudnessCurve } from "./loudness";
 import type { Playback } from "./playback";
+import { eventCopy, eventPlay, useRetimedCopies } from "./retimedCopy";
 
 let context: AudioContext | null = null;
 
@@ -76,7 +77,8 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
 /**
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip (and Overlay
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
- * curve) through its fades. The Clip's own sound (each deck's master video, heard while its deck is
+ * curve) through its fades. An Overlay's sound at a Speed a browser won't play is its Retimed copy's
+ * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
  * live) is set to the plan's `source_volume`, times the Segment's own volume. Nothing is routed
  * through Web Audio until the plan has music or another volume.
  */
@@ -90,8 +92,19 @@ export function PreviewMusic({
   masters: React.RefObject<HTMLVideoElement | null>[];
 }) {
   const players = useRef(new Map<string, HTMLAudioElement>());
-  const events = plan?.audio ?? [];
+  const events = useMemo(() => plan?.audio ?? [], [plan]);
   const sourceVolume = plan?.source_volume ?? 1;
+  const copies = useRetimedCopies(
+    events.map((event) => {
+      const range = eventCopy(event);
+      return range && { media: event.media, range };
+    }),
+  );
+  const played = events.map((event, i) => eventPlay(event, mediaItemUrl(event.media), copies[i]));
+  // Followed on each tick as they are now, and at once when a copy comes.
+  const plays = useRef(played);
+  plays.current = played;
+  const sources = played.map((play) => play.src).join(" ");
 
   useEffect(() => {
     const sync = () => {
@@ -101,7 +114,7 @@ export function PreviewMusic({
       for (const { current: video } of masters) if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
-        if (element && follow(element, playback, eventSpan(event))) {
+        if (element && follow(element, playback, plays.current[i].span)) {
           if (event.gain.length) followCurve(element, playback, event);
           else setVolume(element, loudness(event, playback.shownTime));
         }
@@ -109,7 +122,7 @@ export function PreviewMusic({
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, events, masters, sourceVolume]);
+  }, [playback, events, masters, sourceVolume, sources]);
 
   return (
     <>
@@ -120,7 +133,7 @@ export function PreviewMusic({
             if (element) players.current.set(key(event, i), element);
             else players.current.delete(key(event, i));
           }}
-          src={mediaItemUrl(event.media)}
+          src={played[i].src}
           preload="auto"
           hidden
         />
