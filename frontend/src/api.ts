@@ -408,7 +408,7 @@ export interface TextStyle {
 
 // A free text overlay of the Advanced Edit (backend/app/candidates.py): its text (lines split at
 // newlines) from `start` for `secs` in Timeline time, centred by its Transform (never stretched nor
-// flipped; unscaled, unturned and opaque until Text Layers are pictures) in its Text Style.
+// flipped; for now unscaled, unturned and opaque) in its Text Style.
 export interface TextLayer {
   id: string;
   text: string;
@@ -423,6 +423,8 @@ export interface TextLayer {
 
 // A Text Layer as drawn: its lines at font `size`, each placed by its anchor (the middle of its text
 // and its baseline), in `area`; `box` is the area when it has a Block plate, its corners `radius` px round.
+// It is drawn as the picture the backend made of it (docs/adr/0010), the file `image`
+// (textPictureUrl), placed as `picture` says; `bounds` holds its area once turned and scaled.
 export interface TextEvent {
   layer: TextLayer;
   lines: string[];
@@ -431,6 +433,9 @@ export interface TextEvent {
   area: Box;
   size: number;
   anchors: [number, number][];
+  image: string;
+  picture: Picture;
+  bounds: Box;
   box: Box | null;
   radius: number;
 }
@@ -1097,6 +1102,8 @@ export const api = {
 };
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
+// A Text Layer's picture, by the name its event gives (backend/app/text_pictures.py): never stale.
+export const textPictureUrl = (jobId: string, name: string) => `/api/jobs/${encodeURIComponent(jobId)}/texts/${encodeURIComponent(name)}`;
 // A Media Library item's normalized file, a video's small copy for the preview, and its still.
 export const mediaItemUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`;
 export const mediaProxyUrl = (id: string) => `/api/media/${encodeURIComponent(id)}/proxy`;

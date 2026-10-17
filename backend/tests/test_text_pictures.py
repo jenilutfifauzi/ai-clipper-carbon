@@ -3,7 +3,6 @@ the picture libass draws of a Text Layer, served by its name and swept with the 
 and Seam A renders with the real ffmpeg of where, when and under what it is drawn.
 """
 
-import json
 
 import cv2
 import numpy as np
