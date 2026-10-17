@@ -52,13 +52,14 @@ Segments and Overlay videos get a **Speed**, may play in **Reverse**, and a Segm
 - **It is a Segment with `hold`.** `start` is the frame's time in the Source or the video, and `end` equals `start`. Its length on the Timeline is `hold`.
   - Silent; the Music Clips play on over it.
   - No captions, no Word snapping. Speed, pitch and Reverse don't apply.
+  - The ends of the Segments beside it that touch its frame stay there, not snapped to Words.
 - **Made from the playhead.** "Freeze frame" (Shift+F) on the Segment under the playhead, at least 0.3 s from its edges on the Timeline:
   - The Segment is split there into a head, a Freeze frame of 1 s and a tail. The frame is the one shown at the playhead, at any Speed or in Reverse; head and tail meet on it, a Source Segment's too (not between Words).
   - The Main Track gets 1 s longer at the playhead; the layers after it follow while the Magnetic timeline is on, as an inserted Segment's do.
   - A Transition after the Segment stays after its tail. None is added inside.
   - Segments only. Overlays have no Freeze frame.
 - **It looks as the Segment did at that moment:**
-  - of the Source: the Layout of the Scene holding `start`, its panels' crop and camera held there; no Keyframes;
+  - of the Source: the Layout of the Scene holding `start`, its panels' crop and camera held there; no Keyframes (a keyed Manual Scene's are sampled at the frame);
   - of a video: the Segment's Framing, with its Keyframes sampled at the frame becoming the constants. It may then get Keyframes of its own (a slow zoom into the still), as any media Segment can.
 - **No still file is kept.** The render takes the one frame from the video and holds it; the preview holds a paused video at that frame.
 - **Its length is changed** by dragging either edge (the frame stays) or the Duration field in the inspector: at least 0.1 s, the Clip at most the longest clip. Ripple follows the Magnetic timeline. Transitions may join into and out of it.
@@ -143,7 +144,7 @@ Segments and Overlay videos get a **Speed**, may play in **Reverse**, and a Segm
 - **One function for a Segment's Timeline length** (`hold`, or `(end − start) ÷ speed`, rounded to 6 decimals). `timeline_length`, `transition_overlap`, `check_length`, `Candidate.duration`, the planner's main-track loop, `editor.py`'s preview words, render progress and the MCP's plan view use it. The overlap is worked out from Timeline lengths everywhere (today `candidates.py` uses Source lengths and the planner Timeline spans; they agree only at 1×).
 - **Keyframes are checked against the Timeline length.** `at` is still seconds from the item's start on the Timeline (ADR 0008).
 - **A one-Segment Clip with a Speed, Reverse or hold is stored as its `segments`,** not folded back into `start`/`end` as ADR 0002 stores an uncut Clip.
-- **Validation.** `bounds()` and the longest-clip limit apply to a Source Segment's range as today; `check_length` to the Timeline. A held Segment isn't snapped. A media Segment's minimum (0.1 s) is on the Timeline. `_check_media_of` checks an Overlay's end against `(duration − offset) ÷ speed`.
+- **Validation.** `bounds()` and the longest-clip limit apply to a Source Segment's range as today; `check_length` to the Timeline. A held Segment isn't snapped, nor the end of a Source Segment played next to a held one of its frame. A media Segment's minimum (0.1 s) is on the Timeline. `_check_media_of` checks an Overlay's end against `(duration − offset) ÷ speed`.
 - **Revisions, the client merge, the Clipboard and `RenderedClip`** carry the new fields with the items, by id, as they do the others. No new Revision part.
 
 **One mapping between Timeline time and Source time per Segment**, in Python and in TypeScript, pinned by a shared fixture as the Keyframe sampler is (ADR 0008):
@@ -171,7 +172,7 @@ Its inverse places Words, Word Edits, Layout Overrides and Scenes on the Timelin
 - **A held Segment:** its video at `-ss start`, one frame, `tpad=stop_mode=clone` for `hold` seconds; its sound `anullsrc` for as long.
 - **Overlays** at Speed or in Reverse are read the same way, and their sound (`overlay_sound`) gets the same chain.
 - **A keyed picture's frame process** (`frames.VideoDecode`) reads its frames through the same mapping.
-- `check_ffmpeg` also requires `atempo`, `asetrate`, `aresample`, `tpad` and `setpts`.
+- `check_ffmpeg` also requires `atempo`, `asetrate`, `aresample`, `tpad`, `setpts`, `settb`, `reverse`, `areverse`, `apad` and `atrim`.
 
 **Retimed copies.**
 - **What:** a file of a range of a Source or a media item, reversed, or (for the preview only) retimed at a Speed outside 0.25–4×, with its sound made as the render makes it.

@@ -1,4 +1,5 @@
-"""Check that the configured ffmpeg has the filters and encoder the renderer needs."""
+"""Check that the configured ffmpeg has the filters and encoder the renderer, its frame processes
+(frames.py), the Retimed copies (retimed.py) and the Scene analysis need."""
 
 import re
 import subprocess
@@ -7,7 +8,16 @@ from pathlib import Path
 
 from app.config import load_settings
 
-FILTERS = ("ass", "scdet", "overlay", "colorchannelmixer", "setpts", "atempo", "asetrate", "aresample")
+FILTERS = (
+    # Picture
+    "ass", "scdet", "overlay", "colorchannelmixer", "crop", "scale", "pad", "rotate", "hflip", "vflip",
+    "format", "setsar", "split", "select", "trim", "fps", "settb", "setpts", "tpad", "reverse", "xfade",
+    "gblur", "eq", "geq", "blend", "color", "drawbox", "lut", "lutrgb", "alphaextract", "alphamerge",
+    "sendcmd", "concat",
+    # Sound
+    "atempo", "asetrate", "aresample", "aformat", "asetpts", "asetnsamples", "atrim", "apad", "areverse",
+    "afade", "adelay", "acrossfade", "amix", "volume", "anullsrc", "loudnorm",
+)
 ENCODERS = ("h264_videotoolbox",)
 
 

@@ -446,8 +446,11 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
         if segment.hold is not None:
             given += _held(segment.hold)
         elif segment.speed != 1:
-            # Its frames moved onto the Timeline, then dropped or repeated to the Clip's frame rate.
-            given += f"setpts=(PTS-STARTPTS)/{segment.speed:.6g},fps={_rate(plan)},"
+            # Its frames moved onto the Timeline, then dropped or repeated to the Clip's frame rate:
+            # each frame is the last of the video's at or before its time, as a Retimed copy's (a
+            # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
+            rate = _rate(plan)
+            given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / float(rate):.6g}/TB,fps={rate}:round=up,"
         chains.append(_scenes(plan, tuning, scenes, given, f"[g{i}]", f"g{i}s", segment.start, keyed))
     count = len(plan.segments)
     if not plan.transitions:

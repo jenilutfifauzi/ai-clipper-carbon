@@ -158,10 +158,10 @@ Edits:
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
   holding its frame, as that Scene is at that moment, and has no captions nor Keyframes; one of a
   video by its framing, and may have picture Keyframes (a slow zoom into the still), not volume. To
-  freeze a moment of a Segment: split it there into two Segments, the first ending and the second
-  starting at the moment, put a held Segment of that moment between them, then move the Text Layers,
-  Music Clips, Overlays and hook after the moment later by its hold. The dry run lists each Segment's
-  span in the Clip under `segments`.
+  freeze a moment of a Segment: split it there into two Segments meeting at the moment, put a held
+  Segment of that moment between them (their ends touching it stay at its frame, not snapped to
+  Words), then move the Text Layers, Music Clips, Overlays and hook after the moment later by its
+  hold. The dry run lists each Segment's span in the Clip under `segments`.
 - The owner may have the Job open in the browser: its editors show these edits as they are saved.
   Each Candidate has a `revision`. Pass the one you read to edit_candidate: an edit made after
   someone else's is then refused with the Candidate as it is now; redo yours on top of it.

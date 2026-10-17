@@ -90,14 +90,19 @@ class Episode:
     max_secs: float
     tuning: SelectionTuning
 
-    def bounds(self, start: float, end: float) -> tuple[float, float]:
-        """`start`..`end` snapped to Words (see selection.snap); InvalidEdit when it isn't a usable clip."""
+    def bounds(self, start: float, end: float, keep_start: bool = False, keep_end: bool = False) -> tuple[float, float]:
+        """`start`..`end` snapped to Words (see selection.snap), but for the ends kept where they are;
+        InvalidEdit when it isn't a usable clip. A range with a kept end and no Words is kept whole."""
         if not 0 <= start < end <= self.duration:
             raise InvalidEdit(
                 f"The range {start:g}–{end:g} s must lie within the Source (0–{self.duration:g} s), start before end"
             )
         snapped = snap(self.transcript, self.duration, self.tuning, start, end)
-        if snapped is None:
+        if snapped is None and not (keep_start or keep_end):
+            raise InvalidEdit(f"No Words between {start:g} s and {end:g} s")
+        snapped = snapped or (start, end)
+        snapped = (start if keep_start else snapped[0], end if keep_end else snapped[1])
+        if snapped[0] >= snapped[1]:
             raise InvalidEdit(f"No Words between {start:g} s and {end:g} s")
         longest = max(MAX_CLIP_SECS, self.max_secs)
         if snapped[1] - snapped[0] > longest:
@@ -106,7 +111,8 @@ class Episode:
 
     def segments(self, segments: list[Segment]) -> list[Segment]:
         """The Segments with the ends of those that show the Source snapped to Words (as `bounds`
-        snaps a Clip's), but a Freeze frame's, which holds one frame; InvalidEdit for none, for none
+        snaps a Clip's), but a Freeze frame's, which holds one frame, and an end played next to a
+        Freeze frame of its own frame (`_touching_frame`), which stays at it; InvalidEdit for none, for none
         playing the Source, or for one that isn't a usable Segment. A video's is placed by its
         Framing, and the episode's has none: its Layouts frame it.
         (A Media Library video's are checked against it by the API; their Timeline's length against
@@ -114,7 +120,7 @@ class Episode:
         if not any(segment.media is None and segment.hold is None for segment in segments):
             raise InvalidEdit("A clip needs at least one Segment of the episode that plays (not a Freeze frame)")
         snapped = []
-        for segment in segments:
+        for i, segment in enumerate(segments):
             if (segment.media is None) is not (segment.framing is None):
                 raise InvalidEdit(
                     "A video's Segment needs its framing (its transform, crop and background)"
@@ -127,7 +133,11 @@ class Episode:
                     raise InvalidEdit(f"Segment {segment.id} holds a frame at {segment.start:g} s, past the Source's end ({self.duration:g} s)")
                 snapped.append(segment)
             elif segment.media is None:
-                start, end = self.bounds(segment.start, segment.end)
+                # On the Timeline, a reversed one plays from its range's end to its start.
+                first, last = (segment.end, segment.start) if segment.reverse else (segment.start, segment.end)
+                left, right = _touching_frame(segments, i - 1, first), _touching_frame(segments, i + 1, last)
+                keep_start, keep_end = (right, left) if segment.reverse else (left, right)
+                start, end = self.bounds(segment.start, segment.end, keep_start, keep_end)
                 snapped.append(replace(segment, start=start, end=end))
             elif segment_time(segment).length < MIN_MEDIA_SECS:
                 raise InvalidEdit(f"A video's Segment lasts {MIN_MEDIA_SECS:g} s at least")
@@ -296,6 +306,15 @@ def _check_ids(kind: str, ids: list[str]) -> None:
     """InvalidEdit unless each of the items has its own id."""
     if len(set(ids)) != len(ids):
         raise InvalidEdit(f"Two of the {kind}s have the same id")
+
+
+def _touching_frame(segments: list[Segment], i: int, at: float) -> bool:
+    """Whether the Segment played `i`th is a Freeze frame of the Source holding its frame at `at`
+    (to the ms): the end of the Segment beside it that plays there then stays at that frame."""
+    if not 0 <= i < len(segments):
+        return False
+    held = segments[i]
+    return held.media is None and held.hold is not None and round(held.start, 3) == round(at, 3)
 
 
 def _index(candidates: list[Candidate], candidate_id: str) -> int:

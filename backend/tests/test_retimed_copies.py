@@ -165,6 +165,29 @@ def test_a_copy_retimed_at_a_speed_has_its_frames_at_the_videos_rate_and_lasts_i
         assert np.abs(shown - frames).max() < step / 2, (retime, shown - frames)
 
 
+def test_at_4x_the_render_shows_the_same_frames_as_the_preview_copy(client, settings, counter, tmp_path):
+    """A frame landing between two of the Clip's goes to the later one in both, so that the preview
+    of a Segment at 4× shows what the render will: frames 0, 4, 8… of the video."""
+    copy = copies_of(tmp_path / "retimed", counter).make(settings.ffmpeg_bin, CopySize.PREVIEW, Retime(0, 2.4, reverse=False, speed=4))
+    copied = [np.abs(lumas(counter) - luma).argmin() for luma in lumas(copy.path)]
+
+    video = upload(client, counter.read_bytes(), "counter.mp4").json()
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    words = {word["text"]: word for word in job["transcript"]["words"]}
+    candidate = patch(client, job, candidate, segments=[
+        {"id": "once", "start": 0, "end": 2.4, "media": video["id"], "framing": COVER},
+        {"id": "quad", "start": 0, "end": 2.4, "media": video["id"], "framing": COVER, "speed": 4},
+        {"id": "e", "start": words["halo"]["start"], "end": words["ya"]["end"]},
+    ])
+    shown = centre_luma(settings, clip_of(client, settings, job, candidate))
+    # Each of the counter's frames as the Segment at 1× shows it.
+    once = shown[:72]
+    rendered = [np.abs(once - luma).argmin() for luma in shown[72 : 72 + len(copied)]]
+    assert copied == list(range(0, 72, 4))
+    assert rendered == copied
+
+
 def test_a_slowed_copys_sound_keeps_its_pitch_as_the_renders_does(tmp_path, counter):
     copy = copies_of(tmp_path / "retimed", counter).make(
         load_settings().ffmpeg_bin, CopySize.PREVIEW, Retime(0.5, 1.0, reverse=False, speed=0.125)

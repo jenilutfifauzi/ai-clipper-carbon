@@ -689,7 +689,7 @@ def plan_render(
     # The frames a keyed picture is drawn at, as the renderer draws them.
     rate = source.fps if source.fps > 0 else 30.0
     if main_track:
-        plans, at, showings, before = [], 0.0, [], 0.0
+        plans, at, showings, stills, before = [], 0.0, [], [], 0.0
         for i, given in enumerate(main_track):
             length = round(given.time.length, 3)
             if i and given.join is not None:
@@ -703,7 +703,9 @@ def plan_render(
             if given.media is not None:
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
             elif given.hold is not None:
-                framed = [_still(given, length, source, layout, camera, framing)]
+                still, held = _still(given, length, source, layout, camera, framing, len(plans))
+                framed = [still]
+                stills += [(showing, given.start) for showing in held]
             else:
                 # Framed over its range as at 1×, then put on the Timeline at its Speed (in Reverse, mirrored).
                 reach = round(given.time.span, 3)
@@ -723,7 +725,7 @@ def plan_render(
             at, before = round(at + length, 3), length
         duration = at
         words, word_edits = _segment_words(main_track, segments, cuts, duration)
-        plans = _keyed_manual(plans, showings, rate)
+        plans = _keyed_manual(_frozen(plans, stills, showings, source), showings, rate)
     else:
         duration = round(SegmentTime(start, end).length, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
@@ -818,14 +820,18 @@ def _framed(
     return plans
 
 
-def _still(given: SegmentInput, length: float, source: SourceMetadata, layout: Layout, camera: CameraTuning, framing: Framing | None) -> ScenePlan:
+def _still(
+    given: SegmentInput, length: float, source: SourceMetadata, layout: Layout, camera: CameraTuning, framing: Framing | None, first: int
+) -> tuple[ScenePlan, list["_ManualShowing"]]:
     """The one Scene of a held Segment of the Source (a Freeze frame), `length` long: of the Scenes of
     its analysed range, framed as `_framed` frames them, the one holding its frame, as it is at that
     frame and held there: its Layout (an override's, or `layout`), each panel's crop where the camera
-    is then. A Manual one is its Framing, unkeyed (a Freeze frame has no Keyframes)."""
+    is then. A Manual one is its Framing, unkeyed (a Freeze frame has no Keyframes); and, when it is
+    an override's, its showing as the plan's Scene `first`, whose Keyframes `_frozen` samples."""
     low, high = given.analysed or (given.start, given.start + length)
     at = round(given.start - low, 3)
-    framed = _framed(round(high - low, 3), source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
+    reach = round(high - low, 3)
+    framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
     scene = next((scene for scene in framed if scene.start <= at < scene.end), framed[-1])
 
     def held(panel: Panel) -> Panel:
@@ -834,7 +840,36 @@ def _still(given: SegmentInput, length: float, source: SourceMetadata, layout: L
 
     panels = [held(panel) for panel in scene.panels]
     shown = _first_framing(scene.layout, panels, source) if scene.layout is SceneLayout.TRACK else scene.framing
-    return ScenePlan(0.0, length, scene.layout, panels, scene.picture, scene.colour, shown)
+    showings = _manual_showings([scene], given.layout_overrides, reach, SegmentTime(low, high), first)
+    return ScenePlan(0.0, length, scene.layout, panels, scene.picture, scene.colour, shown), showings
+
+
+def _frozen(
+    plans: list[ScenePlan], stills: list[tuple["_ManualShowing", float]], showings: list["_ManualShowing"], source: SourceMetadata
+) -> list[ScenePlan]:
+    """`plans` with each Freeze frame of a keyed Manual Scene in `stills` (its showing, and its frame
+    on the Source's timeline) framed as the Scene is at that frame: its override's Keyframes sampled
+    there as `_keyed_manual` moves the Segments of `showings` that show the Scene (counted from the
+    earliest one's start, those past the latest one's end ignored), or from its own Scene's start
+    when none does. The sampled values become its Framing's constants."""
+    plans = list(plans)
+    for still, frame in stills:
+        if not any(still.override.keys.values()):
+            continue
+        alike = [other for other in showings if still.same_scene_as(other)] or [still]
+        start, end = min(other.start for other in alike), max(other.end for other in alike)
+        given = still.override.framing
+        assert given is not None
+        sampled = {}
+        for prop, keys in still.override.keys.items():
+            if within := [key for key in keys if key.at <= end - start + 1e-3]:
+                low, high = KEY_RANGES[prop]
+                value = value_at(within, frame - start, getattr(given.transform, prop.value))
+                sampled[prop.value] = math.fmod(value, 360) if prop is KeyProperty.ROTATION else min(max(value, low), high)
+        scene = plans[still.index]
+        held = replace(given, transform=replace(given.transform, **sampled))
+        plans[still.index] = framed_scene(scene.start, scene.end, scene.layout, source.width, source.height, held)
+    return plans
 
 
 def _held(overrides: list[LayoutOverride], start: float, end: float, duration: float) -> LayoutOverride | None:

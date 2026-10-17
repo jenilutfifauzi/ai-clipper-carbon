@@ -15,7 +15,7 @@ from app.candidates import Framing, Keyframe, KeyProperty, Layout, LayoutOverrid
 from app.config import AnalysisTuning, CameraTuning
 from app.media import MediaItem, MediaKind
 from app.pictures import cover_scale
-from app.planner import FRAME, FrameFaces, Scene, SceneLayout, SegmentPlan, _first_framing
+from app.planner import FRAME, FrameFaces, Scene, SceneLayout, SegmentPlan, _first_framing, picture_at
 from app.rendering import HELD_REACH_SECS, analysed_range, candidate_plan
 from app.styles import PresetStore
 from app.transcript import Word
@@ -101,6 +101,31 @@ def test_a_held_source_segment_takes_the_layout_of_its_scene_from_an_override_or
         assert all(len(panel.path) == 1 for panel in scene.panels)
 
 
+@pytest.mark.parametrize("speed", [1, 2])
+def test_a_freeze_frame_of_a_keyed_manual_scene_shows_its_picture_as_at_its_frame(tmp_path, speed):
+    # A Manual override zooming in over 20–23 s and moving right; its last x key (at 4 s) is past
+    # its Scene's end, so the head never reaches it and holds 500 from 2 s on.
+    keys = {
+        KeyProperty.SCALE: [Keyframe(0, 1), Keyframe(3, 2)],
+        KeyProperty.X: [Keyframe(0, 300), Keyframe(2, 500), Keyframe(4, 700)],
+    }
+    override = LayoutOverride(20.5, Layout.MANUAL, Framing(Transform(x=540, scale=1)), keys)
+    head = analysis(20, 23, [Scene(0, 3)], sampled((3, [face(500)])))
+    candidate = replace(
+        manual_candidate("c1", 20, 24),
+        segments=[Segment("head", 20, 23, speed=speed), Segment("still", 23, 23, hold=1), Segment("tail", 23, 24)],
+        layout_overrides=[override],
+    )
+    planned = plan(tmp_path, candidate, None, [head, head, analysis(23, 24, [Scene(0, 1)], sampled((1, [face(500)])))])
+    first, held = planned.scenes[:2]
+    assert held.layout is SceneLayout.MANUAL and not held.picture.motion
+    assert held.framing.transform == Transform(x=500, scale=2)
+    # The picture the head shows as it reaches the frame, held (to the pixel a still picture's size is rounded to).
+    shown = picture_at(first.picture, 3 / speed)
+    assert held.picture.centre == shown.centre
+    assert (held.picture.width, held.picture.height) == pytest.approx((shown.width, shown.height), abs=1)
+
+
 def test_a_freeze_frame_no_segment_plays_through_is_framed_from_a_short_window_around_it(tmp_path):
     candidate = replace(
         manual_candidate("c1", 10, 12),
@@ -159,6 +184,35 @@ def test_freeze_frames_are_saved_unsnapped_and_validated(client):
     ):
         response = client.patch(candidate_url(job, saved), json={"segments": bad})
         assert response.status_code == 422 and said in response.text, (bad, response.text)
+
+
+def test_the_ends_of_a_segment_touching_a_freeze_frame_of_its_own_frame_stay_at_that_frame(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "kabar")
+    words = {word["text"]: word for word in job["transcript"]["words"]}
+    # A frame in the middle of "kabar", and a start just inside "halo".
+    frame, early = round(words["kabar"]["start"] + 0.1, 3), round(words["halo"]["start"] + 0.05, 3)
+    late = round(words["ngobrol"]["end"] - 0.05, 3)
+    still = {"id": "still", "start": frame, "end": frame, "hold": 1}
+
+    def saved(*segments: dict) -> list[tuple[float, float]]:
+        clip = patch(client, job, candidate, segments=list(segments))
+        # One Segment played as filmed is kept as the Clip's range.
+        return [(s["start"], s["end"]) for s in clip["segments"] if s["hold"] is None] or [(clip["start"], clip["end"])]
+
+    # Alone, every end snaps to Words: none is at the frame.
+    [(start, cut_end)], [(cut_start, end)] = saved({"id": "a", "start": early, "end": frame}), saved({"id": "b", "start": frame, "end": late})
+    assert frame not in (cut_end, cut_start) and (start, end) != (early, late)
+    # Either side of its Freeze frame, the ends touching it stay at the frame; the others snap.
+    head, tail = {"id": "head", "start": early, "end": frame}, {"id": "tail", "start": frame, "end": late}
+    assert saved(head, still, tail) == [(start, frame), (frame, end)]
+    # In Reverse, the head is the later part: its start and the tail's end touch the frame.
+    back_head, back_tail = {"id": "head", "start": frame, "end": late, "reverse": True}, {"id": "tail", "start": early, "end": frame, "reverse": True}
+    assert saved(back_head, still, back_tail) == [(frame, end), (start, frame)]
+    # A Freeze frame of another frame, or one not next to it on the Main Track, leaves them snapped.
+    other = still | {"start": frame + 0.2, "end": frame + 0.2}
+    assert saved(head, other, tail) == [(start, cut_end), (cut_start, end)]
+    assert saved(head, tail, still) == [(start, cut_end), (cut_start, end)]
 
 
 def test_a_freeze_frame_has_no_speed_pitch_or_reverse(client):

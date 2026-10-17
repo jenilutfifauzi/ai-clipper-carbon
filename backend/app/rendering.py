@@ -57,7 +57,9 @@ RENDERABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 # A Clip's captions are transcribed from this long before its start to this long after its end.
 CAPTION_MARGIN_SECS = 2.0
 # A Freeze frame of the Source that no other Segment of its Clip plays through is framed from the
-# analysis of this long either side of its frame (`analysed_range`).
+# analysis of this long either side of its frame (`analysed_range`). Rare: the head a Freeze frame is
+# split from ends at its frame, unsnapped (app/review.py), so only a Clip made otherwise (an agent's)
+# needs it.
 HELD_REACH_SECS = 1.0
 WORDS_DIR = "words"
 
@@ -120,7 +122,8 @@ def analysed_range(candidate: Candidate, segment: Segment, duration: float) -> t
     """The range of the Source, `duration` long, whose analysis frames the Candidate's Source
     `segment`: its own; for a Freeze frame, which holds one frame, the range of the first Segment of
     the Candidate that plays through its frame (the head or tail it was split from, analysed for its
-    own sake), else HELD_REACH_SECS either side of it."""
+    own sake, whose end touching it is kept at its frame), else HELD_REACH_SECS either side of it: a
+    fallback for a Freeze frame put elsewhere than between the halves of its Segment."""
     if segment.hold is None:
         return segment.start, segment.end
     at = segment.start
