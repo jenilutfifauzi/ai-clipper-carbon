@@ -131,10 +131,10 @@ describe("every style's font field is the Face picker", () => {
   } as unknown as TextLayer;
 
   test.each([
-    ["a Text Layer's", <TextLayerFields layer={layer} duration={10} fonts={FONTS} onChange={() => {}} onApplyLook={() => {}} onDuplicate={() => {}} onDelete={() => {}} />],
+    ["a Text Layer's", <TextLayerFields layer={layer} duration={10} fonts={FONTS} onChange={() => {}} onApplyTextStyle={() => {}} onDuplicate={() => {}} onDelete={() => {}} />],
     [
       "several Text Layers'",
-      <TextLayersFields layers={[layer, layer]} fonts={FONTS} onChange={() => {}} onApplyLook={() => {}} onDuplicate={() => {}} onCopy={() => {}} onDelete={() => {}} />,
+      <TextLayersFields layers={[layer, layer]} fonts={FONTS} onChange={() => {}} onApplyTextStyle={() => {}} onDuplicate={() => {}} onCopy={() => {}} onDelete={() => {}} />,
     ],
     ["the captions'", <CaptionStylePanel style={controls} fonts={FONTS} more={false} onMore={() => {}} />],
     ["the hook's", <HookLook style={controls} fonts={FONTS} />],

@@ -8,8 +8,9 @@ import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { IDENTITY } from "../editor/picture";
+import { NO_SHADOW, shadowOn, withShadow } from "../editor/shadow";
 import { layersStyle, layerStyle, PlateGroup, ShadowGroup, SpacingGroup, type StyleAccess } from "./TextStyleGroups";
-import { NO_SHADOW, shadowOn, textStyle, withShadow } from "./textStyle";
+import { textStyle } from "./textStyle";
 
 const layer = (id: string, style: Parameters<typeof textStyle>[0] = {}): TextLayer => ({
   id,

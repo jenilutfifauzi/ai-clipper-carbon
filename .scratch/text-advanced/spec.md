@@ -410,3 +410,10 @@ No new seam: the rasteriser is tested through the picture endpoint and through r
 - **Ticket 1 starts by proving `ass` with `alpha=1`.** On this machine's ffmpeg 9.0.2 and libass 0.17.5, it should give clean straight alpha with antialiased edges. If it doesn't, the fallback is to render the text white-on-black and black-on-white and recover alpha from the two (difference matting), still with libass.
 - **The Linux host (`.scratch/linux-host/`) needs nothing new from the system for text,** since every Face and emoji image is bundled. This removes today's dependence on the system's fallback fonts.
 - **Concat (`docs/referensi/concat`) is reference for behaviour only.** Its Preset data and fonts are not copied.
+
+## Code review fixes (2026-10-17)
+
+- **Frontend** (A1–A3, the frontend half of A9, all of C):
+  - A Text Layer's bounds are rounded to the nearest pixel as a picture's are, in the planner (`_turned_box`, so `text_bounds_at` and the dry run too) and the preview (`textEventAt`, through picture.ts' `boundsAbout`), so that they agree to the pixel; they were rounded outwards (floor/ceil) and the preview's could differ by 1 px. The inspector says Stroke for `stroke_width`, and `nudge`'s comments say Text Layers are keyed.
+  - "look" in code: `TextLook` is `UntimedTextLayer`, `lookOf` `fromPreset`, `applyLook` `applyTextStyle`, `ApplyLook` `ApplyTextPreset` (the owner still reads "Apply look"), styleShape's `shadowLook` `drawnShadow`. The Render Plan event's `look` is left to the backend half.
+  - One Transform fields component for pictures and Text Layers (`TransformFields` with `onReset` instead of a Crop) and one keyed wrapper (`useKeyedTransform`) for Overlays, video Segments and Text Layers; one set of shadow fields (`editor/ShadowFields.tsx`'s `shadowControls`) for the hook, the captions and Text Layers, its on/off and offset in `editor/shadow.ts`; one list store (`listStore.ts`) under `fonts.ts` and `textPresets.ts`; `FRAME` and `textStagePicture` reused. `ImportFont`, the shadow helpers and `Mixed` moved into `editor/`, so that `editor/` no longer imports from `advanced/`.

@@ -1,4 +1,4 @@
-import type { Background, MediaItem, Panel, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
+import type { Background, Box, MediaItem, Panel, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
 import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
 
 /**
@@ -116,12 +116,20 @@ export function pictureAt(picture: Picture, time: number): Picture {
     centre: [x, y],
     rotation,
     opacity: sampled("opacity", picture.opacity),
-    bounds: { x: roundHalfEven(x - across / 2), y: roundHalfEven(y - down / 2), width: roundHalfEven(across), height: roundHalfEven(down) },
+    bounds: boundsAbout([x, y], across, down),
     motion: {},
   };
 }
 
-// Python's round(): a half goes to the even neighbour, so that bounds are the backend's to the pixel.
+/**
+ * The bounds of a turned picture or Text Layer `across` × `down` about its middle `centre`, rounded
+ * to the pixel as the backend rounds them (Python's round()), so that they are the backend's.
+ */
+export function boundsAbout([x, y]: readonly [number, number], across: number, down: number): Box {
+  return { x: roundHalfEven(x - across / 2), y: roundHalfEven(y - down / 2), width: roundHalfEven(across), height: roundHalfEven(down) };
+}
+
+// Python's round(): a half goes to the even neighbour.
 function roundHalfEven(value: number): number {
   const floor = Math.floor(value);
   if (value - floor !== 0.5) return Math.round(value);

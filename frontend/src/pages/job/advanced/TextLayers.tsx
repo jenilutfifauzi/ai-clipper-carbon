@@ -8,12 +8,13 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { FacePicker } from "../editor/FacePicker";
-import { Group } from "../editor/StyleFields";
+import { FRAME } from "../editor/picture";
+import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
 import { newId, round } from "./edits";
 import { styled } from "./textStyle";
-import { ApplyLook, SaveAsTextPreset } from "./TextPresets";
-import { layersStyle, layerStyle, Mixed, PlateGroup, ShadowGroup, SpacingGroup } from "./TextStyleGroups";
+import { ApplyTextPreset, SaveAsTextPreset } from "./TextPresets";
+import { layersStyle, layerStyle, PlateGroup, ShadowGroup, SpacingGroup } from "./TextStyleGroups";
 import { TimingFields } from "./TimingFields";
 import { TextTransformFields } from "./TransformFields";
 
@@ -23,13 +24,13 @@ const TEXT_SECS = 3;
 const TEXT_MAX_CHARS = 300;
 
 // What a new Text Layer is made of: all of it but its id, its time and its Keyframes (it has none):
-// a Text Preset's look (TextPresets.tsx).
-export type TextLook = Omit<TextLayer, "id" | "start" | "secs" | "keys">;
+// a Text Preset's sample in its Text Style (TextPresets.tsx' fromPreset).
+export type UntimedTextLayer = Omit<TextLayer, "id" | "start" | "secs" | "keys">;
 
-/** A Text Layer in `look` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
-export function newTextLayer(look: TextLook, at: number, duration: number): TextLayer {
+/** A Text Layer of `made` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
+export function newTextLayer(made: UntimedTextLayer, at: number, duration: number): TextLayer {
   const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
-  return { ...look, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)), keys: {} };
+  return { ...made, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)), keys: {} };
 }
 
 const ALIGNS = [
@@ -45,13 +46,13 @@ const ANIMATIONS = [
   { value: "slide", label: "Slide" },
 ] as const;
 
-/** The selected Text Layer's text, look, Transform, motion and time. */
+/** The selected Text Layer's words, Text Style, Transform, motion and time. */
 export function TextLayerFields({
   layer,
   duration,
   fonts,
   onChange,
-  onApplyLook,
+  onApplyTextStyle,
   onDuplicate,
   onDelete,
 }: {
@@ -60,8 +61,8 @@ export function TextLayerFields({
   fonts: FontInfo[] | null;
   // `group` names the field being changed, so that its changes are undone as one.
   onChange: (layer: TextLayer, group: string) => void;
-  // A Text Preset's style given to it (actions.ts' applyLook), as one change.
-  onApplyLook: (style: TextStyle) => void;
+  // A Text Preset's Text Style given to it (actions.ts' applyTextStyle), as one change.
+  onApplyTextStyle: (style: TextStyle) => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -99,19 +100,19 @@ export function TextLayerFields({
         />
       </div>
       <Group title="Look">
-        <ApplyLook onApply={onApplyLook} />
+        <ApplyTextPreset onApply={onApplyTextStyle} />
         <FacePicker value={style.font} fonts={fonts} onChange={(font) => setStyle("font", font)} />
         <Slider label="Size" value={style.size} min={16} max={320} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={style.colour} onChange={(colour) => setStyle("colour", colour)} />
         <Slider
-          label="Outline"
+          label="Stroke"
           value={style.stroke_width}
           min={0}
           max={20}
           format={(v) => (v ? `${v} px` : "None")}
           onChange={(width) => setStyle("stroke_width", width)}
         />
-        {style.stroke_width > 0 && <ColorField label="Outline colour" value={style.stroke_colour} onChange={(colour) => setStyle("stroke_colour", colour)} />}
+        {style.stroke_width > 0 && <ColorField label="Stroke colour" value={style.stroke_colour} onChange={(colour) => setStyle("stroke_colour", colour)} />}
         <Segmented legend="Lines" options={ALIGNS} value={style.align} onChange={(align: TextAlign) => setStyle("align", align)} />
         <SaveAsTextPreset style={style} />
       </Group>
@@ -119,8 +120,8 @@ export function TextLayerFields({
       <PlateGroup style={access} />
       <SpacingGroup style={access} />
       <Group title="Box">
-        <BoxField label="Wrap width" value={style.wrap_width} most={FRAME_WIDTH} onChange={(width) => setStyle("wrap_width", width)} />
-        <BoxField label="Fixed height" value={style.fixed_height} most={FRAME_HEIGHT} onChange={(height) => setStyle("fixed_height", height)} />
+        <BoxField label="Wrap width" value={style.wrap_width} most={FRAME.width} onChange={(width) => setStyle("wrap_width", width)} />
+        <BoxField label="Fixed height" value={style.fixed_height} most={FRAME.height} onChange={(height) => setStyle("fixed_height", height)} />
       </Group>
       <TextTransformFields layer={layer} onChange={onChange} />
       <Group title="Motion">
@@ -145,13 +146,10 @@ export function TextLayerFields({
   );
 }
 
-// The frame, which a box's slider reaches across (the field itself takes more: 4096 px).
-const FRAME_WIDTH = 1080;
-const FRAME_HEIGHT = 1920;
-
 /**
  * A Text Layer's wrap width or fixed height: Auto at 0 (the frame less a margin, or the words' own
- * height), or in output pixels, with Auto to go back to it. Its box Grips on the stage set it too.
+ * height), or in output pixels, with Auto to go back to it. Its slider reaches across the frame
+ * (`most`), the field itself takes more (4096 px). Its box Grips on the stage set it too.
  */
 export function BoxField({ label, value, most, onChange }: { label: string; value: number; most: number; onChange: (value: number) => void }) {
   return (
@@ -188,14 +186,14 @@ const READ = {
 type Field = keyof typeof READ;
 
 /**
- * Several picked Text Layers' look and motion, set on every one of them at once. A field they differ
+ * Several picked Text Layers' Text Style and motion, set on every one of them at once. A field they differ
  * in shows the first one's value, marked Mixed, until it is set. Their words and places stay their own.
  */
 export function TextLayersFields({
   layers,
   fonts,
   onChange,
-  onApplyLook,
+  onApplyTextStyle,
   onDuplicate,
   onCopy,
   onDelete,
@@ -204,8 +202,8 @@ export function TextLayersFields({
   fonts: FontInfo[] | null;
   // `change` made to them all; `group` names the field, so that its changes are undone as one.
   onChange: (change: (layer: TextLayer) => TextLayer, group: string) => void;
-  // A Text Preset's style given to them all (actions.ts' applyLook), as one change.
-  onApplyLook: (style: TextStyle) => void;
+  // A Text Preset's Text Style given to them all (actions.ts' applyTextStyle), as one change.
+  onApplyTextStyle: (style: TextStyle) => void;
   onDuplicate: () => void;
   onCopy: () => void;
   onDelete: () => void;
@@ -239,12 +237,12 @@ export function TextLayersFields({
       </div>
       <Hint more="Their words, places and times stay each one's own: change those one at a time.">A change here applies to every picked text.</Hint>
       <Group title="Look">
-        <ApplyLook onApply={onApplyLook} />
+        <ApplyTextPreset onApply={onApplyTextStyle} />
         <FacePicker value={value("font")} fonts={fonts} onChange={(font) => setStyle("font", font)} marker={marker("font")} />
         <Slider label="Size" value={value("size")} min={16} max={320} format={shown("size", String)} onChange={(size) => setStyle("size", size)} />
         <ColorField label="Colour" value={value("colour")} onChange={(colour) => setStyle("colour", colour)} marker={marker("colour")} />
         <Slider
-          label="Outline"
+          label="Stroke"
           value={value("stroke_width")}
           min={0}
           max={20}
@@ -253,7 +251,7 @@ export function TextLayersFields({
         />
         {any((layer) => layer.style.stroke_width > 0) && (
           <ColorField
-            label="Outline colour"
+            label="Stroke colour"
             value={value("stroke_colour")}
             onChange={(colour) => setStyle("stroke_colour", colour)}
             marker={marker("stroke_colour")}

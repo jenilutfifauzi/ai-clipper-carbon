@@ -5,7 +5,7 @@ import { Hint, InfoTip } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { cx } from "../../../format";
 import { fontFamily } from "../../../fonts";
-import { ImportFont } from "../advanced/ImportFont";
+import { ImportFont } from "./ImportFont";
 import { faceAt, families, familyOf, italicOffered, searchFamilies, weightName, weightsOf, type Family } from "./faces";
 
 // The list's distance from its button, and from the window's edges; below the button unless there is

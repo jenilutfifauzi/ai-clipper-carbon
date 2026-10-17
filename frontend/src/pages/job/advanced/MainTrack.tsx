@@ -11,11 +11,10 @@ import { IDENTITY, mediaSize } from "../editor/picture";
 import type { Playback, PlayedSegment } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
-import { shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
-import { KeyedVolume, useKeyNotice, useKeyTime } from "./KeyCluster";
-import { heldKeyTime, keyedGroup, keyTime, resetFraming, type KeySpan } from "./keying";
+import { KeyedVolume } from "./KeyCluster";
+import { resetFraming, type KeySpan } from "./keying";
 import { HoldFields, SpeedFields } from "./SpeedFields";
-import { BackgroundFields, TransformFields } from "./TransformFields";
+import { BackgroundFields, TransformFields, useKeyedTransform } from "./TransformFields";
 
 // The shortest Segment the editor makes; the backend snaps each to Words.
 export const SEGMENT_MIN_SECS = 0.3;
@@ -287,33 +286,28 @@ export function FramingFields({
   onChange: (segment: ClipSegment, group: string) => void;
   onCropMode?: () => void;
 }) {
-  const time = useKeyTime(playback);
-  const keys = segment.keys ?? {};
-  const at = span && keyTime(span, time);
-  const shown = shownTransform(framing.transform, keys, at ?? (span ? heldKeyTime(span, time) : 0));
-  const notify = useKeyNotice();
+  const fields = useKeyedTransform({
+    item: { kind: "segment", id: segment.id },
+    span,
+    transform: framing.transform,
+    keys: segment.keys ?? {},
+    playback,
+    group: `segment:${segment.id}:transform`,
+    onWritten: (written, group) => onChange({ ...segment, keys: written.keys, framing: { ...framing, transform: written.transform } }, group),
+  });
   const set = <K extends keyof Framing>(part: K, value: Framing[K], field: string) =>
     onChange({ ...segment, framing: { ...framing, [part]: value } }, `segment:${segment.id}:${part}.${field}`);
   return (
     <>
       <TransformFields
-        transform={shown}
+        {...fields}
         crop={framing.crop}
         size={mediaSize(item)}
         defaults={IDENTITY}
-        onChange={(next, field) => {
-          const written = writtenTransform(framing.transform, keys, next, at, shown);
-          if (written.full) return notify(tooManyKeys(written.full));
-          onChange(
-            { ...segment, keys: written.keys, framing: { ...framing, transform: written.transform } },
-            keyedGroup(`segment:${segment.id}:transform.${field}`, written.keys !== keys, at),
-          );
-        }}
         onCrop={(crop, field, transform) =>
           onChange(transform ? resetFraming(segment, transform) : { ...segment, framing: { ...framing, crop } }, `segment:${segment.id}:crop.${field}`)
         }
         onCropMode={onCropMode}
-        keyed={{ item: { kind: "segment", id: segment.id }, keys, inside: at !== null }}
       />
       <BackgroundFields background={framing.background} onChange={(background, field) => set("background", background, field)} />
     </>

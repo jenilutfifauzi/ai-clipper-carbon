@@ -2,6 +2,7 @@
 // does (backend/app/renderer.py), and the padding the clip editor shows for a box whose style gives
 // none, as the planner pads it (backend/app/planner.py's _hook_padding).
 import type { CaptionStyle, DropShadow, HookStyle } from "../../../api";
+import { shadowOffset, shadowOn } from "./shadow";
 
 // The hook's box padding unless its style gives its own: a block's (and lines' with no box) in output
 // pixels, a strip's in sizes (planner.py's HOOK_PAD_X, HOOK_PAD_Y, STRIP_PAD_X, STRIP_PAD_Y).
@@ -41,8 +42,7 @@ export function highlightShape(
  * down, at `opacity`, blurred by a Gaussian of `sigma` (half its blur, as a CSS shadow's). The
  * shadow's letters and their stroke are in its colour.
  */
-export function shadowLook(shadow: DropShadow): { x: number; y: number; opacity: number; sigma: number } | null {
-  if (shadow.opacity <= 0 || (shadow.distance <= 0 && shadow.blur <= 0)) return null;
-  const angle = (shadow.angle * Math.PI) / 180;
-  return { x: shadow.distance * Math.cos(angle), y: shadow.distance * Math.sin(angle), opacity: shadow.opacity, sigma: shadow.blur / 2 };
+export function drawnShadow(shadow: DropShadow): { x: number; y: number; opacity: number; sigma: number } | null {
+  if (!shadowOn(shadow)) return null;
+  return { ...shadowOffset(shadow), opacity: shadow.opacity, sigma: shadow.blur / 2 };
 }

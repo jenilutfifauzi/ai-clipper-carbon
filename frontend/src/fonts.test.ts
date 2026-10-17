@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, type FontImported, type FontInfo } from "./api";
 import { fontFamily, importFont, reloadFonts } from "./fonts";
-import { importedText } from "./pages/job/advanced/ImportFont";
+import { importedText } from "./pages/job/editor/ImportFont";
 
 const face = (id: string, url = `/api/fonts/${id}?v=1`): FontInfo => ({
   id,

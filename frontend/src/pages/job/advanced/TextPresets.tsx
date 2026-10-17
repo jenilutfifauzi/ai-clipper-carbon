@@ -7,28 +7,28 @@ import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { fontFamily } from "../../../fonts";
 import { chooseForNewTitles, deleteTextPreset, forNewTitles, renameTextPreset, saveTextPreset, shelvesOf, useTextPresets } from "../../../textPresets";
+import { ImportFont } from "../editor/ImportFont";
 import { IDENTITY } from "../editor/picture";
+import { shadowOffset, shadowOn } from "../editor/shadow";
 import { DRAG_TEXT } from "./drag";
-import { ImportFont } from "./ImportFont";
-import type { TextLook } from "./TextLayers";
-import { shadowOn } from "./textStyle";
+import type { UntimedTextLayer } from "./TextLayers";
 
 /** What a Text Layer made from `preset` is: its sample text in its Text Style, a copy, at the frame's centre and without animations. */
-export function lookOf(preset: TextPreset): TextLook {
+export function fromPreset(preset: TextPreset): UntimedTextLayer {
   return { text: preset.sample, transform: IDENTITY, style: preset.style, animation_in: "none", animation_out: "none", animation_ms: 300 };
 }
 
 /**
  * The Text tab: Add text, in the Preset used for new titles; the Presets on their shelves ("Mine",
- * then the built-in ones by kind), each drawn in its look and adding a Text Layer at the playhead,
+ * then the built-in ones by kind), each drawn in its Text Style and adding a Text Layer at the playhead,
  * or where it is dropped on the timeline; and Import font, whose Faces every font picker then lists.
  */
-export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (look: TextLook) => void }) {
+export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (made: UntimedTextLayer) => void }) {
   const presets = useTextPresets();
   const forNew = presets && forNewTitles(presets);
   return (
     <div className="flex flex-col gap-3">
-      <Button variant="primary" size="sm" className="self-start" disabled={!forNew} onClick={() => forNew && onAdd(lookOf(forNew))}>
+      <Button variant="primary" size="sm" className="self-start" disabled={!forNew} onClick={() => forNew && onAdd(fromPreset(forNew))}>
         <Plus aria-hidden size={16} />
         Add text
       </Button>
@@ -42,7 +42,7 @@ export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: 
             <h3 className="text-sm font-medium text-muted">{shelf.category}</h3>
             <div className="grid grid-cols-2 gap-2">
               {shelf.presets.map((preset) => (
-                <PresetTile key={preset.id} preset={preset} fonts={fonts} onAdd={() => onAdd(lookOf(preset))} />
+                <PresetTile key={preset.id} preset={preset} fonts={fonts} onAdd={() => onAdd(fromPreset(preset))} />
               ))}
             </div>
           </section>
@@ -59,7 +59,7 @@ const TILE_SIZE = 18;
 function sampleStyle(style: TextStyle, fonts: FontInfo[] | null): CSSProperties {
   const by = TILE_SIZE / style.size;
   const { shadow, plate } = style;
-  const angle = (shadow.angle * Math.PI) / 180;
+  const offset = shadowOffset(shadow);
   const px = (value: number) => `${Math.round(value * by * 10) / 10}px`;
   return {
     fontFamily: fonts?.some((font) => font.id === style.font) ? fontFamily(style.font) : undefined,
@@ -67,7 +67,7 @@ function sampleStyle(style: TextStyle, fonts: FontInfo[] | null): CSSProperties 
     backgroundColor: plate.shape !== "none" && plate.opacity > 0 ? `color-mix(in srgb, ${plate.colour} ${Math.round(plate.opacity * 100)}%, transparent)` : undefined,
     WebkitTextStroke: style.stroke_width ? `1px ${style.stroke_colour}` : undefined,
     textShadow: shadowOn(shadow)
-      ? `${px(shadow.distance * Math.cos(angle))} ${px(shadow.distance * Math.sin(angle))} ${px(shadow.blur)} color-mix(in srgb, ${shadow.colour} ${Math.round(shadow.opacity * 100)}%, transparent)`
+      ? `${px(offset.x)} ${px(offset.y)} ${px(shadow.blur)} color-mix(in srgb, ${shadow.colour} ${Math.round(shadow.opacity * 100)}%, transparent)`
       : undefined,
   };
 }
@@ -252,7 +252,7 @@ function NameForm({ label, initial = "", busy, onSave, onCancel }: { label: stri
   );
 }
 
-/** Save as Text Preset: a Text Layer's look kept under Mine in the Text tab, by a name. */
+/** Save as Text Preset: a Text Layer's Text Style kept under Mine in the Text tab, by a name. */
 export function SaveAsTextPreset({ style }: { style: TextStyle }) {
   const [naming, setNaming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -293,8 +293,8 @@ export function SaveAsTextPreset({ style }: { style: TextStyle }) {
   );
 }
 
-/** Apply look: the picked Text Layers given a Preset's Text Style, their words, places and Keyframes kept. */
-export function ApplyLook({ onApply }: { onApply: (style: TextStyle) => void }) {
+/** Apply look (in the owner's words): the picked Text Layers given a Preset's Text Style, their words, places and Keyframes kept. */
+export function ApplyTextPreset({ onApply }: { onApply: (style: TextStyle) => void }) {
   const presets = useTextPresets();
   const options = [{ value: "", label: "Choose a look…" }, ...(presets ?? []).map((preset) => ({ value: preset.id, label: preset.builtin ? preset.name : `${preset.name} (yours)` }))];
   return (

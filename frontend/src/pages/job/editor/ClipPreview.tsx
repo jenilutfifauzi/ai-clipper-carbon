@@ -34,7 +34,7 @@ import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
-import { highlightShape, shadowLook } from "./styleShape";
+import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
@@ -937,14 +937,14 @@ function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; activ
  */
 function Shadow({ shadow, children }: { shadow: DropShadow; children: ReactNode }) {
   const id = `shadow${useId().replace(/[^\w-]/g, "")}`;
-  const look = shadowLook(shadow);
-  if (!look) return null;
+  const drawn = drawnShadow(shadow);
+  if (!drawn) return null;
   return (
-    <g transform={`translate(${look.x} ${look.y})`} opacity={look.opacity} filter={look.sigma ? `url(#${id})` : undefined}>
-      {look.sigma > 0 && (
+    <g transform={`translate(${drawn.x} ${drawn.y})`} opacity={drawn.opacity} filter={drawn.sigma ? `url(#${id})` : undefined}>
+      {drawn.sigma > 0 && (
         // Over the whole frame, wherever the line is.
         <filter id={id} filterUnits="userSpaceOnUse" x={-1080} y={-1920} width={3 * 1080} height={3 * 1920}>
-          <feGaussianBlur stdDeviation={look.sigma} />
+          <feGaussianBlur stdDeviation={drawn.sigma} />
         </filter>
       )}
       {children}

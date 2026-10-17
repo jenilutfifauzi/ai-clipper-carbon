@@ -4,7 +4,7 @@
 // corners scale it and the handle above turns it; it has no edges to stretch it. 12: a keyed one is
 // gripped where its Keyframes have it at the playhead (docs/adr/0008).
 import type { Picture, RenderPlan, TextEvent } from "../../../api";
-import { isKeyed, pictureAt } from "./picture";
+import { boundsAbout, isKeyed, pictureAt } from "./picture";
 import type { Size } from "./pictureGestures";
 
 /**
@@ -23,7 +23,8 @@ export function textStagePicture(event: TextEvent): { picture: Picture; fitted: 
 /**
  * The event of a Text Layer as its Keyframes have it at `time` seconds into the Clip: its picture
  * sampled there (pictureAt) and still, its Transform's centre, scale, rotation and opacity as sampled,
- * and its bounds its area's then, turned and scaled about the sampled centre. Unkeyed, the event itself.
+ * and its bounds its area's then, scaled and turned about its picture's sampled centre and rounded as
+ * a picture's are (backend/app/planner.py's text_bounds_at). Unkeyed, the event itself.
  */
 export function textEventAt(event: TextEvent, time: number): TextEvent {
   const { picture, area, layer } = event;
@@ -32,10 +33,12 @@ export function textEventAt(event: TextEvent, time: number): TextEvent {
   const scale = picture.motion?.scale?.length && picture.unscaled ? drawn.width / picture.unscaled[0] : layer.transform.scale;
   const [x, y] = drawn.centre;
   const angle = (drawn.rotation * Math.PI) / 180;
-  const [cos, sin] = [Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle))];
+  const [cos, sin] = [Math.cos(angle), Math.sin(angle)];
+  // The area's middle, off its picture's by up to half a pixel, scaled and turned with it.
+  const [u, v] = [(area.x + area.width / 2 - picture.centre[0]) * scale, (area.y + area.height / 2 - picture.centre[1]) * scale];
   const [width, height] = [area.width * scale, area.height * scale];
-  const [across, down] = [width * cos + height * sin, width * sin + height * cos];
-  const bounds = { x: Math.floor(x - across / 2), y: Math.floor(y - down / 2), width: Math.ceil(across), height: Math.ceil(down) };
+  const [across, down] = [width * Math.abs(cos) + height * Math.abs(sin), width * Math.abs(sin) + height * Math.abs(cos)];
+  const bounds = boundsAbout([x + u * cos - v * sin, y + u * sin + v * cos], across, down);
   const transform = { ...layer.transform, x, y, scale, rotation: drawn.rotation, opacity: drawn.opacity };
   return { ...event, layer: { ...layer, transform }, picture: drawn, bounds };
 }

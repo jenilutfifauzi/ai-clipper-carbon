@@ -539,13 +539,13 @@ const FRAME = { width: 1080, height: 1920 };
 const middleOf = (item: TextLayer | Overlay) => item.transform;
 const middledAt = <T extends TextLayer | Overlay>(item: T, x: number, y: number): T => ({ ...item, transform: { ...item.transform, x, y } });
 
-// Where a keyed Overlay's middle goes along `axis`: its Keyframes' values (none for a Text Layer).
-const keyedMiddles = (item: TextLayer | Overlay, axis: "x" | "y") => ("keys" in item ? (item.keys[axis] ?? []).map((key) => key.value) : []);
+// Where a keyed Text Layer's or Overlay's middle goes along `axis`: its Keyframes' values.
+const keyedMiddles = (item: TextLayer | Overlay, axis: "x" | "y") => (item.keys[axis] ?? []).map((key) => key.value);
 
 /**
  * The picked Text Layers and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
- * further than keeps each one's middle in the frame. A keyed Overlay's motion moves with it: each of
- * its x and y Keyframes by as much, kept in the frame as its middle is.
+ * further than keeps each one's middle in the frame. A keyed one's motion moves with it: each of its
+ * x and y Keyframes by as much, kept in the frame as its middle is.
  */
 export function nudge(scene: PickContext, dx: number, dy: number): Outcome | null {
   const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "overlay"; item: TextLayer | Overlay }[];
@@ -562,7 +562,7 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
         if (other.id !== item.id) return other;
         const { x, y } = middleOf(other);
         const moved = middledAt(other, Math.round(x + byX), Math.round(y + byY));
-        if (!("keys" in moved) || !(moved.keys.x || moved.keys.y)) return moved;
+        if (!(moved.keys.x || moved.keys.y)) return moved;
         const { x: xs, y: ys } = moved.keys;
         return { ...moved, keys: { ...moved.keys, ...(xs && { x: shifted(xs, byX) }), ...(ys && { y: shifted(ys, byY) }) } };
       }),
@@ -583,8 +583,8 @@ export function restyle(scene: { edits: AdvancedEdits; pick: Pick }, change: (la
   return { edits: { ...scene.edits, text_layers }, pick: scene.pick };
 }
 
-/** Every picked Text Layer given `style`, a Text Preset's look: their words, Transforms, Keyframes and times stay their own. */
-export const applyLook = (scene: { edits: AdvancedEdits; pick: Pick }, style: TextStyle): Outcome => restyle(scene, (layer) => ({ ...layer, style }));
+/** Every picked Text Layer given `style`, a Text Preset's Text Style: their words, Transforms, Keyframes and times stay their own. */
+export const applyTextStyle = (scene: { edits: AdvancedEdits; pick: Pick }, style: TextStyle): Outcome => restyle(scene, (layer) => ({ ...layer, style }));
 
 /**
  * Music Clip or media Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2
