@@ -1,9 +1,12 @@
 import { useId, useState } from "react";
+import type { ClipSegment, MediaItem, Overlay } from "../../../api";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
 import { copyProgress, useRetimedCopies, type RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
+import type { SpedRef } from "./actions";
+import type { AdvancedEdits } from "./edits";
 import { octaveOf, SPEED_CHIPS, SPEED_OCTAVES, SPEED_RANGE, speedAtOctave, speedLabel, speedOf } from "./speed";
 
 /**
@@ -48,7 +51,7 @@ export function SpeedFields({
             aria-pressed={speed === chip}
             onClick={() => set(chip)}
             className={cx(
-              "min-h-8 rounded-lg text-sm font-medium tabular-nums",
+              "min-h-8 rounded-lg text-sm font-medium tabular-nums in-data-sheet:min-h-11",
               "focus-visible:outline-2 focus-visible:outline-focus",
               speed === chip ? "raised text-text" : "text-muted hover:text-text",
             )}
@@ -75,7 +78,7 @@ export function SpeedFields({
       <Switch checked={reverse} onChange={onReverse}>
         <span className="flex flex-1 items-center justify-between gap-2 text-sm font-medium">
           Reverse
-          <kbd aria-hidden className="raised min-w-6 rounded-md px-1.5 py-0.5 text-center font-sans text-xs text-muted">
+          <kbd aria-hidden className="raised min-w-6 rounded-md px-1.5 py-0.5 text-center font-sans text-xs text-muted in-data-sheet:hidden">
             R
           </kbd>
         </span>
@@ -86,6 +89,63 @@ export function SpeedFields({
         </p>
       )}
     </Group>
+  );
+}
+
+/**
+ * The phone's Speed sheet, of `item` (actions.ts' `paced`): the inspector's Speed section, with each
+ * change the same history group as there; a Freeze frame's Duration instead.
+ */
+export function SpeedPanel({
+  item,
+  edits,
+  mediaById,
+  copyOf,
+  onSpeed,
+  onReverse,
+  onHold,
+  onSegment,
+  onOverlay,
+}: {
+  item: SpedRef;
+  edits: AdvancedEdits;
+  mediaById: Map<string, MediaItem>;
+  copyOf: (item: SpedRef) => RetimedAsk | null;
+  onSpeed: (item: SpedRef, speed: number, group: string) => void;
+  onReverse: (item: SpedRef, reverse: boolean) => void;
+  onHold: (id: string, hold: number) => void;
+  onSegment: (segment: ClipSegment, group: string) => void;
+  onOverlay: (overlay: Overlay, group: string) => void;
+}) {
+  const segment = item.kind === "segment" ? edits.segments.find((other) => other.id === item.id) : undefined;
+  const overlay = item.kind === "overlay" ? edits.overlays.find((other) => other.id === item.id) : undefined;
+  if (segment?.hold != null) return <HoldFields key={segment.id} hold={segment.hold} onHold={(hold) => onHold(segment.id, hold)} />;
+  const fields = segment
+    ? {
+        sped: segment,
+        heard: !segment.media || mediaById.get(segment.media)?.has_audio !== false,
+        onPitch: (pitch: boolean) => onSegment({ ...segment, pitch }, `segment:${segment.id}:pitch`),
+      }
+    : overlay && {
+        sped: overlay,
+        heard: !!mediaById.get(overlay.media)?.has_audio,
+        onPitch: (pitch: boolean) => onOverlay({ ...overlay, pitch }, `overlay:${overlay.id}:pitch`),
+      };
+  if (!fields) return null;
+  const { sped, heard, onPitch } = fields;
+  return (
+    <SpeedFields
+      key={sped.id}
+      speed={sped.speed ?? 1}
+      pitch={sped.pitch ?? false}
+      reverse={sped.reverse ?? false}
+      heard={heard}
+      group={`${item.kind}:${item.id}:speed`}
+      copy={copyOf(item)}
+      onSpeed={(speed, group) => onSpeed(item, speed, group)}
+      onPitch={onPitch}
+      onReverse={(reverse) => onReverse(item, reverse)}
+    />
   );
 }
 
@@ -119,7 +179,7 @@ function SpeedNumber({ speed, onChange }: { speed: number; onChange: (speed: num
           }}
           onBlur={() => setTyped(null)}
           className={cx(
-            "w-full min-w-0 rounded-control border border-border bg-fill py-2 pr-8 pl-3 text-base text-text tabular-nums",
+            "w-full min-w-0 rounded-control border border-border bg-fill py-2 pr-8 pl-3 text-base text-text tabular-nums in-data-sheet:min-h-11",
             "user-invalid:border-danger",
           )}
         />
@@ -164,7 +224,7 @@ export function HoldFields({ hold, onHold }: { hold: number; onHold: (hold: numb
               if (event.key === "Enter") commit();
             }}
             className={cx(
-              "w-full min-w-0 rounded-control border border-border bg-fill py-2 pr-8 pl-3 text-base text-text tabular-nums",
+              "w-full min-w-0 rounded-control border border-border bg-fill py-2 pr-8 pl-3 text-base text-text tabular-nums in-data-sheet:min-h-11",
               "user-invalid:border-danger",
             )}
           />

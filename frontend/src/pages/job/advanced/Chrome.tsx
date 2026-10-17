@@ -8,6 +8,7 @@ import {
   ClipboardCopy,
   ClipboardPaste,
   Copy,
+  FastForward,
   Film,
   FoldHorizontal,
   Gauge,
@@ -169,7 +170,8 @@ export function SaveStatus({
 
 /**
  * The phone's bottom bar: the asset tabs and Pick, or what can be done to the picked items (with
- * Transform, for an Overlay or a Segment picked alone, opening the Transform sheet). In picking
+ * Transform, for an Overlay or a Segment picked alone, opening the Transform sheet, and Speed, for a
+ * Segment or a video Overlay picked alone, the Speed sheet). Freeze frame sits beside Split. In picking
  * mode (`picking`, started by Pick), a tap adds an item to the Pick or takes it out, and the bar counts
  * them and offers what can be done to them all, Paste while the Clipboard holds something
  * (`paste`), and Done.
@@ -178,12 +180,14 @@ export function Toolbar({
   pick,
   actions,
   splitter,
+  freezer,
   playback,
   picking,
   paste,
   onAsset,
   onInspect,
   onTransform,
+  onSpeed,
   onTracks,
   onPlayback,
   onPicking,
@@ -192,6 +196,7 @@ export function Toolbar({
   pick: Pick;
   actions: ItemActions | null;
   splitter: Splitter;
+  freezer: Freezer;
   playback: Playback;
   picking: boolean;
   paste: (() => void) | null;
@@ -199,6 +204,9 @@ export function Toolbar({
   onInspect: () => void;
   // Opens the Transform sheet: the picked picture's Transform, Crop and Background or decoration.
   onTransform: () => void;
+  // Opens the Speed sheet of the Segment or video Overlay picked alone (actions.ts' `paced`): null for
+  // any other pick.
+  onSpeed: (() => void) | null;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;
   // Opens the Playback sheet: the rate, the Loop Region and the Edit Point jumps.
@@ -232,9 +240,11 @@ export function Toolbar({
           <ToolButton icon={X} label="Done" onClick={onDeselect} />
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
           {picture && <ToolButton icon={Scaling} label="Transform" onClick={onTransform} />}
+          {onSpeed && <ToolButton icon={FastForward} label="Speed" onClick={onSpeed} />}
           {actions && (
             <>
               <SplitButton splitter={splitter} playback={playback} />
+              <FreezeButton freezer={freezer} playback={playback} />
               <ToolButton icon={Copy} label="Duplicate" onClick={actions.duplicate} />
               <ToolButton icon={Trash2} label="Delete" onClick={actions.remove} />
               <ToolButton icon={FoldHorizontal} label="Ripple" onClick={actions.rippleRemove} />
@@ -248,6 +258,7 @@ export function Toolbar({
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
           <SplitButton splitter={splitter} playback={playback} />
+          <FreezeButton freezer={freezer} playback={playback} />
           <PlaybackButton playback={playback} onClick={onPlayback} />
           <ToolButton icon={Layers2} label="Tracks" onClick={onTracks} />
           <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
@@ -444,6 +455,13 @@ export function ItemTools({
 function SplitButton({ splitter, playback }: { splitter: Splitter; playback: Playback }) {
   const splittable = usePlayback(playback, splitter.canSplit);
   return <ToolButton icon={Scissors} label="Split" onClick={splitter.split} disabled={!splittable} />;
+}
+
+// The phone toolbar's Freeze frame, enabled while the playhead is on a Segment far enough from its
+// edges (actions.ts' `canFreezeAt`).
+function FreezeButton({ freezer, playback }: { freezer: Freezer; playback: Playback }) {
+  const freezable = usePlayback(playback, freezer.canFreeze);
+  return <ToolButton icon={Snowflake} label="Freeze frame" onClick={freezer.freeze} disabled={!freezable} />;
 }
 
 // The phone toolbar's Playback, which says the rate whenever it isn't 1×, so that a fast preview

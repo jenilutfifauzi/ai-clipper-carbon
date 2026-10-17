@@ -51,6 +51,7 @@ import {
   splitter,
   move,
   nudge,
+  paced,
   pickAll,
   placeAfter,
   placeDropped,
@@ -111,6 +112,7 @@ import { newTextLayer, TEXT_PRESETS } from "./TextLayers";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
+import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
 import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory } from "./useEditHistory";
@@ -179,8 +181,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [fonts, setFonts] = useState<FontInfo[] | null>(null);
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
-  // picture's Transform, of the Tracks or of Playback.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "tracks" | "playback" | null>(null);
+  // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The player's room, which goes full screen with the stage and the player bar.
   const fullscreenRoom = useRef<HTMLDivElement>(null);
@@ -570,6 +572,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   // The one picked Segment or video Overlay, which R reverses.
   const reversed = reversible(scene, (media) => mediaById.get(media)?.kind === "video");
+  // The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens.
+  const sped = paced(scene, (media) => mediaById.get(media)?.kind === "video");
   // The Retimed copy the preview plays a Segment or Overlay from, as the plan has it (retimedCopy.ts).
   function copyOf(item: SpedRef): RetimedAsk | null {
     const plan = preview?.plan;
@@ -1091,6 +1095,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         pick={pick}
         actions={actions}
         splitter={splits}
+        freezer={freezes}
         playback={playback}
         onAsset={(tab) => {
           setAssetTab(tab);
@@ -1100,6 +1105,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         paste={pasteHere}
         onInspect={() => setSheet("inspector")}
         onTransform={() => setSheet("transform")}
+        onSpeed={sped && (() => setSheet("speed"))}
         onTracks={() => setSheet("tracks")}
         onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
@@ -1116,11 +1122,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               ? "Edit"
               : sheet === "transform"
                 ? "Transform"
-                : sheet === "tracks"
-                ? "Tracks"
-                : sheet === "playback"
-                  ? "Playback"
-                  : ASSET_TABS.find((tab) => tab.value === sheet)!.label
+                : sheet === "speed"
+                  ? "Speed"
+                  : sheet === "tracks"
+                    ? "Tracks"
+                      : sheet === "playback"
+                        ? "Playback"
+                        : ASSET_TABS.find((tab) => tab.value === sheet)!.label
           }
           onClose={() => setSheet(null)}
         >
@@ -1147,6 +1155,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 cropMode={cropMode}
               />
             </KeyingContext.Provider>
+          ) : sheet === "speed" ? (
+            sped ? (
+              <SpeedPanel
+                item={sped}
+                edits={edits}
+                mediaById={mediaById}
+                copyOf={copyOf}
+                onSpeed={setItemSpeed}
+                onReverse={setItemReverse}
+                onHold={setFreezeHold}
+                onSegment={updateSegment}
+                onOverlay={updateOverlay}
+              />
+            ) : (
+              <p className="text-sm text-pretty text-muted">Pick a Segment or a video Overlay to change its Speed.</p>
+            )
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
           ) : sheet === "playback" ? (

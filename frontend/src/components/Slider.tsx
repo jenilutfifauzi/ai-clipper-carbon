@@ -51,7 +51,7 @@ export function Slider({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="h-7 w-full cursor-pointer accent-accent disabled:cursor-default disabled:opacity-50"
+        className="h-7 w-full cursor-pointer accent-accent disabled:cursor-default disabled:opacity-50 in-data-sheet:h-11"
       />
     </div>
   );

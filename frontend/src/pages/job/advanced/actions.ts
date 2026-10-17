@@ -668,6 +668,16 @@ export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (
 }
 
 /**
+ * The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens: as
+ * `reversible`, and a Freeze frame too (its sheet shows its Duration).
+ */
+export function paced(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpedRef | null {
+  const only = onlyItem(scene.pick);
+  if (only?.kind === "segment" && scene.edits.segments.some((segment) => segment.id === only.id)) return { kind: "segment", id: only.id };
+  return reversible(scene, video);
+}
+
+/**
  * Segment or video Overlay `item` played backwards, or forwards again (`reverse`, ADR 0009), from a
  * Retimed copy. It keeps its range, its place and length on the Timeline, and its Keyframes, in
  * seconds from its start: its motion keeps its moments, not its frames. Null for a Freeze frame, or
