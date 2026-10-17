@@ -59,7 +59,7 @@ Use these terms in code, UI copy, tickets and commit messages.
   - its face, size and colour;
   - its stroke and drop shadow (colour, opacity, blur, distance, angle);
   - its plate (a Block or Strips, with colour, opacity, radius and padding);
-  - its line height, tracking, alignment, wrap width and fixed height.
+  - its line height, tracking, alignment, wrap width and fixed height (the box's outer size, the plate's padding included).
 
   The box grows to hold the words; they are never shrunk to fit.
 - **Text Preset:** a named Text Style that a new Text Layer starts from. It is copied into the layer, never linked to it. Built-in Presets can't be changed or deleted; the owner saves, renames and deletes their own. One Preset is used for new titles, by the editor and the agent. Not a Style Preset.
