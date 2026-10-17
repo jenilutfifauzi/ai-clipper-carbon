@@ -375,10 +375,11 @@ export interface WatermarkEvent {
 
 export type TextAlign = "center" | "left" | "right";
 
-// What is drawn behind a Text Style's words (backend/app/candidates.py): nothing, or a Block behind
-// all its lines, in `colour` at `opacity`, its corners `radius` round, reaching `padding_x` either
-// side of the widest line and `padding_y` above the capitals and below the descenders. Lengths in
-// output pixels, at the style's size. Strips are refused until Text Layers are pictures.
+// What is drawn behind a Text Style's words (backend/app/candidates.py): nothing, a Block behind all
+// its lines, or Strips, one behind each line, in `colour` at `opacity`, its corners `radius` round
+// (at most half its height), reaching `padding_x` either side of the widest line (of each, for
+// Strips) and `padding_y` above the capitals and below the descenders. Lengths in output pixels, at
+// the style's size.
 export interface Plate {
   shape: HookShape;
   colour: string;
@@ -388,16 +389,29 @@ export interface Plate {
   padding_y: number;
 }
 
+// A drop shadow under text (backend/app/styles.py): its letters and stroke again in `colour` at
+// `opacity`, moved `distance` px towards `angle` degrees clockwise from the right (45: down and to
+// the right) and blurred `blur` px (a CSS shadow's blur radius). Off at opacity 0, or with neither
+// distance nor blur.
+export interface DropShadow {
+  colour: string;
+  opacity: number;
+  blur: number;
+  distance: number;
+  angle: number;
+}
+
 // How a Text Layer's words look (backend/app/candidates.py): its Face at `size` (libass's, as the
-// captions') in `colour`, stroked `stroke_width` px (none at 0), over its plate; its baselines
-// `line_height` sizes apart. `tracking`, `wrap_width` and `fixed_height` stay 0 until Text Layers are
-// pictures (ADR 0010).
+// captions') in `colour`, stroked `stroke_width` px (none at 0), with its shadow, over its plate (a
+// Block, or Strips: one per line); its baselines `line_height` sizes apart, `tracking` px after
+// each character but a line's last. `wrap_width` and `fixed_height` stay 0 until they are drawn.
 export interface TextStyle {
   font: string;
   size: number;
   colour: string;
   stroke_width: number;
   stroke_colour: string;
+  shadow: DropShadow;
   plate: Plate;
   line_height: number;
   tracking: number;

@@ -6,7 +6,8 @@ import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { HookShapePicker } from "./HookShapePicker";
-import { countChanged, fontChoices, Group, StyleMarker } from "./StyleFields";
+import { FacePicker } from "./FacePicker";
+import { countChanged, Group, StyleMarker } from "./StyleFields";
 import type { StyleControls } from "./useStyleDraft";
 
 const POSITIONS = [
@@ -73,7 +74,7 @@ export function HookLook({ style, fonts }: { style: StyleControls; fonts: FontIn
     <>
       <HookShapePicker style={hook} onChange={(v) => set("shape", v)} marker={marker("shape", "shape")} />
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-        <Select label="Font" value={hook.font} {...fontChoices(fonts)} onChange={(v) => set("font", v)} marker={marker("font", "hook font")} />
+        <FacePicker value={hook.font} fonts={fonts} onChange={(v) => set("font", v)} marker={marker("font", "hook font")} className="sm:col-span-2" />
         <Slider label="Size" value={hook.size} min={40} max={160} onChange={(v) => set("size", v)} marker={marker("size", "hook size")} />
         <ColorField label="Text colour" value={hook.colour} onChange={(v) => set("colour", v)} marker={marker("colour", "hook text colour")} />
         <ColorField

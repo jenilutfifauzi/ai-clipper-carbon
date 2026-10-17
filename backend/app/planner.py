@@ -616,10 +616,12 @@ class TextRun:
 class TextLayout:
     """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
     scale 1: its `lines` in `style` set at font `size`, each placed by its anchor (the middle of its
-    text and its baseline) and drawn as its `runs`, over its Block plate `box` with corners `radius`
-    pixels round. The picture is rasterised `scale` times as large (app/text_pictures.py; the
-    largest scale the layer is drawn at, up to the next of TEXT_PICTURE_SCALES), and named by a hash of all of it
-    (`name`), so that the same look is one file wherever the layer is."""
+    text and its baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its
+    Block, or a Strip per line) with corners `radius` pixels round. Its shadow, when on, is its runs
+    again moved by `shadow` (right and down), between them and the plate. The picture is rasterised
+    `scale` times as large (app/text_pictures.py; the largest scale the layer is drawn at, up to the
+    next of TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same look
+    is one file wherever the layer is."""
 
     style: TextStyle
     size: float
@@ -630,8 +632,9 @@ class TextLayout:
     width: int
     height: int
     scale: float = 1.0
-    box: Box | None = None
+    plates: list[Box] = field(default_factory=list)
     radius: int = 0
+    shadow: tuple[float, float] | None = None
 
     @property
     def raster(self) -> tuple[int, int]:
@@ -668,8 +671,8 @@ TEXT_PICTURE_FORMAT = "v1-libass-matte"
 class TextEvent:
     """A Text Layer as drawn: its `lines` set at font `size` (its style's, or smaller for one too
     wide), on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it
-    has a Block plate, which is `box` (the area), its corners `radius` pixels round. Each line is
-    placed by its anchor: the middle of its text and its baseline.
+    has a plate: a Block plate is `box` (the area), Strips are its layout's. Its plate's corners are
+    `radius` pixels round. Each line is placed by its anchor: the middle of its text and its baseline.
 
     It is drawn as the picture of its `layout` (docs/adr/0010), the file `image`, placed as `picture`
     says with the Overlay's maths: its box and the room round it for its ink, centred about the
@@ -1456,8 +1459,9 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its lines
     (split at newlines, without emoji, split into runs by Face with what no Face has left out, blank
     ones at either end left out) centred on its Transform's centre (on the frame, its picture maybe
-    past the edges, as an Overlay's), set smaller when the widest, padded, is wider than the frame
-    less TEXT_MARGIN either side. None when it is blank or would start at or after the Clip's end."""
+    past the edges, as an Overlay's), set smaller when the widest, padded and with its tracking, is
+    wider than the frame less TEXT_MARGIN either side (its tracking staying as wide). None when it is
+    blank or would start at or after the Clip's end."""
     style = layer.style
     runs = [text_runs(without_emoji(line), style.font) for line in layer.text.split("\n")]
     while runs and not runs[0]:
@@ -1469,17 +1473,20 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
         return None
     lines = ["".join(run.text for run in line) for line in runs]
     metrics = font_metrics(style.font)
-    block = style.plate if style.plate.shape is HookShape.BLOCK else None
+    plated = style.plate.shape is not HookShape.NONE
     # Its width, padding and corners grow with the size (the plate's are given at the style's), so a
     # size that fits scales them alike.
-    pad = (block.padding_x / style.size, block.padding_y / style.size) if block else (0.0, 0.0)
-    widest = max(runs_width(line, 1) for line in runs) + 2 * pad[0]
+    pad = (style.plate.padding_x / style.size, style.plate.padding_y / style.size) if plated else (0.0, 0.0)
     size = float(style.size)
     room = OUTPUT_WIDTH - 2 * TEXT_MARGIN
-    if widest * size > room:
-        size = math.floor(room / widest * 10) / 10
+    # The largest size each line fits at, its tracking as wide at any size.
+    fitting = min(
+        (room - style.tracking * max(len(text) - 1, 0)) / (runs_width(line, 1) + 2 * pad[0]) for line, text in zip(runs, lines)
+    )
+    if fitting < size:
+        size = max(math.floor(fitting * 10) / 10, MIN_SIZE)
     pad_x, pad_y = pad[0] * size, pad[1] * size
-    widths = [runs_width(line, size) for line in runs]
+    widths = [runs_width(line, size, style.tracking) for line in runs]
     width = math.ceil(max(widths) + 2 * pad_x)
     letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
     height = math.ceil(letters + 2 * pad_y)
@@ -1498,28 +1505,60 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
         for i, line in enumerate(widths)
     ]
     end = round(min(start + layer.secs, duration), 3)
-    radius = 0 if block is None else min(round(block.radius / style.size * size), height // 2)
-    placed = [placed_runs(line, x - width / 2, size) for line, width, (x, _) in zip(runs, widths, anchors)]
-    layout, origin = _text_layout(layer, lines, placed, size, area, anchors, radius if block else None)
+    plates = _plates(style, area, lines, widths, anchors, size)
+    radius = min(round(style.plate.radius / style.size * size), min(box.height for box in plates) // 2) if plates else 0
+    placed = [placed_runs(line, x - width / 2, size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
+    layout, origin = _text_layout(layer, lines, placed, size, area, anchors, plates, radius)
     # Keyed, it moves as an Overlay does, its whole picture scaled from its size at scale 1.
     picture = with_motion(_text_picture(layout, origin, layer.transform), layer.transform, layer.keys, start, (layout.width, layout.height))
     return TextEvent(
         layer, lines, start, end, area, size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
-        None if block is None else area, radius, layout.look,
+        area if style.plate.shape is HookShape.BLOCK else None, radius, layout.look,
     )
 
 
+def _plates(
+    style: TextStyle, area: Box, lines: list[str], widths: list[float], anchors: list[tuple[float, float]], size: float
+) -> list[Box]:
+    """The rectangles of a Text Layer's plate on the frame, its lines (`widths` wide, at `anchors`)
+    set at `size` in `area`: none, its Block (the area), or a Strip round each line but a blank one,
+    padded as the area is round the widest and from the capitals down to the descenders."""
+    plate = style.plate
+    if plate.shape is HookShape.NONE:
+        return []
+    if plate.shape is HookShape.BLOCK:
+        return [area]
+    metrics = font_metrics(style.font)
+    pad_x, pad_y = plate.padding_x / style.size * size, plate.padding_y / style.size * size
+    height = math.ceil((metrics.cap_height + metrics.descent) / metrics.units * size + 2 * pad_y)
+    strips = []
+    for line, line_width, (x, baseline) in zip(lines, widths, anchors):
+        if not line:
+            continue
+        width = min(math.ceil(line_width + 2 * pad_x), area.width)
+        left = min(max(round(x - width / 2), area.x), area.x + area.width - width)
+        strips.append(Box(left, round(baseline - metrics.cap_height / metrics.units * size - pad_y), width, height))
+    return strips
+
+
 def _text_layout(
-    layer: TextLayer, lines: list[str], runs: list[list[TextRun]], size: float, area: Box,
-    anchors: list[tuple[float, float]], radius: int | None,
+    layer: TextLayer,
+    lines: list[str],
+    runs: list[list[TextRun]],
+    size: float,
+    area: Box,
+    anchors: list[tuple[float, float]],
+    plates: list[Box],
+    radius: int,
 ) -> tuple[TextLayout, tuple[int, int]]:
     """A Text Layer's layout, set at `size` in `area` with its lines at `anchors` drawn as `runs`
-    (placed on the frame; a Block plate's corners `radius` round, None without one), and where its
-    picture's top-left corner is on the frame: its area and TEXT_INK_ROOM round it, made even across
-    and down. Its anchors and runs are kept from that corner, so that the layout (and its picture) is
-    the same wherever the layer is."""
+    (placed on the frame) over its `plates` (their corners `radius` round), and where its picture's
+    top-left corner is on the frame: its area and TEXT_INK_ROOM round it, and its shadow's reach,
+    made even across and down. Its anchors, runs and plates are kept from that corner, so that the
+    layout (and its picture) is the same wherever the layer is; the area stays in the picture's
+    middle, which the Transform turns it about."""
     style = layer.style
-    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size)
+    room = math.ceil(style.stroke_width + TEXT_INK_ROOM * size) + style.shadow.reach
     left, top = area.x - room, area.y - room
     width, height = area.width + 2 * room, area.height + 2 * room
     width, height = width + width % 2, height + height % 2
@@ -1527,8 +1566,12 @@ def _text_layout(
     local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
     stepped = next((step for step in TEXT_PICTURE_SCALES if reached_scale(layer) <= step), TEXT_PICTURE_SCALES[-1])
     scale = min(stepped, MAX_TEXT_PICTURE / max(width, height))
-    box = None if radius is None else Box(room, room, area.width, area.height)
-    return TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), box, radius or 0), (left, top)
+    plates = [Box(box.x - left, box.y - top, box.width, box.height) for box in plates]
+    shadow = style.shadow.offset if style.shadow.on else None
+    return (
+        TextLayout(style, size, lines, local, local_runs, width, height, round(scale, 4), plates, radius, shadow),
+        (left, top),
+    )
 
 
 def reached_scale(layer: TextLayer) -> float:

@@ -22,7 +22,7 @@ from test_jobs_api import URL
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 65_000
+TOOLS_BUDGET_BYTES = 67_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -283,7 +283,8 @@ async def test_logos_and_media_are_added_from_files_and_media_in_use_is_kept(mcp
     assets = await call(mcp, "list_assets")
     assert [m["id"] for m in assets["media"]] == [item["id"]]
     assert [l["id"] for l in assets["logos"]] == [added["id"]]
-    assert assets["fonts"][0]["id"] == "montserrat-extrabold" and assets["fonts"][0]["weight"] == 800
+    faces = {face["id"]: face for face in assets["fonts"]}
+    assert faces["montserrat-extrabold"]["weight"] == 800 and faces["montserrat-extrabold"]["typographic_family"] == "Montserrat"
     assert "PNG, JPEG or WebP" in await fails(mcp, "add_asset", kind="logo", path=str(text))
     assert await fails(mcp, "add_asset", kind="media", path=str(text))
 
@@ -386,6 +387,18 @@ async def test_a_text_layers_style_and_transform_are_merged_field_by_field_and_t
     [changed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {"plate": {"opacity": 0.5}}}]))["text_layers"]
     assert changed["style"]["plate"] == made["style"]["plate"] | {"opacity": 0.5}
     assert changed["transform"] == made["transform"]
+    # The shadow by its own fields too, and Strips, tracking and spacing.
+    shadow = {"colour": "#330000", "opacity": 0.8, "blur": 6, "distance": 10, "angle": 45}
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {
+        "shadow": shadow, "tracking": -2, "line_height": 0.9, "plate": {"shape": "strips"},
+    }}]))["text_layers"]
+    assert changed["style"]["shadow"] == shadow and changed["style"]["plate"]["shape"] == "strips"
+    assert (changed["style"]["tracking"], changed["style"]["line_height"]) == (-2, 0.9)
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {"shadow": {"angle": 135}}}]))["text_layers"]
+    assert changed["style"]["shadow"] == shadow | {"angle": 135}
+    assert changed["style"]["plate"] == made["style"]["plate"] | {"opacity": 0.5, "shape": "strips"}
+    for bad in ({"blur": -1}, {"opacity": 1.2}):
+        assert "shadow" in await fails(mcp, "merge_candidate_items", **ids, text_layers=[{"id": "title", "style": {"shadow": bad}}])
     # The dry run lists its lines, its box and the picture the Clip burns.
     [shown] = (await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True))["text_layers"]
     assert shown["lines"] == ["Judul"]

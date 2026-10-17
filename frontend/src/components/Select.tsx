@@ -11,6 +11,7 @@ export function Select<T extends string>({
   marker,
   className,
   optionStyle,
+  disabled,
 }: {
   label: string;
   value: T;
@@ -20,6 +21,7 @@ export function Select<T extends string>({
   className?: string;
   // The style of the shown value, such as its font.
   optionStyle?: (value: T) => CSSProperties | undefined;
+  disabled?: boolean;
 }) {
   const id = useId();
   return (
@@ -32,9 +34,10 @@ export function Select<T extends string>({
         <select
           id={id}
           value={value}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value as T)}
           style={optionStyle?.(value)}
-          className="min-h-10 w-full cursor-pointer appearance-none rounded-[10px] border border-border bg-fill py-2 pr-9 pl-3 text-base"
+          className="min-h-10 w-full appearance-none enabled:cursor-pointer disabled:opacity-60 rounded-[10px] border border-border bg-fill py-2 pr-9 pl-3 text-base"
         >
           {options.map((option) => (
             <option key={option.value} value={option.value}>

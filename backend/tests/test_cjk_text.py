@@ -101,6 +101,24 @@ def test_a_layers_picture_draws_each_run_in_its_face_where_it_is_planned():
     assert gap.size and gap.max() < 64
 
 
+def test_tracking_spaces_every_character_of_every_run_and_each_run_is_drawn_where_it_is_planned():
+    # .scratch/text-advanced/issues/04-shadow-plate-and-spacing.md: tracking across runs.
+    plain = text_event(layer("HALO 日本語"), 10)
+    spaced = text_event(layer("HALO 日本語", tracking=30), 10)
+    # 8 characters, the space among them: 7 gaps.
+    assert spaced.area.width - plain.area.width == pytest.approx(7 * 30, abs=1)
+    [[halo, japanese]] = spaced.layout.runs
+    assert halo.width == pytest.approx(font_metrics(STYLE_FONT).width("HALO", 100, 30), abs=0.01)
+    # The run after a space starts past the space and the tracking after it and after HALO's O.
+    assert japanese.x - halo.x == pytest.approx(font_metrics(STYLE_FONT).width("HALO ", 100) + 5 * 30, abs=0.01)
+    pixels = rasterised(load_settings().ffmpeg_bin, spaced.layout)
+    columns = ink_columns(pixels)
+    assert columns.min() == pytest.approx(halo.x, abs=8)
+    assert columns.max() + 1 == pytest.approx(japanese.x + japanese.width, abs=8)
+    gap = pixels[:, round(halo.x + halo.width) + 3 : round(japanese.x) - 3, 3]
+    assert gap.size and gap.max() < 64
+
+
 def test_japanese_glyphs_are_drawn_not_missing_glyph_boxes():
     def halves(text: str) -> tuple[np.ndarray, np.ndarray]:
         event = text_event(layer(text), 10)

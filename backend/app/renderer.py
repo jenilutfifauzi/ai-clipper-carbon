@@ -126,7 +126,7 @@ from app.planner import (
     picture_at,
 )
 from app.candidates import Keyframe, Shadow, TextLayer
-from app.styles import Animation, CaptionStyle, Highlight, HookStyle, WatermarkKind, WatermarkStyle
+from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
 
@@ -1373,6 +1373,22 @@ def _tracked(x: float, tracking: float) -> float:
     """Where a centred line with `tracking` is placed for its letters to be centred on `x`: libass
     adds the tracking after its last letter too, and centres that."""
     return x + tracking / 2
+
+
+# libass's \blur N is a Gaussian blur whose sigma is N times this.
+LIBASS_BLUR_SIGMA = 2 / math.sqrt(math.log(256))
+
+
+def _shadow_tags(shadow: DropShadow, stroke: float) -> str:
+    """The override tags that draw text as its drop `shadow` (on), its `stroke` pixels wide stroke
+    included: in the shadow's colour at its opacity, blurred as a CSS shadow of its blur is. With a
+    stroke, only the stroke is drawn, over where the letters are too: a translucent fill would show
+    where it meets the stroke, and libass blurs only the stroke of stroked text."""
+    colour, alpha = _tag_colour(shadow.colour), f"&H{round(255 * (1 - shadow.opacity)):02X}&"
+    blur = f"\\blur{shadow.blur / 2 / LIBASS_BLUR_SIGMA:.3g}" if shadow.blur else ""
+    if stroke:
+        return f"\\1a&HFF&\\3c{colour}\\3a{alpha}\\bord{stroke:g}\\shad0{blur}"
+    return f"\\1c{colour}\\1a{alpha}\\bord0\\shad0{blur}"
 
 
 def _rounded_box(width: int, height: int, radius: int) -> str:
