@@ -283,7 +283,8 @@ async def test_logos_and_media_are_added_from_files_and_media_in_use_is_kept(mcp
     assets = await call(mcp, "list_assets")
     assert [m["id"] for m in assets["media"]] == [item["id"]]
     assert [l["id"] for l in assets["logos"]] == [added["id"]]
-    assert assets["fonts"][0]["id"] == "montserrat-extrabold" and assets["fonts"][0]["weight"] == 800
+    faces = {face["id"]: face for face in assets["fonts"]}
+    assert faces["montserrat-extrabold"]["weight"] == 800 and faces["montserrat-extrabold"]["typographic_family"] == "Montserrat"
     assert "PNG, JPEG or WebP" in await fails(mcp, "add_asset", kind="logo", path=str(text))
     assert await fails(mcp, "add_asset", kind="media", path=str(text))
 
