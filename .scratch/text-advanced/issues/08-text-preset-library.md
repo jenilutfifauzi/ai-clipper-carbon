@@ -68,6 +68,7 @@
 - **The owner's Preset's sample is its name,** set on save and on rename.
 - **Shelves:** built-in categories appear in the order of their first Preset's `order`.
 - **`save_preset` with kind "text"** replaces the style as a whole when it is given (as a Style Preset's save does), rather than merging it field by field. Without a style, it renames only. Its `preset` is typed `PresetBody | TextPresetGiven`, where `TextPresetGiven` is a name and a free `style` object, validated by the API. This keeps the Text Style schema out of a second tool. The budget still grew: `TOOLS_BUDGET_BYTES` went from 67,500 to 68,500 (about 67.8 KB now).
-- I didn't refuse wrap_width or fixed_height in a Preset's style. `TextLayer._check_drawn` refuses them on a layer until ticket 03 lands.
+- A Preset's style may have any wrap_width and fixed_height. Ticket 03, merged in here, draws them.
+- **Merged with main** after ticket 03. The only conflict was in the MCP instructions, and both paragraphs are kept.
 
 **Left:** nothing for this ticket. Ticket 09 adds its 27 files to `backend/assets/text-presets/` and may want shelf tiles to show a shadow. The tiles already draw it scaled, as a CSS `text-shadow`.
