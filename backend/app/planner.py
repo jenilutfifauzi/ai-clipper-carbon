@@ -49,11 +49,14 @@ The Watermark (text, or one of the Logos) shows for the whole Clip. At one of it
 sits WATERMARK_MARGIN inside SAFE_AREA's corners, edges or middle; at the Custom position it is
 centred where the owner dragged it, kept inside the frame.
 
-Text Layers (the Advanced Edit's free text) are centred where the owner put them, kept inside the
-frame, each in its own look; one wider than the frame less TEXT_MARGIN either side is set smaller.
-They are drawn over the captions and under the hook, in their order, each as a picture
-(docs/adr/0010): its layout (`TextLayout`) holds its box and room round it for its ink, its lines
-placed from its corner, so that moving it keeps the same picture, named by a hash of what it shows.
+Text Layers (the Advanced Edit's free text) are centred where the owner put them, as Overlays are
+(their pictures may go past the frame's edges), each in its own look. Their words are never set
+smaller: they break into lines at their wrap width, or the frame less TEXT_MARGIN either side
+(app/line_breaks.py), and their box grows to hold them, at least their wrap width wide and their
+fixed height tall. They are drawn over the captions
+and under the hook, in their order, each as a picture (docs/adr/0010): its layout (`TextLayout`)
+holds its box and room round it for its ink, its lines placed from its corner, so that moving it
+keeps the same picture, named by a hash of what it shows.
 Each line is split into runs by Face (`text_runs`): a character its Face hasn't got is set in the
 bundled CJK Face (FALLBACK_FONT) when that has it, and measured with it, or else left out. The line
 pitch stays its own Face's.
@@ -124,6 +127,7 @@ from app.candidates import (
 from app.config import CameraTuning
 from app.fonts import DEFAULT_FONT, FALLBACK_FONT, on_change, registry
 from app.keyframes import value_at
+from app.line_breaks import broken_lines
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
 from app.styles import (
@@ -669,10 +673,11 @@ TEXT_PICTURE_FORMAT = "v1-libass-matte"
 
 @dataclass(frozen=True)
 class TextEvent:
-    """A Text Layer as drawn: its `lines` set at font `size` (its style's, or smaller for one too
-    wide), on screen from `start` to `end` (seconds into the Clip). `area` holds it, padded when it
-    has a plate: a Block plate is `box` (the area), Strips are its layout's. Its plate's corners are
-    `radius` pixels round. Each line is placed by its anchor: the middle of its text and its baseline.
+    """A Text Layer as drawn: its `lines` (broken at its wrap width) set at font `size` (its
+    style's), on screen from `start` to `end` (seconds into the Clip). `area` is its box, padded when
+    it has a plate: a Block plate is `box` (the area), Strips are its layout's. Its plate's corners
+    are `radius` pixels round. Each line is placed by its anchor: the middle of its text and its
+    baseline.
 
     It is drawn as the picture of its `layout` (docs/adr/0010), the file `image`, placed as `picture`
     says with the Overlay's maths: its box and the room round it for its ink, centred about the
@@ -1456,40 +1461,22 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
 
 
 def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
-    """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its lines
-    (split at newlines, without emoji, split into runs by Face with what no Face has left out, blank
-    ones at either end left out) centred on its Transform's centre (on the frame, its picture maybe
-    past the edges, as an Overlay's), set smaller when the widest, padded and with its tracking, is
-    wider than the frame less TEXT_MARGIN either side (its tracking staying as wide). None when it is
-    blank or would start at or after the Clip's end."""
-    style = layer.style
-    runs = [text_runs(without_emoji(line), style.font) for line in layer.text.split("\n")]
-    while runs and not runs[0]:
-        runs.pop(0)
-    while runs and not runs[-1]:
-        runs.pop()
+    """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its words
+    (without emoji, and what no Face has left out, blank lines at either end left out) broken into
+    lines at its wrap width (`text_lines`), each split into runs by Face (`text_runs`), and set in its
+    box (`text_box`), centred on its Transform's centre (on the frame, its picture maybe past the
+    edges, as an Overlay's). None when it is blank or would start at or after the Clip's end."""
     start = round(layer.start, 3)
-    if not runs or start >= duration:
+    if start >= duration:
         return None
-    lines = ["".join(run.text for run in line) for line in runs]
+    style = layer.style
+    lines = text_lines(layer.text, style)
+    if not lines:
+        return None
+    runs = [text_runs(line, style.font) for line in lines]
     metrics = font_metrics(style.font)
-    plated = style.plate.shape is not HookShape.NONE
-    # Its width, padding and corners grow with the size (the plate's are given at the style's), so a
-    # size that fits scales them alike.
-    pad = (style.plate.padding_x / style.size, style.plate.padding_y / style.size) if plated else (0.0, 0.0)
-    size = float(style.size)
-    room = OUTPUT_WIDTH - 2 * TEXT_MARGIN
-    # The largest size each line fits at, its tracking as wide at any size.
-    fitting = min(
-        (room - style.tracking * max(len(text) - 1, 0)) / (runs_width(line, 1) + 2 * pad[0]) for line, text in zip(runs, lines)
-    )
-    if fitting < size:
-        size = max(math.floor(fitting * 10) / 10, MIN_SIZE)
-    pad_x, pad_y = pad[0] * size, pad[1] * size
-    widths = [runs_width(line, size, style.tracking) for line in runs]
-    width = math.ceil(max(widths) + 2 * pad_x)
-    letters = (metrics.cap_height + metrics.descent) / metrics.units * size + (len(lines) - 1) * style.line_height * size
-    height = math.ceil(letters + 2 * pad_y)
+    widths = [runs_width(line, style.size, style.tracking) for line in runs]
+    width, height, (pad_x, top) = text_box(style, widths)
     x, y = round(layer.transform.x - width / 2), round(layer.transform.y - height / 2)
     area = Box(x, y, width, height)
 
@@ -1501,20 +1488,59 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
         return x + width / 2
 
     anchors = [
-        (middle(line), y + pad_y + (metrics.cap_height / metrics.units + i * style.line_height) * size)
+        (middle(line), y + top + (metrics.cap_height / metrics.units + i * style.line_height) * style.size)
         for i, line in enumerate(widths)
     ]
     end = round(min(start + layer.secs, duration), 3)
-    plates = _plates(style, area, lines, widths, anchors, size)
-    radius = min(round(style.plate.radius / style.size * size), min(box.height for box in plates) // 2) if plates else 0
-    placed = [placed_runs(line, x - width / 2, size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
-    layout, origin = _text_layout(layer, lines, placed, size, area, anchors, plates, radius)
+    plates = _plates(style, area, lines, widths, anchors, style.size)
+    radius = min(round(style.plate.radius), min(box.height for box in plates) // 2) if plates else 0
+    placed = [placed_runs(line, x - width / 2, style.size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
+    layout, origin = _text_layout(layer, lines, placed, style.size, area, anchors, plates, radius)
     # Keyed, it moves as an Overlay does, its whole picture scaled from its size at scale 1.
     picture = with_motion(_text_picture(layout, origin, layer.transform), layer.transform, layer.keys, start, (layout.width, layout.height))
     return TextEvent(
-        layer, lines, start, end, area, size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
+        layer, lines, start, end, area, style.size, anchors, layout, layout.name, picture, _turned_box(area, picture.centre, layer.transform),
         area if style.plate.shape is HookShape.BLOCK else None, radius, layout.look,
     )
+
+
+def text_lines(text: str, style: TextStyle) -> list[str]:
+    """A Text Layer's `text` as the lines it is set in, in `style`: without emoji and what no Face
+    has (`text_runs`), blank lines at either end left out, broken at its newlines and between its
+    words where a line, measured run by run in its Faces, would be wider than its wrap width less its
+    plate's padding either side (`text_room`). Never set smaller."""
+    paragraphs = ["".join(run.text for run in text_runs(without_emoji(line), style.font)) for line in text.split("\n")]
+    while paragraphs and not paragraphs[0]:
+        paragraphs.pop(0)
+    while paragraphs and not paragraphs[-1]:
+        paragraphs.pop()
+    if not paragraphs:
+        return []
+    return broken_lines(
+        "\n".join(paragraphs), text_room(style), lambda line: runs_width(text_runs(line, style.font), style.size, style.tracking)
+    )
+
+
+def text_room(style: TextStyle) -> float:
+    """How wide a Text Layer's lines in `style` may be: its wrap width, or the frame less TEXT_MARGIN
+    either side when it has none, less its plate's padding either side."""
+    pad_x = style.plate.padding_x if style.plate.shape is not HookShape.NONE else 0.0
+    return (style.wrap_width or OUTPUT_WIDTH - 2 * TEXT_MARGIN) - 2 * pad_x
+
+
+def text_box(style: TextStyle, widths: list[float]) -> tuple[int, int, tuple[float, float]]:
+    """The box of a Text Layer's lines `widths` wide in `style`, in whole pixels: as wide as its
+    widest line and as tall as its lines (capitals to descenders, `line_height` apart), plus its
+    plate's padding either side; and at least its wrap width wide and its fixed height tall,
+    its padding then inside them, its lines centred down it. With where its lines start inside it:
+    how far in from either side they are aligned, and how far down the first's capitals are."""
+    metrics = font_metrics(style.font)
+    plated = style.plate.shape is not HookShape.NONE
+    pad_x, pad_y = (style.plate.padding_x, style.plate.padding_y) if plated else (0.0, 0.0)
+    letters = (metrics.cap_height + metrics.descent) / metrics.units * style.size + (len(widths) - 1) * style.line_height * style.size
+    width = math.ceil(max(max(widths) + 2 * pad_x, style.wrap_width))
+    height = math.ceil(max(letters + 2 * pad_y, style.fixed_height))
+    return width, height, (pad_x, pad_y + max(style.fixed_height - letters - 2 * pad_y, 0) / 2)
 
 
 def _plates(

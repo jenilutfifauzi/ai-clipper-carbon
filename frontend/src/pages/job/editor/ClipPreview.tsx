@@ -35,6 +35,7 @@ import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
+import type { BoxEdge } from "./textBox";
 
 // The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
 // how far a sliding hook moves; the highlight box's padding and corners, in sizes of the line's font;
@@ -380,6 +381,7 @@ function stagePictures(
       transform: texts!.transformOf(event.layer.id, time) ?? event.layer.transform,
       grips: "corners-rotate",
       onTransform: (next, group) => texts!.onTransform(event.layer.id, next, group, time),
+      onBox: texts!.onBox && ((edge, length, group) => texts!.onBox!(event.layer.id, edge, length, group)),
       onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
     });
   }
@@ -550,6 +552,8 @@ export interface StageControls {
   texts?: {
     transformOf: (id: string, time: number) => Transform | undefined;
     onTransform: (id: string, transform: Transform, group: string, time: number) => void;
+    // Its box's wrap width or fixed height set by the box Grip on `edge` (`length`, its own pixels).
+    onBox?: (id: string, edge: BoxEdge, length: number, group: string) => void;
   };
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];

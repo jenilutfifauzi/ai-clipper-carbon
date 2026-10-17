@@ -30,6 +30,7 @@ import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
 import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
+import { boxStyle } from "../editor/textBox";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
@@ -731,6 +732,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const old = heldTransform(layer.transform, layer.keys, layer, time);
           if (placedTogether("text", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else applyKeyed(writeItemTransform(scene, { kind: "text", id }, transform, time, old), group);
+        },
+        // Its box Grips: its wrap width or fixed height, its words rewrapped by the next plan.
+        onBox: (id, edge, length, group) => {
+          const layer = edits.text_layers.find((other) => other.id === id);
+          if (layer) updateText({ ...layer, style: boxStyle(layer.style, edge, length) }, group);
         },
       };
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.

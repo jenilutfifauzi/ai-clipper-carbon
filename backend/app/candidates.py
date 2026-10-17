@@ -150,9 +150,10 @@ class Plate:
 class TextStyle:
     """How a Text Layer's words look. Lengths in output pixels."""
 
-    # Its Face, at libass's size.
+    # Its Face, at libass's size (a fraction where a Text Layer saved before Text Styles was set
+    # smaller to fit the frame).
     font: FontId = DEFAULT_FONT
-    size: Annotated[int, Field(ge=16, le=320)] = 80
+    size: Annotated[FiniteFloat, Field(ge=16, le=320)] = 80
     colour: Colour = "#FFFFFF"
     # None at 0.
     stroke_width: Annotated[int, Field(ge=0, le=20)] = 0
@@ -162,11 +163,12 @@ class TextStyle:
     plate: Plate = Plate()
     # Its lines' baselines this many sizes apart.
     line_height: Annotated[FiniteFloat, Field(ge=0.5, le=3)] = 1.1
-    # Added after each character but a line's last (pulled in when negative). The wrap width (0: the
-    # frame less TEXT_MARGIN either side) and the fixed height (0: the words' own height) stay 0 until
-    # a Text Layer's picture (docs/adr/0010-text-layers-are-rasterised-pictures.md) draws them.
+    # Added after each character but a line's last (pulled in when negative).
     tracking: Annotated[FiniteFloat, Field(ge=-50, le=200)] = 0.0
     align: TextAlign = TextAlign.CENTER
+    # Its box's least size, plate and padding and all: its words break into lines no wider than the
+    # wrap width less the padding (0: the frame less TEXT_MARGIN either side, the box as wide as its
+    # words), and are centred down a box at least the fixed height tall (0: the words' own height).
     wrap_width: Annotated[FiniteFloat, Field(ge=0, le=4096)] = 0.0
     fixed_height: Annotated[FiniteFloat, Field(ge=0, le=4096)] = 0.0
 
@@ -180,8 +182,7 @@ class TextLayer:
 
     # In Timeline time, so that trimming the Clip leaves it where it was in it. It is drawn as a
     # picture (docs/adr/0010), scaled, turned and faded by its Transform as an Overlay is, its centre
-    # on the frame and the picture maybe past its edges. Its style has no wrap width nor fixed height
-    # yet (_check_drawn). `id` names it in the editor.
+    # on the frame and the picture maybe past its edges. `id` names it in the editor.
 
     id: ItemId
     text: Annotated[str, StringConstraints(max_length=TEXT_LAYER_MAX_CHARS)]
@@ -197,7 +198,6 @@ class TextLayer:
 
     def __post_init__(self) -> None:
         _check_text_transform(self)
-        _check_drawn(self)
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Text Layer {self.id}", PICTURE_KEYS, self.secs))
 
 
@@ -210,25 +210,6 @@ def _check_text_transform(layer: TextLayer) -> None:
         )
     if transform.flip_h or transform.flip_v:
         raise ValueError(f"Text Layer {layer.id} can't be flipped: its transform's flip_h and flip_v stay false")
-
-
-def _check_drawn(layer: TextLayer) -> None:
-    """ValueError for what a Text Layer's style has that isn't drawn yet: its wrap width or fixed
-    height. Its picture (docs/adr/0010) will draw each."""
-    style = layer.style
-    undrawn = [
-        name
-        for name, given in (
-            ("style.wrap_width", style.wrap_width != 0),
-            ("style.fixed_height", style.fixed_height != 0),
-        )
-        if given
-    ]
-    if undrawn:
-        raise ValueError(
-            f"Text Layer {layer.id} can't have {_listed(tuple(undrawn))} yet: a Text Layer is drawn "
-            "with its lines broken at newlines only"
-        )
 
 
 class Ease(NamedTuple):
