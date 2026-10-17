@@ -464,7 +464,8 @@ class AudioEvent:
     `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
     `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
-    (`gain_at`). `id` is its item's."""
+    (`gain_at`). `id` is its item's. An Overlay's plays at its `speed` (docs/adr/0009), its pitch
+    following it with `pitch`: (end − start) × speed of its item."""
 
     media: str
     start: float
@@ -475,6 +476,8 @@ class AudioEvent:
     fade_out: float
     gain: list[Keyframe] = field(default_factory=list)
     id: str = ""
+    speed: float = 1.0
+    pitch: bool = False
 
 
 @dataclass(frozen=True)
@@ -565,7 +568,8 @@ class Picture:
 @dataclass(frozen=True)
 class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
-    into it) drawn as `picture` says, from `start` to `end` seconds into the Clip. `id` is the Overlay's."""
+    into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`) drawn
+    as `picture` says, from `start` to `end` seconds into the Clip. `id` is the Overlay's."""
 
     media: str
     picture: Picture
@@ -574,6 +578,8 @@ class OverlayEvent:
     offset: float
     image: bool
     id: str = ""
+    speed: float = 1.0
+    pitch: bool = False
 
 
 @dataclass(frozen=True)
@@ -1110,14 +1116,16 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
         gain = overlay.keys.get(KeyProperty.VOLUME, [])
         if event is None or event.image or (overlay.volume <= 0 and not gain) or not items[overlay.media].has_audio:
             continue
-        sounds.append(AudioEvent(overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id))
+        sounds.append(
+            AudioEvent(overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch)
+        )
     return sounds
 
 
 def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo]) -> OverlayEvent | None:
     """The Overlay as drawn: its item placed by its Transform (`picture_of`) with its corners, border
-    and shadow, cut where the Clip or its video ends. None when its item is gone or it would start at
-    or after either end."""
+    and shadow, cut where the Clip or its video ends (at its Speed). None when its item is gone or it
+    would start at or after either end."""
     item = items.get(overlay.media)
     start = round(overlay.start, 3)
     if item is None or not item.width or not item.height or start >= duration:
@@ -1126,7 +1134,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     if item.duration is not None:
         if overlay.offset >= item.duration:
             return None
-        end = min(end, start + item.duration - overlay.offset)
+        end = min(end, start + (item.duration - overlay.offset) / overlay.speed)
     end = round(min(end, duration), 3)
     offset = round(overlay.offset, 3) if item.duration is not None else 0.0
     picture = with_motion(picture_of(item.width, item.height, overlay.transform, overlay.crop), overlay.transform, overlay.keys, start)
@@ -1134,7 +1142,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
-    return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id)
+    return OverlayEvent(overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch)
 
 
 def with_motion(picture: Picture, transform: Transform, keys: Keys, start: float) -> Picture:

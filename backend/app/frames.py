@@ -312,7 +312,9 @@ class VideoDecode:
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
             "-ss", f"{self.shown.start:.3f}", "-t", f"{_HELD_READ_SECS if still else self.shown.span:.3f}", "-i", str(self.video),
             "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(1 if still else len(self.numbers)),
-            "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
+            # Its frames as the steps time them: a frame rate kept by the muxer would fill the time
+            # before the first (from 0, when the video has sound) with copies of it.
+            "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
         ]
         frames = [np.zeros((height, width, 4), np.uint8) for _ in range(2)]
         with tempfile.TemporaryFile() as errors:

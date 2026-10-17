@@ -1,13 +1,13 @@
 import { useEffect, useRef } from "react";
 import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type RenderPlan } from "../../../api";
-import { follow } from "./follow";
+import { eventSpan, follow } from "./follow";
 import { PicturePanel } from "./PicturePanel";
 import { useShown, type Playback } from "./playback";
 
 /**
  * The plan's Overlays while they show, over the Source's (and videos') pictures and under the
  * captions, each drawn as its Picture: an image, or a video's small copy playing in step with the
- * playback (muted: its sound, when turned up, plays with the music). The `selected` ones (picked in
+ * playback at its Speed (muted: its sound, when turned up, plays with the music). The `selected` ones (picked in
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
  * outside their time too. A keyed one moves with the playback (PicturePanel).
  */
@@ -41,14 +41,14 @@ function OverlayView({
   const shown = useShown(playback, (time) => time >= event.start && time < event.end);
 
   // By its times, not the event: one is made afresh while it is held on the stage.
-  const { start, end, offset } = event;
+  const { start, end, offset, speed } = event;
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    const sync = () => void follow(element, playback, { start, end, from: offset });
+    const sync = () => void follow(element, playback, eventSpan({ start, end, offset, speed }));
     sync();
     return playback.subscribe(sync);
-  }, [playback, start, end, offset]);
+  }, [playback, start, end, offset, speed]);
 
   return (
     <PicturePanel

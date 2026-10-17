@@ -434,6 +434,10 @@ export interface AudioEvent {
   fade_out: number;
   gain: Keyframe[];
   id: string;
+  // An Overlay's sound plays (end − start) × speed of its item, its pitch following the Speed with
+  // `pitch` (docs/adr/0009). A plan made by hand may leave them out, at 1 and false.
+  speed?: number;
+  pitch?: boolean;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -524,6 +528,9 @@ export interface Overlay {
   transform: Transform;
   crop: Crop;
   volume: number;
+  // A video's: it shows `secs` × speed of it from `offset` (docs/adr/0009), its sound's pitch following the Speed with `pitch`.
+  speed?: number;
+  pitch?: boolean;
   radius: number;
   border: Border | null;
   shadow: Shadow | null;
@@ -564,6 +571,9 @@ export interface OverlayEvent {
   end: number;
   offset: number;
   image: boolean;
+  // A video's Speed: it shows (end − start) × speed of it from `offset` (docs/adr/0009).
+  speed?: number;
+  pitch?: boolean;
 }
 
 // How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
