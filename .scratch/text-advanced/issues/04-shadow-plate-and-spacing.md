@@ -65,6 +65,8 @@
 - `tests/test_mcp.py`: merging `style.shadow.angle` keeps the shadow's other fields and the plate. Strips, tracking and line height merge, and a bad blur or opacity is refused.
 - Frontend: `advanced/textStyleGroups.test.tsx` covers turning the shadow on and off, each group's fields and their undo groups, and Mixed with several layers.
 
+**Merged with main** after tickets 10 (CJK runs), 05 (transform on stage) and 07 (Face picker and bundled families). The full backend suite gave 718 passed and 6 failed. 5 of the failures came from Faces missing in the copied fonts dir and passed once ticket 07's fonts were copied in. The other was a quota-timing test that passes alone. The frontend gave 677 passed.
+
 **Left / for the parallel tickets:**
 - **Wrapping (ticket 03):** there is none on main yet, so "the wrapped lines account for it" can't be tested here. Ticket 03's line breaking should measure with `metrics.width(line, size, style.tracking)`. It should keep `_plates` (Strips follow whatever lines it makes) and the shadow's reach in `_text_layout`'s room.
 - **Ticket 14** should reuse `DropShadow`, `renderer._shadow_tags` and `LIBASS_BLUR_SIGMA` for the hook and captions. The Caption Style's `shadow: int` (a `\shad` distance) maps to distance = shadow × √2, angle 45, blur 0, opacity 1.
