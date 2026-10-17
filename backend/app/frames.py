@@ -270,6 +270,10 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
     return cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGBA)
 
 
+# How much of its video a Freeze frame reads, of which it shows the first frame: a frame at any rate.
+_HELD_READ_SECS = 0.5
+
+
 class VideoDecode:
     """The frames of a keyed video Overlay's `picture`, from `video` (by `ffmpeg`), one for each of
     the Clip's frames at `fps` (`numbers`) while the Overlay shows, from `start` to `end` seconds
@@ -277,7 +281,8 @@ class VideoDecode:
     larger than it is drawn at its largest over its span (`size`), RGBA. Each is the video's last
     frame at or before the Clip's frame's time, the video's first frame from `shown`'s start at the
     Overlay's start, as the still chain lays a video Overlay over the frames (renderer.py's
-    `_overlay`). When the video ends early, its last frame is held."""
+    `_overlay`). When the video ends early, its last frame is held, and a held `shown` (a Freeze
+    frame's) is its first frame throughout."""
 
     def __init__(self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float) -> None:
         self.ffmpeg, self.video, self.picture = ffmpeg, video, picture
@@ -294,6 +299,7 @@ class VideoDecode:
         """Each of its frames in turn, in one of two reused arrays: the one after next overwrites it."""
         crop = self.picture.crop
         width, height = self.size
+        still = self.shown.hold is not None
         steps = [
             f"setpts=PTS-STARTPTS+{self.start:.3f}/TB",
             f"fps={self.fps:.6g}:start_time={self.numbers.start / self.fps:.6f}:round=up",
@@ -304,8 +310,8 @@ class VideoDecode:
         ]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
-            "-ss", f"{self.shown.start:.3f}", "-t", f"{self.shown.span:.3f}", "-i", str(self.video),
-            "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(len(self.numbers)),
+            "-ss", f"{self.shown.start:.3f}", "-t", f"{_HELD_READ_SECS if still else self.shown.span:.3f}", "-i", str(self.video),
+            "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(1 if still else len(self.numbers)),
             "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
         ]
         frames = [np.zeros((height, width, 4), np.uint8) for _ in range(2)]

@@ -249,13 +249,16 @@ class SegmentInput:
     words: list[Word] | None = None
     word_edits: list[WordEdit] = field(default_factory=list)
     join: Join | None = None
-    # A video's: its Keyframes, in seconds from its start (docs/adr/0008), and its Segment's id.
+    # A video's Keyframes, in seconds from its start (docs/adr/0008); and its Segment's id.
     keys: Keys = field(default_factory=dict)
     id: str = ""
     # How it plays its range (docs/adr/0009): at its Speed, forwards or in Reverse, or held.
     speed: float = 1.0
     reverse: bool = False
     hold: float | None = None
+    # A held one's of the Source (a Freeze frame): the range of the Source its `scenes`, `faces` and
+    # `layout_overrides` are of (in seconds into it), which holds its frame. None: from its frame on.
+    analysed: tuple[float, float] | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -681,6 +684,8 @@ def plan_render(
                 cuts.append(at)
             if given.media is not None:
                 framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
+            elif given.hold is not None:
+                framed = [_still(given, length, source, layout, camera, framing)]
             else:
                 framed = _framed(length, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
                 showings += _manual_showings(framed, given.layout_overrides, length, given.time, len(plans))
@@ -736,6 +741,9 @@ def _segment_words(
     words, edits = [], []
     for i, (given, segment) in enumerate(zip(main_track, segments)):
         low, high = edges[i], edges[i + 1]
+        if given.hold is not None:
+            # A Freeze frame is silent: nothing to caption.
+            continue
         time = given.time
         for word in given.words or []:
             on, off = time.offset_of(word.start) + segment.start, time.offset_of(word.end) + segment.start
@@ -787,6 +795,25 @@ def _framed(
             panels = _blur(a, source)
         plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source)))
     return plans
+
+
+def _still(given: SegmentInput, length: float, source: SourceMetadata, layout: Layout, camera: CameraTuning, framing: Framing | None) -> ScenePlan:
+    """The one Scene of a held Segment of the Source (a Freeze frame), `length` long: of the Scenes of
+    its analysed range, framed as `_framed` frames them, the one holding its frame, as it is at that
+    frame and held there: its Layout (an override's, or `layout`), each panel's crop where the camera
+    is then. A Manual one is its Framing, unkeyed (a Freeze frame has no Keyframes)."""
+    low, high = given.analysed or (given.start, given.start + length)
+    at = round(given.start - low, 3)
+    framed = _framed(round(high - low, 3), source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
+    scene = next((scene for scene in framed if scene.start <= at < scene.end), framed[-1])
+
+    def held(panel: Panel) -> Panel:
+        point = next((point for point in reversed(panel.path) if point.at <= at + 1e-6), panel.path[0])
+        return replace(panel, path=[replace(point, at=0.0)])
+
+    panels = [held(panel) for panel in scene.panels]
+    shown = _first_framing(scene.layout, panels, source) if scene.layout is SceneLayout.TRACK else scene.framing
+    return ScenePlan(0.0, length, scene.layout, panels, scene.picture, scene.colour, shown)
 
 
 def _held(overrides: list[LayoutOverride], start: float, end: float, duration: float) -> LayoutOverride | None:

@@ -10,7 +10,8 @@ const PARKED_SECS = 0.01;
  * Keeps `element` (a song, a video's Segment, an Overlay) in step with `playback` while the Clip's
  * time shown (the skimmed time while skimming) is in its span, from `start` to `end`, where it plays
  * its file from `from` seconds into it, as a Segment as played does (segmentTime.ts): moved back
- * when it drifts, playing and pausing with the playback, at its rate; paused outside its span, and
+ * when it drifts, playing and pausing with the playback, at its rate (a Freeze frame's paused at its
+ * frame throughout); paused outside its span, and
  * with `park`, waiting where it starts so that its first frame is ready when its turn comes.
  * Returns whether the time is in its span.
  */
@@ -31,7 +32,9 @@ export function follow(
   }
   const want = playedSourceAt(played, time);
   if (Math.abs(element.currentTime - want) > MAX_DRIFT_SECS) element.currentTime = want;
-  if (playback.playing && element.paused) void element.play().catch(() => {});
-  if (!playback.playing && !element.paused) element.pause();
+  // A Freeze frame's stays paused at its frame.
+  const plays = playback.playing && span.hold == null;
+  if (plays && element.paused) void element.play().catch(() => {});
+  if (!plays && !element.paused) element.pause();
   return true;
 }

@@ -16,7 +16,7 @@ from app.jobs import Job
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.planner import RenderPlan, match_edits
-from app.rendering import Analysis, candidate_plan, needed_analysis, saved_analysis, saved_words, transcript_words
+from app.rendering import Analysis, analysed_range, candidate_plan, needed_analysis, saved_analysis, saved_words, transcript_words
 from app.segment_time import segment_time
 from app.styles import PresetStore
 from app.transcript import Transcript, Word
@@ -68,9 +68,10 @@ def preview_plan(
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
-    # A video's Segment has neither Words nor analysis.
+    # A video's Segment has neither Words nor analysis, and a Freeze frame no Words.
     saved = [
-        [] if segment.media else saved_words(job_dir, segment.start, segment.end, job.options.language, settings.whisper_model)
+        [] if segment.media or segment.hold is not None
+        else saved_words(job_dir, segment.start, segment.end, job.options.language, settings.whisper_model)
         for segment in segments
     ]
     words = [
@@ -81,7 +82,10 @@ def preview_plan(
     needed = [needed_analysis(candidate, segment, source) for segment in segments]
     analyses = [
         None if wanted is Analysis.NONE
-        else saved_analysis(job_dir, segment.start, segment.end, settings.analysis, BLAZE_FACE_MODEL.name, wanted is Analysis.FACES)
+        else saved_analysis(
+            job_dir, *analysed_range(candidate, segment, source.duration), settings.analysis, BLAZE_FACE_MODEL.name,
+            wanted is Analysis.FACES,
+        )
         for segment, wanted in zip(segments, needed)
     ]
     plan = candidate_plan(

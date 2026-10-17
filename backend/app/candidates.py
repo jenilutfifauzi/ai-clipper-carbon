@@ -454,7 +454,8 @@ class Segment:
     to `end` on its timeline, snapped to Words as a Clip's edges are; or, with `media`, a video from
     the Media Library from `start` to `end` seconds into it, placed by its `framing` (which only it
     has: the Source is framed by its Layouts), its own sound at `volume`. A Clip's Segments play in
-    order, back to back. `id` names it in the editor. A video's Segment may have `keys` (docs/adr/0008)."""
+    order, back to back. `id` names it in the editor. A video's Segment may have `keys` (docs/adr/0008).
+    With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent."""
 
     id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
@@ -466,12 +467,28 @@ class Segment:
     # over its length, each `at` in seconds from its start (where it starts on the Timeline, which
     # is `start` seconds into its video). A Segment of the Source has none: its Layouts frame it.
     keys: Keys = field(default_factory=dict)
+    # A Freeze frame's (docs/adr/0009): how long it holds the frame at `start`, silent; `end` is `start`.
+    hold: TimelineSecs | None = None
 
     def __post_init__(self) -> None:
         if self.media is None and any(self.keys.values()):
             raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
+        if self.hold is not None:
+            _check_held(self)
         length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
+
+
+def _check_held(segment: Segment) -> None:
+    """ValueError unless a Freeze frame's other fields are a held frame's: its `end` at its `start`,
+    at 1x, forwards, and no volume Keyframes (it is silent). Speed, pitch and Reverse are read with
+    their defaults, so that this holds before and after the Segment has them."""
+    if segment.end != segment.start:
+        raise ValueError(f"Segment {segment.id} holds the frame at its start for {segment.hold:g} s: its end must equal its start")
+    if getattr(segment, "speed", 1.0) != 1 or getattr(segment, "pitch", False) or getattr(segment, "reverse", False):
+        raise ValueError(f"Segment {segment.id} is a Freeze frame (hold): it has no Speed, pitch or Reverse")
+    if KeyProperty.VOLUME in segment.keys:
+        raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no volume Keyframes")
 
 
 class TransitionKind(StrEnum):

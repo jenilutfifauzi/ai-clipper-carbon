@@ -106,12 +106,13 @@ class Episode:
 
     def segments(self, segments: list[Segment]) -> list[Segment]:
         """The Segments with the ends of those that show the Source snapped to Words (as `bounds`
-        snaps a Clip's); InvalidEdit for none, for none of the Source, or for one that isn't a usable
-        Segment. A video's is placed by its Framing, and the episode's has none: its Layouts frame it.
+        snaps a Clip's), but a Freeze frame's, which holds one frame; InvalidEdit for none, for none
+        playing the Source, or for one that isn't a usable Segment. A video's is placed by its
+        Framing, and the episode's has none: its Layouts frame it.
         (A Media Library video's are checked against it by the API; their Timeline's length against
         the longest clip by `update`, once their Transitions are known.)"""
-        if not any(segment.media is None for segment in segments):
-            raise InvalidEdit("A clip needs at least one Segment of the episode")
+        if not any(segment.media is None and segment.hold is None for segment in segments):
+            raise InvalidEdit("A clip needs at least one Segment of the episode that plays (not a Freeze frame)")
         snapped = []
         for segment in segments:
             if (segment.media is None) is not (segment.framing is None):
@@ -120,7 +121,12 @@ class Episode:
                     if segment.framing is None
                     else "A Segment of the episode has no framing: its Layout frames it"
                 )
-            if segment.media is None:
+            if segment.media is None and segment.hold is not None:
+                # A Freeze frame holds one frame: no Words to snap to.
+                if segment.start > self.duration:
+                    raise InvalidEdit(f"Segment {segment.id} holds a frame at {segment.start:g} s, past the Source's end ({self.duration:g} s)")
+                snapped.append(segment)
+            elif segment.media is None:
                 start, end = self.bounds(segment.start, segment.end)
                 snapped.append(replace(segment, start=start, end=end))
             elif segment_time(segment).length < MIN_MEDIA_SECS:
@@ -156,8 +162,8 @@ def update(
         segments = episode.segments(change.segments)
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
-        # The hull of the Source they show; one Segment of it is a plain range.
-        shown = [segment for segment in segments if segment.media is None]
+        # The hull of the Source they play, snapped to Words; one Segment of it is a plain range.
+        shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         if len(segments) == 1:
             segments = []

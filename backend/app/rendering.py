@@ -55,6 +55,9 @@ logger = logging.getLogger(__name__)
 RENDERABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 # A Clip's captions are transcribed from this long before its start to this long after its end.
 CAPTION_MARGIN_SECS = 2.0
+# A Freeze frame of the Source that no other Segment of its Clip plays through is framed from the
+# analysis of this long either side of its frame (`analysed_range`).
+HELD_REACH_SECS = 1.0
 WORDS_DIR = "words"
 
 
@@ -105,13 +108,29 @@ class Analysis(StrEnum):
     FACES = "faces"
 
 
+def analysed_range(candidate: Candidate, segment: Segment, duration: float) -> tuple[float, float]:
+    """The range of the Source, `duration` long, whose analysis frames the Candidate's Source
+    `segment`: its own; for a Freeze frame, which holds one frame, the range of the first Segment of
+    the Candidate that plays through its frame (the head or tail it was split from, analysed for its
+    own sake), else HELD_REACH_SECS either side of it."""
+    if segment.hold is None:
+        return segment.start, segment.end
+    at = segment.start
+    playing = (s for s in candidate.main_track() if s.media is None and s.hold is None and s.start <= at <= s.end)
+    if (through := next(playing, None)) is not None:
+        return through.start, through.end
+    return max(0.0, at - HELD_REACH_SECS), min(duration, at + HELD_REACH_SECS)
+
+
 def needed_analysis(candidate: Candidate, segment: Segment, source: SourceMetadata) -> Analysis:
     """What the Candidate's `segment` of `source` needs found to be planned: the faces unless every
     Scene of it is Manual (the Candidate's Layout, and every Layout Override in its range), which needs
-    none (docs/adr/0007); a portrait Source, passed through, needs its Scenes only where one is Manual."""
+    none (docs/adr/0007); a portrait Source, passed through, needs its Scenes only where one is Manual.
+    A Freeze frame's range is its `analysed_range`."""
     if segment.media is not None:
         return Analysis.NONE
-    layouts = {candidate.layout, *(o.layout for o in candidate.layout_overrides if segment.start <= o.at <= segment.end)}
+    start, end = analysed_range(candidate, segment, source.duration)
+    layouts = {candidate.layout, *(o.layout for o in candidate.layout_overrides if start <= o.at <= end)}
     if not reframes(source):
         return Analysis.SCENES if Layout.MANUAL in layouts else Analysis.NONE
     return Analysis.SCENES if layouts == {Layout.MANUAL} else Analysis.FACES
@@ -159,7 +178,8 @@ def candidate_plan(
 ) -> RenderPlan:
     """The Render Plan of the Candidate as it is: each of its Segments (`candidate.main_track()`) captioned
     with its `words` (None: no captions) and framed by its `analyses` (None: unanalysed, or a Source
-    passed through), both in seconds into the Segment; its Watermark's Logo from `logos`, and the
+    passed through), both in seconds into the Segment (a Freeze frame's analysis into its
+    `analysed_range`); its Watermark's Logo from `logos`, and the
     songs of its music and the videos of its Segments from `media` (a video that isn't there is left
     out, and so is a Transition into or out of it). A video's Segment has no captions. Its Word Edits
     and Layout Overrides, on the Source's timeline, apply in every Segment that shows their time
@@ -211,13 +231,13 @@ def candidate_plan(
                 speed=played.speed, reverse=played.reverse, hold=played.hold,
             ))
             continue
+        # Its Scenes, faces and Layout Overrides are of its analysed range (a Freeze frame's is wider).
+        start, end = analysed_range(candidate, segment, source.duration)
         inputs.append(SegmentInput(
             segment.start, segment.end,
             scenes=analysis.scenes if analysis else None,
             faces=analysis.frames if analysis else None,
-            layout_overrides=[
-                replace(o, at=round(o.at - segment.start, 3)) for o in candidate.layout_overrides if segment.start <= o.at <= segment.end
-            ],
+            layout_overrides=[replace(o, at=round(o.at - start, 3)) for o in candidate.layout_overrides if start <= o.at <= end],
             words=None if words is None else words[i],
             volume=segment.volume,
             word_edits=[
@@ -226,7 +246,9 @@ def candidate_plan(
                 if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
             ],
             join=join,
+            id=segment.id,
             speed=played.speed, reverse=played.reverse, hold=played.hold,
+            analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
 
@@ -325,11 +347,13 @@ class Renders:
         words = not job.options.captions or all(
             saved_words(job_dir, segment.start, segment.end, job.options.language, self.settings.whisper_model) is not None
             for segment in segments
+            if segment.hold is None
         )
         tuning, model = self.analyzer.tuning, self.analyzer.model.name
         needed = [(segment, needed_analysis(candidate, segment, job.source.metadata)) for segment in segments]
+        duration = job.source.metadata.duration
         analysed = all(
-            saved_analysis(job_dir, segment.start, segment.end, tuning, model, wanted is Analysis.FACES) is not None
+            saved_analysis(job_dir, *analysed_range(candidate, segment, duration), tuning, model, wanted is Analysis.FACES) is not None
             for segment, wanted in needed
             if wanted is not Analysis.NONE
         )
@@ -525,11 +549,11 @@ class Renders:
         return self.store.change_clips(job.id, finish)
 
     def _all_words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[list[Word]]:
-        """Each of the Candidate's Segments' Words (`_words`; none for a video's), the progress shared
-        out by their lengths."""
+        """Each of the Candidate's Segments' Words (`_words`; none for a video's or a Freeze frame's),
+        the progress shared out by their lengths."""
         total, done, found = sum(segment_time(p).length for p in candidate.source_segments()), 0.0, []
         for segment in candidate.main_track():
-            if segment.media is not None:
+            if segment.media is not None or segment.hold is not None:
                 found.append([])
                 continue
             share = segment_time(segment).length / total
@@ -539,7 +563,8 @@ class Renders:
 
     def _all_analyses(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[ClipAnalysis | None]:
         """Each of the Candidate's Segments' Scenes and faces, or Scenes only, as it needs
-        (`needed_analysis`, `_analysis`; none for a video's), the progress shared out by their lengths."""
+        (`needed_analysis`, `_analysis` of its `analysed_range`; none for a video's), the progress
+        shared out by their lengths."""
         assert job.source is not None
         total, done, found = sum(segment_time(p).length for p in candidate.source_segments()), 0.0, []
         for segment in candidate.main_track():
@@ -551,8 +576,9 @@ class Renders:
             if wanted is Analysis.NONE:
                 found.append(None)
             else:
+                start, end = analysed_range(candidate, segment, job.source.metadata.duration)
                 found.append(self._analysis(
-                    job, candidate, segment.start, segment.end, lambda d, done=done, share=share: progress(done + share * d),
+                    job, candidate, start, end, lambda d, done=done, share=share: progress(done + share * d),
                     faces=wanted is Analysis.FACES,
                 ))
             done += share

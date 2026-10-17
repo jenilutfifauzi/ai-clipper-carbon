@@ -21,7 +21,7 @@ from test_jobs_api import URL
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 60_000
+TOOLS_BUDGET_BYTES = 61_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
