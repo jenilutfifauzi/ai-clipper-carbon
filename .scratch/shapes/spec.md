@@ -1,6 +1,6 @@
 # Shapes at parity with Concat: seven figures on the Stickers tab
 
-Status: ready-for-agent
+Status: done
 Created: 2026-10-18
 
 ## Problem Statement

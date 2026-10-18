@@ -54,7 +54,7 @@ Daftar gap Advanced Edit terhadap editor referensi `docs/referensi/concat`, urut
 | 6 | `keyframes` | Keyframe Pos/Scale/Rot/Opacity/Volume dengan easing, panel keyframe — **spec 2026-10-16** (`.scratch/keyframes/spec.md`, ADR 0008) | 5 | P2 |
 | 7 | `speed` | Speed konstan, preserve pitch, reverse, freeze frame | — | P2 |
 | 8 | `text-advanced` | Shadow, tracking, line height, rotasi, plate, impor font, preset teks — **spec 2026-10-17** (`.scratch/text-advanced/spec.md`, ADR 0010) | — | P2 |
-| 9 | `shapes` | Shape layers (rect, circle, triangle, line, arrow…) | 8 (opsional) | P3 |
+| 9 | `shapes` | Shape layers (rect, circle, triangle, line, arrow…) — **selesai 2026-10-18** | 8 (opsional) | P3 |
 | 10 | `transitions-expanded` | ±30 jenis xfade, apply ke semua join, seam handle, animasi masuk/keluar Overlay | — | P2 |
 | 11 | `color-adjust` | Panel Adjust, filter looks, impor LUT, adjustment layer | — | P2 |
 | 12 | `video-effects` | Rantai efek per clip (blur, grain, glitch, glow, vignette, chroma key…) | 11 | P3 |
