@@ -241,7 +241,8 @@ def candidate_plan(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else [], join=join, keys=segment.keys, id=segment.id,
-                speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch, muted=segment.muted,
+                speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
+                fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted,
             ))
             continue
         # Its Scenes, faces and Layout Overrides are of its analysed range (a Freeze frame's is wider).
@@ -261,7 +262,8 @@ def candidate_plan(
             ],
             join=join,
             id=segment.id,
-            speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch, muted=segment.muted,
+            speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
+            fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted,
             analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)

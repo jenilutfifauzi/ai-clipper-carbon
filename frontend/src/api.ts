@@ -767,7 +767,10 @@ export interface SegmentPlan extends Retiming {
   gain: Keyframe[];
   // Its Segment's id.
   id: string;
-  // Its sound switched silent (ADR 0016), keeping its volume and Keyframes.
+  // Its sound's linear fades from `start` and to `end` (a Transition's overlap included), fitted to it.
+  fade_in: number;
+  fade_out: number;
+  // Its sound switched silent (ADR 0016), keeping its volume, Keyframes and fades.
   muted?: boolean;
 }
 
@@ -873,6 +876,9 @@ export interface ClipSegment extends Retiming {
   framing?: Framing | null;
   volume?: number;
   keys?: Keys;
+  // Its sound's fades in and out, 0 to 10 s each (the plan fits them to its length).
+  fade_in?: number;
+  fade_out?: number;
   muted?: boolean;
 }
 

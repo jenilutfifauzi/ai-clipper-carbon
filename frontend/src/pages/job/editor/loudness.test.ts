@@ -3,32 +3,62 @@
 // drift; and the curve a keyed sound's gain node follows from the playhead.
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/gain_vectors.json";
-import type { AudioEvent, Ease } from "../../../api";
+import type { AudioEvent, Ease, SegmentPlan } from "../../../api";
 import { fadesWithin } from "../advanced/edits";
 import { EASE_IN, LINEAR, valueAt } from "./keyframes";
-import { CURVE_RATE, loudness, loudnessCurve, sourceSound } from "./loudness";
+import { CURVE_RATE, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
 import { playedFrom } from "./playback";
 
 describe("a sound", () => {
-  for (const { name, sound, at } of cases.sounds) {
+  for (const { name, sound, at, ...of } of cases.sounds) {
     test(`${name}: is as loud as the shared cases say`, () => {
-      // Its fades fitted to it as the planner fits a Music Clip's.
+      // Its fades fitted to it as the planner fits a Music Clip's and a Segment's.
       const fades = fadesWithin({ fade_in: sound.fade_in ?? 0, fade_out: sound.fade_out ?? 0 }, sound.end - sound.start);
-      const gain = (sound.keys ?? []).map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
-      const event: AudioEvent = {
-        id: "m",
-        media: "song",
-        start: sound.start,
-        end: sound.end,
-        offset: 0,
-        volume: sound.volume,
-        gain,
-        ...fades,
-        muted: sound.muted ?? false,
-      };
+      const keys: { at: number; value: number; ease?: number[] }[] = sound.keys ?? [];
+      const gain = keys.map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
+      const muted = sound.muted ?? false;
+      const event: Heard =
+        "item" in of && of.item === "segment"
+          ? segmentSound(segment({ start: sound.start, end: sound.end, volume: sound.volume, gain, ...fades, muted }), 1)
+          : { id: "m", media: "song", start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades, muted };
       for (const [time, expected] of at) expect(Math.abs(loudness(event, time) - expected), `at ${time}`).toBeLessThan(cases.tolerance);
     });
   }
+});
+
+// A Segment of a video as planned, with `fields`.
+const segment = (fields: Partial<SegmentPlan>): SegmentPlan => ({
+  start: 0,
+  end: 1,
+  source_start: 0,
+  source_end: 1,
+  media: "video",
+  volume: 1,
+  silent: false,
+  scenes: 1,
+  gain: [],
+  id: "v",
+  fade_in: 0,
+  fade_out: 0,
+  ...fields,
+});
+
+describe("a Segment's sound", () => {
+  test("is a Source Segment's under the Clip's own volume, a video's at its own", () => {
+    const source = segmentSound(segment({ media: null, start: 2, end: 6, volume: 0.5, fade_in: 1 }), 1.5);
+    expect(loudness(source, 2.5)).toBeCloseTo(0.375, 6);
+    expect(loudness(source, 4)).toBeCloseTo(0.75, 6);
+    expect(loudness(segmentSound(segment({ start: 2, end: 6, volume: 0.5 }), 1.5), 4)).toBeCloseTo(0.5, 6);
+  });
+
+  test("taken away by a Transition, falls with its crossfade, which multiplies its own fade out", () => {
+    // Faded out over its last second, which a Transition overlaps.
+    const faded = segment({ start: 0, end: 2, fade_out: 1 });
+    const taken = segmentSound(faded, 1, { start: 1, end: 2 });
+    for (const [time, expected] of [[0.5, 1], [1, 1], [1.25, 0.75 * 0.75], [1.5, 0.25], [2, 0]]) expect(loudness(taken, time)).toBeCloseTo(expected, 6);
+    // Unfaded, the crossfade alone.
+    expect(loudness(segmentSound({ ...faded, fade_out: 0 }, 1, { start: 1, end: 2 }), 1.5)).toBeCloseTo(0.5, 6);
+  });
 });
 
 describe("a keyed sound", () => {
@@ -76,20 +106,20 @@ describe("a Source Segment's sound", () => {
 
   test("follows its volume Keyframes from where it starts, times the Clip's own sound", () => {
     const segment = { id: "e", start: 10, end: 14, source_start: 100, volume: 0.8, gain: keys };
-    const sound = sourceSound(segment, 0.5);
+    const sound = segmentSound(segment, 0.5);
     for (const time of [10, 11, 11.5, 12, 13.9]) expect(loudness(sound, time)).toBeCloseTo(0.5 * valueAt(keys, time - 10, 0.8), 9);
     // Faded out by a Transition taking it away.
-    expect(loudness(sourceSound(segment, 0.5, { start: 13, end: 14 }), 13.5)).toBeCloseTo(0.5 * 0.25 * 0.5, 9);
+    expect(loudness(segmentSound(segment, 0.5, { start: 13, end: 14 }), 13.5)).toBeCloseTo(0.5 * 0.25 * 0.5, 9);
   });
 
   test("is keyed from the edits' Segments as played back to back, before a plan has them", () => {
     const [plain, keyed] = playedFrom([{ start: 0, end: 4 }, { start: 100, end: 104, volume: 0.8, keys: { volume: keys } }]);
     expect([plain.gain, keyed.gain]).toEqual([undefined, keys]);
-    expect(loudness(sourceSound(keyed, 0.5), 5.5)).toBeCloseTo(0.5 * valueAt(keys, 1.5, 0.8), 9);
+    expect(loudness(segmentSound(keyed, 0.5), 5.5)).toBeCloseTo(0.5 * valueAt(keys, 1.5, 0.8), 9);
   });
 
   test("unkeyed, is its volume times the Clip's own sound all along", () => {
-    const sound = sourceSound({ start: 0, end: 4, source_start: 0, volume: 0.5 }, 0.8);
+    const sound = segmentSound({ start: 0, end: 4, source_start: 0, volume: 0.5 }, 0.8);
     expect([loudness(sound, 0), loudness(sound, 3)]).toEqual([0.4, 0.4]);
   });
 });

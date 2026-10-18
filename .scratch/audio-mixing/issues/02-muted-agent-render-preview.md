@@ -38,7 +38,7 @@
 - MCP: `muted` passes through `edit_candidate` and `merge_candidate_items` as a model field. A short instruction says what Muted keeps. The dry run marks `muted` on `segments`, and `sounds` now lists Muted sounds as well as keyed ones (`keys` only when keyed).
 
 **Decided differently / left for later:**
-- **Tool budget.** The three `muted` fields took the tool list to 69 349 bytes, over the 69 000 budget. Rather than raise it, `_patch_model` now drops the field titles from the patch schemas of `merge_candidate_items` (each was its field's name again). The list is now 67 836 bytes, which leaves room for 04, 06, 07 and 10.
+- **Tool budget.** The three `muted` fields took the tool list to 69 349 bytes, over the 69 000 budget. `_patch_model` first dropped the field titles from the patch schemas. On merging 04, which strips every tool schema's titles in `build_mcp`, that was removed in favour of 04's single mechanism.
 - **No refusal of `muted`** on an image Overlay or a Freeze frame. Both are silent anyway, and the editor's M ignores them (03).
 - **The dry run's `sounds`** lists the keyed and the Muted ones, not every sound. The spec's full list (span, fades, ducked spans for every sound) belongs to 04 and 10.
 - **Tests:**
