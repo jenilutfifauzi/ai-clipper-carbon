@@ -24,7 +24,9 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
-TOOLS_BUDGET_BYTES = 69_000
+# Raised again for a Music Clip's speed, pitch and reverse (audio-mixing/07): their schemas in the edit
+# and merge tools, ~450 bytes after the Music Clip's own description was cut by ~180.
+TOOLS_BUDGET_BYTES = 69_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

@@ -512,12 +512,11 @@ class Shadow:
 
 @dataclass(frozen=True)
 class MusicClip:
-    """A song (or a video's sound) from the Media Library under the Clip: heard from `start` for `secs`,
-    in Timeline time, playing `secs` × speed of its file from `offset` seconds into it (docs/adr/0016,
-    as a video Overlay's sound), at `volume`, faded in and out over `fade_in` and `fade_out` seconds.
-    Its `keys` shape its volume over its length (docs/adr/0008): with volume Keyframes, they set it,
-    not `volume`, and the fades multiply them. Its read is kept within its file with the Media
-    Library at hand (app/api.py)."""
+    """A song (or a video's sound) from the Media Library under the Clip, heard from `start` for `secs`
+    in Timeline time: secs * speed of it from `offset` seconds in, at `volume` (its volume `keys` in
+    place of it), faded in and out (docs/adr/0008, 0016)."""
+    # Its read is kept within its file with the Media Library at hand (app/api.py), and its fades
+    # multiply its keys.
 
     id: ItemId
     media: MediaId
