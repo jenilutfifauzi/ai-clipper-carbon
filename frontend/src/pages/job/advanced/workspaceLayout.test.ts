@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   ASSET,
   BOTTOM,
+  bottomHeightCss,
   clampBottomH,
   clampSidebarAgainstPlayer,
   clampWidth,
   DEFAULT_LAYOUT,
   fitSidebars,
+  gridTemplateColumns,
   INSPECTOR,
   layout,
   migrateOnce,
@@ -77,6 +79,46 @@ describe("fitSidebars", () => {
   test("returns the mins when even the mins overflow a tiny container", () => {
     const fitted = fitSidebars(ASSET.max, INSPECTOR.max, 10, { assetHidden: false, inspectorHidden: false });
     expect(fitted).toEqual({ assetW: ASSET.min, inspectorW: INSPECTOR.min });
+  });
+});
+
+describe("gridTemplateColumns", () => {
+  test("both visible: asset | player | inspector", () => {
+    expect(gridTemplateColumns({ assetW: 17, inspectorW: 20, assetHidden: false, inspectorHidden: false })).toBe(
+      "17rem minmax(0,1fr) 20rem",
+    );
+  });
+
+  test("asset hidden drops its track", () => {
+    expect(gridTemplateColumns({ assetW: 17, inspectorW: 20, assetHidden: true, inspectorHidden: false })).toBe(
+      "minmax(0,1fr) 20rem",
+    );
+  });
+
+  test("inspector hidden drops its track", () => {
+    expect(gridTemplateColumns({ assetW: 17, inspectorW: 20, assetHidden: false, inspectorHidden: true })).toBe(
+      "17rem minmax(0,1fr)",
+    );
+  });
+
+  test("both hidden leaves only the player", () => {
+    expect(gridTemplateColumns({ assetW: 17, inspectorW: 20, assetHidden: true, inspectorHidden: true })).toBe(
+      "minmax(0,1fr)",
+    );
+  });
+
+  test("the default layout is a no-op: 17rem minmax(0,1fr) 20rem", () => {
+    expect(gridTemplateColumns(DEFAULT_LAYOUT)).toBe("17rem minmax(0,1fr) 20rem");
+  });
+});
+
+describe("bottomHeightCss", () => {
+  test("returns the stored height in dvh", () => {
+    expect(bottomHeightCss({ bottomH: 55 })).toBe("55dvh");
+  });
+
+  test("is 40dvh at the default", () => {
+    expect(bottomHeightCss(DEFAULT_LAYOUT)).toBe("40dvh");
   });
 });
 

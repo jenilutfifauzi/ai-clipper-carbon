@@ -70,6 +70,7 @@ import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { bottomPanelId, BottomTabs, useBottomTab } from "./BottomTabs";
+import { bottomHeightCss, gridTemplateColumns, layout } from "./workspaceLayout";
 import {
   ASSET_TABS,
   AssetTabs,
@@ -213,6 +214,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [touched, setTouched] = useState<KeyProperty | null>(null);
   // On a desktop: the Timeline or the Keyframes pane at the bottom, as the browser remembers.
   const [bottomTab, setBottomTab] = useBottomTab();
+  // The remembered desktop workspace: sidebar widths, bottom height and which panels are collapsed.
+  const ws = layout.use();
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
@@ -1102,23 +1105,28 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     return (
       <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
         {bar}
-        <div className="grid min-h-0 flex-1 grid-cols-[17rem_minmax(0,1fr)_20rem] gap-3 px-3">
-          <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
-            <AssetTabs value={assetTab} onChange={setAssetTab} />
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
-          </aside>
+        <div className="grid min-h-0 flex-1 gap-3 px-3" style={{ gridTemplateColumns: gridTemplateColumns(ws) }}>
+          {!ws.assetHidden && (
+            <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
+              <AssetTabs value={assetTab} onChange={setAssetTab} />
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
+            </aside>
+          )}
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
             {room}
             {notes}
           </section>
-          <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
-            {inspector}
-          </aside>
+          {!ws.inspectorHidden && (
+            <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
+              {inspector}
+            </aside>
+          )}
         </div>
         <section
           aria-label="Timeline and Keyframes"
-          // The Keyframes pane takes a little more room than the Timeline: a row per property, and the Curves.
-          className={cx("glass mx-3 flex flex-col overflow-hidden rounded-panel", bottomTab === "keyframes" ? "h-[44dvh] min-h-72" : "h-[36dvh] min-h-60")}
+          // One remembered height for every bottom tab (ADR 0024).
+          className="glass mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
+          style={{ height: bottomHeightCss(ws) }}
         >
           <BottomTabs value={bottomTab} onChange={setBottomTab} />
           {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}

@@ -84,6 +84,26 @@ export function fitSidebars(
 }
 
 /**
+ * The desktop grid's `grid-template-columns`, listing only the columns that render, in source order
+ * asset | player | inspector. The player's is always `minmax(0,1fr)`; a hidden sidebar drops its
+ * track. At the defaults this is `"17rem minmax(0,1fr) 20rem"`, so the shell is unchanged.
+ */
+export function gridTemplateColumns(
+  l: Pick<WorkspaceLayout, "assetW" | "inspectorW" | "assetHidden" | "inspectorHidden">,
+): string {
+  const cols: string[] = [];
+  if (!l.assetHidden) cols.push(`${l.assetW}rem`);
+  cols.push("minmax(0,1fr)");
+  if (!l.inspectorHidden) cols.push(`${l.inspectorW}rem`);
+  return cols.join(" ");
+}
+
+/** The bottom area's CSS height, one height for every tab (dvh). */
+export function bottomHeightCss(l: Pick<WorkspaceLayout, "bottomH">): string {
+  return `${l.bottomH}dvh`;
+}
+
+/**
  * Clamp a live drag of ONE sidebar: to its own [min, max], and to at most what leaves the player its
  * floor beside the other visible sidebar. The own min wins if the floor would demand less. Used by
  * the divider drag.
