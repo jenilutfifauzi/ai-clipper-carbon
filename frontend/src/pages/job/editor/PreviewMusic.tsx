@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
 import { follow, MAX_DRIFT_SECS } from "./follow";
 import { CURVE_RATE, loudness, loudnessCurve } from "./loudness";
+import { masterBus } from "./masterBus";
 import type { Playback } from "./playback";
 import { eventCopy, eventPlay, useRetimedCopies } from "./retimedCopy";
 
@@ -18,8 +19,8 @@ function audioContext(): AudioContext | null {
   return context;
 }
 
-// What each element of the page plays through, once it does: a media element can be routed through
-// Web Audio only once.
+// What each element of the page plays through, once it does, into the master bus: a media element can
+// be routed through Web Audio only once.
 const gains = new WeakMap<HTMLMediaElement, GainNode>();
 
 function gainOf(element: HTMLMediaElement): GainNode | null {
@@ -28,7 +29,7 @@ function gainOf(element: HTMLMediaElement): GainNode | null {
   const audio = audioContext();
   if (!audio) return null;
   const gain = audio.createGain();
-  audio.createMediaElementSource(element).connect(gain).connect(audio.destination);
+  audio.createMediaElementSource(element).connect(gain).connect(masterBus(audio).input);
   gains.set(element, gain);
   return gain;
 }
@@ -81,8 +82,8 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
  * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
  * live) is set to the plan's `source_volume`, times the Segment's own volume, or held at 0 while it is
- * Muted, as a Muted Music Clip or Overlay sound is (`loudness`). Nothing is routed
- * through Web Audio until the plan has music or another volume.
+ * Muted, as a Muted Music Clip or Overlay sound is (`loudness`). Every element is heard through Web
+ * Audio and its master bus (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
   plan,
@@ -113,7 +114,7 @@ export function PreviewMusic({
       // A skim's snippet is heard at the skimmed Segment's volume; a Muted one's not at all.
       const shown = playback.segments[playback.shownSegmentIndex];
       const volume = shown.muted ? 0 : sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
-      for (const { current: video } of masters) if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
+      for (const { current: video } of masters) if (video) setVolume(video, volume);
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
         if (element && follow(element, playback, plays.current[i].span)) {

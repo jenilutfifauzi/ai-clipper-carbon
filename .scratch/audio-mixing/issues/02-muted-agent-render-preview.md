@@ -43,5 +43,5 @@
 - **The dry run's `sounds`** lists the keyed and the Muted ones, not every sound. The spec's full list (span, fades, ducked spans for every sound) belongs to 04 and 10.
 - **Tests:**
   - `backend/tests/test_muted.py`: a stored Candidate read unmuted; the plan's Muted Segment, Music Clip and Overlay at gain 0 with their volume and Keyframes kept; the API keeping one Muted Segment; MCP setting, clearing and dry-running it; and a real render of three Source Segments with the middle one Muted, plus a keyed Muted song and a Muted video Overlay at volume 1. The Muted Segment's span is silent, neither tone is heard, and unmuted they all come back at their volume and Keyframes.
-  - The unkeyed command fixture (`test_keyframes.py`) is unchanged and passes.
-  - `loudness.test.ts` "a Muted sound"; `trackState.test.ts`.
+  - The unkeyed command fixture (`test_keyframes.py`) is unchanged and passes. `test_freeze_frame.py`'s whole stored Segment now has `muted: false`.
+  - A "Muted, keyed and faded" case in the shared `gain_vectors.json` (01), read by `test_gain.py` and `loudness.test.ts`, with a curve-of-silence check beside it; `trackState.test.ts`.
