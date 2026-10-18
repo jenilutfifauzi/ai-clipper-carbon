@@ -49,6 +49,9 @@ export function commandsOf(
     fps: number;
     // The preview put full screen, or back.
     setFullscreen: (on: boolean) => void;
+    // The desktop Workspace's Asset Panel or Inspector hidden or shown (A and P).
+    toggleAssets: () => void;
+    toggleInspector: () => void;
     // While the Pick is one item that can have Keyframes: a Keyframe added or removed at the
     // playhead on its active row (K), and where its Keyframe before or after `time` is ([ and ]).
     keyframes: { toggle: () => boolean | void; around: (time: number, direction: -1 | 1) => number | null } | null;
@@ -115,6 +118,8 @@ export function commandsOf(
     fullscreen: () => more.setFullscreen(true),
     "fullscreen-exit": () => more.setFullscreen(false),
     skim: () => toggleSkim(),
+    "toggle-assets": () => more.toggleAssets(),
+    "toggle-inspector": () => more.toggleInspector(),
     shortcuts: () => more.shortcuts(),
     "mark-in": () => more.markIn(),
     "mark-out": () => more.markOut(),
