@@ -30,7 +30,7 @@ import {
   type PickContext,
 } from "./actions";
 import { copy, cut, paste } from "./clipboard";
-import { fadesWithin, type AdvancedEdits } from "./edits";
+import type { AdvancedEdits } from "./edits";
 import { textStyle } from "./textStyle";
 import { bandPick, picked, prunedPick, stageIdsOf, stageItem, unlockedPick, type Pick } from "./pick";
 
@@ -522,12 +522,7 @@ describe("setting a Music Clip's fades", () => {
     expect(setFade(scene(before, null), "m", "fade_in", 5, 6)?.edits.music).toEqual([music("m", 0, 10, { fade_in: 3, fade_out: 3 })]);
   });
 
-  test("fades are heard as the planner hears them (its worked examples in backend/tests/test_music.py)", () => {
-    // Fitting: as they are. Twice as long as the Music Clip: halved. A 4 s Clip cut to 3 s: 3/4 each.
-    expect(fadesWithin({ fade_in: 3, fade_out: 0.5 }, 4)).toEqual({ fade_in: 3, fade_out: 0.5 });
-    expect(fadesWithin({ fade_in: 3, fade_out: 3 }, 2)).toEqual({ fade_in: 1, fade_out: 1 });
-    expect(fadesWithin({ fade_in: 3, fade_out: 1 }, 3)).toEqual({ fade_in: 2.25, fade_out: 0.75 });
-  });
+  // Fades are fitted as the planner fits them: the shared gain cases in editor/loudness.test.ts.
 
   test("a Music Clip that isn't there has no fades to set", () => {
     expect(setFade(scene(edits(), null), "gone", "fade_in", 2)).toBeNull();

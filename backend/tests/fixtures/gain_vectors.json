@@ -1,0 +1,64 @@
+{
+  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
+  "tolerance": 1e-6,
+  "sounds": [
+    {
+      "name": "a constant volume",
+      "sound": {"start": 3, "end": 7, "volume": 0.5},
+      "at": [[2.9, 0], [3, 0.5], [5, 0.5], [7, 0.5], [7.1, 0]]
+    },
+    {
+      "name": "a fade in and out",
+      "sound": {"start": 2, "end": 6, "volume": 0.8, "fade_in": 1, "fade_out": 2},
+      "at": [
+        [1.9, 0], [2, 0], [2.5, 0.4], [2.75, 0.6], [3, 0.8], [3.25, 0.8],
+        [3.75, 0.8], [4, 0.8], [5, 0.4], [5.5, 0.2], [6, 0], [6.1, 0]
+      ]
+    },
+    {
+      "name": "keyed, Linear then eased in-out",
+      "sound": {
+        "start": 2,
+        "end": 8,
+        "volume": 0.5,
+        "keys": [
+          {"at": 1, "value": 0.2},
+          {"at": 3, "value": 1.0, "ease": [0, 0, 1, 1]},
+          {"at": 5, "value": 0.2, "ease": [0.42, 0, 0.58, 1]}
+        ]
+      },
+      "at": [
+        [1.9, 0], [2, 0.2], [3, 0.2], [4, 0.6], [5, 1.0], [5.5, 0.8966704551624],
+        [6, 0.6], [6.5, 0.3033295448376], [7, 0.2], [8, 0.2], [8.1, 0]
+      ]
+    },
+    {
+      "name": "keyed and faded",
+      "sound": {
+        "start": 3,
+        "end": 7,
+        "volume": 0.5,
+        "fade_in": 0.5,
+        "fade_out": 1,
+        "keys": [
+          {"at": 1, "value": 1.0},
+          {"at": 2, "value": 0.25, "ease": [0.42, 0, 1, 1]}
+        ]
+      },
+      "at": [
+        [2.9, 0], [3, 0], [3.25, 0.5], [3.5, 1.0], [4, 1.0], [4.5, 0.76348239057025],
+        [5, 0.25], [5.5, 0.25], [6, 0.25], [6.5, 0.125], [7, 0], [7.1, 0]
+      ]
+    },
+    {
+      "name": "fades twice as long as the sound, halved",
+      "sound": {"start": 1, "end": 3, "volume": 1.0, "fade_in": 3, "fade_out": 3},
+      "at": [[0.9, 0], [1, 0], [1.5, 0.5], [2, 1.0], [2.5, 0.5], [3, 0], [3.1, 0]]
+    },
+    {
+      "name": "fades longer than the sound, shortened by the same share",
+      "sound": {"start": 7, "end": 10, "volume": 1.0, "fade_in": 3, "fade_out": 1},
+      "at": [[6.9, 0], [7, 0], [8.125, 0.5], [9.25, 1.0], [9.625, 0.5], [10, 0], [10.1, 0]]
+    }
+  ]
+}

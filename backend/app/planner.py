@@ -1377,8 +1377,9 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
     sound is (`overlay_time`: in Reverse, a cut at the Clip's end leaves out the start of its part,
     so its `offset` begins later); its fades, when together they are longer than what is left,
     both shortened by the same share to fit. This is the rule; the Timeline draws the fades by a copy
-    of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts), tested on the same worked
-    examples. One whose song is gone, or that would start at or after either end, isn't heard."""
+    of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts), tested on the same cases
+    (tests/fixtures/gain_vectors.json). One whose song is gone, or that would start at or after
+    either end, isn't heard."""
     events = []
     for clip in music:
         item = items.get(clip.media)
@@ -1401,7 +1402,8 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
 def gain_at(event: AudioEvent, time: float) -> float:
     """How loud `event` is heard `time` seconds into the Clip: its volume, or its Keyframes sampled
     there (app/keyframes.py), through its fades' linear ramps; silent outside it. The same rule as
-    the preview's (loudness in frontend/src/pages/job/editor/PreviewMusic.tsx)."""
+    the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are tested on the
+    cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
     into = time - event.start
     if into < 0 or time > event.end:
         return 0.0

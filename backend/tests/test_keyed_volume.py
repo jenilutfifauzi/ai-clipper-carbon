@@ -10,7 +10,7 @@ import pytest
 
 from app.candidates import EASE_IN, EASE_IN_OUT, Ease, Keyframe, MusicClip, Overlay
 from app.keyframes import linear_steps, value_at
-from app.planner import MediaInfo, audio_events, gain_at, overlay_events, overlay_sound
+from app.planner import MediaInfo, audio_events, overlay_events, overlay_sound
 from test_keyframes import clip_of, stills  # noqa: F401
 from test_media_library import make, upload
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -56,13 +56,7 @@ def test_a_music_clips_volume_keyframes_are_its_sound_events_gain_track_in_its_o
     assert (event.id, event.start, event.gain) == ("m", 3.0, DIP)
     [still] = audio_events([MusicClip("m", SONG, 3.0, 4.0, volume=0.5)], 10, SONGS)
     assert still.gain == []
-
-    # The track replaces the volume; its fades multiply it. In seconds into the Clip.
-    assert gain_at(event, 3.25) == pytest.approx(0.5)
-    assert gain_at(event, 4.0) == 1.0
-    assert gain_at(event, 4.5) == pytest.approx(value_at(DIP, 1.5, 0))
-    assert gain_at(event, 5.5) == 0.25 and gain_at(event, 6.5) == pytest.approx(0.125)
-    assert gain_at(still, 4.0) == 0.5 and gain_at(still, 2.0) == 0.0
+    # How loud the track is heard, through its fades: test_gain.py's shared cases ("keyed and faded").
 
 
 def test_an_overlay_videos_volume_keyframes_are_its_sounds_gain_track_and_not_its_motion():
