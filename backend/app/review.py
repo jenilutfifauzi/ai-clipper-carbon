@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.candidates import (
     Candidate,
     Framing,
+    Keys,
     Layout,
     LayoutOverride,
     MusicClip,
@@ -22,6 +23,7 @@ from app.candidates import (
     timeline_length,
 )
 from app.config import SelectionTuning
+from app.keyframes import rewindow
 from app.segment_time import SegmentTime, segment_time
 from app.selection import snap
 from app.styles import StyleOverrides
@@ -140,7 +142,7 @@ class Episode:
                 left, right = _touching_frame(segments, i - 1, first), _touching_frame(segments, i + 1, last)
                 keep_start, keep_end = (right, left) if segment.reverse else (left, right)
                 start, end = self.bounds(segment.start, segment.end, keep_start, keep_end)
-                snapped.append(replace(segment, start=start, end=end))
+                snapped.append(replace(segment, start=start, end=end, keys=_snapped_keys(segment, start, end)))
             elif segment_time(segment).length < MIN_MEDIA_SECS:
                 raise InvalidEdit(f"A video's Segment lasts {MIN_MEDIA_SECS:g} s at least")
             else:
@@ -175,10 +177,11 @@ def update(
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
-        # filmed is a plain range (one at a Speed is kept as its Segment).
+        # filmed is a plain range (one at a Speed, or at a volume or Keyframes of its own, is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
-        if len(segments) == 1 and segment_time(segments[0]) == SegmentTime(start, end):
+        [first, *more] = segments
+        if not more and segment_time(first) == SegmentTime(start, end) and first.volume == 1 and not first.keys:
             segments = []
     elif change.transitions is not None:
         episode.check_length(old.main_track(), _joined(transitions, old.segments))
@@ -312,6 +315,17 @@ def _check_ids(kind: str, ids: list[str]) -> None:
     """InvalidEdit unless each of the items has its own id."""
     if len(set(ids)) != len(ids):
         raise InvalidEdit(f"Two of the {kind}s have the same id")
+
+
+def _snapped_keys(segment: Segment, start: float, end: float) -> Keys:
+    """Segment `segment`'s Keyframes once its range is snapped to `start`..`end`: re-anchored to where
+    its left edge now shows (`rewindow`), so that each stays on its moment of the Source."""
+    if not segment.keys:
+        return segment.keys
+    was = segment_time(segment)
+    now = SegmentTime(start, end, was.speed, was.reverse)
+    first = was.offset_at(now.source_at(0))
+    return {prop: rewindow(keys, first, first + now.length) for prop, keys in segment.keys.items()}
 
 
 def _touching_frame(segments: list[Segment], i: int, at: float) -> bool:

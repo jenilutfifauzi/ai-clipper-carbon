@@ -1001,7 +1001,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
+              // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
               applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
             },
             onFade: (id, fade, secs, heard, group) => {
@@ -1245,7 +1245,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         </div>
         {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
         <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
-          <section aria-label="Timeline and Keyframes" className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel">
+          <section
+            aria-label="Timeline and Keyframes"
+            className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+          >
             <BottomTabs value={bottomTab} onChange={setBottomTab} />
             {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
                 it sits just inside rather than up in the gutter). It comes after the Bottom tabs in

@@ -37,7 +37,7 @@ import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
 import { speedLabel } from "./speed";
-import { gainAt, segmentHeard, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
+import { gainAt, segmentHeard, sourceGain, sourceHeard, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -318,8 +318,9 @@ export function Tracks({
           if (!segment) return null;
           const selected = isPicked(pick, "segment", segment.id);
           const volume = segment.media ? 1 : sourceGain(edits, segment);
-          // A video's sound, by its volume Keyframes once it has some.
+          // Its sound, by its volume Keyframes once it has some.
           const heard = segmentHeard(segment, shown);
+          const keyed = !!segment.keys?.volume?.length;
           // A Freeze frame is silent: no Waveform and no Volume Line.
           const held = segment.hold != null;
           return (
@@ -353,19 +354,19 @@ export function Tracks({
                   heard={heard}
                 />
               ) : (
-                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} gain={volume} />
+                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} heard={sourceHeard(edits, segment, shown)} />
               )}
-              {segment.media && !held && mediaById.get(segment.media)?.has_audio !== false && (
+              {!held && (!segment.media || mediaById.get(segment.media)?.has_audio !== false) && (
                 <VolumeLine
                   volume={segment.volume ?? 1}
-                  keyed={segment.keys?.volume?.length ? { heard, start: shown.start, playback } : undefined}
+                  keyed={keyed ? { heard, start: shown.start, playback } : undefined}
                   grab={selected && !locked("video")}
                   onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
                 />
               )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(mediaAlong(shown).mediaStart)}
-                {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
+                {volume !== 1 && !keyed ? ` · ${Math.round(volume * 100)}%` : ""}
               </span>
               <RetimingBadge retiming={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
@@ -649,20 +650,21 @@ function MediaFilmstrip({
 
 /**
  * A Source Segment's picture: the Source's frames along it (its Filmstrip), over the plain lane until
- * they arrive, and the speech's Waveform along its bottom at `gain`, the Clip's own sound's volume.
+ * they arrive, and the speech's Waveform along its bottom as it is `heard` (its volume or volume
+ * Keyframes, under the Clip's own sound).
  */
 function SourceFilmstrip({
   geometry,
   cache,
   shown,
   source,
-  gain,
+  heard,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   shown: PlayedSegment;
   source: { job: string; metadata: SourceMetadata };
-  gain: number;
+  heard: Heard;
 }) {
   const { pps } = geometry;
   return (
@@ -687,7 +689,7 @@ function SourceFilmstrip({
                 url: (start) => jobPeaksUrl(source.job, start),
                 ...mediaAlong(shown),
                 duration: source.metadata.duration,
-                gain: () => gain,
+                gain: (time) => gainAt(time, heard),
                 color: MEDIA_WAVE,
                 band: MEDIA_WAVE_BAND,
               }),
@@ -744,7 +746,7 @@ function SongWaveform({
 const VOLUME_HIT_PX = 24;
 
 /**
- * A Music Clip's or media Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
+ * A Music Clip's or Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
  * height. On a picked item of an unlocked Track (`grab`), it drags up and down to set the volume, with
  * a % label while it does; elsewhere on the item, a drag moves or trims it as ever. With volume
  * Keyframes (`keyed`), it is their line (KeyedVolumeLine).

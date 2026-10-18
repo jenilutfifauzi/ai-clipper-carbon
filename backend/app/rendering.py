@@ -253,6 +253,7 @@ def candidate_plan(
             layout_overrides=[replace(o, at=round(o.at - start, 3)) for o in candidate.layout_overrides if start <= o.at <= end],
             words=None if words is None else words[i],
             volume=segment.volume,
+            keys=segment.keys,
             word_edits=[
                 replace(edit, at=round(edit.at - segment.start, 3))
                 for edit in candidate.word_edits

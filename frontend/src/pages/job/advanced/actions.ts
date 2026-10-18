@@ -608,16 +608,17 @@ export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (sh
 export const applyTextStyle = (scene: { edits: AdvancedEdits; pick: Pick }, style: TextStyle): Outcome => restyle(scene, (layer) => ({ ...layer, style }));
 
 /**
- * Music Clip or media Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2
- * (by its Volume Line or the inspector). A Source Segment has none to set here: the Clip's own sound
- * has one volume. Null for one, or for an item that isn't there.
+ * Music Clip or Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2 (by its
+ * Volume Line or the inspector); a Source Segment's under the Clip's own sound. Null for a Freeze
+ * frame of the Source, which is silent, or for an item that isn't there.
  */
 export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { kind: "music" | "segment"; id: string }, volume: number): Outcome | null {
   const { edits, pick } = scene;
   const level = Math.round(Math.min(Math.max(volume, 0), 2) * 100) / 100;
   const set = <T extends { id: string }>(items: T[]) => items.map((other) => (other.id === item.id ? { ...other, volume: level } : other));
   if (item.kind === "music") return edits.music.some((clip) => clip.id === item.id) ? { edits: { ...edits, music: set(edits.music) }, pick } : null;
-  return edits.segments.some((segment) => segment.id === item.id && segment.media) ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
+  const heard = edits.segments.some((segment) => segment.id === item.id && (segment.media || segment.hold == null));
+  return heard ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
 }
 
 /** A Segment, a video Overlay or a Music Clip, which has a Speed. */
