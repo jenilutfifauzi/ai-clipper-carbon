@@ -145,6 +145,9 @@ Edits:
   secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
   (source_start, source_end).
+  An Overlay comes on and goes off as a Text Layer does: animation_in and animation_out (none, fade,
+  pop, slide) over animation_ms (100..2000, 300 by default; each end at most half its secs). They
+  move its picture only: a video's sound keeps its volume and Keyframes. The dry run lists them.
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
   may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
   are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the
@@ -225,8 +228,8 @@ Edits:
   Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
   leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
-  volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
-  its keyed values.
+  volume's under `sounds`. A Text Layer's, a Shape's and an Overlay's animations (fade, pop, slide)
+  play on top of its keyed values.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -850,7 +853,8 @@ def _plan_view(
     (`copied`)), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
-    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
+    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
+    animated one's animations (`_animation_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
     box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the
@@ -890,6 +894,7 @@ def _plan_view(
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
+                **_animation_view(event),
             }
             for event in plan["overlays"]
         ],
@@ -900,6 +905,13 @@ def _plan_view(
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _animation_view(event: dict) -> dict:
+    """How an Overlay comes on and goes off: each end's animation but none, and their length when it
+    has one; nothing unanimated."""
+    animated = _compact({key: event[key] if event[key] != "none" else None for key in ("animation_in", "animation_out")})
+    return animated | {"animation_ms": event["animation_ms"]} if animated else {}
 
 
 def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:

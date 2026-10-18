@@ -7,6 +7,7 @@ import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
+import { isAnimated, movesOf, type Moves } from "../editor/animation";
 import { FacePicker } from "../editor/FacePicker";
 import { FRAME } from "../editor/picture";
 import { Group, Mixed } from "../editor/StyleFields";
@@ -131,23 +132,31 @@ export function TextLayerFields({
 type Animated = Pick<TextLayer, "id" | "animation_in" | "animation_out" | "animation_ms">;
 
 /**
- * The Motion fields of a Text Layer or a Shape (`kind`): how it comes on and goes off (Fade, Pop,
- * Slide), stacked on its Keyframes, and, once it does, for how long. Each field's changes are a step
- * of their own.
+ * The Motion fields of a Text Layer, a Shape or an Overlay (`kind`; an Overlay's may be left out,
+ * read as none): how it comes on and goes off (Fade, Pop, Slide), stacked on its Keyframes, and, once
+ * it does, for how long. Each field's changes are a step of their own.
  */
-export function MotionFields<T extends Animated>({ item, kind, onChange }: { item: T; kind: PictureLayerKind; onChange: (item: T, group: string) => void }) {
-  const set = <K extends keyof Animated>(field: K, value: Animated[K]) => onChange({ ...item, [field]: value }, `${kind}:${item.id}:${field}`);
-  const animated = item.animation_in !== "none" || item.animation_out !== "none";
+export function MotionFields<T extends Partial<Animated> & { id: string }>({
+  item,
+  kind,
+  onChange,
+}: {
+  item: T;
+  kind: PictureLayerKind | "overlay";
+  onChange: (item: T, group: string) => void;
+}) {
+  const set = <K extends keyof Moves>(field: K, value: Moves[K]) => onChange({ ...item, [field]: value }, `${kind}:${item.id}:${field}`);
+  const moves = movesOf(item);
   return (
     <Group title="Motion">
       <div className="grid grid-cols-2 gap-3">
-        <Select label="Comes on" value={item.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />
-        <Select label="Goes off" value={item.animation_out} options={ANIMATIONS} onChange={(value: Animation) => set("animation_out", value)} />
+        <Select label="Comes on" value={moves.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />
+        <Select label="Goes off" value={moves.animation_out} options={ANIMATIONS} onChange={(value: Animation) => set("animation_out", value)} />
       </div>
-      {animated && (
+      {isAnimated(item) && (
         <Slider
           label="Animation length"
-          value={item.animation_ms}
+          value={moves.animation_ms}
           min={100}
           max={2000}
           step={50}

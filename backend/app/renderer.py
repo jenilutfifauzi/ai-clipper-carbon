@@ -63,9 +63,10 @@ A keyed Overlay (docs/adr/0008) is drawn by a frame process instead (app/frames.
 this process that draws the picture as it is at each frame of its span with OpenCV (a video's frames
 decoded for it by an ffmpeg of their own), decorated, and writes it, the whole frame in raw RGBA, to a
 pipe that the encode reads as one more input, laid over at 0, 0 in the same place of the graph, each
-frame over the Clip's frame of its number. With any, the joined
-frames are first brought to the Clip's frame rate (`fps`), so that frame n is at n / fps exactly, the
-time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
+frame over the Clip's frame of its number. So is one that comes on or goes off as a picture layer
+does (Fade, Pop, Slide): faded, scaled and moved on top of its keyed values (`overlay_at`), its
+sound left as it is. With any, the joined frames are first brought to the Clip's frame rate
+(`fps`), so that frame n is at n / fps exactly, the time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
 or is stopped ends its frame processes. Without keyed pictures the command is as it was.
 
 A keyed video Segment's picture is drawn by a frame process too, in seconds into its Segment, and
@@ -100,6 +101,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import NamedTuple
 
@@ -773,38 +775,61 @@ def _picture_layer(event: PictureLayer, below: str, out: str, index: int, number
     return _picture(picture, f"[{index}:v]", below, out, name, padded, f"{shows}:eof_action=repeat")
 
 
+# What is animated as the hook is: the hook in its style, a picture layer in its item's, or an Overlay
+# in its own.
+type _Shown = HookEvent | PictureLayer | OverlayEvent
+type _Motion = HookStyle | TextLayer | Shape | OverlayEvent
+
+
 def layer_at(event: PictureLayer, time: float) -> Picture:
-    """A picture layer's picture as drawn at `time` seconds into the Clip: as its Keyframes have it
-    then (`picture_at`), and on top of that faded, scaled about its centre and moved down as its
-    animations have it (`layer_animation`): its keyed opacity and scale multiplied, its drop added."""
-    opacity, scale, below = layer_animation(event, time)
-    picture = picture_at(event.picture, time)
+    """A picture layer's picture as drawn at `time` seconds into the Clip, animated by its item's
+    animations (`animated_at`)."""
+    return animated_at(event, event.layer, event.picture, time)
+
+
+def overlay_at(event: OverlayEvent, time: float) -> Picture:
+    """An Overlay's picture as drawn at `time` seconds into the Clip, animated as a picture layer is
+    (`animated_at`)."""
+    return animated_at(event, event, event.picture, time)
+
+
+def animated_at(shown: _Shown, style: _Motion, picture: Picture, time: float) -> Picture:
+    """`picture`, of an item shown from `shown`'s start to its end and animated as `style` says, as
+    drawn at `time` seconds into the Clip: as its Keyframes have it then (`picture_at`), and on top
+    of that faded, scaled about its centre (its corners with it) and moved down as its animations
+    have it (`animation_at`): its keyed opacity and scale multiplied, its drop added."""
+    opacity, scale, below = animation_at(shown, style, time)
+    picture = picture_at(picture, time)
     if (opacity, scale, below) == (1.0, 1.0, 0.0):
         return picture
     x, y = picture.centre
     return replace(
-        picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below), opacity=picture.opacity * opacity
+        picture,
+        width=picture.width * scale,
+        height=picture.height * scale,
+        radius=picture.radius * scale,
+        centre=(x, y + below),
+        opacity=picture.opacity * opacity,
     )
 
 
-def layer_animation(event: PictureLayer, time: float) -> tuple[float, float, float]:
-    """A picture layer's opacity, scale and how far below its place it is at `time` seconds into the
-    Clip, coming on and going off as the hook does (_hook_phases, _hook_motion): faded in and out
-    over its animation_ms (Fade alone), or for _hook_ends' time grown from POP_FROM percent (Pop) or
-    risen SLIDE_PX (Slide) as it fades, each in a straight line. The preview's twin is hookLook in
-    frontend/src/pages/job/editor/ClipPreview.tsx."""
-    layer = event.layer
+def animation_at(shown: _Shown, style: _Motion, time: float) -> tuple[float, float, float]:
+    """An item's opacity, scale and how far below its place it is at `time` seconds into the Clip,
+    coming on and going off as the hook does (_hook_phases, _hook_motion): faded in and out over its
+    animation_ms (Fade alone), or for _hook_ends' time grown from POP_FROM percent (Pop) or risen
+    SLIDE_PX (Slide) as it fades, each in a straight line. The preview's twin is hookLook in
+    frontend/src/pages/job/editor/animation.ts."""
     moving = {Animation.POP, Animation.SLIDE}
-    if layer.animation_in not in moving and layer.animation_out not in moving:
-        ms = layer.animation_ms / 1000
-        on = (time - event.start) / ms if layer.animation_in == Animation.FADE else 1.0
-        off = (event.end - time) / ms if layer.animation_out == Animation.FADE else 1.0
+    if style.animation_in not in moving and style.animation_out not in moving:
+        ms = style.animation_ms / 1000
+        on = (time - shown.start) / ms if style.animation_in == Animation.FADE else 1.0
+        off = (shown.end - time) / ms if style.animation_out == Animation.FADE else 1.0
         return min(max(min(on, off), 0.0), 1.0), 1.0, 0.0
-    on, off = _hook_ends(event, layer)
-    if on and time < event.start + on:
-        return _animated(layer.animation_in, (time - event.start) / on)
-    if off and time >= event.end - off:
-        return _animated(layer.animation_out, (event.end - time) / off)
+    on, off = _hook_ends(shown, style)
+    if on and time < shown.start + on:
+        return _animated(style.animation_in, (time - shown.start) / on)
+    if off and time >= shown.end - off:
+        return _animated(style.animation_out, (shown.end - time) / off)
     return 1.0, 1.0, 0.0
 
 
@@ -843,7 +868,7 @@ def _rate(plan: RenderPlan) -> str:
     return f"{plan.fps if plan.fps > 0 else 30:.6g}"
 
 
-# A keyed picture of the plan: ("overlay", its place among the Overlays), ("scene", its Scene's
+# A keyed picture of the plan: ("overlay", a keyed or animated Overlay's place among them), ("scene", its Scene's
 # place among the Scenes) or ("layer", a keyed or animated picture layer's place among the plan's);
 # and each one's frame process.
 Keyed = tuple[str, int]
@@ -854,12 +879,13 @@ def _keyed_items(
     plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
-    an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's), or the `source`
-    for a Manual Scene; and a keyed or animated picture layer's picture's pixels, from `pictures`."""
+    a keyed or animated Overlay's image's pixels, or a video's file (such an Overlay's or a keyed
+    Segment's), or the `source` for a Manual Scene; and a keyed or animated picture layer's
+    picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {
         ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
-        if event.picture.motion and event.media in files
+        if (_comes_animated(event) or event.picture.motion) and event.media in files
     }
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
@@ -867,14 +893,15 @@ def _keyed_items(
         elif media in files:
             items[("scene", i)] = files[media]
     for i, event in enumerate(plan.picture_layers):
-        if (_comes_animated(event) or event.picture.motion) and pictures and event.image in pictures:
+        if (_comes_animated(event.layer) or event.picture.motion) and pictures and event.image in pictures:
             items[("layer", i)] = read_image(pictures[event.image])
     return items
 
 
-def _comes_animated(event: PictureLayer) -> bool:
-    """Whether a picture layer comes on or goes off animated, so that a frame process draws it."""
-    return event.layer.animation_in != Animation.NONE or event.layer.animation_out != Animation.NONE
+def _comes_animated(style: _Motion) -> bool:
+    """Whether an item (a picture layer's, or an Overlay) comes on or goes off animated, so that a
+    frame process draws it."""
+    return style.animation_in != Animation.NONE or style.animation_out != Animation.NONE
 
 
 def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]:
@@ -923,11 +950,13 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             feeds[(kind, i)] = FrameFeed(frames, layer.start, layer.end, rate)
             continue
         event = plan.overlays[i]
+        sampled = partial(overlay_at, event)
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
-            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
+            frames = PictureFrames(event.picture, sampled=sampled)
+            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
         else:
-            frames, video = PictureFrames(event.picture, item), None
+            frames, video = PictureFrames(event.picture, item, sampled=sampled), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
     return feeds
 
@@ -1363,11 +1392,6 @@ HOOK_STAGGER_SECS = 0.08
 # up from (or goes down to) this many pixels below its place.
 POP_FROM = 70
 SLIDE_PX = 60
-
-
-# What is animated as the hook is: the hook in its style, or a picture layer in its own.
-type _Shown = HookEvent | PictureLayer
-type _Motion = HookStyle | TextLayer | Shape
 
 
 def _hook_ends(hook: _Shown, style: _Motion) -> tuple[float, float]:
