@@ -10,6 +10,7 @@ import { shadowControls, type ShadowAccess } from "../editor/ShadowFields";
 import { Group } from "../editor/StyleFields";
 import { cornersFormat } from "./DecorationFields";
 import { drawsSomething, NEW_FILL, NOTHING_TO_DRAW, SHAPE_SIZE, SHAPE_STROKE_MAX } from "./shapeStyle";
+import { MotionFields } from "./TextLayers";
 import { TimingFields } from "./TimingFields";
 import { ShapeTransformFields } from "./TransformFields";
 
@@ -46,9 +47,9 @@ export function ShapeAssets({ onAdd }: { onAdd: (kind: ShapeKind) => void }) {
 }
 
 /**
- * The picked Shape's Shape Style (its size, fill, stroke, corners and drop shadow), Transform and
- * time. It is never left with neither fill nor stroke: with no stroke its fill can't be turned off
- * (which it says), and with no fill its stroke is at least 1 px.
+ * The picked Shape's Shape Style (its size, fill, stroke, corners and drop shadow), Transform,
+ * motion and time. It is never left with neither fill nor stroke: with no stroke its fill can't be
+ * turned off (which it says), and with no fill its stroke is at least 1 px.
  */
 export function ShapeFields({
   shape,
@@ -112,6 +113,7 @@ export function ShapeFields({
       </Group>
       <Group title="Shadow">{shadowControls(shadow, { inspector: true })}</Group>
       <ShapeTransformFields shape={shape} onChange={onChange} />
+      <MotionFields item={shape} kind="shape" onChange={onChange} />
       <TimingFields item={shape} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>
   );

@@ -665,7 +665,7 @@ function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): 
 }
 
 /**
- * A picture layer (a Text Layer) while it is on screen: the picture the backend made of it
+ * A picture layer (a Text Layer, a Shape) while it is on screen: the picture the backend made of it
  * (docs/adr/0010), the same pixels the Clip burns, placed, scaled, turned and faded as its plan's
  * `picture` says (or as the stage holds it: `heldLayerEvent`), and animated on and off as the hook
  * is, on top of its Keyframes (`placedLayer`). While a changed look's picture loads, the last one
