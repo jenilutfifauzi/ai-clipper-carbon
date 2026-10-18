@@ -96,6 +96,7 @@ import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
+import { Meters } from "./Meters";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
 import { DEFAULT_FPS, loopRegion, onFrame, type LoopMarks } from "./playhead";
@@ -1115,26 +1116,26 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             {inspector}
           </aside>
         </div>
-        <section
-          aria-label="Timeline and Keyframes"
-          // The Keyframes pane takes a little more room than the Timeline: a row per property, and the Curves.
-          className={cx("glass mx-3 flex flex-col overflow-hidden rounded-panel", bottomTab === "keyframes" ? "h-[44dvh] min-h-72" : "h-[36dvh] min-h-60")}
-        >
-          <BottomTabs value={bottomTab} onChange={setBottomTab} />
-          {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}
-          <div id={bottomPanelId("timeline")} role="tabpanel" aria-label="Timeline" hidden={bottomTab !== "timeline"}
-            className={cx("min-h-0 flex-1 flex-col", bottomTab === "timeline" ? "flex" : "hidden")}
-          >
-            {timeline}
-          </div>
-          {bottomTab === "keyframes" && (
-            <div id={bottomPanelId("keyframes")} role="tabpanel" aria-label="Keyframes" className="flex min-h-0 flex-1 flex-col">
-              <KeyingContext.Provider value={keying}>
-                <KeyframesPane keying={keying} fps={fps} mediaById={mediaById} />
-              </KeyingContext.Provider>
+        {/* The Keyframes pane takes a little more room than the Timeline: a row per property, and the Curves. */}
+        <div className={cx("mx-3 flex gap-3", bottomTab === "keyframes" ? "h-[44dvh] min-h-72" : "h-[36dvh] min-h-60")}>
+          <section aria-label="Timeline and Keyframes" className="glass flex min-w-0 flex-1 flex-col overflow-hidden rounded-panel">
+            <BottomTabs value={bottomTab} onChange={setBottomTab} />
+            {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}
+            <div id={bottomPanelId("timeline")} role="tabpanel" aria-label="Timeline" hidden={bottomTab !== "timeline"}
+              className={cx("min-h-0 flex-1 flex-col", bottomTab === "timeline" ? "flex" : "hidden")}
+            >
+              {timeline}
             </div>
-          )}
-        </section>
+            {bottomTab === "keyframes" && (
+              <div id={bottomPanelId("keyframes")} role="tabpanel" aria-label="Keyframes" className="flex min-h-0 flex-1 flex-col">
+                <KeyingContext.Provider value={keying}>
+                  <KeyframesPane keying={keying} fps={fps} mediaById={mediaById} />
+                </KeyingContext.Provider>
+              </div>
+            )}
+          </section>
+          <Meters playback={playback} />
+        </div>
       </div>
     );
   }
