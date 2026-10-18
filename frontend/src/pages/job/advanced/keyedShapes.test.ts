@@ -54,6 +54,7 @@ function edits(shapes: Shape[]): AdvancedEdits {
     hook_secs: 3,
     hook_text: "Hook",
     hook_kicker: "",
+    preset_id: "default",
     style_overrides: { caption: {}, hook: {}, watermark: {} },
     word_edits: [],
     layout: "auto",

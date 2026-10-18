@@ -43,6 +43,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
   changeMusic,
@@ -56,6 +57,7 @@ import {
   nudge,
   pickAll,
   placeAfter,
+  restyleCaptions,
   placeDropped,
   reversible,
   setFade,
@@ -578,6 +580,20 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
   const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked };
+  // The captions' look, from the inspector's Caption Style panel and Preset bar: each change a step of undo.
+  const presets = usePresets();
+  const captionStyle =
+    presets.presets &&
+    styleControls(
+      presets.presets,
+      edits,
+      (look, group) => {
+        const outcome = restyleCaptions(scene, look);
+        if (outcome) history.set(outcome.edits, group);
+        else refused("captions");
+      },
+      presets.setPresets,
+    );
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
   const clipboard = useClipboard();
@@ -1025,6 +1041,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         duration={duration}
         preview={preview}
         fonts={fonts}
+        captionStyle={captionStyle}
+        presetsError={presets.error}
         actions={actions}
         mediaById={mediaById}
         playback={playback}

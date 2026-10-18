@@ -1,11 +1,15 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
-import { useContext, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { CaptionStylePanel } from "../editor/CaptionStylePanel";
+import { PresetBar } from "../editor/PresetBar";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
+import { StyleFieldsSkeleton } from "../editor/StyleFields";
+import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
 import { applyTextStyle, reshape, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
@@ -30,6 +34,8 @@ export function Inspector({
   duration,
   preview,
   fonts,
+  captionStyle,
+  presetsError,
   actions,
   mediaById,
   playback,
@@ -51,6 +57,9 @@ export function Inspector({
   duration: number;
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
+  // The Caption Style panel's and the Preset bar's controls, writing the edits; null while the Presets load.
+  captionStyle: StyleControls | null;
+  presetsError: string | null;
   actions: ItemActions | null;
   mediaById: Map<string, MediaItem>;
   playback: Playback;
@@ -242,22 +251,43 @@ export function Inspector({
     );
   }
   if (pick?.kind === "captions") {
-    return (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="font-semibold">Captions</h2>
-          <Hint more="Drag one to move them all, or a corner to resize them; arrow keys nudge them. Their look is changed in the clip editor.">
-            Double-click a line on the preview to correct its words.
-          </Hint>
-        </div>
-        <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
-      </div>
-    );
+    return <CaptionsFields edits={edits} style={captionStyle} error={presetsError} fonts={fonts} onEdits={onEdits} />;
   }
   return (
     <div className="flex flex-col gap-1">
       <h2 className="font-semibold">Nothing selected</h2>
       <p className="text-sm text-pretty text-muted">Select an item on the timeline or the preview to change it.</p>
+    </div>
+  );
+}
+
+/**
+ * The picked captions: their Style Preset and their whole Caption Style, the clip editor's Preset bar
+ * and panel, each change one step of undo; and "Reset position".
+ */
+function CaptionsFields({
+  edits,
+  style,
+  error,
+  fonts,
+  onEdits,
+}: {
+  edits: AdvancedEdits;
+  style: StyleControls | null;
+  error: string | null;
+  fonts: FontInfo[] | null;
+  onEdits: (edits: AdvancedEdits, group?: string) => void;
+}) {
+  const [more, setMore] = useState(false);
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="font-semibold">Captions</h2>
+        <Hint more="Drag one to move them all, or a corner to resize them; arrow keys nudge them.">Double-click a line on the preview to correct its words.</Hint>
+      </div>
+      <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
+      <PresetBar style={style} error={error} />
+      {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector /> : !error && <StyleFieldsSkeleton />}
     </div>
   );
 }

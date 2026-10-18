@@ -1,5 +1,6 @@
 import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
+import type { StyleDraft } from "../editor/useStyleDraft";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
@@ -604,6 +605,15 @@ export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (sh
 
 /** Every picked Text Layer given `style`, a Text Preset's Text Style: their words, Transforms, Keyframes and times stay their own. */
 export const applyTextStyle = (scene: { edits: AdvancedEdits; pick: Pick }, style: TextStyle): Outcome => restyle(scene, (layer) => ({ ...layer, style }));
+
+/**
+ * The captions' look set from the inspector's Caption Style panel or Preset bar: the Candidate's Style
+ * Preset and Style Overrides as `look` has them, one change. Null while the Captions Track is locked.
+ */
+export function restyleCaptions(scene: { edits: AdvancedEdits; pick: Pick; locked?: TrackKind[] }, look: StyleDraft): Outcome | null {
+  if (scene.locked?.includes("captions")) return null;
+  return { edits: { ...scene.edits, preset_id: look.preset_id, style_overrides: look.style_overrides }, pick: scene.pick };
+}
 
 /**
  * Music Clip or media Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2

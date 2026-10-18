@@ -38,13 +38,38 @@ export function merges(last: { group: string; at: number } | null, group: string
   return group.startsWith(GESTURE) || at - last.at < GROUP_MS;
 }
 
+/** An undo history: the steps to undo, the value now, and the steps to redo. */
+export interface Steps<T> {
+  past: T[];
+  value: T;
+  future: T[];
+}
+
+/** `old` with `value` made: a new step, or (`merge`) the last step changed; nothing left to redo. */
+export function stepped<T>(old: Steps<T>, value: T, merge: boolean): Steps<T> {
+  return { past: merge ? old.past : [...old.past, old.value].slice(-MAX_STEPS), value, future: [] };
+}
+
+/** `old` with its last step undone; null when there is none. */
+export function undone<T>(old: Steps<T>): Steps<T> | null {
+  if (!old.past.length) return null;
+  return { past: old.past.slice(0, -1), value: old.past[old.past.length - 1], future: [old.value, ...old.future] };
+}
+
+/** `old` with the step last undone made again; null when there is none. */
+export function redone<T>(old: Steps<T>): Steps<T> | null {
+  if (!old.future.length) return null;
+  const [value, ...future] = old.future;
+  return { past: [...old.past, old.value], value, future };
+}
+
 /**
  * The Advanced Edit's edits of a Candidate, with undo and redo. `saved` is the Candidate's as loaded:
  * it starts the history, and later answers of the backend don't replace what is being edited. Every
  * change (and every undo or redo) is saved with `save` once changes pause.
  */
 export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>): EditHistory<T> {
-  const [state, setState] = useState<{ past: T[]; value: T; future: T[] }>({ past: [], value: saved, future: [] });
+  const [state, setState] = useState<Steps<T>>({ past: [], value: saved, future: [] });
   const last = useRef<{ group: string; at: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pending = useRef<{ value: T } | null>(null);
@@ -74,28 +99,24 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     const now = performance.now();
     const merge = merges(last.current, group, now);
     last.current = group === undefined ? null : { group, at: now };
-    setState((old) => ({
-      past: merge ? old.past : [...old.past, old.value].slice(-MAX_STEPS),
-      value,
-      future: [],
-    }));
+    setState((old) => stepped(old, value, merge));
     persist(value);
   }
 
   function undo() {
-    if (!state.past.length) return;
+    const next = undone(state);
+    if (!next) return;
     last.current = null;
-    const value = state.past[state.past.length - 1];
-    setState({ past: state.past.slice(0, -1), value, future: [state.value, ...state.future] });
-    persist(value);
+    setState(next);
+    persist(next.value);
   }
 
   function redo() {
-    if (!state.future.length) return;
+    const next = redone(state);
+    if (!next) return;
     last.current = null;
-    const [value, ...future] = state.future;
-    setState({ past: [...state.past, state.value], value, future });
-    persist(value);
+    setState(next);
+    persist(next.value);
   }
 
   function elsewhere(value: T, rebase: (step: T) => T, save: boolean) {
