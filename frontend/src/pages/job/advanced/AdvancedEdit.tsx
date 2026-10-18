@@ -1165,28 +1165,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           className="relative grid min-h-0 flex-1 gap-3 px-3"
           style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
         >
+          {/* Source order here is the Tab order: Asset Panel → its Divider → player → Inspector's
+              Divider → Inspector (ticket 05). The Dividers are absolutely positioned, so their place
+              in the flow is free; each is centred in the gap-3 gutter at its boundary (the px-3
+              padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
+              renders no Divider, so it exposes no separator. */}
           {!ws.assetHidden && (
             <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
               <AssetTabs value={assetTab} onChange={setAssetTab} />
               <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
             </aside>
           )}
-          <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
-            {room}
-            {notes}
-          </section>
-          {!ws.inspectorHidden && (
-            <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
-              {inspector}
-            </aside>
-          )}
-          {/* The two sidebar Dividers, each centred in the gap-3 gutter at its boundary: the px-3
-              padding (0.75rem) + the sidebar's width + half the 0.75rem gap. A collapsed sidebar
-              renders none (collapse is 04). */}
           {!ws.assetHidden && (
             <Divider
               orientation="vertical"
               label="Resize the Asset Panel"
+              value={ws.assetW}
+              min={ASSET.min}
+              max={ASSET.max}
               style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
               onStart={() => {
                 const d = dividerDrag.current;
@@ -1202,10 +1198,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               onReset={() => layout.setAssetW(ASSET.def)}
             />
           )}
+          <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+            {room}
+            {notes}
+          </section>
           {!ws.inspectorHidden && (
             <Divider
               orientation="vertical"
               label="Resize the Inspector"
+              value={ws.inspectorW}
+              min={INSPECTOR.min}
+              max={INSPECTOR.max}
               style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
               onStart={() => {
                 const d = dividerDrag.current;
@@ -1223,6 +1226,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               onReset={() => layout.setInspectorW(INSPECTOR.def)}
             />
           )}
+          {!ws.inspectorHidden && (
+            <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
+              {inspector}
+            </aside>
+          )}
         </div>
         <section
           aria-label="Timeline and Keyframes"
@@ -1230,11 +1238,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           className="glass relative mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
           style={{ height: bottomHeightCss(ws) }}
         >
+          <BottomTabs value={bottomTab} onChange={setBottomTab} />
           {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
-              it sits just inside rather than up in the gutter). */}
+              it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
+              source order so Tab reaches it last (ticket 05). */}
           <Divider
             orientation="horizontal"
             label="Resize the Bottom tabs"
+            value={ws.bottomH}
+            min={BOTTOM.min}
+            max={BOTTOM.max}
             onStart={() => {
               const d = dividerDrag.current;
               d.vhPx = window.innerHeight;
@@ -1246,7 +1259,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             }}
             onReset={() => layout.setBottomH(BOTTOM.def)}
           />
-          <BottomTabs value={bottomTab} onChange={setBottomTab} />
           {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
               needs only a registry entry, no edit here. A panel's body renders while it is active or
               `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
