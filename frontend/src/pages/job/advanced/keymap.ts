@@ -42,6 +42,8 @@ export type ShortcutId =
   | "fullscreen"
   | "fullscreen-exit"
   | "skim"
+  | "toggle-assets"
+  | "toggle-inspector"
   | "shortcuts";
 
 export type ShortcutGroup = "playback" | "navigation" | "editing" | "view";
@@ -144,6 +146,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "fullscreen", keys: [{ key: "f" }], group: "view", label: "Watch the preview full screen", fullscreen: false },
   { id: "fullscreen-exit", keys: [{ key: "f" }, { key: "Escape" }], group: "view", label: "Leave full screen", fullscreen: true },
   { id: "skim", keys: [{ key: "s" }], group: "view", label: "Skim on or off: the preview shows the frame under the pointer", desktop: true },
+  { id: "toggle-assets", keys: [{ key: "a" }], group: "view", label: "Hide or show the Asset Panel", desktop: true },
+  { id: "toggle-inspector", keys: [{ key: "p" }], group: "view", label: "Hide or show the Inspector", desktop: true },
   { id: "shortcuts", keys: [{ key: "?" }], group: "view", label: "Show these shortcuts", desktop: true },
 ];
 
