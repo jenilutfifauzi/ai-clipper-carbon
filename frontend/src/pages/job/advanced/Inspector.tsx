@@ -141,6 +141,10 @@ export function Inspector({
         onDelete={actions.remove}
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
+        onFade={(fade, secs, group) => {
+          const outcome = setFade({ edits, pick }, segment.id, fade, secs);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
         onSpeed={(speed, group) => onSpeed({ kind: "segment", id: segment.id }, speed, group)}
         onReverse={(reverse) => onReverse({ kind: "segment", id: segment.id }, reverse)}
         copy={copyOf({ kind: "segment", id: segment.id })}

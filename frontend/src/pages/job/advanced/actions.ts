@@ -253,9 +253,10 @@ export function dragSegment(
   longest?: number,
 ): Outcome {
   const before = origin.edits.segments.find((segment) => segment.id === id);
-  // A video's Keyframes re-anchored to what its trim keeps (retimed), from the Segment as the drag began.
+  // A video's Keyframes re-anchored to what its trim keeps (retimed), and its fades fitted to it, from
+  // the Segment as the drag began.
   const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned, longest).map((segment) =>
-    segment.id === id && before ? retimed(before, segment, change.edge) : segment,
+    segment.id === id && before ? fadesFitted(retimed(before, segment, change.edge)) : segment,
   );
   const index = segments.findIndex((segment) => segment.id === id);
   const whole = origin.planned[index];
@@ -369,12 +370,12 @@ export function split(scene: PickContext, at: number): Outcome | null {
     const [firstRange, secondRange] = segment.reverse
       ? [{ start: cut, end: rangeOf(shown).end }, { start: segment.start, end: cut }]
       : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
-    // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start.
-    const second = rekeyed<ClipSegment>({ ...segment, ...secondRange, id: idOf(scene) }, offsetAt(segment, cut), segmentLength(segment));
-    const first = rekeyed<ClipSegment>(
-      { ...segment, ...firstRange },
-      offsetAt(segment, segment.reverse ? firstRange.end : firstRange.start),
-      offsetAt(segment, cut),
+    // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start;
+    // its fades are cut with it (cutFades).
+    const [first, second] = cutFades(
+      segment,
+      rekeyed<ClipSegment>({ ...segment, ...firstRange }, offsetAt(segment, segment.reverse ? firstRange.end : firstRange.start), offsetAt(segment, cut)),
+      rekeyed<ClipSegment>({ ...segment, ...secondRange, id: idOf(scene) }, offsetAt(segment, cut), segmentLength(segment)),
     );
     next.segments = next.segments.flatMap((other) => (other.id === segment.id ? [first, second] : [other]));
     tails.push({ kind: "segment", id: second.id });
@@ -457,8 +458,11 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   const [headRange, tailRange] = segment.reverse
     ? [{ start: cut, end: segment.end }, { start: segment.start, end: cut }]
     : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
-  const head = rekeyed<ClipSegment>({ ...segment, ...headRange }, into - (cutAt - shown.start), into);
-  const tail = rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length);
+  const [head, tail] = cutFades(
+    segment,
+    rekeyed<ClipSegment>({ ...segment, ...headRange }, into - (cutAt - shown.start), into),
+    rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length),
+  );
   const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
   if (segment.media) {
     held.media = segment.media;
@@ -657,7 +661,8 @@ export function setSpeed(scene: PickContext, item: SpeedRef, value: number, limi
   const segment = edits.segments[index];
   if (!segment || segment.hold != null) return null;
   const by = (segment.speed ?? 1) / speed;
-  const atSpeed = { ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) };
+  // Its fades fitted to its new length.
+  const atSpeed = fadesFitted({ ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) });
   const [before, after] = [segmentLength(segment), segmentLength(atSpeed)];
   const refused = (notice: string): Outcome => ({ edits, pick, notice });
   if (segment.media && after < MEDIA_MIN_SECS) {
@@ -737,11 +742,12 @@ export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: Sp
 }
 
 /**
- * Music Clip `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle or the
- * inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins, so
- * that the two together are never longer than the Music Clip. Cut short by the Clip's end (`heard`
- * seconds of it are heard), both are set as they are heard, so that what is stored is what the
- * Timeline draws and the Clip plays. Null for one that isn't there.
+ * Music Clip or Segment `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle
+ * or the inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins,
+ * so that the two together are never longer than it (a Segment, on the Timeline). Cut short by the
+ * Clip's end, or heard on under a Transition (`heard` seconds of it are heard), both are set as they
+ * are heard, so that what is stored is what the Timeline draws and the Clip plays. Null for a Freeze
+ * frame, which is silent, or an item that isn't there.
  */
 export function setFade(
   scene: { edits: AdvancedEdits; pick: Pick },
@@ -752,13 +758,32 @@ export function setFade(
 ): Outcome | null {
   const { edits, pick } = scene;
   const clip = edits.music.find((other) => other.id === id);
-  if (!clip) return null;
-  // Its fades as heard: shortened when the Clip's end cuts it short (`heard` seconds of it).
-  const fades = fadesWithin(clip, heard ?? clip.secs);
+  const segment = edits.segments.find((other) => other.id === id && other.hold == null);
+  const item = clip ?? segment;
+  if (!item) return null;
+  const length = heard ?? (clip ? clip.secs : segmentLength(item as ClipSegment));
+  // Its fades as heard: shortened when it is shorter than both (`length` seconds of it).
+  const fades = fadesWithin({ fade_in: item.fade_in ?? 0, fade_out: item.fade_out ?? 0 }, length);
   const other = fade === "fade_in" ? "fade_out" : "fade_in";
-  const most = Math.max(0, Math.min(FADE_MAX_SECS, (heard ?? clip.secs) - fades[other]));
-  const set = { ...clip, [other]: fades[other], [fade]: round(Math.min(Math.max(secs, 0), most)) };
-  return { edits: { ...edits, music: edits.music.map((each) => (each.id === id ? set : each)) }, pick };
+  const most = Math.max(0, Math.min(FADE_MAX_SECS, length - fades[other]));
+  const set = <T extends { id: string }>(items: T[]) =>
+    items.map((each) => (each.id === id ? { ...each, [other]: fades[other], [fade]: round(Math.min(Math.max(secs, 0), most)) } : each));
+  return { edits: clip ? { ...edits, music: set(edits.music) } : { ...edits, segments: set(edits.segments) }, pick };
+}
+
+// Segment `segment` with its fades within its Timeline length (fadesWithin), when it has any: trimmed or
+// sped up shorter than both, it has them shortened by the same share.
+function fadesFitted(segment: ClipSegment): ClipSegment {
+  if (!segment.fade_in && !segment.fade_out) return segment;
+  return { ...segment, ...fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, segmentLength(segment)) };
+}
+
+// The `head` and `tail` faded Segment `segment` is cut into (by Split or a Freeze frame), as a Music
+// Clip's are: the head keeps its fade in and the tail its fade out, each within its part, and no
+// fades at the cut.
+function cutFades(segment: ClipSegment, head: ClipSegment, tail: ClipSegment): [ClipSegment, ClipSegment] {
+  if (!segment.fade_in && !segment.fade_out) return [head, tail];
+  return [fadesFitted({ ...head, fade_out: 0 }), fadesFitted({ ...tail, fade_in: 0 })];
 }
 
 /**

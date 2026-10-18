@@ -116,11 +116,11 @@ export function keptOffset(item: OverlayPlay, from: number, to: number): number 
   return Math.abs(kept - item.offset) < 1e-9 ? item.offset : round(Math.max(0, kept));
 }
 
-// A Music Clip's longest fade (fade_in and fade_out in backend/app/candidates.py).
+// A Music Clip's or Segment's longest fade (Fade in backend/app/candidates.py).
 export const FADE_MAX_SECS = 10;
 
 /**
- * A Music Clip's fades within `secs` of it, as the planner hears them (audio_events in
+ * A Music Clip's or Segment's fades within `secs` of it, as the planner hears them (fades_within in
  * backend/app/planner.py, which is the rule; both are tested on the cases in
  * backend/tests/fixtures/gain_vectors.json): each 10 s at most, and when together they are longer
  * than it, both shortened by the same share to fit. To a hundredth, as edits are kept; the planner
