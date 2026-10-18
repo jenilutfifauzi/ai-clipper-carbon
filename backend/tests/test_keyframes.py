@@ -294,7 +294,7 @@ def keyed_render(settings, plain_video, stills, tmp_path, encoders: tuple[str, .
     overlay = Overlay("o", STILL, 0.0, 2.0, transform=Transform(scale=0.25), keys=keys)
     plan = plan_render(0.0, 2.0, SourceMetadata(10.0, 25.0, 640, 360, "h264"), overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)})
     renderer = Renderer(settings.ffmpeg_bin, RenderTuning(encoders=encoders))
-    return renderer.render(plain_video, plan, tmp_path / "clip.mp4", tmp_path / "clip.jpg", files={STILL: image})
+    return renderer.render(plain_video, plan, tmp_path / "clip.mp4", tmp_path / "clip.jpg", files={STILL: image}).encoder
 
 
 def test_an_encode_that_fails_ends_its_frame_processes_and_the_next_encoder_draws_them_again(settings, plain_video, stills, tmp_path):

@@ -25,18 +25,32 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pure tests cover:
+- [x] Pure tests cover:
   - the output size per resolution;
   - the target bitrate per tier, codec, resolution and fps;
   - a given bitrate replacing the tier;
   - CBR's fallback flag on VideoToolbox;
   - the estimated bytes.
-- [ ] Settings off the lists (codec, resolution, fps, kbps out of range) are refused.
-- [ ] With the default settings, a render is H.264 at about 8 Mb/s and −14 LUFS, as before. The existing render tests pass unchanged.
-- [ ] An HEVC render gives an HEVC stream tagged `hvc1`.
-- [ ] An AV1 render gives AV1. This test is skipped when libsvtav1 is missing.
-- [ ] A CBR bitrate on libx264 measures within tolerance of it. A tier's bitrate measures within tolerance of its target.
-- [ ] Loudness −16 measures near −16, and off leaves a quiet test tone quiet.
-- [ ] With VideoToolbox made to fail, H.264 falls back to libx264 and reports it.
+- [x] Settings off the lists (codec, resolution, fps, kbps out of range) are refused.
+- [x] With the default settings, a render is H.264 at about 8 Mb/s and −14 LUFS, as before. The existing render tests pass unchanged.
+- [x] An HEVC render gives an HEVC stream tagged `hvc1`.
+- [x] An AV1 render gives AV1. This test is skipped when libsvtav1 is missing.
+- [x] A CBR bitrate on libx264 measures within tolerance of it. A tier's bitrate measures within tolerance of its target.
+- [x] Loudness −16 measures near −16, and off leaves a quiet test tone quiet.
+- [x] With VideoToolbox made to fail, H.264 falls back to libx264 and reports it.
+
+## Comments
+
+**2026-10-18, agent:** Built.
+- **Model and rules** (`app/encoding.py`, new): `ExportSettings` (frozen dataclass read through pydantic like the styles: `Codec`, `Resolution` = Literal 720/1080/1440/2160, `fps: FrameRate | None` checked against FRAME_RATES, `Quality`, `bitrate: Bitrate | None` with `RateMode` and `kbps` 100–200000, `loudness: Literal[-14, -16] | None`). Its defaults are the "Shorts / TikTok / Reels" settings, so `ExportSettings()` is the default Preset's. The pure rules: `output_size`, `target_kbps(settings, fps)`, `estimated_bytes(settings, fps, secs)` (with AUDIO_KBPS = 192) and `encoder_args(settings, fps, encoder) -> EncoderArgs(args, bitrate_fallback)`.
+- **Encoder arguments**: VideoToolbox (and any encoder unknown there) gets the target as `-b:v`; libx264/libx265 get CRF 16/20/26 with `-maxrate`/`-bufsize` 1.5× the target, preset `fast`; SVT-AV1 gets CRF + 8 (Concat's equivalence) with the same cap, preset 8. CBR on libx264/libx265 is bitrate = minrate = maxrate = bufsize, plus `nal-hrd=cbr` / `strict-cbr=1`, without which x264 undershoots calm content. H.264 adds `-profile:v high`, HEVC `-tag:v hvc1`; x265 runs with `log-level=error` so a failure's last lines are ffmpeg's. Bitrates are spelled in M when whole (`8M`, `12M`), so the default encode's command is byte for byte the one before (the `unkeyed_command.json` fixture is unchanged).
+- **Decision: SVT-AV1 falls back to VBR for CBR too** (as VideoToolbox does, and reported the same way). SVT-AV1 4.2 refuses CBR outside low-delay streams ("CBR Rate control is currently not supported for RANDOM_ACCESS"), so it gets its VBR at the bitrate instead.
+- **Decision: a VBR bitrate of the settings' own replaces the target**, so the software encoders keep their tier's CRF capped at 1.5× it (VideoToolbox averages it), as the spec's rules read.
+- **Note on "renders exactly as today"**: it holds at 30 fps. The target scales with fps / 30 as the spec says, so a 25 fps Source now gets 6.7 Mb/s on VideoToolbox (it got 8) and a 60 fps one 16 Mb/s (it got 12). libx264 at 25 fps is capped at 10 Mb/s rather than 12.
+- **`RenderTuning`** (`app/config.py`) keeps `encoders` (H.264's, so tests that swap it are unchanged), `hevc_encoders`, `av1_encoders`, `codec_encoders(codec)`, the keyframe interval, true peak, loudness range, audio rate, poster time and Blur's parameters. The bitrates, CRF, x264 preset and integrated loudness are gone.
+- **Renderer** (`app/renderer.py`): `render(..., export=ExportSettings())` tries `codec_encoders(export.codec)` and returns `Encoded(encoder, bitrate_fallback)`. Loudness `None` skips the measuring pass and loudnorm (still `aresample` to 48 kHz). `available_codecs(ffmpeg, tuning)` reads `ffmpeg -encoders` once per process (`functools.cache` on the path), and a codec counts when any of its encoders is listed. Resolution and fps aren't applied yet: the Clip is the plan's 1080×1920 at the plan's rate, and the rules are given `plan.fps`.
+- **Render worker** (`app/rendering.py`) passes `ExportSettings()` explicitly and ignores `bitrate_fallback` for now.
+- **For later tickets**: 02 makes the renderer draw at `output_size(export)`. 03 plans at `export.fps` and passes it, since the rules already take the plan's fps. 04 records `Encoded.bitrate_fallback` and a copy of the settings on `RenderedClip`, passes the Preset's settings from the worker, and can reuse `TypeAdapter(ExportSettings)` for 422s and `available_codecs` for `GET /export-presets`. 05's estimate endpoint is `estimated_bytes`.
+- Tests: `backend/tests/test_export_settings.py`. Seam B covers sizes, tiers × codec × resolution × fps, a settings' own bitrate, the estimate, CBR's fallback per encoder, and reading and refusing settings. Seam A uses the real ffmpeg on a grainy 1080×1920 30 fps Source: default H.264 High at 8 Mb/s ±20% and −14 LUFS on VideoToolbox; HEVC `hvc1`; HEVC Smallest at 2.4 Mb/s; CBR 3000k on libx264 within 10% and VBR on VideoToolbox with the flag; failed hardware falling back to libx264/libx265; AV1 (skipped without libsvtav1); −16 LUFS, and loudness off leaving a −30 dB tone at its own level; codec availability. Bitrate renders are 5 s long, because over 2 s the encoders overshoot by about a quarter. `test_keyframes.py`'s `keyed_render` now takes `.encoder`. `test_render.py` is unchanged.

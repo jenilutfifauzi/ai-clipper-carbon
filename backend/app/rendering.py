@@ -35,6 +35,7 @@ from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.candidates import Candidate, Framing, Layout, Segment
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
+from app.encoding import ExportSettings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
@@ -514,8 +515,10 @@ class Renders:
             ))
             # Its picture layers' pictures, made now if they aren't there (docs/adr/0010).
             pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
-            encoder = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures
+            # Every Clip is rendered with the default Export Settings until Export Presets choose others.
+            encoder, _ = self.renderer.render(
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures,
+                ExportSettings(),
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:

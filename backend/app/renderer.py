@@ -2,11 +2,13 @@
 
 Each Clip is one encode, a single ffmpeg process that cuts the range (an accurate seek: ffmpeg
 decodes from the keyframe before the start and drops what comes before it), draws each Scene in its
-Layout, normalizes the audio, and writes the poster from the same frames. Before it, an audio-only
-pass measures the range's loudness, so that the encode can apply the gain that takes it to −14 LUFS
-(loudnorm's two-pass linear mode). One pass would have to adjust the gain as it goes (loudnorm's
-dynamic mode), which can pump and lands less exactly on the target; the measurement only decodes
-the range's audio, which takes about a second for a 90 s Clip.
+Layout, normalizes the audio, and writes the poster from the same frames. It is encoded as its
+Export Settings say (app/encoding.py): their codec's encoders are tried in turn, the hardware one
+first. Before it, an audio-only pass measures the range's loudness, so that the encode can apply the
+gain that takes it to the settings' loudness target, −14 LUFS by default (loudnorm's two-pass linear
+mode). One pass would have to adjust the gain as it goes (loudnorm's dynamic mode), which can pump
+and lands less exactly on the target; the measurement only decodes the range's audio, which takes
+about a second for a 90 s Clip. Without a target, nothing is measured and the mix is left as it is.
 
 The decoded video is split into one branch per Scene, each trimmed to its Scene and drawn there:
 every panel is a crop of the frame, moved at its change points by commands that ffmpeg sends it
@@ -76,7 +78,7 @@ an expression of its own time in its own sound's chain, as a Music Clip's is.
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume (a keyed one's by an expression of its own time, from its Keyframes), faded, and
 delayed to where it is heard, then mixed with the Clip's own sound (at its volume) before the
-loudness is measured and normalized, so that the mix lands at −14 LUFS.
+loudness is measured and normalized, so that the mix lands at the loudness target.
 Without music, and at its own volume, the Clip's sound goes as it did.
 
 The plan's picture layers (its Shapes, docs/adr/0011, and its Text Layers, docs/adr/0010;
@@ -90,6 +92,7 @@ then faded, scaled and moved by the hook's curves on top (`layer_at`). Without p
 command is as it was.
 """
 
+import functools
 import json
 import logging
 import math
@@ -107,6 +110,7 @@ import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.config import FONTS_DIR, RenderTuning
+from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
 from app.keyframes import linear_steps
@@ -145,6 +149,13 @@ class RenderStopped(RuntimeError):
     """The render was cut short because the app is stopping."""
 
 
+class Encoded(NamedTuple):
+    """What made a Clip: its video encoder, and whether that encoder did VBR where CBR was asked for."""
+
+    encoder: str
+    bitrate_fallback: bool
+
+
 class Renderer:
     def __init__(self, ffmpeg: Path, tuning: RenderTuning) -> None:
         self.ffmpeg = ffmpeg
@@ -163,13 +174,16 @@ class Renderer:
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
         pictures: dict[str, Path] | None = None,
-    ) -> str:
+        export: ExportSettings = ExportSettings(),
+    ) -> Encoded:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
-        (JPEG), and return the video encoder that made them: the first of RenderTuning.encoders that
-        succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1. `logo`
-        is the PNG of the plan's Logo Watermark, which isn't drawn without it; `files` has the file of
-        each Media Library item the plan plays (songs and videos), by its id; `pictures` the picture of
-        each of its picture layers (app/layer_pictures.py), by its name.
+        (JPEG), encoded as `export` says, and return what made them: the first of its codec's encoders
+        (RenderTuning.codec_encoders) that succeeds. Only `export`'s codec, quality, bitrate and
+        loudness are applied: the Clip is the plan's size, at the plan's frame rate. `progress` is
+        called with the share of the Clip encoded so far, from 0 to 1. `logo` is the PNG of the plan's
+        Logo Watermark, which isn't drawn without it; `files` has the file of each Media Library item
+        the plan plays (songs and videos), by its id; `pictures` the picture of each of its picture
+        layers (app/layer_pictures.py), by its name.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
@@ -179,7 +193,7 @@ class Renderer:
         pictures = pictures or {}
         if missing := [event.layer.id for event in plan.picture_layers if event.image not in pictures]:
             raise RuntimeError(f"The pictures of picture layers {', '.join(missing)} weren't made")
-        loudness = self._measure(source, plan, files)
+        loudness = None if export.loudness is None else self._measure(source, plan, export.loudness, files)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
         # With picture layers, the script is cut in two about them: what they are drawn over, then the hook.
         below, above = (replace(plan, hook=None), replace(plan, captions=[], watermark=None)) if plan.picture_layers else (plan, None)
@@ -200,14 +214,16 @@ class Renderer:
             for path, script in scripts.values():
                 path.write_text(_ass(script), encoding="utf-8")
             subtitles, over = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
-            for encoder in self.tuning.encoders:
+            for encoder in self.tuning.codec_encoders(export.codec):
                 feeds = _feeds(plan, keyed, self.ffmpeg)
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over)
+                command = self._command(
+                    source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over, export
+                )
                 stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
                     os.replace(parts[0], video)
                     os.replace(parts[1], poster)
-                    return encoder
+                    return Encoded(encoder, encoder_args(export, plan.fps, encoder).bitrate_fallback)
                 stderr = stderr or "no poster frame was written"
                 logger.warning("Rendering with %s failed: %s", encoder, stderr)
                 failures.append(f"{encoder}: {last_lines(stderr)}")
@@ -224,11 +240,11 @@ class Renderer:
             if self._process is not None:
                 self._process.kill()
 
-    def _measure(self, source: Path, plan: RenderPlan, files: dict[str, Path] | None = None) -> dict[str, str] | None:
-        """loudnorm's measurement of the range's audio, mixed with its music; None when it is silent,
-        with nothing to normalize."""
+    def _measure(self, source: Path, plan: RenderPlan, lufs: float, files: dict[str, Path] | None = None) -> dict[str, str] | None:
+        """loudnorm's measurement of the range's audio, mixed with its music, for normalizing it to
+        `lufs`; None when it is silent, with nothing to normalize."""
         tuning = self.tuning
-        measure = f"loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
+        measure = f"loudnorm=I={lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
         inputs, index = _music_inputs(plan, files or {}, first=len(sources) // _INPUT_ARGS)
         mix = _audio_mix(plan, index, tuning.audio_rate, sound)
@@ -263,12 +279,14 @@ class Renderer:
         fonts: Path = FONTS_DIR,
         pictures: dict[str, Path] | None = None,
         above: Path | None = None,
+        export: ExportSettings = ExportSettings(),
     ) -> list[str]:
-        """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
-        Overlays', its keyed Scenes' and its animated picture layers', by their places among them); a
-        keyed one without is drawn still, at its constants. `fonts` holds the Faces the `subtitles`
-        set text in, burned under the picture layers (drawn from `pictures`, by their names), and
-        `above` over them."""
+        """The encode's command: `encoder` encodes as `export` says, and the sound is normalized to its
+        loudness target from the `loudness` measured (left as it is without one). `feeds` are the frame
+        processes of the plan's keyed pictures (its Overlays', its keyed Scenes' and its animated
+        picture layers', by their places among them); a keyed one without is drawn still, at its
+        constants. `fonts` holds the Faces the `subtitles` set text in, burned under the picture layers
+        (drawn from `pictures`, by their names), and `above` over them."""
         tuning = self.tuning
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
@@ -309,25 +327,18 @@ class Renderer:
         audio = f"{heard}aresample={tuning.audio_rate}[a]"
         if loudness is not None:
             audio = (
-                f"{heard}aresample={tuning.audio_rate},loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
+                f"{heard}aresample={tuning.audio_rate},loudnorm=I={export.loudness}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
                 f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
                 f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
                 f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}[a]"
             )
-        if encoder == "libx264":
-            codec = [
-                "-c:v", "libx264", "-preset", tuning.x264_preset, "-crf", str(tuning.x264_crf),
-                "-maxrate", tuning.x264_maxrate, "-bufsize", tuning.x264_maxrate,
-            ]
-        else:
-            codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
             *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
-            *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
-            "-c:a", "aac", "-b:a", tuning.audio_bitrate,
+            *encoder_args(export, plan.fps, encoder).args, "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
+            "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
             "-movflags", "+faststart", "-f", "mp4", str(video),
             "-map", "[poster]", "-frames:v", "1", "-q:v", "3", "-f", "image2", "-update", "1", str(poster),
         ]
@@ -372,6 +383,21 @@ class Renderer:
                 process.wait()
             for feed in feeds:
                 feed.close()
+
+
+def available_codecs(ffmpeg: Path, tuning: RenderTuning) -> frozenset[Codec]:
+    """The codecs `ffmpeg` has at least one of the encoders of."""
+    encoders = _encoders(ffmpeg)
+    return frozenset(codec for codec in Codec if any(encoder in encoders for encoder in tuning.codec_encoders(codec)))
+
+
+@functools.cache
+def _encoders(ffmpeg: Path) -> frozenset[str]:
+    """The names of `ffmpeg`'s encoders, read once per process from its list: a line each after the
+    legend, its flags and then its name."""
+    result = subprocess.run([str(ffmpeg), "-hide_banner", "-encoders"], capture_output=True, text=True, errors="replace")
+    listed = result.stdout.partition("------")[2]
+    return frozenset(line.split()[1] for line in listed.splitlines() if len(line.split()) > 1)
 
 
 def _check(plan: RenderPlan) -> None:
