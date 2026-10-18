@@ -4,20 +4,8 @@ import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
+import { TRANSITION_KINDS, TRANSITIONS } from "../editor/transitions";
 import { DRAG_TRANSITION } from "./drag";
-
-export const TRANSITIONS: { kind: TransitionKind; label: string }[] = [
-  { kind: "fade", label: "Fade" },
-  { kind: "fadeblack", label: "Dip to black" },
-  { kind: "fadewhite", label: "Dip to white" },
-  { kind: "slideleft", label: "Slide left" },
-  { kind: "slideright", label: "Slide right" },
-  { kind: "slideup", label: "Slide up" },
-  { kind: "slidedown", label: "Slide down" },
-  { kind: "wipeleft", label: "Wipe" },
-  { kind: "zoomin", label: "Zoom in" },
-  { kind: "circleopen", label: "Circle open" },
-];
 
 // How long a Transition can be (Transition.secs in backend/app/candidates.py), and a new one's length.
 const SECS = { min: 0.2, max: 1.5 };
@@ -56,7 +44,7 @@ export function TransitionPanel({
             <Hint more="Or drag a transition onto a join.">Select a join (the diamond) on the Video track.</Hint>
           )}
           <div className="grid grid-cols-2 gap-2">
-            {TRANSITIONS.map(({ kind, label }) => (
+            {TRANSITION_KINDS.map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -76,7 +64,7 @@ export function TransitionPanel({
                   transition?.kind === kind && "ring-2 ring-accent",
                 )}
               >
-                {label}
+                {TRANSITIONS[kind].label}
               </button>
             ))}
           </div>
@@ -84,7 +72,7 @@ export function TransitionPanel({
       )}
       {transition && (
         <div className={cx("flex flex-col gap-3", kinds && "border-t border-border pt-4")}>
-          {!kinds && <p className="text-sm font-medium">{TRANSITIONS.find((t) => t.kind === transition.kind)?.label}</p>}
+          {!kinds && <p className="text-sm font-medium">{TRANSITIONS[transition.kind].label}</p>}
           <Slider
             label="Length"
             value={transition.secs}

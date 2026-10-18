@@ -114,6 +114,8 @@ export function ClipPreview({
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
+  // The Segments' picture, which a Transition's look styles as its incoming side.
+  const incoming = useRef<HTMLDivElement>(null);
   // Each deck's videos, its master then its follower; and the masters, whose sound PreviewMusic sets.
   const decks = useMemo(() => [0, 1].map(() => [createRef<HTMLVideoElement>(), createRef<HTMLVideoElement>()]), []);
   const masters = useMemo(() => decks.map(([master]) => master), [decks]);
@@ -217,22 +219,25 @@ export function ClipPreview({
     >
       {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
-        {decks.map((refs, deck) =>
-          refs.map((ref, slot) => (
-            <PanelView
-              key={`${deck}:${slot}`}
-              videoRef={ref}
-              src={src}
-              plan={drawn}
-              {...slotView(scene, slot)}
-              playback={playback}
-              muted={deck > 0 || slot > 0}
-              hidden={deck !== shownDeck}
-            />
-          )),
-        )}
-        <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
-        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} />
+        {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
+        <div ref={incoming} className="absolute inset-0">
+          {decks.map((refs, deck) =>
+            refs.map((ref, slot) => (
+              <PanelView
+                key={`${deck}:${slot}`}
+                videoRef={ref}
+                src={src}
+                plan={drawn}
+                {...slotView(scene, slot)}
+                playback={playback}
+                muted={deck > 0 || slot > 0}
+                hidden={deck !== shownDeck}
+              />
+            )),
+          )}
+          <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+        </div>
+        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
       </div>
       <PreviewOverlays
         plan={drawn}

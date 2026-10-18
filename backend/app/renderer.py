@@ -40,9 +40,10 @@ scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of 
 the same way from its own frames. With videos among them (or a Segment's own volume), each Segment's sound is set to its
 volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
 silence. A Freeze frame (docs/adr/0009) reads a moment of its video at its frame and holds the
-first frame for its hold (`tpad`), in silence. A join with a Transition is an
-xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
-xfade needs) and an acrossfade of the sounds, over the length the two overlap.
+first frame for its hold (`tpad`), in silence. A join with a Transition is drawn by its kind's
+recipe (app/transitions.py, docs/adr/0012): its chains on the two pictures, then one xfade of them
+(each Segment first brought to the Clip's frame rate and time base, which xfade needs); and an
+acrossfade of the sounds, over the length the two overlap.
 
 A Segment at a Speed (docs/adr/0009) has its frames' times divided by it and then brought to the
 Clip's frame rate (frames dropped or repeated, none blended); its sound is played at it, its pitch
@@ -124,12 +125,14 @@ from app.planner import (
     PictureLayer,
     OverlayEvent,
     Picture,
+    TransitionEvent,
     WatermarkEvent,
     font_metrics,
     on_frame,
     picture_at,
 )
 from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.transitions import RECIPES
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -452,7 +455,7 @@ def tempo_stages(speed: float) -> list[float]:
 
 def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
     """Filters that join the Segments' pictures (`kind` "v") or sounds ("a"), from `links`, into
-    `out`, one after another: by the Transition at a join (xfade, acrossfade), else back to back."""
+    `out`, one after another: by the Transition at a join (its recipe's xfade, acrossfade), else back to back."""
     into = {transition.start: transition for transition in plan.transitions}
     chains, joined = [], links[0]
     for i in range(1, len(links)):
@@ -462,12 +465,27 @@ def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
         if transition is None:
             chains.append(f"{joined}{links[i]}concat=n=2:v={int(kind == 'v')}:a={int(kind == 'a')}{label}")
         elif kind == "v":
-            length = transition.end - transition.start
-            chains.append(f"{joined}{links[i]}xfade=transition={transition.kind.value}:duration={length:.3f}:offset={transition.start:.3f}{label}")
+            chains += _crossed(transition, joined, links[i], label, f"x{i}")
         else:
             chains.append(f"{joined}{links[i]}acrossfade=d={transition.end - transition.start:.3f}{label}")
         joined = label
     return ";".join(chains)
+
+
+def _crossed(transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:
+    """Filters that join the pictures `outgoing` (in seconds into the Clip) and `incoming` (from 0 at
+    its start) into `out` by `transition`'s recipe: each side through its chain, if it has one, named
+    after `name`; then the recipe's xfade."""
+    recipe, chains = RECIPES[transition.kind], []
+    if recipe.outgoing is not None:
+        chains.append(f"{outgoing}{recipe.outgoing(transition, transition.start)}[{name}o]")
+        outgoing = f"[{name}o]"
+    if recipe.incoming is not None:
+        chains.append(f"{incoming}{recipe.incoming(transition, 0.0)}[{name}i]")
+        incoming = f"[{name}i]"
+    length = transition.end - transition.start
+    chains.append(f"{outgoing}{incoming}xfade=transition={recipe.transition}:duration={length:.3f}:offset={transition.start:.3f}{out}")
+    return chains
 
 
 def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:

@@ -716,7 +716,7 @@ export interface OverlayEvent extends Omit<Retiming, "hold"> {
   image: boolean;
 }
 
-// How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
+// How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
 export type TransitionKind =
   | "fade"
   | "fadeblack"

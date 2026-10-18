@@ -665,7 +665,7 @@ def _check_held(segment: Segment) -> None:
 
 
 class TransitionKind(StrEnum):
-    """How one Segment gives way to the next (ffmpeg's xfade transitions of the same names)."""
+    """How one Segment gives way to the next: its stored id, rendered by its recipe (app/transitions.py)."""
 
     FADE = "fade"
     FADEBLACK = "fadeblack"

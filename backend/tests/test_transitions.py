@@ -8,6 +8,7 @@ import pytest
 
 from app.candidates import TransitionKind
 from app.planner import Join, SegmentInput, SegmentPlan, TransitionEvent, plan_render
+from app.transitions import RECIPES, Recipe
 from app.transcript import Word
 from app.video_source import SourceMetadata
 from test_render import add, full_frame, preview, render, rendered, reviewed
@@ -17,6 +18,13 @@ from test_review import patch
 from test_segments import luma, ramp_video, ranges  # noqa: F401
 
 SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="h264")
+
+
+def test_every_kind_has_a_recipe_and_the_first_ten_are_xfades_of_their_names():
+    assert set(RECIPES) == set(TransitionKind)
+    # Saved Candidates' kinds keep their look: xfade's own transition of the same name, nothing around it.
+    for kind in ["fade", "fadeblack", "fadewhite", "slideleft", "slideright", "slideup", "slidedown", "wipeleft", "zoomin", "circleopen"]:
+        assert RECIPES[TransitionKind(kind)] == Recipe(xfade=kind)
 
 
 def test_a_transition_overlaps_the_segments_either_side_and_shortens_the_clip():
