@@ -393,8 +393,9 @@ export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [
 }
 
 /**
- * How a media Segment is heard along what is drawn of it (`shown`, from where it starts on the
- * Timeline, as keyedItem's segmentSpan starts it): its volume, or its volume Keyframes, with no fades.
+ * How a Segment is heard along what is drawn of it (`shown`, from where it starts on the Timeline, as
+ * keyedItem's segmentSpan starts it): its volume, or its volume Keyframes, with no fades. Its Volume
+ * Line's; a Source Segment's Waveform is at sourceHeard.
  */
 export function segmentHeard(segment: { volume?: number; keys?: Keys }, shown: { start: number; end: number }): Heard {
   return { volume: segment.volume ?? 1, secs: shown.end - shown.start, fade_in: 0, fade_out: 0, keys: segment.keys?.volume };
@@ -406,6 +407,15 @@ export function segmentHeard(segment: { volume?: number; keys?: Keys }, shown: {
  */
 export function sourceGain({ source_volume }: { source_volume: number }, segment: { volume?: number }): number {
   return source_volume * (segment.volume ?? 1);
+}
+
+/**
+ * How a Source Segment is heard along what is drawn of it (segmentHeard) under the Clip's own sound:
+ * its volume or its volume Keyframes, each times `source_volume`, as the renderer has it.
+ */
+export function sourceHeard({ source_volume }: { source_volume: number }, segment: { volume?: number; keys?: Keys }, shown: { start: number; end: number }): Heard {
+  const heard = segmentHeard(segment, shown);
+  return { ...heard, volume: sourceGain({ source_volume }, segment), keys: heard.keys?.map((key) => ({ ...key, value: key.value * source_volume })) };
 }
 
 // --- The Volume Line ---

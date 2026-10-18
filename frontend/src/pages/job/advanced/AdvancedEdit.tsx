@@ -969,7 +969,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
+              // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
               applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
             },
             onFade: (id, fade, secs, heard, group) => {

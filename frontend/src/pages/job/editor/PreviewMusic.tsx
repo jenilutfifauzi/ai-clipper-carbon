@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
 import { follow, MAX_DRIFT_SECS } from "./follow";
-import { CURVE_RATE, loudness, loudnessCurve } from "./loudness";
-import type { Playback } from "./playback";
+import { CURVE_RATE, loudness, loudnessCurve, sourceSound } from "./loudness";
+import type { Playback, PlayedSegment } from "./playback";
 import { eventCopy, eventPlay, useRetimedCopies } from "./retimedCopy";
 
 let context: AudioContext | null = null;
@@ -79,7 +79,7 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
  * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
  * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
- * live) is set to the plan's `source_volume`, times the Segment's own volume. Nothing is routed
+ * live) is set to the plan's `source_volume`, times the Segment's own volume (a keyed one's Keyframes, as a curve). Nothing is routed
  * through Web Audio until the plan has music or another volume.
  */
 export function PreviewMusic({
@@ -107,11 +107,18 @@ export function PreviewMusic({
   const sources = played.map((play) => play.src).join(" ");
 
   useEffect(() => {
+    // Each keyed Source Segment's sound, made once while it is shown, so that its curve isn't set again.
+    const sounds = new WeakMap<PlayedSegment, AudioEvent>();
+    const soundOf = (shown: PlayedSegment) => sounds.get(shown) ?? sounds.set(shown, sourceSound(shown, sourceVolume)).get(shown)!;
     const sync = () => {
       // A skim's snippet is heard at the skimmed Segment's volume.
       const shown = playback.segments[playback.shownSegmentIndex];
+      const keyed = !shown.media && !!shown.gain?.length;
       const volume = sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
-      for (const { current: video } of masters) if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
+      for (const { current: video } of masters) {
+        if (video && keyed) followCurve(video, playback, soundOf(shown));
+        else if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
+      }
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
         if (element && follow(element, playback, plays.current[i].span)) {

@@ -485,10 +485,12 @@ describe("setting an item's volume", () => {
     expect(setVolume(scene(before, null), { kind: "segment", id: "v1" }, 7)?.edits.segments[1].volume).toBe(2);
   });
 
-  test("a Source Segment has no volume of its own to set here, and an item that isn't there has none", () => {
-    const before = edits({ segments: [segment("s1", 100, 110), segment("v1", 0, 4, { media: "clip" })] });
+  test("a Source Segment's own volume is set as well, but a Freeze frame's, which is silent, isn't; an item that isn't there has none", () => {
+    const still = segment("f1", 110, 110, { hold: 1 });
+    const before = edits({ segments: [segment("s1", 100, 110), still, segment("v1", 0, 4, { media: "clip" })] });
 
-    expect(setVolume(scene(before, null), { kind: "segment", id: "s1" }, 0.5)).toBeNull();
+    expect(setVolume(scene(before, null), { kind: "segment", id: "s1" }, 0.504)?.edits.segments[0].volume).toBe(0.5);
+    expect(setVolume(scene(before, null), { kind: "segment", id: "f1" }, 0.5)).toBeNull();
     expect(setVolume(scene(before, null), { kind: "music", id: "gone" }, 0.5)).toBeNull();
   });
 });
