@@ -1,10 +1,10 @@
 // Seam H (.scratch/transform-crop/spec.md): what the Grips (GLOSSARY.md) on a picked picture do to
 // its Transform, worked out from numbers alone, without React or the DOM: the picture's drawn box
 // and where its Grips sit on it, then moving, corner scale, edge stretch, rotation with its snaps,
-// and a phone's pinch and twist. Points are in frame (output) pixels, y down; angles are degrees
+// and a phone's pinch and twist; and a Shape's edges and a line's ends, which set its own size. Points are in frame (output) pixels, y down; angles are degrees
 // clockwise (docs/adr/0007-one-transform-for-every-picture-and-a-manual-layout.md).
 import type { Box, Transform } from "../../../api";
-import { clamp, SCALE_RANGE, STRETCH_RANGE } from "./picture";
+import { clamp, SCALE_RANGE, SHAPE_SIZE_RANGE, STRETCH_RANGE } from "./picture";
 
 export interface Point {
   x: number;
@@ -187,6 +187,54 @@ function turnedBy(rotation: number, degrees: number, keys: GestureKeys): number 
 export function rotated({ transform }: Grabbed, from: Point, to: Point, keys: GestureKeys): Transform {
   const angle = (point: Point) => Math.atan2(point.y - transform.y, point.x - transform.x);
   return { ...transform, rotation: turnedBy(transform.rotation, turn(angle(from), angle(to)), keys) };
+}
+
+/** A Shape's Transform with its size at scale 1 (its box: a Shape Style's width and height, or a line's length and thickness). */
+export interface Sized {
+  transform: Transform;
+  fitted: Size;
+}
+
+/**
+ * A Shape (docs/adr/0011) resized by its `edge` dragged from `from` to `to`, along its own axis as
+ * `stretched` goes, but setting its own width (the left and right edges) or height (the top and
+ * bottom) instead of stretching it: the drag over its scale, in whole pixels within
+ * SHAPE_SIZE_RANGE, its scale as it was. The opposite edge stays put, its centre moving half as far
+ * along its own axis; `aboutCentre`, the centre stays put and the opposite edge goes as far the
+ * other way (as a Text Layer's box Grip goes).
+ */
+export function resized({ transform, fitted, frame }: Grabbed, edge: Edge, from: Point, to: Point, aboutCentre = false): Sized {
+  const across = edge === "left" || edge === "right";
+  const [held, now] = [offsetOnPicture(transform, from), offsetOnPicture(transform, to)];
+  const by = { left: held.along - now.along, right: now.along - held.along, top: held.down - now.down, bottom: now.down - held.down }[edge];
+  const key = across ? "width" : "height";
+  const size = Math.round(clamp(fitted[key] + ((aboutCentre ? 2 : 1) * by) / transform.scale, SHAPE_SIZE_RANGE));
+  const shift = aboutCentre ? 0 : (((size - fitted[key]) * transform.scale) / 2) * (edge === "left" || edge === "top" ? -1 : 1);
+  const centre = pointOnPicture(placed(transform, fitted), across ? shift : 0, across ? 0 : shift);
+  return { transform: centredAt(transform, centre, frame), fitted: { ...fitted, [key]: size } };
+}
+
+/** An end of a line or an arrow: its tail (its own left) or its tip (its own right, an arrow's head). */
+export type End = "left" | "right";
+
+/**
+ * A line or an arrow (its box its length by its thickness) with its `end` dragged from `from` to
+ * `to`: that end moved as far, the other staying put. Its length is the ends' distance over its
+ * scale, in whole pixels within SHAPE_SIZE_RANGE; it turns to the line from its tail to its tip, the
+ * short way round and snapped as the rotate handle snaps it (`snapRotation`), and its centre is the
+ * middle of its ends. Its thickness and scale are as they were.
+ */
+export function endDragged({ transform, fitted, frame }: Grabbed, end: End, from: Point, to: Point, keys: GestureKeys): Sized {
+  const picture = placed(transform, fitted);
+  const way = end === "right" ? 1 : -1;
+  const fixed = pointOnPicture(picture, (-way * picture.width) / 2, 0);
+  const grabbed = pointOnPicture(picture, (way * picture.width) / 2, 0);
+  const [dx, dy] = [grabbed.x + to.x - from.x - fixed.x, grabbed.y + to.y - from.y - fixed.y];
+  const rotation = turnedBy(transform.rotation, turn(radians(transform.rotation), Math.atan2(way * dy, way * dx)), keys);
+  const width = Math.round(clamp(Math.hypot(dx, dy) / transform.scale, SHAPE_SIZE_RANGE));
+  const half = (way * width * transform.scale) / 2;
+  const centre = { x: fixed.x + half * Math.cos(radians(rotation)), y: fixed.y + half * Math.sin(radians(rotation)) };
+  return { transform: centredAt({ ...transform, rotation }, centre, frame), fitted: { ...fitted, width } };
 }
 
 /** The picture after `grip` (or its body) is dragged from `from` to `to`. */

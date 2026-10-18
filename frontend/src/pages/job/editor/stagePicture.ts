@@ -185,17 +185,22 @@ export function gripsOnFrame(picture: Placed, frame: Size, reach: number, inset:
 
 /**
  * Which Grips a picture has: all of them (the Advanced Edit's), only its corners (the clip
- * editor's), which scale it about its centre with no edge stretch or turn, or its corners and the
- * rotate handle (a Text Layer's, never stretched).
+ * editor's), which scale it about its centre with no edge stretch or turn, its corners and the
+ * rotate handle (a Text Layer's, never stretched), or the middles of its left and right edges and
+ * the rotate handle (a line's or an arrow's: its two ends).
  */
-export type GripSet = "all" | "corners" | "corners-rotate";
+export type GripSet = "all" | "corners" | "corners-rotate" | "ends";
 
 const ALL_GRIPS: Grip[] = ["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left", "rotate"];
 const CORNERS = new Set<Grip>(["top-left", "top-right", "bottom-right", "bottom-left"]);
 
 /** The Grips of `set`, clockwise from the top left, the rotate handle last. */
 export const gripsIn = (set: GripSet): Grip[] =>
-  set === "all" ? ALL_GRIPS : ALL_GRIPS.filter((grip) => CORNERS.has(grip) || (set === "corners-rotate" && grip === "rotate"));
+  set === "all"
+    ? ALL_GRIPS
+    : set === "ends"
+      ? ALL_GRIPS.filter((grip) => grip === "right" || grip === "left" || grip === "rotate")
+      : ALL_GRIPS.filter((grip) => CORNERS.has(grip) || (set === "corners-rotate" && grip === "rotate"));
 
 // Each Grip's way out from the picture's centre, in degrees clockwise from across, unturned.
 const OUTWARD: Record<Exclude<Grip, "rotate">, number> = {

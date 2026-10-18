@@ -5,6 +5,7 @@ import { cropDragged, keptPart, wholePicture, type CropEntry } from "./cropGestu
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
   cornersOf,
+  endDragged,
   fingerDown,
   fingerMoved,
   fingersHeld,
@@ -12,6 +13,7 @@ import {
   fingerUp,
   moved as movedPicture,
   offsetOnPicture,
+  resized,
   type Corner,
   type Edge,
   type Fingers,
@@ -19,6 +21,7 @@ import {
   type Placed,
   type Point,
   type Size,
+  type Sized,
 } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
 import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
@@ -90,6 +93,12 @@ export interface StagePicture {
   // A Text Layer's: its box's wrap width (the sides) or fixed height (the top and bottom) set to
   // `length` of its own pixels by the box Grip on `edge` (TextBoxGrips), once a drag ends: one `group`.
   onBox?: (edge: BoxEdge, length: number, group: string) => void;
+  // A Shape's (docs/adr/0011): its edges (with all its Grips) or a line's or an arrow's two ends (with
+  // `grips` "ends") set its box, its size at scale 1, instead of stretching it (`resized`,
+  // `endDragged`), its last picture stretched while the drag lasts. Once it ends, the box (its own
+  // pixels) and the Transform that keeps its other edge or end in place, together: one `group`.
+  // `aboutCentre`: an edge resizes it about its centre instead, which stays put.
+  resize?: { aboutCentre: boolean; onResize: (box: Size, transform: Transform, group: string) => void };
   // Its Crop as saved, what Crop mode opens on, and where Crop mode leaves it, with the Transform
   // that keeps the kept part in place, together: one `group`. Without them it has no Crop mode.
   crop?: Crop | null;
@@ -98,7 +107,8 @@ export interface StagePicture {
 
 // Held where a gesture put it: a text's area moved by (dx, dy) and scaled by `scale` about its
 // middle, or a picture drawn by `transform` (its centre (dx, dy) from the plan's), and cut by `crop`
-// when Crop mode set one; until `plan` is no longer the plan, once the gesture is over.
+// when Crop mode set one, at `fitted` (its size at scale 1) when a Shape's Grip set one; until
+// `plan` is no longer the plan, once the gesture is over.
 type Held = {
   id: string;
   kind: "move" | "size";
@@ -107,6 +117,7 @@ type Held = {
   scale: number;
   transform: Transform | null;
   crop?: Crop;
+  fitted?: Size;
   plan: RenderPlan | null;
 };
 
@@ -139,8 +150,8 @@ type Gesture = {
   // Grabbed as one of several picked, which move with it.
   together: boolean;
   // A picture's: the fingers (or the one pointer) on its body or a Grip, from its Transform then, and
-  // where it is now.
-  picture?: { fingers: Fingers; now: Transform };
+  // where it is now; a Shape's edge or end (`resizing`, one finger only), with the box it sets.
+  picture?: { fingers: Fingers; now: Transform; resizing: boolean; box?: Size };
 };
 
 let gestures = 0;
@@ -217,7 +228,7 @@ export function useStageEdit(
     }
     if (cropping?.id === id) return wholeOnStage(picture, cropping.entry);
     if (holding?.id !== id || !holding.transform || !plan) return picture;
-    const fitted = pictures.find((item) => item.id === id)?.fitted;
+    const fitted = holding.fitted ?? pictures.find((item) => item.id === id)?.fitted;
     return heldPicture(holding.crop ? croppedPicture(picture, holding.crop) : picture, holding.transform, plan, fitted);
   }
 
@@ -400,10 +411,10 @@ export function useStageEdit(
     };
   }
 
-  // `item` drawn by `transform` (moved, or resized: `kind`), and cut by `crop`, until the next plan once it is let go.
-  function hold(item: StagePicture, transform: Transform, kind: Held["kind"], crop?: Crop) {
+  // `item` drawn by `transform` (moved, or resized: `kind`), cut by `crop` and at `fitted`, until the next plan once it is let go.
+  function hold(item: StagePicture, transform: Transform, kind: Held["kind"], crop?: Crop, fitted?: Size) {
     const [x, y] = item.picture?.centre ?? [transform.x, transform.y];
-    setHeld({ id: item.id, kind, dx: transform.x - x, dy: transform.y - y, scale: 1, transform, crop, plan });
+    setHeld({ id: item.id, kind, dx: transform.x - x, dy: transform.y - y, scale: 1, transform, crop, fitted, plan });
   }
 
   // `item` put at `transform` and saved, as `group`: nothing when it is there already.
@@ -415,6 +426,26 @@ export function useStageEdit(
     }
     hold(item, next, kind);
     item.onTransform(next, group);
+  }
+
+  // A Shape's `item` given the box `box` (its size at scale 1) by an edge or an end, at `transform`,
+  // and saved together, as `group`: nothing when both are as they were.
+  function commitResize(item: StagePicture, transform: Transform, box: Size, group: string) {
+    const next = tidyTransform(transform);
+    const was = item.fitted;
+    if (!item.resize || (JSON.stringify(next) === JSON.stringify(item.transform) && was?.width === box.width && was?.height === box.height)) {
+      setHeld(null);
+      return;
+    }
+    hold(item, next, "size", undefined, box);
+    item.resize.onResize(box, next, group);
+  }
+
+  // Where a Shape's edge or a line's end (`grip`) dragged from `from` to `to` puts it, with the box it sets.
+  function resizedBy(item: StagePicture, fingers: Fingers, from: Point, to: Point, keys: { shift: boolean; alt: boolean }): Sized {
+    const grip = fingers.grip as Edge;
+    if (item.grips === "ends") return endDragged(fingers.grab, grip === "left" ? "left" : "right", from, to, keys);
+    return resized(fingers.grab, grip, from, to, item.resize?.aboutCentre);
   }
 
   function pictureHandlers(item: StagePicture) {
@@ -441,6 +472,7 @@ export function useStageEdit(
       if (!item.transform || !item.picture || (grip === "body" && !onPicture(point))) return;
       pointer.currentTarget.setPointerCapture(pointer.pointerId);
       const grabbed = { transform: item.transform, fitted: fittedFor(item, item.picture, plan), frame: plan };
+      const resizing = !!item.resize && (grip === "top" || grip === "right" || grip === "bottom" || grip === "left");
       gesture.current = {
         id: item.id,
         pointer: pointer.pointerId,
@@ -452,7 +484,7 @@ export function useStageEdit(
         group: `drag:stage-picture:${++gestures}`,
         moved: false,
         together,
-        picture: { fingers: fingersOn(grabbed, grip, pointer.pointerId, point), now: item.transform },
+        picture: { fingers: fingersOn(grabbed, grip, pointer.pointerId, point), now: item.transform, resizing },
       };
     };
     const move = (pointer: PointerEvent<HTMLElement>) => {
@@ -466,6 +498,14 @@ export function useStageEdit(
       // A tap's jitter leaves it where it is.
       if (!current.moved && Math.hypot(point.x - grab.x, point.y - grab.y) < DRAG_CSS_PX * point.unit) return;
       current.moved = true;
+      if (current.picture.resizing) {
+        const [finger] = fingers.down;
+        const sized = resizedBy(item, fingers, finger.from, finger.at, { shift: pointer.shiftKey, alt: pointer.altKey });
+        current.picture.now = sized.transform;
+        current.picture.box = sized.fitted;
+        hold(item, sized.transform, "size", undefined, sized.fitted);
+        return;
+      }
       const held = fingersHeld(fingers, { shift: pointer.shiftKey, alt: pointer.altKey });
       // One without a rotate handle (the clip editor's) isn't turned by a twist either.
       const next = item.grips === "corners" ? { ...held, rotation: fingers.grab.transform.rotation } : held;
@@ -502,6 +542,7 @@ export function useStageEdit(
       setGuides(null);
       // Let go over another picture than it took hold of (the next Scene's, played into): dropped.
       if (current.id !== item.id) setHeld(null);
+      else if (current.moved && current.picture.box) commitResize(item, current.picture.now, current.picture.box, current.group);
       else if (current.moved && current.picture) commit(item, current.picture.now, current.kind, current.group);
       // A click on one of several picked picks it alone.
       else if (current.together) onSelect(item.id, false);
@@ -576,7 +617,8 @@ export function useStageEdit(
       event.stopPropagation();
       const point = latest.current.at(event);
       const { picture } = current;
-      if (!picture || current.together || !point) return;
+      // A Shape's edge or end is dragged by one finger alone.
+      if (!picture || picture.resizing || current.together || !point) return;
       const fingers = fingerDown(picture.fingers, event.pointerId, point, picture.now);
       if (fingers === picture.fingers) return;
       current.target.setPointerCapture(event.pointerId);
@@ -820,10 +862,16 @@ function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: Stage
   const { body } = edit.pictureHandlers(item);
   const picture = item.picture && edit.cropMode?.id !== item.id && edit.shownPicture(item.id, item.picture);
   const outline = selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed";
-  const grips = { all: ", its edges stretch it, the handle above turns it", corners: "", "corners-rotate": ", the handle above turns it" }[item.grips ?? "all"];
+  const edges = item.resize ? "set its width and height" : "stretch it";
+  const grips = {
+    all: `its corners scale it, its edges ${edges}, the handle above turns it`,
+    corners: "its corners scale it",
+    "corners-rotate": "its corners scale it, the handle above turns it",
+    ends: "drag an end to move it alone, the handle above turns it",
+  }[item.grips ?? "all"];
   const hints = [
     "drag to move it, or use the arrow keys",
-    selected && `its corners scale it${grips}`,
+    selected && grips,
     item.onEdit && "double-click or press Enter to edit its words",
   ];
   const box = picture && item.transform && (!item.behind || selected) && (
@@ -879,14 +927,16 @@ const GRIP_INSET_CSS_PX = 10;
 /**
  * The Grips of the picture picked alone, over everything else on the stage, on the picture as turned
  * (or, off the stage, pulled in towards its centre: `gripsOnFrame`): its corners scale it about its
- * centre, its edges stretch it, and the handle above it turns it (Shift: in 15° steps; Alt: without
- * snapping to a quarter turn); only the corners, of one with `grips` "corners". `scale` is the
- * stage's CSS pixels per output pixel.
+ * centre, its edges stretch it (a Shape's set its width and height), and the handle above it turns
+ * it (Shift: in 15° steps; Alt: without snapping to a quarter turn); only the corners, of one with
+ * `grips` "corners"; a line's or an arrow's two ends and the handle, of one with "ends". `scale` is
+ * the stage's CSS pixels per output pixel.
  */
 function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; scale: number }) {
   const picture = edit.shownPicture(item.id, item.picture!);
   const { grip } = edit.pictureHandlers(item);
   const has = new Set(gripsIn(item.grips ?? "all"));
+  const ends = item.grips === "ends";
   const finger = useMediaQuery("(pointer: coarse)");
   const [x, y] = picture.centre;
   const unit = 1 / scale;
@@ -904,9 +954,14 @@ function Grips({ plan, edit, item, scale }: { plan: RenderPlan; edit: StageEdit;
           <line x1={on.top.x} y1={on.top.y} x2={on.rotate.x} y2={on.rotate.y} stroke="white" strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
         </svg>
       )}
-      {GRIPS.filter(({ grip: at }) => has.has(at)).map(({ grip: at, look }) => (
-        <span key={at} {...grip(at)} className={cx(GRIP_DOT, look)} style={{ ...place(on[at]), cursor: gripCursor(at, picture.rotation) }} />
-      ))}
+      {GRIPS.filter(({ grip: at }) => has.has(at)).map(({ grip: at, look }) =>
+        // A line's or an arrow's ends: dots that move freely.
+        ends ? (
+          <span key={at} {...grip(at)} className={cx(GRIP_DOT, CORNER_LOOK)} style={{ ...place(on[at]), cursor: "move" }} />
+        ) : (
+          <span key={at} {...grip(at)} className={cx(GRIP_DOT, look)} style={{ ...place(on[at]), cursor: gripCursor(at, picture.rotation) }} />
+        ),
+      )}
       {has.has("rotate") && (
         <span {...grip("rotate")} className={cx(GRIP_DOT, "size-3.5 rounded-full bg-white pointer-coarse:size-5")} style={{ ...place(on.rotate), cursor: gripCursor("rotate", picture.rotation) }} />
       )}

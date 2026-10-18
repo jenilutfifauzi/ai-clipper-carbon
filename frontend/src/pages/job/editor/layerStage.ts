@@ -2,7 +2,8 @@
 // on the stage is a picture as an Overlay is (docs/adr/0007, 0010): its Grips are on its area (a Text
 // Layer's words and plate, not the room its picture keeps round them for its ink), scaled and turned
 // by its Transform. Its corners scale it and the handle above turns it; it has no edges to stretch
-// it. 12: a keyed one is gripped where its Keyframes have it at the playhead (docs/adr/0008).
+// it (a Shape's edges set its width and height instead, .scratch/shapes/issues/05-resize-on-stage.md).
+// 12: a keyed one is gripped where its Keyframes have it at the playhead (docs/adr/0008).
 import type { Picture, PictureLayerEvent, RenderPlan } from "../../../api";
 import { boundsAbout, isKeyed, pictureAt } from "./picture";
 import type { Size } from "./pictureGestures";
@@ -51,16 +52,17 @@ export const layersAt = (plan: RenderPlan, time: number): Pick<RenderPlan, "shap
 
 /**
  * The event of a picture layer whose area (`planned`, its `layerStagePicture`) the stage draws as
- * `shown` while a gesture holds it: its picture, the same file, placed, scaled, turned and faded with it.
+ * `shown` while a gesture holds it: its picture, the same file, placed, scaled, turned and faded with
+ * it, and stretched as far as its area is (a Shape's edge Grip, setting its width or height, draws
+ * the last picture stretched until the new one comes).
  */
 export function heldLayerEvent<Event extends PictureLayerEvent>(event: Event, planned: Picture, shown: Picture): Event {
   if (shown === planned) return event;
-  const by = shown.width / planned.width;
   const picture = {
     ...event.picture,
     centre: shown.centre,
-    width: event.picture.width * by,
-    height: event.picture.height * by,
+    width: (event.picture.width * shown.width) / planned.width,
+    height: (event.picture.height * shown.height) / planned.height,
     rotation: shown.rotation,
     opacity: shown.opacity,
   };

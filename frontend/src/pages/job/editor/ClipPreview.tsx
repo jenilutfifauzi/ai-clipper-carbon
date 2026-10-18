@@ -32,7 +32,7 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
-import { framePoint } from "./pictureGestures";
+import { framePoint, type Size } from "./pictureGestures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
@@ -383,16 +383,22 @@ function stagePictures(
   const shapes = controls.shapes;
   for (const event of shapes ? plan.shapes : []) {
     const { picture, fitted } = layerStagePicture(event);
+    const { id, style, keys } = event.layer;
+    const onResize = shapes!.onResize;
+    const ends = style.kind === "line" || style.kind === "arrow";
     pictures.push({
-      id: `shape:${event.layer.id}`,
-      label: "Shape",
+      id: `shape:${id}`,
+      label: ends ? `Shape: ${style.kind}` : "Shape",
       start: event.start,
       end: event.end,
       picture,
       fitted,
-      transform: shapes!.transformOf(event.layer.id, time) ?? event.layer.transform,
-      grips: "corners-rotate",
-      onTransform: (next, group) => shapes!.onTransform(event.layer.id, next, group, time),
+      transform: shapes!.transformOf(id, time) ?? event.layer.transform,
+      grips: !onResize ? "corners-rotate" : ends ? "ends" : "all",
+      onTransform: (next, group) => shapes!.onTransform(id, next, group, time),
+      // Its position keyed, an edge resizes it about its centre, as a Text Layer's box Grip does,
+      // so that a resize writes no Keyframe.
+      resize: onResize && { aboutCentre: !!(keys.x?.length || keys.y?.length), onResize: (box, next, group) => onResize(id, box, next, group, time) },
     });
   }
   const texts = controls.texts;
@@ -588,9 +594,13 @@ export interface StageControls {
   };
   // The Shapes (their Track unlocked), pictures with corners and a rotate handle as a Text Layer's
   // are: each one's Transform as shown at `time`, and where a gesture made from it there puts it.
+  // With `onResize`, its edges (a line's or an arrow's ends) set its box (`box`, its Shape Style's
+  // width and height, or a line's length, in its own pixels) with the Transform that keeps its other
+  // edge or end in place.
   shapes?: {
     transformOf: (id: string, time: number) => Transform | undefined;
     onTransform: (id: string, transform: Transform, group: string, time: number) => void;
+    onResize?: (id: string, box: Size, transform: Transform, group: string, time: number) => void;
   };
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];

@@ -112,7 +112,7 @@ import {
   unlockedPick,
   type Pick,
 } from "./pick";
-import { addShape } from "./shapeStyle";
+import { addShape, resizeShape } from "./shapeStyle";
 import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
@@ -755,7 +755,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         },
       };
   // The Shapes on the preview, moved, scaled and turned there as Text Layers are; on a locked Track,
-  // only drawn. Their size is their Shape Style's, set in the inspector.
+  // only drawn. Their edges (a line's or an arrow's ends) set their Shape Style's size, with the
+  // Transform that keeps the other edge or end in place, auto-keyed: one change.
   const shapeControls: StageControls["shapes"] = tracks.locked.includes("shape")
     ? undefined
     : {
@@ -769,6 +770,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const old = heldTransform(shape.transform, shape.keys, shape, time);
           if (placedTogether("shape", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else applyKeyed(writeItemTransform(scene, { kind: "shape", id }, transform, time, old), group);
+        },
+        onResize: (id, box, transform, group, time) => {
+          const shape = edits.shapes.find((other) => other.id === id);
+          if (shape) applyKeyed(resizeShape(scene, id, box, transform, time, heldTransform(shape.transform, shape.keys, shape, time)), group);
         },
       };
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.

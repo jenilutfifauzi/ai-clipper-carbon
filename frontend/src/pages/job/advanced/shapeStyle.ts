@@ -1,15 +1,17 @@
-import type { Shape, ShapeKind, ShapeStyle } from "../../../api";
-import { FRAME, IDENTITY } from "../editor/picture";
+import type { Shape, ShapeKind, ShapeStyle, Transform } from "../../../api";
+import { FRAME, IDENTITY, SHAPE_SIZE_RANGE } from "../editor/picture";
+import type { Size } from "../editor/pictureGestures";
 import { NO_SHADOW } from "../editor/shadow";
 import type { Outcome } from "./actions";
 import { newId, newTiming, type AdvancedEdits } from "./edits";
+import { writeItemTransform, type KeyScene } from "./keying";
 import { picked } from "./pick";
 
 // Shapes (docs/adr/0011, GLOSSARY.md): figures added from the Stickers tab, each drawn by the backend
 // as a picture of its Shape Style, as a Text Layer is.
 
-// A Shape Style's least and most width and height, in output pixels (SHAPE_SIZE in backend/app/candidates.py).
-export const SHAPE_SIZE = { min: 2, max: 4096 } as const;
+// A Shape Style's least and most width and height, in output pixels.
+export const SHAPE_SIZE = { min: SHAPE_SIZE_RANGE[0], max: SHAPE_SIZE_RANGE[1] } as const;
 // The thickest a Shape's stroke is, in output pixels (SHAPE_STROKE_MAX in backend/app/candidates.py).
 export const SHAPE_STROKE_MAX = 200;
 
@@ -95,4 +97,26 @@ export function addShape(
   const within = (value: number, most: number) => Math.round(Math.min(Math.max(value, 0), most));
   const shape = place ? { ...made, transform: { ...made.transform, x: within(place.x, FRAME.width), y: within(place.y, FRAME.height) } } : made;
   return { edits: { ...scene.edits, shapes: [...scene.edits.shapes, shape] }, pick: picked({ kind: "shape", id: shape.id }) };
+}
+
+/**
+ * `style` with its box set to `box` (in its own pixels) by its Grips on the stage: its width and
+ * height; a line's or an arrow's length alone (its box's height is its thickness or its head's,
+ * and its stored height isn't used). Its stroke and corners are as they were, so they keep their size.
+ */
+export function sizedStyle(style: ShapeStyle, box: Size): ShapeStyle {
+  return allStroke(style.kind) ? { ...style, width: box.width } : { ...style, width: box.width, height: box.height };
+}
+
+/**
+ * Shape `id` resized on the stage (an edge Grip, or a line's or an arrow's end), with the playhead at
+ * `time`: its box set to `box` (`sizedStyle`) and its Transform to `transform`, from what was `shown`
+ * there, auto-keyed as the Grips' Transforms are (`writeItemTransform`); together, one change. Null
+ * for one that isn't there or is on a locked Track.
+ */
+export function resizeShape(scene: KeyScene, id: string, box: Size, transform: Transform, time: number, shown?: Transform): Outcome | null {
+  const shape = scene.edits.shapes.find((other) => other.id === id);
+  if (!shape) return null;
+  const shapes = scene.edits.shapes.map((other) => (other === shape ? { ...shape, style: sizedStyle(shape.style, box) } : other));
+  return writeItemTransform({ ...scene, edits: { ...scene.edits, shapes } }, { kind: "shape", id }, transform, time, shown);
 }
