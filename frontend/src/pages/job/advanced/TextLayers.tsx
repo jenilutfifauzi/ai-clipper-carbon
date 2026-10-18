@@ -69,7 +69,6 @@ export function TextLayerFields({
     onChange({ ...layer, style: styled(layer.style, field, value) }, `text:${layer.id}:style.${field}`);
   const { style } = layer;
   const access = layerStyle(layer, onChange);
-  const animated = layer.animation_in !== "none" || layer.animation_out !== "none";
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -121,25 +120,41 @@ export function TextLayerFields({
         <BoxField label="Fixed height" value={style.fixed_height} most={FRAME.height} onChange={(height) => setStyle("fixed_height", height)} />
       </Group>
       <TextTransformFields layer={layer} onChange={onChange} />
-      <Group title="Motion">
-        <div className="grid grid-cols-2 gap-3">
-          <Select label="Comes on" value={layer.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />
-          <Select label="Goes off" value={layer.animation_out} options={ANIMATIONS} onChange={(value: Animation) => set("animation_out", value)} />
-        </div>
-        {animated && (
-          <Slider
-            label="Animation length"
-            value={layer.animation_ms}
-            min={100}
-            max={2000}
-            step={50}
-            format={(v) => `${(v / 1000).toFixed(2)} s`}
-            onChange={(ms) => set("animation_ms", ms)}
-          />
-        )}
-      </Group>
+      <MotionFields item={layer} kind="text" onChange={onChange} />
       <TimingFields item={layer} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>
+  );
+}
+
+// What comes on and goes off as the hook does: a Text Layer, a Shape.
+type Animated = Pick<TextLayer, "id" | "animation_in" | "animation_out" | "animation_ms">;
+
+/**
+ * The Motion fields of a Text Layer or a Shape (`kind`): how it comes on and goes off (Fade, Pop,
+ * Slide), stacked on its Keyframes, and, once it does, for how long. Each field's changes are a step
+ * of their own.
+ */
+export function MotionFields<T extends Animated>({ item, kind, onChange }: { item: T; kind: "text" | "shape"; onChange: (item: T, group: string) => void }) {
+  const set = <K extends keyof Animated>(field: K, value: Animated[K]) => onChange({ ...item, [field]: value }, `${kind}:${item.id}:${field}`);
+  const animated = item.animation_in !== "none" || item.animation_out !== "none";
+  return (
+    <Group title="Motion">
+      <div className="grid grid-cols-2 gap-3">
+        <Select label="Comes on" value={item.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />
+        <Select label="Goes off" value={item.animation_out} options={ANIMATIONS} onChange={(value: Animation) => set("animation_out", value)} />
+      </div>
+      {animated && (
+        <Slider
+          label="Animation length"
+          value={item.animation_ms}
+          min={100}
+          max={2000}
+          step={50}
+          format={(v) => `${(v / 1000).toFixed(2)} s`}
+          onChange={(ms) => set("animation_ms", ms)}
+        />
+      )}
+    </Group>
   );
 }
 

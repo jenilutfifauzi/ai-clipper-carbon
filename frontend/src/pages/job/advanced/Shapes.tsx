@@ -9,6 +9,7 @@ import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
 import { DRAG_SHAPE } from "./drag";
 import { SHAPE_SIZE } from "./shapeStyle";
+import { MotionFields } from "./TextLayers";
 import { TimingFields } from "./TimingFields";
 import { ShapeTransformFields } from "./TransformFields";
 
@@ -52,7 +53,7 @@ export function ShapeAssets({ onAdd }: { onAdd: (kind: ShapeKind) => void }) {
   );
 }
 
-/** The picked Shape's Shape Style (its size and fill), Transform and time. */
+/** The picked Shape's Shape Style (its size and fill), Transform, motion and time. */
 export function ShapeFields({
   shape,
   duration,
@@ -91,6 +92,7 @@ export function ShapeFields({
         <ColorField label="Fill" value={style.fill ?? "#FFFFFF"} onChange={(fill) => setStyle("fill", fill)} />
       </Group>
       <ShapeTransformFields shape={shape} onChange={onChange} />
+      <MotionFields item={shape} kind="shape" onChange={onChange} />
       <TimingFields item={shape} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>
   );
