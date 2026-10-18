@@ -3,9 +3,11 @@ import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import type { Playback } from "../editor/playback";
+import type { RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
 import { FADE_MAX_SECS, ITEM_MIN_SECS, newId, round } from "./edits";
 import { KeyedVolume } from "./KeyCluster";
+import { SpeedFields } from "./SpeedFields";
 import { TimingFields } from "./TimingFields";
 
 /** A Music Clip of `item` at `at` (the playhead, or where it was dropped), as long as the song or what is left of the Clip. */
@@ -20,17 +22,21 @@ export function newMusicClip(item: MediaItem, at: number, duration: number): Mus
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 /**
- * The selected Music Clip's volume, fades, part of its song and time. Its volume is shown at the
- * playhead, and keyed there (`onVolume` writes a Keyframe once it has some), with its ‹ ◆ ›.
+ * The selected Music Clip's volume, fades, Speed (the Overlay's fields), part of its song and time.
+ * Its volume is shown at the playhead, and keyed there (`onVolume` writes a Keyframe once it has
+ * some), with its ‹ ◆ ›.
  */
 export function MusicFields({
   clip,
   item,
   duration,
   playback,
+  copy,
   onChange,
   onVolume,
   onFade,
+  onSpeed,
+  onReverse,
   onDuplicate,
   onDelete,
 }: {
@@ -39,10 +45,16 @@ export function MusicFields({
   item: MediaItem | undefined;
   duration: number;
   playback: Playback;
+  // The Retimed copy the preview plays it from, if any.
+  copy: RetimedAsk | null;
   onChange: (clip: MusicClip, group: string) => void;
   onVolume: (volume: number, group: string) => void;
   // A fade set, as its Fade Ramp's handle sets it.
   onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
+  // Its Speed set (actions.ts' setSpeed), a change of `group`.
+  onSpeed: (speed: number, group: string) => void;
+  // Its Reverse turned on or off (actions.ts' setReverse).
+  onReverse: (reverse: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -96,11 +108,23 @@ export function MusicFields({
           onChange={fade("fade_out")}
         />
       </Group>
+      <SpeedFields
+        speed={clip.speed ?? 1}
+        pitch={clip.pitch ?? false}
+        reverse={clip.reverse ?? false}
+        heard
+        group={`music:${clip.id}:speed`}
+        copy={copy}
+        what={item?.kind === "video" ? "video" : "song"}
+        onSpeed={onSpeed}
+        onPitch={(pitch) => onChange({ ...clip, pitch }, `music:${clip.id}:pitch`)}
+        onReverse={onReverse}
+      />
       <TimingFields
         item={clip}
         duration={duration}
         length={length}
-        labels={{ start: "Comes in at", secs: "Plays for", offset: "Starts in the song at" }}
+        labels={{ start: "Comes in at", secs: "Plays for", offset: clip.reverse ? "Ends in the song at" : "Starts in the song at" }}
         onChange={onChange}
       />
     </div>

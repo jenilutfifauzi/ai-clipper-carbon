@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { eventSpan, follow } from "./follow";
 import { Playback, playedFrom } from "./playback";
 import { harness } from "./playbackHarness";
+import { eventPlay } from "./retimedCopy";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -464,6 +465,27 @@ describe("speed", () => {
       expect(sound.currentTime).toBeCloseTo(0.5, 5);
       vi.unstubAllGlobals();
     }
+  });
+
+  test("a 2× Music Clip plays its song in half the time, its pitch kept, and stops at its end", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(playedFrom([{ start: 100, end: 106 }]));
+    stage.decks(playback);
+    const sound = stage.video();
+    // As test_sped_music.py renders it: its 2 s song over 1 s from 0.5 s.
+    const event = { media: "song", start: 0.5, end: 1.5, offset: 0, volume: 1, fade_in: 0, fade_out: 0, gain: [], id: "m", speed: 2 };
+    const { span } = eventPlay(event, "song.m4a", null);
+    playback.subscribe(() => follow(sound.element, playback, span));
+    playback.seek(0.5);
+    stage.settle();
+    playback.play();
+    expect(sound.playbackRate).toBe(2);
+    expect(sound.preservesPitch).toBe(true);
+    stage.advance(0.9);
+    expect(Math.abs(sound.currentTime - (playback.time - 0.5) * 2)).toBeLessThanOrEqual(1 / 30);
+    stage.advance(0.2);
+    expect(sound.paused).toBe(true);
   });
 
   // 0–5 s from 100 s of the Source, then 5–9 s of 8 s from 200 s at `speed` 2.

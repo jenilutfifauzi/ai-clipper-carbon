@@ -62,11 +62,11 @@ export function Inspector({
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
-  // A Segment's or video Overlay's Speed set (actions.ts' setSpeed), a change of `group`.
+  // A Segment's, video Overlay's or Music Clip's Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (item: SpeedRef, speed: number, group: string) => void;
-  // A Segment's or video Overlay's Reverse turned on or off (actions.ts' setReverse).
+  // A Segment's, video Overlay's or Music Clip's Reverse turned on or off (actions.ts' setReverse).
   onReverse: (item: SpeedRef, reverse: boolean) => void;
-  // The Retimed copy the preview plays a Segment or video Overlay from, as the plan has it, if any.
+  // The Retimed copy the preview plays a Segment, video Overlay or Music Clip from, as the plan has it, if any.
   copyOf: (item: SpeedRef) => RetimedAsk | null;
   // A Freeze frame's hold set (actions.ts' setHold).
   onHold: (id: string, hold: number) => void;
@@ -192,6 +192,9 @@ export function Inspector({
         duration={duration}
         playback={playback}
         onChange={onMusic}
+        onSpeed={(speed, group) => onSpeed({ kind: "music", id: clip.id }, speed, group)}
+        onReverse={(reverse) => onReverse({ kind: "music", id: clip.id }, reverse)}
+        copy={copyOf({ kind: "music", id: clip.id })}
         onVolume={volumeOf({ kind: "music", id: clip.id })}
         onFade={(fade, secs, group) => {
           const outcome = setFade({ edits, pick }, clip.id, fade, secs);

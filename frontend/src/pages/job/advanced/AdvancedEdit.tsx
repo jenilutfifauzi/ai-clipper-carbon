@@ -558,10 +558,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
   // A notice told once while the change that makes it keeps coming (a drag), not at every step.
   const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
-  // A Segment's or video Overlay's Speed set from the inspector: one change of `group`, its ripple included.
+  // A Segment's, video Overlay's or Music Clip's Speed set from the inspector: one change of `group`, its ripple included.
   function setItemSpeed(item: SpeedRef, speed: number, group: string) {
-    const overlay = item.kind === "overlay" ? edits.overlays.find((other) => other.id === item.id) : undefined;
-    const video = overlay ? (mediaById.get(overlay.media)?.duration ?? undefined) : undefined;
+    const timed =
+      item.kind === "overlay"
+        ? edits.overlays.find((other) => other.id === item.id)
+        : item.kind === "music"
+          ? edits.music.find((other) => other.id === item.id)
+          : undefined;
+    const video = timed ? (mediaById.get(timed.media)?.duration ?? undefined) : undefined;
     const outcome = speedGesture(scene, item, speed, group, { longest, video });
     if (!outcome) return;
     if (outcome.edits !== edits) history.set(outcome.edits, group);
@@ -598,16 +603,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const actions = itemActions(scene, () => playback.time, apply, clip);
   const splits = splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
-  // A Segment's or video Overlay's Reverse turned on or off (the inspector's switch, R): one change.
+  // A Segment's, video Overlay's or Music Clip's Reverse turned on or off (the inspector's switch, R): one change.
   function setItemReverse(item: SpeedRef, reverse: boolean) {
     const outcome = setReverse(scene, item, reverse);
     if (outcome) history.set(outcome.edits);
   }
-  // The one picked Segment or video Overlay, which R reverses.
+  // The one picked Segment, video Overlay or Music Clip, which R reverses.
   const reversed = reversible(scene, (media) => mediaById.get(media)?.kind === "video");
-  // The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens.
+  // The one picked Segment, video Overlay or Music Clip, whose Speed sheet the phone's toolbar opens.
   const speedSheet = speedSheetItem(scene, (media) => mediaById.get(media)?.kind === "video");
-  // The Retimed copy the preview plays a Segment or Overlay from, as the plan has it (retimedCopy.ts).
+  // The Retimed copy the preview plays a Segment, Overlay or Music Clip from, as the plan has it (retimedCopy.ts).
   function copyOf(item: SpeedRef): RetimedAsk | null {
     const plan = preview?.plan;
     if (item.kind === "segment") {
@@ -615,6 +620,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       const range = shown && segmentCopy(shown);
       if (!range) return null;
       return shown.media ? { media: shown.media, range } : { job: job.id, range };
+    }
+    if (item.kind === "music") {
+      const heard = plan?.audio.find((sound) => sound.id === item.id);
+      const range = heard && eventCopy(heard);
+      return heard && range ? { media: heard.media, range } : null;
     }
     const event = plan?.overlays.find((overlay) => overlay.id === item.id);
     const range = event && !event.image ? eventCopy(event) : null;
@@ -1372,9 +1382,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 onHold={setFreezeHold}
                 onSegment={updateSegment}
                 onOverlay={updateOverlay}
+                onMusic={updateMusic}
               />
             ) : (
-              <p className="text-sm text-pretty text-muted">Pick a Segment or a video Overlay to change its Speed.</p>
+              <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
             )
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />

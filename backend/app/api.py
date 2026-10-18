@@ -1172,26 +1172,27 @@ def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
 
 @router.post("/media/{media_id}/retimed")
 def media_retimed(media_id: str, body: RetimedRequest, library: Media, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
-    """The preview-size Retimed copy of a video's range from `start` to `end` seconds, as the editor
-    asks for it while it previews a reversed item, or one at a Speed a browser won't play, then polls
-    (app/retimed.py): any copy that serves it, or the one being made, or one queued now and made
-    outside the Worker, on every core unless the Worker is running a Job. 404 for an item that isn't
-    a video; 422 for a range outside it, or one played forwards at 1×."""
+    """The preview-size Retimed copy of a video's or a song's range from `start` to `end` seconds, as
+    the editor asks for it while it previews a reversed item, or one at a Speed a browser won't play,
+    then polls (app/retimed.py): any copy that serves it, or the one being made, or one queued now and
+    made outside the Worker, on every core unless the Worker is running a Job. 404 for an image; 422
+    for a range outside it, or one played forwards at 1×."""
     try:
         item = library.get(media_id)
         copies = library.retimed(media_id)
     except MediaNotFound:
-        raise HTTPException(404, f"No video {media_id}") from None
-    return _ask_retimed(copies, item.duration or 0.0, "the video", body, f"/api/media/{media_id}/retimed", settings, worker)
+        raise HTTPException(404, f"No video or song {media_id}") from None
+    what = "the song" if item.kind is MediaKind.AUDIO else "the video"
+    return _ask_retimed(copies, item.duration or 0.0, what, body, f"/api/media/{media_id}/retimed", settings, worker)
 
 
 @router.get("/media/{media_id}/retimed/{name}")
 def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse:
-    """A video's Retimed copy, by the name its `url` gives."""
+    """A video's or a song's Retimed copy, by the name its `url` gives."""
     try:
         copies = library.retimed(media_id)
     except MediaNotFound:
-        raise HTTPException(404, f"No video {media_id}") from None
+        raise HTTPException(404, f"No video or song {media_id}") from None
     file = copies.folder / name
     if Retime.named(name) is None or not file.is_file():
         raise HTTPException(404, f"No copy {name} of {media_id}")
@@ -1228,17 +1229,17 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
 
 
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
-    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
-    Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
+    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos and songs no
+    other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
     History plays from; and the Job's picture layers' pictures (app/layer_pictures.py) none of them
     shows, and the folder they were kept in before (OLD_PICTURES_DIR), whole."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
-    videos = {item.id: item.duration or 0.0 for item in library.all() if item.kind is MediaKind.VIDEO}
-    used = copies_used(states, videos)
+    timed = {item.id: item.duration or 0.0 for item in library.all() if item.kind is not MediaKind.IMAGE}
+    used = copies_used(states, timed)
     sweep(store.job_dir(job_id) / RETIMED_DIR, used.get(None, []))
-    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & videos.keys()):
+    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & timed.keys()):
         if all(use.job_id == job_id for use in media_uses(store, media_id)):
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
     sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
@@ -1257,12 +1258,16 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
 
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
-    be a song or a video with sound, a Segment a video, within its length, and an Overlay within its
-    video's at its Speed, an image's having no Speed nor Reverse."""
+    be a song or a video with sound, within its length at its Speed, a Segment a video, within its
+    length, and an Overlay within its video's at its Speed, an image's having no Speed nor Reverse."""
     for clip in body.music or []:
         item = library.find(clip.media)
         if item is None or not item.has_audio:
             raise HTTPException(422, f"Music Clip {clip.id}: no song or video with sound {clip.media} in the Media Library")
+        if item.duration is not None and overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse).end > item.duration + 0.05:
+            at_speed = f" at {clip.speed:g}x" if clip.speed != 1 else ""
+            song = "song" if item.kind is MediaKind.AUDIO else "video"
+            raise HTTPException(422, f"Music Clip {clip.id} runs past the end of its {song} ({item.duration:g} s){at_speed}")
     for segment in body.segments or []:
         if segment.media is None:
             continue
