@@ -59,8 +59,8 @@ export interface TrackHandlers {
   onMove: (delta: number, group: string) => void;
   // A Music Clip's or media Segment's volume set by its Volume Line.
   onVolume: (item: { kind: "music" | "segment"; id: string }, volume: number, group: string) => void;
-  // A Music Clip's fade in or fade out set by its Fade Ramp's handle.
-  // `heard`: the seconds of the Music Clip heard, where the Clip's end cuts it short.
+  // A Music Clip's or Segment's fade in or fade out set by its Fade Ramp's handle. `heard`: the
+  // seconds of it heard, where the Clip's end cuts it short or a Transition after it carries it on.
   onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
@@ -318,10 +318,14 @@ export function Tracks({
           if (!segment) return null;
           const selected = isPicked(pick, "segment", segment.id);
           const volume = segment.media ? 1 : sourceGain(edits, segment);
-          // Its sound, by its volume Keyframes once it has some.
-          const heard = segmentHeard(segment, shown);
+          // Heard on under the Transition into the next one, past what is drawn of it, as planned.
+          const handsOver = edits.transitions.some((transition) => transition.after === segment.id);
+          const whole = handsOver ? plan?.segments.find((other) => other.id === segment.id) : undefined;
+          const tail = whole && Math.abs(whole.start - shown.start) < 1e-6 ? Math.max(0, whole.end - shown.end) : 0;
+          // Its sound, by its volume Keyframes once it has some, through its fades.
+          const heard = segmentHeard(segment, shown, tail);
           const keyed = !!segment.keys?.volume?.length;
-          // A Freeze frame is silent: no Waveform and no Volume Line.
+          // A Freeze frame is silent: no Waveform, no Volume Line and no Fade Ramps.
           const held = segment.hold != null;
           return (
             <TimelineItem
@@ -354,15 +358,25 @@ export function Tracks({
                   heard={heard}
                 />
               ) : (
-                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} heard={sourceHeard(edits, segment, shown)} />
+                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} heard={sourceHeard(edits, segment, shown, tail)} />
               )}
               {!held && (!segment.media || mediaById.get(segment.media)?.has_audio !== false) && (
-                <VolumeLine
-                  volume={segment.volume ?? 1}
-                  keyed={keyed ? { heard, start: shown.start, playback } : undefined}
-                  grab={selected && !locked("video")}
-                  onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
-                />
+                <>
+                  <VolumeLine
+                    volume={segment.volume ?? 1}
+                    keyed={keyed ? { heard, start: shown.start, playback } : undefined}
+                    grab={selected && !locked("video")}
+                    onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
+                  />
+                  <FadeRamps
+                    fades={heard}
+                    pps={pps}
+                    tail={tail}
+                    band={MEDIA_WAVE_BAND}
+                    grab={selected && !locked("video")}
+                    onFade={(fade, secs, group) => handlers.onFade(segment.id, fade, secs, heard.secs + tail, group)}
+                  />
+                </>
               )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(mediaAlong(shown).mediaStart)}
@@ -842,29 +856,37 @@ const FADE_HIT_PX = 24;
 const TRIM_EDGE_PX = 12;
 
 /**
- * A Music Clip's Fade Ramps: its fade in and fade out (`fades`, as heard), at `pps` pixels a second,
- * as slopes at its ends that shade what they quieten. On a picked Music Clip of an unlocked Track
- * (`grab`), a handle at the top of each slope drags that fade's length, with its seconds while it does;
- * elsewhere on the item, a drag moves or trims it as ever.
+ * A Music Clip's or Segment's Fade Ramps: its fade in and fade out (`fades`, as heard), at `pps`
+ * pixels a second, as slopes at its ends that shade what they quieten; a Segment's over the sound
+ * `band` of its Filmstrip, its fade out ending `tail` seconds past its drawn end (under the Transition
+ * into the next). On a picked item of an unlocked Track (`grab`), a handle at the top of each slope
+ * drags that fade's length, with its seconds while it does; elsewhere on the item, a drag moves or
+ * trims it as ever.
  */
 function FadeRamps({
   fades,
   pps,
+  tail = 0,
+  band,
   grab,
   onFade,
 }: {
   fades: { fade_in: number; fade_out: number };
   pps: number;
+  tail?: number;
+  // Its height in pixels, along the item's bottom; all of the item's without it.
+  band?: number;
   grab: boolean;
   onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
 }) {
   const ramp = (fade: "fade_in" | "fade_out") => {
     const width = fades[fade] * pps;
-    // From the Clip's start for the fade in, from its end for the fade out.
+    // From the item's start for the fade in, from where it is last heard for the fade out.
     const side = fade === "fade_in" ? "left" : "right";
+    const past = side === "right" ? tail * pps : 0;
     return [
       width > 0 && (
-        <svg key={`${fade}:ramp`} className={cx("absolute inset-y-0 h-full", side === "left" ? "left-0" : "right-0")} style={{ width }} viewBox="0 0 1 1" preserveAspectRatio="none">
+        <svg key={`${fade}:ramp`} className="absolute inset-y-0 h-full" style={{ width, [side]: -past }} viewBox="0 0 1 1" preserveAspectRatio="none">
           <path d={side === "left" ? "M0 0 H1 L0 1 Z" : "M0 0 H1 V1 Z"} fill="rgb(0 0 0 / 0.35)" />
           <path d={side === "left" ? "M0 1 L1 0" : "M0 0 L1 1"} stroke="oklch(0.88 0.16 90)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" fill="none" />
         </svg>
@@ -872,11 +894,13 @@ function FadeRamps({
       grab && (
         <ItemHandle
           key={`${fade}:handle`}
-          className="absolute top-0 cursor-ew-resize"
+          className="absolute cursor-ew-resize"
           style={{
             width: FADE_HIT_PX,
             height: FADE_HIT_PX,
-            [side]: `clamp(${TRIM_EDGE_PX}px, ${width - FADE_HIT_PX / 2}px, calc(100% - ${TRIM_EDGE_PX + FADE_HIT_PX}px))`,
+            // Across the top of a band; at the top of the item without one.
+            top: band ? -FADE_HIT_PX / 2 : 0,
+            [side]: `clamp(${TRIM_EDGE_PX}px, ${width - past - FADE_HIT_PX / 2}px, calc(100% - ${TRIM_EDGE_PX + FADE_HIT_PX}px))`,
           }}
           label={`${fades[fade].toFixed(1)} s`}
           labelBefore={side === "right"}
@@ -886,13 +910,18 @@ function FadeRamps({
             return ({ dx }, group) => onFade(fade, from + (side === "left" ? dx : -dx) / pps, group);
           }}
         >
-          <span className="absolute top-0.5 left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_1px_rgb(0_0_0/0.5)]" />
+          <span
+            className={cx(
+              "absolute left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_1px_rgb(0_0_0/0.5)]",
+              band ? "top-1/2 -translate-y-1/2" : "top-0.5",
+            )}
+          />
         </ItemHandle>
       ),
     ];
   };
   return (
-    <span aria-hidden className="pointer-events-none absolute inset-0">
+    <span aria-hidden className={cx("pointer-events-none absolute inset-x-0 bottom-0", !band && "top-0")} style={band ? { height: band } : undefined}>
       {ramp("fade_in")}
       {ramp("fade_out")}
     </span>

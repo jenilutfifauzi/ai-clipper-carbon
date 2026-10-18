@@ -11,6 +11,7 @@ import { IDENTITY, mediaSize } from "../editor/picture";
 import type { Playback, PlayedSegment } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
+import { FADE_MAX_SECS } from "./edits";
 import { KeyedVolume } from "./KeyCluster";
 import { resetFraming, type KeySpan } from "./keying";
 import { HoldFields, SpeedFields } from "./SpeedFields";
@@ -116,6 +117,7 @@ export function SegmentFields({
   onDelete,
   onSourceVolume,
   onVolume,
+  onFade,
   onSpeed,
   onReverse,
   onHold,
@@ -139,6 +141,8 @@ export function SegmentFields({
   onSourceVolume: (volume: number) => void;
   // Its own volume (a keyed one's as a Keyframe at the playhead).
   onVolume: (volume: number, group: string) => void;
+  // A fade set (actions.ts' setFade), as its Fade Ramp's handle sets it.
+  onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
   // Its Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (speed: number, group: string) => void;
   // Its Reverse turned on or off (actions.ts' setReverse).
@@ -220,6 +224,7 @@ export function SegmentFields({
               onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
             />
           )}
+          {!held && item?.has_audio !== false && <FadeFields segment={segment} onFade={onFade} />}
         </>
       ) : (
         <>
@@ -245,6 +250,7 @@ export function SegmentFields({
                 playback={playback}
                 onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
               />
+              <FadeFields segment={segment} onFade={onFade} />
               <Slider
                 label="The episode's sound, in every Segment"
                 value={sourceVolume}
@@ -260,6 +266,39 @@ export function SegmentFields({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * A Segment's fades, as a Music Clip's: each as long as 10 s, or as what the other leaves of it on the
+ * Timeline (the plan fits them to it as heard, a Transition's overlap included).
+ */
+function FadeFields({ segment, onFade }: { segment: ClipSegment; onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void }) {
+  const length = segmentLength(segment);
+  const most = (other: number) => Math.max(0, Math.min(FADE_MAX_SECS, length - other));
+  const [fadeIn, fadeOut] = [segment.fade_in ?? 0, segment.fade_out ?? 0];
+  const fade = (field: "fade_in" | "fade_out") => (secs: number) => onFade(field, secs, `segment:${segment.id}:${field}`);
+  return (
+    <>
+      <Slider
+        label="Fade in"
+        value={Math.min(fadeIn, most(fadeOut))}
+        min={0}
+        max={most(fadeOut)}
+        step={0.1}
+        format={(v) => `${v.toFixed(1)} s`}
+        onChange={fade("fade_in")}
+      />
+      <Slider
+        label="Fade out"
+        value={Math.min(fadeOut, most(fadeIn))}
+        min={0}
+        max={most(fadeIn)}
+        step={0.1}
+        format={(v) => `${v.toFixed(1)} s`}
+        onChange={fade("fade_out")}
+      />
+    </>
   );
 }
 
