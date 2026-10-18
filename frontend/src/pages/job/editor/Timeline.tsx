@@ -8,6 +8,7 @@ import type { HookTiming } from "../HookEditor";
 import { Link } from "react-router";
 import { usePlayback, type PlayedSegment, type Playback } from "./playback";
 import { MagneticToggle } from "./MagneticToggle";
+import { cueText } from "./cues";
 
 // How much of the Source either side of the clip the timeline shows, and the longest clip (as
 // app/review.py's MAX_CLIP_SECS).
@@ -146,11 +147,11 @@ export function Timeline({
                   playback.seek(event.start);
                   onCaption(event.start);
                 }}
-                title={event.text}
+                title={cueText(event)}
                 className="absolute inset-y-1 overflow-hidden rounded-md bg-surface-raised px-1 text-left text-xs leading-7 text-ellipsis whitespace-nowrap ring-1 ring-border hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
                 style={{ left: x(range.start + event.start), width: Math.max(2, (event.end - event.start) * pps - 1) }}
               >
-                {event.text}
+                {cueText(event)}
               </button>
             ))}
           </Track>

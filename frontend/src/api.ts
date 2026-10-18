@@ -352,14 +352,28 @@ export interface ScenePlan {
   ignored?: Keys;
 }
 
-export interface CaptionEvent {
-  text: string;
+// What a Cue is known by (and a Cue Edit keys it by): the middle of its first Word on that Word's
+// timeline, seconds into the Source (or, with `media`, into that Media Library item).
+export interface CueKey {
+  at: number;
+  media: string | null;
+}
+
+// Captions shown at once (GLOSSARY: Cue). One moved at a Layout change is one of these in each place, keyed alike.
+export interface Cue {
   start: number;
   end: number;
-  // Each highlighted from its start to its end.
-  words: Word[];
+  // One under another; their Words, as captions show them, each highlighted from its start to its end.
+  lines: Word[][];
+  // Each line as its Words are written, with the Word Edits (not in the Caption Style's case, nor stripped).
+  plain: string[];
   area: Box;
   size: number;
+  key: CueKey;
+  // A Cue Edit applies to it.
+  edited: boolean;
+  // Merged into the Cue before, it would still fit the line limits.
+  joinable: boolean;
 }
 
 export interface HookEvent {
@@ -770,7 +784,7 @@ export interface RenderPlan {
   source_height: number;
   fps: number;
   scenes: ScenePlan[];
-  captions: CaptionEvent[];
+  captions: Cue[];
   hook: HookEvent | null;
   caption_style: CaptionStyle;
   hook_style: HookStyle;

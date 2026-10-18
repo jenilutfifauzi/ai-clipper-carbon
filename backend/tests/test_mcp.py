@@ -202,6 +202,25 @@ async def test_candidates_are_added_edited_and_dry_run_through_mcp(mcp):
 
 
 @pytest.mark.anyio
+async def test_a_dry_run_lists_each_cue_with_its_times_lines_plain_text_and_key(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    words = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["words"]
+    semua = next(word for word in words if word["text"] == "semua")
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={"word_edits": [{"at": semua["at"], "text": "Semua!"}]}, dry_run=True)
+    first = plan["captions"][0]
+    assert (first["lines"], first["plain"], first["key"]) == (["HALO SEMUA!"], ["halo Semua!"], {"at": words[0]["at"]})
+    assert first["start"] < first["end"]
+    # Every Word is in one Cue, keyed by the first's middle on the Source's timeline.
+    assert " ".join(line for cue in plan["captions"] for line in cue["plain"]) == " ".join(
+        "Semua!" if word is semua else word["text"] for word in words
+    )
+    assert all(cue["key"]["at"] in [word["at"] for word in words] for cue in plan["captions"])
+
+
+@pytest.mark.anyio
 async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry_run(mcp):
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)

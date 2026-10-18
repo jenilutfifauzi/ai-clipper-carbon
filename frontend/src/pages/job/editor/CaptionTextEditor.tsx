@@ -30,8 +30,8 @@ export function CaptionTextEditor({
   const [expanded, setExpanded] = useState(false);
   const words = preview.words;
   const spoken = usePlayback(playback, (time) => words.findIndex((word) => word.start <= time && time < word.end));
-  // Where the plan starts its lines: the first Word of each caption event.
-  const lineStarts = new Set(preview.plan.captions.map((event) => event.words[0]?.start.toFixed(3)));
+  // Where the plan starts its lines: the first Word of each Cue.
+  const lineStarts = new Set(preview.plan.captions.map((event) => event.lines[0]?.[0]?.start.toFixed(3)));
 
   useEffect(() => {
     if (!focus) return;

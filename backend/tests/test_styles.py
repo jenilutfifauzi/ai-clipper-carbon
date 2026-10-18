@@ -162,12 +162,18 @@ def preset_plan_view(preset, hook: str) -> dict:
 
     from pydantic import TypeAdapter
 
-    from app.planner import CaptionEvent, HookEvent
+    from app.planner import Box, CaptionWord, HookEvent
 
     text, kicker = PRESET_HOOKS[hook]
     planned = plan(caption_style=preset.caption, hook_style=preset.hook, hook=text, hook_kicker=kicker)
+    # Each Cue as the caption line it was then.
+    lines = [
+        {"text": cue.text, "start": cue.start, "end": cue.end, "words": TypeAdapter(list[CaptionWord]).dump_python(cue.words, mode="json"),
+         "area": TypeAdapter(Box).dump_python(cue.area, mode="json"), "size": cue.size}
+        for cue in planned.captions
+    ]
     return {
-        "captions": TypeAdapter(list[CaptionEvent]).dump_python(planned.captions, mode="json"),
+        "captions": lines,
         "hook": TypeAdapter(HookEvent | None).dump_python(planned.hook, mode="json"),
         "ass": sha256(_ass(planned).encode()).hexdigest(),
     }

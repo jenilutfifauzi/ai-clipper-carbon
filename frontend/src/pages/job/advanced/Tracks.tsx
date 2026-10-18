@@ -20,6 +20,7 @@ import {
 import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
+import { cueText } from "../editor/cues";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
@@ -433,7 +434,7 @@ export function Tracks({
               playback.seek(event.start + Math.min(CAPTION_SEEK_IN, (event.end - event.start) / 2));
               onSelect({ kind: "captions" });
             }}
-            title={event.text}
+            title={cueText(event)}
             aria-pressed={pick?.kind === "captions"}
             className={cx(
               "absolute inset-y-1 overflow-hidden rounded bg-fill px-1 text-left text-[11px] leading-5 text-ellipsis whitespace-nowrap text-muted ring-1 ring-border hover:text-text",
@@ -441,7 +442,7 @@ export function Tracks({
             )}
             style={{ left: event.start * pps, width: Math.max(2, (event.end - event.start) * pps - 1) }}
           >
-            {event.text}
+            {cueText(event)}
           </button>
         ))}
       </TrackRow>

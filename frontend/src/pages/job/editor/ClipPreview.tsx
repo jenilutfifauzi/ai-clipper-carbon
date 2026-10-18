@@ -3,8 +3,8 @@ import { createRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState
 import {
   logoUrl,
   type Box,
-  type CaptionEvent,
   type CaptionStyle,
+  type Cue,
   type DropShadow,
   type Crop,
   type FontInfo,
@@ -37,6 +37,7 @@ import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
+import { cueLineMiddle, cueWordAt, cueWords } from "./cues";
 import type { GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 
@@ -683,15 +684,16 @@ function stageItems(
   return items;
 }
 
-// What can be grabbed of a caption line: its letters (and outline and tracking) as set, padded, around its middle.
-function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): Box {
+// What can be grabbed of a Cue: its lines' letters (and outline and tracking) as set, padded, around its middle.
+function captionGrab(event: Cue, font: FontInfo, style: CaptionStyle): Box {
   let width = event.area.width;
   if (measure) {
     measure.font = `${cssFontSize(font, event.size)}px "${fontFamily(font.id)}"`;
-    const letters = trackedWidth(event.text, (text) => measure.measureText(text).width, style.tracking);
+    const lines = event.lines.map((line) => line.map((word) => word.text).join(" "));
+    const letters = Math.max(...lines.map((line) => trackedWidth(line, (text) => measure.measureText(text).width, style.tracking)));
     width = Math.min(letters + 2 * style.outline + 2 * CAPTION_GRAB_PAD, event.area.width);
   }
-  const height = event.size + 2 * CAPTION_GRAB_PAD;
+  const height = event.lines.length * event.size + 2 * CAPTION_GRAB_PAD;
   const { x, y } = { x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 };
   return { x: Math.round(x - width / 2), y: Math.round(y - height / 2), width: Math.round(width), height: Math.round(height) };
 }
@@ -918,14 +920,13 @@ function SlotVideo({
 }
 
 /**
- * The caption line on screen, with its spoken Word highlighted as the Caption Style says, moved
- * while it is.
+ * The Cue on screen, with its spoken Word highlighted as the Caption Style says, moved while it is.
  */
 function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback; edit: StageEdit }) {
   const key = useShown(playback, (time) => {
     const event = plan.captions.findIndex((caption) => caption.start <= time && time < caption.end);
     if (event === -1) return "";
-    const word = plan.captions[event].words.findIndex((w) => w.start <= time && time < w.end);
+    const word = cueWords(plan.captions[event]).findIndex((w) => w.start <= time && time < w.end);
     return `${event}:${word}`;
   });
   if (!key || !font) return null;
@@ -933,20 +934,28 @@ function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: Font
   const line = plan.captions[event];
   return (
     <g transform={edit.transform("captions", line.area)}>
-      <CaptionLine event={line} active={word} plan={plan} font={font} />
+      <CaptionLines event={line} active={word} plan={plan} font={font} />
     </g>
   );
 }
 
-function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; active: number; plan: RenderPlan; font: FontInfo }) {
+/** A Cue's lines, one under another, its Word `active` (counted across them) highlighted. */
+function CaptionLines({ event, active, plan, font }: { event: Cue; active: number; plan: RenderPlan; font: FontInfo }) {
+  const [row, index] = cueWordAt(event, active);
+  return event.lines.map((_, i) => (
+    <CaptionLine key={i} event={event} row={i} active={i === row ? index : -1} plan={plan} font={font} />
+  ));
+}
+
+function CaptionLine({ event, row, active, plan, font }: { event: Cue; row: number; active: number; plan: RenderPlan; font: FontInfo }) {
   const style = plan.caption_style;
   const { area, size } = event;
   const centreX = area.x + area.width / 2;
-  // libass centres the line's ascent-plus-descent box, which is the font size, on its position.
-  const baseline = area.y + area.height / 2 - size / 2 + (font.ascent / font.units) * size;
+  // libass centres each line's ascent-plus-descent box, which is the font size, on its middle.
+  const baseline = cueLineMiddle(event, row) - size / 2 + (font.ascent / font.units) * size;
   const fontSize = cssFontSize(font, size);
   const family = fontFamily(font.id);
-  const words = event.words.map((word) => word.text);
+  const words = event.lines[row].map((word) => word.text);
   const tspans = (colours: boolean) =>
     words.map((text, i) => (
       <tspan key={i} fill={colours && i === active && style.highlight === "colour" ? style.active_colour : undefined}>

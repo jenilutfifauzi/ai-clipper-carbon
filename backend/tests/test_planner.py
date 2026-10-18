@@ -20,15 +20,16 @@ from app.planner import (
     SEAM_CAPTIONS,
     TOP_CAPTIONS,
     Box,
-    CaptionEvent,
     CaptionWord,
     CropPoint,
+    Cue,
     Face,
     FrameFaces,
     HookEvent,
     RenderPlan,
     Scene,
     SceneLayout,
+    SegmentInput,
     fit_hook,
     match_edits,
     font_metrics,
@@ -469,11 +470,11 @@ def said(text: str, start: float = 0.0, secs_per_char: float = 0.06, gap: float 
 
 
 def captioned(words: list[Word], secs: float, scenes: list[Scene] | None = None, faces: list[FrameFaces] | None = None,
-              layout: Layout = Layout.AUTO, width: int = 1920, height: int = 1080) -> list[CaptionEvent]:
+              layout: Layout = Layout.AUTO, width: int = 1920, height: int = 1080) -> list[Cue]:
     return plan_render(100, 100 + secs, source(width, height, fps=FPS), scenes, faces, layout, words).captions
 
 
-def shown(events: list[CaptionEvent]) -> list[str]:
+def shown(events: list[Cue]) -> list[str]:
     return [event.text for event in events]
 
 
@@ -683,7 +684,7 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
 # Caption and Hook Styles (clip editor ticket 01). The defaults are v1's, which the tests above check.
 
 
-def styled(words: list[Word], secs: float, style: CaptionStyle, **options) -> list[CaptionEvent]:
+def styled(words: list[Word], secs: float, style: CaptionStyle, **options) -> list[Cue]:
     return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, caption_style=style, **options).captions
 
 
@@ -776,7 +777,7 @@ def test_the_plan_keeps_its_styles():
 # Word Edits (clip editor ticket 06). Their times are in seconds into the Clip, as candidate_plan gives them.
 
 
-def edited(words: list[Word], edits: list, secs: float = 10, **options) -> list[CaptionEvent]:
+def edited(words: list[Word], edits: list, secs: float = 10, **options) -> list[Cue]:
     return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, word_edits=edits, **options).captions
 
 
@@ -825,6 +826,68 @@ def test_edited_text_is_shown_like_a_words_in_capitals_without_end_punctuation_u
     assert shown(edited(words, [edit])) == ["HALO KA-WAN!"]
     assert shown(edited(words, [edit], caption_style=CaptionStyle(uppercase=False))) == ["halo ka-wan!"]
     assert shown(edited(words, [WordEdit(at=words[1].start, text="...")])) == ["HALO"]
+
+
+# Cues (captions-advanced ticket 01): each caption of the plan is a Cue.
+
+
+def test_a_cue_is_one_line_keyed_by_the_middle_of_its_first_word_on_the_sources_timeline():
+    words = [Word("halo,", 1.0, 1.4), Word("semua.", 1.4, 2.0), Word("apa", 3.0, 3.2), Word("kabar", 3.2, 3.6)]
+    cues = captioned(words, 5)  # the Clip from 100 s of the Source
+    assert [[[(w.text, w.start, w.end) for w in line] for line in cue.lines] for cue in cues] == [
+        [[("HALO", 1.0, 1.4), ("SEMUA", 1.4, 2.3)]],
+        [[("APA", 3.0, 3.2), ("KABAR", 3.2, 3.9)]],
+    ]
+    assert [(cue.key.at, cue.key.media, cue.edited) for cue in cues] == [(101.2, None, False), (103.1, None, False)]
+    # A Word the Clip's start cuts into keys its Cue by its own middle.
+    [cut] = captioned([Word("halo", -0.1, 0.3)], 4)
+    assert cut.key.at == 100.1
+    # A Cue moved at a Layout change is shown in two places, keyed alike.
+    faces, scenes = caption_scenes()
+    before, after = captioned([Word("jadi", 3.4, 3.7), Word("begitu", 3.75, 4.1)], 6, scenes, faces)
+    assert before.area != after.area and before.key == after.key
+    assert before.key.at == 103.55
+
+
+def test_a_segments_cues_are_keyed_on_the_sources_timeline_whatever_its_speed():
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
+    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped]).captions
+    assert [(cue.text, cue.start, cue.key.at) for cue in cues] == [("SATU", 0.2, 10.4), ("DUA", 2.5, 51.2), ("TIGA", 3.3, 52.8)]
+
+
+def test_a_cues_plain_lines_keep_the_words_case_and_punctuation_with_word_edits_applied():
+    words = said('Halo, semua! "Kenapa?" gue😂 rugi lima')
+    rugi, lima = words[4], words[5]
+    cues = edited(words, [WordEdit(at=rugi.start, text="Hermanto,"), WordEdit(at=lima.start, text="")])
+    assert shown(cues) == ["HALO SEMUA!", "KENAPA?", "GUE HERMANTO"]
+    assert [cue.plain for cue in cues] == [["Halo, semua!"], ['"Kenapa?"'], ["gue😂 Hermanto,"]]
+    # The Caption Style's case doesn't change them.
+    kept = edited(words, [], caption_style=CaptionStyle(uppercase=False))
+    assert [cue.plain for cue in kept][:2] == [["Halo, semua!"], ['"Kenapa?"']]
+
+
+def test_a_cue_is_joinable_when_merging_it_into_the_one_before_would_fit_the_line_limits():
+    # Parted by a pause, and by a sentence's end, each fitting one line with the one before.
+    words = [Word("oke", 0.0, 0.3), Word("terus.", 1.0, 1.3), Word("ya", 1.4, 1.6), Word("ketidakberdayaannya", 2.5, 3.0)]
+    cues = captioned(words, 4)
+    assert shown(cues) == ["OKE", "TERUS", "YA", "KETIDAKBERDAYAANNYA"]
+    # The first has none before it; YA KETIDAKBERDAYAANNYA is longer than 16 characters.
+    assert [cue.joinable for cue in cues] == [False, True, True, False]
+    # Nor when together they hold more Words than the style's max_words.
+    one = styled(words[:2], 4, CaptionStyle(max_words=1))
+    assert [cue.joinable for cue in one] == [False, False]
+
+
+def test_cues_either_side_of_a_cut_or_a_layout_change_are_not_joinable():
+    parts = [SegmentInput(10.0, 11.0, words=[Word("satu", 0.2, 0.6)]), SegmentInput(20.0, 21.0, words=[Word("dua", 0.1, 0.4)])]
+    cues = plan_render(10, 21, source(1920, 1080, fps=FPS), main_track=parts).captions
+    assert shown(cues) == ["SATU", "DUA"]
+    assert [cue.joinable for cue in cues] == [False, False]
+    faces, scenes = caption_scenes()
+    cues = captioned([Word("jadi", 3.6, 3.9), Word("gitu", 4.05, 4.3)], 6, scenes, faces)
+    assert shown(cues) == ["JADI", "GITU"]
+    assert [cue.joinable for cue in cues] == [False, False]
 
 
 # Hook timing (clip editor ticket 07).

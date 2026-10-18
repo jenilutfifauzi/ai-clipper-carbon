@@ -24,7 +24,7 @@ from app.planner import font_metrics
 from app.ports import Ports
 from app.rendering import Renders
 from app.transcript import Word
-from conftest import FIXTURES, wait_for
+from conftest import FIXTURES, cue_text, cue_words, wait_for
 from test_jobs_api import create_job, statuses
 from test_review import patch
 
@@ -614,9 +614,9 @@ def test_captions_are_burned_from_the_clips_own_transcription(client, settings, 
     ]
     assert len(plan["captions"]) == len(expected)
     for event, (text, on, off, words) in zip(plan["captions"], expected):
-        assert (event["text"], event["area"]) == (text, lower)
+        assert (cue_text(event), event["area"]) == (text, lower)
         assert (event["start"], event["end"]) == (pytest.approx(on - start, abs=1e-3), pytest.approx(off - start, abs=1e-3))
-        assert [(w["text"], w["start"], w["end"]) for w in event["words"]] == [
+        assert [(w["text"], w["start"], w["end"]) for w in cue_words(event)] == [
             (word, pytest.approx(a - start, abs=1e-3), pytest.approx(b - start, abs=1e-3)) for word, a, b in words
         ]
 
@@ -680,7 +680,7 @@ def test_split_captions_are_on_the_seam_and_a_wide_line_is_set_smaller_to_fit(
     check_clip(settings, job_dir, clip, candidate)
 
     [event] = json.loads((job_dir / clip["output"]["plan"]).read_text())["captions"]
-    assert (event["text"], event["area"]) == ("W" * 15, {"x": 130, "y": 860, "width": 820, "height": 200})
+    assert (cue_text(event), event["area"]) == ("W" * 15, {"x": 130, "y": 860, "width": 820, "height": 200})
     frame = full_frame(settings, job_dir / clip["output"]["video"], 4.5 - candidate["start"])
     rows, columns = pixels(frame, ORANGE)
     assert len(rows) > 1000
@@ -834,7 +834,7 @@ def test_tracking_and_line_height_space_the_burned_hook_and_captions_as_planned(
     [caption] = [event for event in plan["captions"] if event["start"] <= 4.2 - start < event["end"]]
     area, size = caption["area"], caption["size"]
     _, left, right = ink(magenta, area["y"], area["y"] + area["height"])
-    width = metrics.width(caption["text"], size, 24)
+    width = metrics.width(cue_text(caption), size, 24)
     assert width - 20 < right - left + 1 <= width + 2
     assert (left + right) / 2 == pytest.approx(area["x"] + area["width"] / 2, abs=3)
 
@@ -1036,12 +1036,12 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
     # The preview gives each Word its edit, as saved.
     shown = preview(client, job, candidate)
     assert [w["edit"] for w in shown["words"]] == [None, candidate["word_edits"][0], candidate["word_edits"][1], candidate["word_edits"][2], None]
-    assert [event["text"] for event in shown["plan"]["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
+    assert [cue_text(event) for event in shown["plan"]["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
 
     render(client, job)
     [clip] = rendered(client, job)["clips"]
     plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
-    assert [event["text"] for event in plan["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
+    assert [cue_text(event) for event in plan["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
 
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
     for bad in ([{"at": 1.0, "text": "x" * 41}], [{"at": "inf", "text": "x"}], [{"at": 1.0, "text": "x"}] * 501, [{"text": "x"}]):

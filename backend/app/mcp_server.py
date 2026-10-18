@@ -877,7 +877,7 @@ def _plan_view(
             })
             for segment in plan["segments"]
         ],
-        "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
+        "captions": [_cue_view(cue) for cue in plan["captions"]],
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
@@ -899,6 +899,18 @@ def _plan_view(
             if event["gain"]
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
+    }
+
+
+def _cue_view(cue: dict) -> dict:
+    """A Cue as an agent reads it: when it shows, its lines as shown, its lines as written (`plain`:
+    the Words' own case and punctuation, with the Word Edits) and its key (the middle of its first
+    Word on its timeline, which a Cue Edit names)."""
+    return {
+        **_times(cue, "start", "end"),
+        "lines": [" ".join(word["text"] for word in line) for line in cue["lines"]],
+        "plain": cue["plain"],
+        "key": _compact({"at": round(cue["key"]["at"], 3), "media": cue["key"]["media"]}),
     }
 
 

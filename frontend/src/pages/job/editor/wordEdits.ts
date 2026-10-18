@@ -1,4 +1,5 @@
-import type { CaptionEvent, PreviewWord, WordEdit } from "../../../api";
+import type { Cue, PreviewWord, WordEdit } from "../../../api";
+import { cueWords } from "./cues";
 
 // The longest a Word Edit's text can be (candidates.py's WORD_EDIT_MAX_CHARS).
 export const WORD_EDIT_MAX_CHARS = 40;
@@ -17,14 +18,14 @@ export function withWordEdit(edits: WordEdit[], word: PreviewWord, change: Parti
 }
 
 /**
- * The Preview Plan's Words a caption line shows, in order: the run of Words (as edited, removed ones
- * left out) that reads as the line, nearest the time it is shown. The Words' times can be apart from
- * the line's, in a Clip cut into Segments, so they only choose between runs that read the same; with
- * none, each Word said at the middle of one of the line's. Empty when the line's Words can't be found.
+ * The Preview Plan's Words a Cue shows, in order: the run of Words (as edited, removed ones left
+ * out) that reads as the Cue, nearest the time it is shown. The Words' times can be apart from the
+ * Cue's, in a Clip cut into Segments, so they only choose between runs that read the same; with
+ * none, each Word said at the middle of one of the Cue's. Empty when the Cue's Words can't be found.
  */
-export function lineWords(line: CaptionEvent, words: PreviewWord[]): PreviewWord[] {
+export function lineWords(line: Cue, words: PreviewWord[]): PreviewWord[] {
   const shown = words.filter((word) => word.edit?.text !== "");
-  const wanted = line.words.map((word) => plain(word.text));
+  const wanted = cueWords(line).map((word) => plain(word.text));
   let best: { at: number; off: number } | null = null;
   for (let at = 0; at + wanted.length <= shown.length; at++) {
     if (!wanted.every((text, i) => plain(shown[at + i].edit?.text ?? shown[at + i].text) === text)) continue;
@@ -32,7 +33,7 @@ export function lineWords(line: CaptionEvent, words: PreviewWord[]): PreviewWord
     if (!best || off < best.off) best = { at, off };
   }
   if (best) return shown.slice(best.at, best.at + wanted.length);
-  const said = line.words.map((word) => {
+  const said = cueWords(line).map((word) => {
     const middle = (word.start + word.end) / 2;
     return shown.find((w) => w.start <= middle && middle < w.end);
   });
