@@ -4,7 +4,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { HOOK_MAX, KICKER_MAX } from "../HookEditor";
 import type { StageId } from "./ClipPreview";
 import { toggledEmphasis } from "./emphasis";
-import { textStagePicture } from "./textStage";
+import { layerStagePicture } from "./layerStage";
 import { lineWords, retypedLine } from "./wordEdits";
 
 // The longest a Text Layer can be (candidates.py's TEXT_LAYER_MAX_CHARS), and a caption line as typed.
@@ -122,7 +122,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
       const event = plan.texts.find((other) => other.layer.id === editing.id);
       if (!event) return null;
       // Its area as its Transform scales and turns it about its picture's centre, as its Grips have it.
-      const { picture } = textStagePicture(event);
+      const { picture } = layerStagePicture(event);
       const [x, y] = picture.centre;
       return {
         area: { x: x - picture.width / 2, y: y - picture.height / 2, width: picture.width, height: picture.height },

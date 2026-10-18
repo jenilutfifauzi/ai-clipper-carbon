@@ -2,13 +2,13 @@
 // stage scale and turn it by its Transform, as an Overlay's do, and while one holds it the preview
 // draws the picture it has, placed, scaled and turned with it.
 import { describe, expect, test } from "vitest";
-import { textPictureUrl, type Picture, type TextEvent, type Transform } from "../../../api";
-import { IDENTITY } from "./picture";
+import { textPictureUrl, type Picture, type RenderPlan, type TextEvent, type Transform } from "../../../api";
+import { IDENTITY, pictureLayers } from "./picture";
 import { fingersHeld, fingerMoved, fingersOn, gripsOf, placed } from "./pictureGestures";
 import { heldPicture } from "./stagePicture";
 import { snapScaled } from "./smartGuides";
-import { wantedPicture } from "./textPicture";
-import { heldTextEvent, textEventAt, textStagePicture } from "./textStage";
+import { wantedPicture } from "./layerPicture";
+import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import { LINEAR } from "./keyframes";
 
 const FRAME = { width: 1080, height: 1920 };
@@ -50,7 +50,7 @@ function event(transform: Partial<Transform> = {}): TextEvent {
 
 describe("a Text Layer on the stage", () => {
   test("is gripped by its area, scaled by its Transform about its picture's centre", () => {
-    const { picture, fitted } = textStagePicture(event({ scale: 2 }));
+    const { picture, fitted } = layerStagePicture(event({ scale: 2 }));
     expect(fitted).toEqual({ width: 300, height: 100 });
     expect(picture).toMatchObject({ centre: [540, 600], width: 600, height: 200 });
     // Its corner Grips are the area's corners, twice as far out.
@@ -59,14 +59,14 @@ describe("a Text Layer on the stage", () => {
 
   test("a corner dragged out scales it about its centre, its words and size as they were", () => {
     const planned = event();
-    const { picture, fitted } = textStagePicture(planned);
+    const { picture, fitted } = layerStagePicture(planned);
     const grab = { transform: planned.layer.transform, fitted, frame: FRAME };
     // The bottom-right corner (690, 650) dragged twice as far from the centre.
     const fingers = fingerMoved(fingersOn(grab, "bottom-right", 1, { x: 690, y: 650 }), 1, { x: 840, y: 700 });
     const scaled = fingersHeld(fingers, {});
     expect(scaled).toEqual({ ...planned.layer.transform, scale: 2 });
     // Drawn from the gesture until the plan comes: the same picture, twice as large.
-    const held = heldTextEvent(planned, picture, heldPicture(picture, scaled, FRAME, fitted));
+    const held = heldLayerEvent(planned, picture, heldPicture(picture, scaled, FRAME, fitted));
     expect(held.image).toBe(planned.image);
     expect(wantedPicture("j", held).url).toBe(textPictureUrl("j", "abc.png"));
     expect(held.picture).toMatchObject({ centre: [540, 600], width: 800, height: 400, rotation: 0 });
@@ -75,13 +75,13 @@ describe("a Text Layer on the stage", () => {
 
   test("the rotate handle turns it about its centre", () => {
     const planned = event();
-    const { picture, fitted } = textStagePicture(planned);
+    const { picture, fitted } = layerStagePicture(planned);
     const grab = { transform: planned.layer.transform, fitted, frame: FRAME };
     // From straight above its centre to straight right of it: a quarter turn clockwise.
     const fingers = fingerMoved(fingersOn(grab, "rotate", 1, { x: 540, y: 500 }), 1, { x: 640, y: 600 });
     const turned = fingersHeld(fingers, {});
     expect(turned).toEqual({ ...planned.layer.transform, rotation: 90 });
-    const held = heldTextEvent(planned, picture, heldPicture(picture, turned, FRAME, fitted));
+    const held = heldLayerEvent(planned, picture, heldPicture(picture, turned, FRAME, fitted));
     expect(held.picture).toMatchObject({ centre: [540, 600], width: 400, height: 200, rotation: 90 });
     expect(held.bounds.width).toBeCloseTo(100);
     expect(held.bounds.height).toBeCloseTo(300);
@@ -89,7 +89,7 @@ describe("a Text Layer on the stage", () => {
 
   test("a corner snaps its area's edges to the Smart Guides", () => {
     const planned = event();
-    const { fitted } = textStagePicture(planned);
+    const { fitted } = layerStagePicture(planned);
     // At scale 2.73 its area's right edge is at 949.5, half a pixel short of the safe area's guide.
     const near = { ...planned.layer.transform, scale: 2.73 };
     const snapped = snapScaled(near, fitted, { x: [950], y: [] }, { unit: 1 });
@@ -99,8 +99,8 @@ describe("a Text Layer on the stage", () => {
 
   test("is drawn as planned while nothing holds it", () => {
     const planned = event({ scale: 1.5, rotation: 20 });
-    const { picture } = textStagePicture(planned);
-    expect(heldTextEvent(planned, picture, picture)).toBe(planned);
+    const { picture } = layerStagePicture(planned);
+    expect(heldLayerEvent(planned, picture, picture)).toBe(planned);
   });
 });
 
@@ -118,9 +118,9 @@ describe("a keyed Text Layer on the stage", () => {
   };
 
   test("is gripped where its Keyframes have it at the playhead: its area scaled and turned about its sampled centre", () => {
-    const at = textEventAt(keyed(), 1);
+    const at = layerEventAt(keyed(), 1);
     expect(at.layer.transform).toMatchObject({ x: 500, y: 600, scale: 1.5, rotation: 45 });
-    const { picture, fitted } = textStagePicture(at);
+    const { picture, fitted } = layerStagePicture(at);
     expect(fitted).toEqual({ width: 300, height: 100 });
     expect(picture).toMatchObject({ centre: [500, 600], width: 450, height: 150, rotation: 45 });
     const across = (450 + 150) * Math.SQRT1_2;
@@ -137,20 +137,44 @@ describe("a keyed Text Layer on the stage", () => {
       x: [{ at: 0, value: 540, ease: LINEAR }, { at: 1, value: 542, ease: LINEAR }],
       scale: [{ at: 0, value: 1, ease: LINEAR }, { at: 1, value: 1.002, ease: LINEAR }],
     };
-    const at = textEventAt({ ...planned, picture: { ...planned.picture, motion, unscaled: [400, 200] } }, 0.5);
+    const at = layerEventAt({ ...planned, picture: { ...planned.picture, motion, unscaled: [400, 200] } }, 0.5);
     // To the nearest pixel (390.85, 549.95, 300.3, 100.1), not out to whole ones (390, 549, 301, 101).
     expect(at.bounds).toEqual({ x: 391, y: 550, width: 300, height: 100 });
   });
 
   test("a Grip held draws the same picture where the gesture puts it", () => {
-    const at = textEventAt(keyed(), 2);
-    const { picture, fitted } = textStagePicture(at);
-    const moved = heldTextEvent(at, picture, heldPicture(picture, { ...at.layer.transform, x: 300 }, FRAME, fitted));
+    const at = layerEventAt(keyed(), 2);
+    const { picture, fitted } = layerStagePicture(at);
+    const moved = heldLayerEvent(at, picture, heldPicture(picture, { ...at.layer.transform, x: 300 }, FRAME, fitted));
     expect(moved.picture).toMatchObject({ centre: [300, 600], width: 800, height: 400, rotation: 90 });
   });
 
   test("unkeyed, is as planned", () => {
     const planned = event({ scale: 2 });
-    expect(textEventAt(planned, 1)).toBe(planned);
+    expect(layerEventAt(planned, 1)).toBe(planned);
+  });
+});
+
+// .scratch/shapes/issues/01-picture-layers-prefactor.md: the preview draws a plan's picture layers by
+// what every kind has (docs/adr/0011).
+describe("a plan's picture layers", () => {
+  const plan = (texts: TextEvent[]) => ({ texts }) as RenderPlan;
+  const named = (id: string, start = 0): TextEvent => ({ ...event(), layer: { ...event().layer, id }, start });
+
+  test("are its Text Layers in drawing order, each by its id on the stage", () => {
+    const [first, second] = [named("a"), named("b", 1)];
+    expect(pictureLayers(plan([first, second]))).toEqual([
+      { id: "text:a", event: first },
+      { id: "text:b", event: second },
+    ]);
+  });
+
+  test("at a time, are each as its Keyframes have it then", () => {
+    const motion = { x: [{ at: 0, value: 200, ease: LINEAR }, { at: 2, value: 800, ease: LINEAR }] };
+    const moving: TextEvent = { ...named("a"), picture: { ...event().picture, motion, unscaled: [400, 200] } };
+    const still = named("b");
+    const { texts } = layersAt(plan([moving, still]), 1);
+    expect(texts[0].layer.transform.x).toBe(500);
+    expect(texts[1]).toBe(still);
   });
 });

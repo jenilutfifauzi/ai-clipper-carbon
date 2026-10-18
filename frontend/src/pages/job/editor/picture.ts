@@ -1,4 +1,4 @@
-import type { Background, Box, MediaItem, Panel, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
+import type { Background, Box, MediaItem, Panel, Picture, PictureLayerEvent, RenderPlan, ScenePlan, Transform } from "../../../api";
 import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
 
 /**
@@ -146,11 +146,21 @@ export function scenesAt(plan: RenderPlan, time: number): RenderPlan["scenes"] {
   return plan.scenes.map((scene) => (scene.picture && isKeyed(scene.picture) ? { ...scene, picture: pictureAt(scene.picture, time) } : scene));
 }
 
-/** Whether any picture of the plan moves: an Overlay's, a Scene's or a Text Layer's. */
+// A picture layer of the plan as the preview draws it (docs/adr/0010): its event, and its id on the
+// stage and in the Pick (`text:<its id>`).
+export interface ShownLayer {
+  id: `text:${string}`;
+  event: PictureLayerEvent;
+}
+
+/** The plan's picture layers in drawing order, over the captions and under the hook: its Text Layers. */
+export const pictureLayers = (plan: RenderPlan): ShownLayer[] => plan.texts.map((event) => ({ id: `text:${event.layer.id}`, event }));
+
+/** Whether any picture of the plan moves: an Overlay's, a Scene's or a picture layer's. */
 export const hasKeyedPictures = (plan: RenderPlan) =>
   plan.overlays.some((event) => isKeyed(event.picture)) ||
   plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture)) ||
-  plan.texts.some((event) => isKeyed(event.picture));
+  pictureLayers(plan).some(({ event }) => isKeyed(event.picture));
 
 export interface PanelStyle {
   box: { left: string; top: string; width: string; height: string };

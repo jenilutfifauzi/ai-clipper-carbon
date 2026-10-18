@@ -511,8 +511,8 @@ class Renders:
             ).make(
                 self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
             ))
-            # Its Text Layers' pictures, made now if they aren't there (docs/adr/0010).
-            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.texts), job_dir / TEXTS_DIR)
+            # Its picture layers' pictures, made now if they aren't there (docs/adr/0010).
+            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / TEXTS_DIR)
             encoder = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures
             )

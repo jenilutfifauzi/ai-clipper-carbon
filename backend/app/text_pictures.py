@@ -1,8 +1,10 @@
-"""Text Layers' pictures (docs/adr/0010-text-layers-are-rasterised-pictures.md): a Text Layer's layout,
-drawn once by libass onto a transparent picture, which the render lays over the Clip and the preview
-shows as it is.
+"""Picture layers' pictures (docs/adr/0010-text-layers-are-rasterised-pictures.md): a picture layer's
+layout (planner.py's `PictureLayout`), drawn once by libass onto a transparent picture, which the
+render lays over the Clip and the preview shows as it is. Each kind of layout is written as an ASS
+script of the picture's size by its own `layout_script`, and may have more pasted over what libass
+drew (`pasted`); the rest is the same for every kind.
 
-The layout (planner.py's `TextLayout`) is written as an ASS script of the picture's size: its plate
+A Text Layer's layout (planner.py's `TextLayout`) is written as an ASS script of the picture's size: its plate
 (a Block, or a Strip per line) as one `\\p1` drawing, then its drop shadow, then each run of each
 line centred where the planner placed it, on its line's baseline, in the layer's style, its stroke
 as the outline and its tracking as `\\fsp`, as the hook's lines are. A run in the fallback Face
@@ -37,6 +39,7 @@ import tempfile
 import threading
 import uuid
 from collections.abc import Iterable
+from functools import singledispatch
 from pathlib import Path
 
 import cv2
@@ -46,7 +49,7 @@ from app.ass import ass_alpha, ass_filter, ass_text, rounded_box, shadow_tags, s
 from app.candidates import Candidate
 from app.emoji import image_pixels
 from app.fonts import font, registry
-from app.planner import TextLayout, emoji_square, font_metrics, text_event
+from app.planner import PictureLayout, TextLayout, emoji_square, font_metrics, text_event
 from app.renderer import last_lines
 
 # In a Job's directory.
@@ -57,7 +60,7 @@ _writing: set[Path] = set()
 _writing_lock = threading.Lock()
 
 
-def make_picture(ffmpeg: Path, layout: TextLayout, folder: Path) -> Path:
+def make_picture(ffmpeg: Path, layout: PictureLayout, folder: Path) -> Path:
     """The picture of `layout` in `folder`: made now if it isn't there yet."""
     target = folder / layout.name
     if target.is_file():
@@ -68,7 +71,7 @@ def make_picture(ffmpeg: Path, layout: TextLayout, folder: Path) -> Path:
         _writing.add(part)
     try:
         if not cv2.imwrite(str(part), cv2.cvtColor(rasterised(ffmpeg, layout), cv2.COLOR_RGBA2BGRA)):
-            raise RuntimeError(f"The picture of a Text Layer couldn't be written to {folder}")
+            raise RuntimeError(f"A picture layer's picture couldn't be written to {folder}")
         os.replace(part, target)
     finally:
         part.unlink(missing_ok=True)
@@ -77,14 +80,14 @@ def make_picture(ffmpeg: Path, layout: TextLayout, folder: Path) -> Path:
     return target
 
 
-def make_pictures(ffmpeg: Path, layouts: Iterable[TextLayout], folder: Path) -> dict[str, Path]:
+def make_pictures(ffmpeg: Path, layouts: Iterable[PictureLayout], folder: Path) -> dict[str, Path]:
     """The pictures of `layouts` in `folder`, by their names, each made now if it isn't there yet."""
     return {layout.name: make_picture(ffmpeg, layout, folder) for layout in layouts}
 
 
-def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
-    """`layout` drawn by libass with its emoji pasted in, as straight-alpha RGBA pixels of its raster
-    size."""
+def rasterised(ffmpeg: Path, layout: PictureLayout) -> np.ndarray:
+    """`layout` drawn by libass (`layout_script`) with what is pasted over that (`pasted`), as
+    straight-alpha RGBA pixels of its raster size."""
     width, height = layout.raster
     with tempfile.TemporaryDirectory(prefix="text-picture-") as work:
         fonts = registry().gather(layout.faces, Path(work, "fonts"))
@@ -99,9 +102,9 @@ def rasterised(ffmpeg: Path, layout: TextLayout) -> np.ndarray:
         ]
         result = subprocess.run(command, capture_output=True)
     if result.returncode:
-        raise RuntimeError(f"ffmpeg couldn't draw a Text Layer: {last_lines(result.stderr.decode(errors='replace'))}")
+        raise RuntimeError(f"ffmpeg couldn't draw a picture layer: {last_lines(result.stderr.decode(errors='replace'))}")
     both = np.frombuffer(result.stdout, np.uint8).reshape(height, 2 * width, 3).astype(np.int32)
-    return with_emoji(matted(both[:, :width], both[:, width:]), layout)
+    return pasted(layout, matted(both[:, :width], both[:, width:]))
 
 
 def matted(over_black: np.ndarray, over_white: np.ndarray) -> np.ndarray:
@@ -111,6 +114,18 @@ def matted(over_black: np.ndarray, over_white: np.ndarray) -> np.ndarray:
     colour = np.clip(np.rint(over_black * 255 / np.maximum(alpha, 1)[..., None]), 0, 255)
     colour[alpha == 0] = 0
     return np.dstack([colour, alpha]).astype(np.uint8)
+
+
+@singledispatch
+def pasted(layout: PictureLayout, pixels: np.ndarray) -> np.ndarray:
+    """The picture `pixels` libass drew of `layout`, with what libass doesn't draw laid over it:
+    nothing, unless its kind says otherwise."""
+    return pixels
+
+
+@pasted.register
+def _text_pasted(layout: TextLayout, pixels: np.ndarray) -> np.ndarray:
+    return with_emoji(pixels, layout)
 
 
 def with_emoji(pixels: np.ndarray, layout: TextLayout) -> np.ndarray:
@@ -154,9 +169,18 @@ def _lay_over(pixels: np.ndarray, image: np.ndarray, left: int, top: int) -> Non
     pixels[y0:y1, x0:x1] = np.rint(np.dstack([colour, alpha]).clip(0, 1) * 255).astype(np.uint8)
 
 
-def layout_script(layout: TextLayout) -> str:
-    """`layout` as an ASS script of its size at scale 1: its plate, its lines' shadow over it, then its
-    lines over that. libass scales it to the canvas, the stroke, tracking and blur with it."""
+@singledispatch
+def layout_script(layout: PictureLayout) -> str:
+    """`layout` as an ASS script of its size at scale 1, which libass scales to the canvas: each kind
+    of layout has its own."""
+    raise TypeError(f"No picture is drawn of a {type(layout).__name__}")
+
+
+@layout_script.register
+def text_script(layout: TextLayout) -> str:
+    """A Text Layer's `layout` as an ASS script of its size at scale 1: its plate, its lines' shadow
+    over it, then its lines over that. libass scales it to the canvas, the stroke, tracking and blur
+    with it."""
     style = layout.style
     text, edge = style_colour(style.colour), style_colour(style.stroke_colour)
     events = []
@@ -217,13 +241,9 @@ def _moved(drawing: str, x: float, y: float) -> str:
 
 
 def pictures_used(candidates: Iterable[Candidate]) -> set[str]:
-    """The names of the pictures `candidates`' Text Layers are drawn from."""
-    return {
-        event.image
-        for candidate in candidates
-        for layer in candidate.text_layers
-        if (event := text_event(layer, math.inf)) is not None
-    }
+    """The names of the pictures `candidates`' picture layers (their Text Layers) are drawn from."""
+    events = (text_event(layer, math.inf) for candidate in candidates for layer in candidate.text_layers)
+    return {event.image for event in events if event is not None}
 
 
 def sweep(folder: Path, used: Iterable[str]) -> list[Path]:

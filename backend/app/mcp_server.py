@@ -47,7 +47,7 @@ from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
-from app.planner import Box, Picture, TextEvent, key_times, picture_at, text_bounds_at
+from app.planner import Box, Picture, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
@@ -791,14 +791,17 @@ def _motion_view(picture: dict) -> dict:
     return {"keys": keys, "bounds_at_keys": bounds}
 
 
-def _text_motion_view(text: dict) -> dict:
-    """A keyed Text Layer's Keyframes in Timeline time (`_keys_view`), and its box at each time any
-    property has one (`text_bounds_at`); nothing for an unkeyed one."""
-    if not text["picture"]["motion"]:
-        return {}
-    event = _TEXT.validate_python(text)
-    bounds = [{"at": round(at, 3), "bounds": _dump(Box, text_bounds_at(event, at))} for at in key_times(event.picture)]
-    return {"keys": _keys_view(text["picture"]["motion"]), "bounds_at_keys": bounds}
+def _layer_view(event: dict, kind: TypeAdapter, picture_url: Callable[[str], str], *shown: str) -> dict:
+    """A picture layer as an agent reads it (`kind` reads its event): its item's id, its times and
+    the fields `shown` of its kind, its area once turned and scaled (`bounds`), its picture's URL
+    (`picture_url`, by its name), and a keyed one's Keyframes in Timeline time (`_keys_view`) with
+    its area's bounds at each time any property has one (`bounds_at`)."""
+    view = {"id": event["layer"]["id"], **_times(event, "start", "end", *shown), "bounds": event["bounds"], "picture": picture_url(event["image"])}
+    if not event["picture"]["motion"]:
+        return view
+    drawn = kind.validate_python(event)
+    bounds = [{"at": round(at, 3), "bounds": _dump(Box, bounds_at(drawn, at))} for at in key_times(drawn.picture)]
+    return view | {"keys": _keys_view(event["picture"]["motion"]), "bounds_at_keys": bounds}
 
 
 def _plan_view(
@@ -811,8 +814,8 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
-    Segment's, a Music Clip's, an Overlay's), each Text Layer's box and its picture's URL
-    (`picture_url`, by its name), and the Words."""
+    Segment's, a Music Clip's, an Overlay's), each Text Layer's lines, box and picture's URL
+    (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -840,13 +843,7 @@ def _plan_view(
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
         },
-        "text_layers": [
-            {
-                "id": text["layer"]["id"], **_times(text, "start", "end", "lines"), "bounds": text["bounds"], "picture": picture_url(text["image"]),
-                **_text_motion_view(text),
-            }
-            for text in plan["texts"]
-        ],
+        "text_layers": [_layer_view(text, _TEXT, picture_url, "lines") for text in plan["texts"]],
         "overlays": [
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),

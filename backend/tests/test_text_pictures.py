@@ -4,12 +4,15 @@ and Seam A renders with the real ffmpeg of where, when and under what it is draw
 """
 
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 import pytest
 
 from app.jobs import CANDIDATES_FILE
-from app.text_pictures import TEXTS_DIR
+from app.planner import PictureLayout
+from app.text_pictures import TEXTS_DIR, layout_script, make_pictures
 from test_render import HEARD, add, full_frame, pixels, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
 from test_render import from_render_video, plain_video, render_video  # noqa: F401
@@ -365,3 +368,51 @@ def test_a_shadow_falls_towards_its_angle_by_its_distance_softened_by_its_blur_a
     # The video shows between them.
     between = frame[plates[0]["y"] + plates[0]["height"] + 3 : plates[1]["y"] - 3, plates[1]["x"] + 10 : plates[1]["x"] + plates[1]["width"] - 10]
     assert between.size and len(pixels(between, np.array([0, 0, 255]))[0]) == 0
+
+
+@dataclass(frozen=True)
+class Square(PictureLayout):
+    """A picture layer's layout of a kind of its own: a white square `side` wide in its middle."""
+
+    width: int
+    height: int
+    side: int
+    scale: float = 1.0
+
+    @property
+    def name(self) -> str:
+        return f"square-{self.width}x{self.height}-{self.side}-{self.scale:g}.png"
+
+
+@layout_script.register
+def _square_script(layout: Square) -> str:
+    left, top = (layout.width - layout.side) / 2, (layout.height - layout.side) / 2
+    right, bottom = left + layout.side, top + layout.side
+    return "\n".join([
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {layout.width}", f"PlayResY: {layout.height}", "YCbCr Matrix: None", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+        "MarginR, MarginV, Encoding",
+        "Style: Square,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1", "",
+        "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        f"Dialogue: 0,0:00:00.00,0:00:10.00,Square,,0,0,0,,{{\\an7\\pos(0,0)\\p1}}m {left:g} {top:g} l {right:g} {top:g} {right:g} {bottom:g} {left:g} {bottom:g}{{\\p0}}",
+    ]) + "\n"
+
+
+def test_a_layout_of_any_kind_is_drawn_by_its_own_script_and_kept_by_its_name(settings, tmp_path):
+    square = Square(200, 100, 60, scale=2.0)
+    assert square.raster == (400, 200) and square.picture_key == "square-200x100-60-1"
+    folder = tmp_path / TEXTS_DIR
+    [(name, path)] = make_pictures(settings.ffmpeg_bin, [square], folder).items()
+    assert name == square.name and path == folder / square.name
+    pixels = cv2.cvtColor(cv2.imread(str(path), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGRA2RGBA).astype(int)
+    # At its raster size: the square opaque white, 120 px wide in its middle, clear round it.
+    assert pixels.shape == (200, 400, 4)
+    rows, columns = np.nonzero(pixels[..., 3] > 128)
+    assert (columns.min(), columns.max() + 1, rows.min(), rows.max() + 1) == (140, 260, 40, 160)
+    assert pixels[100, 200].tolist() == [255, 255, 255, 255] and pixels[10, 10, 3] == 0
+    # Made once.
+    made = path.stat().st_mtime_ns
+    make_pictures(settings.ffmpeg_bin, [square], folder)
+    assert path.stat().st_mtime_ns == made

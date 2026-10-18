@@ -579,12 +579,12 @@ def job_peaks(start: int, job: ExistingJob, store: Store, settings: AppSettings)
 
 @router.get(f"/jobs/{{job_id}}/{TEXTS_DIR}/{{name}}")
 def job_text_picture(name: str, job: ExistingJob, store: Store) -> FileResponse:
-    """A Text Layer's picture (app/text_pictures.py), by the name its event in a Preview Plan gives:
+    """A picture layer's picture (app/text_pictures.py), by the name its event in a Preview Plan gives:
     made with that plan, and named by a hash of what it shows, so never stale. 404 for one not made,
     or swept since."""
     picture = store.job_dir(job.id) / TEXTS_DIR / name
     if not name.endswith(".png") or name.startswith(".") or "/" in name or not picture.is_file():
-        raise HTTPException(404, f"No Text Layer picture {name} in Job {job.id}")
+        raise HTTPException(404, f"No picture {name} in Job {job.id}")
     return FileResponse(picture, media_type="image/png", headers=_DERIVED)
 
 
@@ -1222,7 +1222,7 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
     """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
     Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
-    History plays from; and the Job's Text Layer pictures (app/text_pictures.py) none of them shows."""
+    History plays from; and the Job's picture layers' pictures (app/text_pictures.py) none of them shows."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]

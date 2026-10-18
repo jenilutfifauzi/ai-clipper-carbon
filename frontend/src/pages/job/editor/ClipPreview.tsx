@@ -12,9 +12,9 @@ import {
   type HookStyle,
   type Panel,
   type Picture,
+  type PictureLayerEvent,
   type PreviewPlan,
   type RenderPlan,
-  type TextEvent,
   type Transform,
   type WatermarkEvent,
 } from "../../../api";
@@ -22,13 +22,13 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureStyle, scenesAt, slotView } from "./picture";
+import { hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
-import { placedText, useTextPicture, wantedPicture, type PlacedText } from "./textPicture";
-import { heldTextEvent, textEventAt, textsAt, textStagePicture } from "./textStage";
+import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from "./layerPicture";
+import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
@@ -158,7 +158,7 @@ export function ClipPreview({
   const pictures =
     plan && controls
       ? stagePictures(
-          keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt), texts: textsAt(plan, keyedAt) },
+          keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt), ...layersAt(plan, keyedAt) },
           controls,
           behind,
           sceneIndex,
@@ -226,16 +226,10 @@ export function ClipPreview({
           {editing?.kind !== "captions" && (
             <Captions plan={plan} font={fontById.get(plan.caption_style.font)} playback={playback} edit={edit} />
           )}
-          {(drawn ?? plan).texts.map(
-            (event) =>
-              !(editing?.kind === "text" && editing.id === event.layer.id) && (
-                <TextLayerView
-                  key={event.layer.id}
-                  event={event}
-                  jobId={jobId}
-                  playback={playback}
-                  still={controls?.selected.includes(`text:${event.layer.id}`)}
-                />
+          {pictureLayers(drawn ?? plan).map(
+            ({ id, event }) =>
+              !(editing?.kind === "text" && id === `text:${editing.id}`) && (
+                <PictureLayerView key={id} event={event} jobId={jobId} playback={playback} still={controls?.selected.includes(id)} />
               ),
           )}
           {plan.hook && editing?.kind !== "hook" && editing?.kind !== "kicker" && (
@@ -274,7 +268,7 @@ export function ClipPreview({
       {preview && editing && retype && (
         <InlineText
           // A keyed Text Layer is retyped where it is at the playhead.
-          preview={keyedAt === null ? preview : { ...preview, plan: { ...preview.plan, texts: textsAt(preview.plan, keyedAt) } }}
+          preview={keyedAt === null ? preview : { ...preview, plan: { ...preview.plan, ...layersAt(preview.plan, keyedAt) } }}
           fontById={fontById}
           editing={editing}
           retype={retype}
@@ -368,7 +362,7 @@ function stagePictures(
   }
   const texts = controls.texts;
   for (const event of texts ? plan.texts : []) {
-    const { picture, fitted } = textStagePicture(event);
+    const { picture, fitted } = layerStagePicture(event);
     pictures.push({
       id: `text:${event.layer.id}`,
       label: `Text: ${event.lines.join(" ")}`,
@@ -386,8 +380,8 @@ function stagePictures(
   return pictures;
 }
 
-// The plan with its Overlays, Text Layers and the Scene `scene`'s picture drawn where the stage holds
-// them; a keyed Text Layer held where the stage has it at `keyedAt` (useKeyedTime), still.
+// The plan with its Overlays, picture layers and the Scene `scene`'s picture drawn where the stage
+// holds them; a keyed picture layer held where the stage has it at `keyedAt` (useKeyedTime), still.
 function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: number | null): RenderPlan {
   const overlays = plan.overlays.map((event) => {
     const picture = edit.shownPicture(`overlay:${event.id}`, event.picture);
@@ -397,12 +391,14 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: nu
     const picture = index === scene && each.picture ? edit.shownPicture(behindId(scene), each.picture) : each.picture;
     return picture === each.picture ? each : { ...each, picture };
   });
-  const texts = plan.texts.map((event) => {
-    const at = keyedAt === null ? event : textEventAt(event, keyedAt);
-    const { picture } = textStagePicture(at);
-    const shown = edit.shownPicture(`text:${event.layer.id}`, picture);
-    return shown === picture ? event : heldTextEvent(at, picture, shown);
-  });
+  // A picture layer of the stage's `id`, as the stage holds it.
+  const held = <Event extends PictureLayerEvent>(event: Event, id: string): Event => {
+    const at = keyedAt === null ? event : layerEventAt(event, keyedAt);
+    const { picture } = layerStagePicture(at);
+    const shown = edit.shownPicture(id, picture);
+    return shown === picture ? event : heldLayerEvent(at, picture, shown);
+  };
+  const texts = plan.texts.map((event) => held(event, `text:${event.layer.id}`));
   return { ...plan, overlays, scenes, texts };
 }
 
@@ -646,19 +642,19 @@ function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): 
 }
 
 /**
- * A Text Layer while it is on screen: the picture the backend made of it (docs/adr/0010), the same
- * pixels the Clip burns, placed, scaled, turned and faded as its plan's `picture` says (or as the
- * stage holds it: `heldTextEvent`), and animated on and off as the hook is, on top of its Keyframes
- * (`placedText`). While a changed look's picture loads, the last one stays. A `still` one (selected
- * in the Advanced Edit) is shown whole while paused in its time, so that it can be seen while it is
- * edited, even on a frame its animation hasn't reached.
+ * A picture layer (a Text Layer) while it is on screen: the picture the backend made of it
+ * (docs/adr/0010), the same pixels the Clip burns, placed, scaled, turned and faded as its plan's
+ * `picture` says (or as the stage holds it: `heldLayerEvent`), and animated on and off as the hook
+ * is, on top of its Keyframes (`placedLayer`). While a changed look's picture loads, the last one
+ * stays. A `still` one (picked in the Advanced Edit) is shown whole while paused in its time, so that
+ * it can be seen while it is edited, even on a frame its animation hasn't reached.
  *
  * A keyed one (ADR 0008) moves with the playback as PicturePanel moves a keyed picture: on every
  * frame of its clock it is sampled at the time shown and written to its elements directly.
  */
-function TextLayerView({ event, jobId, playback, still = false }: { event: TextEvent; jobId: string; playback: Playback; still?: boolean }) {
-  const shown = useTextPicture(wantedPicture(jobId, event));
-  const key = useShown(playback, (time, p) => textLook(event, still, time, p)?.map((value) => value.toFixed(3)).join(" ") ?? null);
+function PictureLayerView({ event, jobId, playback, still = false }: { event: PictureLayerEvent; jobId: string; playback: Playback; still?: boolean }) {
+  const shown = useLayerPicture(wantedPicture(jobId, event));
+  const key = useShown(playback, (time, p) => layerLook(event, still, time, p)?.map((value) => value.toFixed(3)).join(" ") ?? null);
   const group = useRef<SVGGElement>(null);
   const image = useRef<SVGImageElement>(null);
   const moving = isKeyed(event.picture);
@@ -667,34 +663,34 @@ function TextLayerView({ event, jobId, playback, still = false }: { event: TextE
     if (!moving) return;
     const paint = () => {
       const time = playback.shownTime;
-      const look = textLook(event, still, time, playback);
+      const look = layerLook(event, still, time, playback);
       if (!look || !group.current || !image.current) return;
-      const placed = placedText(event.picture, time, look);
+      const placed = placedLayer(event.picture, time, look);
       group.current.setAttribute("opacity", String(placed.opacity));
-      for (const [name, value] of Object.entries(textBox(placed))) image.current.setAttribute(name, String(value));
+      for (const [name, value] of Object.entries(layerBox(placed))) image.current.setAttribute(name, String(value));
     };
     paint();
     return playback.subscribe(paint);
   }, [moving, event, still, playback]);
 
   if (!key || !shown) return null;
-  const placed = placedText(event.picture, playback.shownTime, key.split(" ").map(Number) as [number, number, number]);
+  const placed = placedLayer(event.picture, playback.shownTime, key.split(" ").map(Number) as [number, number, number]);
   return (
     <g ref={group} opacity={placed.opacity}>
-      <image ref={image} href={shown.url} preserveAspectRatio="none" {...textBox(placed)} />
+      <image ref={image} href={shown.url} preserveAspectRatio="none" {...layerBox(placed)} />
     </g>
   );
 }
 
-// A Text Layer's opacity, scale and drop at `time` (hookLook): whole while paused in its time when
+// A picture layer's opacity, scale and drop at `time` (hookLook): whole while paused in its time when
 // `still`; null while it is off screen.
-function textLook(event: TextEvent, still: boolean, time: number, playback: Playback): [number, number, number] | null {
+function layerLook(event: PictureLayerEvent, still: boolean, time: number, playback: Playback): [number, number, number] | null {
   if (still && !playback.playing && event.start <= time && time < event.end) return [1, 1, 0];
   return hookLook(time, event, event.layer, 0);
 }
 
-// The SVG <image> attributes that draw a Text Layer's picture where it is `placed`.
-const textBox = (placed: PlacedText) => ({
+// The SVG <image> attributes that draw a picture layer's picture where it is `placed`.
+const layerBox = (placed: PlacedLayer) => ({
   x: placed.x - placed.width / 2,
   y: placed.y - placed.height / 2,
   width: placed.width,

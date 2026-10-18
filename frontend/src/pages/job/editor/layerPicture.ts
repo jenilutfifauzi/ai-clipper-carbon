@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { textPictureUrl, type Picture, type TextEvent } from "../../../api";
+import { textPictureUrl, type Picture, type PictureLayerEvent } from "../../../api";
 import { pictureAt } from "./picture";
 
-// A Text Layer's picture as the preview draws it (docs/adr/0010): its URL, and the size it is drawn
+// A picture layer's picture as the preview draws it (docs/adr/0010): its URL, and the size it is drawn
 // at, in output pixels, Transform scale included.
 export interface ShownPicture {
   url: string;
@@ -10,7 +10,7 @@ export interface ShownPicture {
   height: number;
 }
 
-// The picture a Text Layer's plan names: what it shows at any scale (`key`, its picture_key by its
+// The picture a picture layer's plan names: what it shows at any scale (`key`, its picture_key by its
 // Job) and how many pixels wide it was made (`made`). Pictures of one key differ only in size.
 export interface WantedPicture extends ShownPicture {
   key: string;
@@ -24,7 +24,7 @@ export type Loaded = { url: string; made: number };
 const largest = new Map<string, Loaded>();
 
 /** The picture of `event`, by its name alone: moving, turning or fading the layer asks for no new one. */
-export function wantedPicture(jobId: string, event: TextEvent): WantedPicture {
+export function wantedPicture(jobId: string, event: PictureLayerEvent): WantedPicture {
   const { picture } = event;
   return {
     url: textPictureUrl(jobId, event.image),
@@ -42,7 +42,7 @@ export function needsLoading(wanted: WantedPicture, loaded: (key: string) => Loa
 }
 
 /**
- * What to draw for a Text Layer that wants `wanted`, `shown` being what it drew last: the largest
+ * What to draw for a picture layer that wants `wanted`, `shown` being what it drew last: the largest
  * picture of its key loaded (`loaded`), drawn at the wanted size, so that scaling the layer down
  * draws the larger picture it has, and scaling it up draws that one larger until the sharper one has
  * loaded; else the last one, so that the preview never blinks or goes blank while a changed look is
@@ -55,9 +55,9 @@ export function pictureToShow(shown: ShownPicture | null, wanted: WantedPicture,
 
 const loadedPicture = (key: string) => largest.get(key);
 
-// Where a Text Layer's picture is drawn, in output pixels: its centre, its size, its turn in degrees
+// Where a picture layer's picture is drawn, in output pixels: its centre, its size, its turn in degrees
 // clockwise about its centre, and its opacity.
-export interface PlacedText {
+export interface PlacedLayer {
   x: number;
   y: number;
   width: number;
@@ -67,18 +67,18 @@ export interface PlacedText {
 }
 
 /**
- * A Text Layer's `picture` as drawn at `time` seconds into the Clip, its animations' `look` there
+ * A picture layer's `picture` as drawn at `time` seconds into the Clip, its animations' `look` there
  * being its opacity, scale and drop (hookLook): as its Keyframes have it (pictureAt, ADR 0008), then
- * faded, scaled about its centre and moved down on top, as the renderer's text_at draws it.
+ * faded, scaled about its centre and moved down on top, as the renderer's layer_at draws it.
  */
-export function placedText(picture: Picture, time: number, [opacity, scale, below]: readonly [number, number, number]): PlacedText {
+export function placedLayer(picture: Picture, time: number, [opacity, scale, below]: readonly [number, number, number]): PlacedLayer {
   const drawn = pictureAt(picture, time);
   const [x, y] = drawn.centre;
   return { x, y: y + below, width: drawn.width * scale, height: drawn.height * scale, rotation: drawn.rotation, opacity: drawn.opacity * opacity };
 }
 
-/** The picture a Text Layer draws now (`pictureToShow`), loading the one it wants when it needs to (`needsLoading`). */
-export function useTextPicture(wanted: WantedPicture): ShownPicture | null {
+/** The picture a picture layer draws now (`pictureToShow`), loading the one it wants when it needs to (`needsLoading`). */
+export function useLayerPicture(wanted: WantedPicture): ShownPicture | null {
   const [shown, setShown] = useState<ShownPicture | null>(() => pictureToShow(null, wanted, loadedPicture));
   const { url, width, height, key, made } = wanted;
   useEffect(() => {

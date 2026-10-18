@@ -1,17 +1,17 @@
-// .scratch/text-advanced/issues/05-text-layer-transform-on-stage.md: a Text Layer on the stage is a
-// picture as an Overlay is (docs/adr/0007, 0010): its Grips are on its area (its words and plate,
-// not the room its picture keeps round them for its ink), scaled and turned by its Transform. Its
-// corners scale it and the handle above turns it; it has no edges to stretch it. 12: a keyed one is
-// gripped where its Keyframes have it at the playhead (docs/adr/0008).
-import type { Picture, RenderPlan, TextEvent } from "../../../api";
+// .scratch/text-advanced/issues/05-text-layer-transform-on-stage.md: a picture layer (a Text Layer)
+// on the stage is a picture as an Overlay is (docs/adr/0007, 0010): its Grips are on its area (a Text
+// Layer's words and plate, not the room its picture keeps round them for its ink), scaled and turned
+// by its Transform. Its corners scale it and the handle above turns it; it has no edges to stretch
+// it. 12: a keyed one is gripped where its Keyframes have it at the playhead (docs/adr/0008).
+import type { Picture, PictureLayerEvent, RenderPlan } from "../../../api";
 import { boundsAbout, isKeyed, pictureAt } from "./picture";
 import type { Size } from "./pictureGestures";
 
 /**
- * A Text Layer's area as a picture of the stage: its size at scale 1 (`fitted`, what its Grips scale),
- * and the Picture of it drawn by its Transform, about its picture's centre, turned with its bounds.
+ * A picture layer's area as a picture of the stage: its size at scale 1 (`fitted`, what its Grips
+ * scale), and the Picture of it drawn by its Transform, about its picture's centre, turned with its bounds.
  */
-export function textStagePicture(event: TextEvent): { picture: Picture; fitted: Size } {
+export function layerStagePicture(event: PictureLayerEvent): { picture: Picture; fitted: Size } {
   const { area, picture, bounds } = event;
   const { scale } = event.layer.transform;
   return {
@@ -21,12 +21,12 @@ export function textStagePicture(event: TextEvent): { picture: Picture; fitted: 
 }
 
 /**
- * The event of a Text Layer as its Keyframes have it at `time` seconds into the Clip: its picture
+ * The event of a picture layer as its Keyframes have it at `time` seconds into the Clip: its picture
  * sampled there (pictureAt) and still, its Transform's centre, scale, rotation and opacity as sampled,
  * and its bounds its area's then, scaled and turned about its picture's sampled centre and rounded as
- * a picture's are (backend/app/planner.py's text_bounds_at). Unkeyed, the event itself.
+ * a picture's are (backend/app/planner.py's bounds_at). Unkeyed, the event itself.
  */
-export function textEventAt(event: TextEvent, time: number): TextEvent {
+export function layerEventAt<Event extends PictureLayerEvent>(event: Event, time: number): Event {
   const { picture, area, layer } = event;
   if (!isKeyed(picture)) return event;
   const drawn = pictureAt(picture, time);
@@ -43,14 +43,16 @@ export function textEventAt(event: TextEvent, time: number): TextEvent {
   return { ...event, layer: { ...layer, transform }, picture: drawn, bounds };
 }
 
-/** The plan's Text Layers as they are at `time` (`textEventAt`). */
-export const textsAt = (plan: RenderPlan, time: number): TextEvent[] => plan.texts.map((event) => textEventAt(event, time));
+/** The plan's picture layers as they are at `time` (`layerEventAt`), by kind. */
+export const layersAt = (plan: RenderPlan, time: number): Pick<RenderPlan, "texts"> => ({
+  texts: plan.texts.map((event) => layerEventAt(event, time)),
+});
 
 /**
- * The event of a Text Layer whose area (`planned`, its `textStagePicture`) the stage draws as `shown`
- * while a gesture holds it: its picture, the same file, placed, scaled, turned and faded with it.
+ * The event of a picture layer whose area (`planned`, its `layerStagePicture`) the stage draws as
+ * `shown` while a gesture holds it: its picture, the same file, placed, scaled, turned and faded with it.
  */
-export function heldTextEvent(event: TextEvent, planned: Picture, shown: Picture): TextEvent {
+export function heldLayerEvent<Event extends PictureLayerEvent>(event: Event, planned: Picture, shown: Picture): Event {
   if (shown === planned) return event;
   const by = shown.width / planned.width;
   const picture = {

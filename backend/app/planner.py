@@ -53,13 +53,18 @@ Text Layers (the Advanced Edit's free text) are centred where the owner put them
 (their pictures may go past the frame's edges), each in its own look. Their words are never set
 smaller: they break into lines at their wrap width, or the frame less TEXT_MARGIN either side
 (app/line_breaks.py), and their box grows to hold them, at least their wrap width wide and their
-fixed height tall. They are drawn over the captions
-and under the hook, in their order, each as a picture (docs/adr/0010): its layout (`TextLayout`)
+fixed height tall. Each is drawn as a picture (docs/adr/0010): its layout (`TextLayout`)
 holds its box and room round it for its ink, its lines placed from its corner, so that moving it
 keeps the same picture, named by a hash of what it shows.
 Each line is split into runs by Face (`text_runs`): a character its Face hasn't got is set in the
 bundled CJK Face (FALLBACK_FACE) when that has it, and measured with it, or else left out. The line
 pitch stays its own Face's.
+
+Text Layers are the plan's picture layers (`PictureLayer`): items drawn as the picture libass makes
+once of their layout (`PictureLayout`), placed by their Transform and Keyframes as an Overlay's
+picture is (`layer_picture`), over the captions and under the hook, in the plan's order
+(`RenderPlan.picture_layers`). The renderer, the pictures' maker (app/text_pictures.py) and the
+preview read them by these alone, whatever kind of item each draws.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes
@@ -203,9 +208,9 @@ TEXT_MARGIN = 48
 # A Text Layer's picture holds its box and this many of its sizes round it, plus its stroke: room
 # for what its letters draw past their advances and above their capitals (accents, a slanted face).
 TEXT_INK_ROOM = 0.5
-# A Text Layer's picture is at most this many pixels on its longest side, whatever its scale.
+# A picture layer's picture is at most this many pixels on its longest side, whatever its scale.
 MAX_TEXT_PICTURE = 4096
-# A Text Layer's picture is made at the first of these scales the largest it is drawn at doesn't pass
+# A picture layer's picture is made at the first of these scales the largest it is drawn at doesn't pass
 # (`reached_scale`): scaling it within one step is drawing the same picture smaller or larger, and
 # only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
 TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
@@ -621,8 +626,40 @@ class TextRun:
     image: str | None = None
 
 
+class PictureLayout:
+    """What a picture layer's picture shows (docs/adr/0010): in its own pixels, `width` x `height` at
+    scale 1, rasterised `scale` times as large, by libass from the ASS script app/text_pictures.py
+    writes of it (`layout_script`). Its picture's file is `name`, a hash of all of it, so that the
+    same picture is one file wherever the layer is; it is drawn in its `faces`. Each kind of picture
+    layer has a frozen dataclass of its own with these: a Text Layer's is a TextLayout."""
+
+    width: int
+    height: int
+    scale: float
+
+    @property
+    def raster(self) -> tuple[int, int]:
+        """The picture's size in its own pixels: its size at scale 1 times its scale."""
+        return max(1, round(self.width * self.scale)), max(1, round(self.height * self.scale))
+
+    @property
+    def name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def picture_key(self) -> str:
+        """What its picture shows at any scale: its name at scale 1, without the extension. The
+        pictures of one key are the same, only larger or smaller."""
+        return replace(self, scale=1.0).name.removesuffix(".png")
+
+    @property
+    def faces(self) -> set[str]:
+        """The Faces it is drawn in: none unless it draws text."""
+        return set()
+
+
 @dataclass(frozen=True)
-class TextLayout:
+class TextLayout(PictureLayout):
     """What a Text Layer's picture shows (docs/adr/0010), in its own pixels, `width` x `height` at
     scale 1: its `lines` set in `style`, each placed by its anchor (the middle of its text and its
     baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its Block, or a Strip
@@ -645,11 +682,6 @@ class TextLayout:
     shadow: tuple[float, float] | None = None
 
     @property
-    def raster(self) -> tuple[int, int]:
-        """The picture's size in its own pixels: its size at scale 1 times its scale."""
-        return max(1, round(self.width * self.scale)), max(1, round(self.height * self.scale))
-
-    @property
     def name(self) -> str:
         """Its picture's file name: a hash of the layout, of its Faces' files (an id may name another
         file once its Face is deleted and another imported), of how pictures are drawn
@@ -662,12 +694,6 @@ class TextLayout:
         return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
 
     @property
-    def picture_key(self) -> str:
-        """What its picture shows at any scale: its name at scale 1, without the extension. The
-        pictures of one key are the same words, only larger or smaller."""
-        return replace(self, scale=1.0).name.removesuffix(".png")
-
-    @property
     def faces(self) -> set[str]:
         """The Faces it is drawn in: its style's, and any its runs fall back to."""
         return {self.style.font, *(run.face for line in self.runs for run in line)}
@@ -677,19 +703,46 @@ class TextLayout:
 TEXT_PICTURE_FORMAT = "v1-libass-matte"
 
 
-@dataclass(frozen=True)
-class TextEvent:
-    """A Text Layer as drawn, on screen from `start` to `end` (seconds into the Clip). `area` is its
-    box, padded when it has a plate: a Block plate is `box` (the area), Strips are its layout's. Its
-    lines are placed on the frame by `anchors`: the middle of each one's text and its baseline (its
-    layout has them from its picture's corner).
+class PictureLayer:
+    """A picture layer as drawn (docs/adr/0010): an item of the Advanced Edit (`layer`: its id,
+    Transform, Keyframes and in/out animations) drawn as the picture of its `layout`, from `start` to
+    `end` seconds into the Clip, between the captions and the hook. It is placed as `picture` says,
+    with the Overlay's maths (`layer_picture`). `area` is what its Grips hold (its box, without the
+    room its picture keeps round it), and `bounds` that area once turned and scaled (`bounds_at`
+    for a keyed one at a time). In its JSON too: its picture's file `image`, and `picture_key`, which
+    names its pictures at every scale (PictureLayout.picture_key): the preview draws a larger picture
+    of the same key it has rather than fetch a smaller one. Each kind has a frozen dataclass of its
+    own with these: a Text Layer's is a TextEvent."""
 
-    It is drawn as the picture of its `layout` (docs/adr/0010), placed as `picture` says with the
-    Overlay's maths: its box and the room round it for its ink, centred about the middle of its area
-    (to within half a pixel). `bounds` holds its area once turned and scaled. Its layout gives the
-    rest, in its JSON too: its `lines` (broken at its wrap width), its picture's file `image`, and
-    `picture_key`, which names its pictures at every scale (TextLayout.picture_key): the preview
-    draws a larger picture of the same key it has rather than fetch a smaller one."""
+    layer: TextLayer
+    start: float
+    end: float
+    area: Box
+    layout: PictureLayout
+    picture: Picture
+    bounds: Box
+
+    @computed_field
+    @property
+    def image(self) -> str:
+        return self.layout.name
+
+    @computed_field
+    @property
+    def picture_key(self) -> str:
+        return self.layout.picture_key
+
+
+@dataclass(frozen=True)
+class TextEvent(PictureLayer):
+    """A Text Layer as drawn, a picture layer (`PictureLayer`) on screen from `start` to `end`
+    (seconds into the Clip). `area` is its box, padded when it has a plate: a Block plate is `box`
+    (the area), Strips are its layout's. Its lines are placed on the frame by `anchors`: the middle
+    of each one's text and its baseline (its layout has them from its picture's corner).
+
+    Its picture is its box and the room round it for its ink, centred about the middle of its area
+    (to within half a pixel). Its layout gives its `lines` (broken at its wrap width), in its JSON
+    too."""
 
     layer: TextLayer
     start: float
@@ -705,16 +758,6 @@ class TextEvent:
     @property
     def lines(self) -> list[str]:
         return self.layout.lines
-
-    @computed_field
-    @property
-    def image(self) -> str:
-        return self.layout.name
-
-    @computed_field
-    @property
-    def picture_key(self) -> str:
-        return self.layout.picture_key
 
 
 @dataclass(frozen=True)
@@ -751,6 +794,11 @@ class RenderPlan:
     @property
     def duration(self) -> float:
         return self.segments[-1].end if self.segments else SegmentTime(self.start, self.end).length
+
+    @property
+    def picture_layers(self) -> list[PictureLayer]:
+        """Its picture layers in drawing order, over the captions and under the hook: its Text Layers."""
+        return list(self.texts)
 
 
 def reframes(source: SourceMetadata) -> bool:
@@ -1512,8 +1560,7 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     radius = min(round(style.plate.radius), min(box.height for box in plates) // 2) if plates else 0
     placed = [placed_runs(line, x - width / 2, style.size, style.tracking) for line, width, (x, _) in zip(runs, widths, anchors)]
     layout, origin = _text_layout(layer, lines, placed, area, anchors, plates, radius)
-    # Keyed, it moves as an Overlay does, its whole picture scaled from its size at scale 1.
-    picture = with_motion(_text_picture(layout, origin, layer.transform), layer.transform, layer.keys, start, (layout.width, layout.height))
+    picture = layer_picture(layout, origin, layer, start)
     return TextEvent(
         layer, start, end, area, anchors, layout, picture, _turned_box(area, picture.centre, layer.transform),
         area if style.plate.shape is HookShape.BLOCK else None,
@@ -1603,35 +1650,45 @@ def _text_layout(
     width, height = width + width % 2, height + height % 2
     local = [(round(x - left, 4), round(y - top, 4)) for x, y in anchors]
     local_runs = [[replace(run, x=round(run.x - left, 4)) for run in line] for line in runs]
-    stepped = next((step for step in TEXT_PICTURE_SCALES if reached_scale(layer) <= step), TEXT_PICTURE_SCALES[-1])
-    scale = min(stepped, MAX_TEXT_PICTURE / max(width, height))
     plates = [Box(box.x - left, box.y - top, box.width, box.height) for box in plates]
     shadow = style.shadow.offset if style.shadow.on else None
     return (
-        TextLayout(style, lines, local, local_runs, width, height, round(scale, 4), plates, radius, shadow),
+        TextLayout(style, lines, local, local_runs, width, height, picture_scale(layer, width, height), plates, radius, shadow),
         (left, top),
     )
 
 
 def reached_scale(layer: TextLayer) -> float:
-    """The largest scale a Text Layer is drawn at: its Transform's, or its largest scale Keyframe's
-    while its scale is keyed (the Keyframes replace it). Pop grows it to its scale, never past it
-    (app/renderer.py's POP_FROM)."""
+    """The largest scale a picture layer's item is drawn at: its Transform's, or its largest scale
+    Keyframe's while its scale is keyed (the Keyframes replace it). Pop grows it to its scale, never
+    past it (app/renderer.py's POP_FROM)."""
     keyed = layer.keys.get(KeyProperty.SCALE)
     return max(key.value for key in keyed) if keyed else layer.transform.scale
 
 
-def _text_picture(layout: TextLayout, origin: tuple[int, int], transform: Transform) -> Picture:
-    """How a Text Layer's picture is drawn, its top-left corner at `origin` at scale 1: scaled,
-    turned and faded by `transform` about its middle, as an Overlay's is."""
+def picture_scale(layer: TextLayer, width: int, height: int) -> float:
+    """The scale a picture layer's picture, `width` x `height` at scale 1, is rasterised at: the first
+    of TEXT_PICTURE_SCALES its item's reached scale doesn't pass, and no more than MAX_TEXT_PICTURE
+    on its longest side."""
+    stepped = next((step for step in TEXT_PICTURE_SCALES if reached_scale(layer) <= step), TEXT_PICTURE_SCALES[-1])
+    return round(min(stepped, MAX_TEXT_PICTURE / max(width, height)), 4)
+
+
+def layer_picture(layout: PictureLayout, origin: tuple[int, int], layer: TextLayer, start: float) -> Picture:
+    """How a picture layer's picture is drawn, its top-left corner at `origin` at scale 1: scaled,
+    turned and faded by its item's Transform about its middle, as an Overlay's is. Keyed, it moves as
+    an Overlay does (`with_motion`, its Keyframes from `start` seconds into the Clip), its whole
+    picture scaled from its size at scale 1."""
+    transform = layer.transform
     raster = layout.raster
     width, height = max(2, _even(layout.width * transform.scale)), max(2, _even(layout.height * transform.scale))
     centre = (origin[0] + layout.width / 2, origin[1] + layout.height / 2)
     across, down = turned_size(width, height, transform.rotation)
     bounds = Box(round(centre[0] - across / 2), round(centre[1] - down / 2), round(across), round(down))
-    return Picture(
+    picture = Picture(
         Box(0, 0, *raster), raster, width, height, centre, transform.rotation, False, False, transform.opacity, bounds,
     )
+    return with_motion(picture, transform, layer.keys, start, (layout.width, layout.height))
 
 
 def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to: tuple[float, float] | None = None) -> Box:
@@ -1648,8 +1705,8 @@ def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to
     return Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
 
 
-def text_bounds_at(event: TextEvent, time: float) -> Box:
-    """What holds a Text Layer's area at `time` seconds into the Clip, as its Keyframes have it then
+def bounds_at(event: PictureLayer, time: float) -> Box:
+    """What holds a picture layer's area at `time` seconds into the Clip, as its Keyframes have it then
     (`picture_at`): scaled and turned about its picture's sampled centre. Unkeyed, its `bounds`."""
     picture = event.picture
     if not picture.motion or picture.unscaled is None:

@@ -11,8 +11,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import EASE_OUT, Keyframe, KeyProperty, TextLayer
 from app.keyframes import value_at
-from app.planner import MAX_TEXT_PICTURE, picture_at, text_bounds_at, text_event
-from app.renderer import text_at
+from app.planner import MAX_TEXT_PICTURE, bounds_at, picture_at, text_event
+from app.renderer import layer_at
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
 from test_render import HEARD, add, full_frame, pixels, preview, render, rendered, reviewed
@@ -97,17 +97,17 @@ def test_fade_pop_and_slide_are_stacked_on_a_keyed_text_layers_values():
     popped = text_event(layer(keys=keys, start=1.0, secs=2.0, animation_in="pop", animation_out="slide", animation_ms=400), 10)
     picture = popped.picture
     # Half way in: half its keyed opacity, 85% of its keyed scale, at its keyed place.
-    keyed, drawn = picture_at(picture, 1.2), text_at(popped, 1.2)
+    keyed, drawn = picture_at(picture, 1.2), layer_at(popped, 1.2)
     assert drawn.opacity == pytest.approx(keyed.opacity * 0.5)
     assert (drawn.width, drawn.height) == pytest.approx((keyed.width * 0.85, keyed.height * 0.85))
     assert drawn.centre == pytest.approx(keyed.centre)
     # Half way out: half its keyed opacity, 30 px below its keyed place, at its keyed scale.
-    keyed, drawn = picture_at(picture, 2.8), text_at(popped, 2.8)
+    keyed, drawn = picture_at(picture, 2.8), layer_at(popped, 2.8)
     assert drawn.opacity == pytest.approx(keyed.opacity * 0.5)
     assert drawn.centre == pytest.approx((keyed.centre[0], keyed.centre[1] + 30))
     assert (drawn.width, drawn.height) == pytest.approx((keyed.width, keyed.height))
     # In between, as keyed.
-    assert text_at(popped, 2.0) == picture_at(picture, 2.0)
+    assert layer_at(popped, 2.0) == picture_at(picture, 2.0)
 
 
 def eased_x(at: float, start: float) -> float:
@@ -194,16 +194,16 @@ def test_a_keyed_text_layers_bounds_at_a_time_hold_its_area_as_keyed_then():
     event = text_event(layer({"x": 540, "y": 900}, style={"size": 60}, start=1.0, secs=2.0, keys=keys), 10)
     area = event.area
     # At first, its area at scale 1 about x 300.
-    first = text_bounds_at(event, 1.0)
+    first = bounds_at(event, 1.0)
     assert (first.width, first.height) == pytest.approx((area.width, area.height), abs=1)
     assert first.x + first.width / 2 == pytest.approx(300, abs=1) and first.y + first.height / 2 == pytest.approx(900, abs=1)
     # After its last Keyframe, twice as large and stood on end about x 700.
-    last = text_bounds_at(event, 2.5)
+    last = bounds_at(event, 2.5)
     assert (last.width, last.height) == pytest.approx((2 * area.height, 2 * area.width), abs=2)
     assert last.x + last.width / 2 == pytest.approx(700, abs=1) and last.y + last.height / 2 == pytest.approx(900, abs=1)
     # Unkeyed, its bounds.
     still = text_event(layer({"x": 540, "y": 900}), 10)
-    assert text_bounds_at(still, 1.5) == still.bounds
+    assert bounds_at(still, 1.5) == still.bounds
 
 
 @pytest.mark.anyio

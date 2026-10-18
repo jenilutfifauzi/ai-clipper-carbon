@@ -92,8 +92,8 @@ def preview_plan(
     plan = candidate_plan(
         candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
     )
-    # Its Text Layers' pictures, which the preview shows (docs/adr/0010): made now if they aren't there.
-    make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.texts), job_dir / TEXTS_DIR)
+    # Its picture layers' pictures, which the preview shows (docs/adr/0010): made now if they aren't there.
+    make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / TEXTS_DIR)
     shown, at = [], 0.0
     for segment, heard in zip(segments, words):
         played = segment_time(segment)

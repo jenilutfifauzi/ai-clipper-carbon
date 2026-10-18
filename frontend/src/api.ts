@@ -465,23 +465,39 @@ export interface TextLayer {
   keys: Keys;
 }
 
-// A Text Layer as drawn: its lines at its style's size, each placed by its anchor (the middle of its
-// text and its baseline), in `area`; `box` is the area when it has a Block plate.
-// It is drawn as the picture the backend made of it (docs/adr/0010), the file `image`
-// (textPictureUrl), placed as `picture` says; `bounds` holds its area once turned and scaled.
-// `picture_key` names what its picture shows at any scale: its pictures of one key differ only in size.
-export interface TextEvent {
-  layer: TextLayer;
-  lines: string[];
+// What a picture layer draws (a Text Layer): its id, its Transform and Keyframes, and its in/out
+// animations.
+export interface PictureLayerItem {
+  id: string;
+  transform: Transform;
+  animation_in: Animation;
+  animation_out: Animation;
+  animation_ms: number;
+  keys: Keys;
+}
+
+// A picture layer as drawn (backend/app/planner.py's PictureLayer): its item `layer`, on screen from
+// `start` to `end`, drawn as the picture the backend made of it (docs/adr/0010), the file `image`
+// (textPictureUrl), placed as `picture` says. `area` is what its Grips hold, and `bounds` that area
+// once turned and scaled. `picture_key` names what its picture shows at any scale: its pictures of
+// one key differ only in size.
+export interface PictureLayerEvent<Item extends PictureLayerItem = PictureLayerItem> {
+  layer: Item;
   start: number;
   end: number;
   area: Box;
-  anchors: [number, number][];
   image: string;
   picture: Picture;
   bounds: Box;
-  box: Box | null;
   picture_key: string;
+}
+
+// A Text Layer as drawn, a picture layer: its lines at its style's size, each placed by its anchor
+// (the middle of its text and its baseline), in `area`; `box` is the area when it has a Block plate.
+export interface TextEvent extends PictureLayerEvent<TextLayer> {
+  lines: string[];
+  anchors: [number, number][];
+  box: Box | null;
 }
 
 // A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
