@@ -514,14 +514,15 @@ class Shadow:
 
 @dataclass(frozen=True)
 class MusicClip:
-    """A song (or a video's sound) from the Media Library under the Clip, heard from `start` for `secs`
-    in Timeline time: secs * speed of it from `offset` seconds in, at `volume` (its volume `keys` in
-    place of it), faded in and out (docs/adr/0008, 0016)."""
-    # Its read is kept within its file with the Media Library at hand (app/api.py), and its fades
-    # multiply its keys.
+    """A song (or a video's sound) from the Media Library under the Clip, or without `media` the
+    Source's sound, heard from `start` for `secs` in Timeline time: secs * speed of it from `offset`
+    seconds in, at `volume` (its volume `keys` in place of it), faded in and out (docs/adr/0008, 0016)."""
+    # Its read is kept within its file with the Media Library at hand (app/api.py), or within the
+    # Source (app/review.py), and its fades multiply its keys. The Source's is also at the Clip's
+    # own volume (`source_volume`), as a Segment of it is; `offset` is then a time on its timeline.
 
     id: ItemId
-    media: MediaId
+    media: MediaId | None = field(default=None, kw_only=True)
     start: TimelineStart
     secs: TimelineSecs
     offset: FileOffset = 0.0
@@ -791,7 +792,7 @@ class Candidate:
     def media_ids(self) -> set[str]:
         """The Media Library items it uses."""
         return (
-            {clip.media for clip in self.music}
+            {clip.media for clip in self.music if clip.media}
             | {segment.media for segment in self.segments if segment.media}
             | {overlay.media for overlay in self.overlays}
         )

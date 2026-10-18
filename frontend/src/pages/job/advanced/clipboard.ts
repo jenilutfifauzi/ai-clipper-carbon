@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
+import type { ClipSegment, LayoutOverride, MusicClip, Transition, WordEdit } from "../../../api";
 import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
 import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
@@ -75,7 +75,8 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
  *
  * Into another Candidate of the Job, Segments of the Source bring the Word Edits and Layout Overrides
  * of their ranges, but where it has its own: a Word Edit of the same Word (by the Source's `words`)
- * or a Layout Override in that range. Into another Job, they are left out, with their Transitions.
+ * or a Layout Override in that range. Into another Job, they are left out, with their Transitions,
+ * and so are Music Clips of the Source's sound.
  */
 export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: Place, words: { start: number; end: number }[] = []): Outcome {
   const { edits, played } = scene;
@@ -133,9 +134,15 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   }
   let trimmed = 0;
   let skipped = 0;
+  // Music Clips of the Source's sound, which another Job's clips can't play.
+  let unheard = 0;
   for (const { kind, item, at: after } of clipboard.layers) {
     if (locked.includes(TRACK_OF[kind])) {
       refuse(kind);
+      continue;
+    }
+    if (kind === "music" && (item as MusicClip).media === null && !sameJob) {
+      unheard += 1;
       continue;
     }
     // Kept inside the Clip: one that would start before it (it was before the first Segment pasted)
@@ -158,6 +165,7 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   const left = unlocked.length - kept.length;
   const told: string[] = [];
   if (left) told.push(`${count(left, "Segment", "Segments")} of this episode left out: another Job's clips can't show ${left === 1 ? "it" : "them"}.`);
+  if (unheard) told.push(`${count(unheard, "Music Clip", "Music Clips")} of this episode's sound left out: another Job's clips can't play ${unheard === 1 ? "it" : "them"}.`);
   const fitted = [trimmed && `${count(trimmed)} cut short to fit`, skipped && `${count(skipped)} left out, falling outside the clip`];
   if (trimmed || skipped) told.push(`${fitted.filter(Boolean).join("; ")}.`);
   if (refused.size) {

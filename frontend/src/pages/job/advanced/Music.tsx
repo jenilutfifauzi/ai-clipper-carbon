@@ -1,6 +1,7 @@
 import { Copy, Music as MusicIcon, Trash2 } from "lucide-react";
 import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
+import { formatPrecise } from "../../../format";
 import { Slider } from "../../../components/Slider";
 import type { Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
@@ -21,14 +22,18 @@ export function newMusicClip(item: MediaItem, at: number, duration: number): Mus
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
+/** What a Music Clip is called: a song's (or video's) name, or the episode's sound for a Music Clip of the Source. */
+export const musicName = (clip: MusicClip, item: MediaItem | undefined) => (clip.media === null ? "The episode's sound" : (item?.name ?? "Music"));
+
 /**
- * The selected Music Clip's volume, fades, Speed (the Overlay's fields), part of its song and time.
- * Its volume is shown at the playhead, and keyed there (`onVolume` writes a Keyframe once it has
- * some), with its ‹ ◆ ›.
+ * The selected Music Clip's volume, fades, Speed (the Overlay's fields), part of its song (or, of the
+ * Source's sound, the time in the episode it plays from) and time. Its volume is shown at the
+ * playhead, and keyed there (`onVolume` writes a Keyframe once it has some), with its ‹ ◆ ›.
  */
 export function MusicFields({
   clip,
   item,
+  sourceLength,
   duration,
   playback,
   copy,
@@ -41,8 +46,10 @@ export function MusicFields({
   onDelete,
 }: {
   clip: MusicClip;
-  // Its song; undefined while the library loads.
+  // Its song; undefined while the library loads, and for the Source's sound.
   item: MediaItem | undefined;
+  // The Source's, which a Music Clip of the Source reads.
+  sourceLength: number;
   duration: number;
   playback: Playback;
   // The Retimed copy the preview plays it from, if any.
@@ -58,7 +65,8 @@ export function MusicFields({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const length = item?.duration ?? clip.offset + clip.secs;
+  const episode = clip.media === null;
+  const length = episode ? sourceLength : (item?.duration ?? clip.offset + clip.secs);
   // Each fade as long as 10 s, or as what the other leaves of the clip.
   const most = (other: number) => Math.max(0, Math.min(FADE_MAX_SECS, clip.secs - other));
   const fade = (field: "fade_in" | "fade_out") => (secs: number) => onFade(field, secs, `music:${clip.id}:${field}`);
@@ -67,7 +75,7 @@ export function MusicFields({
       <div className="flex items-center justify-between gap-2">
         <h2 className="flex min-w-0 items-center gap-2 font-semibold">
           <MusicIcon aria-hidden size={17} className="shrink-0 text-muted" />
-          <span className="truncate">{item?.name ?? "Music"}</span>
+          <span className="truncate">{musicName(clip, item)}</span>
         </h2>
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate music">
@@ -115,7 +123,7 @@ export function MusicFields({
         heard
         group={`music:${clip.id}:speed`}
         copy={copy}
-        what={item?.kind === "video" ? "video" : "song"}
+        what={episode ? "sound" : item?.kind === "video" ? "video" : "song"}
         onSpeed={onSpeed}
         onPitch={(pitch) => onChange({ ...clip, pitch }, `music:${clip.id}:pitch`)}
         onReverse={onReverse}
@@ -124,7 +132,9 @@ export function MusicFields({
         item={clip}
         duration={duration}
         length={length}
-        labels={{ start: "Comes in at", secs: "Plays for", offset: clip.reverse ? "Ends in the song at" : "Starts in the song at" }}
+        labels={{ start: "Comes in at", secs: "Plays for", offset: `${clip.reverse ? "Ends" : "Starts"} in the ${episode ? "episode" : "song"} at` }}
+        // A time in the episode reads as the Transcript's do.
+        offsetFormat={episode ? formatPrecise : undefined}
         onChange={onChange}
       />
     </div>

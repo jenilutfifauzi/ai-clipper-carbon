@@ -543,13 +543,15 @@ export interface TextEvent extends PictureLayerEvent<TextLayer> {
 // about its Transform's centre; its picture holds that and a little room round it.
 export type ShapeEvent = PictureLayerEvent<Shape>;
 
-// A song (or a video's sound) from the Media Library under the Clip: heard from `start` for `secs` in
-// Timeline time, playing `secs` × speed of its file from `offset` seconds into it (ADR 0016; in
-// Reverse, backwards, as a video Overlay's sound), at `volume` (0 to 2), faded in and out. Its `keys`
-// shape its volume over its length (ADR 0008), in place of `volume`; the fades multiply them.
+// A song (or a video's sound) from the Media Library under the Clip, or with `media` null the Source's
+// sound (scaled by the Clip's `source_volume`, `offset` then a time on the Source's timeline): heard
+// from `start` for `secs` in Timeline time, playing `secs` × speed of its file from `offset` seconds
+// into it (ADR 0016; in Reverse, backwards, as a video Overlay's sound), at `volume` (0 to 2), faded
+// in and out. Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades
+// multiply them.
 export interface MusicClip extends Omit<Retiming, "hold"> {
   id: string;
-  media: string;
+  media: string | null;
   start: number;
   secs: number;
   offset: number;
@@ -571,9 +573,11 @@ export interface Retiming {
 
 // A Music Clip (or an Overlay video's sound, `id` its item's) as heard, cut where the Clip or its
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
-// `volume`; its fades multiply them. It plays (end − start) × speed of its item.
+// `volume`; its fades multiply them. It plays (end − start) × speed of its item: with `source`, of
+// the Source (`media` null), at the Clip's `source_volume` too.
 export interface AudioEvent extends Omit<Retiming, "hold"> {
-  media: string;
+  media: string | null;
+  source?: boolean;
   start: number;
   end: number;
   offset: number;

@@ -24,7 +24,7 @@ from app.candidates import (
 )
 from app.config import SelectionTuning
 from app.keyframes import rewindow
-from app.segment_time import SegmentTime, segment_time
+from app.segment_time import SegmentTime, overlay_time, segment_time
 from app.selection import snap
 from app.styles import StyleOverrides
 from app.transcript import Transcript
@@ -149,6 +149,14 @@ class Episode:
                 snapped.append(segment)
         return snapped
 
+    def check_music(self, music: list[MusicClip]) -> None:
+        """InvalidEdit for a Music Clip of the Source whose read, `secs × speed` from its offset, runs
+        past the Source's end."""
+        for clip in music:
+            if clip.media is None and overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse).end > self.duration + 0.05:
+                at_speed = f" at {clip.speed:g}x" if clip.speed != 1 else ""
+                raise InvalidEdit(f"Music Clip {clip.id} runs past the end of the episode ({self.duration:g} s){at_speed}")
+
     def check_length(self, segments: list[Segment], transitions: list[Transition]) -> None:
         """InvalidEdit when the Main Track of `segments` plays longer than the longest clip."""
         longest = max(MAX_CLIP_SECS, self.max_secs)
@@ -193,6 +201,7 @@ def update(
         _check_ids("Shape", [shape.id for shape in change.shapes])
     if change.music is not None:
         _check_ids("Music Clip", [clip.id for clip in change.music])
+        episode.check_music(change.music)
     if change.overlays is not None:
         _check_ids("Overlay", [overlay.id for overlay in change.overlays])
     if change.layout_overrides is not None:

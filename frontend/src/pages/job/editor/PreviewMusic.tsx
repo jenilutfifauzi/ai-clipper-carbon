@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
 import { follow, MAX_DRIFT_SECS } from "./follow";
-import { changing, CURVE_RATE, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
+import { changing, CURVE_RATE, eventSound, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
 import { masterBus } from "./masterBus";
 import { onOwnVideos, type Playback, type PlayedSegment } from "./playback";
-import { eventCopy, eventPlay, useRetimedCopies } from "./retimedCopy";
+import { eventPlay, soundAsk, useRetimedCopies } from "./retimedCopy";
 
 let context: AudioContext | null = null;
 
@@ -80,32 +80,35 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip (and Overlay
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
  * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
- * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
- * live) is set to the plan's `source_volume`, times the Segment's own volume (a keyed one's Keyframes, as a curve),
- * through its fades. Every element is heard through Web Audio and its master bus (masterBus.ts), which the Meters read.
+ * (retimedCopy.ts), silent until the copy is made. A Music Clip of the Source plays the Source's `src` (the decks'
+ * proxy) or its Retimed copy (of Job `jobId`), at the plan's `source_volume` too (`eventSound`). The Clip's own sound
+ * (each deck's master video, heard while its deck is live) is set to the plan's `source_volume`, times the Segment's
+ * own volume (a keyed one's Keyframes, as a curve), through its fades. Every element is heard through Web Audio and
+ * its master bus (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
   plan,
   playback,
   masters,
+  src,
+  jobId,
 }: {
   plan: RenderPlan | null;
   playback: Playback;
   masters: React.RefObject<HTMLVideoElement | null>[];
+  src: string;
+  jobId: string;
 }) {
   const players = useRef(new Map<string, HTMLAudioElement>());
   const events = useMemo(() => plan?.audio ?? [], [plan]);
   const sourceVolume = plan?.source_volume ?? 1;
+  // As heard: a Music Clip of the Source's at the Clip's own sound too.
+  const sounds = useMemo(() => events.map((event) => eventSound(event, sourceVolume)), [events, sourceVolume]);
   // The Segments' sounds as planned (their fades fitted, each to its end past a Transition's start),
   // which the decks' masters play while the plan has the Segments the playback plays.
   const planned = useMemo(() => plan?.segments.map((segment) => segmentSound(segment, plan.source_volume)) ?? [], [plan]);
-  const copies = useRetimedCopies(
-    events.map((event) => {
-      const range = eventCopy(event);
-      return range && { media: event.media, range };
-    }),
-  );
-  const played = events.map((event, i) => eventPlay(event, mediaItemUrl(event.media), copies[i]));
+  const copies = useRetimedCopies(events.map((event) => soundAsk(event, jobId)));
+  const played = events.map((event, i) => eventPlay(event, event.media ? mediaItemUrl(event.media) : src, copies[i]));
   // Followed on each tick as they are now, and at once when a copy comes.
   const plays = useRef(played);
   plays.current = played;
@@ -126,17 +129,17 @@ export function PreviewMusic({
         if (video && sound && changing(sound)) followCurve(video, playback, sound);
         else if (video) setVolume(video, volume);
       }
-      events.forEach((event, i) => {
-        const element = players.current.get(key(event, i));
+      sounds.forEach((sound, i) => {
+        const element = players.current.get(key(sound, i));
         if (element && follow(element, playback, plays.current[i].span)) {
-          if (event.gain.length) followCurve(element, playback, event);
-          else setVolume(element, loudness(event, playback.shownTime));
+          if (sound.gain.length) followCurve(element, playback, sound);
+          else setVolume(element, loudness(sound, playback.shownTime));
         }
       });
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, events, masters, sourceVolume, planned, sources]);
+  }, [playback, sounds, masters, sourceVolume, planned, sources]);
 
   return (
     <>
@@ -156,4 +159,4 @@ export function PreviewMusic({
   );
 }
 
-const key = (event: AudioEvent, i: number) => `${i}:${event.media}`;
+const key = (event: AudioEvent, i: number) => `${i}:${event.media ?? "source"}`;

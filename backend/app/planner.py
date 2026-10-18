@@ -487,14 +487,16 @@ class WatermarkEvent:
 
 @dataclass(frozen=True)
 class AudioEvent:
-    """A Music Clip (or an Overlay video's sound) as heard: the Media Library item `media` from
-    `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
-    `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
+    """A Music Clip (or an Overlay video's sound) as heard: the Media Library item `media` (None: the
+    Source) from `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`,
+    faded in over `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
     (`gain_at`). `id` is its item's. It plays at its `speed` (docs/adr/0009, 0016), its pitch
-    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`."""
+    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`. With
+    `source` it is the Source's sound, which the Clip's own volume scales too (and stays so once
+    `media` names the Retimed copy it is read from)."""
 
-    media: str
+    media: str | None
     start: float
     end: float
     offset: float
@@ -506,6 +508,7 @@ class AudioEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+    source: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -901,7 +904,7 @@ def plan_render(
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
     `text_layers` and `shapes` (their times in seconds into the Clip) are drawn as `text_event` and
     `shape_event` place them, and `music` is heard as `audio_events` places it, given what
-    `media_info` says of its songs.
+    `media_info` says of its songs (and `source` of the Source, for its Music Clips of the Source).
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
     their items (whose videos' sound, when turned up, joins the music).
@@ -975,7 +978,7 @@ def plan_render(
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
-        audio=audio_events(music or [], duration, media_info or {}) + overlay_sound(overlays or [], duration, media_info or {}),
+        audio=audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {}),
         source_volume=source_volume,
         segments=segments,
         overlays=overlay_events(overlays or [], duration, media_info or {}),
@@ -1391,16 +1394,18 @@ def fades_within(fade_in: float, fade_out: float, secs: float) -> tuple[float, f
     return round(fade_in * share, 3), round(fade_out * share, 3)
 
 
-def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
+def audio_events(
+    music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"], source: float = math.inf
+) -> list[AudioEvent]:
     """The Music Clips as heard in a Clip lasting `duration`, each at its Speed, forwards or in
-    Reverse, and cut where the Clip or its song (whose length is in `items`) ends, as an Overlay's
-    sound is (`overlay_time`: in Reverse, a cut at the Clip's end leaves out the start of its part,
-    so its `offset` begins later); its fades fitted to what is left (`fades_within`). One whose song
-    is gone, or that would start at or after either end, isn't heard."""
+    Reverse, and cut where the Clip or its song (whose length is in `items`; the Source's, `source`)
+    ends, as an Overlay's sound is (`overlay_time`: in Reverse, a cut at the Clip's end leaves out
+    the start of its part, so its `offset` begins later); its fades fitted to what is left
+    (`fades_within`). One whose song is gone, or that would start at or after either end, isn't heard."""
     events = []
     for clip in music:
-        item = items.get(clip.media)
-        length = item.duration if item is not None else None
+        item = items.get(clip.media) if clip.media is not None else None
+        length = source if clip.media is None else (item.duration if item is not None else None)
         start = round(clip.start, 3)
         if length is None or start >= duration or clip.offset >= length:
             continue
@@ -1410,7 +1415,7 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         events.append(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
-                clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse,
+                clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.media is None,
             )
         )
     return events

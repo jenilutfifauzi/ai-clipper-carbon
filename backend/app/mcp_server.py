@@ -146,6 +146,8 @@ Edits:
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
   (source_start, source_end). A Music Clip's speed, pitch and reverse are the same (secs * speed of
   its song from offset); the dry run's `sounds` give what it reads.
+- A Music Clip without `media` plays the episode's sound, anywhere in the Clip: its offset is
+  Source time, its read within the Source, and source_volume scales it (`sounds` lists it, source true).
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
   may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
   are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the
@@ -876,7 +878,8 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a Segment's, a
-    Music Clip's, an Overlay's) and what a sound at a Speed or in Reverse reads (`_video_read`),
+    Music Clip's, an Overlay's), what a sound at a Speed or in Reverse reads (`_video_read`), every
+    Music Clip of the Source (`source`),
     each Shape's and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its
     name) as a picture layer's (`_layer_view`), and the
     Words."""
@@ -920,12 +923,13 @@ def _plan_view(
         ],
         **_compact({"sounds": [
             {
-                "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
+                "id": event["id"], "media": event["media"], **({"source": True} if event.get("source") else {}),
+                **_times(event, "start", "end"),
                 **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
                 **(_video_read(event, copied) if _retimed(event) else {}),
             }
             for event in plan["segments"] + plan["audio"]
-            if event["gain"] or _retimed(event)
+            if event["gain"] or _retimed(event) or event.get("source")
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }

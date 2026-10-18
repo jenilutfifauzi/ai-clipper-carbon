@@ -6,7 +6,7 @@ import cases from "../../../../../backend/tests/fixtures/gain_vectors.json";
 import type { AudioEvent, Ease, SegmentPlan } from "../../../api";
 import { fadesWithin } from "../advanced/edits";
 import { EASE_IN, LINEAR, valueAt } from "./keyframes";
-import { CURVE_RATE, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
+import { CURVE_RATE, eventSound, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
 import { playedFrom } from "./playback";
 
 describe("a sound", () => {
@@ -114,5 +114,26 @@ describe("a Source Segment's sound", () => {
   test("unkeyed, is its volume times the Clip's own sound all along", () => {
     const sound = segmentSound({ start: 0, end: 4, source_start: 0, volume: 0.5 }, 0.8);
     expect([loudness(sound, 0), loudness(sound, 3)]).toEqual([0.4, 0.4]);
+  });
+});
+
+// .scratch/audio-mixing/issues/08: a Music Clip of the Source's sound, under the Clip's own sound.
+describe("a Music Clip of the Source's sound", () => {
+  const keys = [
+    { at: 1, value: 1, ease: LINEAR },
+    { at: 2, value: 0.25, ease: EASE_IN },
+  ];
+  const episode: AudioEvent = { id: "s", media: null, source: true, start: 3, end: 7, offset: 120, volume: 0.8, fade_in: 1, fade_out: 0, gain: [] };
+
+  test("is its volume through its fades times the Clip's own sound, keyed or not", () => {
+    for (const time of [3.5, 5]) expect(loudness(eventSound(episode, 0.5), time)).toBeCloseTo(0.5 * loudness(episode, time), 9);
+    const keyed = { ...episode, gain: keys };
+    for (const time of [3.5, 4.5, 5, 6.9]) expect(loudness(eventSound(keyed, 0.5), time)).toBeCloseTo(0.5 * loudness(keyed, time), 9);
+  });
+
+  test("leaves a song's sound as planned, the same sound, and the Source's at the Clip's own 1", () => {
+    const song = { ...episode, media: "song", source: false };
+    expect(eventSound(song, 0.5)).toBe(song);
+    expect(eventSound(episode, 1)).toBe(episode);
   });
 });

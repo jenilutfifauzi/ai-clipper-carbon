@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { eventSpan, follow } from "./follow";
 import { Playback, playedFrom } from "./playback";
 import { harness } from "./playbackHarness";
-import { eventPlay } from "./retimedCopy";
+import { eventPlay, soundAsk } from "./retimedCopy";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -486,6 +486,30 @@ describe("speed", () => {
     expect(Math.abs(sound.currentTime - (playback.time - 0.5) * 2)).toBeLessThanOrEqual(1 / 30);
     stage.advance(0.2);
     expect(sound.paused).toBe(true);
+  });
+
+  // .scratch/audio-mixing/issues/08: a Music Clip of the Source plays the Source's proxy.
+  test("a Music Clip of the Source plays its range of the episode in time with the playhead, a reversed one asking the Source's copy", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(playedFrom([{ start: 100, end: 106 }]));
+    stage.decks(playback);
+    const sound = stage.video();
+    // The episode's 300..302 s, heard from 1 s to 3 s.
+    const event = { media: null, source: true, start: 1, end: 3, offset: 300, volume: 1, fade_in: 0, fade_out: 0, gain: [], id: "s" };
+    const { src, span } = eventPlay(event, "/media/j/source.proxy.mp4", null);
+    expect(src).toBe("/media/j/source.proxy.mp4");
+    expect(soundAsk(event, "j")).toBeNull();
+    playback.subscribe(() => follow(sound.element, playback, span));
+    playback.seek(1.5);
+    stage.settle();
+    playback.play();
+    stage.advance(0.8);
+    expect(Math.abs(sound.currentTime - (300 + playback.time - 1))).toBeLessThanOrEqual(1 / 30);
+    stage.advance(1);
+    expect(sound.paused).toBe(true);
+    expect(soundAsk({ ...event, reverse: true }, "j")).toEqual({ job: "j", range: { start: 300, end: 302, reverse: true } });
+    expect(soundAsk({ ...event, media: "song", reverse: true }, "j")).toEqual({ media: "song", range: { start: 300, end: 302, reverse: true } });
   });
 
   // 0–5 s from 100 s of the Source, then 5–9 s of 8 s from 200 s at `speed` 2.

@@ -43,7 +43,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
+import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   changeMusic,
   dragSegment,
@@ -566,7 +566,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         : item.kind === "music"
           ? edits.music.find((other) => other.id === item.id)
           : undefined;
-    const video = timed ? (mediaById.get(timed.media)?.duration ?? undefined) : undefined;
+    // How far its file goes: its item's length, or the Source's for a Music Clip of the Source.
+    const video = !timed ? undefined : timed.media ? (mediaById.get(timed.media)?.duration ?? undefined) : sourceLength;
     const outcome = speedGesture(scene, item, speed, group, { longest, video });
     if (!outcome) return;
     if (outcome.edits !== edits) history.set(outcome.edits, group);
@@ -623,8 +624,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     }
     if (item.kind === "music") {
       const heard = plan?.audio.find((sound) => sound.id === item.id);
-      const range = heard && eventCopy(heard);
-      return heard && range ? { media: heard.media, range } : null;
+      return heard ? soundAsk(heard, job.id) : null;
     }
     const event = plan?.overlays.find((overlay) => overlay.id === item.id);
     const range = event && !event.image ? eventCopy(event) : null;
@@ -1038,6 +1038,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         fonts={fonts}
         actions={actions}
         mediaById={mediaById}
+        sourceLength={sourceLength}
         playback={playback}
         transition={transitionPanel(!wide)}
         onEdits={history.set}
