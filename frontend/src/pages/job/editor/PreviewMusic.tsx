@@ -56,14 +56,14 @@ function unschedule(gain: GainNode) {
  * Sets how loud a keyed or faded sound's `element` plays at the playback's time: while playing, through Web
  * Audio, as a curve sampled from the playhead to its end (loudnessCurve), set on play, on every seek
  * (when the time is further than MAX_DRIFT_SECS from where the curve has got to), at a new rate and
- * for a new `event` (another object); otherwise its loudness there. A Music Clip's, an Overlay
- * video's, and a Segment's (`segmentSound`): on the decks' masters, or on its own videos
- * (PreviewSegments.tsx).
+ * for a new `event` (another object); otherwise its loudness there. A Muted one follows no curve: it
+ * is held at 0. A Music Clip's, an Overlay video's, and a Segment's (`segmentSound`): on the decks'
+ * masters, or on its own videos (PreviewSegments.tsx).
  */
 export function followCurve(element: HTMLMediaElement, playback: Playback, event: Heard) {
   const time = playback.shownTime;
   const gain = gainOf(element);
-  if (!gain || !context || context.state !== "running" || !playback.playing) {
+  if (!gain || !context || context.state !== "running" || !playback.playing || event.muted) {
     setVolume(element, loudness(event, time));
     return;
   }
@@ -83,8 +83,9 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * (retimedCopy.ts), silent until the copy is made. A Music Clip of the Source plays the Source's `src` (the decks'
  * proxy) or its Retimed copy (of Job `jobId`), at the plan's `source_volume` too (`eventSound`). The Clip's own sound
  * (each deck's master video, heard while its deck is live) is set to the plan's `source_volume`, times the Segment's
- * own volume (a keyed one's Keyframes, as a curve), through its fades. Every element is heard through Web Audio and
- * its master bus (masterBus.ts), which the Meters read.
+ * own volume (a keyed one's Keyframes, as a curve), through its fades, or held at 0 while it is Muted, as a Muted
+ * Music Clip or Overlay sound is (`loudness`). Every element is heard through Web Audio and its master bus
+ * (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
   plan,
@@ -120,11 +121,11 @@ export function PreviewMusic({
     const drafted = new WeakMap<PlayedSegment, Heard>();
     const soundOf = (shown: PlayedSegment) => drafted.get(shown) ?? drafted.set(shown, segmentSound(shown, sourceVolume)).get(shown)!;
     const sync = () => {
-      // A skim's snippet is heard at the skimmed Segment's volume, and through its fades.
+      // A skim's snippet is heard at the skimmed Segment's volume, and through its fades; a Muted one's not at all.
       const index = playback.shownSegmentIndex;
       const shown = playback.segments[index];
       const sound = onOwnVideos(shown) ? null : planned.length === playback.segments.length ? planned[index] : soundOf(shown);
-      const volume = sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
+      const volume = shown.muted ? 0 : sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
       for (const { current: video } of masters) {
         if (video && sound && changing(sound)) followCurve(video, playback, sound);
         else if (video) setVolume(video, volume);

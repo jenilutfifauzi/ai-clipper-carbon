@@ -16,10 +16,11 @@ describe("a sound", () => {
       const fades = fadesWithin({ fade_in: sound.fade_in ?? 0, fade_out: sound.fade_out ?? 0 }, sound.end - sound.start);
       const keys: { at: number; value: number; ease?: number[] }[] = sound.keys ?? [];
       const gain = keys.map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
+      const muted = sound.muted ?? false;
       const event: Heard =
         "item" in of && of.item === "segment"
-          ? segmentSound(segment({ start: sound.start, end: sound.end, volume: sound.volume, gain, ...fades }), 1)
-          : { id: "m", media: "song", start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades };
+          ? segmentSound(segment({ start: sound.start, end: sound.end, volume: sound.volume, gain, ...fades, muted }), 1)
+          : { id: "m", media: "song", start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades, muted };
       for (const [time, expected] of at) expect(Math.abs(loudness(event, time) - expected), `at ${time}`).toBeLessThan(cases.tolerance);
     });
   }
@@ -87,6 +88,12 @@ describe("a keyed sound", () => {
     expect(loudnessCurve(dipped, 7).length).toBe(2);
     // Its last value, just past its end, is its loudness at its end.
     expect(loudnessCurve({ ...dipped, fade_out: 0 }, 4.205).at(-1)).toBe(0.25);
+  });
+
+  // Muted (.scratch/audio-mixing/issues/02-muted-agent-render-preview.md), its gain is 0 at every
+  // time (the shared cases' "Muted, keyed and faded"), so a curve of it is silence throughout.
+  test("Muted, follows a curve of silence", () => {
+    expect(loudnessCurve({ ...dipped, muted: true }, 4).every((gain) => gain === 0)).toBe(true);
   });
 });
 

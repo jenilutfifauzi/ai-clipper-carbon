@@ -1,5 +1,5 @@
 {
-  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. A sound whose `item` is \"segment\" is a Segment's, from its start on the Timeline (a Transition's overlap included) to its end, its fades fitted to that length; any other, a Music Clip's. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
+  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. A sound whose `item` is \"segment\" is a Segment's, from its start on the Timeline (a Transition's overlap included) to its end, its fades fitted to that length; any other, a Music Clip's. A `muted` one (docs/adr/0016) is silent throughout, whatever its volume, Keyframes and fades. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
   "tolerance": 1e-6,
   "sounds": [
     {
@@ -87,6 +87,24 @@
         ]
       },
       "at": [[0.9, 0], [1, 0], [1.25, 0.9375], [1.5, 1.75], [2, 1.5], [3, 1.0], [3.5, 0.5], [4, 0], [4.1, 0]]
+    },
+    {
+      "name": "Muted, keyed and faded",
+      "sound": {
+        "start": 3,
+        "end": 7,
+        "volume": 0.5,
+        "fade_in": 0.5,
+        "keys": [{"at": 1, "value": 1.0, "ease": [0, 0, 1, 1]}, {"at": 2, "value": 0.25, "ease": [0, 0, 1, 1]}],
+        "muted": true
+      },
+      "at": [[2.9, 0], [3, 0], [3.25, 0], [4, 0], [4.5, 0], [5.5, 0], [7, 0], [7.1, 0]]
+    },
+    {
+      "name": "a Muted Segment, faded",
+      "item": "segment",
+      "sound": {"start": 2, "end": 5, "volume": 1.5, "fade_in": 1, "fade_out": 0.5, "muted": true},
+      "at": [[1.9, 0], [2, 0], [2.5, 0], [3, 0], [4.75, 0], [5, 0], [5.1, 0]]
     }
   ]
 }

@@ -69,7 +69,13 @@
 - `loudness.test.ts` (+2), `playback.test.ts` (+1: plays the Source's proxy in time, and `soundAsk` asks the Job's Source in Reverse), `timelineView.test.ts` (+1).
 
 **Decided differently / left for later:**
-- **Muted** applies once 02 lands. Nothing here filters Music Clips by `muted`, so 02's rule for Music Clips covers these too.
+- **`MusicClip`'s `media` is keyword-only.** A `MusicClip` built positionally with its media second (`MusicClip("m", SONG, 0, 2)`, as tests did before) is refused with a `TypeError` in `__post_init__`, rather than silently taking the id for its start. Any test another ticket adds this way must pass `media=` by name.
+- **Merged with feat/audio-mixing (02 Muted, 05).**
+  - `_music_inputs` skips a Muted sound, so neither a song nor the Source is read for it.
+  - `AudioEvent` has `muted`, then `source`.
+  - The dry run lists a sound that is keyed, Muted, retimed or of the Source.
+  - `test_muted.py`'s two `MusicClip`s pass `media=` by name.
+  - A Muted Music Clip of the Source is silent in the render (left out) and in the preview (`loudness`), as any Music Clip is.
 - **`duck` is not refused yet:** the field doesn't exist until 10. Ticket 10 must refuse it on a Music Clip without `media`.
 - **No browser walkthrough.** Nothing in the editor creates a Music Clip of the Source until Detach (09). Its drawing, inspector and preview wiring are covered by typecheck, build and the pure tests above; ticket 15's walkthrough covers the rest.
 - **The Clipboard keeps `detached_from` untouched** because that field arrives with 09. Ticket 09 drops it on a paste into another Candidate.

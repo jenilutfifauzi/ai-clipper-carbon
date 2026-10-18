@@ -12,13 +12,14 @@ export type Heard = AudioEvent & { crossfade?: { start: number; end: number } };
 
 /**
  * How loud a sound is heard `time` seconds into the Clip: its volume, or its Keyframes sampled there,
- * through its fades' linear ramps; silent outside it. As the renderer has it (gain_at in
- * backend/app/planner.py): both are tested on the cases in backend/tests/fixtures/gain_vectors.json,
- * so that they can't drift. Under a Transition's `crossfade`, that falls linearly from 1 to 0 over it
- * and multiplies the rest, as acrossfade does in the render.
+ * through its fades' linear ramps; silent outside it, and when Muted (ADR 0016). As the renderer has
+ * it (gain_at in backend/app/planner.py): both are tested on the cases in
+ * backend/tests/fixtures/gain_vectors.json, so that they can't drift. Under a Transition's
+ * `crossfade`, that falls linearly from 1 to 0 over it and multiplies the rest, as acrossfade does in
+ * the render.
  */
 export function loudness(event: Heard, time: number): number {
-  if (time < event.start || time > event.end) return 0;
+  if (event.muted || time < event.start || time > event.end) return 0;
   let share = 1;
   if (event.fade_in > 0) share = Math.min(share, (time - event.start) / event.fade_in);
   if (event.fade_out > 0) share = Math.min(share, (event.end - time) / event.fade_out);
@@ -45,6 +46,7 @@ export function segmentSound(
     gain?: Keyframe[];
     fade_in?: number;
     fade_out?: number;
+    muted?: boolean;
   },
   sourceVolume: number,
   crossfade?: { start: number; end: number },
@@ -60,6 +62,7 @@ export function segmentSound(
     fade_out: segment.fade_out ?? 0,
     gain: (segment.gain ?? []).map((key) => ({ ...key, value: key.value * own })),
     id: segment.id ?? "",
+    muted: segment.muted ?? false,
     ...(crossfade && { crossfade }),
   };
 }

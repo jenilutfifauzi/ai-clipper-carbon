@@ -305,6 +305,8 @@ class SegmentInput:
     # Its sound's fades as set, in seconds (the plan fits them to its length).
     fade_in: float = 0.0
     fade_out: float = 0.0
+    # Its sound switched silent (docs/adr/0016).
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -492,9 +494,10 @@ class AudioEvent:
     faded in over `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
     (`gain_at`). `id` is its item's. It plays at its `speed` (docs/adr/0009, 0016), its pitch
-    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`. With
-    `source` it is the Source's sound, which the Clip's own volume scales too (and stays so once
-    `media` names the Retimed copy it is read from)."""
+    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`. A
+    `muted` one (docs/adr/0016) keeps its volume and Keyframes but isn't heard. With `source` it is
+    the Source's sound, which the Clip's own volume scales too (and stays so once `media` names the
+    Retimed copy it is read from)."""
 
     media: str | None
     start: float
@@ -508,6 +511,7 @@ class AudioEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+    muted: bool = False
     source: bool = False
 
     @property
@@ -548,6 +552,8 @@ class SegmentPlan:
     # its crossfade multiply.
     fade_in: float = 0.0
     fade_out: float = 0.0
+    # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -953,7 +959,7 @@ def plan_render(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold, given.pitch,
-                    fade_in=fade_in, fade_out=fade_out,
+                    fade_in=fade_in, fade_out=fade_out, muted=given.muted,
                 )
             )
             at, before = round(at + length, 3), length
@@ -1415,7 +1421,8 @@ def audio_events(
         events.append(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
-                clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.media is None,
+                clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
+                clip.media is None,
             )
         )
     return events
@@ -1424,11 +1431,11 @@ def audio_events(
 def gain_at(event: AudioEvent | SegmentPlan, time: float) -> float:
     """How loud `event` (a Music Clip's or an Overlay's sound, or a Segment's before the Clip's own
     volume and a Transition's crossfade) is heard `time` seconds into the Clip: its volume, or its
-    Keyframes sampled there (app/keyframes.py), through its fades' linear ramps; silent outside it.
-    The same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are
+    Keyframes sampled there (app/keyframes.py), through its fades' linear ramps; silent outside it,
+    and Muted. The same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are
     tested on the cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
     into = time - event.start
-    if into < 0 or time > event.end:
+    if into < 0 or time > event.end or event.muted:
         return 0.0
     share = 1.0
     if event.fade_in > 0:
@@ -1445,7 +1452,7 @@ def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, Me
 
 def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[AudioEvent]:
     """The sound of the Overlays' videos that are turned up, or keyed, heard as Music Clips are, while
-    they show."""
+    they show (a Muted one's too, which isn't heard)."""
     sounds = []
     for overlay in overlays:
         event = _overlay_event(overlay, duration, items)
@@ -1454,7 +1461,8 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
             continue
         sounds.append(
             AudioEvent(
-                overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse
+                overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse,
+                overlay.muted,
             )
         )
     return sounds

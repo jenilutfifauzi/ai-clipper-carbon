@@ -12,17 +12,21 @@ type Listener = () => void;
  * `end` seconds into the Clip, at its Speed, forwards or in Reverse, or held (segmentTime.ts); or,
  * with `media`, a Media Library video from `source_start` to `source_end` seconds into it, which the
  * preview plays itself while the Source waits. Its own sound is at `volume`, or by its volume
- * Keyframes (`gain`, in seconds from its start), its pitch following its Speed with `pitch`.
+ * Keyframes (`gain`, in seconds from its start), silent when `muted`, its pitch following its Speed
+ * with `pitch`.
  */
 export interface PlayedSegment extends PlayedRange {
   source_end: number;
   media?: string | null;
   volume?: number;
   gain?: Keyframe[];
+  muted?: boolean;
 }
 
 /** A Main Track of these Segments as played, back to back from 0 s. */
-export function playedFrom(segments: (SegmentRange & { media?: string | null; volume?: number; keys?: Keys })[]): PlayedSegment[] {
+export function playedFrom(
+  segments: (SegmentRange & { media?: string | null; volume?: number; keys?: Keys; muted?: boolean })[],
+): PlayedSegment[] {
   let at = 0;
   return segments.map((segment) => {
     const played = {
@@ -32,6 +36,7 @@ export function playedFrom(segments: (SegmentRange & { media?: string | null; vo
       source_end: segment.end,
       media: segment.media ?? null,
       volume: segment.volume ?? 1,
+      muted: segment.muted ?? false,
       ...retimingOf(segment),
       ...(segment.keys?.volume?.length ? { gain: segment.keys.volume } : {}),
     };

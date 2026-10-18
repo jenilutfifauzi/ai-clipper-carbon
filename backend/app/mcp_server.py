@@ -237,6 +237,9 @@ Edits:
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
   volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
   its keyed values.
+- `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
+  the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
+  Muted ones (`segments`, `sounds`).
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -878,11 +881,10 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a Segment's, a
-    Music Clip's, an Overlay's), what a sound at a Speed or in Reverse reads (`_video_read`), every
-    Music Clip of the Source (`source`),
-    each Shape's and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its
-    name) as a picture layer's (`_layer_view`), and the
-    Words."""
+    Music Clip's, an Overlay's), which sounds are Muted, what a sound at a Speed or in Reverse reads
+    (`_video_read`), every Music Clip of the Source (`source`), each Shape's and each Text Layer's
+    (with its lines) box and picture's URL (`picture_url`, by its name) as a picture layer's
+    (`_layer_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -900,7 +902,8 @@ def _plan_view(
             _compact({
                 **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
-                "reverse": segment["reverse"] or None, "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
+                "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
+                "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
             })
             for segment in plan["segments"]
@@ -926,10 +929,11 @@ def _plan_view(
                 "id": event["id"], "media": event["media"], **({"source": True} if event.get("source") else {}),
                 **_times(event, "start", "end"),
                 **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
+                **({"muted": True} if event["muted"] else {}),
                 **(_video_read(event, copied) if _retimed(event) else {}),
             }
             for event in plan["segments"] + plan["audio"]
-            if event["gain"] or _retimed(event) or event.get("source")
+            if event["gain"] or event["muted"] or _retimed(event) or event.get("source")
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }

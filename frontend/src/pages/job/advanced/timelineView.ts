@@ -7,7 +7,7 @@ import type { Keyframe, Keys, Retiming } from "../../../api";
 import { valueAt } from "../editor/keyframes";
 import type { PlayedSegment } from "../editor/playback";
 import { playingFrom, sourceAt } from "../editor/segmentTime";
-import type { AdvancedEdits } from "./edits";
+import { fadesWithin, type AdvancedEdits } from "./edits";
 import { KEY_GAP_SECS, toMillionth } from "./keyActions";
 import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
@@ -373,13 +373,18 @@ export function peaksExtremes(peaks: Peaks, from: number, to: number): [number, 
   return [low / 127, high / 127];
 }
 
-/** How an item `secs` long is heard: at `volume`, or by its volume Keyframes (`keys`), through its fades. */
+/**
+ * How an item `secs` long is heard: at `volume`, or by its volume Keyframes (`keys`), through its
+ * fades. A Segment under the Transition into the next is heard on `tail` seconds past what is drawn
+ * of it, and its fade out ends there.
+ */
 export interface Heard {
   volume: number;
   secs: number;
   fade_in: number;
   fade_out: number;
   keys?: readonly Keyframe[];
+  tail?: number;
 }
 
 /**
@@ -387,18 +392,24 @@ export interface Heard {
  * sampled there (keyframes.ts), through its fade in's and fade out's linear ramps (none for a fade
  * of 0), as the renderer has it.
  */
-export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [] }: Heard): number {
+export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [], tail = 0 }: Heard): number {
   const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
-  return valueAt(keys, time, volume) * ramp(time, fade_in) * ramp(secs - time, fade_out);
+  return valueAt(keys, time, volume) * ramp(time, fade_in) * ramp(secs + tail - time, fade_out);
 }
+
+/** A Segment's sound: its volume, its Keyframes and its fades. */
+type SegmentSound = { volume?: number; keys?: Keys; fade_in?: number; fade_out?: number };
 
 /**
  * How a Segment is heard along what is drawn of it (`shown`, from where it starts on the Timeline, as
- * keyedItem's segmentSpan starts it): its volume, or its volume Keyframes, with no fades. Its Volume
- * Line's; a Source Segment's Waveform is at sourceHeard.
+ * keyedItem's segmentSpan starts it), and `tail` seconds on under the Transition into the next: its
+ * volume, or its volume Keyframes, through its fades fitted to all it is heard for, as the plan fits
+ * them. Its Volume Line's; a Source Segment's Waveform is at sourceHeard.
  */
-export function segmentHeard(segment: { volume?: number; keys?: Keys }, shown: { start: number; end: number }): Heard {
-  return { volume: segment.volume ?? 1, secs: shown.end - shown.start, fade_in: 0, fade_out: 0, keys: segment.keys?.volume };
+export function segmentHeard(segment: SegmentSound, shown: { start: number; end: number }, tail = 0): Heard {
+  const secs = shown.end - shown.start;
+  const fades = fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, secs + tail);
+  return { volume: segment.volume ?? 1, secs, ...fades, keys: segment.keys?.volume, ...(tail > 0 && { tail }) };
 }
 
 /**
@@ -413,8 +424,8 @@ export function sourceGain({ source_volume }: { source_volume: number }, segment
  * How a Source Segment is heard along what is drawn of it (segmentHeard) under the Clip's own sound:
  * its volume or its volume Keyframes, each times `source_volume`, as the renderer has it.
  */
-export function sourceHeard({ source_volume }: { source_volume: number }, segment: { volume?: number; keys?: Keys }, shown: { start: number; end: number }): Heard {
-  const heard = segmentHeard(segment, shown);
+export function sourceHeard({ source_volume }: { source_volume: number }, segment: SegmentSound, shown: { start: number; end: number }, tail = 0): Heard {
+  const heard = segmentHeard(segment, shown, tail);
   return { ...heard, volume: sourceGain({ source_volume }, segment), keys: heard.keys?.map((key) => ({ ...key, value: key.value * source_volume })) };
 }
 
@@ -460,8 +471,8 @@ const VOLUME_LINE_POINTS = 120;
  * to be drawn straight between.
  */
 export function volumeLine(heard: Heard): { time: number; height: number }[] {
-  const { secs, fade_in, fade_out, keys = [] } = heard;
-  const times = new Set([fade_in, secs - fade_out, ...keys.map((key) => key.at)]);
+  const { secs, fade_in, fade_out, keys = [], tail = 0 } = heard;
+  const times = new Set([fade_in, secs + tail - fade_out, ...keys.map((key) => key.at)]);
   for (let i = 0; i <= VOLUME_LINE_POINTS; i++) times.add((secs * i) / VOLUME_LINE_POINTS);
   return [...times]
     .filter((time) => time >= 0 && time <= secs)

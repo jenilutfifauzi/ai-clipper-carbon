@@ -25,7 +25,7 @@ def heard(sound: dict) -> AudioEvent:
     secs = sound["end"] - sound["start"]
     clip = MusicClip(
         "m", media=SONG, start=sound["start"], secs=secs, volume=sound.get("volume", 1.0), fade_in=sound.get("fade_in", 0.0),
-        fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound),
+        fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound), muted=sound.get("muted", False),
     )
     [event] = audio_events([clip], sound["end"] + 1, {SONG: MediaInfo(0, 0, secs, True)})
     return event
@@ -41,7 +41,7 @@ def played(sound: dict) -> SegmentPlan:
     before = [video(sound["start"])] if sound["start"] else []
     segment = video(
         sound["end"] - sound["start"], volume=sound.get("volume", 1.0), fade_in=sound.get("fade_in", 0.0),
-        fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound),
+        fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound), muted=sound.get("muted", False),
     )
     return plan_render(0, 1, SOURCE, main_track=[*before, segment]).segments[-1]
 

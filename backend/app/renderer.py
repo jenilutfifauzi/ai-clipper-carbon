@@ -42,7 +42,8 @@ each Segment's sound is set to its volume (a Source Segment's also at the Clip's
 and out (linear `afade`s from its start on the Timeline, a Transition's overlap included, which the
 crossfade multiplies) before the join, and a video without sound adds silence. A Freeze frame
 (docs/adr/0009) reads a moment of its video at its frame and holds the first frame for its hold
-(`tpad`), in silence. A join with a Transition is an
+(`tpad`), in silence; a Muted Segment (docs/adr/0016) is heard as silence too, and a Muted Music
+Clip or Overlay is left out of the mix. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
@@ -393,10 +394,10 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, a Segment's own volume, Speed or fades, or Transitions, each Segment's sound is
-    first played at its Speed (`speed_filters`), set to its volume (a Source Segment's also to the
-    Clip's own, which the mix then leaves) and faded (`_fades`) in one format, and a video without
-    sound, and a Freeze frame, give silence."""
+    the Segments, a Segment's own volume, Speed or fades, a Muted one, or Transitions, each Segment's
+    sound is first played at its Speed (`speed_filters`), set to its volume (a Source Segment's also
+    to the Clip's own, which the mix then leaves) and faded (`_fades`) in one format, and a video
+    without sound, a Freeze frame and a Muted Segment give silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -407,7 +408,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     count = len(plan.segments)
     plain = all(
         segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.gain
-        and not (segment.fade_in or segment.fade_out)
+        and not (segment.fade_in or segment.fade_out) and not segment.muted
         for segment in plan.segments
     )
     if plain and not plan.transitions:
@@ -415,7 +416,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = []
     for i, segment in enumerate(plan.segments):
-        if segment.silent or segment.hold is not None:
+        if segment.silent or segment.hold is not None or segment.muted:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
             continue
         sped = speed_filters(segment.speed, segment.pitch, rate)
@@ -655,12 +656,15 @@ def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int, source: 
     """The input options of what the plan's music plays, numbered from `first`: each song once,
     whole; and for each Music Clip of the Source, the Source (`source`) from its offset for its read,
     as a Segment's is, so that a long episode isn't decoded from its start. And where each sound of
-    the plan's audio is read, by its place there; one of a song not in `music` isn't heard."""
+    the plan's audio is read, by its place there; one of a song not in `music` isn't heard. A Muted
+    sound is left out of the mix, and so is a song only it plays."""
     inputs: list[str] = []
     songs: dict[str, int] = {}
     reads: dict[int, Read] = {}
     count = 0
     for i, event in enumerate(plan.audio):
+        if event.muted:
+            continue
         if event.media is None:
             reads[i] = (first + count, 0.0)
             inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}", "-i", str(source)]

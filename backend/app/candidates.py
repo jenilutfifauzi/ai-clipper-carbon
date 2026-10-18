@@ -535,8 +535,13 @@ class MusicClip:
     fade_in: Fade = 0.0
     fade_out: Fade = 0.0
     keys: Keys = field(default_factory=dict)
+    # Switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
+    muted: bool = False
 
     def __post_init__(self) -> None:
+        if isinstance(self.start, str):
+            # `media` is given by name (it may be left out): MusicClip(id, start, secs, media=...).
+            raise TypeError(f"Music Clip {self.id} was given its media in place of its start")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
 
 
@@ -569,6 +574,8 @@ class Overlay:
     border: Border | None = None
     shadow: Shadow | None = None
     keys: Keys = field(default_factory=dict)
+    # A video's sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
+    muted: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
@@ -657,6 +664,8 @@ class Segment:
     # included), linearly, as a Music Clip's; the planner fits them to its length. A Freeze frame has none.
     fade_in: Fade = 0.0
     fade_out: Fade = 0.0
+    # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
+    muted: bool = False
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):

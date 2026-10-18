@@ -185,13 +185,13 @@ def update(
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
-        # filmed is a plain range (one at a Speed, faded, or at a volume or Keyframes of its own, is kept
-        # as its Segment).
+        # filmed is a plain range (one at a Speed, faded, Muted, or at a volume or Keyframes of its own,
+        # is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         [first, *more] = segments
         as_filmed = segment_time(first) == SegmentTime(start, end)
-        if not more and as_filmed and first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out):
+        if not more and as_filmed and first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted:
             segments = []
     elif change.transitions is not None:
         episode.check_length(old.main_track(), _joined(transitions, old.segments))
