@@ -1,15 +1,16 @@
 import { ClipboardCopy, Copy, Trash2 } from "lucide-react";
-import type { Shape, ShapeKind, ShapeStyle } from "../../../api";
+import type { Animation, Shape, ShapeKind, ShapeStyle } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Hint } from "../../../components/InfoTip";
+import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { FRAME } from "../editor/picture";
 import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
 import { DRAG_SHAPE } from "./drag";
 import { SHAPE_SIZE } from "./shapeStyle";
-import { MotionFields } from "./TextLayers";
+import { ANIMATIONS, MotionFields } from "./TextLayers";
 import { TimingFields } from "./TimingFields";
 import { ShapeTransformFields } from "./TransformFields";
 
@@ -103,11 +104,14 @@ const READ = {
   width: (shape: Shape) => shape.style.width,
   height: (shape: Shape) => shape.style.height,
   fill: (shape: Shape) => shape.style.fill,
+  animation_in: (shape: Shape) => shape.animation_in,
+  animation_out: (shape: Shape) => shape.animation_out,
+  animation_ms: (shape: Shape) => shape.animation_ms,
 };
 type Field = keyof typeof READ;
 
 /**
- * Several picked Shapes' Shape Style, set on every one of them at once, as TextLayersFields sets
+ * Several picked Shapes' Shape Style and motion, set on every one of them at once, as TextLayersFields sets
  * several Text Layers'. A field they differ in shows the first one's value, marked Mixed, until it is
  * set. Their places and times stay their own.
  */
@@ -128,6 +132,8 @@ export function ShapesFields({
   const read = (field: Field) => READ[field] as (shape: Shape) => unknown;
   const value = <F extends Field>(field: F) => (shared(shapes, read(field)) ?? read(field)(shapes[0])) as ReturnType<(typeof READ)[F]>;
   const mixed = (field: Field) => shared(shapes, read(field)) === undefined;
+  const marker = (field: Field) => (mixed(field) ? <Mixed /> : undefined);
+  const set = <K extends keyof Shape>(field: K, next: Shape[K]) => onChange((shape) => ({ ...shape, [field]: next }), `shapes:${field}`);
   const setStyle = <K extends keyof ShapeStyle>(field: K, next: ShapeStyle[K]) =>
     onChange((shape) => ({ ...shape, style: { ...shape.style, [field]: next } }), `shapes:style.${field}`);
   // Whole pixels, as ShapeFields' (or Mixed).
@@ -156,7 +162,36 @@ export function ShapesFields({
       <Group title="Look">
         <Slider label="Width" value={value("width")} {...size("width", FRAME.width)} onChange={(width) => setStyle("width", Math.round(width))} />
         <Slider label="Height" value={value("height")} {...size("height", FRAME.height)} onChange={(height) => setStyle("height", Math.round(height))} />
-        <ColorField label="Fill" value={value("fill") ?? "#FFFFFF"} onChange={(fill) => setStyle("fill", fill)} marker={mixed("fill") ? <Mixed /> : undefined} />
+        <ColorField label="Fill" value={value("fill") ?? "#FFFFFF"} onChange={(fill) => setStyle("fill", fill)} marker={marker("fill")} />
+      </Group>
+      <Group title="Motion">
+        <div className="grid grid-cols-2 gap-3">
+          <Select
+            label="Comes on"
+            value={value("animation_in")}
+            options={ANIMATIONS}
+            onChange={(next: Animation) => set("animation_in", next)}
+            marker={marker("animation_in")}
+          />
+          <Select
+            label="Goes off"
+            value={value("animation_out")}
+            options={ANIMATIONS}
+            onChange={(next: Animation) => set("animation_out", next)}
+            marker={marker("animation_out")}
+          />
+        </div>
+        {shapes.some((shape) => shape.animation_in !== "none" || shape.animation_out !== "none") && (
+          <Slider
+            label="Animation length"
+            value={value("animation_ms")}
+            min={100}
+            max={2000}
+            step={50}
+            format={(v) => (mixed("animation_ms") ? "Mixed" : `${(v / 1000).toFixed(2)} s`)}
+            onChange={(ms) => set("animation_ms", ms)}
+          />
+        )}
       </Group>
     </div>
   );

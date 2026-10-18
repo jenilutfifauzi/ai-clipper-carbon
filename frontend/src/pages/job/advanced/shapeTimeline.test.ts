@@ -253,7 +253,7 @@ describe("Smart Guides", () => {
 
 describe("several Shapes picked", () => {
   const a = shape("a", 0, 2, { style: { kind: "rectangle", width: 400, height: 200, fill: "#FF0000" } });
-  const b = shape("b", 3, 2, { style: { kind: "rectangle", width: 300, height: 200, fill: "#FF0000" } });
+  const b = shape("b", 3, 2, { style: { kind: "rectangle", width: 300, height: 200, fill: "#FF0000" }, animation_in: "pop" });
 
   test("a field set on them sets it on each, their own other fields kept", () => {
     const before = edits({ shapes: [a, b, shape("c", 6, 2)] });
@@ -269,9 +269,9 @@ describe("several Shapes picked", () => {
     );
 
     expect(markup).toContain("Editing 2 shapes");
-    for (const label of ["Width", "Height", "Fill"]) expect(markup).toContain(label);
-    // The widths differ; the heights don't.
-    expect(markup).toContain("Mixed");
+    for (const label of ["Width", "Height", "Fill", "Comes on", "Goes off", "Animation length"]) expect(markup).toContain(label);
+    // The widths and the ways they come on differ; the heights don't.
+    expect(markup.match(/Mixed/g)).toHaveLength(2);
     expect(markup).toContain("200 px");
   });
 });
