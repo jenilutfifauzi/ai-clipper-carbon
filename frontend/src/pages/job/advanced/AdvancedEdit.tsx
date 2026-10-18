@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, Maximize, Minimize } from "lucide-react";
+import { ArrowLeft, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -69,7 +69,18 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
-import { bottomPanelId, BottomTabs, useBottomTab } from "./BottomTabs";
+import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
+import {
+  ASSET,
+  BOTTOM,
+  bottomHeightCss,
+  gridTemplateColumns,
+  INSPECTOR,
+  layout,
+  nextBottomH,
+  nextSidebarW,
+} from "./workspaceLayout";
+import { Divider } from "./Divider";
 import {
   ASSET_TABS,
   AssetTabs,
@@ -90,7 +101,6 @@ import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
-import { KeyframesPane } from "./KeyframesPane";
 import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
@@ -213,6 +223,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [touched, setTouched] = useState<KeyProperty | null>(null);
   // On a desktop: the Timeline or the Keyframes pane at the bottom, as the browser remembers.
   const [bottomTab, setBottomTab] = useBottomTab();
+  // The remembered desktop workspace: sidebar widths, bottom height and which panels are collapsed.
+  const ws = layout.use();
+  // The desktop grid, measured on a Divider's pointer-down for the player-floor clamp (its width in
+  // rem), and the snapshot each Divider drag captures then (the value being dragged and the DOM reads),
+  // so each move's maths is pure (workspaceLayout.ts). A ref, not state: a drag never re-renders here.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const dividerDrag = useRef({ startW: 0, startH: 0, remPx: 16, vhPx: 0, availableRem: 0, otherVisibleW: 0 });
+  const remPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
@@ -681,6 +699,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     },
     fps,
     setFullscreen,
+    // Read fresh, not the captured `ws`, so a toggle flips the current state (no stale closure).
+    toggleAssets: () => layout.setAssetHidden(!layout.read().assetHidden),
+    toggleInspector: () => layout.setInspectorHidden(!layout.read().inspectorHidden),
     keyframes,
   });
   useShortcuts(commands, { fullscreen: fullscreen.way !== null, phone: !wide });
@@ -993,6 +1014,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       )}
     </AdvancedTimeline>
   );
+  // What each registered bottom tab renders from (BottomTabs.tsx's registry): the Timeline element and
+  // the Keyframes pane's inputs. A new tab registers against this shape, not against the shell here.
+  const bottomTabContext: BottomTabContext = { timeline, keying, fps, mediaById };
   const inspector = (
     <KeyingContext.Provider value={keying}>
       <Inspector
@@ -1035,6 +1059,37 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onAddOverlay={(item) => addOverlay(item)}
     />
   );
+  // The desktop Workspace's top controls: collapse the Asset Panel (A) or the Inspector (P), each lit
+  // while its panel is hidden, and reset the sizes and collapses to their defaults. Desktop only.
+  const layoutControls = wide && (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={commands["toggle-assets"]}
+        aria-pressed={ws.assetHidden}
+        className="aria-pressed:text-accent-text"
+        aria-label={ws.assetHidden ? "Show the Asset Panel" : "Hide the Asset Panel"}
+        title="Asset Panel (A)"
+      >
+        <PanelLeft aria-hidden size={18} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={commands["toggle-inspector"]}
+        aria-pressed={ws.inspectorHidden}
+        className="aria-pressed:text-accent-text"
+        aria-label={ws.inspectorHidden ? "Show the Inspector" : "Hide the Inspector"}
+        title="Inspector (P)"
+      >
+        <PanelRight aria-hidden size={18} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={() => layout.resetLayout()} aria-label="Reset layout" title="Reset layout">
+        <RotateCcw aria-hidden size={18} />
+      </Button>
+    </>
+  );
   const bar = (
     <>
       <TopBar
@@ -1056,7 +1111,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         }
         history={history}
         actions={
-          <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
+          <>
+            {layoutControls}
+            <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
+          </>
         }
         onShortcuts={wide ? () => setShortcuts(true) : undefined}
         onClose={() => void close()}
@@ -1102,38 +1160,124 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     return (
       <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
         {bar}
-        <div className="grid min-h-0 flex-1 grid-cols-[17rem_minmax(0,1fr)_20rem] gap-3 px-3">
-          <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
-            <AssetTabs value={assetTab} onChange={setAssetTab} />
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
-          </aside>
+        <div
+          ref={gridRef}
+          className="relative grid min-h-0 flex-1 gap-3 px-3"
+          style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
+        >
+          {/* Source order here is the Tab order: Asset Panel → its Divider → player → Inspector's
+              Divider → Inspector (ticket 05). The Dividers are absolutely positioned, so their place
+              in the flow is free; each is centred in the gap-3 gutter at its boundary (the px-3
+              padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
+              renders no Divider, so it exposes no separator. */}
+          {!ws.assetHidden && (
+            <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
+              <AssetTabs value={assetTab} onChange={setAssetTab} />
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">{assets(assetTab)}</div>
+            </aside>
+          )}
+          {!ws.assetHidden && (
+            <Divider
+              orientation="vertical"
+              label="Resize the Asset Panel"
+              value={ws.assetW}
+              min={ASSET.min}
+              max={ASSET.max}
+              style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
+              onStart={() => {
+                const d = dividerDrag.current;
+                d.remPx = remPx();
+                d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                d.otherVisibleW = ws.inspectorHidden ? 0 : ws.inspectorW;
+                d.startW = ws.assetW;
+              }}
+              onDrag={(deltaPx) => {
+                const d = dividerDrag.current;
+                layout.setAssetW(nextSidebarW(d.startW, deltaPx, d.remPx, 1, d.otherVisibleW, d.availableRem, ASSET));
+              }}
+              onReset={() => layout.setAssetW(ASSET.def)}
+            />
+          )}
           <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
             {room}
             {notes}
           </section>
-          <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
-            {inspector}
-          </aside>
+          {!ws.inspectorHidden && (
+            <Divider
+              orientation="vertical"
+              label="Resize the Inspector"
+              value={ws.inspectorW}
+              min={INSPECTOR.min}
+              max={INSPECTOR.max}
+              style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
+              onStart={() => {
+                const d = dividerDrag.current;
+                d.remPx = remPx();
+                d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                d.otherVisibleW = ws.assetHidden ? 0 : ws.assetW;
+                d.startW = ws.inspectorW;
+              }}
+              onDrag={(deltaPx) => {
+                const d = dividerDrag.current;
+                layout.setInspectorW(
+                  nextSidebarW(d.startW, deltaPx, d.remPx, -1, d.otherVisibleW, d.availableRem, INSPECTOR),
+                );
+              }}
+              onReset={() => layout.setInspectorW(INSPECTOR.def)}
+            />
+          )}
+          {!ws.inspectorHidden && (
+            <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
+              {inspector}
+            </aside>
+          )}
         </div>
         <section
           aria-label="Timeline and Keyframes"
-          // The Keyframes pane takes a little more room than the Timeline: a row per property, and the Curves.
-          className={cx("glass mx-3 flex flex-col overflow-hidden rounded-panel", bottomTab === "keyframes" ? "h-[44dvh] min-h-72" : "h-[36dvh] min-h-60")}
+          // One remembered height for every bottom tab (ADR 0024).
+          className="glass relative mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
+          style={{ height: bottomHeightCss(ws) }}
         >
           <BottomTabs value={bottomTab} onChange={setBottomTab} />
-          {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}
-          <div id={bottomPanelId("timeline")} role="tabpanel" aria-label="Timeline" hidden={bottomTab !== "timeline"}
-            className={cx("min-h-0 flex-1 flex-col", bottomTab === "timeline" ? "flex" : "hidden")}
-          >
-            {timeline}
-          </div>
-          {bottomTab === "keyframes" && (
-            <div id={bottomPanelId("keyframes")} role="tabpanel" aria-label="Keyframes" className="flex min-h-0 flex-1 flex-col">
-              <KeyingContext.Provider value={keying}>
-                <KeyframesPane keying={keying} fps={fps} mediaById={mediaById} />
-              </KeyingContext.Provider>
-            </div>
-          )}
+          {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
+              it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
+              source order so Tab reaches it last (ticket 05). */}
+          <Divider
+            orientation="horizontal"
+            label="Resize the Bottom tabs"
+            value={ws.bottomH}
+            min={BOTTOM.min}
+            max={BOTTOM.max}
+            onStart={() => {
+              const d = dividerDrag.current;
+              d.vhPx = window.innerHeight;
+              d.startH = ws.bottomH;
+            }}
+            onDrag={(deltaPx) => {
+              const d = dividerDrag.current;
+              layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
+            }}
+            onReset={() => layout.setBottomH(BOTTOM.def)}
+          />
+          {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
+              needs only a registry entry, no edit here. A panel's body renders while it is active or
+              `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
+              others mount on first activation. */}
+          {BOTTOM_TABS.map((tab) => {
+            const active = bottomTab === tab.value;
+            return (
+              <div
+                key={tab.value}
+                id={bottomPanelId(tab.value)}
+                role="tabpanel"
+                aria-label={tab.label}
+                hidden={!active}
+                className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
+              >
+                {(active || tab.keepMounted) && tab.render(bottomTabContext)}
+              </div>
+            );
+          })}
         </section>
       </div>
     );
