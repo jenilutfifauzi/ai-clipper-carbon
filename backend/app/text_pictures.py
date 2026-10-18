@@ -20,7 +20,8 @@ middle of the picture: its drop shadow, then its fill, then its stroke. The stro
 the figure, as a ring: the figure, and the figure inset by the stroke's width gone round the other
 way, which libass leaves as a hole. The fill reaches under the middle of the stroke, so that no seam
 shows between them. The shadow is what is drawn (the figure, or the ring of an outline alone) again,
-moved and in the shadow's colour, blurred with `\\blur`, as a Text Layer's.
+moved and in the shadow's colour, blurred with `\\blur`, as a Text Layer's. A line and an arrow are
+all stroke: their outline is one drawing in the stroke's colour, and their shadow that again.
 
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
@@ -240,23 +241,32 @@ def text_script(layout: TextLayout) -> str:
 @layout_script.register
 def shape_script(layout: ShapeLayout) -> str:
     """A Shape's `layout` as an ASS script of its size at scale 1: its shadow, its fill and its
-    stroke, each one drawing of its figure in the middle of it. libass scales it to the canvas, the
-    stroke, corners and blur with it."""
+    stroke, each one drawing of its figure in the middle of it; a line's or an arrow's shadow and its
+    outline in its stroke's colour. libass scales it to the canvas, the stroke, corners and blur
+    with it."""
     style = layout.style
-    left, top = (layout.width - style.width) / 2, (layout.height - style.height) / 2
-    figure = figure_drawing(style)
-    # Its stroke: the figure less its inside (all of it, when the stroke leaves no inside).
-    inside = figure_drawing(style, style.stroke_width)
-    ring = "" if not style.stroke_width else f"{figure} {reversed_drawing(inside)}" if inside else figure
+    width, height = style.size
+    left, top = (layout.width - width) / 2, (layout.height - height) / 2
+    if style.kind.all_stroke:
+        cast = line_drawing(style)
+        drawn = [(cast, style.stroke_colour)]
+    else:
+        figure = figure_drawing(style)
+        # Its stroke: the figure less its inside (all of it, when the stroke leaves no inside).
+        inside = figure_drawing(style, style.stroke_width)
+        ring = "" if not style.stroke_width else f"{figure} {reversed_drawing(inside)}" if inside else figure
+        cast = figure if style.fill is not None else ring
+        drawn = []
+        if style.fill is not None and (filled := figure_drawing(style, style.stroke_width / 2)):
+            drawn.append((filled, style.fill))
+        if style.stroke_width:
+            drawn.append((ring, style.stroke_colour))
     events = []
     if style.shadow.on:
         dx, dy = style.shadow.offset
-        cast = figure if style.fill is not None else ring
         events.append(f"{{\\an7\\pos(0,0)\\p1{shadow_tags(style.shadow, 0)}}}{_moved(cast, left + dx, top + dy)}{{\\p0}}")
-    if style.fill is not None and (filled := figure_drawing(style, style.stroke_width / 2)):
-        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(style.fill)}}}{_moved(filled, left, top)}{{\\p0}}")
-    if style.stroke_width:
-        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(style.stroke_colour)}}}{_moved(ring, left, top)}{{\\p0}}")
+    for drawing, colour in drawn:
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(colour)}}}{_moved(drawing, left, top)}{{\\p0}}")
     return "\n".join([
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -279,19 +289,127 @@ def shape_script(layout: ShapeLayout) -> str:
     ]) + "\n"
 
 
+# How far a parallelogram leans, and how much narrower a trapezoid's top is on each side, as a share
+# of its shorter side: the same slant at any width.
+SLANT = 0.25
+# How long an arrow's head is, in its thicknesses (ARROW_HEAD says how tall).
+ARROW_HEAD_LENGTH = 3
+# How far a quarter circle's Bézier control points are from its ends, as a share of its radius.
+KAPPA = 0.5523
+
+
 def figure_drawing(style: ShapeStyle, inset: float = 0.0) -> str:
-    """An ASS drawing of a Shape Style's figure, `width` x `height` from its top-left corner, inset
-    `inset` pixels on every side (its stroke's inside, or the fill under it); "" when nothing of it is
-    left. Each Shape Kind is drawn the same way round, so that one inside another, turned round, is a
-    hole (`reversed_drawing`)."""
+    """An ASS drawing of a filled Shape Kind's figure, `width` x `height` from its top-left corner,
+    inset `inset` pixels on every side (its stroke's inside, or the fill under it): what of the figure
+    is further than `inset` from its edge, so that a stroke is as thick all round. "" when nothing of
+    it is left. Each is drawn the same way round (clockwise on screen), so that one inside another,
+    turned round, is a hole (`reversed_drawing`)."""
+    width, height = style.width, style.height
     match style.kind:
         case ShapeKind.RECTANGLE:
-            width, height = style.width - 2 * inset, style.height - 2 * inset
-            if min(width, height) <= 0:
+            if min(width, height) - 2 * inset <= 0:
                 return ""
             # Inset, a rounded corner keeps its centre: its radius is less by the inset.
-            radius = max(style.radius * min(style.width, style.height) - inset, 0)
-            return _moved(rounded_box(width, height, radius), inset, inset)
+            radius = max(style.radius * min(width, height) - inset, 0)
+            return _moved(rounded_box(width - 2 * inset, height - 2 * inset, radius), inset, inset)
+        case ShapeKind.ELLIPSE:
+            return _ellipse(width / 2, height / 2, inset)
+        case ShapeKind.TRIANGLE:
+            corners = [(width / 2, 0), (width, height), (0, height)]
+        case ShapeKind.PARALLELOGRAM:
+            slant = SLANT * min(width, height)
+            corners = [(slant, 0), (width, 0), (width - slant, height), (0, height)]
+        case ShapeKind.TRAPEZOID:
+            slant = SLANT * min(width, height)
+            corners = [(slant, 0), (width - slant, 0), (width, height), (0, height)]
+        case _:
+            raise ValueError(f"A {style.kind} isn't a filled figure")
+    return _polygon(_inset(corners, inset))
+
+
+def line_drawing(style: ShapeStyle) -> str:
+    """An ASS drawing of a line or an arrow, all stroke, its style's `size` from its top-left corner,
+    clockwise on screen: a line a bar of its thickness with round ends; an arrow a shaft of its
+    thickness with a round tail and a head at the right, ARROW_HEAD thicknesses tall and
+    ARROW_HEAD_LENGTH long (all head, when it is shorter than that)."""
+    (length, tall), thick = style.size, style.stroke_width
+    if style.kind is ShapeKind.LINE:
+        return rounded_box(length, thick, min(length, thick) / 2)
+    head = min(ARROW_HEAD_LENGTH * thick, length)
+    shaft, middle = length - head, tall / 2
+    upper, lower = middle - thick / 2, middle + thick / 2
+    # The tail's round end reaches back as far as the shaft allows.
+    cap = min(thick / 2, shaft)
+    drawing = _polygon([(cap, upper), (shaft, upper), (shaft, 0), (length, middle), (shaft, tall), (shaft, lower), (cap, lower)])
+    if not cap:
+        return drawing
+    reach = thick / 2
+    return (
+        f"{drawing} b {cap - KAPPA * cap:g} {lower:g} 0 {middle + KAPPA * reach:g} 0 {middle:g}"
+        f" b 0 {middle - KAPPA * reach:g} {cap - KAPPA * cap:g} {upper:g} {cap:g} {upper:g}"
+    )
+
+
+def _polygon(corners: list[tuple[float, float]]) -> str:
+    """An ASS drawing of the figure with these `corners`, in their order; "" for none."""
+    if not corners:
+        return ""
+    (x, y), *rest = corners
+    return " ".join([f"m {x:g} {y:g}", *(f"l {x:g} {y:g}" for x, y in rest)])
+
+
+def _inset(corners: list[tuple[float, float]], inset: float) -> list[tuple[float, float]]:
+    """A convex figure's `corners` (clockwise on screen) with each side moved `inset` in, square to
+    itself: the figure cut by each side's line moved in. None when nothing is left."""
+    kept = list(corners)
+    for (x0, y0), (x1, y1) in zip(corners, corners[1:] + corners[:1]):
+        # Clockwise on screen, a side's inside is on its right.
+        length = math.hypot(x1 - x0, y1 - y0)
+        across = (-(y1 - y0) / length, (x1 - x0) / length)
+
+        def depth(point: tuple[float, float]) -> float:
+            return (point[0] - x0) * across[0] + (point[1] - y0) * across[1] - inset
+
+        cut = []
+        for here, there in zip(kept, kept[1:] + kept[:1]):
+            if depth(here) >= 0:
+                cut.append(here)
+            if (depth(here) >= 0) != (depth(there) >= 0):
+                share = depth(here) / (depth(here) - depth(there))
+                cut.append((here[0] + share * (there[0] - here[0]), here[1] + share * (there[1] - here[1])))
+        kept = cut
+    area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(kept, kept[1:] + kept[:1])) / 2
+    return kept if len(kept) >= 3 and area > 1e-6 else []
+
+
+def _ellipse(across: float, down: float, inset: float) -> str:
+    """An ASS drawing of an ellipse of semi-axes `across` and `down` from its box's top-left corner,
+    inset `inset` on every side, clockwise on screen from its top: four Béziers, or inset, the curve
+    `inset` inside its edge all round (an ellipse's is no ellipse), as many short lines."""
+    if min(across, down) <= inset:
+        return ""
+    if not inset:
+        a, b, ka, kb = across, down, KAPPA * across, KAPPA * down
+        return (
+            f"m {a:g} 0 b {a + ka:g} 0 {2 * a:g} {b - kb:g} {2 * a:g} {b:g} b {2 * a:g} {b + kb:g} {a + ka:g} {2 * b:g} {a:g} {2 * b:g} "
+            f"b {a - ka:g} {2 * b:g} 0 {b + kb:g} 0 {b:g} b 0 {b - kb:g} {a - ka:g} 0 {a:g} 0"
+        )
+    turns = np.linspace(-np.pi / 2, 3 * np.pi / 2, ELLIPSE_STEPS, endpoint=False)
+    edge = np.stack([across * np.cos(turns), down * np.sin(turns)], axis=1)
+    outward = np.stack([down * np.cos(turns), across * np.sin(turns)], axis=1)
+    curve = edge - inset * outward / np.hypot(outward[:, :1], outward[:, 1:])
+    # Where the edge is rounder than `inset` (at the ends of a long ellipse), the curve crosses
+    # itself: what of it is nearer the edge than `inset` is left out.
+    if inset > min(across, down) ** 2 / max(across, down):
+        dense = np.linspace(0, 2 * np.pi, 4096, endpoint=False)
+        edges = np.stack([across * np.cos(dense), down * np.sin(dense)], axis=1)
+        nearest = np.sqrt(((curve[:, None, :] - edges[None, :, :]) ** 2).sum(axis=2)).min(axis=1)
+        curve = curve[nearest >= inset - 0.01]
+    return _polygon([(x + across, y + down) for x, y in curve.tolist()])
+
+
+# How many short lines an inset ellipse is drawn with.
+ELLIPSE_STEPS = 360
 
 
 def _moved(drawing: str, x: float, y: float) -> str:

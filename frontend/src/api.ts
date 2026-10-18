@@ -465,15 +465,19 @@ export interface TextLayer {
   keys: Keys;
 }
 
-// The figure a Shape draws (backend/app/candidates.py's ShapeKind, docs/adr/0011).
-export type ShapeKind = "rectangle";
+// The figure a Shape draws (backend/app/candidates.py's ShapeKind, docs/adr/0011): a filled figure
+// (the triangle point up, the parallelogram leaning right, the trapezoid narrower at the top), or a
+// line or an arrow (its head at the right), all stroke.
+export type ShapeKind = "rectangle" | "ellipse" | "triangle" | "parallelogram" | "trapezoid" | "line" | "arrow";
 
 // How a Shape looks (backend/app/candidates.py): its figure `kind`, `width` x `height` output
 // pixels before its Transform's scale (whole pixels, 2 to 4096), filled with `fill` (null: none),
 // with a stroke `stroke_width` px thick (none at 0) drawn inside its width and height, its corners
 // rounded `radius` times its shorter side (a rectangle's; 0.5 makes a pill) and a drop shadow as a
 // Text Layer's. A fill or a stroke it has, or it is refused. Never stretched: a wider Shape is a new
-// width, drawn again, its stroke and corners keeping their size.
+// width, drawn again, its stroke and corners keeping their size. A line and an arrow are all stroke:
+// `width` is their length, `stroke_width` their thickness (never 0) and `stroke_colour` their
+// colour; their height and fill are kept but not used.
 export interface ShapeStyle {
   kind: ShapeKind;
   width: number;

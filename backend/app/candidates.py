@@ -215,9 +215,26 @@ def _check_unstretched(item: str, transform: Transform, sized: str) -> None:
 
 
 class ShapeKind(StrEnum):
-    """The figure a Shape draws (docs/adr/0011)."""
+    """The figure a Shape draws (docs/adr/0011): a filled figure (its fill, its stroke inside it and
+    its shadow), or a line or an arrow, all stroke."""
 
     RECTANGLE = "rectangle"
+    ELLIPSE = "ellipse"
+    # Point up.
+    TRIANGLE = "triangle"
+    # Leaning right.
+    PARALLELOGRAM = "parallelogram"
+    # Narrower at the top.
+    TRAPEZOID = "trapezoid"
+    LINE = "line"
+    # Its head at the right end.
+    ARROW = "arrow"
+
+    @property
+    def all_stroke(self) -> bool:
+        """Whether it is all stroke (a line, an arrow): its width its length, its stroke width its
+        thickness, its colour the stroke's, and its height and fill not used."""
+        return self in (ShapeKind.LINE, ShapeKind.ARROW)
 
 
 # The least and the most a Shape Style's width and height are, in output pixels.
@@ -225,6 +242,8 @@ SHAPE_SIZE = (2, 4096)
 ShapeSize = Annotated[int, Field(ge=SHAPE_SIZE[0], le=SHAPE_SIZE[1])]
 # The thickest a Shape's stroke is, in output pixels.
 SHAPE_STROKE_MAX = 200
+# How tall an arrow's head is, in its thicknesses.
+ARROW_HEAD = 4
 
 
 @dataclass(frozen=True)
@@ -233,7 +252,10 @@ class ShapeStyle:
     its Transform's scale, filled with `fill` (None: none), with a stroke `stroke_width` pixels thick
     (none at 0) drawn inside its width and height, its corners rounded `radius` times its shorter
     side (a rectangle's; 0.5 makes a pill) and a drop shadow as a Text Layer's. Never stretched: a
-    wider Shape is a new width, drawn again, so that its stroke and corners keep their size."""
+    wider Shape is a new width, drawn again, so that its stroke and corners keep their size. A line
+    and an arrow are all stroke: their width is their length, `stroke_width` their thickness (never
+    0) and `stroke_colour` their colour; their height and fill are kept but not used, so that
+    switching the kind back finds them as they were."""
 
     kind: ShapeKind = ShapeKind.RECTANGLE
     width: ShapeSize = 400
@@ -244,6 +266,17 @@ class ShapeStyle:
     radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
     # Under the figure, off by default.
     shadow: DropShadow = DropShadow()
+
+    @property
+    def size(self) -> tuple[int, int]:
+        """The box its figure fills, in output pixels before its Transform's scale: its width and
+        height; a line's length and thickness, an arrow's length and the height of its head."""
+        match self.kind:
+            case ShapeKind.LINE:
+                return self.width, self.stroke_width
+            case ShapeKind.ARROW:
+                return self.width, ARROW_HEAD * self.stroke_width
+        return self.width, self.height
 
 
 @dataclass(frozen=True)
@@ -270,6 +303,10 @@ class Shape:
 
     def __post_init__(self) -> None:
         _check_unstretched(f"Shape {self.id}", self.transform, "set its style's width and height")
+        kind = self.style.kind
+        if kind.all_stroke and not self.style.stroke_width:
+            named = "an arrow" if kind is ShapeKind.ARROW else "a line"
+            raise ValueError(f"Shape {self.id} has nothing to draw: {named} is all stroke, its stroke_width its thickness: give it one")
         if self.style.fill is None and not self.style.stroke_width:
             raise ValueError(f"Shape {self.id} has nothing to draw: give its style a fill or a stroke (stroke_width)")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Shape {self.id}", PICTURE_KEYS, self.secs))

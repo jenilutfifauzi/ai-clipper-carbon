@@ -13,29 +13,55 @@ export const SHAPE_SIZE = { min: 2, max: 4096 } as const;
 // The thickest a Shape's stroke is, in output pixels (SHAPE_STROKE_MAX in backend/app/candidates.py).
 export const SHAPE_STROKE_MAX = 200;
 
+// Every Shape Kind, in the Stickers tab's order.
+export const SHAPE_KINDS: readonly ShapeKind[] = ["rectangle", "ellipse", "triangle", "parallelogram", "trapezoid", "line", "arrow"];
+
+/**
+ * Whether a Shape of `kind` is all stroke (a line, an arrow): its width is its length, its stroke
+ * width its thickness and its stroke colour its colour, and its height and fill aren't used.
+ */
+export const allStroke = (kind: ShapeKind): boolean => kind === "line" || kind === "arrow";
+
 // What a Stickers tile adds: white, 400 px square, before its Transform's scale, with no stroke,
-// square corners and no shadow (the backend's defaults).
+// square corners and no shadow (the backend's defaults); a line or an arrow 600 px long and 12 px
+// thick, white.
 const NEW_SIDE = 400;
 export const NEW_FILL = "#FFFFFF";
+const NEW_LENGTH = 600;
+const NEW_THICKNESS = 12;
 
 /** A new Shape Style of `kind`: its tile's look. */
-export const newShapeStyle = (kind: ShapeKind): ShapeStyle => ({
-  kind,
-  width: NEW_SIDE,
-  height: NEW_SIDE,
-  fill: NEW_FILL,
-  stroke_colour: "#000000",
-  stroke_width: 0,
-  radius: 0,
-  shadow: NO_SHADOW,
-});
+export function newShapeStyle(kind: ShapeKind): ShapeStyle {
+  const style: ShapeStyle = {
+    kind,
+    width: NEW_SIDE,
+    height: NEW_SIDE,
+    fill: NEW_FILL,
+    stroke_colour: "#000000",
+    stroke_width: 0,
+    radius: 0,
+    shadow: NO_SHADOW,
+  };
+  return allStroke(kind) ? { ...style, width: NEW_LENGTH, stroke_width: NEW_THICKNESS, stroke_colour: NEW_FILL } : style;
+}
+
+/**
+ * `style` as a Shape of `kind`, its size, colours, corners and shadow kept (those `kind` doesn't use
+ * too, for switching back). Made a line or an arrow while it has no stroke, it is 12 px thick in
+ * its fill's colour: the colour it showed.
+ */
+export function withKind(style: ShapeStyle, kind: ShapeKind): ShapeStyle {
+  if (allStroke(kind) && !style.stroke_width) return { ...style, kind, stroke_width: NEW_THICKNESS, stroke_colour: style.fill ?? style.stroke_colour };
+  return { ...style, kind };
+}
 
 // What the inspector says where a Shape would be left with neither fill nor stroke, which the
 // backend refuses as nothing to draw.
 export const NOTHING_TO_DRAW = "A shape needs a fill or a stroke: give it a stroke to turn its fill off.";
 
-/** Whether a Shape of `style` draws anything: it has a fill or a stroke. */
-export const drawsSomething = (style: ShapeStyle): boolean => style.fill !== null || style.stroke_width > 0;
+/** Whether a Shape of `style` draws anything: a fill or a stroke; a line or an arrow, a thickness. */
+export const drawsSomething = (style: ShapeStyle): boolean =>
+  allStroke(style.kind) ? style.stroke_width > 0 : style.fill !== null || style.stroke_width > 0;
 
 /**
  * A Shape of `kind` added at `at` (the playhead) in a Clip `duration` long: for a new Text Layer's

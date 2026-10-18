@@ -6,7 +6,8 @@
 import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { Picture, RenderPlan, Shape, ShapeEvent, ShapeStyle, TextEvent, Transform } from "../../../api";
+import type { Picture, RenderPlan, Shape, ShapeEvent, ShapeKind, ShapeStyle, TextEvent, Transform } from "../../../api";
+import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { mergeEdits } from "../editor/merge";
@@ -20,7 +21,7 @@ import { move, remove, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { writeItemTransform } from "./keying";
 import { NAMES, picked, stageIdsOf, stageItem, TRACK_OF, unlockedPick, type Pick } from "./pick";
-import { addShape, newShape, NOTHING_TO_DRAW } from "./shapeStyle";
+import { addShape, drawsSomething, newShape, NOTHING_TO_DRAW } from "./shapeStyle";
 import { ShapeAssets, ShapeFields, ShapesFields } from "./Shapes";
 import { shownPlan, TRACKS, UNTOUCHED } from "./trackState";
 
@@ -332,5 +333,164 @@ describe("several Shapes' look in the inspector", () => {
     // One has no stroke: their fill can't be turned off, which it says.
     expect(several([plain, outline]).markup).toContain(NOTHING_TO_DRAW);
     expect(markup).not.toContain(NOTHING_TO_DRAW);
+  });
+});
+
+// 04-six-more-figures.md: every Shape Kind, a tile each, and the inspector's kind field.
+const KINDS: ShapeKind[] = ["rectangle", "ellipse", "triangle", "parallelogram", "trapezoid", "line", "arrow"];
+// A new line's or arrow's look: 600 long, 12 thick, white (its stroke's colour), its height and fill kept but not used.
+const WHITE_LINE = { width: 600, stroke_width: 12, stroke_colour: "#FFFFFF" };
+
+describe("every Shape Kind on the Stickers tab", () => {
+  const tiles = () => laidOut(ShapeAssets({ onAdd: () => {} })).filter((element) => element.type === "button");
+
+  test("has a tile per kind, each adding its kind", () => {
+    const added: ShapeKind[] = [];
+    const buttons = laidOut(ShapeAssets({ onAdd: (kind) => void added.push(kind) })).filter((element) => element.type === "button");
+    expect(buttons.map((tile) => (tile.props as { "aria-label": string })["aria-label"])).toEqual([
+      "Add a rectangle",
+      "Add an ellipse",
+      "Add a triangle",
+      "Add a parallelogram",
+      "Add a trapezoid",
+      "Add a line",
+      "Add an arrow",
+    ]);
+    for (const tile of buttons) (tile.props as { onClick: () => void }).onClick();
+    expect(added).toEqual(KINDS);
+  });
+
+  test("the rectangle's tile shows a square and the ellipse's a circle", () => {
+    const [rectangle, ellipse] = tiles().map((tile) => renderToStaticMarkup(tile));
+    expect(rectangle).toMatch(/<rect[^>]* width="(\d+)" height="\1"/);
+    expect(ellipse).toMatch(/<circle /);
+    expect(ellipse).not.toMatch(/<ellipse /);
+  });
+
+  test("each kind is added in its default look: a figure 400 square and white, a line or an arrow 600 long and 12 thick", () => {
+    for (const kind of KINDS) {
+      const { style } = newShape(kind, 0, 10, "a");
+      if (kind === "line" || kind === "arrow") expect(style).toEqual({ ...WHITE_SQUARE, kind, ...WHITE_LINE });
+      else expect(style).toEqual({ ...WHITE_SQUARE, kind });
+      expect(drawsSomething(style)).toBe(true);
+    }
+    const outcome = addShape({ edits: edits() }, "arrow", 1, 10, { id: "n1" });
+    expect(outcome.edits.shapes).toEqual([{ ...shape("n1", 1, 3), style: { ...WHITE_SQUARE, kind: "arrow", ...WHITE_LINE } }]);
+  });
+
+  test("a line or an arrow with no stroke width draws nothing; any figure with a fill or a stroke draws", () => {
+    for (const kind of ["line", "arrow"] as const) {
+      expect(drawsSomething({ ...WHITE_SQUARE, kind, stroke_width: 0 })).toBe(false);
+      expect(drawsSomething({ ...WHITE_SQUARE, kind, fill: null, stroke_width: 3 })).toBe(true);
+    }
+    expect(drawsSomething({ ...WHITE_SQUARE, kind: "ellipse" })).toBe(true);
+    expect(drawsSomething({ ...WHITE_SQUARE, kind: "triangle", fill: null })).toBe(false);
+  });
+});
+
+describe("a Shape's kind in the inspector", () => {
+  const select = (style: Partial<ShapeStyle>, changed: Shape[] = []) => {
+    const picked = shape("a", 1, 2, { style: { ...WHITE_SQUARE, ...style } });
+    const props = { shape: picked, duration: 10, onChange: (next: Shape) => void changed.push(next), onDuplicate: () => {}, onDelete: () => {} };
+    return laidOut(ShapeFields(props)).find((element) => element.type === Select) as ReactElement<{
+      label: string;
+      value: ShapeKind;
+      options: { value: ShapeKind }[];
+      onChange: (kind: ShapeKind) => void;
+    }>;
+  };
+
+  test("lists every kind and switches a rectangle to an ellipse keeping its size, colours and shadow", () => {
+    const changed: Shape[] = [];
+    const look = { width: 500, height: 300, fill: "#00FF00", stroke_width: 8, stroke_colour: "#FF0000", radius: 0.2, shadow: { ...WHITE_SQUARE.shadow, distance: 10 } };
+    const field = select(look, changed);
+    expect(field.props.label).toBe("Figure");
+    expect(field.props.value).toBe("rectangle");
+    expect(field.props.options.map((option) => option.value)).toEqual(KINDS);
+    field.props.onChange("ellipse");
+    expect(changed[0].style).toEqual({ ...WHITE_SQUARE, ...look, kind: "ellipse" });
+  });
+
+  test("a figure with no stroke becomes a line 12 thick in its fill's colour, and a line back keeps its look", () => {
+    const changed: Shape[] = [];
+    select({ fill: "#00FF00" }, changed).props.onChange("line");
+    expect(changed[0].style).toEqual({ ...WHITE_SQUARE, kind: "line", fill: "#00FF00", stroke_width: 12, stroke_colour: "#00FF00" });
+    // With a stroke, it keeps its stroke's thickness and colour.
+    select({ stroke_width: 5, stroke_colour: "#FF0000" }, changed).props.onChange("arrow");
+    expect(changed[1].style).toEqual({ ...WHITE_SQUARE, kind: "arrow", stroke_width: 5, stroke_colour: "#FF0000" });
+    // Back to a figure, as it was stored.
+    select({ kind: "line", fill: "#00FF00", stroke_width: 12, stroke_colour: "#00FF00" }, changed).props.onChange("triangle");
+    expect(changed[2].style).toEqual({ ...WHITE_SQUARE, kind: "triangle", fill: "#00FF00", stroke_width: 12, stroke_colour: "#00FF00" });
+  });
+
+  test("shows only the fields its kind uses", () => {
+    const labels = (style: Partial<ShapeStyle>) => {
+      const { markup } = inspected(style);
+      return ["Width", "Length", "Height", "Fill", "Fill colour", "Stroke", "Thickness", "Colour", "Corners"].filter((label) =>
+        markup.includes(`>${label}<`),
+      );
+    };
+    expect(labels({ stroke_width: 4 })).toEqual(["Width", "Height", "Fill", "Fill colour", "Stroke", "Corners"]);
+    for (const kind of ["ellipse", "triangle", "parallelogram", "trapezoid"] as const) {
+      expect(labels({ kind, stroke_width: 4 })).toEqual(["Width", "Height", "Fill", "Fill colour", "Stroke"]);
+    }
+    // A line and an arrow: their length, thickness and colour, no height, fill nor corners.
+    for (const kind of ["line", "arrow"] as const) {
+      expect(labels({ kind, ...WHITE_LINE })).toEqual(["Length", "Thickness", "Colour"]);
+      expect(inspected({ kind, ...WHITE_LINE }).markup).toContain("Drop shadow");
+      expect(inspected({ kind, ...WHITE_LINE }).markup).not.toContain(NOTHING_TO_DRAW);
+    }
+  });
+
+  test("a line's thickness is at least 1 px, and none is refused", () => {
+    const changed: Shape[] = [];
+    const { slider } = inspected({ kind: "line", ...WHITE_LINE }, changed);
+    expect(slider("Thickness")!.props.min).toBe(1);
+    slider("Thickness")!.props.onChange(0);
+    expect(changed).toEqual([]);
+    slider("Thickness")!.props.onChange(20);
+    slider("Length")!.props.onChange(800);
+    expect(changed.map((next) => next.style)).toEqual([
+      { ...WHITE_SQUARE, kind: "line", ...WHITE_LINE, stroke_width: 20 },
+      { ...WHITE_SQUARE, kind: "line", ...WHITE_LINE, width: 800 },
+    ]);
+  });
+});
+
+describe("several Shapes' kinds in the inspector", () => {
+  const rectangle = shape("a", 0, 2, { style: { ...WHITE_SQUARE, fill: "#00FF00" } });
+  const line = shape("b", 3, 2, { style: { ...WHITE_SQUARE, kind: "line", ...WHITE_LINE } });
+  const ellipse = shape("c", 6, 2, { style: { ...WHITE_SQUARE, kind: "ellipse" } });
+
+  function several(shapes: Shape[]) {
+    const changes: ((shape: Shape) => Shape)[] = [];
+    const props = { shapes, onChange: (change: (shape: Shape) => Shape) => void changes.push(change), onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} };
+    const elements = laidOut(ShapesFields(props));
+    const kind = elements.find((element) => element.type === Select && (element.props as { label: string }).label === "Figure") as ReactElement<{
+      value: ShapeKind;
+      onChange: (kind: ShapeKind) => void;
+      marker?: ReactNode;
+    }>;
+    return { markup: renderToStaticMarkup(createElement(ShapesFields, props)), kind, changes };
+  }
+
+  test("switches each one's kind as one would alone, marked Mixed where they differ", () => {
+    const { kind, changes } = several([rectangle, line]);
+    expect(kind.props.marker).toBeTruthy();
+    expect(several([ellipse, { ...ellipse, id: "d" }]).kind.props.marker).toBeFalsy();
+    kind.props.onChange("arrow");
+    expect(changes[0](rectangle).style).toEqual({ ...rectangle.style, kind: "arrow", stroke_width: 12, stroke_colour: "#00FF00" });
+    expect(changes[0](line).style).toEqual({ ...line.style, kind: "arrow" });
+  });
+
+  test("shows a field while one of them uses it", () => {
+    const shown = (shapes: Shape[], label: string) => several(shapes).markup.includes(`>${label}<`);
+    expect(shown([rectangle, line], "Corners")).toBe(true);
+    expect(shown([ellipse, line], "Corners")).toBe(false);
+    expect(shown([ellipse, line], "Height")).toBe(true);
+    expect(shown([line, line], "Height")).toBe(false);
+    expect(shown([line, line], "Fill colour")).toBe(false);
+    expect(shown([line, line], "Length")).toBe(true);
+    expect(shown([line, line], "Thickness")).toBe(true);
   });
 });

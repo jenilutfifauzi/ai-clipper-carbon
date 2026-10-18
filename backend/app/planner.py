@@ -1616,20 +1616,20 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
 
 
 def shape_event(shape: Shape, duration: float) -> ShapeEvent | None:
-    """The Shape in a Clip lasting `duration`, until its end if that comes sooner: its figure
-    `width` x `height` of its style, centred on its Transform's centre (on the frame, its picture
-    maybe past the edges), drawn as the picture of its layout. None when it would start at or after
-    the Clip's end."""
+    """The Shape in a Clip lasting `duration`, until its end if that comes sooner: its figure (its
+    style's `size`: `width` x `height`, or a line's length by its thickness), centred on its
+    Transform's centre (on the frame, its picture maybe past the edges), drawn as the picture of its
+    layout. None when it would start at or after the Clip's end."""
     start = round(shape.start, 3)
     if start >= duration:
         return None
     style, (x, y) = shape.style, (shape.transform.x, shape.transform.y)
-    room = SHAPE_ROOM + style.shadow.reach
-    width, height = style.width + 2 * room, style.height + 2 * room
+    (figure_width, figure_height), room = style.size, SHAPE_ROOM + style.shadow.reach
+    width, height = figure_width + 2 * room, figure_height + 2 * room
     # Made even, as a Text Layer's, the figure staying in its middle.
     width, height = width + width % 2, height + height % 2
     layout = ShapeLayout(style, width, height, picture_scale(shape, width, height))
-    area = Box(round(x - style.width / 2), round(y - style.height / 2), style.width, style.height)
+    area = Box(round(x - figure_width / 2), round(y - figure_height / 2), figure_width, figure_height)
     picture = layer_picture(layout, (x - width / 2, y - height / 2), shape, start)
     end = round(min(start + shape.secs, duration), 3)
     return ShapeEvent(shape, start, end, area, layout, picture, _turned_box(area, picture.centre, shape.transform))

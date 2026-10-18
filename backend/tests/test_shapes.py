@@ -1,8 +1,8 @@
 """Shapes (.scratch/shapes/issues/02-tracer-a-rectangle-from-the-stickers-tab.md,
-03-rectangle-look.md, docs/adr/0011): a Shape saved on the Candidate, planned as a picture layer,
-drawn by libass into a picture of its own (its fill, its stroke inside its width and height, its
-rounded corners and its drop shadow), and burned into the Clip over the captions and under the Text
-Layers.
+03-rectangle-look.md, 04-six-more-figures.md, docs/adr/0011): a Shape saved on the Candidate,
+planned as a picture layer, drawn by libass into a picture of its own (its figure, its fill, its
+stroke inside its width and height, its rounded corners and its drop shadow; a line or an arrow all
+stroke), and burned into the Clip over the captions and under the Text Layers.
 """
 
 import json
@@ -215,11 +215,13 @@ def test_a_shapes_picture_is_its_fill_with_clean_alpha_at_the_scale_it_is_drawn(
 
 def drawn(client, job: dict, candidate: dict, **style) -> tuple[np.ndarray, int, int]:
     """The picture of a Shape of `style` at scale 1, as the preview fetches it, and where its
-    figure's top-left corner is in it."""
+    figure's top-left corner is in it (its figure the size of its area: a line's its length by its
+    thickness)."""
     [event] = preview(client, job, candidate, {"shapes": [plate(style=style)]})["plan"]["shapes"]
     assert event["layout"]["scale"] == 1
     picture = picture_of(client, job, event)
-    return picture, (picture.shape[1] - style["width"]) // 2, (picture.shape[0] - style["height"]) // 2
+    area = event["area"]
+    return picture, (picture.shape[1] - area["width"]) // 2, (picture.shape[0] - area["height"]) // 2
 
 
 @pytest.mark.parametrize("width, height", [(400, 400), (1000, 200)])
@@ -295,6 +297,189 @@ def test_a_rounded_outlines_inner_corners_are_rounded_less_by_its_stroke(client)
     thick = sum(diagonal) * np.sqrt(2)
     assert thick == pytest.approx(16, abs=3)
     assert alpha[top + 60, left + 60] == 0
+
+
+# Six more figures (04-six-more-figures.md)
+
+# Where each filled figure, 400 x 300, has ink and where it has none: points as shares of its width
+# and height from its top-left corner.
+FIGURES = {
+    # Its edge touches the middle of each side of its box; its corners are clear.
+    "ellipse": (
+        [(0.5, 0.5), (0.5, 0.03), (0.03, 0.5), (0.97, 0.5), (0.5, 0.97), (0.8, 0.8), (0.2, 0.2)],
+        [(0.03, 0.03), (0.97, 0.03), (0.03, 0.97), (0.97, 0.97), (0.9, 0.9), (0.1, 0.1)],
+    ),
+    # Point up, in the middle of its top; its base the box's bottom.
+    "triangle": (
+        [(0.5, 0.05), (0.5, 0.5), (0.03, 0.98), (0.97, 0.98)],
+        [(0.05, 0.05), (0.95, 0.05), (0.2, 0.5), (0.8, 0.5)],
+    ),
+    # Leaning right: its top-right and bottom-left corners are its box's, the others clear.
+    "parallelogram": (
+        [(0.5, 0.5), (0.97, 0.03), (0.03, 0.97)],
+        [(0.03, 0.03), (0.97, 0.97)],
+    ),
+    # Narrower at the top: its bottom corners are its box's, its top ones clear.
+    "trapezoid": (
+        [(0.5, 0.5), (0.5, 0.03), (0.03, 0.97), (0.97, 0.97)],
+        [(0.05, 0.05), (0.95, 0.05)],
+    ),
+}
+
+
+def test_every_filled_figure_fills_its_width_and_height_about_its_centre_and_a_line_and_an_arrow_are_their_stroke():
+    for kind in ("rectangle", *FIGURES):
+        event = shape_event(shape({"x": 400, "y": 700}, {"kind": kind, "width": 300, "height": 200}), 10)
+        assert event.area == event.bounds == Box(250, 600, 300, 200), kind
+        assert event.picture.centre == pytest.approx((400, 700))
+    # A line is its length by its thickness, its height not used.
+    line = shape_event(shape({"x": 400, "y": 700}, {"kind": "line", "width": 600, "height": 300, "stroke_width": 12}), 10)
+    assert line.area == line.bounds == Box(100, 694, 600, 12)
+    assert line.picture.centre == pytest.approx((400, 700))
+    lower = shape_event(shape({"x": 400, "y": 700}, {"kind": "line", "width": 600, "height": 50, "stroke_width": 12}), 10)
+    assert lower.area == line.area and (lower.layout.width, lower.layout.height) == (line.layout.width, line.layout.height)
+    assert line.layout.height < 50
+    # An arrow is its length by its head, four times its thickness, about the middle of its shaft.
+    arrow = shape_event(shape({"x": 400, "y": 700, "rotation": 90}, {"kind": "arrow", "width": 600, "stroke_width": 12}), 10)
+    assert arrow.area == Box(100, 676, 600, 48)
+    assert arrow.bounds == Box(376, 400, 48, 600)
+
+
+def test_a_line_or_an_arrow_with_no_stroke_width_is_refused_and_needs_no_fill(client):
+    for kind, named in (("line", "a line"), ("arrow", "an arrow")):
+        with pytest.raises(ValidationError, match=f"Shape s1 has nothing to draw: {named} is all stroke, its stroke_width its thickness"):
+            shape(style={"kind": kind})
+        assert shape(style={"kind": kind, "fill": None, "stroke_width": 4}).style.stroke_width == 4
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    response = client.patch(candidate_url(job, candidate), json={"shapes": [plate(style={"kind": "arrow", "width": 600})], "revision": candidate["revision"]})
+    assert response.status_code == 422 and "an arrow is all stroke" in response.text, response.text
+    saved = patch(client, job, candidate, shapes=[plate(style={"kind": "line", "width": 600, "stroke_width": 12})])
+    assert saved["shapes"][0]["style"]["kind"] == "line"
+
+
+@pytest.mark.parametrize("kind", FIGURES)
+def test_each_filled_figure_has_ink_inside_it_and_none_outside_with_clean_alpha(client, kind):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    width, height = 400, 300
+    picture, left, top = drawn(client, job, candidate, kind=kind, width=width, height=height, fill="#00FF00")
+
+    def at(x: float, y: float) -> np.ndarray:
+        return picture[top + min(round(y * height), height - 1), left + min(round(x * width), width - 1)]
+
+    inside, outside = FIGURES[kind]
+    for x, y in inside:
+        assert at(x, y).tolist() == [0, 255, 0, 255], (kind, x, y)
+    for x, y in outside:
+        assert at(x, y)[3] == 0, (kind, x, y)
+    # Nothing past its box: clear round it.
+    alpha = picture[..., 3]
+    rows, columns = np.nonzero(alpha)
+    assert left - 1 <= columns.min() and columns.max() <= left + width and top - 1 <= rows.min() and rows.max() <= top + height
+    # Across its middle it is as wide as its box (a triangle half as wide; a parallelogram and a
+    # trapezoid less what their slant, a quarter of the shorter side, takes), and down its middle as tall.
+    ink = alpha > 127
+    across = {"ellipse": width, "triangle": width / 2, "parallelogram": width - 75, "trapezoid": width - 75}[kind]
+    assert ink[top + height // 2].sum() == pytest.approx(across, abs=1.5)
+    assert ink[:, left + width // 2].sum() >= height * 0.95
+    # Clean alpha: where it is part covered, its colour is the fill's, with no dark fringe.
+    edges = (alpha > 0) & (alpha < 255)
+    assert edges.any() and picture[edges][:, 1].min() >= 250 and picture[edges][:, [0, 2]].max() <= 5
+
+
+def thickness(alpha: np.ndarray, start: tuple[float, float], inward: tuple[float, float], reach: float = 60) -> float:
+    """How far, in pixels, a walk from `start` (outside the figure) along `inward` goes through ink."""
+    norm = np.hypot(*inward)
+    steps = np.arange(0, reach, 0.25)
+    xs = np.floor(start[0] + steps * inward[0] / norm).astype(int)
+    ys = np.floor(start[1] + steps * inward[1] / norm).astype(int)
+    return float((alpha[ys, xs] > 127).sum() * 0.25)
+
+
+def test_an_outline_alone_ellipse_and_triangle_keep_the_strokes_thickness_all_round(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    # A long ellipse: across its edge, its stroke is as thick near its ends as at its sides.
+    width, height, stroke = 800, 200, 24
+    picture, left, top = drawn(client, job, candidate, kind="ellipse", width=width, height=height, fill=None, stroke_colour="#FF0000", stroke_width=stroke)
+    a, b = width / 2, height / 2
+    cx, cy = left + a, top + b
+    alpha = picture[..., 3]
+    assert alpha[round(cy), round(cx)] == 0
+    for turn in np.linspace(0, 2 * np.pi, 24, endpoint=False):
+        normal = np.array([np.cos(turn) / a, np.sin(turn) / b])
+        normal /= np.hypot(*normal)
+        start = (cx + a * np.cos(turn) + 1.5 * normal[0], cy + b * np.sin(turn) + 1.5 * normal[1])
+        assert thickness(alpha, start, (-normal[0], -normal[1])) == pytest.approx(stroke, abs=1.5), turn
+    assert (picture[alpha == 255][:, :3] == [255, 0, 0]).all()
+    # Thicker than its ends are round (25 px), its inside comes to a point there: no thinner anywhere,
+    # and as thick where it is less round.
+    stroke = 40
+    picture, left, top = drawn(client, job, candidate, kind="ellipse", width=width, height=height, fill=None, stroke_colour="#FF0000", stroke_width=stroke)
+    alpha = picture[..., 3]
+    for turn in np.linspace(0, 2 * np.pi, 24, endpoint=False):
+        normal = np.array([np.cos(turn) / a, np.sin(turn) / b])
+        normal /= np.hypot(*normal)
+        start = (cx + a * np.cos(turn) + 1.5 * normal[0], cy + b * np.sin(turn) + 1.5 * normal[1])
+        across = thickness(alpha, start, (-normal[0], -normal[1]), reach=1.5 * stroke)
+        assert across >= stroke - 1.5, turn
+        if abs(np.cos(turn)) < 0.9:
+            assert across == pytest.approx(stroke, abs=1.5), turn
+    assert alpha[round(cy), round(cx) - 300 : round(cx) + 300].max() == 0
+
+    # A triangle: across each side, a quarter, half and three quarters along it.
+    width, height, stroke = 400, 300, 16
+    picture, left, top = drawn(client, job, candidate, kind="triangle", width=width, height=height, fill=None, stroke_colour="#FF0000", stroke_width=stroke)
+    alpha = picture[..., 3]
+    corners = [(left + width / 2, top), (left + width, top + height), (left, top + height)]
+    for (x0, y0), (x1, y1) in zip(corners, corners[1:] + corners[:1]):
+        # Going round clockwise on screen, its inside is on the right.
+        inward = (-(y1 - y0), x1 - x0)
+        outward = -np.array(inward) / np.hypot(*inward)
+        for share in (0.25, 0.5, 0.75):
+            x, y = x0 + share * (x1 - x0), y0 + share * (y1 - y0)
+            assert thickness(alpha, (x + 1.5 * outward[0], y + 1.5 * outward[1]), inward) == pytest.approx(stroke, abs=1.5), (x0, y0, share)
+    assert alpha[top + 200, left + 200] == 0
+
+
+def test_a_line_and_an_arrow_are_ink_along_their_length_at_their_thickness_in_their_strokes_colour(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    length, stroke = 600, 12
+    for kind, fill in (("line", "#FFFFFF"), ("line", None), ("arrow", "#FFFFFF")):
+        picture, left, top = drawn(client, job, candidate, kind=kind, width=length, fill=fill, stroke_colour="#FF0000", stroke_width=stroke)
+        alpha = picture[..., 3]
+        ink = alpha > 127
+        middle = top + (stroke if kind == "line" else 4 * stroke) / 2
+        # Its length, end to end.
+        columns = np.nonzero(ink.any(axis=0))[0]
+        assert (columns.min(), columns.max() + 1) == pytest.approx((left, left + length), abs=1), kind
+        # Along its shaft, as thick as its stroke about its middle, and in its colour whatever its fill.
+        for share in (0.1, 0.3, 0.5, 0.7):
+            column = ink[:, left + round(share * length)]
+            assert column.sum() == pytest.approx(stroke, abs=1), (kind, share)
+            assert abs(np.nonzero(column)[0].mean() + 0.5 - middle) <= 1
+        assert (picture[alpha == 255][:, :3] == [255, 0, 0]).all()
+        edges = (alpha > 0) & (alpha < 255)
+        assert picture[edges][:, 0].min() >= 250 and picture[edges][:, 1:3].max() <= 5
+        heights = ink[:, left : left + length].sum(axis=0)
+        if kind == "line":
+            assert heights.max() <= stroke + 1
+            continue
+        # An arrow's head is at its right end: four times its thickness tall where it starts, coming to a point.
+        assert heights.max() == pytest.approx(4 * stroke, abs=2)
+        assert np.argmax(heights) >= length - 4 * stroke
+        assert heights[: length // 2].max() <= stroke + 1
+        assert heights[-2] <= stroke / 2
+
+    # Its drop shadow is the figure again, moved.
+    picture, left, top = drawn(
+        client, job, candidate, kind="line", width=length, stroke_colour="#FF0000", stroke_width=stroke,
+        shadow={"colour": "#0000FF", "opacity": 1, "distance": 20, "angle": 90},
+    )
+    assert picture[top + stroke // 2, left + length // 2].tolist() == [255, 0, 0, 255]
+    assert picture[top + 20 + stroke // 2, left + length // 2].tolist() == [0, 0, 255, 255]
 
 
 def test_shape_pictures_no_candidate_shows_are_swept_when_the_job_is_opened(client, settings):
