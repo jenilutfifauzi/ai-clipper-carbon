@@ -21,8 +21,10 @@ from test_jobs_api import URL
 # tests/fixtures/captions.json3's Words "halo" to "kabar", and "kita" to "soal" (Source time).
 HALO_KABAR = (0.1, 1.6)
 KITA_SOAL = (1.6, 2.6)
-# The tool list is sent to the agent's context with every conversation: keep it within this.
-TOOLS_BUDGET_BYTES = 68_500
+# The tool list is sent to the agent's context with every conversation: keep it within this. Raised
+# from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
+# their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
+TOOLS_BUDGET_BYTES = 69_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -626,6 +628,83 @@ async def test_an_overlays_border_and_shadow_are_merged_field_by_field_and_turne
     assert (merged["overlays"][0]["border"], merged["overlays"][0]["shadow"]["y"]) == (None, 30)
 
 
+# Shapes (.scratch/shapes/issues/08-agent-shapes.md)
+
+# A pill behind a title: a rectangle 600x120 rounded to its half, centred where the title is.
+PILL = {
+    "id": "pill", "start": 0, "secs": 1, "transform": {"x": 540, "y": 960},
+    "style": {"kind": "rectangle", "width": 600, "height": 120, "fill": "#112233", "radius": 0.5},
+}
+
+
+@pytest.mark.anyio
+async def test_a_pill_is_added_under_a_text_layer_in_one_edit_and_the_dry_run_shows_both(mcp, client):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    title = {"id": "title", "text": "Judul", "start": 0, "secs": 1, "transform": {"x": 540, "y": 960}}
+
+    edited = await call(mcp, "edit_candidate", **ids, changes={"text_layers": [title], "shapes": [PILL]})
+    [pill] = edited["shapes"]
+    assert (pill["id"], pill["style"]["radius"], pill["style"]["fill"]) == ("pill", 0.5, "#112233")
+    assert [layer["id"] for layer in edited["text_layers"]] == ["title"]
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
+    [shape], [text] = plan["shapes"], plan["text_layers"]
+    assert (shape["id"], shape["start"], shape["end"]) == ("pill", 0, 1)
+    assert shape["bounds"] == {"x": 240, "y": 900, "width": 600, "height": 120}
+    assert text["id"] == "title" and abs(text["bounds"]["x"] + text["bounds"]["width"] / 2 - 540) <= 1
+    for shown in (shape, text):
+        picture = client.get(shown["picture"])
+        assert picture.status_code == 200 and picture.headers["content-type"] == "image/png"
+    assert shape["picture"] != text["picture"]
+
+
+@pytest.mark.anyio
+async def test_a_shapes_style_and_transform_are_merged_field_by_field_and_shapes_are_removed_by_id(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    shadow = {"colour": "#330000", "opacity": 0.8, "blur": 6, "distance": 10, "angle": 45}
+    look = PILL["style"] | {"stroke_colour": "#FFFFFF", "stroke_width": 8, "shadow": shadow}
+    [made] = (await call(mcp, "merge_candidate_items", **ids, shapes=[PILL | {"style": look}]))["shapes"]
+
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"fill": "#ff0000"}}]))["shapes"]
+    assert changed == made | {"style": made["style"] | {"fill": "#FF0000"}}
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"shadow": {"angle": 135}}}]))["shapes"]
+    assert changed["style"]["shadow"] == shadow | {"angle": 135} and changed["style"]["fill"] == "#FF0000"
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "transform": {"rotation": 90}}]))["shapes"]
+    assert changed["transform"] == made["transform"] | {"rotation": 90}
+    # An outline alone: its fill turned off with null, its stroke kept.
+    [changed] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"fill": None}}]))["shapes"]
+    assert (changed["style"]["fill"], changed["style"]["stroke_width"]) == (None, 8)
+
+    await call(mcp, "merge_candidate_items", **ids, shapes=[PILL | {"id": "bar"}])
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="shapes", keys=["pill"])
+    assert [shape["id"] for shape in removed["shapes"]] == ["bar"]
+    assert "no shapes item" in await fails(mcp, "remove_candidate_items", **ids, kind="shapes", keys=["nope"])
+
+
+@pytest.mark.anyio
+async def test_a_shape_the_model_refuses_is_a_clear_tool_error(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    nothing = PILL | {"style": {"fill": None}}
+
+    assert "nothing to draw" in await fails(mcp, "edit_candidate", **ids, changes={"shapes": [nothing]})
+    assert "nothing to draw" in await fails(mcp, "merge_candidate_items", **ids, shapes=[nothing])
+    await call(mcp, "merge_candidate_items", **ids, shapes=[PILL])
+    assert "nothing to draw" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"fill": None}}])
+    assert "stretched" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "transform": {"stretch_x": 2}}])
+    assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "transform": {"flip_h": True}}])
+    assert "kind" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"kind": "hexagon"}}])
+    assert "secs" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "new", "style": {"fill": "#FFFFFF"}}])
+    # Nothing was saved by the refusals.
+    [kept] = (await call(mcp, "get_candidate", **ids))["shapes"]
+    assert kept["style"]["fill"] == "#112233" and kept["transform"]["stretch_x"] == 1
+
+
 # 08: agent guidance
 
 
@@ -635,6 +714,10 @@ async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
     size = len(json.dumps([tool.model_dump(mode="json", exclude_none=True) for tool in tools]))
     assert size < TOOLS_BUDGET_BYTES, size
     assert {tool.name for tool in tools} >= {"create_job_from_url", "wait_for_job", "edit_candidate", "render_clips"}
+    # The Shape Kinds are named where a Shape is given.
+    [edit] = [tool for tool in tools if tool.name == "edit_candidate"]
+    for kind in ("rectangle", "ellipse", "triangle", "parallelogram", "trapezoid", "line", "arrow"):
+        assert kind in json.dumps(edit.input_schema), kind
 
     glossary = await mcp.read_resource("ai-clipper://glossary")
     assert "Candidate" in glossary.contents[0].text

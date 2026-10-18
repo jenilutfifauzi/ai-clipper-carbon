@@ -87,6 +87,13 @@ SHAPES_MAX = 50
 MUSIC_MAX = 50
 SEGMENTS_MAX = 100
 OVERLAYS_MAX = 50
+# The JSON schema of a list of Shapes, for edit_candidate and merge_candidate_items: a line, which
+# keeps the agent's tools within their budget. The MCP server's instructions say the rest.
+SHAPES_SCHEMA = WithJsonSchema({
+    "type": "array",
+    "description": "As Text Layers but style: kind (rectangle,ellipse,triangle,parallelogram,trapezoid,line,arrow),"
+    "width,height,fill,stroke_colour,stroke_width,radius,shadow",
+})
 
 _OPTIONS = TypeAdapter(JobOptions)
 _CANDIDATE = TypeAdapter(Candidate)
@@ -227,13 +234,8 @@ class CandidateUpdate(BaseModel):
     hook_kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] | None = None
     # Replaces the Candidate's Text Layers as a whole.
     text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX), BeforeValidator(no_old_text_layers)] | None = None
-    # Replaces the Candidate's Shapes as a whole. Described in a line, which keeps the agent's tools
-    # (whose schema this is too) within their budget.
-    shapes: Annotated[
-        list[Shape],
-        Field(max_length=SHAPES_MAX),
-        WithJsonSchema({"type": "array", "description": "As Text Layers; style:kind,width,height,fill,stroke_*,radius,shadow"}),
-    ] | None = None
+    # Replaces the Candidate's Shapes as a whole.
+    shapes: Annotated[list[Shape], Field(max_length=SHAPES_MAX), SHAPES_SCHEMA] | None = None
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
