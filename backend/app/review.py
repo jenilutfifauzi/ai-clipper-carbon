@@ -14,6 +14,7 @@ from app.candidates import (
     Origin,
     Overlay,
     Segment,
+    Shape,
     TextLayer,
     Transition,
     WordEdit,
@@ -67,6 +68,7 @@ class CandidateChange:
     layout_overrides: list[LayoutOverride] | None = None
     hook_kicker: str | None = None
     text_layers: list[TextLayer] | None = None
+    shapes: list[Shape] | None = None
     music: list[MusicClip] | None = None
     source_volume: float | None = None
     # Snapped to Words; one Segment is stored as `start` and `end`.
@@ -182,6 +184,8 @@ def update(
         episode.check_length(old.main_track(), _joined(transitions, old.segments))
     if change.text_layers is not None:
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
+    if change.shapes is not None:
+        _check_ids("Shape", [shape.id for shape in change.shapes])
     if change.music is not None:
         _check_ids("Music Clip", [clip.id for clip in change.music])
     if change.overlays is not None:
@@ -211,13 +215,14 @@ def update(
         layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
         text_layers=_pick(change.text_layers, old.text_layers),
+        shapes=_pick(change.shapes, old.shapes),
         music=_pick(change.music, old.music),
         source_volume=_pick(change.source_volume, old.source_volume),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
         transitions=_joined(transitions, segments),
     )
-    if change.text_layers is not None:
+    if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
@@ -265,7 +270,7 @@ def _look(candidate: Candidate) -> tuple:
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
-        candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.music,
+        candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.shapes, candidate.music,
         candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,
     )
 
@@ -285,12 +290,13 @@ def _joined(transitions: list[Transition], segments: list[Segment]) -> list[Tran
 
 
 def _check_inside(new: Candidate, old: Candidate) -> None:
-    """InvalidEdit for a Text Layer, new or changed, that starts at or after the end of the Clip.
-    (One left past it by a trim is kept: the planner doesn't show it.)"""
-    before = {layer.id: layer for layer in old.text_layers}
-    for layer in new.text_layers:
-        if layer != before.get(layer.id) and layer.start >= new.duration:
-            raise InvalidEdit(f"Text Layer {layer.id} starts after the clip ends ({new.duration:g} s)")
+    """InvalidEdit for a Text Layer or a Shape, new or changed, that starts at or after the end of
+    the Clip. (One left past it by a trim is kept: the planner doesn't show it.)"""
+    for kind, olds, news in (("Text Layer", old.text_layers, new.text_layers), ("Shape", old.shapes, new.shapes)):
+        before = {item.id: item for item in olds}
+        for item in news:
+            if item != before.get(item.id) and item.start >= new.duration:
+                raise InvalidEdit(f"{kind} {item.id} starts after the clip ends ({new.duration:g} s)")
 
 
 def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:

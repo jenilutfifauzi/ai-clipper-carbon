@@ -128,7 +128,7 @@ from app.planner import (
     on_frame,
     picture_at,
 )
-from app.candidates import Keyframe, Shadow, TextLayer
+from app.candidates import Keyframe, Shadow, Shape, TextLayer
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -1366,7 +1366,7 @@ SLIDE_PX = 60
 
 # What is animated as the hook is: the hook in its style, or a picture layer in its own.
 type _Shown = HookEvent | PictureLayer
-type _Motion = HookStyle | TextLayer
+type _Motion = HookStyle | TextLayer | Shape
 
 
 def _hook_ends(hook: _Shown, style: _Motion) -> tuple[float, float]:

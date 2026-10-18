@@ -6,8 +6,8 @@ import type { TrackKind } from "./trackState";
 // and inspector act on. Kept in the editor only: never saved, never undone.
 
 // The items that are picked together, and the list of the edits each kind is in.
-export type ItemKind = "segment" | "text" | "music" | "overlay";
-export const LISTS = { segment: "segments", text: "text_layers", music: "music", overlay: "overlays" } as const;
+export type ItemKind = "segment" | "text" | "shape" | "music" | "overlay";
+export const LISTS = { segment: "segments", text: "text_layers", shape: "shapes", music: "music", overlay: "overlays" } as const;
 
 export interface ItemRef {
   kind: ItemKind;
@@ -15,7 +15,7 @@ export interface ItemRef {
 }
 
 /**
- * One or more Segments, Text Layers, Music Clips and Overlays, mixed; or the hook, the captions or
+ * One or more Segments, Text Layers, Shapes, Music Clips and Overlays, mixed; or the hook, the captions or
  * the join after a Segment (for its Transition), alone; or nothing.
  */
 export type Pick = { kind: "items"; items: ItemRef[] } | { kind: "hook" } | { kind: "captions" } | { kind: "join"; after: string } | null;
@@ -45,7 +45,7 @@ export function toggled(pick: Pick, item: ItemRef): Pick {
 export const clicked = (pick: Pick, item: ItemRef, toggle: boolean): Pick => (toggle ? toggled(pick, item) : picked(item));
 
 /** Each kind of item, by name: "Text Layer". */
-export const NAMES: Record<ItemKind, string> = { segment: "Segment", text: "Text Layer", music: "Music Clip", overlay: "Overlay" };
+export const NAMES: Record<ItemKind, string> = { segment: "Segment", text: "Text Layer", shape: "Shape", music: "Music Clip", overlay: "Overlay" };
 
 /** `n` items of `kind`, by name: "1 Text Layer", "2 Overlays". */
 export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n === 1 ? "" : "s"}`;
@@ -54,7 +54,7 @@ export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n ==
 export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? ""));
 
 /** The Track each kind of item is on. */
-export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", music: "music", overlay: "overlay" };
+export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay" };
 
 /** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track. */
 export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {
@@ -76,17 +76,19 @@ export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {
   return kept.length === pick.items.length ? pick : picked(...kept);
 }
 
-/** The ids on the preview's stage (StageControls) of what is picked there: the hook, the captions, Text Layers and Overlays. */
+/** The ids on the preview's stage (StageControls) of what is picked there: the hook, the captions, Text Layers, Shapes and Overlays. */
 export function stageIdsOf(pick: Pick): PickedOnStage[] {
   if (pick?.kind === "hook" || pick?.kind === "captions") return [pick.kind];
-  return itemsOf(pick).flatMap((item): PickedOnStage[] => (item.kind === "text" || item.kind === "overlay" ? [`${item.kind}:${item.id}`] : []));
+  return itemsOf(pick).flatMap((item): PickedOnStage[] =>
+    item.kind === "text" || item.kind === "shape" || item.kind === "overlay" ? [`${item.kind}:${item.id}`] : [],
+  );
 }
 
-/** What a stage id names: the hook, the captions, a Text Layer or an Overlay. */
+/** What a stage id names: the hook, the captions, a Text Layer, a Shape or an Overlay. */
 export function stageItem(stageId: PickedOnStage): { kind: "hook" } | { kind: "captions" } | ItemRef {
   if (stageId === "hook" || stageId === "captions") return { kind: stageId };
   const [kind, ...id] = stageId.split(":");
-  return { kind: kind as "text" | "overlay", id: id.join(":") };
+  return { kind: kind as "text" | "shape" | "overlay", id: id.join(":") };
 }
 
 /** An item's key on the Timeline: its kind and id. */

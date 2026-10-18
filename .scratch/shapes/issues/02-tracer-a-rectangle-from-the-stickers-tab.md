@@ -15,13 +15,23 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Clicking the rectangle tile adds a picked 400×400 white Shape at the playhead, as one undo step.
-- [ ] The preview and a rendered frame show it at its planned bounds; where it overlaps a caption the Shape shows, and where it overlaps a Text Layer the Text Layer shows.
-- [ ] Its picture has clean alpha and the planned size at the largest scale it reaches (capped).
-- [ ] A Shape with stretch or a flip is refused with a clear message.
-- [ ] A stored Candidate without `shapes` reads and renders as before.
-- [ ] Moving, trimming and deleting it on the Shape Track work with undo and redo.
+- [x] Clicking the rectangle tile adds a picked 400×400 white Shape at the playhead, as one undo step.
+- [x] The preview and a rendered frame show it at its planned bounds; where it overlaps a caption the Shape shows, and where it overlaps a Text Layer the Text Layer shows.
+- [x] Its picture has clean alpha and the planned size at the largest scale it reaches (capped).
+- [x] A Shape with stretch or a flip is refused with a clear message.
+- [x] A stored Candidate without `shapes` reads and renders as before.
+- [x] Moving, trimming and deleting it on the Shape Track work with undo and redo.
 
 ## Comments
+
+**2026-10-18, agent:** Built.
+- **Model** (`app/candidates.py`): `ShapeKind` (rectangle only), `ShapeStyle` (`kind`, `width` and `height` as whole pixels 2–4096, `fill: Colour | None`), `Shape` (id, start, secs, Transform, style, `animation_in/out/ms`, `keys` with PICTURE_KEYS) and `Candidate.shapes` (empty by default, so stored Candidates read without a migration). Stretch and flips are refused by `_check_unstretched`, shared with Text Layers (their message is unchanged); a Shape with no fill is refused as having nothing to draw (03 widens that to "no fill and no stroke").
+- **API and Revisions**: `CandidateUpdate.shapes` and `CandidateChange.shapes` (ids checked, a new or changed one past the Clip's end refused, `_look` and the Revision part "Shapes"); `RenderedClip.shapes`. Its schema is a one-line `WithJsonSchema`, because edit_candidate's input is this model and the tools' budget (TOOLS_BUDGET_BYTES) had about 70 bytes to spare: 08 has to describe Shapes to the agent within it (or raise it). Revision merge is the browser's (`merge.ts`): `shapes` merges item by item by id, as `text_layers`.
+- **Planner** (`app/planner.py`): `ShapeLayout` (the style, the picture's size with SHAPE_ROOM = 2 px round the figure, scale; named by a hash with SHAPE_PICTURE_FORMAT), `ShapeEvent`, `shape_event` (area = width × height about the Transform's centre; picture scale from `picture_scale`, so keyed maximum and the 4096 cap), `RenderPlan.shapes`, and `picture_layers` = Shapes then Text Layers.
+- **Drawing** (`app/text_pictures.py`): `shape_script` registered for `ShapeLayout` (one `\p1` drawing, `YCbCr Matrix: None`), `figure_drawing(style)` by kind (a `match` 04 extends), and `pictures_used` sweeps Shapes' pictures. The renderer took Shapes with no change but `_Motion`.
+- **Dry run**: `shapes` (id, times, bounds, picture URL, Keyframes) in `_plan_view`.
+- **Editor**: `ItemKind`/`TrackKind` `"shape"` (Shape Track under Text, hides and locks), `KINDS.shape` in actions.ts (so remove, move, nudge, duplicate, split and the Clipboard take Shapes already), `KeyedRef` `"shape"` in keying.ts (the stage's Grips write through `writeItemTransform`, so a keyed Shape is auto-keyed), Stickers tab (lucide `Sticker`, `ShapeAssets`), `shapeStyle.ts` (`newShape`, `addShape`; `newTiming` in edits.ts now shared with `newTextLayer`), `ShapeFields` (width, height, fill, `ShapeTransformFields`, timing), Shape lanes in Tracks.tsx (trims re-anchor Keyframes), the stage's `shapes` controls (corners and rotate handle) and `drawnPlan`/`layersAt`/`pictureLayers` (`shape:<id>`), and `shownPlan` hiding them.
+- Not done here, for later tickets: Ripple delete and the Magnetic timeline (`ripple.ts` LAYER_KINDS), `pickAll` and Split all (`under`), Edit Points (`timelineView.ts`), Smart Guides targets (`picturesAt`), dropping a tile on the Timeline or the preview — 06; stroke, radius, shadow — 03; Keyframes pane and animations UI — 07.
+- Tests: `backend/tests/test_shapes.py` (planner, model and API refusals, stored Candidate without `shapes`, picture alpha and size, sweep, a rendered frame over a caption and under a Text Layer's plate, the dry run) and `frontend/src/pages/job/advanced/shapes.test.ts`. The preview was checked through its pure parts (picture layers, stage Grips, hidden Track), not in a browser.

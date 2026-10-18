@@ -47,7 +47,7 @@ from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
-from app.planner import Box, Picture, TextEvent, bounds_at, key_times, picture_at
+from app.planner import Box, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
@@ -210,6 +210,7 @@ Edits:
 _JOB = TypeAdapter(Job)
 _PICTURE = TypeAdapter(Picture)
 _TEXT = TypeAdapter(TextEvent)
+_SHAPE = TypeAdapter(ShapeEvent)
 # httpx logs each request at INFO: here, every tool's call to the API.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -814,8 +815,9 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
-    Segment's, a Music Clip's, an Overlay's), each Text Layer's lines, box and picture's URL
-    (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the Words."""
+    Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
+    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the
+    Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -843,6 +845,7 @@ def _plan_view(
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
         },
+        "shapes": [_layer_view(shape, _SHAPE, picture_url) for shape in plan["shapes"]],
         "text_layers": [_layer_view(text, _TEXT, picture_url, "lines") for text in plan["texts"]],
         "overlays": [
             {

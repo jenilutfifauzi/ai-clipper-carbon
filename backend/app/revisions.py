@@ -24,6 +24,7 @@ PARTS: dict[str, tuple[str, ...]] = {
     "Range": ("start", "end"),
     "Segments": ("segments",),
     "Text Layers": ("text_layers",),
+    "Shapes": ("shapes",),
     "Music": ("music",),
     "Overlays": ("overlays",),
     "Transitions": ("transitions",),

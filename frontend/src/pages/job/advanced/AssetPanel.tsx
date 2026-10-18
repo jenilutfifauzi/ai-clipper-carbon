@@ -1,15 +1,16 @@
 import type { ReactNode } from "react";
-import type { ClipSegment, FontInfo, MediaItem, Transcript } from "../../../api";
+import type { ClipSegment, FontInfo, MediaItem, ShapeKind, Transcript } from "../../../api";
 import type { AssetTab } from "./Chrome";
 import { SourcePicker } from "./MainTrack";
 import { MediaAssets, type MediaLibrary } from "./MediaLibrary";
+import { ShapeAssets } from "./Shapes";
 import type { UntimedTextLayer } from "./TextLayers";
 import { TextAssets } from "./TextPresets";
 
 /**
- * An asset tab's content: the Text Presets; the episode's moments and the Media Library's
- * videos and images; its songs; or the Transitions. Each added at the playhead by a click, or where
- * it is dropped on the timeline.
+ * An asset tab's content: the Text Presets; the Shapes (the Stickers tab); the episode's moments and
+ * the Media Library's videos and images; its songs; or the Transitions. Each added at the playhead
+ * by a click, or (but a Shape) where it is dropped on the timeline.
  */
 export function AssetPanel({
   tab,
@@ -19,6 +20,7 @@ export function AssetPanel({
   near,
   transitions,
   onAddText,
+  onAddShape,
   onAddMusic,
   onAddSource,
   onAddVideo,
@@ -32,12 +34,14 @@ export function AssetPanel({
   near: ClipSegment;
   transitions: ReactNode;
   onAddText: (made: UntimedTextLayer) => void;
+  onAddShape: (kind: ShapeKind) => void;
   onAddMusic: (item: MediaItem) => void;
   onAddSource: (range: { start: number; end: number }) => void;
   onAddVideo: (item: MediaItem) => void;
   onAddOverlay: (item: MediaItem) => void;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
+  if (tab === "stickers") return <ShapeAssets onAdd={onAddShape} />;
   if (tab === "media") {
     return (
       <div className="flex flex-col gap-4">

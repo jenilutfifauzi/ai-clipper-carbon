@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, type ReactNode } from "react";
-import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, TextLayer } from "../../../api";
+import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -16,11 +16,12 @@ import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { ShapeFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
- * The picked item's properties: a Segment's, a Text Layer's, a Music Clip's, an Overlay's, the hook's,
- * or a join's Transition; or, with several picked, what they are and what can be done to them.
+ * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's,
+ * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them.
  */
 export function Inspector({
   pick,
@@ -34,6 +35,7 @@ export function Inspector({
   transition,
   onEdits,
   onText,
+  onShape,
   onMusic,
   onOverlay,
   onSegment,
@@ -55,6 +57,7 @@ export function Inspector({
   transition: ReactNode;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
+  onShape: (shape: Shape, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
@@ -163,6 +166,10 @@ export function Inspector({
       />
     );
   }
+  const shape = find(edits.shapes, "shape");
+  if (shape && actions) {
+    return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
+  }
   const clip = find(edits.music, "music");
   if (clip && actions) {
     return (
@@ -270,6 +277,7 @@ function ResetPlace({
 const NAMES: Record<ItemKind, [string, string]> = {
   segment: ["Segment", "Segments"],
   text: ["Text Layer", "Text Layers"],
+  shape: ["Shape", "Shapes"],
   music: ["Music Clip", "Music Clips"],
   overlay: ["Overlay", "Overlays"],
 };

@@ -36,7 +36,7 @@ const plan = {
 function edits(overrides: LayoutOverride[] = [override]): AdvancedEdits {
   return {
     hook_start: 0, hook_secs: 3, hook_text: "Hook", hook_kicker: "", style_overrides: { caption: {}, hook: {}, watermark: {} }, word_edits: [],
-    layout: "auto", framing: null, layout_overrides: overrides, text_layers: [], music: [], source_volume: 1,
+    layout: "auto", framing: null, layout_overrides: overrides, text_layers: [], shapes: [], music: [], source_volume: 1,
     segments: [whole, later], overlays: [], transitions: [],
   };
 }

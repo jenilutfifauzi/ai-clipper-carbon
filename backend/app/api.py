@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError, WithJsonSchema
 
 from app import emoji, review
 from app.candidates import (
@@ -22,6 +22,7 @@ from app.candidates import (
     MusicClip,
     Overlay,
     Segment,
+    Shape,
     Speed,
     TextLayer,
     TextStyle,
@@ -80,8 +81,9 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
-# The most Text Layers, Music Clips and Segments a Candidate holds.
+# The most Text Layers, Shapes, Music Clips and Segments a Candidate holds.
 TEXT_LAYERS_MAX = 50
+SHAPES_MAX = 50
 MUSIC_MAX = 50
 SEGMENTS_MAX = 100
 OVERLAYS_MAX = 50
@@ -225,6 +227,13 @@ class CandidateUpdate(BaseModel):
     hook_kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] | None = None
     # Replaces the Candidate's Text Layers as a whole.
     text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX), BeforeValidator(no_old_text_layers)] | None = None
+    # Replaces the Candidate's Shapes as a whole. Described in a line, which keeps the agent's tools
+    # (whose schema this is too) within their budget.
+    shapes: Annotated[
+        list[Shape],
+        Field(max_length=SHAPES_MAX),
+        WithJsonSchema({"type": "array", "description": "As Text Layers, a style (kind, width, height, fill) for text"}),
+    ] | None = None
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None

@@ -147,14 +147,17 @@ export function scenesAt(plan: RenderPlan, time: number): RenderPlan["scenes"] {
 }
 
 // A picture layer of the plan as the preview draws it (docs/adr/0010): its event, and its id on the
-// stage and in the Pick (`text:<its id>`).
+// stage and in the Pick (`shape:<its id>`, `text:<its id>`).
 export interface ShownLayer {
-  id: `text:${string}`;
+  id: `shape:${string}` | `text:${string}`;
   event: PictureLayerEvent;
 }
 
-/** The plan's picture layers in drawing order, over the captions and under the hook: its Text Layers. */
-export const pictureLayers = (plan: RenderPlan): ShownLayer[] => plan.texts.map((event) => ({ id: `text:${event.layer.id}`, event }));
+/** The plan's picture layers in drawing order, over the captions and under the hook: its Shapes, then its Text Layers. */
+export const pictureLayers = (plan: RenderPlan): ShownLayer[] => [
+  ...plan.shapes.map((event): ShownLayer => ({ id: `shape:${event.layer.id}`, event })),
+  ...plan.texts.map((event): ShownLayer => ({ id: `text:${event.layer.id}`, event })),
+];
 
 /** Whether any picture of the plan moves: an Overlay's, a Scene's or a picture layer's. */
 export const hasKeyedPictures = (plan: RenderPlan) =>

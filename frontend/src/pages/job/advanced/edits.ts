@@ -20,6 +20,7 @@ export type AdvancedEdits = Pick<
   | "framing"
   | "layout_overrides"
   | "text_layers"
+  | "shapes"
   | "music"
   | "source_volume"
   | "segments"
@@ -39,6 +40,7 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     framing,
     layout_overrides,
     text_layers,
+    shapes,
     music,
     source_volume,
     overlays,
@@ -55,6 +57,7 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     framing,
     layout_overrides,
     text_layers,
+    shapes,
     music,
     source_volume,
     overlays,
@@ -64,12 +67,12 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
 }
 
 /**
- * The items of `next` that aren't in `old` as they are: Segments, Text Layers, Music Clips and
- * Overlays by id, and "hook" when its timing or words changed. What the Timeline shows as changed.
+ * The items of `next` that aren't in `old` as they are: Segments, Text Layers, Shapes, Music Clips
+ * and Overlays by id, and "hook" when its timing or words changed. What the Timeline shows as changed.
  */
 export function changedItems(old: AdvancedEdits, next: AdvancedEdits): Set<string> {
   const changed = new Set<string>();
-  for (const field of ["segments", "text_layers", "music", "overlays"] as const) {
+  for (const field of ["segments", "text_layers", "shapes", "music", "overlays"] as const) {
     const before = new Map<string, unknown>(old[field].map((item) => [item.id, item]));
     for (const item of next[field]) if (!same(before.get(item.id), item)) changed.add(item.id);
   }
@@ -78,13 +81,26 @@ export function changedItems(old: AdvancedEdits, next: AdvancedEdits): Set<strin
   return changed;
 }
 
-// The shortest a Text Layer, a Music Clip or an Overlay lasts (TimelineSecs in backend/app/candidates.py).
+// The shortest a Text Layer, a Shape, a Music Clip or an Overlay lasts (TimelineSecs in backend/app/candidates.py).
 export const ITEM_MIN_SECS = 0.1;
 
 // Times in the editor, to the hundredth of a second.
 export const round = (seconds: number) => Math.round(seconds * 100) / 100;
 
 export const newId = () => crypto.randomUUID().slice(0, 8);
+
+// A new Text Layer or Shape stays this long, or to the Clip's end.
+export const TEXT_SECS = 3;
+
+/**
+ * When a new Text Layer or Shape added at `at` (the playhead, or where it was dropped) shows in a
+ * Clip `duration` long: for TEXT_SECS, from early enough to end with the Clip near its end, or the
+ * whole of a shorter Clip.
+ */
+export function newTiming(at: number, duration: number): { start: number; secs: number } {
+  const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
+  return { start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)) };
+}
 
 /**
  * Where in its file a song or video Overlay that keeps `from` to `to` seconds of its span (from its

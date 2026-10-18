@@ -54,6 +54,7 @@ function edits(layers: TextLayer[]): AdvancedEdits {
     framing: null,
     layout_overrides: [],
     text_layers: layers,
+    shapes: [],
     music: [],
     source_volume: 1,
     segments: [{ id: "s", start: 0, end: 20 }],

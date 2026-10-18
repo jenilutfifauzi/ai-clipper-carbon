@@ -15,6 +15,9 @@ image (app/emoji.py) is pasted onto the picture afterwards, in its square (plann
 `emoji_square`), over the plate and the shadow, in its own colours, with none of the text's
 colour, stroke or shadow.
 
+A Shape's layout (planner.py's `ShapeLayout`) is written as one `\\p1` drawing of its figure, in the
+middle of the picture, in its fill.
+
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
 by it twice over, so a white stroke over transparency gets a dark fringe. So the script is drawn
@@ -46,10 +49,10 @@ import cv2
 import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
-from app.candidates import Candidate
+from app.candidates import Candidate, ShapeKind, ShapeStyle
 from app.emoji import image_pixels
 from app.fonts import font, registry
-from app.planner import PictureLayout, TextLayout, emoji_square, font_metrics, text_event
+from app.planner import PictureLayout, ShapeLayout, TextLayout, emoji_square, font_metrics, shape_event, text_event
 from app.renderer import last_lines
 
 # In a Job's directory.
@@ -228,6 +231,45 @@ def text_script(layout: TextLayout) -> str:
     ]) + "\n"
 
 
+@layout_script.register
+def shape_script(layout: ShapeLayout) -> str:
+    """A Shape's `layout` as an ASS script of its size at scale 1: its figure, filled, as one drawing
+    in the middle of it. libass scales it to the canvas."""
+    style = layout.style
+    left, top = (layout.width - style.width) / 2, (layout.height - style.height) / 2
+    events = []
+    if style.fill is not None:
+        figure = _moved(figure_drawing(style), left, top)
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(style.fill)}}}{figure}{{\\p0}}")
+    return "\n".join([
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        f"PlayResX: {layout.width}",
+        f"PlayResY: {layout.height}",
+        "WrapStyle: 2",
+        "ScaledBorderAndShadow: yes",
+        # Without it, libass takes the canvas for TV range and white comes out at 235.
+        "YCbCr Matrix: None",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+        "MarginR, MarginV, Encoding",
+        "Style: Shape,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        *(f"Dialogue: {layer},0:00:00.00,0:00:10.00,Shape,,0,0,0,,{event}" for layer, event in enumerate(events)),
+    ]) + "\n"
+
+
+def figure_drawing(style: ShapeStyle) -> str:
+    """An ASS drawing of a Shape Style's figure, `width` x `height` from its top-left corner."""
+    match style.kind:
+        case ShapeKind.RECTANGLE:
+            return rounded_box(style.width, style.height, 0)
+
+
 def _moved(drawing: str, x: float, y: float) -> str:
     """An ASS drawing's points moved `x` right and `y` down."""
     words, moved, axis = drawing.split(), [], 0
@@ -241,9 +283,12 @@ def _moved(drawing: str, x: float, y: float) -> str:
 
 
 def pictures_used(candidates: Iterable[Candidate]) -> set[str]:
-    """The names of the pictures `candidates`' picture layers (their Text Layers) are drawn from."""
-    events = (text_event(layer, math.inf) for candidate in candidates for layer in candidate.text_layers)
-    return {event.image for event in events if event is not None}
+    """The names of the pictures `candidates`' picture layers (their Text Layers and Shapes) are drawn
+    from."""
+    candidates = list(candidates)
+    texts = (text_event(layer, math.inf) for candidate in candidates for layer in candidate.text_layers)
+    shapes = (shape_event(shape, math.inf) for candidate in candidates for shape in candidate.shapes)
+    return {event.image for events in (texts, shapes) for event in events if event is not None}
 
 
 def sweep(folder: Path, used: Iterable[str]) -> list[Path]:

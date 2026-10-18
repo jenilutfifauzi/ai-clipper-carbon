@@ -24,6 +24,7 @@ import {
   Snowflake,
   StepBack,
   StepForward,
+  Sticker,
   Trash2,
   Type,
   Undo2,
@@ -48,10 +49,11 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "audio" | "media" | "transitions";
+export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
+  { value: "stickers", label: "Stickers", icon: Sticker },
   { value: "audio", label: "Audio", icon: AudioLines },
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },

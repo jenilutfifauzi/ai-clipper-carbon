@@ -1,4 +1,4 @@
-import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, TextLayer, TextStyle, Transform } from "../../../api";
+import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
@@ -34,18 +34,18 @@ export interface Outcome {
   notice?: string;
 }
 
-export type Timed = TextLayer | MusicClip | Overlay;
-export type TimedKind = "text" | "music" | "overlay";
+export type Timed = TextLayer | Shape | MusicClip | Overlay;
+export type TimedKind = "text" | "shape" | "music" | "overlay";
 
 /**
  * How each kind of timed item behaves: its list in the edits; where a copy goes when there is no
- * room after it (a text a little lower, so that both show); and, split in two, what each part keeps
+ * room after it (a text or a Shape a little lower, so that both show); and, split in two, what each part keeps
  * (a song's or video's second part goes on from where the first stops in its file; a song has no
  * fades at the cut, nor a fade longer than its part).
  */
 const KINDS: {
   [K in TimedKind]: {
-    list: "text_layers" | "music" | "overlays";
+    list: "text_layers" | "shapes" | "music" | "overlays";
     aside: (item: Timed) => Partial<Timed>;
     cut: (item: Timed, at: number) => { first: Partial<Timed>; second: Partial<Timed> };
   };
@@ -54,6 +54,14 @@ const KINDS: {
     list: "text_layers",
     aside: (item) => {
       const { transform } = item as TextLayer;
+      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+    },
+    cut: () => ({ first: {}, second: {} }),
+  },
+  shape: {
+    list: "shapes",
+    aside: (item) => {
+      const { transform } = item as Shape;
       return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
     },
     cut: () => ({ first: {}, second: {} }),
@@ -99,6 +107,7 @@ export function remove(scene: PickContext, rippled = scene.magnetic ?? false): O
     ...edits,
     segments: kept(edits.segments, "segment"),
     text_layers: kept(edits.text_layers, "text"),
+    shapes: kept(edits.shapes, "shape"),
     music: kept(edits.music, "music"),
     overlays: kept(edits.overlays, "overlay"),
   };
@@ -266,8 +275,8 @@ export function pickAll(edits: AdvancedEdits): Pick {
   return picked(...refs("segment"), ...refs("text"), ...refs("music"), ...refs("overlay"));
 }
 
-// The picked Segments in Main Track order, and the picked Text Layers, Music Clips and Overlays in
-// their lists' order: the order their copies and parts are made and picked in.
+// The picked Segments in Main Track order, and the picked Text Layers, Shapes, Music Clips and
+// Overlays in their lists' order: the order their copies and parts are made and picked in.
 export function pickedItems(scene: PickContext) {
   const { edits, pick } = scene;
   const segments = edits.segments.filter((segment) => isPicked(pick, "segment", segment.id));
@@ -514,8 +523,8 @@ export function freezer(scene: PickContext, now: () => number, apply: (outcome: 
 }
 
 /**
- * The picked Text Layers, Music Clips and Overlays moved `delta` seconds later (earlier when it is
- * negative), as a group: no further than keeps them all inside the Clip. Picked Segments stay.
+ * The picked Text Layers, Shapes, Music Clips and Overlays moved `delta` seconds later (earlier when
+ * it is negative), as a group: no further than keeps them all inside the Clip. Picked Segments stay.
  */
 export function move(scene: PickContext, delta: number): Outcome | null {
   const { layers } = pickedItems(scene);
@@ -531,24 +540,27 @@ export function move(scene: PickContext, delta: number): Outcome | null {
   return { edits: next, pick: scene.pick };
 }
 
-// The output's size, in pixels: where the middles of Text Layers and Overlays can be.
+// The output's size, in pixels: where the middles of Text Layers, Shapes and Overlays can be.
 const FRAME = { width: 1080, height: 1920 };
 
-// Where a Text Layer's or an Overlay's middle is on the frame (its Transform has it), and the item with
-// its middle at (x, y).
-const middleOf = (item: TextLayer | Overlay) => item.transform;
-const middledAt = <T extends TextLayer | Overlay>(item: T, x: number, y: number): T => ({ ...item, transform: { ...item.transform, x, y } });
+// What is placed on the frame by its Transform: a Text Layer, a Shape or an Overlay.
+type Placed = TextLayer | Shape | Overlay;
 
-// Where a keyed Text Layer's or Overlay's middle goes along `axis`: its Keyframes' values.
-const keyedMiddles = (item: TextLayer | Overlay, axis: "x" | "y") => (item.keys[axis] ?? []).map((key) => key.value);
+// Where a Text Layer's, a Shape's or an Overlay's middle is on the frame (its Transform has it), and
+// the item with its middle at (x, y).
+const middleOf = (item: Placed) => item.transform;
+const middledAt = <T extends Placed>(item: T, x: number, y: number): T => ({ ...item, transform: { ...item.transform, x, y } });
+
+// Where a keyed Text Layer's, Shape's or Overlay's middle goes along `axis`: its Keyframes' values.
+const keyedMiddles = (item: Placed, axis: "x" | "y") => (item.keys[axis] ?? []).map((key) => key.value);
 
 /**
- * The picked Text Layers and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
+ * The picked Text Layers, Shapes and Overlays moved on the frame by (`dx`, `dy`) output pixels, together: no
  * further than keeps each one's middle in the frame. A keyed one's motion moves with it: each of its
  * x and y Keyframes by as much, kept in the frame as its middle is.
  */
 export function nudge(scene: PickContext, dx: number, dy: number): Outcome | null {
-  const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "overlay"; item: TextLayer | Overlay }[];
+  const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "shape" | "overlay"; item: Placed }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
   const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), FRAME.width);
@@ -558,7 +570,7 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   for (const { kind, item } of placed) {
     const list = KINDS[kind].list;
     Object.assign(next, {
-      [list]: (next[list] as (TextLayer | Overlay)[]).map((other) => {
+      [list]: (next[list] as Placed[]).map((other) => {
         if (other.id !== item.id) return other;
         const { x, y } = middleOf(other);
         const moved = middledAt(other, Math.round(x + byX), Math.round(y + byY));

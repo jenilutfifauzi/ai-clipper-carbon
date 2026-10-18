@@ -109,6 +109,7 @@ def test_job_reaches_review_with_candidates_ranked_by_predicted_score(client, fr
         "layout_overrides": [],
         "hook_kicker": "",
         "text_layers": [],
+        "shapes": [],
         "music": [],
         "source_volume": 1.0,
         "segments": [],

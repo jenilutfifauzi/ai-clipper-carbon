@@ -3,11 +3,12 @@ import type { CandidateChange, RenderPlan } from "../../../api";
 // The Tracks of the Advanced Edit's Timeline (GLOSSARY.md), and what is hidden, muted or locked of
 // them. Kept in the editor only: never saved, never undone, and the Clip renders as if none were set.
 
-export type TrackKind = "text" | "overlay" | "video" | "captions" | "hook" | "music";
+export type TrackKind = "text" | "shape" | "overlay" | "video" | "captions" | "hook" | "music";
 
 /** Each Track's name, and whether it can be hidden (it shows) and muted (it sounds). Every Track locks. */
 export const TRACKS: Record<TrackKind, { label: string; hide: boolean; mute: boolean }> = {
   text: { label: "Text", hide: true, mute: false },
+  shape: { label: "Shape", hide: true, mute: false },
   overlay: { label: "Overlay", hide: true, mute: true },
   video: { label: "Video", hide: true, mute: true },
   captions: { label: "Captions", hide: true, mute: false },
@@ -28,12 +29,13 @@ export function toggledTrack(state: TrackState, control: TrackControl, kind: Tra
   return { ...state, [control]: now.includes(kind) ? now.filter((other) => other !== kind) : [...now, kind] };
 }
 
-/** The plan as the preview draws it: without the hidden Tracks' Text Layers, Overlays, captions and hook. */
+/** The plan as the preview draws it: without the hidden Tracks' Text Layers, Shapes, Overlays, captions and hook. */
 export function shownPlan(plan: RenderPlan, { hidden }: TrackState): RenderPlan {
   if (!hidden.length) return plan;
   return {
     ...plan,
     texts: hidden.includes("text") ? [] : plan.texts,
+    shapes: hidden.includes("shape") ? [] : plan.shapes,
     overlays: hidden.includes("overlay") ? [] : plan.overlays,
     captions: hidden.includes("captions") ? [] : plan.captions,
     hook: hidden.includes("hook") ? null : plan.hook,

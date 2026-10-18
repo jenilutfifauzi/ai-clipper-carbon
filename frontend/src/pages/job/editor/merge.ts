@@ -25,6 +25,7 @@ export interface Merged<T> {
 const KEYS = {
   segments: "id",
   text_layers: "id",
+  shapes: "id",
   music: "id",
   overlays: "id",
   transitions: "after",
@@ -92,6 +93,7 @@ const PART_OF: Record<Collision["field"], string> = {
   end: "Range",
   segments: "Segments",
   text_layers: "Text Layers",
+  shapes: "Shapes",
   music: "Music",
   overlays: "Overlays",
   transitions: "Transitions",

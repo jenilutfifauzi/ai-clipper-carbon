@@ -158,7 +158,7 @@ describe("a keyed Text Layer on the stage", () => {
 // .scratch/shapes/issues/01-picture-layers-prefactor.md: the preview draws a plan's picture layers by
 // what every kind has (docs/adr/0011).
 describe("a plan's picture layers", () => {
-  const plan = (texts: TextEvent[]) => ({ texts }) as RenderPlan;
+  const plan = (texts: TextEvent[]) => ({ shapes: [], texts }) as unknown as RenderPlan;
   const named = (id: string, start = 0): TextEvent => ({ ...event(), layer: { ...event().layer, id }, start });
 
   test("are its Text Layers in drawing order, each by its id on the stage", () => {

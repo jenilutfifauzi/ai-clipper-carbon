@@ -11,15 +11,13 @@ import { FacePicker } from "../editor/FacePicker";
 import { FRAME } from "../editor/picture";
 import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
-import { newId, round } from "./edits";
+import { newId, newTiming } from "./edits";
 import { styled } from "./textStyle";
 import { ApplyTextPreset, SaveAsTextPreset } from "./TextPresets";
 import { layersStyle, layerStyle, PlateGroup, ShadowGroup, SpacingGroup } from "./TextStyleGroups";
 import { TimingFields } from "./TimingFields";
 import { TextTransformFields } from "./TransformFields";
 
-// A new Text Layer stays this long, or to the Clip's end.
-const TEXT_SECS = 3;
 // The backend's limit (TEXT_LAYER_MAX_CHARS in app/candidates.py).
 const TEXT_MAX_CHARS = 300;
 
@@ -29,8 +27,7 @@ export type UntimedTextLayer = Omit<TextLayer, "id" | "start" | "secs" | "keys">
 
 /** A Text Layer of `made` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
 export function newTextLayer(made: UntimedTextLayer, at: number, duration: number): TextLayer {
-  const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
-  return { ...made, id: newId(), start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)), keys: {} };
+  return { ...made, id: newId(), ...newTiming(at, duration), keys: {} };
 }
 
 const ALIGNS = [

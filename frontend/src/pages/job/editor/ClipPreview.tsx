@@ -315,8 +315,8 @@ const behindId = (scene: number): StageId => `picture:${scene}`;
 /**
  * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
  * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at
- * `time`, then the Text Layers, by their areas (textStage.ts) as they are at `time`, each retyped by
- * `edit` when given.
+ * `time`, then the Shapes and the Text Layers, by their areas (layerStage.ts) as they are at `time`,
+ * each Text Layer retyped by `edit` when given.
  */
 function stagePictures(
   plan: RenderPlan,
@@ -360,6 +360,21 @@ function stagePictures(
       onCrop: overlays!.onCrop && ((crop, next, group) => overlays!.onCrop!(event.id, crop, next, group)),
     });
   }
+  const shapes = controls.shapes;
+  for (const event of shapes ? plan.shapes : []) {
+    const { picture, fitted } = layerStagePicture(event);
+    pictures.push({
+      id: `shape:${event.layer.id}`,
+      label: "Shape",
+      start: event.start,
+      end: event.end,
+      picture,
+      fitted,
+      transform: shapes!.transformOf(event.layer.id, time) ?? event.layer.transform,
+      grips: "corners-rotate",
+      onTransform: (next, group) => shapes!.onTransform(event.layer.id, next, group, time),
+    });
+  }
   const texts = controls.texts;
   for (const event of texts ? plan.texts : []) {
     const { picture, fitted } = layerStagePicture(event);
@@ -398,8 +413,9 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: nu
     const shown = edit.shownPicture(id, picture);
     return shown === picture ? event : heldLayerEvent(at, picture, shown);
   };
+  const shapes = plan.shapes.map((event) => held(event, `shape:${event.layer.id}`));
   const texts = plan.texts.map((event) => held(event, `text:${event.layer.id}`));
-  return { ...plan, overlays, scenes, texts };
+  return { ...plan, overlays, scenes, shapes, texts };
 }
 
 // The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
@@ -504,12 +520,13 @@ function useWatermarkDrag(
 
 /**
  * The hold of an editor on what can be moved on the preview: the hook ("hook"), the captions
- * ("captions"), with `texts` each Text Layer ("text:<id>"), with `overlays` each Overlay
- * ("overlay:<id>"), and with `pictureAt` the picture behind them all ("picture:<n>": the Segment
- * under the playhead, at the plan's Scene n). Which are picked, what a click picks (with Shift, Cmd or Ctrl, `toggle`), where a
- * move or resize puts one, and what retyping one saves.
+ * ("captions"), with `texts` each Text Layer ("text:<id>"), with `shapes` each Shape ("shape:<id>"),
+ * with `overlays` each Overlay ("overlay:<id>"), and with `pictureAt` the picture behind them all
+ * ("picture:<n>": the Segment under the playhead, at the plan's Scene n). Which are picked, what a
+ * click picks (with Shift, Cmd or Ctrl, `toggle`), where a move or resize puts one, and what
+ * retyping one saves.
  */
-export type StageId = "hook" | "captions" | `text:${string}` | `overlay:${string}` | `picture:${number}`;
+export type StageId = "hook" | "captions" | `text:${string}` | `shape:${string}` | `overlay:${string}` | `picture:${number}`;
 
 // What is picked on the stage by its id: all but the picture behind, which says itself (PictureTarget).
 export type PickedOnStage = Exclude<StageId, `picture:${number}`>;
@@ -548,6 +565,12 @@ export interface StageControls {
     onTransform: (id: string, transform: Transform, group: string, time: number) => void;
     // Its box's wrap width or fixed height set by the box Grip on `edge` (`length`, its own pixels).
     onBox?: (id: string, edge: BoxEdge, length: number, group: string) => void;
+  };
+  // The Shapes (their Track unlocked), pictures with corners and a rotate handle as a Text Layer's
+  // are: each one's Transform as shown at `time`, and where a gesture made from it there puts it.
+  shapes?: {
+    transformOf: (id: string, time: number) => Transform | undefined;
+    onTransform: (id: string, transform: Transform, group: string, time: number) => void;
   };
   // The hook or the captions held where they are: not moved, resized or retyped (their Track locked).
   fixed?: ("hook" | "captions")[];

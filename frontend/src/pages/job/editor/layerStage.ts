@@ -1,4 +1,4 @@
-// .scratch/text-advanced/issues/05-text-layer-transform-on-stage.md: a picture layer (a Text Layer)
+// .scratch/text-advanced/issues/05-text-layer-transform-on-stage.md: a picture layer (a Text Layer, a Shape)
 // on the stage is a picture as an Overlay is (docs/adr/0007, 0010): its Grips are on its area (a Text
 // Layer's words and plate, not the room its picture keeps round them for its ink), scaled and turned
 // by its Transform. Its corners scale it and the handle above turns it; it has no edges to stretch
@@ -44,7 +44,8 @@ export function layerEventAt<Event extends PictureLayerEvent>(event: Event, time
 }
 
 /** The plan's picture layers as they are at `time` (`layerEventAt`), by kind. */
-export const layersAt = (plan: RenderPlan, time: number): Pick<RenderPlan, "texts"> => ({
+export const layersAt = (plan: RenderPlan, time: number): Pick<RenderPlan, "shapes" | "texts"> => ({
+  shapes: plan.shapes.map((event) => layerEventAt(event, time)),
   texts: plan.texts.map((event) => layerEventAt(event, time)),
 });
 

@@ -124,6 +124,8 @@ from app.candidates import (
     MusicClip,
     Overlay,
     Shadow,
+    Shape,
+    ShapeStyle,
     TextAlign,
     TextLayer,
     TextStyle,
@@ -214,6 +216,9 @@ MAX_TEXT_PICTURE = 4096
 # (`reached_scale`): scaling it within one step is drawing the same picture smaller or larger, and
 # only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
 TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
+# A Shape's picture holds its figure and this many pixels round it, at scale 1: room for the edge
+# libass softens.
+SHAPE_ROOM = 2
 
 
 # The planner's input, found by app/analysis.py.
@@ -699,8 +704,28 @@ class TextLayout(PictureLayout):
         return {self.style.font, *(run.face for line in self.runs for run in line)}
 
 
-# How Text Layers' pictures are drawn: a new one is new pictures, under new names.
+# How Text Layers' and Shapes' pictures are drawn: a new one is new pictures, under new names.
 TEXT_PICTURE_FORMAT = "v1-libass-matte"
+SHAPE_PICTURE_FORMAT = "v1-libass-matte-shape"
+
+
+@dataclass(frozen=True)
+class ShapeLayout(PictureLayout):
+    """What a Shape's picture shows (docs/adr/0011), in its own pixels, `width` x `height` at scale 1:
+    its figure as its `style` draws it, centred, SHAPE_ROOM round it. Rasterised `scale` times as
+    large (as a Text Layer's, the largest scale the Shape is drawn at, up to the next of
+    TEXT_PICTURE_SCALES) and named by a hash of all of it and of SHAPE_PICTURE_FORMAT, so that the
+    same picture is one file wherever the Shape is. It draws no text: it has no Faces."""
+
+    style: ShapeStyle
+    width: int
+    height: int
+    scale: float = 1.0
+
+    @property
+    def name(self) -> str:
+        drawn = json.dumps([SHAPE_PICTURE_FORMAT, asdict(self)], sort_keys=True, default=str)
+        return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
 
 
 class PictureLayer:
@@ -712,9 +737,9 @@ class PictureLayer:
     for a keyed one at a time). In its JSON too: its picture's file `image`, and `picture_key`, which
     names its pictures at every scale (PictureLayout.picture_key): the preview draws a larger picture
     of the same key it has rather than fetch a smaller one. Each kind has a frozen dataclass of its
-    own with these: a Text Layer's is a TextEvent."""
+    own with these: a Text Layer's is a TextEvent, a Shape's a ShapeEvent."""
 
-    layer: TextLayer
+    layer: TextLayer | Shape
     start: float
     end: float
     area: Box
@@ -761,6 +786,22 @@ class TextEvent(PictureLayer):
 
 
 @dataclass(frozen=True)
+class ShapeEvent(PictureLayer):
+    """A Shape as drawn, a picture layer (`PictureLayer`) on screen from `start` to `end` (seconds
+    into the Clip). `area` is its figure's box, `width` x `height` of its style about its Transform's
+    centre (to within half a pixel); its picture is that and SHAPE_ROOM round it, centred on the same
+    centre."""
+
+    layer: Shape
+    start: float
+    end: float
+    area: Box
+    layout: ShapeLayout
+    picture: Picture
+    bounds: Box
+
+
+@dataclass(frozen=True)
 class RenderPlan:
     # The Clip's range on the Source's timeline; with several Segments, the hull of what they show.
     start: float
@@ -790,6 +831,8 @@ class RenderPlan:
     overlays: list[OverlayEvent] = field(default_factory=list)
     # Between Segments, in order.
     transitions: list[TransitionEvent] = field(default_factory=list)
+    # The Shapes that show, in drawing order, under the Text Layers.
+    shapes: list[ShapeEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -797,8 +840,9 @@ class RenderPlan:
 
     @property
     def picture_layers(self) -> list[PictureLayer]:
-        """Its picture layers in drawing order, over the captions and under the hook: its Text Layers."""
-        return list(self.texts)
+        """Its picture layers in drawing order, over the captions and under the hook: its Shapes, then
+        its Text Layers."""
+        return [*self.shapes, *self.texts]
 
 
 def reframes(source: SourceMetadata) -> bool:
@@ -833,6 +877,7 @@ def plan_render(
     overlays: list[Overlay] | None = None,
     media_info: dict[str, MediaInfo] | None = None,
     framing: Framing | None = None,
+    shapes: list[Shape] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -846,8 +891,9 @@ def plan_render(
     Manual Scene is the Source placed by its override's Framing, or by `framing` (the Candidate's)
     without one (`framed_scene`), and needs no faces; its override's Keyframes move it (`_keyed_manual`). The
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
-    `text_layers` (their times in seconds into the Clip) are drawn as `text_event` places them, and
-    `music` is heard as `audio_events` places it, given what `media_info` says of its songs.
+    `text_layers` and `shapes` (their times in seconds into the Clip) are drawn as `text_event` and
+    `shape_event` place them, and `music` is heard as `audio_events` places it, given what
+    `media_info` says of its songs.
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
     their items (whose videos' sound, when turned up, joins the music).
@@ -924,6 +970,7 @@ def plan_render(
         segments=segments,
         overlays=overlay_events(overlays or [], duration, media_info or {}),
         transitions=transitions,
+        shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
     )
 
 
@@ -1567,6 +1614,25 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     )
 
 
+def shape_event(shape: Shape, duration: float) -> ShapeEvent | None:
+    """The Shape in a Clip lasting `duration`, until its end if that comes sooner: its figure
+    `width` x `height` of its style, centred on its Transform's centre (on the frame, its picture
+    maybe past the edges), drawn as the picture of its layout. None when it would start at or after
+    the Clip's end."""
+    start = round(shape.start, 3)
+    if start >= duration:
+        return None
+    style, (x, y) = shape.style, (shape.transform.x, shape.transform.y)
+    width, height = style.width + 2 * SHAPE_ROOM, style.height + 2 * SHAPE_ROOM
+    # Made even, as a Text Layer's, the figure staying in its middle.
+    width, height = width + width % 2, height + height % 2
+    layout = ShapeLayout(style, width, height, picture_scale(shape, width, height))
+    area = Box(round(x - style.width / 2), round(y - style.height / 2), style.width, style.height)
+    picture = layer_picture(layout, (x - width / 2, y - height / 2), shape, start)
+    end = round(min(start + shape.secs, duration), 3)
+    return ShapeEvent(shape, start, end, area, layout, picture, _turned_box(area, picture.centre, shape.transform))
+
+
 def text_lines(text: str, style: TextStyle) -> list[str]:
     """A Text Layer's `text` as the lines it is set in, in `style`: without what no Face nor emoji
     image has (`text_runs`), blank lines at either end left out, broken at its newlines and between
@@ -1658,7 +1724,7 @@ def _text_layout(
     )
 
 
-def reached_scale(layer: TextLayer) -> float:
+def reached_scale(layer: TextLayer | Shape) -> float:
     """The largest scale a picture layer's item is drawn at: its Transform's, or its largest scale
     Keyframe's while its scale is keyed (the Keyframes replace it). Pop grows it to its scale, never
     past it (app/renderer.py's POP_FROM)."""
@@ -1666,7 +1732,7 @@ def reached_scale(layer: TextLayer) -> float:
     return max(key.value for key in keyed) if keyed else layer.transform.scale
 
 
-def picture_scale(layer: TextLayer, width: int, height: int) -> float:
+def picture_scale(layer: TextLayer | Shape, width: int, height: int) -> float:
     """The scale a picture layer's picture, `width` x `height` at scale 1, is rasterised at: the first
     of TEXT_PICTURE_SCALES its item's reached scale doesn't pass, and no more than MAX_TEXT_PICTURE
     on its longest side."""
@@ -1674,7 +1740,7 @@ def picture_scale(layer: TextLayer, width: int, height: int) -> float:
     return round(min(stepped, MAX_TEXT_PICTURE / max(width, height)), 4)
 
 
-def layer_picture(layout: PictureLayout, origin: tuple[int, int], layer: TextLayer, start: float) -> Picture:
+def layer_picture(layout: PictureLayout, origin: tuple[float, float], layer: TextLayer | Shape, start: float) -> Picture:
     """How a picture layer's picture is drawn, its top-left corner at `origin` at scale 1: scaled,
     turned and faded by its item's Transform about its middle, as an Overlay's is. Keyed, it moves as
     an Overlay does (`with_motion`, its Keyframes from `start` seconds into the Clip), its whole

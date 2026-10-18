@@ -1,4 +1,4 @@
-import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, TextLayer, Transform } from "../../../api";
+import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, Shape, TextLayer, Transform } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { PICTURE_KEYS, valueAt } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
@@ -24,13 +24,14 @@ import type { TrackKind } from "./trackState";
  */
 
 /**
- * An item that can have Keyframes: an Overlay, a Text Layer, a Music Clip, a video's Segment, or a
- * Manual Scene of a Layout Override's (`index` its place among the plan's Scenes, `sceneRef`: that
- * Segment's showing of it).
+ * An item that can have Keyframes: an Overlay, a Text Layer, a Shape, a Music Clip, a video's
+ * Segment, or a Manual Scene of a Layout Override's (`index` its place among the plan's Scenes,
+ * `sceneRef`: that Segment's showing of it).
  */
 export type KeyedRef =
   | { kind: "overlay"; id: string }
   | { kind: "text"; id: string }
+  | { kind: "shape"; id: string }
   | { kind: "music"; id: string }
   | { kind: "segment"; id: string }
   | { kind: "scene"; index: number };
@@ -207,6 +208,19 @@ const KINDS: { [K in KeyedRef["kind"]]: Kind<RefOf<K>> } = {
     write: (edits, ref, keys, set) => ({
       ...edits,
       text_layers: edits.text_layers.map((layer) => (layer.id === ref.id ? { ...layer, keys, transform: set.transform ?? layer.transform } : layer)),
+    }),
+  },
+  // Its Transform only, as a Text Layer's.
+  shape: {
+    track: "shape",
+    find: (edits, ref) => {
+      const shape = edits.shapes.find((other) => other.id === ref.id);
+      return shape ? asKeyed({ start: shape.start, secs: shape.secs, keys: shape.keys, transform: shape.transform, volume: 1 }) : null;
+    },
+    keyable: () => [...PICTURE_KEYS],
+    write: (edits, ref, keys, set) => ({
+      ...edits,
+      shapes: edits.shapes.map((shape) => (shape.id === ref.id ? { ...shape, keys, transform: set.transform ?? shape.transform } : shape)),
     }),
   },
   music: {
@@ -432,8 +446,8 @@ export const resetOverlay = (overlay: Overlay, defaults: Transform): Overlay => 
   keys: clearKeys(overlay.keys, PICTURE_KEYS),
 });
 
-/** Text Layer `layer` Reset: unscaled, unturned and opaque where it is, and none of those fields' Keyframes (its centre's kept). */
-export const resetTextLayer = (layer: TextLayer): TextLayer => ({
+/** Text Layer or Shape `layer` Reset: unscaled, unturned and opaque where it is, and none of those fields' Keyframes (its centre's kept). */
+export const resetTextLayer = <T extends TextLayer | Shape>(layer: T): T => ({
   ...layer,
   transform: { ...layer.transform, scale: 1, rotation: 0, opacity: 1 },
   keys: clearKeys(layer.keys, ["scale", "rotation", "opacity"]),

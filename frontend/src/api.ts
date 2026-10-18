@@ -465,8 +465,36 @@ export interface TextLayer {
   keys: Keys;
 }
 
-// What a picture layer draws (a Text Layer): its id, its Transform and Keyframes, and its in/out
-// animations.
+// The figure a Shape draws (backend/app/candidates.py's ShapeKind, docs/adr/0011).
+export type ShapeKind = "rectangle";
+
+// How a Shape looks (backend/app/candidates.py): its figure `kind`, `width` x `height` output
+// pixels before its Transform's scale (whole pixels, 2 to 4096), filled with `fill` (null: none).
+// Never stretched: a wider Shape is a new width, drawn again.
+export interface ShapeStyle {
+  kind: ShapeKind;
+  width: number;
+  height: number;
+  fill: string | null;
+}
+
+// A figure of the Advanced Edit (backend/app/candidates.py): drawn in its Shape Style from `start`
+// for `secs` in Timeline time, centred by its Transform (never stretched nor flipped), coming on and
+// going off as a Text Layer does, its `keys` moving it as a Text Layer's do.
+export interface Shape {
+  id: string;
+  start: number;
+  secs: number;
+  transform: Transform;
+  style: ShapeStyle;
+  animation_in: Animation;
+  animation_out: Animation;
+  animation_ms: number;
+  keys: Keys;
+}
+
+// What a picture layer draws (a Text Layer, a Shape): its id, its Transform and Keyframes, and its
+// in/out animations.
 export interface PictureLayerItem {
   id: string;
   transform: Transform;
@@ -499,6 +527,10 @@ export interface TextEvent extends PictureLayerEvent<TextLayer> {
   anchors: [number, number][];
   box: Box | null;
 }
+
+// A Shape as drawn, a picture layer: `area` is its figure's box, its Shape Style's width and height
+// about its Transform's centre; its picture holds that and a little room round it.
+export type ShapeEvent = PictureLayerEvent<Shape>;
 
 // A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
 // seconds into the file, heard from `start` in Timeline time, at `volume` (0 to 2), faded in and out.
@@ -746,6 +778,8 @@ export interface RenderPlan {
   overlays: OverlayEvent[];
   // Between Segments, in order.
   transitions: TransitionEvent[];
+  // The Shapes that show, in drawing order, under the Text Layers.
+  shapes: ShapeEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
@@ -874,6 +908,8 @@ export interface Candidate {
   hook_kicker: string;
   // The Advanced Edit's, drawn in this order (the last on top).
   text_layers: TextLayer[];
+  // The Advanced Edit's, drawn in this order over the captions and under the Text Layers.
+  shapes: Shape[];
   // Its Music Clips, under its own sound at `source_volume` (0 to 2).
   music: MusicClip[];
   source_volume: number;
@@ -912,6 +948,8 @@ export interface CandidateChange {
   hook_kicker?: string;
   // Replaces the Candidate's Text Layers as a whole.
   text_layers?: TextLayer[];
+  // Replaces the Candidate's Shapes as a whole.
+  shapes?: Shape[];
   // Replaces the Candidate's Music Clips as a whole.
   music?: MusicClip[];
   source_volume?: number;

@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Lock, LockOpen, Music, Type, Volume2, VolumeX } from "lucide-react";
+import { Eye, EyeOff, Lock, LockOpen, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
@@ -11,6 +11,7 @@ import {
   type Overlay,
   type RenderPlan,
   type Retiming,
+  type Shape,
   type SourceMetadata,
   type TextLayer,
   type TransitionKind,
@@ -49,6 +50,7 @@ export interface TrackHandlers {
   onSelect: (pick: Pick) => void;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
+  onShape: (shape: Shape, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
@@ -78,9 +80,10 @@ const MEDIA_WAVE_BAND = 14;
 const CAPTION_SEEK_IN = 0.05;
 
 /**
- * The tracks, top to bottom: the Text Layers' lanes, the Overlays' lanes, the Main Track (its
- * Segments as played over their Scenes, and the joins between them), the caption lines, the hook,
- * and the Music Clips' lanes. Each track takes what is dropped on it from the asset panel.
+ * The tracks, top to bottom: the Text Layers' lanes, the Shapes' lanes, the Overlays' lanes, the
+ * Main Track (its Segments as played over their Scenes, and the joins between them), the caption
+ * lines, the hook, and the Music Clips' lanes. Each track but the Shape Track takes what is dropped
+ * on it from the asset panel.
  */
 export function Tracks({
   geometry,
@@ -124,7 +127,7 @@ export function Tracks({
 }) {
   const { pps } = geometry;
   const { onSelect, onDelete } = handlers;
-  // A Music Clip or Overlay trimmed: its Keyframes re-anchored from where they were as the drag began.
+  // A Shape, Music Clip or Overlay trimmed: its Keyframes re-anchored from where they were as the drag began.
   const [retime] = useState(gestureRetime);
   // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
   const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
@@ -132,7 +135,7 @@ export function Tracks({
   const alone = (item: ItemRef) => {
     if (itemsOf(pick).length > 1) onSelect(picked(item));
   };
-  // A Text Layer, Music Clip or Overlay dragged or trimmed, from `now` (its start): moved with the
+  // A Text Layer, Shape, Music Clip or Overlay dragged or trimmed, from `now` (its start): moved with the
   // other picked ones when it is picked with others, else changed alone by `update`.
   const layerChanged = (item: ItemRef, now: number, { start, edge }: { start: number; edge: "move" | "start" | "end" }, group: string, update: () => void) => {
     if (edge === "move" && isPicked(pick, item.kind, item.id) && itemsOf(pick).length > 1) {
@@ -156,6 +159,7 @@ export function Tracks({
   const dimmed = (kind: TrackKind) => tracks.hidden.includes(kind);
   const locked = (kind: TrackKind) => tracks.locked.includes(kind);
   const textLanes = lanes(edits.text_layers, true);
+  const shapeLanes = lanes(edits.shapes, true);
   const overlayLanes = lanes(edits.overlays, true);
   const musicLanes = lanes(edits.music, false);
   return (
@@ -193,6 +197,38 @@ export function Tracks({
               >
                 <Type aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium">{layer.text.split("\n").join(" ") || "Empty text"}</span>
+              </TimelineItem>
+            );
+          })}
+        </TrackRow>
+      ))}
+      {shapeLanes.map((lane, i) => (
+        <TrackRow key={`shape${shapeLanes.length - i}`} label={i === shapeLanes.length - 1 ? label("shape") : ""} dimmed={dimmed("shape")} locked={locked("shape")}>
+          {lane.map((shape) => {
+            const selected = isPicked(pick, "shape", shape.id);
+            return (
+              <TimelineItem
+                key={shape.id}
+                geometry={geometry}
+                start={shape.start}
+                end={Math.min(shape.start + shape.secs, duration)}
+                max={duration}
+                minSecs={ITEM_MIN_SECS}
+                tone="shape"
+                selected={selected}
+                changed={changed.has(shape.id)}
+                label={`Shape, ${shape.style.kind}, from ${shape.start.toFixed(1)} s for ${shape.secs.toFixed(1)} s`}
+                pickKey={keyOf({ kind: "shape", id: shape.id })}
+                onSelect={choose({ kind: "shape", id: shape.id })}
+                onChange={({ start, end, edge }, group) =>
+                  layerChanged({ kind: "shape", id: shape.id }, shape.start, { start, edge }, group, () =>
+                    handlers.onShape(retime(shape, { ...shape, start: round(start), secs: round(end - start) }, edge, group), group),
+                  )
+                }
+                onDelete={selected ? onDelete : undefined}
+              >
+                <Square aria-hidden size={12} className="shrink-0" />
+                <span className="truncate font-medium capitalize">{shape.style.kind}</span>
               </TimelineItem>
             );
           })}

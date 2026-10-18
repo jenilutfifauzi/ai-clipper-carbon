@@ -201,19 +201,69 @@ class TextLayer:
     keys: "Keys" = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _check_text_transform(self)
+        _check_unstretched(f"Text Layer {self.id}", self.transform, "set its style's size")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Text Layer {self.id}", PICTURE_KEYS, self.secs))
 
 
-def _check_text_transform(layer: TextLayer) -> None:
-    """ValueError for a Text Layer's Transform that stretches or flips it."""
-    transform = layer.transform
+def _check_unstretched(item: str, transform: Transform, sized: str) -> None:
+    """ValueError for the Transform of a picture layer's `item` (a Text Layer, a Shape) that
+    stretches or flips it; `sized` says how else it is made larger."""
     if transform.stretch_x != 1 or transform.stretch_y != 1:
-        raise ValueError(
-            f"Text Layer {layer.id} can't be stretched: its transform's stretch_x and stretch_y stay 1 (scale it, or set its style's size)"
-        )
+        raise ValueError(f"{item} can't be stretched: its transform's stretch_x and stretch_y stay 1 (scale it, or {sized})")
     if transform.flip_h or transform.flip_v:
-        raise ValueError(f"Text Layer {layer.id} can't be flipped: its transform's flip_h and flip_v stay false")
+        raise ValueError(f"{item} can't be flipped: its transform's flip_h and flip_v stay false")
+
+
+class ShapeKind(StrEnum):
+    """The figure a Shape draws (docs/adr/0011)."""
+
+    RECTANGLE = "rectangle"
+
+
+# The least and the most a Shape Style's width and height are, in output pixels.
+SHAPE_SIZE = (2, 4096)
+ShapeSize = Annotated[int, Field(ge=SHAPE_SIZE[0], le=SHAPE_SIZE[1])]
+
+
+@dataclass(frozen=True)
+class ShapeStyle:
+    """How a Shape looks (docs/adr/0011): its figure `kind`, `width` x `height` output pixels before
+    its Transform's scale, filled with `fill` (None: none). Never stretched: a wider Shape is a new
+    width, drawn again, so that what is drawn round its edges keeps its size."""
+
+    kind: ShapeKind = ShapeKind.RECTANGLE
+    width: ShapeSize = 400
+    height: ShapeSize = 400
+    fill: Colour | None = "#FFFFFF"
+
+
+@dataclass(frozen=True)
+class Shape:
+    """A figure of the Advanced Edit (docs/adr/0011): drawn in its `style` from `start` for `secs` in
+    Timeline time, centred by its `transform` (never stretched nor flipped), coming on and going off
+    as a Text Layer does. Its `keys` move its centre, scale, rotation and opacity over its length;
+    its animations are stacked on them."""
+
+    # Names it in the editor.
+    id: ItemId
+    # In Timeline time, so that trimming the Clip leaves it where it was in it.
+    start: TimelineStart
+    secs: TimelineSecs
+    # It is drawn as a picture, as a Text Layer is: scaled, turned and faded by its Transform, its
+    # centre on the frame and the picture maybe past its edges.
+    transform: Transform = Transform()
+    style: ShapeStyle = ShapeStyle()
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
+    # Keys is defined with Keyframes, below.
+    keys: "Keys" = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _check_unstretched(f"Shape {self.id}", self.transform, "set its style's width and height")
+        if self.style.fill is None:
+            raise ValueError(f"Shape {self.id} has nothing to draw: give its style a fill")
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Shape {self.id}", PICTURE_KEYS, self.secs))
 
 
 class Ease(NamedTuple):
@@ -639,6 +689,9 @@ class Candidate:
     hook_kicker: str = ""
     # The Advanced Edit's Text Layers, drawn in this order (the last on top).
     text_layers: list[TextLayer] = field(default_factory=list)
+    # The Advanced Edit's Shapes, drawn in this order (the last on top) over the captions and under
+    # the Text Layers; none in a Candidate saved before Shapes.
+    shapes: list[Shape] = field(default_factory=list)
     # Its Music Clips, mixed under its own sound, which is at `source_volume`.
     music: list[MusicClip] = field(default_factory=list)
     source_volume: Volume = 1.0

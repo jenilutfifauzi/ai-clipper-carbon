@@ -81,6 +81,7 @@ function edits(changes: Partial<AdvancedEdits> = {}): AdvancedEdits {
     framing: null,
     layout_overrides: [],
     text_layers: [],
+    shapes: [],
     music: [],
     source_volume: 1,
     segments: [segment("s1", 100, 110)],

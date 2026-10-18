@@ -1,6 +1,6 @@
 import { Crop as CropIcon, FlipHorizontal2, FlipVertical2 } from "lucide-react";
 import { useContext, useId, useState, type ReactNode } from "react";
-import type { Background, Crop, Keys, TextLayer, Transform } from "../../../api";
+import type { Background, Crop, Keys, Shape, TextLayer, Transform } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
@@ -230,28 +230,56 @@ export function useKeyedTransform({
  * the playhead is outside the layer (ADR 0008).
  */
 export function TextTransformFields({ layer, onChange }: { layer: TextLayer; onChange: (layer: TextLayer, group: string) => void }) {
+  return <LayerTransformFields kind="text" layer={layer} onChange={onChange} />;
+}
+
+/** A Shape's Transform as numbers (docs/adr/0011), as a Text Layer's (TextTransformFields). */
+export function ShapeTransformFields({ shape, onChange }: { shape: Shape; onChange: (shape: Shape, group: string) => void }) {
+  return <LayerTransformFields kind="shape" layer={shape} onChange={onChange} />;
+}
+
+// A picture layer's Transform as numbers: a Text Layer's or a Shape's (`kind`).
+function LayerTransformFields<T extends TextLayer | Shape>({
+  kind,
+  layer,
+  onChange,
+}: {
+  kind: "text" | "shape";
+  layer: T;
+  onChange: (layer: T, group: string) => void;
+}) {
   const keying = useContext(KeyingContext);
-  if (keying) return <KeyedTextTransform keying={keying} layer={layer} onChange={onChange} />;
+  if (keying) return <KeyedLayerTransform keying={keying} kind={kind} layer={layer} onChange={onChange} />;
   return (
     <TransformFields
       transform={layer.transform}
-      onChange={(transform, field) => onChange({ ...layer, transform }, `text:${layer.id}:transform.${field}`)}
-      onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)}
+      onChange={(transform, field) => onChange({ ...layer, transform }, `${kind}:${layer.id}:transform.${field}`)}
+      onReset={() => onChange(resetTextLayer(layer), `${kind}:${layer.id}:transform.reset`)}
     />
   );
 }
 
-function KeyedTextTransform({ keying, layer, onChange }: { keying: Keying; layer: TextLayer; onChange: (layer: TextLayer, group: string) => void }) {
+function KeyedLayerTransform<T extends TextLayer | Shape>({
+  keying,
+  kind,
+  layer,
+  onChange,
+}: {
+  keying: Keying;
+  kind: "text" | "shape";
+  layer: T;
+  onChange: (layer: T, group: string) => void;
+}) {
   const fields = useKeyedTransform({
-    item: { kind: "text", id: layer.id },
+    item: { kind, id: layer.id },
     span: layer,
     transform: layer.transform,
     keys: layer.keys,
     playback: keying.playback,
-    group: `text:${layer.id}:transform`,
+    group: `${kind}:${layer.id}:transform`,
     onWritten: (written, group) => onChange({ ...layer, ...written }, group),
   });
-  return <TransformFields {...fields} onReset={() => onChange(resetTextLayer(layer), `text:${layer.id}:transform.reset`)} />;
+  return <TransformFields {...fields} onReset={() => onChange(resetTextLayer(layer), `${kind}:${layer.id}:transform.reset`)} />;
 }
 
 const BACKGROUNDS = [

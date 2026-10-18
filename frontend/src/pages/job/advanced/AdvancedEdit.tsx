@@ -14,6 +14,8 @@ import {
   type MediaItem,
   type MusicClip,
   type Overlay,
+  type Shape,
+  type ShapeKind,
   type TextLayer,
   type Transform,
   type Transition,
@@ -109,6 +111,7 @@ import {
   unlockedPick,
   type Pick,
 } from "./pick";
+import { addShape } from "./shapeStyle";
 import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
@@ -458,6 +461,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ text_layers: [...edits.text_layers, layer] });
     added(picked({ kind: "text", id: layer.id }), true);
   }
+  function addNewShape(kind: ShapeKind, at = playback.time) {
+    if (refused("shape")) return;
+    const outcome = addShape(scene, kind, at, duration);
+    history.set(outcome.edits);
+    added(outcome.pick);
+  }
   function addMusic(item: MediaItem, at = playback.time) {
     if (refused("music")) return;
     const clip = newMusicClip(item, at, duration);
@@ -519,6 +528,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     />
   );
   const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
+  const updateShape = (shape: Shape, group?: string) => change({ shapes: replaced(edits.shapes, shape) }, group);
   // Moved or trimmed, on the Timeline or in the inspector: its fades kept within it.
   const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
@@ -682,9 +692,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     navigate(`/jobs/${job.id}?candidate=${candidate.id}`);
   }
 
-  // Whether the Text Layer or Overlay `id` is one of several picked on the frame, which move with it.
-  const placedTogether = (kind: "text" | "overlay", id: string) =>
-    isPicked(pick, kind, id) && itemsOf(pick).filter((item) => item.kind === "text" || item.kind === "overlay").length > 1;
+  // Whether the Text Layer, Shape or Overlay `id` is one of several picked on the frame, which move with it.
+  const placedTogether = (kind: "text" | "shape" | "overlay", id: string) =>
+    isPicked(pick, kind, id) && itemsOf(pick).filter((item) => item.kind === "text" || item.kind === "shape" || item.kind === "overlay").length > 1;
   function moveOnFrame(dx: number, dy: number, group: string) {
     const moved = nudge(scene, dx, dy);
     if (moved) history.set(moved.edits, group);
@@ -740,6 +750,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onBox: (id, edge, length, group) => {
           const layer = edits.text_layers.find((other) => other.id === id);
           if (layer) updateText({ ...layer, style: boxStyle(layer.style, edge, length) }, group);
+        },
+      };
+  // The Shapes on the preview, moved, scaled and turned there as Text Layers are; on a locked Track,
+  // only drawn. Their size is their Shape Style's, set in the inspector.
+  const shapeControls: StageControls["shapes"] = tracks.locked.includes("shape")
+    ? undefined
+    : {
+        transformOf: (id, time) => {
+          const shape = edits.shapes.find((other) => other.id === id);
+          return shape && heldTransform(shape.transform, shape.keys, shape, time);
+        },
+        onTransform: (id, transform, group, time) => {
+          const shape = edits.shapes.find((other) => other.id === id);
+          if (!shape) return;
+          const old = heldTransform(shape.transform, shape.keys, shape, time);
+          if (placedTogether("shape", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
+          else applyKeyed(writeItemTransform(scene, { kind: "shape", id }, transform, time, old), group);
         },
       };
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.
@@ -837,6 +864,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onWords: (update) => change({ word_edits: update(edits.word_edits) }),
         },
         texts: textControls,
+        shapes: shapeControls,
         fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
         overlays: overlayControls,
         pictureAt,
@@ -925,6 +953,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSelect: select,
             onEdits: history.set,
             onText: updateText,
+            onShape: updateShape,
             onMusic: updateMusic,
             onOverlay: updateOverlay,
             onSegment: moveSegment,
@@ -967,6 +996,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         transition={transitionPanel(!wide)}
         onEdits={history.set}
         onText={updateText}
+        onShape={updateShape}
         onMusic={updateMusic}
         onOverlay={updateOverlay}
         onSegment={updateSegment}
@@ -987,6 +1017,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
       onAddText={(made) => addText(made)}
+      onAddShape={(kind) => addNewShape(kind)}
       onAddMusic={(item) => addMusic(item)}
       onAddSource={(range) => addSegment({ id: newId(), ...range })}
       onAddVideo={(item) => addSegment(newMediaSegment(item, newId()))}
