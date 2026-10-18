@@ -486,7 +486,7 @@ class AudioEvent:
     `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
     `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
-    (`gain_at`). `id` is its item's. An Overlay's plays at its `speed` (docs/adr/0009), its pitch
+    (`gain_at`). `id` is its item's. It plays at its `speed` (docs/adr/0009, 0016), its pitch
     following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`."""
 
     media: str
@@ -1372,8 +1372,10 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
 
 
 def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
-    """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
-    (whose length is in `items`) ends, its fades, when together they are longer than what is left,
+    """The Music Clips as heard in a Clip lasting `duration`, each at its Speed, forwards or in
+    Reverse, and cut where the Clip or its song (whose length is in `items`) ends, as an Overlay's
+    sound is (`overlay_time`: in Reverse, a cut at the Clip's end leaves out the start of its part,
+    so its `offset` begins later); its fades, when together they are longer than what is left,
     both shortened by the same share to fit. This is the rule; the Timeline draws the fades by a copy
     of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts), tested on the same worked
     examples. One whose song is gone, or that would start at or after either end, isn't heard."""
@@ -1384,12 +1386,13 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         start = round(clip.start, 3)
         if length is None or start >= duration or clip.offset >= length:
             continue
-        end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
+        time = overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse, length, duration - start)
+        end = round(start + time.length, 3)
         share = min(1.0, (end - start) / ((clip.fade_in + clip.fade_out) or 1.0))
         events.append(
             AudioEvent(
-                clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3),
-                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id,
+                clip.media, start, end, round(time.start, 3), clip.volume, round(clip.fade_in * share, 3),
+                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse,
             )
         )
     return events

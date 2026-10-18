@@ -512,10 +512,12 @@ class Shadow:
 
 @dataclass(frozen=True)
 class MusicClip:
-    """A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
-    seconds into the file, heard from `start`, in Timeline time, at `volume`, faded in and out over
-    `fade_in` and `fade_out` seconds. Its `keys` shape its volume over its length (docs/adr/0008):
-    with volume Keyframes, they set it, not `volume`, and the fades multiply them."""
+    """A song (or a video's sound) from the Media Library under the Clip: heard from `start` for `secs`,
+    in Timeline time, playing `secs` × speed of its file from `offset` seconds into it (docs/adr/0016,
+    as a video Overlay's sound), at `volume`, faded in and out over `fade_in` and `fade_out` seconds.
+    Its `keys` shape its volume over its length (docs/adr/0008): with volume Keyframes, they set it,
+    not `volume`, and the fades multiply them. Its read is kept within its file with the Media
+    Library at hand (app/api.py)."""
 
     id: ItemId
     media: MediaId
@@ -523,6 +525,11 @@ class MusicClip:
     secs: TimelineSecs
     offset: FileOffset = 0.0
     volume: Volume = 1.0
+    # Its pitch kept unless `pitch`; backwards, from a Retimed copy, with `reverse`, `offset` then
+    # being where it ends in the file.
+    speed: Speed = 1.0
+    pitch: bool = False
+    reverse: bool = False
     fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
     fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
     keys: Keys = field(default_factory=dict)

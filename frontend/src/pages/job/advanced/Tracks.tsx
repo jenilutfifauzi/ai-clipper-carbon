@@ -470,7 +470,14 @@ export function Tracks({
           {lane.map((clip) => {
             const selected = isPicked(pick, "music", clip.id);
             const song = mediaById.get(clip.media);
-            const length = song?.duration ?? clip.offset + clip.secs;
+            // Its song at its Speed, in Reverse from its end, as an Overlay's video: trimmed, each edge
+            // reaches as far as the song goes that way (as far as it plays now, while the library loads).
+            const time = overlayTime(clip);
+            const length = song?.duration ?? time.end;
+            const reach = {
+              before: clip.start + offsetAt(time, clip.reverse ? length : 0),
+              after: clip.start + offsetAt(time, clip.reverse ? 0 : length),
+            };
             const end = Math.min(clip.start + clip.secs, duration);
             // Its fades over what is heard of it, as the planner has them.
             const fades = fadesWithin(clip, end - clip.start);
@@ -483,12 +490,12 @@ export function Tracks({
                 end={end}
                 max={duration}
                 minSecs={ITEM_MIN_SECS}
-                maxSecs={length - clip.offset}
-                trimMin={clip.start - clip.offset}
+                trimMin={reach.before}
+                trimMax={reach.after}
                 tone="audio"
                 selected={selected}
                 changed={changed.has(clip.id)}
-                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
+                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -500,8 +507,8 @@ export function Tracks({
                           ...clip,
                           start: round(start),
                           secs: round(end - start),
-                          // Trimming its start starts it later in the song.
-                          offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
+                          // Trimmed, it plays the part of its song its edges now reach.
+                          offset: edge !== "move" ? keptOffset(clip, start - clip.start, end - clip.start) : clip.offset,
                         },
                         edge,
                         group,
@@ -532,6 +539,7 @@ export function Tracks({
                 {clip.volume !== 1 && !clip.keys.volume?.length && (
                   <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>
                 )}
+                <RetimingBadge retiming={clip} />
               </TimelineItem>
             );
           })}
@@ -541,13 +549,13 @@ export function Tracks({
   );
 }
 
-/** A Segment's or Overlay's Speed and Reverse, as its accessible name says them: ", at 2×", ", reversed at 2×", or nothing at 1× forwards. */
+/** A Segment's, Overlay's or Music Clip's Speed and Reverse, as its accessible name says them: ", at 2×", ", reversed at 2×", or nothing at 1× forwards. */
 function retimingName({ speed = 1, reverse }: Retiming): string {
   const atSpeed = speed !== 1 ? ` at ${speedLabel(speed)}` : "";
   return reverse ? `, reversed${atSpeed}` : atSpeed && `,${atSpeed}`;
 }
 
-/** A Segment's or Overlay's badge on the Timeline at a Speed or in Reverse: "2×", "◀", "◀ 2×"; none at 1× forwards. */
+/** A Segment's, Overlay's or Music Clip's badge on the Timeline at a Speed or in Reverse: "2×", "◀", "◀ 2×"; none at 1× forwards. */
 function RetimingBadge({ retiming: { speed = 1, reverse } }: { retiming: Retiming }) {
   if (speed === 1 && !reverse) return null;
   return (
@@ -690,9 +698,9 @@ function SourceFilmstrip({
 }
 
 /**
- * A Music Clip's Waveform: the part of its song it plays, across its body, as `heard` over the secs
- * it is heard for, at its volume or by its volume Keyframes, through its fades (as the planner has
- * them over those). `length` is the song's.
+ * A Music Clip's Waveform: the part of its song it plays, across its body, at its Speed (from the
+ * part's end, backwards, in Reverse), as `heard` over the secs it is heard for, at its volume or by
+ * its volume Keyframes, through its fades (as the planner has them over those). `length` is the song's.
  */
 function SongWaveform({
   geometry,
@@ -720,7 +728,9 @@ function SongWaveform({
         waveformLayer({
           cache,
           url: (start) => mediaPeaksUrl(clip.media, start),
-          mediaStart: clip.offset,
+          mediaStart: clip.reverse ? overlayTime(clip, length).end : clip.offset,
+          speed: clip.speed,
+          reverse: clip.reverse,
           duration: length,
           gain: (time) => gainAt(time, heard),
           color: SONG_WAVE,
