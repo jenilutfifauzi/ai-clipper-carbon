@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, TransitionEvent, TransitionKind } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
+import { valueAt } from "./keyframes";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
@@ -75,7 +76,7 @@ function Ghost({
       // The ghost plays at the main playback's rate, and its deck its Segment at its Speed.
       ghost.setRate(playback.rate);
       const video = master.current;
-      if (video) setVolume(video, inside ? (1 - share) * (plan.source_volume * segment.volume) : 0);
+      if (video) setVolume(video, inside ? (1 - share) * plan.source_volume * valueAt(segment.gain, time - segment.start, segment.volume) : 0);
       if (!inside) {
         if (ghost.playing) ghost.pause();
         // Ready on the Transition's first frame.

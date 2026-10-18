@@ -13,7 +13,7 @@ import { onFrame } from "./playhead";
 
 /**
  * The Keyframes pane (ADR 0008), the desktop's bottom tab beside the Timeline: the Keyframes of the
- * one picked Overlay, Music Clip, video Segment or Manual Scene, with room to work on them. A row per property it can key (its
+ * one picked Overlay, Music Clip, Segment or Manual Scene, with room to work on them. A row per property it can key (its
  * value at the playhead, and its own ‹ ◆ ›), and over the item's own seconds either the Dopesheet (a
  * lane per row, its diamonds dragged to retime them) or the Curves (each keyed row's value over time;
  * the active row's Keyframes dragged in time and value, and its Eases' handles). Its tool strip
@@ -24,7 +24,7 @@ import { onFrame } from "./playhead";
 export function KeyframesPane({ keying, fps, mediaById }: { keying: Keying; fps: number; mediaById: Map<string, MediaItem> }) {
   // A Segment of the Source picked: its Manual Scene under the playhead, framed by its own override.
   const ref = usePickedKeyed(keying, keying.playback);
-  // A Segment of the Source has none: keyedItem gives null for it.
+  // A Freeze frame of the Source has none: keyedItem gives null for it.
   const item = ref && keyedItem(keying.edits, ref, keying.track, keying.plan);
   if (!ref || !item) {
     return (

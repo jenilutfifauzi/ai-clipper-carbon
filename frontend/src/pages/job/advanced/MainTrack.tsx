@@ -137,7 +137,7 @@ export function SegmentFields({
   onDuplicate: () => void;
   onDelete: () => void;
   onSourceVolume: (volume: number) => void;
-  // A video's Segment's volume.
+  // Its own volume (a keyed one's as a Keyframe at the playhead).
   onVolume: (volume: number, group: string) => void;
   // Its Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (speed: number, group: string) => void;
@@ -151,7 +151,7 @@ export function SegmentFields({
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
   playback: Playback;
-  // Where it plays on the Timeline (keying.ts' segmentSpan), which a video's Keyframes are set in.
+  // Where it plays on the Timeline (keying.ts' segmentSpan), which its Keyframes are set in.
   span: KeySpan | null;
   // The Retimed copy the preview plays it from, if any.
   copy: RetimedAsk | null;
@@ -235,14 +235,15 @@ export function SegmentFields({
           {speed}
           {!held && (
             <>
-              <Slider
+              <KeyedVolume
+                item={{ kind: "segment", id: segment.id }}
+                span={span}
+                keys={segment.keys?.volume ?? []}
+                volume={segment.volume ?? 1}
                 label="This Segment's sound"
-                value={segment.volume ?? 1}
-                min={0}
-                max={2}
-                step={0.05}
                 format={(v) => `${Math.round(v * 100)}%`}
-                onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
+                playback={playback}
+                onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
               />
               <Slider
                 label="The episode's sound, in every Segment"

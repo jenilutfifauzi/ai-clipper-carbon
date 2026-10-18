@@ -991,7 +991,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
+              // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
               applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
             },
             onFade: (id, fade, secs, heard, group) => {
@@ -1233,7 +1233,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             </aside>
           )}
         </div>
-        {/* The bottom tabs at their one remembered height (ADR 0024), the Meters (audio-mixing 13) beside them. */}
+        {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
         <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
           <section
             aria-label="Timeline and Keyframes"

@@ -5,7 +5,7 @@ import { follow } from "./follow";
 import { FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
-import { loudness } from "./loudness";
+import { loudness, sourceSound } from "./loudness";
 import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
@@ -127,7 +127,7 @@ export function MediaSegment({
  * a Speed a browser won't play), shown until `end`, or within a Transition when `end` is its own, its
  * sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a Blur's background and
  * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
- * own playing the copy (`sourcePlay`), at the Clip's own volume times its own. Outside its span they
+ * own playing the copy (`sourcePlay`), at the Clip's own volume times its own (or its Keyframes'). Outside its span they
  * wait at its start. Until the copy is made they hold the Source's `src` at the frame the copy shows
  * first, with its progress.
  */
@@ -161,22 +161,13 @@ export function CopiedSourceSegment({
   const scene = plan.scenes[sceneIndex];
 
   useEffect(() => {
-    const sound: AudioEvent = {
-      media: "",
-      start: segment.start,
-      end: fade ? fade.end : segment.end,
-      offset: segment.source_start,
-      volume: plan.source_volume * segment.volume,
-      fade_in: 0,
-      fade_out: fade ? fade.end - fade.start : 0,
-      gain: [],
-      id: segment.id,
-      muted: segment.muted,
-    };
+    // Its sound: its volume Keyframes when keyed, under the Clip's own, faded out by the Transition taking it away.
+    const sound = sourceSound(segment, plan.source_volume, fade);
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;
       if (follower.current) follow(follower.current, playback, span, true);
-      if (master.current) setVolume(master.current, loudness(sound, playback.shownTime));
+      if (master.current && segment.gain.length) followCurve(master.current, playback, sound);
+      else if (master.current) setVolume(master.current, loudness(sound, playback.shownTime));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
     sync();

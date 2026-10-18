@@ -212,9 +212,10 @@ Edits:
   output pixels, or null for none; merge_candidate_items changes only the fields given.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
-  Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
-  of the episode, another Layout and the Candidate's own framing have none. `at` is seconds from the
-  item's start (a Segment's: where it starts in the Clip, its `start` in the video; a Manual
+  Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
+  source_volume an episode Segment's. A Segment of the episode has no picture Keyframes; another
+  Layout and the Candidate's own framing have none. `at` is seconds from the
+  item's start (a Segment's: where it starts in the Clip, its `start`; a Manual
   override's: its Scene's start on the Source's timeline, so every Segment showing that Scene moves
   alike; the dry run lists those past the Scene's end as `ignored`), value in the field's own units (rotation -3600..3600, to
   turn several times). A keyed property's transform field is unused. The value holds before the
@@ -222,8 +223,9 @@ Edits:
   default), ease_in, ease_out, ease_in_out, or a cubic-bezier [x1, y1, x2, y2] (x 0..1; y may
   overshoot). At most 100 per property, 1/30 s apart at least. merge_candidate_items replaces the
   lists of the properties given ([] clears one) and keeps the others. Moving an item moves its
-  Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
-  leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
+  Keyframes; the server never re-times them (but an episode Segment's, kept on their moments as its
+  ends snap to Words), and refuses a length or a Segment's range that would leave one past its item's
+  end: send its keys too. The dry run lists them in Timeline time, with
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
   volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
   its keyed values.
@@ -854,7 +856,7 @@ def _plan_view(
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
-    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
+    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a
     Segment's, a Music Clip's, an Overlay's) and which sounds are Muted, each Shape's and each Text
     Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a picture
     layer's (`_layer_view`), and the Words."""
