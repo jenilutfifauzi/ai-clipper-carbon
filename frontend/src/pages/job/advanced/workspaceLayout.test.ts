@@ -257,6 +257,26 @@ describe("store setters", () => {
     layout.setBottomTab("nonsense" as never);
     expect(layout.read().bottomTab).toBe("timeline");
   });
+
+  test("the collapse toggles flip the stored hidden flags (the A/P command path)", () => {
+    // Seed a known blob so the flip doesn't depend on the module-level fallback (mutated by prior tests).
+    vi.stubGlobal(
+      "localStorage",
+      fakeStorage({
+        "ai-clipper-advanced-layout": JSON.stringify({ ...DEFAULT_LAYOUT, assetHidden: false, inspectorHidden: false }),
+      }),
+    );
+    // The command handlers read fresh and negate, as AdvancedEdit wires toggle-assets/-inspector.
+    layout.setAssetHidden(!layout.read().assetHidden);
+    expect(layout.read().assetHidden).toBe(true);
+    layout.setAssetHidden(!layout.read().assetHidden);
+    expect(layout.read().assetHidden).toBe(false);
+
+    layout.setInspectorHidden(!layout.read().inspectorHidden);
+    expect(layout.read().inspectorHidden).toBe(true);
+    layout.setInspectorHidden(!layout.read().inspectorHidden);
+    expect(layout.read().inspectorHidden).toBe(false);
+  });
 });
 
 describe("resetLayout", () => {

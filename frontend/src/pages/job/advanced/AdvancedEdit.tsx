@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, Maximize, Minimize } from "lucide-react";
+import { ArrowLeft, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -700,6 +700,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     },
     fps,
     setFullscreen,
+    // Read fresh, not the captured `ws`, so a toggle flips the current state (no stale closure).
+    toggleAssets: () => layout.setAssetHidden(!layout.read().assetHidden),
+    toggleInspector: () => layout.setInspectorHidden(!layout.read().inspectorHidden),
     keyframes,
   });
   useShortcuts(commands, { fullscreen: fullscreen.way !== null, phone: !wide });
@@ -1054,6 +1057,37 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onAddOverlay={(item) => addOverlay(item)}
     />
   );
+  // The desktop Workspace's top controls: collapse the Asset Panel (A) or the Inspector (P), each lit
+  // while its panel is hidden, and reset the sizes and collapses to their defaults. Desktop only.
+  const layoutControls = wide && (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={commands["toggle-assets"]}
+        aria-pressed={ws.assetHidden}
+        className="aria-pressed:text-accent-text"
+        aria-label={ws.assetHidden ? "Show the Asset Panel" : "Hide the Asset Panel"}
+        title="Asset Panel (A)"
+      >
+        <PanelLeft aria-hidden size={18} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={commands["toggle-inspector"]}
+        aria-pressed={ws.inspectorHidden}
+        className="aria-pressed:text-accent-text"
+        aria-label={ws.inspectorHidden ? "Show the Inspector" : "Hide the Inspector"}
+        title="Inspector (P)"
+      >
+        <PanelRight aria-hidden size={18} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={() => layout.resetLayout()} aria-label="Reset layout" title="Reset layout">
+        <RotateCcw aria-hidden size={18} />
+      </Button>
+    </>
+  );
   const bar = (
     <>
       <TopBar
@@ -1075,7 +1109,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         }
         history={history}
         actions={
-          <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
+          <>
+            {layoutControls}
+            <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
+          </>
         }
         onShortcuts={wide ? () => setShortcuts(true) : undefined}
         onClose={() => void close()}

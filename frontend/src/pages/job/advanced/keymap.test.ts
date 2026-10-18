@@ -90,6 +90,21 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "s" }, { typing: true })).toBeNull();
   });
 
+  test("A toggles the Asset Panel and P the Inspector, in either case; with Cmd/Ctrl, typing, or on a phone they give nothing", () => {
+    expect(resolveShortcut({ key: "a" })).toBe("toggle-assets");
+    expect(resolveShortcut({ key: "A" })).toBe("toggle-assets");
+    expect(resolveShortcut({ key: "p" })).toBe("toggle-inspector");
+    expect(resolveShortcut({ key: "P" })).toBe("toggle-inspector");
+    // Cmd+A stays Pick all, Cmd+P the browser's print.
+    expect(resolveShortcut({ key: "a", command: true })).toBe("pick-all");
+    expect(resolveShortcut({ key: "p", command: true })).toBeNull();
+    // Ignored while a field is focused, and on a phone (desktop-only).
+    expect(resolveShortcut({ key: "a" }, { typing: true })).toBeNull();
+    expect(resolveShortcut({ key: "p" }, { typing: true })).toBeNull();
+    expect(resolveShortcut({ key: "a" }, { phone: true })).toBeNull();
+    expect(resolveShortcut({ key: "p" }, { phone: true })).toBeNull();
+  });
+
   test("? opens the sheet, with Shift or without (as the keyboard's layout needs)", () => {
     expect(resolveShortcut({ key: "?", shift: true })).toBe("shortcuts");
     expect(resolveShortcut({ key: "?" })).toBe("shortcuts");
