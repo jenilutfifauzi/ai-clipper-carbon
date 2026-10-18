@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
 import { follow, MAX_DRIFT_SECS } from "./follow";
 import { CURVE_RATE, loudness, loudnessCurve, sourceSound } from "./loudness";
+import { masterBus } from "./masterBus";
 import type { Playback, PlayedSegment } from "./playback";
 import { eventCopy, eventPlay, useRetimedCopies } from "./retimedCopy";
 
@@ -18,8 +19,8 @@ function audioContext(): AudioContext | null {
   return context;
 }
 
-// What each element of the page plays through, once it does: a media element can be routed through
-// Web Audio only once.
+// What each element of the page plays through, once it does, into the master bus: a media element can
+// be routed through Web Audio only once.
 const gains = new WeakMap<HTMLMediaElement, GainNode>();
 
 function gainOf(element: HTMLMediaElement): GainNode | null {
@@ -28,7 +29,7 @@ function gainOf(element: HTMLMediaElement): GainNode | null {
   const audio = audioContext();
   if (!audio) return null;
   const gain = audio.createGain();
-  audio.createMediaElementSource(element).connect(gain).connect(audio.destination);
+  audio.createMediaElementSource(element).connect(gain).connect(masterBus(audio).input);
   gains.set(element, gain);
   return gain;
 }
@@ -79,8 +80,8 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
  * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
  * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
- * live) is set to the plan's `source_volume`, times the Segment's own volume (a keyed one's Keyframes, as a curve). Nothing is routed
- * through Web Audio until the plan has music or another volume.
+ * live) is set to the plan's `source_volume`, times the Segment's own volume (a keyed one's Keyframes, as a curve). Every
+ * element is heard through Web Audio and its master bus (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
   plan,
@@ -117,7 +118,7 @@ export function PreviewMusic({
       const volume = sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
       for (const { current: video } of masters) {
         if (video && keyed) followCurve(video, playback, soundOf(shown));
-        else if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
+        else if (video) setVolume(video, volume);
       }
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));
