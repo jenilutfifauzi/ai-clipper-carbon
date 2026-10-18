@@ -70,7 +70,17 @@ import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { bottomPanelId, BottomTabs, useBottomTab } from "./BottomTabs";
-import { bottomHeightCss, gridTemplateColumns, layout } from "./workspaceLayout";
+import {
+  ASSET,
+  BOTTOM,
+  bottomHeightCss,
+  gridTemplateColumns,
+  INSPECTOR,
+  layout,
+  nextBottomH,
+  nextSidebarW,
+} from "./workspaceLayout";
+import { Divider } from "./Divider";
 import {
   ASSET_TABS,
   AssetTabs,
@@ -216,6 +226,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [bottomTab, setBottomTab] = useBottomTab();
   // The remembered desktop workspace: sidebar widths, bottom height and which panels are collapsed.
   const ws = layout.use();
+  // The desktop grid, measured on a Divider's pointer-down for the player-floor clamp (its width in
+  // rem), and the snapshot each Divider drag captures then (the value being dragged and the DOM reads),
+  // so each move's maths is pure (workspaceLayout.ts). A ref, not state: a drag never re-renders here.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const dividerDrag = useRef({ startW: 0, startH: 0, remPx: 16, vhPx: 0, availableRem: 0, otherVisibleW: 0 });
+  const remPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const picking = pickingMode && !wide;
   // What of the Tracks is hidden, muted or locked: in this editor only.
   const [tracks, setTracks] = useState<TrackState>(UNTOUCHED);
@@ -1105,7 +1121,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     return (
       <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
         {bar}
-        <div className="grid min-h-0 flex-1 gap-3 px-3" style={{ gridTemplateColumns: gridTemplateColumns(ws) }}>
+        <div
+          ref={gridRef}
+          className="relative grid min-h-0 flex-1 gap-3 px-3"
+          style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
+        >
           {!ws.assetHidden && (
             <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
               <AssetTabs value={assetTab} onChange={setAssetTab} />
@@ -1121,13 +1141,72 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               {inspector}
             </aside>
           )}
+          {/* The two sidebar Dividers, each centred in the gap-3 gutter at its boundary: the px-3
+              padding (0.75rem) + the sidebar's width + half the 0.75rem gap. A collapsed sidebar
+              renders none (collapse is 04). */}
+          {!ws.assetHidden && (
+            <Divider
+              orientation="vertical"
+              label="Resize the Asset Panel"
+              style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
+              onStart={() => {
+                const d = dividerDrag.current;
+                d.remPx = remPx();
+                d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                d.otherVisibleW = ws.inspectorHidden ? 0 : ws.inspectorW;
+                d.startW = ws.assetW;
+              }}
+              onDrag={(deltaPx) => {
+                const d = dividerDrag.current;
+                layout.setAssetW(nextSidebarW(d.startW, deltaPx, d.remPx, 1, d.otherVisibleW, d.availableRem, ASSET));
+              }}
+              onReset={() => layout.setAssetW(ASSET.def)}
+            />
+          )}
+          {!ws.inspectorHidden && (
+            <Divider
+              orientation="vertical"
+              label="Resize the Inspector"
+              style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
+              onStart={() => {
+                const d = dividerDrag.current;
+                d.remPx = remPx();
+                d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                d.otherVisibleW = ws.assetHidden ? 0 : ws.assetW;
+                d.startW = ws.inspectorW;
+              }}
+              onDrag={(deltaPx) => {
+                const d = dividerDrag.current;
+                layout.setInspectorW(
+                  nextSidebarW(d.startW, deltaPx, d.remPx, -1, d.otherVisibleW, d.availableRem, INSPECTOR),
+                );
+              }}
+              onReset={() => layout.setInspectorW(INSPECTOR.def)}
+            />
+          )}
         </div>
         <section
           aria-label="Timeline and Keyframes"
           // One remembered height for every bottom tab (ADR 0024).
-          className="glass mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
+          className="glass relative mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
           style={{ height: bottomHeightCss(ws) }}
         >
+          {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
+              it sits just inside rather than up in the gutter). */}
+          <Divider
+            orientation="horizontal"
+            label="Resize the Bottom tabs"
+            onStart={() => {
+              const d = dividerDrag.current;
+              d.vhPx = window.innerHeight;
+              d.startH = ws.bottomH;
+            }}
+            onDrag={(deltaPx) => {
+              const d = dividerDrag.current;
+              layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
+            }}
+            onReset={() => layout.setBottomH(BOTTOM.def)}
+          />
           <BottomTabs value={bottomTab} onChange={setBottomTab} />
           {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}
           <div id={bottomPanelId("timeline")} role="tabpanel" aria-label="Timeline" hidden={bottomTab !== "timeline"}

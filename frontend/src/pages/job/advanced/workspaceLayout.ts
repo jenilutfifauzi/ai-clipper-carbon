@@ -119,6 +119,36 @@ export function clampSidebarAgainstPlayer(
   return clamp(value, bounds.min, max);
 }
 
+/**
+ * A live sidebar drag's next width, in rem. The pointer has moved `deltaPx` CSS pixels from where the
+ * drag began; `remPx` is the root font size so `deltaPx / remPx` is that move in rem. `sign` turns a
+ * pointer move into a width change: +1 for the LEFT (Asset) sidebar — dragging its right edge right
+ * widens it — and -1 for the RIGHT (Inspector) sidebar — dragging its left edge left widens it. The
+ * result is clamped to the sidebar's own bounds and to what leaves the player its floor beside the
+ * other visible sidebar (`clampSidebarAgainstPlayer`).
+ */
+export function nextSidebarW(
+  startW: number,
+  deltaPx: number,
+  remPx: number,
+  sign: 1 | -1,
+  otherVisibleW: number,
+  availableRem: number,
+  bounds: Bounds,
+): number {
+  return clampSidebarAgainstPlayer(startW + (sign * deltaPx) / remPx, otherVisibleW, availableRem, bounds);
+}
+
+/**
+ * A live bottom drag's next height, in dvh. The pointer has moved `deltaPx` CSS pixels vertically from
+ * where the drag began (down is positive); the bottom area grows as it is dragged UP, so the move is
+ * negated. `vhPx` is the viewport height in px, so `1dvh = vhPx / 100` and `-deltaPx * 100 / vhPx` is
+ * the move in dvh. The result is clamped to the bottom area's bounds (`clampBottomH`).
+ */
+export function nextBottomH(startH: number, deltaPx: number, vhPx: number): number {
+  return clampBottomH(startH + (-deltaPx * 100) / vhPx);
+}
+
 // A partial/old/bad blob fills its missing fields from the defaults, and every field is clamped or
 // validated on the way out.
 const normalise = (raw: Partial<WorkspaceLayout> | null | undefined): WorkspaceLayout => {

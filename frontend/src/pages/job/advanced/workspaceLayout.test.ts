@@ -15,6 +15,8 @@ import {
   INSPECTOR,
   layout,
   migrateOnce,
+  nextBottomH,
+  nextSidebarW,
   PLAYER_FLOOR,
 } from "./workspaceLayout";
 
@@ -138,6 +140,61 @@ describe("clampSidebarAgainstPlayer", () => {
     // Other sidebar eats almost everything: cap would fall below min, so min wins.
     const capped = clampSidebarAgainstPlayer(ASSET.max, 40, 64, ASSET);
     expect(capped).toBe(ASSET.min);
+  });
+});
+
+describe("nextSidebarW", () => {
+  // remPx = 16, so 160px = 10rem. A roomy container (1000rem) leaves the own bounds in charge.
+  const REM = 16;
+
+  test("the Asset divider (sign +1) widens as the pointer drags right", () => {
+    // From 17rem, +160px right → 27rem, within ASSET's [14, 28].
+    expect(nextSidebarW(ASSET.def, 160, REM, 1, 0, 1000, ASSET)).toBe(27);
+  });
+
+  test("the Asset divider clamps at its max when dragged past it", () => {
+    // From 17rem, +320px (20rem) → 37rem, clamped to ASSET.max 28.
+    expect(nextSidebarW(ASSET.def, 320, REM, 1, 0, 1000, ASSET)).toBe(ASSET.max);
+  });
+
+  test("the Asset divider clamps at its min when dragged left past it", () => {
+    // From 17rem, -160px (10rem) → 7rem, clamped to ASSET.min 14.
+    expect(nextSidebarW(ASSET.def, -160, REM, 1, 0, 1000, ASSET)).toBe(ASSET.min);
+  });
+
+  test("the Inspector divider (sign -1) mirrors: dragging LEFT widens it", () => {
+    // From 20rem, -160px (the pointer moved 10rem left) → 30rem, within INSPECTOR's [16, 34].
+    expect(nextSidebarW(INSPECTOR.def, -160, REM, -1, 0, 1000, INSPECTOR)).toBe(30);
+    // And dragging right narrows it.
+    expect(nextSidebarW(INSPECTOR.def, 160, REM, -1, 0, 1000, INSPECTOR)).toBe(10 < INSPECTOR.min ? INSPECTOR.min : 10);
+  });
+
+  test("the player floor caps the drag beside the other visible sidebar", () => {
+    // availableRem 64, other sidebar 20, floor 24 → this sidebar may be at most 20rem however far it
+    // is dragged. From 17rem, +320px (20rem) would be 37rem; capped to 20rem.
+    expect(nextSidebarW(ASSET.def, 320, REM, 1, 20, 64, ASSET)).toBe(64 - PLAYER_FLOOR - 20);
+  });
+});
+
+describe("nextBottomH", () => {
+  test("dragging UP (negative deltaY) raises the height", () => {
+    // vhPx 800 → 1dvh = 8px. From 40dvh, -80px up = +10dvh → 50dvh.
+    expect(nextBottomH(BOTTOM.def, -80, 800)).toBe(50);
+  });
+
+  test("dragging DOWN lowers the height", () => {
+    // From 40dvh, +80px down = -10dvh → 30dvh.
+    expect(nextBottomH(BOTTOM.def, 80, 800)).toBe(30);
+  });
+
+  test("clamps at BOTTOM's max when dragged far up", () => {
+    // From 40dvh, -400px (−50dvh) → 90dvh, clamped to BOTTOM.max 70.
+    expect(nextBottomH(BOTTOM.def, -400, 800)).toBe(BOTTOM.max);
+  });
+
+  test("clamps at BOTTOM's min when dragged far down", () => {
+    // From 40dvh, +400px (+50dvh) → −10dvh, clamped to BOTTOM.min 22.
+    expect(nextBottomH(BOTTOM.def, 400, 800)).toBe(BOTTOM.min);
   });
 });
 
