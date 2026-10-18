@@ -10,6 +10,9 @@ const SHADOW: Shadow = { blur: 24, x: 0, y: 12, colour: "#000000", opacity: 0.5 
 
 const px = (value: number) => `${value} px`;
 
+/** Rounded corners as a share of the most they can be (0.5: half the shorter side, a pill or a circle). */
+export const cornersFormat = (radius: number) => (radius === 0 ? "Square" : radius === 0.5 ? "Round" : `${Math.round(radius * 200)}%`);
+
 /**
  * An Overlay's corners, border and shadow: the radius as a share of the most it can be (half its
  * shorter side, a pill or a circle), and a border and a shadow each turned on and off, in output
@@ -31,7 +34,7 @@ export function DecorationFields({ overlay, onChange }: { overlay: Overlay; onCh
           min={0}
           max={0.5}
           step={0.01}
-          format={(v) => (v === 0 ? "Square" : v === 0.5 ? "Round" : `${Math.round(v * 200)}%`)}
+          format={cornersFormat}
           onChange={(radius) => onChange({ ...overlay, radius }, group("radius"))}
         />
       </Group>

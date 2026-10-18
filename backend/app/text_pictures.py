@@ -15,8 +15,12 @@ image (app/emoji.py) is pasted onto the picture afterwards, in its square (plann
 `emoji_square`), over the plate and the shadow, in its own colours, with none of the text's
 colour, stroke or shadow.
 
-A Shape's layout (planner.py's `ShapeLayout`) is written as one `\\p1` drawing of its figure, in the
-middle of the picture, in its fill.
+A Shape's layout (planner.py's `ShapeLayout`) is written as `\\p1` drawings of its figure, in the
+middle of the picture: its drop shadow, then its fill, then its stroke. The stroke is drawn inside
+the figure, as a ring: the figure, and the figure inset by the stroke's width gone round the other
+way, which libass leaves as a hole. The fill reaches under the middle of the stroke, so that no seam
+shows between them. The shadow is what is drawn (the figure, or the ring of an outline alone) again,
+moved and in the shadow's colour, blurred with `\\blur`, as a Text Layer's.
 
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
@@ -48,7 +52,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.ass import ass_alpha, ass_filter, ass_text, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
+from app.ass import (
+    ass_alpha, ass_filter, ass_text, reversed_drawing, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked,
+)
 from app.candidates import Candidate, ShapeKind, ShapeStyle
 from app.emoji import image_pixels
 from app.fonts import font, registry
@@ -233,14 +239,24 @@ def text_script(layout: TextLayout) -> str:
 
 @layout_script.register
 def shape_script(layout: ShapeLayout) -> str:
-    """A Shape's `layout` as an ASS script of its size at scale 1: its figure, filled, as one drawing
-    in the middle of it. libass scales it to the canvas."""
+    """A Shape's `layout` as an ASS script of its size at scale 1: its shadow, its fill and its
+    stroke, each one drawing of its figure in the middle of it. libass scales it to the canvas, the
+    stroke, corners and blur with it."""
     style = layout.style
     left, top = (layout.width - style.width) / 2, (layout.height - style.height) / 2
+    figure = figure_drawing(style)
+    # Its stroke: the figure less its inside (all of it, when the stroke leaves no inside).
+    inside = figure_drawing(style, style.stroke_width)
+    ring = "" if not style.stroke_width else f"{figure} {reversed_drawing(inside)}" if inside else figure
     events = []
-    if style.fill is not None:
-        figure = _moved(figure_drawing(style), left, top)
-        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(style.fill)}}}{figure}{{\\p0}}")
+    if style.shadow.on:
+        dx, dy = style.shadow.offset
+        cast = figure if style.fill is not None else ring
+        events.append(f"{{\\an7\\pos(0,0)\\p1{shadow_tags(style.shadow, 0)}}}{_moved(cast, left + dx, top + dy)}{{\\p0}}")
+    if style.fill is not None and (filled := figure_drawing(style, style.stroke_width / 2)):
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(style.fill)}}}{_moved(filled, left, top)}{{\\p0}}")
+    if style.stroke_width:
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(style.stroke_colour)}}}{_moved(ring, left, top)}{{\\p0}}")
     return "\n".join([
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -263,11 +279,19 @@ def shape_script(layout: ShapeLayout) -> str:
     ]) + "\n"
 
 
-def figure_drawing(style: ShapeStyle) -> str:
-    """An ASS drawing of a Shape Style's figure, `width` x `height` from its top-left corner."""
+def figure_drawing(style: ShapeStyle, inset: float = 0.0) -> str:
+    """An ASS drawing of a Shape Style's figure, `width` x `height` from its top-left corner, inset
+    `inset` pixels on every side (its stroke's inside, or the fill under it); "" when nothing of it is
+    left. Each Shape Kind is drawn the same way round, so that one inside another, turned round, is a
+    hole (`reversed_drawing`)."""
     match style.kind:
         case ShapeKind.RECTANGLE:
-            return rounded_box(style.width, style.height, 0)
+            width, height = style.width - 2 * inset, style.height - 2 * inset
+            if min(width, height) <= 0:
+                return ""
+            # Inset, a rounded corner keeps its centre: its radius is less by the inset.
+            radius = max(style.radius * min(style.width, style.height) - inset, 0)
+            return _moved(rounded_box(width, height, radius), inset, inset)
 
 
 def _moved(drawing: str, x: float, y: float) -> str:

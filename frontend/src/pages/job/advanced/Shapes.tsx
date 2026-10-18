@@ -4,9 +4,12 @@ import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
+import { Switch } from "../../../components/Switch";
 import { FRAME } from "../editor/picture";
+import { shadowControls, type ShadowAccess } from "../editor/ShadowFields";
 import { Group } from "../editor/StyleFields";
-import { SHAPE_SIZE } from "./shapeStyle";
+import { cornersFormat } from "./DecorationFields";
+import { drawsSomething, NEW_FILL, NOTHING_TO_DRAW, SHAPE_SIZE, SHAPE_STROKE_MAX } from "./shapeStyle";
 import { TimingFields } from "./TimingFields";
 import { ShapeTransformFields } from "./TransformFields";
 
@@ -42,7 +45,11 @@ export function ShapeAssets({ onAdd }: { onAdd: (kind: ShapeKind) => void }) {
   );
 }
 
-/** The picked Shape's Shape Style (its size and fill), Transform and time. */
+/**
+ * The picked Shape's Shape Style (its size, fill, stroke, corners and drop shadow), Transform and
+ * time. It is never left with neither fill nor stroke: with no stroke its fill can't be turned off
+ * (which it says), and with no fill its stroke is at least 1 px.
+ */
 export function ShapeFields({
   shape,
   duration,
@@ -57,9 +64,18 @@ export function ShapeFields({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const setStyle = <K extends keyof ShapeStyle>(field: K, value: ShapeStyle[K]) =>
-    onChange({ ...shape, style: { ...shape.style, [field]: value } }, `shape:${shape.id}:style.${field}`);
+  const setStyle = <K extends keyof ShapeStyle>(field: K, value: ShapeStyle[K], group: string = field) => {
+    const next = { ...shape.style, [field]: value };
+    if (drawsSomething(next)) onChange({ ...shape, style: next }, `shape:${shape.id}:style.${group}`);
+  };
   const { style } = shape;
+  const filled = style.fill !== null;
+  const shadow: ShadowAccess = {
+    shadow: style.shadow,
+    mixed: () => false,
+    any: (test) => test(style.shadow),
+    change: (change, field) => setStyle("shadow", change(style.shadow), field ? `shadow.${field}` : "shadow"),
+  };
   // Whole pixels, up to the frame's side (or more, where it is already larger).
   const size = (value: number, frame: number) => ({ min: SHAPE_SIZE.min, max: Math.max(frame, value), format: (v: number) => `${Math.round(v)} px` });
   return (
@@ -78,8 +94,23 @@ export function ShapeFields({
       <Group title="Look">
         <Slider label="Width" value={style.width} {...size(style.width, FRAME.width)} onChange={(width) => setStyle("width", Math.round(width))} />
         <Slider label="Height" value={style.height} {...size(style.height, FRAME.height)} onChange={(height) => setStyle("height", Math.round(height))} />
-        <ColorField label="Fill" value={style.fill ?? "#FFFFFF"} onChange={(fill) => setStyle("fill", fill)} />
+        <Switch checked={filled} disabled={filled && !style.stroke_width} onChange={(on) => setStyle("fill", on ? NEW_FILL : null)}>
+          <span className="text-sm font-medium">Fill</span>
+        </Switch>
+        {style.fill !== null && <ColorField label="Fill colour" value={style.fill} onChange={(fill) => setStyle("fill", fill)} />}
+        {filled && !style.stroke_width && <Hint>{NOTHING_TO_DRAW}</Hint>}
+        <Slider
+          label="Stroke"
+          value={style.stroke_width}
+          min={filled ? 0 : 1}
+          max={Math.max(SHAPE_STROKE_MAX, style.stroke_width)}
+          format={(v) => (v ? `${v} px` : "None")}
+          onChange={(width) => setStyle("stroke_width", Math.round(width))}
+        />
+        {style.stroke_width > 0 && <ColorField label="Stroke colour" value={style.stroke_colour} onChange={(colour) => setStyle("stroke_colour", colour)} />}
+        <Slider label="Corners" value={style.radius} min={0} max={0.5} step={0.01} format={cornersFormat} onChange={(radius) => setStyle("radius", radius)} />
       </Group>
+      <Group title="Shadow">{shadowControls(shadow, { inspector: true })}</Group>
       <ShapeTransformFields shape={shape} onChange={onChange} />
       <TimingFields item={shape} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
     </div>

@@ -232,7 +232,7 @@ class CandidateUpdate(BaseModel):
     shapes: Annotated[
         list[Shape],
         Field(max_length=SHAPES_MAX),
-        WithJsonSchema({"type": "array", "description": "As Text Layers, a style (kind, width, height, fill) for text"}),
+        WithJsonSchema({"type": "array", "description": "As Text Layers; style:kind,width,height,fill,stroke_*,radius,shadow"}),
     ] | None = None
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None

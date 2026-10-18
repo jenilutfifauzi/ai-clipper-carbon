@@ -1,6 +1,8 @@
-"""Shapes (.scratch/shapes/issues/02-tracer-a-rectangle-from-the-stickers-tab.md, docs/adr/0011): a
-Shape saved on the Candidate, planned as a picture layer, drawn by libass into a picture of its own,
-and burned into the Clip over the captions and under the Text Layers.
+"""Shapes (.scratch/shapes/issues/02-tracer-a-rectangle-from-the-stickers-tab.md,
+03-rectangle-look.md, docs/adr/0011): a Shape saved on the Candidate, planned as a picture layer,
+drawn by libass into a picture of its own (its fill, its stroke inside its width and height, its
+rounded corners and its drop shadow), and burned into the Clip over the captions and under the Text
+Layers.
 """
 
 import json
@@ -91,10 +93,32 @@ def test_a_shape_is_never_stretched_nor_flipped_nor_left_with_nothing_to_draw():
     for transform, refused in (({"stretch_x": 2}, "stretched"), ({"stretch_y": 0.5}, "stretched"), ({"flip_h": True}, "flipped"), ({"flip_v": True}, "flipped")):
         with pytest.raises(ValidationError, match=f"Shape s1 can't be {refused}"):
             shape(transform)
-    with pytest.raises(ValidationError, match="Shape s1 has nothing to draw"):
+    with pytest.raises(ValidationError, match="Shape s1 has nothing to draw: give its style a fill or a stroke"):
         shape(style={"fill": None})
+    with pytest.raises(ValidationError, match="Shape s1 has nothing to draw"):
+        shape(style={"fill": None, "stroke_width": 0, "stroke_colour": "#FF0000"})
+    # An outline alone is something to draw.
+    assert shape(style={"fill": None, "stroke_width": 6}).style.fill is None
     # Scaled, turned and faded, as a Text Layer is.
     assert shape({"scale": 2, "rotation": 15, "opacity": 0.5}).transform.rotation == 15
+
+
+def test_a_shapes_stroke_and_corners_keep_its_bounds_and_its_shadow_grows_its_picture_to_hold_it():
+    plain = shape_event(shape({"x": 400, "y": 700}, {"width": 300, "height": 200}), 10)
+    # Drawn inside its width and height: no stroke, however thick, nor corner makes it larger.
+    for look in ({"stroke_width": 4}, {"stroke_width": 60, "fill": None}, {"radius": 0.5}):
+        event = shape_event(shape({"x": 400, "y": 700}, {"width": 300, "height": 200, **look}), 10)
+        assert (event.area, event.bounds) == (plain.area, plain.bounds)
+        assert (event.layout.width, event.layout.height) == (plain.layout.width, plain.layout.height)
+    # Its picture holds the shadow's distance and its blur's reach on every side, about the same centre.
+    shadowed = shape_event(shape({"x": 400, "y": 700}, {"width": 300, "height": 200, "shadow": {"distance": 12, "blur": 6}}), 10)
+    assert shadowed.layout.width - plain.layout.width in (2 * (12 + 9), 2 * (12 + 9) + 2)
+    assert shadowed.layout.height - plain.layout.height in (2 * (12 + 9), 2 * (12 + 9) + 2)
+    assert (shadowed.area, shadowed.bounds) == (plain.area, plain.bounds)
+    assert shadowed.picture.centre == plain.picture.centre
+    # An unseen shadow takes no room.
+    unseen = shape_event(shape({"x": 400, "y": 700}, {"width": 300, "height": 200, "shadow": {"distance": 12, "opacity": 0}}), 10)
+    assert unseen.layout.width == plain.layout.width
 
 
 # Model and API
@@ -109,7 +133,10 @@ def test_shapes_are_saved_on_the_candidate_with_their_defaults_and_bad_ones_are_
     assert stored == {
         "id": "s1", "start": 0.5, "secs": 1.5,
         "transform": {"x": 540, "y": 960, "scale": 1.0, "stretch_x": 1.0, "stretch_y": 1.0, "rotation": 0.0, "flip_h": False, "flip_v": False, "opacity": 1.0},
-        "style": {"kind": "rectangle", "width": 400, "height": 400, "fill": "#FFFFFF"},
+        "style": {
+            "kind": "rectangle", "width": 400, "height": 400, "fill": "#FFFFFF", "stroke_colour": "#000000", "stroke_width": 0,
+            "radius": 0.0, "shadow": {"colour": "#000000", "opacity": 0.6, "blur": 0.0, "distance": 0.0, "angle": 45.0},
+        },
         "animation_in": "none", "animation_out": "none", "animation_ms": 300, "keys": {},
     }
     [part] = client.get(f"{candidate_url(job, candidate)}/revisions").json()["revisions"][0]["parts"]
@@ -119,6 +146,12 @@ def test_shapes_are_saved_on_the_candidate_with_their_defaults_and_bad_ones_are_
         ([plate(transform={"stretch_x": 2})], "can't be stretched"),
         ([plate(transform={"flip_v": True})], "can't be flipped"),
         ([plate(style={"fill": None})], "nothing to draw"),
+        ([plate(style={"fill": None, "stroke_width": 0})], "nothing to draw"),
+        ([plate(style={"stroke_width": -1})], "stroke_width"),
+        ([plate(style={"stroke_width": 201})], "stroke_width"),
+        ([plate(style={"stroke_colour": "red"})], "stroke_colour"),
+        ([plate(style={"radius": 0.6})], "radius"),
+        ([plate(style={"shadow": {"distance": 101}})], "distance"),
         ([plate(style={"kind": "hexagon"})], "kind"),
         ([plate(style={"width": 0})], "width"),
         ([plate(style={"height": 5000})], "height"),
@@ -180,6 +213,90 @@ def test_a_shapes_picture_is_its_fill_with_clean_alpha_at_the_scale_it_is_drawn(
     assert event["picture"]["width"] == pytest.approx(1.2 * event["layout"]["width"], abs=2)
 
 
+def drawn(client, job: dict, candidate: dict, **style) -> tuple[np.ndarray, int, int]:
+    """The picture of a Shape of `style` at scale 1, as the preview fetches it, and where its
+    figure's top-left corner is in it."""
+    [event] = preview(client, job, candidate, {"shapes": [plate(style=style)]})["plan"]["shapes"]
+    assert event["layout"]["scale"] == 1
+    picture = picture_of(client, job, event)
+    return picture, (picture.shape[1] - style["width"]) // 2, (picture.shape[0] - style["height"]) // 2
+
+
+@pytest.mark.parametrize("width, height", [(400, 400), (1000, 200)])
+def test_an_outline_alone_is_the_strokes_colour_within_its_width_of_every_edge_and_clear_inside(client, width, height):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    stroke = 16
+    picture, left, top = drawn(client, job, candidate, width=width, height=height, fill=None, stroke_colour="#FF0000", stroke_width=stroke)
+    right, bottom = left + width, top + height
+    red = [255, 0, 0, 255]
+    # Along each edge, a quarter, half and three quarters of the way: the stroke's colour through its
+    # width, clear past it, and clear outside the figure.
+    for share in (0.25, 0.5, 0.75):
+        x, y = round(left + share * width), round(top + share * height)
+        for depth in (1, stroke // 2, stroke - 2):
+            assert picture[top + depth, x].tolist() == red, ("top", share, depth)
+            assert picture[bottom - 1 - depth, x].tolist() == red, ("bottom", share, depth)
+            assert picture[y, left + depth].tolist() == red, ("left", share, depth)
+            assert picture[y, right - 1 - depth].tolist() == red, ("right", share, depth)
+        for depth in (stroke + 2, stroke + 20):
+            assert picture[top + depth, x, 3] == picture[bottom - 1 - depth, x, 3] == 0, ("inside", share, depth)
+            assert picture[y, left + depth, 3] == picture[y, right - 1 - depth, 3] == 0, ("inside", share, depth)
+        assert picture[top - 2, x, 3] == picture[bottom + 1, x, 3] == picture[y, left - 2, 3] == picture[y, right + 1, 3] == 0
+    # Clear in the middle, and the stroke as thick on every side.
+    assert picture[top + height // 2, left + width // 2, 3] == 0
+    ink = picture[..., 3] > 127
+    across, down = ink[top + height // 2], ink[:, left + width // 2]
+    assert across.sum() == pytest.approx(2 * stroke, abs=1) and down.sum() == pytest.approx(2 * stroke, abs=1)
+
+
+def test_a_thicker_stroke_draws_inside_the_same_edges_over_its_fill(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    for stroke in (4, 40):
+        picture, left, top = drawn(client, job, candidate, width=500, height=300, fill="#0000FF", stroke_colour="#FFFF00", stroke_width=stroke)
+        rows, columns = np.nonzero(picture[..., 3] > 127)
+        assert (columns.min(), columns.max() + 1, rows.min(), rows.max() + 1) == (left, left + 500, top, top + 300)
+        # Its stroke at its edge, its fill inside it, with no seam between them.
+        assert picture[top + stroke // 2, left + 250].tolist() == [255, 255, 0, 255]
+        assert picture[top + stroke + 2, left + 250].tolist() == [0, 0, 255, 255]
+        inside = picture[top + 1 : top + 299, left + 1 : left + 499]
+        assert (inside[..., 3] == 255).all()
+
+
+def test_a_pills_corners_are_clear_and_its_middle_is_filled(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    picture, left, top = drawn(client, job, candidate, width=600, height=200, fill="#00FF00", radius=0.5)
+    right, bottom = left + 600, top + 200
+    alpha = picture[..., 3]
+    # Each corner of its box is clear: its ends are half circles of its height.
+    for x, y in ((left + 8, top + 8), (right - 9, top + 8), (left + 8, bottom - 9), (right - 9, bottom - 9)):
+        assert alpha[y, x] == 0, (x, y)
+    # Its middle, and the middle of each end, are filled.
+    for x, y in ((left + 300, top + 100), (left + 3, top + 100), (right - 4, top + 100), (left + 300, top + 2), (left + 300, bottom - 3)):
+        assert picture[y, x].tolist() == [0, 255, 0, 255], (x, y)
+    # Its ends are round: 50 px above the middle, the left end's edge is 86.6 px left of its circle's centre.
+    assert alpha[top + 50, left + 100 - 84] == 255 and alpha[top + 50, left + 100 - 90] == 0
+    # A smaller radius rounds less: 0.1 of the shorter side, 20 px.
+    picture, left, top = drawn(client, job, candidate, width=600, height=200, fill="#00FF00", radius=0.1)
+    assert picture[top + 2, left + 2, 3] == 0 and picture[top + 8, left + 8, 3] == 255 and picture[top + 2, left + 30, 3] == 255
+
+
+def test_a_rounded_outlines_inner_corners_are_rounded_less_by_its_stroke(client):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    # Corners 40 px round, a stroke 16 px thick: inside, its corners 24 px round.
+    picture, left, top = drawn(client, job, candidate, width=400, height=400, fill=None, stroke_colour="#FFFFFF", stroke_width=16, radius=0.1)
+    alpha = picture[..., 3]
+    assert alpha[top + 2, left + 2] == 0
+    # On the diagonal into the corner, the stroke is 16 px thick, as on its sides.
+    diagonal = [alpha[top + i, left + i] > 127 for i in range(0, 60)]
+    thick = sum(diagonal) * np.sqrt(2)
+    assert thick == pytest.approx(16, abs=3)
+    assert alpha[top + 60, left + 60] == 0
+
+
 def test_shape_pictures_no_candidate_shows_are_swept_when_the_job_is_opened(client, settings):
     job = reviewed(client)
     candidate = patch(client, job, add(client, job, "halo", "ya"), shapes=[plate(style={"fill": "#00FF00"})])
@@ -230,6 +347,47 @@ def test_a_shape_is_burned_in_at_its_bounds_over_the_captions_and_under_the_text
     assert len(pixels(plated, np.array([255, 0, 255]))[0]) > 0.9 * plated.shape[0] * plated.shape[1]
     # Not there before it starts.
     assert len(pixels(full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 2.6), np.array([0, 255, 0]))[0]) == 0
+
+
+def test_a_shapes_shadow_falls_towards_its_angle_by_its_distance_in_a_rendered_frame(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    green = {"width": 200, "height": 200, "fill": "#00FF00"}
+    red = {"colour": "#FF0000", "opacity": 1}
+    placed = (
+        ("se", {"x": 300, "y": 500}, {"angle": 45, "distance": 30}),
+        ("w", {"x": 780, "y": 500}, {"angle": 180, "distance": 24}),
+        ("n", {"x": 540, "y": 1000}, {"angle": -90, "distance": 20}),
+    )
+    shapes = [plate(id=id, start=0.0, secs=2.5, transform=at, style=green | {"shadow": red | shadow}) for id, at, shadow in placed]
+    candidate = patch(client, job, candidate, shapes=shapes)
+    planned = preview(client, job, candidate)["plan"]["shapes"]
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    frame = full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 1.5)
+
+    def extent(event: dict, colour: list[int]) -> tuple[int, int, int, int]:
+        """The left, top, right and bottom of `colour` round the Shape's area, from its area's corner."""
+        area, reach = event["area"], 60
+        around = frame[area["y"] - reach : area["y"] + area["height"] + reach, area["x"] - reach : area["x"] + area["width"] + reach]
+        rows, columns = pixels(around, np.array(colour), 60)
+        return columns.min() - reach, rows.min() - reach, columns.max() + 1 - reach, rows.max() + 1 - reach
+
+    se, w, n = planned
+    # The figure where it was planned, its shadow under it and past it towards the angle only.
+    for event in planned:
+        assert extent(event, [0, 255, 0]) == pytest.approx((0, 0, 200, 200), abs=2)
+    # 30 px at 45°: 21 px right and down, showing where the figure doesn't cover it.
+    assert extent(se, [255, 0, 0]) == pytest.approx((21, 21, 221, 221), abs=3)
+    # 24 px at 180°: left of it, level with it.
+    assert extent(w, [255, 0, 0]) == pytest.approx((-24, 0, 0, 200), abs=3)
+    # 20 px at -90°: above it.
+    assert extent(n, [255, 0, 0]) == pytest.approx((0, -20, 200, 0), abs=3)
 
 
 # The agent's dry run

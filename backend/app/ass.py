@@ -40,16 +40,45 @@ def shadow_tags(shadow: DropShadow, stroke: float) -> str:
     return f"\\1c{colour}\\1a{opacity}\\bord0\\shad0{blur}"
 
 
-def rounded_box(width: int, height: int, radius: int) -> str:
+def rounded_box(width: float, height: float, radius: float) -> str:
     """An ASS drawing of a `width` x `height` rectangle with rounded corners, from its top-left corner;
     each corner a Bézier quarter circle."""
     w, h, r = width, height, radius
     # How far from each corner its curve's control points are.
     c = round(r * (1 - 0.5523), 2)
     return (
-        f"m {r} 0 l {w - r} 0 b {w - c:g} 0 {w} {c:g} {w} {r} l {w} {h - r} b {w} {h - c:g} {w - c:g} {h} {w - r} {h} "
-        f"l {r} {h} b {c:g} {h} 0 {h - c:g} 0 {h - r} l 0 {r} b 0 {c:g} {c:g} 0 {r} 0"
+        f"m {r:g} 0 l {w - r:g} 0 b {w - c:g} 0 {w:g} {c:g} {w:g} {r:g} l {w:g} {h - r:g} b {w:g} {h - c:g} {w - c:g} {h:g} {w - r:g} {h:g} "
+        f"l {r:g} {h:g} b {c:g} {h:g} 0 {h - c:g} 0 {h - r:g} l 0 {r:g} b 0 {c:g} {c:g} 0 {r:g} 0"
     )
+
+
+def reversed_drawing(drawing: str) -> str:
+    """An ASS drawing of one closed figure (`m`, then `l` lines and `b` Béziers) gone round the other
+    way. libass fills where a point is wound round a nonzero number of times, so a figure drawn the
+    other way inside another, in the same drawing, is a hole in it."""
+    words = drawing.split()
+    if words[0] != "m" or "m" in words[1:]:
+        raise ValueError("Only one figure, from one m, is turned round")
+    numbers = [float(word) for word in words if not word.isalpha()]
+    start, ends, controls = (numbers[0], numbers[1]), [], []
+    i, command = 3, ""
+    while i < len(words):
+        if words[i].isalpha():
+            command, i = words[i], i + 1
+        count = 6 if command == "b" else 2
+        points = [float(word) for word in words[i : i + count]]
+        controls.append(points[:-2])
+        ends.append((points[-2], points[-1]))
+        i += count
+    # Each piece runs from the end of the one before (the start, for the first) to its own end.
+    froms = [start, *ends[:-1]]
+    moved = [f"m {ends[-1][0]:g} {ends[-1][1]:g}"]
+    for (x, y), inner in zip(reversed(froms), reversed(controls)):
+        if inner:
+            moved.append(f"b {inner[2]:g} {inner[3]:g} {inner[0]:g} {inner[1]:g} {x:g} {y:g}")
+        else:
+            moved.append(f"l {x:g} {y:g}")
+    return " ".join(moved)
 
 
 def style_colour(hex_colour: str, opacity: float = 1.0) -> str:

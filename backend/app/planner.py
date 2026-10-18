@@ -217,7 +217,7 @@ MAX_TEXT_PICTURE = 4096
 # only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
 TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
 # A Shape's picture holds its figure and this many pixels round it, at scale 1: room for the edge
-# libass softens.
+# libass softens (and its shadow's reach past that).
 SHAPE_ROOM = 2
 
 
@@ -712,7 +712,8 @@ SHAPE_PICTURE_FORMAT = "v1-libass-matte-shape"
 @dataclass(frozen=True)
 class ShapeLayout(PictureLayout):
     """What a Shape's picture shows (docs/adr/0011), in its own pixels, `width` x `height` at scale 1:
-    its figure as its `style` draws it, centred, SHAPE_ROOM round it. Rasterised `scale` times as
+    its figure as its `style` draws it, centred, SHAPE_ROOM and its shadow's reach round it. Its
+    stroke, corners and shadow are its style's, in its own pixels too. Rasterised `scale` times as
     large (as a Text Layer's, the largest scale the Shape is drawn at, up to the next of
     TEXT_PICTURE_SCALES) and named by a hash of all of it and of SHAPE_PICTURE_FORMAT, so that the
     same picture is one file wherever the Shape is. It draws no text: it has no Faces."""
@@ -789,8 +790,8 @@ class TextEvent(PictureLayer):
 class ShapeEvent(PictureLayer):
     """A Shape as drawn, a picture layer (`PictureLayer`) on screen from `start` to `end` (seconds
     into the Clip). `area` is its figure's box, `width` x `height` of its style about its Transform's
-    centre (to within half a pixel); its picture is that and SHAPE_ROOM round it, centred on the same
-    centre."""
+    centre (to within half a pixel), whatever its stroke, which is drawn inside it; its picture is
+    that and SHAPE_ROOM and its shadow's reach round it, centred on the same centre."""
 
     layer: Shape
     start: float
@@ -1623,7 +1624,8 @@ def shape_event(shape: Shape, duration: float) -> ShapeEvent | None:
     if start >= duration:
         return None
     style, (x, y) = shape.style, (shape.transform.x, shape.transform.y)
-    width, height = style.width + 2 * SHAPE_ROOM, style.height + 2 * SHAPE_ROOM
+    room = SHAPE_ROOM + style.shadow.reach
+    width, height = style.width + 2 * room, style.height + 2 * room
     # Made even, as a Text Layer's, the figure staying in its middle.
     width, height = width + width % 2, height + height % 2
     layout = ShapeLayout(style, width, height, picture_scale(shape, width, height))

@@ -469,13 +469,20 @@ export interface TextLayer {
 export type ShapeKind = "rectangle";
 
 // How a Shape looks (backend/app/candidates.py): its figure `kind`, `width` x `height` output
-// pixels before its Transform's scale (whole pixels, 2 to 4096), filled with `fill` (null: none).
-// Never stretched: a wider Shape is a new width, drawn again.
+// pixels before its Transform's scale (whole pixels, 2 to 4096), filled with `fill` (null: none),
+// with a stroke `stroke_width` px thick (none at 0) drawn inside its width and height, its corners
+// rounded `radius` times its shorter side (a rectangle's; 0.5 makes a pill) and a drop shadow as a
+// Text Layer's. A fill or a stroke it has, or it is refused. Never stretched: a wider Shape is a new
+// width, drawn again, its stroke and corners keeping their size.
 export interface ShapeStyle {
   kind: ShapeKind;
   width: number;
   height: number;
   fill: string | null;
+  stroke_colour: string;
+  stroke_width: number;
+  radius: number;
+  shadow: DropShadow;
 }
 
 // A figure of the Advanced Edit (backend/app/candidates.py): drawn in its Shape Style from `start`

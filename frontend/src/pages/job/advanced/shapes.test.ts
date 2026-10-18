@@ -1,10 +1,14 @@
 // .scratch/shapes/issues/02-tracer-a-rectangle-from-the-stickers-tab.md: a white rectangle added from
 // the Stickers tab, on its Shape Track (picked, moved, trimmed and deleted, each one change), on the
 // preview under the Text Layers (gripped as a Text Layer is), and in the inspector, as worked examples.
-import { createElement } from "react";
+// 03-rectangle-look.md: its fill, stroke, corners and drop shadow in the inspector, which never leaves
+// it with nothing to draw.
+import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { Picture, RenderPlan, Shape, ShapeEvent, TextEvent, Transform } from "../../../api";
+import type { Picture, RenderPlan, Shape, ShapeEvent, ShapeStyle, TextEvent, Transform } from "../../../api";
+import { Slider } from "../../../components/Slider";
+import { Switch } from "../../../components/Switch";
 import { mergeEdits } from "../editor/merge";
 import { IDENTITY, pictureLayers } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
@@ -16,20 +20,33 @@ import { move, remove, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { writeItemTransform } from "./keying";
 import { NAMES, picked, stageIdsOf, stageItem, TRACK_OF, unlockedPick, type Pick } from "./pick";
-import { addShape, newShape } from "./shapeStyle";
+import { addShape, newShape, NOTHING_TO_DRAW } from "./shapeStyle";
 import { ShapeAssets, ShapeFields } from "./Shapes";
 import { shownPlan, TRACKS, UNTOUCHED } from "./trackState";
 
 const FRAME = { width: 1080, height: 1920 };
 
-// A white rectangle, `width` x `height`, from `start` for `secs`.
+// A Stickers tile's look (the backend's defaults): white, 400 px square, with no stroke, square
+// corners and no shadow.
+const WHITE_SQUARE: ShapeStyle = {
+  kind: "rectangle",
+  width: 400,
+  height: 400,
+  fill: "#FFFFFF",
+  stroke_colour: "#000000",
+  stroke_width: 0,
+  radius: 0,
+  shadow: { colour: "#000000", opacity: 0.6, blur: 0, distance: 0, angle: 45 },
+};
+
+// A white rectangle, 400 px square, from `start` for `secs`.
 function shape(id: string, start: number, secs: number, changes: Partial<Shape> = {}): Shape {
   return {
     id,
     start,
     secs,
     transform: { ...IDENTITY, x: 540, y: 960 },
-    style: { kind: "rectangle", width: 400, height: 400, fill: "#FFFFFF" },
+    style: WHITE_SQUARE,
     animation_in: "none",
     animation_out: "none",
     animation_ms: 300,
@@ -214,5 +231,73 @@ describe("a Shape in the inspector", () => {
     );
     for (const label of ["Width", "Height", "Fill", "Scale", "Rotation", "Opacity", "Comes on at", "Stays for"]) expect(markup).toContain(label);
     expect(markup).toContain("400 px");
+  });
+});
+
+// The elements ShapeFields lays out, its fields among them, without rendering them.
+function laidOut(node: ReactNode): ReactElement[] {
+  if (Array.isArray(node)) return node.flatMap(laidOut);
+  if (!isValidElement(node)) return [];
+  const { children } = node.props as { children?: ReactNode };
+  return [node, ...laidOut(children)];
+}
+
+function inspected(style: Partial<ShapeStyle>, changed: Shape[] = []) {
+  const picked = shape("a", 1, 2, { style: { ...WHITE_SQUARE, ...style } });
+  const props = { shape: picked, duration: 10, onChange: (next: Shape) => void changed.push(next), onDuplicate: () => {}, onDelete: () => {} };
+  const elements = laidOut(ShapeFields(props));
+  const slider = (label: string) => elements.find((element) => element.type === Slider && (element.props as { label: string }).label === label);
+  const fillSwitch = elements.find((element) => element.type === Switch && laidOut((element.props as { children: ReactNode }).children).some(
+    (child) => (child.props as { children?: ReactNode }).children === "Fill",
+  ));
+  return { markup: renderToStaticMarkup(createElement(ShapeFields, props)), slider, fillSwitch: fillSwitch as ReactElement<Parameters<typeof Switch>[0]> };
+}
+
+describe("a Shape's look in the inspector", () => {
+  test("a new one is white, with no stroke, square corners and no shadow", () => {
+    expect(newShape("rectangle", 0, 10, "a").style).toEqual(WHITE_SQUARE);
+  });
+
+  test("its stroke, corners and drop shadow are set there", () => {
+    const changed: Shape[] = [];
+    const { markup, slider } = inspected({ stroke_width: 8, stroke_colour: "#FF0000" }, changed);
+    for (const label of ["Fill", "Stroke", "Stroke colour", "Corners", "Drop shadow"]) expect(markup).toContain(label);
+    expect(markup).toContain("8 px");
+    slider("Stroke")!.props.onChange(12);
+    slider("Corners")!.props.onChange(0.5);
+    expect(changed.map((next) => next.style)).toEqual([
+      { ...WHITE_SQUARE, stroke_width: 12, stroke_colour: "#FF0000" },
+      { ...WHITE_SQUARE, stroke_width: 8, stroke_colour: "#FF0000", radius: 0.5 },
+    ]);
+    // With no stroke, it says none and has no colour to set.
+    expect(inspected({}).markup).not.toContain("Stroke colour");
+  });
+
+  test("its fill turns off for an outline alone, and back on in white", () => {
+    const changed: Shape[] = [];
+    const { fillSwitch } = inspected({ stroke_width: 8 }, changed);
+    expect(fillSwitch.props.disabled).toBeFalsy();
+    fillSwitch.props.onChange(false);
+    expect(changed[0].style).toEqual({ ...WHITE_SQUARE, stroke_width: 8, fill: null });
+    const outline = inspected({ stroke_width: 8, fill: null }, changed);
+    expect(outline.markup).not.toContain("Fill colour");
+    outline.fillSwitch.props.onChange(true);
+    expect(changed[1].style).toEqual({ ...WHITE_SQUARE, stroke_width: 8 });
+  });
+
+  test("with no stroke its fill can't be turned off, and with no fill its stroke can't be none, which it says", () => {
+    const changed: Shape[] = [];
+    const filled = inspected({}, changed);
+    expect(filled.fillSwitch.props.disabled).toBe(true);
+    filled.fillSwitch.props.onChange(false);
+    expect(changed).toEqual([]);
+    expect(filled.markup).toContain(NOTHING_TO_DRAW);
+    // An outline alone: its stroke is at least 1 px.
+    const outline = inspected({ stroke_width: 8, fill: null }, changed);
+    expect(outline.slider("Stroke")!.props.min).toBe(1);
+    outline.slider("Stroke")!.props.onChange(0);
+    expect(changed).toEqual([]);
+    expect(inspected({ stroke_width: 8 }).slider("Stroke")!.props.min).toBe(0);
+    expect(inspected({ stroke_width: 8 }).markup).not.toContain(NOTHING_TO_DRAW);
   });
 });

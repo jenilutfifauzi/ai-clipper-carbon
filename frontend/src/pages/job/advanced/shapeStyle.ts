@@ -1,5 +1,6 @@
 import type { Shape, ShapeKind, ShapeStyle } from "../../../api";
 import { IDENTITY } from "../editor/picture";
+import { NO_SHADOW } from "../editor/shadow";
 import type { Outcome } from "./actions";
 import { newId, newTiming, type AdvancedEdits } from "./edits";
 import { picked } from "./pick";
@@ -9,13 +10,32 @@ import { picked } from "./pick";
 
 // A Shape Style's least and most width and height, in output pixels (SHAPE_SIZE in backend/app/candidates.py).
 export const SHAPE_SIZE = { min: 2, max: 4096 } as const;
+// The thickest a Shape's stroke is, in output pixels (SHAPE_STROKE_MAX in backend/app/candidates.py).
+export const SHAPE_STROKE_MAX = 200;
 
-// What a Stickers tile adds: white, 400 px square, before its Transform's scale.
+// What a Stickers tile adds: white, 400 px square, before its Transform's scale, with no stroke,
+// square corners and no shadow (the backend's defaults).
 const NEW_SIDE = 400;
-const NEW_FILL = "#FFFFFF";
+export const NEW_FILL = "#FFFFFF";
 
 /** A new Shape Style of `kind`: its tile's look. */
-export const newShapeStyle = (kind: ShapeKind): ShapeStyle => ({ kind, width: NEW_SIDE, height: NEW_SIDE, fill: NEW_FILL });
+export const newShapeStyle = (kind: ShapeKind): ShapeStyle => ({
+  kind,
+  width: NEW_SIDE,
+  height: NEW_SIDE,
+  fill: NEW_FILL,
+  stroke_colour: "#000000",
+  stroke_width: 0,
+  radius: 0,
+  shadow: NO_SHADOW,
+});
+
+// What the inspector says where a Shape would be left with neither fill nor stroke, which the
+// backend refuses as nothing to draw.
+export const NOTHING_TO_DRAW = "A shape needs a fill or a stroke: give it a stroke to turn its fill off.";
+
+/** Whether a Shape of `style` draws anything: it has a fill or a stroke. */
+export const drawsSomething = (style: ShapeStyle): boolean => style.fill !== null || style.stroke_width > 0;
 
 /**
  * A Shape of `kind` added at `at` (the playhead) in a Clip `duration` long: for a new Text Layer's

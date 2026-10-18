@@ -223,18 +223,27 @@ class ShapeKind(StrEnum):
 # The least and the most a Shape Style's width and height are, in output pixels.
 SHAPE_SIZE = (2, 4096)
 ShapeSize = Annotated[int, Field(ge=SHAPE_SIZE[0], le=SHAPE_SIZE[1])]
+# The thickest a Shape's stroke is, in output pixels.
+SHAPE_STROKE_MAX = 200
 
 
 @dataclass(frozen=True)
 class ShapeStyle:
     """How a Shape looks (docs/adr/0011): its figure `kind`, `width` x `height` output pixels before
-    its Transform's scale, filled with `fill` (None: none). Never stretched: a wider Shape is a new
-    width, drawn again, so that what is drawn round its edges keeps its size."""
+    its Transform's scale, filled with `fill` (None: none), with a stroke `stroke_width` pixels thick
+    (none at 0) drawn inside its width and height, its corners rounded `radius` times its shorter
+    side (a rectangle's; 0.5 makes a pill) and a drop shadow as a Text Layer's. Never stretched: a
+    wider Shape is a new width, drawn again, so that its stroke and corners keep their size."""
 
     kind: ShapeKind = ShapeKind.RECTANGLE
     width: ShapeSize = 400
     height: ShapeSize = 400
     fill: Colour | None = "#FFFFFF"
+    stroke_colour: Colour = "#000000"
+    stroke_width: Annotated[int, Field(ge=0, le=SHAPE_STROKE_MAX)] = 0
+    radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
+    # Under the figure, off by default.
+    shadow: DropShadow = DropShadow()
 
 
 @dataclass(frozen=True)
@@ -261,8 +270,8 @@ class Shape:
 
     def __post_init__(self) -> None:
         _check_unstretched(f"Shape {self.id}", self.transform, "set its style's width and height")
-        if self.style.fill is None:
-            raise ValueError(f"Shape {self.id} has nothing to draw: give its style a fill")
+        if self.style.fill is None and not self.style.stroke_width:
+            raise ValueError(f"Shape {self.id} has nothing to draw: give its style a fill or a stroke (stroke_width)")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Shape {self.id}", PICTURE_KEYS, self.secs))
 
 

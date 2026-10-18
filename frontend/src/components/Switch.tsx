@@ -2,26 +2,29 @@ import type { ReactNode } from "react";
 import { cx } from "../format";
 
 // An on/off switch: a checkbox with the switch role, drawn as a track and a thumb that springs
-// across. Its label is `children`, or the element `labelledBy` names.
+// across. Its label is `children`, or the element `labelledBy` names. Disabled, it can't be turned.
 export function Switch({
   checked,
   onChange,
   children,
   labelledBy,
+  disabled,
   className,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   children: ReactNode;
   labelledBy?: string;
+  disabled?: boolean;
   className?: string;
 }) {
   return (
-    <label className={cx("flex min-h-11 cursor-pointer items-center gap-3", className)}>
+    <label className={cx("flex min-h-11 items-center gap-3", disabled ? "opacity-50" : "cursor-pointer", className)}>
       <input
         type="checkbox"
         role="switch"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
         aria-labelledby={labelledBy}
         className="peer sr-only"
