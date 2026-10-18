@@ -40,7 +40,8 @@ scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of 
 the same way from its own frames. With videos among them (or a Segment's own volume), each Segment's sound is set to its
 volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
 silence. A Freeze frame (docs/adr/0009) reads a moment of its video at its frame and holds the
-first frame for its hold (`tpad`), in silence. A join with a Transition is an
+first frame for its hold (`tpad`), in silence; a Muted Segment (docs/adr/0016) is heard as silence
+too, and a Muted Music Clip or Overlay is left out of the mix. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
@@ -390,10 +391,10 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, a Segment's own volume or Speed, or Transitions, each Segment's sound is first
-    played at its Speed (`speed_filters`) and set to its volume (a Source Segment's also to the
-    Clip's own, which the mix then leaves) in one format, and a video without sound, and a Freeze
-    frame, give silence."""
+    the Segments, a Segment's own volume or Speed, a Muted one, or Transitions, each Segment's sound
+    is first played at its Speed (`speed_filters`) and set to its volume (a Source Segment's also to
+    the Clip's own, which the mix then leaves) in one format, and a video without sound, a Freeze
+    frame and a Muted Segment give silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -403,14 +404,15 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{span:.3f}", "-i", str(read)]
     count = len(plan.segments)
     plain = all(
-        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None for segment in plan.segments
+        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.muted
+        for segment in plan.segments
     )
     if plain and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = []
     for i, segment in enumerate(plan.segments):
-        if segment.silent or segment.hold is not None:
+        if segment.silent or segment.hold is not None or segment.muted:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
             continue
         sped = speed_filters(segment.speed, segment.pitch, rate)
@@ -639,10 +641,10 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
 
 def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int) -> tuple[list[str], dict[str, int]]:
     """The input options of the songs the plan's music plays, each once, numbered from `first`, and
-    each song's input number by its id."""
+    each song's input number by its id. A Muted sound is left out of the mix, and so is its song."""
     index: dict[str, int] = {}
     for event in plan.audio:
-        if event.media not in index and event.media in music:
+        if event.media not in index and event.media in music and not event.muted:
             index[event.media] = first + len(index)
     return [arg for media in index for arg in ("-i", str(music[media]))], index
 
@@ -652,7 +654,7 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
     `index[media]`), at its volume, faded, delayed to its start; an Overlay's sound played at its
     Speed first (`speed_filters`). None without music at the Clip's own volume, where the sound goes
     as it is."""
-    heard = [event for event in plan.audio if event.media in index]
+    heard = [event for event in plan.audio if event.media in index and not event.muted]
     # Segments' sounds set to their volumes already (with videos among them) aren't set again.
     volume = 1.0 if source == "[srcv]" else plan.source_volume
     if not heard and volume == 1:

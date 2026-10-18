@@ -227,6 +227,9 @@ Edits:
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
   volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
   its keyed values.
+- `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
+  the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
+  Muted ones (`segments`, `sounds`).
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -852,9 +855,9 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
-    Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
-    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the
-    Words."""
+    Segment's, a Music Clip's, an Overlay's) and which sounds are Muted, each Shape's and each Text
+    Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a picture
+    layer's (`_layer_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -872,7 +875,7 @@ def _plan_view(
             _compact({
                 **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
-                "reverse": segment["reverse"] or None,
+                "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
             })
             for segment in plan["segments"]
@@ -894,9 +897,12 @@ def _plan_view(
             for event in plan["overlays"]
         ],
         **_compact({"sounds": [
-            {"id": event["id"], "media": event["media"], **_times(event, "start", "end"), "keys": _keys_view({"volume": event["gain"]}, event["start"])}
+            {
+                "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
+                **_compact({"keys": event["gain"] and _keys_view({"volume": event["gain"]}, event["start"]), "muted": event["muted"] or None}),
+            }
             for event in plan["segments"] + plan["audio"]
-            if event["gain"]
+            if event["gain"] or event["muted"]
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
@@ -961,7 +967,14 @@ def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
         if dataclasses.is_dataclass(hint):
             hint = _patch_model(hint)
         fields[field.name] = (hint, ...) if field.name == key else (hint | None, None)
-    return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
+    return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid", json_schema_extra=_untitled), **fields)
+
+
+def _untitled(schema: dict[str, Any], kind: type) -> None:
+    """A patch's JSON schema without its fields' titles (each its name again), which keeps the tools
+    within their budget."""
+    for field in schema.get("properties", {}).values():
+        field.pop("title", None)
 
 
 def _switched_stroke(shapes: list[dict], patch: dict) -> dict:

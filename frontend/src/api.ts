@@ -546,6 +546,7 @@ export type ShapeEvent = PictureLayerEvent<Shape>;
 // A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
 // seconds into the file, heard from `start` in Timeline time, at `volume` (0 to 2), faded in and out.
 // Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades multiply them.
+// Muted (ADR 0016), it is silent and keeps them.
 export interface MusicClip {
   id: string;
   media: string;
@@ -556,6 +557,7 @@ export interface MusicClip {
   fade_in: number;
   fade_out: number;
   keys: Keys;
+  muted?: boolean;
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
@@ -571,6 +573,7 @@ export interface Retiming {
 // A Music Clip (or an Overlay video's sound, `id` its item's) as heard, cut where the Clip or its
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
 // `volume`; its fades multiply them. An Overlay's sound plays (end − start) × speed of its item.
+// A Muted one (ADR 0016) isn't heard.
 export interface AudioEvent extends Omit<Retiming, "hold"> {
   media: string;
   start: number;
@@ -581,6 +584,7 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   fade_out: number;
   gain: Keyframe[];
   id: string;
+  muted?: boolean;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -663,7 +667,8 @@ export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
 // side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
 // and opacity over its length, replacing those fields of its Transform, and a video's volume.
 // A video's shows `secs` × speed of it from `offset` (docs/adr/0009); in Reverse its left edge shows
-// `offset + secs × speed`, its right edge `offset`.
+// `offset + secs × speed`, its right edge `offset`. A video's sound may be Muted (ADR 0016),
+// keeping its volume and Keyframes.
 export interface Overlay extends Omit<Retiming, "hold"> {
   id: string;
   media: string;
@@ -677,6 +682,7 @@ export interface Overlay extends Omit<Retiming, "hold"> {
   border: Border | null;
   shadow: Shadow | null;
   keys: Keys;
+  muted?: boolean;
 }
 
 // A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
@@ -761,6 +767,8 @@ export interface SegmentPlan extends Retiming {
   gain: Keyframe[];
   // Its Segment's id.
   id: string;
+  // Its sound switched silent (ADR 0016), keeping its volume and Keyframes.
+  muted?: boolean;
 }
 
 export interface RenderPlan {
@@ -856,7 +864,7 @@ export interface FontImported {
 // A video's `keys` move its Framing's Transform and shape its volume (ADR 0008), each `at` in
 // seconds from its start; the Source's have none. Its range plays in (end − start) ÷ speed on the
 // Timeline (docs/adr/0009), its left edge showing `end` in Reverse; a Freeze frame holds the frame
-// at `start`, silent, and its `end` is `start`.
+// at `start`, silent, and its `end` is `start`. Muted (ADR 0016), its sound is silent and keeps its volume and Keyframes.
 export interface ClipSegment extends Retiming {
   id: string;
   start: number;
@@ -865,6 +873,7 @@ export interface ClipSegment extends Retiming {
   framing?: Framing | null;
   volume?: number;
   keys?: Keys;
+  muted?: boolean;
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at

@@ -79,6 +79,7 @@ export function MediaSegment({
       fade_out: fade ? fade.end - fade.start : 0,
       gain: segment.gain,
       id: segment.id,
+      muted: segment.muted,
     };
     const sync = () => {
       const inside = main.current ? follow(main.current, playback, span, true) : false;
@@ -170,6 +171,7 @@ export function CopiedSourceSegment({
       fade_out: fade ? fade.end - fade.start : 0,
       gain: [],
       id: segment.id,
+      muted: segment.muted,
     };
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;

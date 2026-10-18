@@ -55,13 +55,14 @@ function unschedule(gain: GainNode) {
  * Sets how loud a keyed sound's `element` plays at the playback's time: while playing, through Web
  * Audio, as a curve sampled from the playhead to its end (loudnessCurve), set on play, on every seek
  * (when the time is further than MAX_DRIFT_SECS from where the curve has got to), at a new rate and
- * for a new `event` (another object); otherwise its loudness there. A Music Clip's, an Overlay
- * video's, and a video Segment's (PreviewSegments.tsx, as an event of its own).
+ * for a new `event` (another object); otherwise its loudness there. A Muted one follows no curve: it
+ * is held at 0. A Music Clip's, an Overlay video's, and a video Segment's (PreviewSegments.tsx, as an
+ * event of its own).
  */
 export function followCurve(element: HTMLMediaElement, playback: Playback, event: AudioEvent) {
   const time = playback.shownTime;
   const gain = gainOf(element);
-  if (!gain || !context || context.state !== "running" || !playback.playing) {
+  if (!gain || !context || context.state !== "running" || !playback.playing || event.muted) {
     setVolume(element, loudness(event, time));
     return;
   }
@@ -79,7 +80,8 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
  * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
  * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
- * live) is set to the plan's `source_volume`, times the Segment's own volume. Nothing is routed
+ * live) is set to the plan's `source_volume`, times the Segment's own volume, or held at 0 while it is
+ * Muted, as a Muted Music Clip or Overlay sound is (`loudness`). Nothing is routed
  * through Web Audio until the plan has music or another volume.
  */
 export function PreviewMusic({
@@ -108,9 +110,9 @@ export function PreviewMusic({
 
   useEffect(() => {
     const sync = () => {
-      // A skim's snippet is heard at the skimmed Segment's volume.
+      // A skim's snippet is heard at the skimmed Segment's volume; a Muted one's not at all.
       const shown = playback.segments[playback.shownSegmentIndex];
-      const volume = sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
+      const volume = shown.muted ? 0 : sourceVolume * (shown.media ? 1 : (shown.volume ?? 1));
       for (const { current: video } of masters) if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
       events.forEach((event, i) => {
         const element = players.current.get(key(event, i));

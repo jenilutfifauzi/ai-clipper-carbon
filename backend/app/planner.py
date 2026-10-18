@@ -300,6 +300,8 @@ class SegmentInput:
     analysed: tuple[float, float] | None = None
     # Whether its sound's pitch follows its Speed.
     pitch: bool = False
+    # Its sound switched silent (docs/adr/0016).
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -487,7 +489,8 @@ class AudioEvent:
     `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
     (`gain_at`). `id` is its item's. An Overlay's plays at its `speed` (docs/adr/0009), its pitch
-    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`."""
+    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`. A
+    `muted` one (docs/adr/0016) keeps its volume and Keyframes but isn't heard."""
 
     media: str
     start: float
@@ -501,6 +504,7 @@ class AudioEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -536,6 +540,8 @@ class SegmentPlan:
     # The renderer's (app/retimed.py's `read_from_copies`): a Segment of the Source read from this
     # file of the render's, its Retimed copy, in place of the Source.
     read_from: str | None = None
+    # Its sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -940,6 +946,7 @@ def plan_render(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold, given.pitch,
+                    muted=given.muted,
                 )
             )
             at, before = round(at + length, 3), length
@@ -1389,7 +1396,7 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         events.append(
             AudioEvent(
                 clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3),
-                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id,
+                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id, muted=clip.muted,
             )
         )
     return events
@@ -1397,10 +1404,10 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
 
 def gain_at(event: AudioEvent, time: float) -> float:
     """How loud `event` is heard `time` seconds into the Clip: its volume, or its Keyframes sampled
-    there (app/keyframes.py), through its fades' linear ramps; silent outside it. The same rule as
-    the preview's (loudness in frontend/src/pages/job/editor/PreviewMusic.tsx)."""
+    there (app/keyframes.py), through its fades' linear ramps; silent outside it, and Muted. The
+    same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts)."""
     into = time - event.start
-    if into < 0 or time > event.end:
+    if into < 0 or time > event.end or event.muted:
         return 0.0
     share = 1.0
     if event.fade_in > 0:
@@ -1417,7 +1424,7 @@ def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, Me
 
 def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[AudioEvent]:
     """The sound of the Overlays' videos that are turned up, or keyed, heard as Music Clips are, while
-    they show."""
+    they show (a Muted one's too, which isn't heard)."""
     sounds = []
     for overlay in overlays:
         event = _overlay_event(overlay, duration, items)
@@ -1426,7 +1433,8 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
             continue
         sounds.append(
             AudioEvent(
-                overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse
+                overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse,
+                overlay.muted,
             )
         )
     return sounds

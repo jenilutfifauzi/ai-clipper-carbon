@@ -43,3 +43,17 @@ describe("a keyed sound", () => {
     expect(loudnessCurve(dipped, 7).length).toBe(2);
   });
 });
+
+// A Muted sound (.scratch/audio-mixing/issues/02-muted-agent-render-preview.md) keeps its volume
+// and Keyframes, and isn't heard.
+describe("a Muted sound", () => {
+  test("is silent at every time, keyed or not, and follows a curve of silence", () => {
+    for (const event of [dipped, { ...dipped, gain: [] }]) {
+      const muted = { ...event, muted: true };
+      for (let time = 2.5; time <= 7.5; time += 0.25) expect(loudness(muted, time)).toBe(0);
+      expect(loudnessCurve(muted, 4).every((gain) => gain === 0)).toBe(true);
+    }
+    // Unmuted, it is heard as it was.
+    expect(loudness({ ...dipped, muted: false }, 4)).toBe(1);
+  });
+});
