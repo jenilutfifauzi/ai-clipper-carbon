@@ -278,7 +278,7 @@ export function Tracks({
                 tone="overlay"
                 selected={selected}
                 changed={changed.has(overlay.id)}
-                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}`}
+                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}${overlay.muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -305,6 +305,7 @@ export function Tracks({
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
                 <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
                 <RetimingBadge retiming={overlay} />
+                {overlay.muted && <MutedBadge />}
               </TimelineItem>
             );
           })}
@@ -327,6 +328,8 @@ export function Tracks({
           const keyed = !!segment.keys?.volume?.length;
           // A Freeze frame is silent: no Waveform, no Volume Line and no Fade Ramps.
           const held = segment.hold != null;
+          // Muted, its Waveform is flat and dimmed, with no Volume Line nor Fade Ramps, and a crossed speaker.
+          const muted = !held && !!segment.muted;
           return (
             <TimelineItem
               key={segment.id}
@@ -339,7 +342,7 @@ export function Tracks({
               tone="video"
               selected={selected}
               changed={changed.has(segment.id)}
-              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${retimingName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}`}
+              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${retimingName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}${muted ? ", Muted" : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => {
@@ -356,11 +359,19 @@ export function Tracks({
                   media={segment.media}
                   item={mediaById.get(segment.media)}
                   heard={heard}
+                  muted={muted}
                 />
               ) : (
-                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} heard={sourceHeard(edits, segment, shown, tail)} />
+                <SourceFilmstrip
+                  geometry={geometry}
+                  cache={mediaCache}
+                  shown={shown}
+                  source={source}
+                  heard={sourceHeard(edits, segment, shown, tail)}
+                  muted={muted}
+                />
               )}
-              {!held && (!segment.media || mediaById.get(segment.media)?.has_audio !== false) && (
+              {!held && !muted && (!segment.media || mediaById.get(segment.media)?.has_audio !== false) && (
                 <>
                   <VolumeLine
                     volume={segment.volume ?? 1}
@@ -384,6 +395,7 @@ export function Tracks({
               </span>
               <RetimingBadge retiming={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
+              {muted && <MutedBadge />}
             </TimelineItem>
           );
         })}
@@ -497,6 +509,7 @@ export function Tracks({
             // Its fades over what is heard of it, as the planner has them.
             const fades = fadesWithin(clip, end - clip.start);
             const heard: Heard = { volume: clip.volume, secs: end - clip.start, ...fades, keys: clip.keys.volume };
+            const muted = !!clip.muted;
             return (
               <TimelineItem
                 key={clip.id}
@@ -510,7 +523,7 @@ export function Tracks({
                 tone="audio"
                 selected={selected}
                 changed={changed.has(clip.id)}
-                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}`}
+                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}${muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -535,26 +548,31 @@ export function Tracks({
                 onDelete={selected ? onDelete : undefined}
               >
                 {song?.has_audio && !!song.duration && (
-                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} heard={heard} length={song.duration} />
+                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} heard={heard} length={song.duration} muted={muted} />
                 )}
-                <VolumeLine
-                  volume={clip.volume}
-                  keyed={clip.keys.volume?.length ? { heard, start: clip.start, playback } : undefined}
-                  grab={selected && !locked("music")}
-                  onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
-                />
-                <FadeRamps
-                  fades={fades}
-                  pps={pps}
-                  grab={selected && !locked("music")}
-                  onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, end - clip.start, group)}
-                />
+                {!muted && (
+                  <>
+                    <VolumeLine
+                      volume={clip.volume}
+                      keyed={clip.keys.volume?.length ? { heard, start: clip.start, playback } : undefined}
+                      grab={selected && !locked("music")}
+                      onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
+                    />
+                    <FadeRamps
+                      fades={fades}
+                      pps={pps}
+                      grab={selected && !locked("music")}
+                      onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, end - clip.start, group)}
+                    />
+                  </>
+                )}
                 <Music aria-hidden size={12} className="relative shrink-0" />
                 <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
                 {clip.volume !== 1 && !clip.keys.volume?.length && (
                   <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>
                 )}
                 <RetimingBadge retiming={clip} />
+                {muted && <MutedBadge />}
               </TimelineItem>
             );
           })}
@@ -576,6 +594,15 @@ function RetimingBadge({ retiming: { speed = 1, reverse } }: { retiming: Retimin
   return (
     <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white tabular-nums">
       {[reverse && "◀", speed !== 1 && speedLabel(speed)].filter(Boolean).join(" ")}
+    </span>
+  );
+}
+
+/** A Muted item's crossed speaker on the Timeline. */
+function MutedBadge() {
+  return (
+    <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 p-0.5 text-white">
+      <VolumeX size={12} />
     </span>
   );
 }
@@ -604,7 +631,7 @@ const mediaAlong = (shown: PlayedSegment) => ({
 /**
  * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
  * tiled, which shows until they arrive. A video with sound has its Waveform along the bottom, as it
- * is `heard` (at its volume or by its volume Keyframes).
+ * is `heard` (at its volume or by its volume Keyframes); flat and dimmed when `muted`.
  */
 function MediaFilmstrip({
   geometry,
@@ -613,6 +640,7 @@ function MediaFilmstrip({
   media,
   item,
   heard,
+  muted,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
@@ -620,6 +648,7 @@ function MediaFilmstrip({
   media: string;
   item?: MediaItem;
   heard: Heard;
+  muted: boolean;
 }) {
   const { pps } = geometry;
   return (
@@ -652,6 +681,7 @@ function MediaFilmstrip({
                     gain: (time) => gainAt(time, heard),
                     color: MEDIA_WAVE,
                     band: MEDIA_WAVE_BAND,
+                    muted,
                   }),
                 ]
               : []),
@@ -665,7 +695,7 @@ function MediaFilmstrip({
 /**
  * A Source Segment's picture: the Source's frames along it (its Filmstrip), over the plain lane until
  * they arrive, and the speech's Waveform along its bottom as it is `heard` (its volume or volume
- * Keyframes, under the Clip's own sound).
+ * Keyframes, under the Clip's own sound); flat and dimmed when `muted`.
  */
 function SourceFilmstrip({
   geometry,
@@ -673,12 +703,14 @@ function SourceFilmstrip({
   shown,
   source,
   heard,
+  muted,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   shown: PlayedSegment;
   source: { job: string; metadata: SourceMetadata };
   heard: Heard;
+  muted: boolean;
 }) {
   const { pps } = geometry;
   return (
@@ -706,6 +738,7 @@ function SourceFilmstrip({
                 gain: (time) => gainAt(time, heard),
                 color: MEDIA_WAVE,
                 band: MEDIA_WAVE_BAND,
+                muted,
               }),
             ]),
       ]}
@@ -716,7 +749,8 @@ function SourceFilmstrip({
 /**
  * A Music Clip's Waveform: the part of its song it plays, across its body, at its Speed (from the
  * part's end, backwards, in Reverse), as `heard` over the secs it is heard for, at its volume or by
- * its volume Keyframes, through its fades (as the planner has them over those). `length` is the song's.
+ * its volume Keyframes, through its fades (as the planner has them over those); flat and dimmed when
+ * `muted`. `length` is the song's.
  */
 function SongWaveform({
   geometry,
@@ -724,12 +758,14 @@ function SongWaveform({
   clip,
   heard,
   length,
+  muted,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   clip: MusicClip;
   heard: Heard;
   length: number;
+  muted: boolean;
 }) {
   const { pps } = geometry;
   const { secs } = heard;
@@ -750,6 +786,7 @@ function SongWaveform({
           duration: length,
           gain: (time) => gainAt(time, heard),
           color: SONG_WAVE,
+          muted,
         }),
       ]}
     />

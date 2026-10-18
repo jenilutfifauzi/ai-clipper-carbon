@@ -62,6 +62,7 @@ import {
   setHold,
   setReverse,
   speedSheetItem,
+  toggleMute,
   type Outcome,
   type SegmentDrag,
   type SpeedRef,
@@ -116,6 +117,7 @@ import {
   isPicked,
   isPlaced,
   itemsOf,
+  LISTS,
   picked,
   prunedPick,
   samePick,
@@ -694,8 +696,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     freeze: () => (freezes.canFreeze(playback.time) ? freezes.freeze() : false),
     reverse: () => {
       if (!reversed) return false;
-      const items: { id: string; reverse?: boolean }[] = reversed.kind === "segment" ? edits.segments : edits.overlays;
+      const items: { id: string; reverse?: boolean }[] = edits[LISTS[reversed.kind]];
       setItemReverse(reversed, !items.find((item) => item.id === reversed.id)?.reverse);
+    },
+    mute: () => {
+      const outcome = toggleMute(scene, (media) => mediaById.get(media)?.has_audio === true);
+      if (!outcome) return false;
+      apply(outcome);
     },
     fit: () => fitTimeline.current?.(),
     zoom: (direction) => zoomTimeline.current?.(direction),

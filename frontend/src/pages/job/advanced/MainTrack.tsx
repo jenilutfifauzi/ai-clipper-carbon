@@ -12,7 +12,7 @@ import type { Playback, PlayedSegment } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS } from "./edits";
-import { KeyedVolume } from "./KeyCluster";
+import { KeyedVolume, MutedSwitch } from "./KeyCluster";
 import { resetFraming, type KeySpan } from "./keying";
 import { HoldFields, SpeedFields } from "./SpeedFields";
 import { BackgroundFields, TransformFields, useKeyedTransform } from "./TransformFields";
@@ -184,6 +184,7 @@ export function SegmentFields({
       onReverse={onReverse}
     />
   );
+  const muteSwitch = <MutedSwitch muted={segment.muted ?? false} onChange={(muted) => onChange({ ...segment, muted }, `segment:${segment.id}:muted`)} />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -213,16 +214,19 @@ export function SegmentFields({
           {held ? null : item?.has_audio === false ? (
             <p className="text-sm text-muted">This video has no sound.</p>
           ) : (
-            <KeyedVolume
-              item={{ kind: "segment", id: segment.id }}
-              span={span}
-              keys={segment.keys?.volume ?? []}
-              volume={segment.volume ?? 1}
-              label="Its sound"
-              format={(v) => `${Math.round(v * 100)}%`}
-              playback={playback}
-              onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
-            />
+            <>
+              <KeyedVolume
+                item={{ kind: "segment", id: segment.id }}
+                span={span}
+                keys={segment.keys?.volume ?? []}
+                volume={segment.volume ?? 1}
+                label="Its sound"
+                format={(v) => `${Math.round(v * 100)}%`}
+                playback={playback}
+                onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
+              />
+              {muteSwitch}
+            </>
           )}
           {!held && item?.has_audio !== false && <FadeFields segment={segment} onFade={onFade} />}
         </>
@@ -250,6 +254,7 @@ export function SegmentFields({
                 playback={playback}
                 onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
               />
+              {muteSwitch}
               <FadeFields segment={segment} onFade={onFade} />
               <Slider
                 label="The episode's sound, in every Segment"

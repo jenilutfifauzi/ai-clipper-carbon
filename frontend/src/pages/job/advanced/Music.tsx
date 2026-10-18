@@ -6,7 +6,7 @@ import type { Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { Group } from "../editor/StyleFields";
 import { FADE_MAX_SECS, ITEM_MIN_SECS, newId, round } from "./edits";
-import { KeyedVolume } from "./KeyCluster";
+import { KeyedVolume, MutedSwitch } from "./KeyCluster";
 import { SpeedFields } from "./SpeedFields";
 import { TimingFields } from "./TimingFields";
 
@@ -22,7 +22,7 @@ export function newMusicClip(item: MediaItem, at: number, duration: number): Mus
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 /**
- * The selected Music Clip's volume, fades, Speed (the Overlay's fields), part of its song and time.
+ * The selected Music Clip's volume, Muted, fades, Speed (the Overlay's fields), part of its song and time.
  * Its volume is shown at the playhead, and keyed there (`onVolume` writes a Keyframe once it has
  * some), with its ‹ ◆ ›.
  */
@@ -89,6 +89,7 @@ export function MusicFields({
           playback={playback}
           onChange={(volume) => onVolume(volume, `music:${clip.id}:volume`)}
         />
+        <MutedSwitch muted={clip.muted ?? false} onChange={(muted) => onChange({ ...clip, muted }, `music:${clip.id}:muted`)} />
         <Slider
           label="Fade in"
           value={Math.min(clip.fade_in, most(clip.fade_out))}

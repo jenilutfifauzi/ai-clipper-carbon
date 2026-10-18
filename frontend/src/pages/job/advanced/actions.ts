@@ -625,6 +625,24 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
   return heard ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
 }
 
+/**
+ * M on the Pick (GLOSSARY.md, Muted): its items with sound all Muted when any of them is heard, else
+ * all unmuted, keeping their volume, Keyframes and fades. Text Layers, Shapes, Freeze frames, images
+ * and videos without sound (`sounded` says whether a Media Library item has sound) are left alone, as
+ * are the hook, the captions and a join. Null when none with sound is picked.
+ */
+export function toggleMute(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Outcome | null {
+  const { edits, pick } = scene;
+  const segments = edits.segments.filter((segment) => isPicked(pick, "segment", segment.id) && segment.hold == null && (!segment.media || sounded(segment.media)));
+  const music = edits.music.filter((clip) => isPicked(pick, "music", clip.id));
+  const overlays = edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id) && sounded(overlay.media));
+  const chosen = new Set<{ muted?: boolean }>([...segments, ...music, ...overlays]);
+  if (!chosen.size) return null;
+  const muted = [...chosen].some((item) => !item.muted);
+  const set = <T extends { muted?: boolean }>(items: T[]) => items.map((item) => (chosen.has(item) ? { ...item, muted } : item));
+  return { edits: { ...edits, segments: set(edits.segments), music: set(edits.music), overlays: set(edits.overlays) }, pick };
+}
+
 /** A Segment, a video Overlay or a Music Clip, which has a Speed. */
 export type SpeedRef = { kind: "segment" | "overlay" | "music"; id: string };
 
