@@ -33,6 +33,8 @@ function setUp(move: ((delta: number, group: string) => void) | null = null, key
     clearMarks: () => {},
     fps: 30,
     setFullscreen: () => {},
+    toggleAssets: () => {},
+    toggleInspector: () => {},
     keyframes,
   });
   return { stage, playback, commands };
