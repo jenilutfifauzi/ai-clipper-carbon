@@ -84,7 +84,7 @@ def segmented_command() -> list[str]:
             SegmentInput(10, 12, join=Join(TransitionKind.FADE, 0.5), id="a"),
             SegmentInput(13, 15, id="b"),
         ],
-        music=[MusicClip("m", SONG, 0.5, 3.0, volume=0.5, fade_in=0.5)],
+        music=[MusicClip("m", 0.5, 3.0, media=SONG, volume=0.5, fade_in=0.5)],
         media_info={VIDEO: MediaInfo(640, 360, 4.0, True), SONG: MediaInfo(0, 0, 30.0, True)},
     )
     files = {VIDEO: Path("/media/clip.mp4"), SONG: Path("/media/song.m4a")}

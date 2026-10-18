@@ -233,8 +233,8 @@ class Renderer:
         tuning = self.tuning
         measure = f"loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
-        inputs, index = _music_inputs(plan, files or {}, first=len(sources) // _INPUT_ARGS)
-        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
+        inputs, reads = _music_inputs(plan, files or {}, len(sources) // _INPUT_ARGS, source)
+        mix = _audio_mix(plan, reads, tuning.audio_rate, sound)
         if mix is None and not sounds:
             audio = ["-map", "0:a:0", "-af", measure]
         else:
@@ -278,10 +278,11 @@ class Renderer:
         count = len(sources) // _INPUT_ARGS
         # The music's first input: after the Source's and its videos', and the logo's.
         before_music = count + (1 if logo is not None else 0)
-        inputs, index = _music_inputs(plan, files or {}, first=before_music)
-        layers, layered = _overlay_inputs(plan, files or {}, before_music + len(index), feeds)
-        scene_inputs, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
-        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + len(index) + len(layered) + len(drawn), feeds)
+        inputs, reads = _music_inputs(plan, files or {}, before_music, source)
+        after_music = before_music + _music_count(reads)
+        layers, layered = _overlay_inputs(plan, files or {}, after_music, feeds)
+        scene_inputs, drawn = _scene_inputs(plan, after_music + len(layered), feeds)
+        picture_inputs, written = _layer_inputs(plan, pictures or {}, after_music + len(layered) + len(drawn), feeds)
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
@@ -307,7 +308,7 @@ class Renderer:
             subtitles = above
         burned = "" if subtitles is None else f"{ass_filter(subtitles, fonts)},"
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
-        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
+        mix = _audio_mix(plan, reads, tuning.audio_rate, sound)
         heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
         audio = f"{heard}aresample={tuning.audio_rate}[a]"
         if loudness is not None:
@@ -647,22 +648,48 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
     return drawn + ",setsar=1"
 
 
-def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int) -> tuple[list[str], dict[str, int]]:
-    """The input options of the songs the plan's music plays, each once, numbered from `first`, and
-    each song's input number by its id. A Muted sound is left out of the mix, and so is its song."""
-    index: dict[str, int] = {}
-    for event in plan.audio:
-        if event.media not in index and event.media in music and not event.muted:
-            index[event.media] = first + len(index)
-    return [arg for media in index for arg in ("-i", str(music[media]))], index
+# Where a sound of the plan's audio is read: its input's number, and how far into that input its part starts.
+Read = tuple[int, float]
 
 
-def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str = "[0:a:0]") -> str | None:
-    """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into [mix]: each Music Clip its part of its song (input
-    `index[media]`), at its volume, faded, delayed to its start; an Overlay's sound played at its
-    Speed first (`speed_filters`). None without music at the Clip's own volume, where the sound goes
-    as it is."""
-    heard = [event for event in plan.audio if event.media in index and not event.muted]
+def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int, source: Path) -> tuple[list[str], dict[int, Read]]:
+    """The input options of what the plan's music plays, numbered from `first`: each song once,
+    whole; and for each Music Clip of the Source, the Source (`source`) from its offset for its read,
+    as a Segment's is, so that a long episode isn't decoded from its start. And where each sound of
+    the plan's audio is read, by its place there; one of a song not in `music` isn't heard. A Muted
+    sound is left out of the mix, and so is a song only it plays."""
+    inputs: list[str] = []
+    songs: dict[str, int] = {}
+    reads: dict[int, Read] = {}
+    count = 0
+    for i, event in enumerate(plan.audio):
+        if event.muted:
+            continue
+        if event.media is None:
+            reads[i] = (first + count, 0.0)
+            inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}", "-i", str(source)]
+            count += 1
+        elif event.media in music:
+            if event.media not in songs:
+                songs[event.media] = first + count
+                inputs += ["-i", str(music[event.media])]
+                count += 1
+            reads[i] = (songs[event.media], event.offset)
+    return inputs, reads
+
+
+def _music_count(reads: dict[int, Read]) -> int:
+    """How many inputs the music reads (`_music_inputs`): each is read by a sound at least."""
+    return len({number for number, _ in reads.values()})
+
+
+def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str = "[0:a:0]") -> str | None:
+    """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into
+    [mix]: each sound its part of what it reads (`reads`, by its place in the plan's audio), played
+    at its Speed (`speed_filters`), at its volume (a Music Clip of the Source's at the Clip's own
+    too, as a Segment of it is), faded, delayed to its start. None without music at the Clip's own
+    volume, where the sound goes as it is."""
+    heard = [(event, reads[i]) for i, event in enumerate(plan.audio) if i in reads]
     # Segments' sounds set to their volumes already (with videos among them) aren't set again.
     volume = 1.0 if source == "[srcv]" else plan.source_volume
     if not heard and volume == 1:
@@ -671,17 +698,23 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
         return f"{source}volume={volume:g}[mix]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = [f"{source}volume={volume:g},{form}[m0]"]
-    for i, event in enumerate(heard, 1):
+    for i, (event, (number, at)) in enumerate(heard, 1):
         length = round(event.end - event.start, 3)
         read = round(event.time.span, 3)
         sped = speed_filters(event.speed, event.pitch, rate)
+        # The Source's at the Clip's own volume too (a keyed one's after its Keyframes, as a Segment's).
+        own = plan.source_volume if event.source else 1.0
+        if event.gain:
+            level = [*_volume(event.gain, event.volume), *([f"volume={own:g}"] if own != 1 else [])]
+        else:
+            level = _volume(event.gain, event.volume * own)
         filters = [
-            f"atrim=start={event.offset:g}:end={event.offset + read:g}", "asetpts=PTS-STARTPTS",
+            f"atrim=start={at:g}:end={at + read:g}", "asetpts=PTS-STARTPTS",
             # Then its time on the Timeline from 0 at its start, which its Keyframes and fades are in.
-            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *_volume(event.gain, event.volume),
+            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *level,
             *_fades(event.fade_in, event.fade_out, length), f"adelay={round(event.start * 1000)}:all=1",
         ]
-        chains.append(f"[{index[event.media]}:a:0]{','.join(filters)},{form}[m{i}]")
+        chains.append(f"[{number}:a:0]{','.join(filters)},{form}[m{i}]")
     labels = "".join(f"[m{i}]" for i in range(len(heard) + 1))
     # The Clip's length is its own sound's; nothing is turned down to make room (normalize=0).
     chains.append(f"{labels}amix=inputs={len(heard) + 1}:duration=first:normalize=0[mix]")

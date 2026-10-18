@@ -501,7 +501,7 @@ class Renders:
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
             used = (
-                {event.media for event in plan.audio}
+                {event.media for event in plan.audio if event.media}
                 | {segment.media for segment in plan.segments if segment.media}
                 | {overlay.media for overlay in plan.overlays}
             )

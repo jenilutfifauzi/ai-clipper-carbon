@@ -48,6 +48,15 @@ export type RetimedItem = { media: string } | { job: string };
 /** A copy of a range of a Media Library video's, or of a Job's Source, to ask for. */
 export type RetimedAsk = RetimedItem & { range: RetimedRange };
 
+/**
+ * The preview copy a plan's sound plays from (`eventCopy`), asked of its Media Library item, or of Job
+ * `job`'s Source for a Music Clip of the Source (`media` null); null for one played from its own file.
+ */
+export function soundAsk(event: PlannedEvent & { media: string | null }, job: string): RetimedAsk | null {
+  const range = eventCopy(event);
+  return range && (event.media ? { media: event.media, range } : { job, range });
+}
+
 const itemOf = (ask: RetimedAsk) => ("media" in ask ? ask.media : `job:${ask.job}`);
 
 const keyOf = (ask: RetimedAsk) => {

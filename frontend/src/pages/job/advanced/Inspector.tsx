@@ -32,6 +32,7 @@ export function Inspector({
   fonts,
   actions,
   mediaById,
+  sourceLength,
   playback,
   transition,
   onEdits,
@@ -53,6 +54,8 @@ export function Inspector({
   fonts: FontInfo[] | null;
   actions: ItemActions | null;
   mediaById: Map<string, MediaItem>;
+  // The Source's length, which a Music Clip of the Source reads within.
+  sourceLength: number;
   playback: Playback;
   // The Transitions' panel, for a picked join.
   transition: ReactNode;
@@ -192,7 +195,8 @@ export function Inspector({
       <MusicFields
         key={clip.id}
         clip={clip}
-        item={mediaById.get(clip.media)}
+        item={clip.media ? mediaById.get(clip.media) : undefined}
+        sourceLength={sourceLength}
         duration={duration}
         playback={playback}
         onChange={onMusic}

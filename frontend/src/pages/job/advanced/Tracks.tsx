@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Lock, LockOpen, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
+import { Eye, EyeOff, Lock, LockOpen, Mic, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
@@ -37,7 +37,8 @@ import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
 import { speedLabel } from "./speed";
-import { gainAt, segmentHeard, sourceGain, sourceHeard, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
+import { gainAt, segmentHeard, sourceGain, sourceHeard, underSourceVolume, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
+import { musicName } from "./Music";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -496,11 +497,14 @@ export function Tracks({
         <TrackRow key={`music${i}`} label={i === 0 ? label("music") : ""} locked={locked("music")} drop={dropMedia("music")}>
           {lane.map((clip) => {
             const selected = isPicked(pick, "music", clip.id);
-            const song = mediaById.get(clip.media);
+            // Of a song, or of the Source's sound (the episode's).
+            const episode = clip.media === null;
+            const song = clip.media ? mediaById.get(clip.media) : undefined;
             // Its song at its Speed, in Reverse from its end, as an Overlay's video: trimmed, each edge
-            // reaches as far as the song goes that way (as far as it plays now, while the library loads).
+            // reaches as far as the song (or the episode) goes that way (as far as it plays now, while
+            // the library loads).
             const time = overlayTime(clip);
-            const length = song?.duration ?? time.end;
+            const length = episode ? source.metadata.duration : (song?.duration ?? time.end);
             const reach = {
               before: clip.start + offsetAt(time, clip.reverse ? length : 0),
               after: clip.start + offsetAt(time, clip.reverse ? 0 : length),
@@ -510,6 +514,7 @@ export function Tracks({
             const fades = fadesWithin(clip, end - clip.start);
             const heard: Heard = { volume: clip.volume, secs: end - clip.start, ...fades, keys: clip.keys.volume };
             const muted = !!clip.muted;
+            const name = musicName(clip, song);
             return (
               <TimelineItem
                 key={clip.id}
@@ -523,7 +528,7 @@ export function Tracks({
                 tone="audio"
                 selected={selected}
                 changed={changed.has(clip.id)}
-                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}${muted ? ", Muted" : ""}`}
+                label={`${episode ? name : `Music ${song?.name ?? ""}`}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}${muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>
@@ -547,8 +552,30 @@ export function Tracks({
                 }
                 onDelete={selected ? onDelete : undefined}
               >
-                {song?.has_audio && !!song.duration && (
-                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} heard={heard} length={song.duration} muted={muted} />
+                {episode ? (
+                  // The Source's Peaks, at the Clip's own sound too, as its Segments' are.
+                  <SongWaveform
+                    geometry={geometry}
+                    cache={mediaCache}
+                    clip={clip}
+                    heard={underSourceVolume(heard, edits)}
+                    length={length}
+                    peaks={(start) => jobPeaksUrl(source.job, start)}
+                    muted={muted}
+                  />
+                ) : (
+                  song?.has_audio &&
+                  !!song.duration && (
+                    <SongWaveform
+                      geometry={geometry}
+                      cache={mediaCache}
+                      clip={clip}
+                      heard={heard}
+                      length={song.duration}
+                      peaks={(start) => mediaPeaksUrl(song.id, start)}
+                      muted={muted}
+                    />
+                  )
                 )}
                 {!muted && (
                   <>
@@ -566,8 +593,8 @@ export function Tracks({
                     />
                   </>
                 )}
-                <Music aria-hidden size={12} className="relative shrink-0" />
-                <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
+                {episode ? <Mic aria-hidden size={12} className="relative shrink-0" /> : <Music aria-hidden size={12} className="relative shrink-0" />}
+                <span className="relative truncate font-medium">{name}</span>
                 {clip.volume !== 1 && !clip.keys.volume?.length && (
                   <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>
                 )}
@@ -750,7 +777,8 @@ function SourceFilmstrip({
  * A Music Clip's Waveform: the part of its song it plays, across its body, at its Speed (from the
  * part's end, backwards, in Reverse), as `heard` over the secs it is heard for, at its volume or by
  * its volume Keyframes, through its fades (as the planner has them over those); flat and dimmed when
- * `muted`. `length` is the song's.
+ * `muted`. `length` is the song's, whose Peaks are at `peaks` (a Media Library item's, or the
+ * Source's for its sound).
  */
 function SongWaveform({
   geometry,
@@ -758,6 +786,7 @@ function SongWaveform({
   clip,
   heard,
   length,
+  peaks,
   muted,
 }: {
   geometry: TimeGeometry;
@@ -765,6 +794,7 @@ function SongWaveform({
   clip: MusicClip;
   heard: Heard;
   length: number;
+  peaks: (start: number) => string;
   muted: boolean;
 }) {
   const { pps } = geometry;
@@ -779,7 +809,7 @@ function SongWaveform({
       layers={[
         waveformLayer({
           cache,
-          url: (start) => mediaPeaksUrl(clip.media, start),
+          url: peaks,
           mediaStart: clip.reverse ? overlayTime(clip, length).end : clip.offset,
           speed: clip.speed,
           reverse: clip.reverse,

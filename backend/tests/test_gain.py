@@ -24,7 +24,7 @@ def heard(sound: dict) -> AudioEvent:
     """The case's sound as the planner hears it: a Music Clip over its span, of a song longer than it."""
     secs = sound["end"] - sound["start"]
     clip = MusicClip(
-        "m", SONG, sound["start"], secs, volume=sound.get("volume", 1.0), fade_in=sound.get("fade_in", 0.0),
+        "m", media=SONG, start=sound["start"], secs=secs, volume=sound.get("volume", 1.0), fade_in=sound.get("fade_in", 0.0),
         fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound), muted=sound.get("muted", False),
     )
     [event] = audio_events([clip], sound["end"] + 1, {SONG: MediaInfo(0, 0, secs, True)})

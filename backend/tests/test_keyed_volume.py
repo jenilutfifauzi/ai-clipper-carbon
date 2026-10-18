@@ -50,11 +50,11 @@ def test_an_eased_span_is_24_linear_steps_within_0_6_percent_of_its_change(ease)
 
 
 def test_a_music_clips_volume_keyframes_are_its_sound_events_gain_track_in_its_own_seconds():
-    clip = MusicClip("m", SONG, 3.0, 4.0, volume=0.5, fade_in=0.5, fade_out=1.0, keys={"volume": DIP})
+    clip = MusicClip("m", 3.0, 4.0, media=SONG, volume=0.5, fade_in=0.5, fade_out=1.0, keys={"volume": DIP})
     [event] = audio_events([clip], 10, SONGS)
     # Seconds from the event's start, as the Keyframes are from the Music Clip's.
     assert (event.id, event.start, event.gain) == ("m", 3.0, DIP)
-    [still] = audio_events([MusicClip("m", SONG, 3.0, 4.0, volume=0.5)], 10, SONGS)
+    [still] = audio_events([MusicClip("m", 3.0, 4.0, media=SONG, volume=0.5)], 10, SONGS)
     assert still.gain == []
     # How loud the track is heard, through its fades: test_gain.py's shared cases ("keyed and faded").
 

@@ -429,6 +429,15 @@ export function sourceHeard({ source_volume }: { source_volume: number }, segmen
   return { ...heard, volume: sourceGain({ source_volume }, segment), keys: heard.keys?.map((key) => ({ ...key, value: key.value * source_volume })) };
 }
 
+/**
+ * How an item of the Source's sound other than a Segment (a Music Clip of the Source) is heard: as
+ * it is `heard` on its own, times the Clip's own sound, its Keyframes' values too, as the renderer
+ * has it. Its Waveform's, as sourceHeard is a Source Segment's.
+ */
+export function underSourceVolume(heard: Heard, { source_volume }: { source_volume: number }): Heard {
+  return { ...heard, volume: heard.volume * source_volume, keys: heard.keys?.map((key) => ({ ...key, value: key.value * source_volume })) };
+}
+
 // --- The Volume Line ---
 
 // The Volume Line's curve: a volume is 2 · height^VOLUME_CURVE, so that 100% sits at two thirds of

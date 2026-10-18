@@ -258,9 +258,9 @@ def piece_secs(width: int, height: int, fps: float) -> float:
 def read_from_copies(
     plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str | None, SegmentTime], Copy]
 ) -> tuple[RenderPlan, dict[str, Path]]:
-    """The Render Plan as the renderer reads it, and its files: each reversed Segment, and each
-    reversed Overlay's picture and sound, played forwards from the full-size copy `copy_of` gives for
-    its video (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
+    """The Render Plan as the renderer reads it, and its files: each reversed Segment, each reversed
+    Overlay's picture and sound, and each reversed Music Clip, played forwards from the full-size copy
+    `copy_of` gives for its item (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
     media Segment's or an Overlay's stands in for its video; a Source Segment's is its `read_from`,
     still a Segment of the Source (its Scenes' panels, the Clip's own volume)."""
     segments = []
@@ -314,8 +314,8 @@ def copies_played(start: float, end: float, speed: float = 1.0, reverse: bool = 
 def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float]) -> dict[str | None, list[tuple[CopySize, Retime]]]:
     """The Retimed copies `candidates` play from (`copies_played`), by their item: a Media Library
     video's or song's id, or None for the Source. An Overlay or a Music Clip is of one of the items
-    `durations` gives (an image has none), its range cut where its file and the Clip end
-    (`overlay_time`)."""
+    `durations` gives (an image has none), or a Music Clip of the Source, its range cut where its
+    file (the Source's read being kept within it) and the Clip end (`overlay_time`)."""
     used: dict[str | None, list[tuple[CopySize, Retime]]] = defaultdict(list)
     for candidate in candidates:
         for segment in candidate.main_track():
@@ -327,8 +327,9 @@ def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float])
                 time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, durations[overlay.media], shown)
                 used[overlay.media] += copies_played(time.start, time.end, overlay.speed, overlay.reverse, overlay.pitch)
         for clip in candidate.music:
-            if clip.media in durations:
-                time = overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse, durations[clip.media], candidate.duration - clip.start)
+            if clip.media is None or clip.media in durations:
+                length = math.inf if clip.media is None else durations[clip.media]
+                time = overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse, length, candidate.duration - clip.start)
                 used[clip.media] += copies_played(time.start, time.end, clip.speed, clip.reverse, clip.pitch)
     return used
 

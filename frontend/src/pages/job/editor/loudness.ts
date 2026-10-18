@@ -67,6 +67,16 @@ export function segmentSound(
   };
 }
 
+/**
+ * A Music Clip's (or an Overlay video's) sound as heard, from its plan's `event`: a Music Clip of the
+ * Source's (`source`) times the Clip's own sound (`sourceVolume`), its Keyframes' values too, as the
+ * renderer has it; any other, and the Source's at 1, the event itself.
+ */
+export function eventSound(event: AudioEvent, sourceVolume: number): Heard {
+  if (!event.source || sourceVolume === 1) return event;
+  return { ...event, volume: event.volume * sourceVolume, gain: event.gain.map((key) => ({ ...key, value: key.value * sourceVolume })) };
+}
+
 /** Whether a sound's loudness changes over its time: keyed, faded or taken away by a Transition. */
 export const changing = (event: Heard): boolean => event.gain.length > 0 || event.fade_in > 0 || event.fade_out > 0 || !!event.crossfade;
 

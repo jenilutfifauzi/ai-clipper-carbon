@@ -227,7 +227,7 @@ const KINDS: { [K in KeyedRef["kind"]]: Kind<RefOf<K>> } = {
     track: "music",
     find: (edits, ref) => {
       const clip = edits.music.find((other) => other.id === ref.id);
-      return clip ? asKeyed({ start: clip.start, secs: clip.secs, keys: clip.keys, volume: clip.volume, media: clip.media }) : null;
+      return clip ? asKeyed({ start: clip.start, secs: clip.secs, keys: clip.keys, volume: clip.volume, media: clip.media ?? undefined }) : null;
     },
     keyable: () => ["volume"],
     write: (edits, ref, keys, set) => ({ ...edits, music: edits.music.map((clip) => (clip.id === ref.id ? { ...clip, keys, ...soundOf(set) } : clip)) }),

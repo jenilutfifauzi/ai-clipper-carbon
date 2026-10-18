@@ -38,7 +38,7 @@ DIP = [Keyframe(1.0, 1.0), Keyframe(2.0, 0.25)]
 def test_a_stored_candidate_reads_as_unmuted():
     candidate = manual_candidate(
         segments=[Segment("a", 10, 12), Segment("b", 20, 22)],
-        music=[MusicClip("m", SONG, 0.0, 2.0)],
+        music=[MusicClip("m", 0.0, 2.0, media=SONG)],
         overlays=[Overlay("o", CLIP, 0.0, 2.0, volume=1.0)],
     )
     adapter = TypeAdapter(Candidate)
@@ -59,7 +59,7 @@ def test_a_muted_segment_is_planned_muted_at_its_volume(tmp_path):
 
 
 def test_a_muted_music_clip_and_overlay_keep_their_volume_and_keys_and_are_heard_at_gain_0():
-    [music] = audio_events([MusicClip("m", SONG, 1.0, 3.0, volume=0.5, fade_in=0.5, keys={"volume": DIP}, muted=True)], 10, ITEMS)
+    [music] = audio_events([MusicClip("m", 1.0, 3.0, media=SONG, volume=0.5, fade_in=0.5, keys={"volume": DIP}, muted=True)], 10, ITEMS)
     # An Overlay at volume 1, Muted, as the editor makes a new one.
     [sound] = overlay_sound([Overlay("o", CLIP, 2.0, 3.0, volume=1.0, muted=True)], 10, ITEMS)
     assert (music.muted, music.volume, music.gain, music.fade_in) == (True, 0.5, DIP, 0.5)
