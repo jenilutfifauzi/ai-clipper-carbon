@@ -1,11 +1,11 @@
-import type { MusicClip, Overlay, TextLayer } from "../../../api";
+import type { MusicClip, Overlay, Shape, TextLayer } from "../../../api";
 import { rekeyed } from "./keyActions";
 import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, type AdvancedEdits } from "./edits";
 import { counted, listed, LISTS } from "./pick";
 
 // The Magnetic timeline (GLOSSARY.md, docs/adr/0004-layers-ripple-with-the-main-track.md): the Text
-// Layers, Music Clips, Overlays and the hook following the Main Track when it gets shorter or longer
-// at a point.
+// Layers, Shapes, Music Clips, Overlays and the hook following the Main Track when it gets shorter or
+// longer at a point.
 
 /**
  * A change of the Main Track's length at one point, in Timeline time: the stretch from `at` to
@@ -13,12 +13,12 @@ import { counted, listed, LISTS } from "./pick";
  */
 export type TrackChange = { kind: "removed" | "inserted"; at: number; secs: number };
 
-type Layer = TextLayer | MusicClip | Overlay;
-type LayerKind = "text" | "music" | "overlay";
-const LAYER_KINDS: LayerKind[] = ["text", "music", "overlay"];
+type Layer = TextLayer | Shape | MusicClip | Overlay;
+type LayerKind = "text" | "shape" | "music" | "overlay";
+const LAYER_KINDS: LayerKind[] = ["text", "shape", "music", "overlay"];
 
-/** What a ripple moves: the Text Layers, Music Clips, Overlays and the hook. */
-export type Layers = Pick<AdvancedEdits, "text_layers" | "music" | "overlays" | "hook_start" | "hook_secs">;
+/** What a ripple moves: the Text Layers, Shapes, Music Clips, Overlays and the hook. */
+export type Layers = Pick<AdvancedEdits, "text_layers" | "shapes" | "music" | "overlays" | "hook_start" | "hook_secs">;
 
 /** How many layers of each kind a ripple removed. */
 export type Removed = Record<LayerKind, number>;
@@ -48,7 +48,7 @@ function cutOut(start: number, secs: number, a: number, b: number): { start: num
  * is the Clip's end, which `duration`, the Clip's length before, tells) to end there.
  */
 export function ripple<T extends Layers>(edits: T, changes: TrackChange[], duration = Infinity): { edits: T; removed: Removed } {
-  const removed: Removed = { text: 0, music: 0, overlay: 0 };
+  const removed: Removed = { text: 0, shape: 0, music: 0, overlay: 0 };
   let next = edits;
   // Whether the hook was wholly inside a stretch cut out, and moved to where it was.
   let rehomed = false;

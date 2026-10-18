@@ -36,7 +36,7 @@ const ALIGNS = [
   { value: "right", label: "Right" },
 ] as const;
 
-const ANIMATIONS = [
+export const ANIMATIONS = [
   { value: "none", label: "None" },
   { value: "fade", label: "Fade" },
   { value: "pop", label: "Pop" },

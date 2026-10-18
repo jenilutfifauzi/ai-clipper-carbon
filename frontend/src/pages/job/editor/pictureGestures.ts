@@ -16,6 +16,15 @@ export interface Size {
   height: number;
 }
 
+/** Where a pointer at (`clientX`, `clientY`) is on a stage drawn in `rect` (CSS pixels), in the output's pixels (`frame`). */
+export function framePoint(
+  rect: { left: number; top: number; width: number; height: number },
+  { clientX, clientY }: { clientX: number; clientY: number },
+  frame: Size,
+): Point {
+  return { x: ((clientX - rect.left) / rect.width) * frame.width, y: ((clientY - rect.top) / rect.height) * frame.height };
+}
+
 /** A picture as drawn: its centre, its width and height before it is turned, and its rotation. */
 export interface Placed {
   x: number;

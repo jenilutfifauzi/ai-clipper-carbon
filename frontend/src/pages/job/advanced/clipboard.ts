@@ -22,7 +22,7 @@ export interface Clipboard {
   // between those that were next to each other.
   segments: { segment: ClipSegment; at: number }[];
   transitions: Transition[];
-  // The Text Layers, Music Clips and Overlays, `at` seconds after the group's start: the first
+  // The Text Layers, Shapes, Music Clips and Overlays, `at` seconds after the group's start: the first
   // Segment's, as played, when Segments were copied, else the first of them.
   layers: { kind: TimedKind; item: Timed; at: number }[];
   // The Word Edits and Layout Overrides in the ranges of the Segments of the Source, which come along
@@ -31,7 +31,7 @@ export interface Clipboard {
   layout_overrides: LayoutOverride[];
 }
 
-/** The Pick's Segments, Text Layers, Music Clips and Overlays, as copied from `from`. */
+/** The Pick's Segments, Text Layers, Shapes, Music Clips and Overlays, as copied from `from`. */
 export function copy(scene: PickContext, from: Place): Clipboard | null {
   const { edits, played } = scene;
   const { segments, layers } = pickedItems(scene);
@@ -69,7 +69,7 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
  * `clipboard` pasted into the Candidate `to` as one change, every item new, the pasted items picked.
  * Its Segments go in at the join nearest the playhead (`at`), with the Transitions between them, and
  * the Segments after them play later (on the Magnetic timeline, the layers after them too); its Text
- * Layers, Music Clips and Overlays keep their times from there (from the playhead when there are no
+ * Layers, Shapes, Music Clips and Overlays keep their times from there (from the playhead when there are no
  * Segments). Whatever would run past the Clip's end is cut
  * short there, or left out when it would start there or be too short, and the owner is told.
  *

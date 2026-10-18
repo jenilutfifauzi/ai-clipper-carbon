@@ -97,7 +97,7 @@ function changedSince(candidate: Candidate, output: RenderedClip, presets: Style
   )
     return true;
   if (output.preset_id === null) return false;
-  const edits = ["preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides", "text_layers", "music", "source_volume", "segments", "overlays", "transitions"] as const;
+  const edits = ["preset_id", "style_overrides", "word_edits", "hook_start", "hook_secs", "layout_overrides", "text_layers", "shapes", "music", "source_volume", "segments", "overlays", "transitions"] as const;
   if (edits.some((field) => !same(candidate[field], output[field]))) return true;
   return restyled(candidate, output, presets);
 }

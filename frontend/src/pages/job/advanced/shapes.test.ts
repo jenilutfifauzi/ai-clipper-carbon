@@ -21,7 +21,7 @@ import type { AdvancedEdits } from "./edits";
 import { writeItemTransform } from "./keying";
 import { NAMES, picked, stageIdsOf, stageItem, TRACK_OF, unlockedPick, type Pick } from "./pick";
 import { addShape, newShape, NOTHING_TO_DRAW } from "./shapeStyle";
-import { ShapeAssets, ShapeFields } from "./Shapes";
+import { ShapeAssets, ShapeFields, ShapesFields } from "./Shapes";
 import { shownPlan, TRACKS, UNTOUCHED } from "./trackState";
 
 const FRAME = { width: 1080, height: 1920 };
@@ -93,7 +93,7 @@ describe("the Stickers tab", () => {
 
   test("its rectangle adds a picked 400×400 white Shape at the playhead, centred, for a new Text Layer's length, as one change", () => {
     const before = edits({ shapes: [shape("old", 0, 1)] });
-    const outcome = addShape({ edits: before }, "rectangle", 2.345, 10, "n1");
+    const outcome = addShape({ edits: before }, "rectangle", 2.345, 10, { id: "n1" });
     expect(outcome).toEqual({
       edits: { ...before, shapes: [shape("old", 0, 1), shape("n1", 2.35, 3)] },
       pick: picked(ref("n1")),
@@ -299,5 +299,38 @@ describe("a Shape's look in the inspector", () => {
     expect(changed).toEqual([]);
     expect(inspected({ stroke_width: 8 }).slider("Stroke")!.props.min).toBe(0);
     expect(inspected({ stroke_width: 8 }).markup).not.toContain(NOTHING_TO_DRAW);
+  });
+});
+
+describe("several Shapes' look in the inspector", () => {
+  const outline = shape("a", 0, 2, { style: { ...WHITE_SQUARE, fill: null, stroke_width: 8, radius: 0.5 } });
+  const plain = shape("b", 3, 2);
+
+  function several(shapes: Shape[]) {
+    const changes: ((shape: Shape) => Shape)[] = [];
+    const props = { shapes, onChange: (change: (shape: Shape) => Shape) => void changes.push(change), onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} };
+    const elements = laidOut(ShapesFields(props));
+    const slider = (label: string) => elements.find((element) => element.type === Slider && (element.props as { label: string }).label === label)!;
+    return { markup: renderToStaticMarkup(createElement(ShapesFields, props)), slider, changes };
+  }
+
+  test("sets their stroke, corners and shadow on each, a field they differ in marked Mixed", () => {
+    const { markup, slider, changes } = several([outline, plain]);
+    for (const label of ["Stroke", "Stroke colour", "Corners", "Drop shadow"]) expect(markup).toContain(label);
+    expect(markup.match(/Mixed/g)!.length).toBeGreaterThanOrEqual(3);
+    slider("Corners").props.onChange(0.25);
+    expect([outline, plain].map((one) => changes[0](one).style.radius)).toEqual([0.25, 0.25]);
+  });
+
+  test("never leaves one with nothing to draw", () => {
+    // One has no fill: their stroke is at least 1 px, and none is refused for it.
+    const { markup, slider, changes } = several([outline, plain]);
+    expect(slider("Stroke").props.min).toBe(1);
+    slider("Stroke").props.onChange(0);
+    expect(changes[0](outline)).toEqual(outline);
+    expect(changes[0](plain)).toEqual(plain);
+    // One has no stroke: their fill can't be turned off, which it says.
+    expect(several([plain, outline]).markup).toContain(NOTHING_TO_DRAW);
+    expect(markup).not.toContain(NOTHING_TO_DRAW);
   });
 });

@@ -1031,6 +1031,8 @@ export interface RenderedClip {
   watermark_style: WatermarkStyle | null;
   // [] in a Clip rendered before Text Layers, and before music.
   text_layers: TextLayer[];
+  // [] in a Clip rendered before Shapes.
+  shapes: Shape[];
   music: MusicClip[];
   source_volume: number;
   segments: ClipSegment[];

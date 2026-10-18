@@ -151,7 +151,8 @@ describe("the pictures at the playhead", () => {
     ...FRAME,
     scenes: [scene(0, 4, null), scene(4, 8, picture(10))],
     overlays: [overlay("o1", 0, 5, 20), overlay("o2", 3, 6, 30), overlay("o3", 6, 9, 40)],
-  } as RenderPlan;
+    shapes: [],
+  } as unknown as RenderPlan;
   const at = (time: number, shown: number | null) => picturesAt(plan, time, shown).map(({ id, picture }) => [id, picture.bounds.x]);
 
   test("are the Scene's picture and the Overlays showing then, as the stage names them", () => {
