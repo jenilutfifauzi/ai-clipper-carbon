@@ -26,7 +26,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, create_model
 
-from app.api import CandidateUpdate, PresetBody, TextPresetBody, TextPresetChange, no_framing_keys, no_old_overlays, no_old_segments, no_old_text_layers
+from app.api import SHAPES_SCHEMA, CandidateUpdate, PresetBody, TextPresetBody, TextPresetChange, no_framing_keys, no_old_overlays, no_old_segments, no_old_text_layers
 from app.candidates import (
     KICKER_MAX_CHARS,
     Ease,
@@ -35,6 +35,7 @@ from app.candidates import (
     MusicClip,
     Overlay,
     Segment,
+    Shape,
     TextLayer,
     TextStyle,
     Transition,
@@ -91,19 +92,21 @@ Workflow:
 Times:
 - A Candidate's start and end, Segments, the Transcript and Words are Source time: seconds into the
   Source video. A Word Edit's `at` is a Word's start in Source time (dry run lists them).
-- Text Layers, Music Clips, Overlays, hook_start and the Preview Plan's events are Timeline time:
-  seconds into the Clip, from 0.
+- Text Layers, Shapes, Music Clips, Overlays, hook_start and the Preview Plan's events are
+  Timeline time: seconds into the Clip, from 0.
 
 Edits:
 - Candidates can be changed only while the Job is in review or rendering.
-- In edit_candidate, a list (text_layers, music, overlays, segments, transitions, word_edits,
-  layout_overrides) and style_overrides replace the Candidate's whole list. To add or change some
-  items and keep the others, use merge_candidate_items; to drop some, remove_candidate_items.
+- In edit_candidate, a list (text_layers, shapes, music, overlays, segments, transitions,
+  word_edits, layout_overrides) and style_overrides replace the Candidate's whole list. To add or
+  change some items and keep the others, use merge_candidate_items; to drop some,
+  remove_candidate_items.
 - The hook is a line or two of text; *word* sets a word in Emphasis. The Kicker is at most
   {KICKER_MAX_CHARS} characters, above the hook.
-- Removing or trimming Segments, or changing start/end, leaves Text Layers, Music Clips, Overlays
-  and the hook where they are in Timeline time, over other words now. The owner's editors move them
-  with the cut while their Magnetic timeline is on; move them yourself when they should follow.
+- Removing or trimming Segments, or changing start/end, leaves Text Layers, Shapes, Music Clips,
+  Overlays and the hook where they are in Timeline time, over other words now. The owner's editors
+  move them with the cut while their Magnetic timeline is on; move them yourself when they should
+  follow.
 - Music, Overlays and Segments of other videos name Media Library items: add_asset adds a song,
   video or image from a file on this Mac, list_assets lists them.
 - A style's font (captions, hook, Watermark, Text Layer) names a Face by its id: list_assets
@@ -139,6 +142,17 @@ Edits:
   Layer's wrapped lines, its box once scaled and turned (bounds) and its picture: the URL, on this
   app, of the PNG the Clip burns. Emoji in a Text Layer are drawn in colour (Noto Color Emoji),
   each 1 em wide; the hook, the Kicker, the Watermark and captions leave emoji out.
+- A Shape is a figure, placed, timed, animated and keyed as a Text Layer (never stretched or
+  flipped). Its style: kind (rectangle, ellipse, triangle point up, parallelogram leaning right,
+  trapezoid narrower at the top, line, arrow with its head at the right), width and height (output
+  px before scale), fill (null: an outline alone), stroke_colour and stroke_width (px, 0 for none;
+  drawn inside width and height), radius (a rectangle's corners, 0..0.5 of its shorter side: 0.5 a
+  pill) and shadow (a Text Style's). A line or an arrow is all stroke: width is its length,
+  stroke_width its thickness, its colour the stroke's (the fill's with no stroke); height is
+  unused. Refused: nothing to draw (no fill and no stroke; a line or arrow with no stroke_width).
+  Shapes are drawn over the captions and under the Text Layers (a plate behind a title).
+  merge_candidate_items changes only the style, shadow and transform fields given. The dry run
+  lists each Shape's box (bounds) and picture.
 - A Text Preset is a named Text Style a new Text Layer copies, never linked to it: list_presets,
   save_preset and delete_preset with kind "text"; built-in ones can't change. One is used for new
   titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some
@@ -173,7 +187,7 @@ Edits:
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
   output pixels, or null for none; merge_candidate_items changes only the fields given.
-- Keyframes move an Overlay, a Text Layer, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
+- Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
   of the episode, another Layout and the Candidate's own framing have none. `at` is seconds from the
@@ -187,8 +201,9 @@ Edits:
   lists of the properties given ([] clears one) and keeps the others. Moving an item moves its
   Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
   leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
-  the picture's bounds at each (an Overlay's, a Text Layer's box or a Scene's); a keyed volume's
-  under `sounds`. A Text Layer's animations (fade, pop, slide) play on top of its keyed values.
+  the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
+  volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
+  its keyed values.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -439,6 +454,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         job_id: str,
         candidate_id: str,
         text_layers: Annotated[list[_PATCHES["text_layers"]], BeforeValidator(no_old_text_layers)] | None = None,  # type: ignore[valid-type]
+        shapes: Annotated[list[_PATCHES["shapes"]], SHAPES_SCHEMA] | None = None,  # type: ignore[valid-type]
         music: list[_PATCHES["music"]] | None = None,  # type: ignore[valid-type]
         overlays: Annotated[list[_PATCHES["overlays"]], BeforeValidator(no_old_overlays)] | None = None,  # type: ignore[valid-type]
         segments: Annotated[list[_PATCHES["segments"]], BeforeValidator(no_old_segments)] | None = None,  # type: ignore[valid-type]
@@ -455,7 +471,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
         field by field. The Candidate is saved once, through the same checks as edit_candidate."""
         given = {
-            "text_layers": text_layers, "music": music, "overlays": overlays, "segments": segments,
+            "text_layers": text_layers, "shapes": shapes, "music": music, "overlays": overlays, "segments": segments,
             "transitions": transitions, "word_edits": word_edits, "layout_overrides": layout_overrides,
         }
 
@@ -484,7 +500,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         job_id: str,
         candidate_id: str,
         kind: Literal[
-            "text_layers", "music", "overlays", "segments", "transitions", "word_edits", "layout_overrides", "style_overrides"
+            "text_layers", "shapes", "music", "overlays", "segments", "transitions", "word_edits", "layout_overrides", "style_overrides"
         ],
         keys: list[str | float],
     ) -> dict:
@@ -878,7 +894,7 @@ def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
 
 # What identifies an item of each kind within its Candidate.
 _KEYS = {
-    "text_layers": "id", "music": "id", "overlays": "id", "segments": "id",
+    "text_layers": "id", "shapes": "id", "music": "id", "overlays": "id", "segments": "id",
     "transitions": "after", "word_edits": "at", "layout_overrides": "at",
 }
 # Two times closer than this are the same `at`.
@@ -934,7 +950,7 @@ _FRAMING_PATCH = _patch_model(Framing)
 _PATCHES = {
     kind: _patch_model(item, _KEYS[kind])
     for kind, item in {
-        "text_layers": TextLayer, "music": MusicClip, "overlays": Overlay, "segments": Segment,
+        "text_layers": TextLayer, "shapes": Shape, "music": MusicClip, "overlays": Overlay, "segments": Segment,
         "transitions": Transition, "word_edits": WordEdit, "layout_overrides": LayoutOverride,
     }.items()
 }
