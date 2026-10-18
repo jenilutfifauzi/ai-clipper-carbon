@@ -121,7 +121,7 @@ Concat's export sheet does all of the encoding part. Concat keeps no presets, th
   - the target video bitrate;
   - per encoder, the ffmpeg codec arguments;
   - the estimated bytes for a duration.
-- **Target bitrate** is 16, 8 or 4 Mb/s for High, Recommended or Smallest, at 1080p and 30 fps. It is scaled by the output's pixels over 1080×1920's, by the fps over 30, and by the codec: H.264 1, HEVC 0.6, AV1 0.5. A given `bitrate` replaces it.
+- **Target bitrate** is 16, 8 or 4 Mb/s for High, Recommended or Smallest, at 1080p and 30 fps. It is scaled by the output's pixels over 1080×1920's, by the fps over 30 (a slower rate counts as 30, so 24 and 25 fps keep today's 8 Mb/s), and by the codec: H.264 1, HEVC 0.6, AV1 0.5. A given `bitrate` replaces it.
 - **Encoder order and arguments:**
   - H.264: `h264_videotoolbox`, then `libx264`.
   - HEVC: `hevc_videotoolbox`, then `libx265`, tagged `hvc1`.

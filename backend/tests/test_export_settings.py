@@ -48,9 +48,10 @@ def test_the_output_is_9_16_with_the_resolution_as_its_short_side(resolution, si
         # by the pixels over 1080x1920's,
         (ExportSettings(resolution=720), 30, 3_556),
         (ExportSettings(resolution=2160, quality=Quality.HIGH), 30, 64_000),
-        # and by the frame rate over 30.
+        # and by the frame rate over 30; a slower one gets 30's.
         (ExportSettings(), 60, 16_000),
-        (ExportSettings(), 25, 6_667),
+        (ExportSettings(), 25, 8_000),
+        (ExportSettings(), 23.976, 8_000),
         (ExportSettings(codec=Codec.HEVC, resolution=1440, quality=Quality.HIGH), 59.94, 34_099),
     ],
 )

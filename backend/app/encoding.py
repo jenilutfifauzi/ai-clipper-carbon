@@ -68,8 +68,8 @@ class Bitrate:
 @dataclass(frozen=True)
 class ExportSettings:
     """How a Clip is encoded. The defaults are the "Shorts / TikTok / Reels" Preset's, which encodes
-    a 30 fps Source as every Clip was before Export Settings (at other rates, the target follows the
-    frame rate: a 25 fps one gets 6.7 Mb/s where it got 8)."""
+    a Source of up to 30 fps as every Clip was before Export Settings (above 30, the target follows
+    the frame rate: a 60 fps one gets 16 Mb/s where it got 12)."""
 
     codec: Codec = Codec.H264
     resolution: Resolution = 1080
@@ -99,11 +99,12 @@ def output_size(settings: ExportSettings) -> tuple[int, int]:
 
 
 def target_kbps(settings: ExportSettings, fps: float) -> int:
-    """The video bitrate the encoders aim for at `fps`, in kb/s."""
+    """The video bitrate the encoders aim for at `fps`, in kb/s. A frame rate under 30 gets 30's, as
+    the platforms recommend one bitrate up to 30 fps."""
     if settings.bitrate is not None:
         return settings.bitrate.kbps
     width, height = output_size(settings)
-    mbps = TIER_MBPS[settings.quality] * width * height / (1080 * 1920) * fps / 30 * CODEC_FACTORS[settings.codec]
+    mbps = TIER_MBPS[settings.quality] * width * height / (1080 * 1920) * max(fps, 30) / 30 * CODEC_FACTORS[settings.codec]
     return round(mbps * 1000)
 
 

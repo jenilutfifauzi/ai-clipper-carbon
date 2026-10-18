@@ -38,7 +38,7 @@ Each choice had genuine alternatives:
   - The plan for a Clip is made at the export's rate ("Same as Source" by default), so that cuts, Transitions, Freeze frames and the picture layers' motion land on the output's frames.
   - The Preview Plan keeps the Source's rate.
 - **A quality tier is a target bitrate.**
-  - High is 16 Mb/s, Recommended 8 and Smallest 4, at 1080p and 30 fps. Each is scaled by pixels over 1080p's, by the frame rate over 30, and by the codec: H.264 1, HEVC 0.6, AV1 0.5.
+  - High is 16 Mb/s, Recommended 8 and Smallest 4, at 1080p and 30 fps. Each is scaled by pixels over 1080p's, by the frame rate over 30 (a slower one counts as 30), and by the codec: H.264 1, HEVC 0.6, AV1 0.5.
   - VideoToolbox encodes at that average.
   - Software encoders use CRF 16, 20 or 26, capped at 1.5× the target.
   - A Preset may instead give its own bitrate, VBR or CBR. CBR falls back to VBR where the encoder can't do it, and the Clip records that.
