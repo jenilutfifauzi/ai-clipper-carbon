@@ -491,7 +491,7 @@ class AudioEvent:
     `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
     `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
-    (`gain_at`). `id` is its item's. An Overlay's plays at its `speed` (docs/adr/0009), its pitch
+    (`gain_at`). `id` is its item's. It plays at its `speed` (docs/adr/0009, 0016), its pitch
     following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`."""
 
     media: str
@@ -1392,9 +1392,11 @@ def fades_within(fade_in: float, fade_out: float, secs: float) -> tuple[float, f
 
 
 def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
-    """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
-    (whose length is in `items`) ends, its fades fitted to what is left (`fades_within`). One whose
-    song is gone, or that would start at or after either end, isn't heard."""
+    """The Music Clips as heard in a Clip lasting `duration`, each at its Speed, forwards or in
+    Reverse, and cut where the Clip or its song (whose length is in `items`) ends, as an Overlay's
+    sound is (`overlay_time`: in Reverse, a cut at the Clip's end leaves out the start of its part,
+    so its `offset` begins later); its fades fitted to what is left (`fades_within`). One whose song
+    is gone, or that would start at or after either end, isn't heard."""
     events = []
     for clip in music:
         item = items.get(clip.media)
@@ -1402,10 +1404,14 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         start = round(clip.start, 3)
         if length is None or start >= duration or clip.offset >= length:
             continue
-        end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
+        time = overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse, length, duration - start)
+        end = round(start + time.length, 3)
         fade_in, fade_out = fades_within(clip.fade_in, clip.fade_out, end - start)
         events.append(
-            AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, fade_in, fade_out, clip.keys.get(KeyProperty.VOLUME, []), clip.id)
+            AudioEvent(
+                clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
+                clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse,
+            )
         )
     return events
 

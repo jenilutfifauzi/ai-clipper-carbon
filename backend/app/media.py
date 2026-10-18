@@ -167,8 +167,11 @@ class MediaStore:
         return make_peaks(self.ffmpeg, self.file(media_id), start, self._peaks(media_id) / f"{start}.peaks")
 
     def retimed(self, media_id: str) -> Copies:
-        """A video's Retimed copies (app/retimed.py), in <id>.retimed; MediaNotFound for any other item."""
+        """A video's or a song's Retimed copies (app/retimed.py), in <id>.retimed (a song's of its sound
+        alone, both sizes from its file); MediaNotFound for an image."""
         item = self.get(media_id)
+        if item.kind is MediaKind.AUDIO:
+            return Copies(self.folder / f"{media_id}.retimed", dict.fromkeys(CopySize, self.file(media_id)), None)
         if item.kind is not MediaKind.VIDEO or not item.width or not item.height:
             raise MediaNotFound(media_id)
         videos = {CopySize.PREVIEW: self.proxy(media_id), CopySize.FULL: self.file(media_id)}

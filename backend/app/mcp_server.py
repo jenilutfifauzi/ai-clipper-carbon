@@ -144,7 +144,8 @@ Edits:
   A video Overlay's `speed` and `pitch` are as a Segment's (below), but it keeps its start and
   secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
-  (source_start, source_end).
+  (source_start, source_end). A Music Clip's speed, pitch and reverse are the same (secs * speed of
+  its song from offset); the dry run's `sounds` give what it reads.
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
   may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
   are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the
@@ -874,9 +875,10 @@ def _plan_view(
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
-    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a
-    Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
-    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the
+    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a Segment's, a
+    Music Clip's, an Overlay's) and what a sound at a Speed or in Reverse reads (`_video_read`),
+    each Shape's and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its
+    name) as a picture layer's (`_layer_view`), and the
     Words."""
     plan = preview["plan"]
     hook = plan["hook"]
@@ -917,17 +919,26 @@ def _plan_view(
             for event in plan["overlays"]
         ],
         **_compact({"sounds": [
-            {"id": event["id"], "media": event["media"], **_times(event, "start", "end"), "keys": _keys_view({"volume": event["gain"]}, event["start"])}
+            {
+                "id": event["id"], "media": event["media"], **_times(event, "start", "end"),
+                **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
+                **(_video_read(event, copied) if _retimed(event) else {}),
+            }
             for event in plan["segments"] + plan["audio"]
-            if event["gain"]
+            if event["gain"] or _retimed(event)
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
 
 
+def _retimed(event: dict) -> bool:
+    """Whether a plan's sound event (a Music Clip's or an Overlay's) plays at a Speed or in Reverse."""
+    return "offset" in event and (event["speed"] != 1 or event["reverse"])
+
+
 def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
-    """What of its video an Overlay shows: seconds into it, its Speed and pitch when not the default,
-    and in Reverse whether its copy is made (`copied`)."""
+    """What of its video an Overlay shows, or of its song a sound plays: seconds into it, its Speed
+    and pitch when not the default, and in Reverse whether its copy is made (`copied`)."""
     read = {"media": event["media"], "source_start": event["offset"], "source_end": event["offset"] + (event["end"] - event["start"]) * event["speed"]}
     return _compact({
         "source_start": round(read["source_start"], 2), "source_end": round(read["source_end"], 2),

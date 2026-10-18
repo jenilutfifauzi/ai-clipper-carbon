@@ -69,11 +69,13 @@ const KINDS: {
   music: {
     list: "music",
     aside: () => ({}),
+    // Each part plays its stretch of the song (keptOffset), at its Speed: in Reverse, the first the later part.
     cut: (item, at) => {
       const clip = item as MusicClip;
+      const into = at - clip.start;
       return {
-        first: { fade_in: Math.min(clip.fade_in, round(at - clip.start)), fade_out: 0 },
-        second: { offset: round(clip.offset + at - clip.start), fade_in: 0, fade_out: Math.min(clip.fade_out, round(clip.start + clip.secs - at)) },
+        first: { offset: keptOffset(clip, 0, into), fade_in: Math.min(clip.fade_in, round(into)), fade_out: 0 },
+        second: { offset: keptOffset(clip, into, clip.secs), fade_in: 0, fade_out: Math.min(clip.fade_out, round(clip.start + clip.secs - at)) },
       };
     },
   },
@@ -619,29 +621,37 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
   return heard ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
 }
 
-/** A Segment or a video Overlay, which has a Speed. */
-export type SpeedRef = { kind: "segment" | "overlay"; id: string };
+/** A Segment, a video Overlay or a Music Clip, which has a Speed. */
+export type SpeedRef = { kind: "segment" | "overlay" | "music"; id: string };
 
 /**
- * Segment or video Overlay `item`'s Speed set to `speed` (speedOf), a trim at its end (ADR 0009): its
- * Keyframes scaled by the old Speed ÷ the new, so that they stay on the same frames. A Segment keeps
- * its range and plays it in its new Timeline length; the Main Track closes up or opens out after it,
- * and on the Magnetic timeline the layers follow as they follow a trim of its end. Refused, with a
- * notice, when a video's Segment would play under MEDIA_MIN_SECS or the Clip would last longer than
- * the `longest` clip. An Overlay keeps its start and shows as much of its video, its end kept within
- * the video (`video` seconds long). Null for a Freeze frame, or an item that isn't there.
+ * Segment, video Overlay or Music Clip `item`'s Speed set to `speed` (speedOf), a trim at its end (ADR
+ * 0009, 0016): its Keyframes scaled by the old Speed ÷ the new, so that they stay on the same frames
+ * (or moments of its song). A Segment keeps its range and plays it in its new Timeline length; the
+ * Main Track closes up or opens out after it, and on the Magnetic timeline the layers follow as they
+ * follow a trim of its end. Refused, with a notice, when a video's Segment would play under
+ * MEDIA_MIN_SECS or the Clip would last longer than the `longest` clip. An Overlay or a Music Clip
+ * keeps its start and plays as much of its file, its end kept within the file (`video` seconds long,
+ * its video's or song's), a Music Clip's fades within it. Null for a Freeze frame, or an item that
+ * isn't there.
  */
 export function setSpeed(scene: PickContext, item: SpeedRef, value: number, limits: { longest?: number; video?: number } = {}): Outcome | null {
   const { edits, pick } = scene;
   const speed = speedOf(value);
+  const sped = <T extends Overlay | MusicClip>(timed: T): T => {
+    const by = (timed.speed ?? 1) / speed;
+    const room = limits.video === undefined ? Infinity : (limits.video - timed.offset) / speed;
+    const secs = round(Math.max(Math.min(timed.secs * by, room), ITEM_MIN_SECS));
+    return rekeyed({ ...timed, speed, secs, keys: scaledKeys(timed.keys, by) }, 0, secs);
+  };
   if (item.kind === "overlay") {
-    const overlay = edits.overlays.find((other) => other.id === item.id);
-    if (!overlay) return null;
-    const by = (overlay.speed ?? 1) / speed;
-    const room = limits.video === undefined ? Infinity : (limits.video - overlay.offset) / speed;
-    const secs = round(Math.max(Math.min(overlay.secs * by, room), ITEM_MIN_SECS));
-    const atSpeed = rekeyed({ ...overlay, speed, secs, keys: scaledKeys(overlay.keys, by) }, 0, secs);
-    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? atSpeed : other)) }, pick };
+    if (!edits.overlays.some((other) => other.id === item.id)) return null;
+    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? sped(other) : other)) }, pick };
+  }
+  if (item.kind === "music") {
+    if (!edits.music.some((other) => other.id === item.id)) return null;
+    const fitted = (clip: MusicClip) => ({ ...clip, ...fadesWithin(clip, clip.secs) });
+    return { edits: { ...edits, music: edits.music.map((other) => (other.id === item.id ? fitted(sped(other)) : other)) }, pick };
   }
   const index = edits.segments.findIndex((other) => other.id === item.id);
   const segment = edits.segments[index];
@@ -680,20 +690,21 @@ export function gestureSpeed() {
 }
 
 /**
- * The one picked Segment or video Overlay, which Reverse (R) turns on or off: null with nothing or
- * several picked, or for a Freeze frame (it holds one frame), an image Overlay (`video` says whether
- * a Media Library item is a video), a Text Layer or a Music Clip.
+ * The one picked Segment, video Overlay or Music Clip, which Reverse (R) turns on or off: null with
+ * nothing or several picked, or for a Freeze frame (it holds one frame), an image Overlay (`video`
+ * says whether a Media Library item is a video), a Text Layer or a Shape.
  */
 export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpeedRef | null {
   const only = onlyItem(scene.pick);
-  const { segments, overlays } = scene.edits;
+  const { segments, overlays, music } = scene.edits;
   if (only?.kind === "segment" && segments.some((segment) => segment.id === only.id && segment.hold == null)) return { kind: "segment", id: only.id };
   if (only?.kind === "overlay" && overlays.some((overlay) => overlay.id === only.id && video(overlay.media))) return { kind: "overlay", id: only.id };
+  if (only?.kind === "music" && music.some((clip) => clip.id === only.id)) return { kind: "music", id: only.id };
   return null;
 }
 
 /**
- * The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens: as
+ * The one picked Segment, video Overlay or Music Clip, whose Speed sheet the phone's toolbar opens: as
  * `reversible`, and a Freeze frame too (its sheet shows its Duration).
  */
 export function speedSheetItem(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpeedRef | null {
@@ -703,10 +714,11 @@ export function speedSheetItem(scene: { edits: AdvancedEdits; pick: Pick }, vide
 }
 
 /**
- * Segment or video Overlay `item` played backwards, or forwards again (`reverse`, ADR 0009), from a
- * Retimed copy. It keeps its range and its place and length on the Timeline. Its Keyframes are
- * mirrored (mirroredKeys), so that its motion stays on the same frames of its video, as a Speed
- * change scales them. Null for a Freeze frame, or an item that isn't there.
+ * Segment, video Overlay or Music Clip `item` played backwards, or forwards again (`reverse`, ADR
+ * 0009), from a Retimed copy. It keeps its range and its place and length on the Timeline. Its
+ * Keyframes are mirrored (mirroredKeys), so that its motion stays on the same frames of its video (a
+ * song's volume on the same moments of it), as a Speed change scales them. Null for a Freeze frame,
+ * or an item that isn't there.
  */
 export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: SpeedRef, reverse: boolean): Outcome | null {
   const { edits, pick } = scene;
@@ -715,6 +727,10 @@ export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: Sp
   if (item.kind === "overlay") {
     if (!edits.overlays.some((other) => other.id === item.id)) return null;
     return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? turned(other, other.secs) : other)) }, pick };
+  }
+  if (item.kind === "music") {
+    if (!edits.music.some((other) => other.id === item.id)) return null;
+    return { edits: { ...edits, music: edits.music.map((other) => (other.id === item.id ? turned(other, other.secs) : other)) }, pick };
   }
   if (!edits.segments.some((other) => other.id === item.id && other.hold == null)) return null;
   return { edits: { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? turned(other, segmentLength(other)) : other)) }, pick };
