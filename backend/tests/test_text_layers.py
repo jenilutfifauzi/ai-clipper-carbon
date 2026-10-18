@@ -4,7 +4,7 @@ each placed by its Transform and drawn in its Text Style
 
 Seam B on the planner and the migration of old Text Layers, whose pictures look as their ASS events
 did, then the update API, stored Candidates and a Seam A render with the real ffmpeg. Their pictures
-are tested in test_text_pictures.py.
+are tested in test_layer_pictures.py.
 """
 
 import json
@@ -19,11 +19,11 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import TextAlign, TextLayer
 from app.jobs import CANDIDATES_FILE, REVISIONS_DIR
+from app.layer_pictures import rasterised
 from app.migration import migrated_candidate, migrated_clip, migrated_text_layer
 from app.config import FONTS_DIR, load_settings
-from app.planner import MAX_TEXT_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
+from app.planner import MAX_LAYER_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
 from app.renderer import _ass
-from app.text_pictures import rasterised
 from app.video_source import SourceMetadata
 from conftest import FIXTURES
 from test_render import HEARD, add, check_clip, full_frame, pixels, preview, render, rendered, reviewed
@@ -304,7 +304,7 @@ def test_text_layers_leave_the_ass_script_in_their_order():
         text_layers=[layer(id="a", style={"colour": "#00FF00", "plate": {"shape": "block"}}), layer(id="b", text="Dua")],
     )
     assert [event.layer.id for event in planned.texts] == ["a", "b"]
-    # Pictures of their own (test_text_pictures.py), and the hook's layers as they are without them.
+    # Pictures of their own (test_layer_pictures.py), and the hook's layers as they are without them.
     script = _ass(planned)
     assert "Dua" not in script and "Style: Text" not in script
     assert script == _ass(plan_render(0, 5, SOURCE, hook="Halo"))
@@ -441,9 +441,9 @@ def test_a_text_layers_picture_is_made_at_the_next_scale_up_and_is_one_picture_w
     # Drawn at its own scale whatever its picture's.
     assert made(2.2).picture.width == pytest.approx(2.2 * made(1).picture.width, abs=2)
     assert made(2.2).picture.item_size == made(2.9).picture.item_size
-    # Never more than MAX_TEXT_PICTURE on its longest side.
+    # Never more than MAX_LAYER_PICTURE on its longest side.
     huge = text_event(layer({"scale": 8}, {"size": 300}, text="Kalimat yang panjang"), 10)
-    assert max(huge.picture.item_size) <= MAX_TEXT_PICTURE
+    assert max(huge.picture.item_size) <= MAX_LAYER_PICTURE
 
 
 def test_text_layers_are_saved_on_the_candidate_validated_and_kept_through_a_trim(client):

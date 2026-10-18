@@ -1,6 +1,6 @@
 """Writing ASS for libass: the colours, tags, drawings and text of the scripts that the Renderer
-burns into a Clip (its captions, hook and Watermark) and that app/text_pictures.py draws a Text
-Layer's picture from, and the `ass` filter that draws a script.
+burns into a Clip (its captions, hook and Watermark) and that app/layer_pictures.py draws a picture
+layer's picture (a Text Layer's or a Shape's) from, and the `ass` filter that draws a script.
 """
 
 import math

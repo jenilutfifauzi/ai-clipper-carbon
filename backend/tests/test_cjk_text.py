@@ -13,8 +13,8 @@ from pydantic import TypeAdapter
 from app.candidates import TextLayer
 from app.config import load_settings
 from app.fonts import FALLBACK_FACE, registry
+from app.layer_pictures import rasterised
 from app.planner import TextEvent, TextRun, font_metrics, text_event
-from app.text_pictures import rasterised
 from test_render import HEARD, add, full_frame, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
 from test_render import from_render_video, plain_video, render_video  # noqa: F401

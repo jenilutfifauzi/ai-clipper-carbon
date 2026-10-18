@@ -24,11 +24,23 @@ from fastapi import FastAPI
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, create_model
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema, create_model
 
-from app.api import SHAPES_SCHEMA, CandidateUpdate, PresetBody, TextPresetBody, TextPresetChange, no_framing_keys, no_old_overlays, no_old_segments, no_old_text_layers
+from app.api import (
+    PICTURES_ROUTE,
+    SHAPES_MAX,
+    CandidateUpdate,
+    PresetBody,
+    TextPresetBody,
+    TextPresetChange,
+    no_framing_keys,
+    no_old_overlays,
+    no_old_segments,
+    no_old_text_layers,
+)
 from app.candidates import (
     KICKER_MAX_CHARS,
+    SWITCHED_THICKNESS,
     Ease,
     Framing,
     LayoutOverride,
@@ -36,6 +48,8 @@ from app.candidates import (
     Overlay,
     Segment,
     Shape,
+    ShapeKind,
+    ShapeStyle,
     TextLayer,
     TextStyle,
     Transition,
@@ -54,7 +68,6 @@ from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import StyleOverrides
-from app.text_pictures import TEXTS_DIR
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
 GLOSSARY = REPO_ROOT / "GLOSSARY.md"
@@ -71,6 +84,14 @@ STALE_RETRIES = 5
 EDIT_SOURCE = {"X-Edit-Source": "agent"}
 # The API's routes of each kind of asset.
 ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
+# The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
+# and remove_candidate_items change item by item: each list's item, and the field that identifies
+# one within its Candidate.
+ITEMS: dict[str, tuple[type, str]] = {
+    "text_layers": (TextLayer, "id"), "shapes": (Shape, "id"), "music": (MusicClip, "id"), "overlays": (Overlay, "id"),
+    "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, "at"),
+    "layout_overrides": (LayoutOverride, "at"),
+}
 
 INSTRUCTIONS = f"""\
 AI Clipper turns a long video (a podcast episode) into vertical short Clips. Words are those of
@@ -97,10 +118,9 @@ Times:
 
 Edits:
 - Candidates can be changed only while the Job is in review or rendering.
-- In edit_candidate, a list (text_layers, shapes, music, overlays, segments, transitions,
-  word_edits, layout_overrides) and style_overrides replace the Candidate's whole list. To add or
-  change some items and keep the others, use merge_candidate_items; to drop some,
-  remove_candidate_items.
+- In edit_candidate, a list and style_overrides replace the Candidate's whole list (the lists:
+  {", ".join(ITEMS)}). To add or change some items and keep the others, use
+  merge_candidate_items; to drop some, remove_candidate_items.
 - The hook is a line or two of text; *word* sets a word in Emphasis. The Kicker is at most
   {KICKER_MAX_CHARS} characters, above the hook.
 - Removing or trimming Segments, or changing start/end, leaves Text Layers, Shapes, Music Clips,
@@ -145,11 +165,14 @@ Edits:
 - A Shape is a figure, placed, timed, animated and keyed as a Text Layer (never stretched or
   flipped). Its style: kind (rectangle, ellipse, triangle point up, parallelogram leaning right,
   trapezoid narrower at the top, line, arrow with its head at the right), width and height (output
-  px before scale), fill (null: an outline alone), stroke_colour and stroke_width (px, 0 for none;
-  drawn inside width and height), radius (a rectangle's corners, 0..0.5 of its shorter side: 0.5 a
-  pill) and shadow (a Text Style's). A line or an arrow is all stroke: width is its length,
-  stroke_width its thickness (an arrow's head 4 times as tall), stroke_colour its colour; height
-  and fill are unused. Refused: nothing to draw (no fill and no stroke; a line or arrow with no stroke_width).
+  px before scale), fill (null: an outline alone), stroke_colour (#000000 by default) and
+  stroke_width (px, 0 for none; drawn inside width and height), radius (a rectangle's corners,
+  0..0.5 of its shorter side: 0.5 a pill) and shadow (a Text Style's). A line or an arrow is all
+  stroke: width is its length, stroke_width its thickness (an arrow's head 4 times as tall),
+  stroke_colour its colour; height and fill are unused. merge_candidate_items switching a figure
+  with no stroke to a line or an arrow gives it a stroke {SWITCHED_THICKNESS} px thick in its fill's colour,
+  where the merge doesn't set them. Refused: nothing to draw (no fill and no stroke; a line or
+  arrow with no stroke_width).
   Shapes are drawn over the captions and under the Text Layers (a plate behind a title).
   merge_candidate_items changes only the style, shadow and transform fields given. The dry run
   lists each Shape's box (bounds) and picture.
@@ -425,7 +448,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool()
     async def edit_candidate(
-        job_id: str, candidate_id: str, changes: Annotated[CandidateUpdate, BeforeValidator(new_titles)], dry_run: bool = False
+        job_id: str, candidate_id: str, changes: Annotated[_CandidateChanges, BeforeValidator(new_titles)], dry_run: bool = False
     ) -> dict:
         """Change a Candidate and save it: only the fields given change. start and end (Source time)
         are snapped to Words. Lists and style_overrides replace the Candidate's whole list (see
@@ -438,7 +461,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
             return _plan_view(
                 await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),
                 lambda segment: copied(job_id, segment),
-                lambda name: f"/api/jobs/{job_id}/{TEXTS_DIR}/{name}",
+                lambda name: f"/api/jobs/{job_id}/{PICTURES_ROUTE}/{name}",
             )
         return await api("PATCH", f"/jobs/{job_id}/candidates/{candidate_id}", json=body)
 
@@ -454,7 +477,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         job_id: str,
         candidate_id: str,
         text_layers: Annotated[list[_PATCHES["text_layers"]], BeforeValidator(no_old_text_layers)] | None = None,  # type: ignore[valid-type]
-        shapes: Annotated[list[_PATCHES["shapes"]], SHAPES_SCHEMA] | None = None,  # type: ignore[valid-type]
+        shapes: Annotated[list[_PATCHES["shapes"]], _SHAPES_SCHEMA] | None = None,  # type: ignore[valid-type]
         music: list[_PATCHES["music"]] | None = None,  # type: ignore[valid-type]
         overlays: Annotated[list[_PATCHES["overlays"]], BeforeValidator(no_old_overlays)] | None = None,  # type: ignore[valid-type]
         segments: Annotated[list[_PATCHES["segments"]], BeforeValidator(no_old_segments)] | None = None,  # type: ignore[valid-type]
@@ -470,10 +493,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
         field by field. The Candidate is saved once, through the same checks as edit_candidate."""
-        given = {
-            "text_layers": text_layers, "shapes": shapes, "music": music, "overlays": overlays, "segments": segments,
-            "transitions": transitions, "word_edits": word_edits, "layout_overrides": layout_overrides,
-        }
+        # The patches of each list, by the parameter named for it.
+        given = {kind: patches for kind, patches in locals().items() if kind in ITEMS}
 
         def merged(current: dict) -> dict:
             body: dict[str, Any] = {}
@@ -482,6 +503,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
                     dumped = [patch.model_dump(mode="json", exclude_unset=True) for patch in patches]
                     if kind == "text_layers":
                         dumped = [patch if any(_same(item["id"], patch["id"]) for item in current[kind]) else new_title(patch) for patch in dumped]
+                    if kind == "shapes":
+                        dumped = [_switched_stroke(current[kind], patch) for patch in dumped]
                     body[kind] = _merge(current[kind], dumped, _KEYS[kind])
             if style_overrides is not None:
                 new = _dump(StyleOverrides, style_overrides)
@@ -499,9 +522,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def remove_candidate_items(
         job_id: str,
         candidate_id: str,
-        kind: Literal[
-            "text_layers", "shapes", "music", "overlays", "segments", "transitions", "word_edits", "layout_overrides", "style_overrides"
-        ],
+        kind: Literal[*ITEMS, "style_overrides"],  # type: ignore[valid-type]
         keys: list[str | float],
     ) -> dict:
         """Remove some of a Candidate's items of one kind, by key: ids; a Transition's `after`; a
@@ -893,10 +914,7 @@ def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
 
 
 # What identifies an item of each kind within its Candidate.
-_KEYS = {
-    "text_layers": "id", "shapes": "id", "music": "id", "overlays": "id", "segments": "id",
-    "transitions": "after", "word_edits": "at", "layout_overrides": "at",
-}
+_KEYS = {kind: key for kind, (_, key) in ITEMS.items()}
 # Two times closer than this are the same `at`.
 _SAME_SECS = 0.01
 
@@ -946,11 +964,31 @@ def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
     return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
 
 
+def _switched_stroke(shapes: list[dict], patch: dict) -> dict:
+    """A Shape's `patch`, which switches one of `shapes` with no stroke to a line or an arrow, with
+    the stroke it then needs where the patch doesn't give it, as the editor switches a kind:
+    SWITCHED_THICKNESS thick, in its fill's colour (the colour it showed). Any other patch as it is."""
+    style = patch.get("style") or {}
+    shape = next((shape for shape in shapes if _same(shape["id"], patch["id"])), None)
+    if shape is None or style.get("kind") is None or not ShapeKind(style["kind"]).all_stroke or shape["style"]["stroke_width"]:
+        return patch
+    stroke = {"stroke_width": SWITCHED_THICKNESS, "stroke_colour": shape["style"]["fill"] or shape["style"]["stroke_colour"]}
+    return patch | {"style": stroke | style}
+
+
 _FRAMING_PATCH = _patch_model(Framing)
-_PATCHES = {
-    kind: _patch_model(item, _KEYS[kind])
-    for kind, item in {
-        "text_layers": TextLayer, "shapes": Shape, "music": MusicClip, "overlays": Overlay, "segments": Segment,
-        "transitions": Transition, "word_edits": WordEdit, "layout_overrides": LayoutOverride,
-    }.items()
-}
+_PATCHES = {kind: _patch_model(item, key) for kind, (item, key) in ITEMS.items()}
+# The JSON schema of a list of Shapes, where the tools take one: a line, which keeps the agent's
+# tools within their budget. The server's instructions say the rest.
+_SHAPES_SCHEMA = WithJsonSchema({
+    "type": "array",
+    "description": f"As Text Layers but style: kind ({','.join(ShapeKind)}),"
+    + ",".join(field.name for field in dataclasses.fields(ShapeStyle) if field.name != "kind"),
+})
+# A CandidateUpdate as edit_candidate takes it, its Shapes in the line above: the same body.
+_CandidateChanges = create_model(
+    "CandidateUpdate",
+    __base__=CandidateUpdate,
+    __doc__=CandidateUpdate.__doc__,
+    shapes=(Annotated[list[Shape], Field(max_length=SHAPES_MAX), _SHAPES_SCHEMA] | None, None),
+)

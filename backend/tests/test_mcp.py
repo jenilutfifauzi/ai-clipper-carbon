@@ -689,6 +689,28 @@ async def test_a_shapes_style_and_transform_are_merged_field_by_field_and_shapes
 
 
 @pytest.mark.anyio
+async def test_a_figure_with_no_stroke_merged_into_a_line_or_an_arrow_is_drawn_in_its_fills_colour(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    white = PILL | {"style": PILL["style"] | {"fill": "#FFFFFF"}}
+    await call(mcp, "merge_candidate_items", **ids, shapes=[white, white | {"id": "kept"}, white | {"id": "red"}])
+
+    # As the editor switches one: 12 px thick, white as it showed, not the default black stroke.
+    [arrow, kept, red] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"kind": "arrow"}}]))["shapes"]
+    assert arrow["style"] | {"kind": "rectangle", "stroke_width": 0, "stroke_colour": "#000000"} == kept["style"]
+    assert (arrow["style"]["kind"], arrow["style"]["stroke_width"], arrow["style"]["stroke_colour"]) == ("arrow", 12, "#FFFFFF")
+    # What the merge gives of its stroke is kept.
+    [_, _, red] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "red", "style": {"kind": "line", "stroke_colour": "#ff0000"}}]))["shapes"]
+    assert (red["style"]["stroke_width"], red["style"]["stroke_colour"]) == (12, "#FF0000")
+    [_, kept, _] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "kept", "style": {"kind": "line", "stroke_width": 4}}]))["shapes"]
+    assert (kept["style"]["stroke_width"], kept["style"]["stroke_colour"]) == (4, "#FFFFFF")
+    # A line that has a stroke keeps it when switched to an arrow.
+    [_, kept, _] = (await call(mcp, "merge_candidate_items", **ids, shapes=[{"id": "kept", "style": {"kind": "arrow"}}]))["shapes"]
+    assert (kept["style"]["kind"], kept["style"]["stroke_width"]) == ("arrow", 4)
+
+
+@pytest.mark.anyio
 async def test_a_shape_the_model_refuses_is_a_clear_tool_error(mcp):
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)
@@ -703,7 +725,8 @@ async def test_a_shape_the_model_refuses_is_a_clear_tool_error(mcp):
     assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "transform": {"flip_h": True}}])
     assert "kind" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"kind": "hexagon"}}])
     # A line or an arrow is all stroke: none with no stroke_width, its thickness.
-    assert "a line is all stroke" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"kind": "line"}}])
+    line = {"id": "pill", "style": {"kind": "line", "stroke_width": 0}}
+    assert "a line is all stroke" in await fails(mcp, "merge_candidate_items", **ids, shapes=[line])
     arrow = PILL | {"id": "arrow", "style": {"kind": "arrow", "stroke_width": 0}}
     assert "an arrow is all stroke" in await fails(mcp, "edit_candidate", **ids, changes={"shapes": [arrow]})
     assert "secs" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "new", "style": {"fill": "#FFFFFF"}}])
@@ -725,6 +748,10 @@ async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
     [edit] = [tool for tool in tools if tool.name == "edit_candidate"]
     for kind in ("rectangle", "ellipse", "triangle", "parallelogram", "trapezoid", "line", "arrow"):
         assert kind in json.dumps(edit.input_schema), kind
+    # The instructions say what a Shape's stroke is when not given, and when switched to a line.
+    shapes = mcp.instructions[mcp.instructions.index("- A Shape is a figure") :]
+    assert "stroke_colour (#000000 by default)" in shapes
+    assert "a stroke 12 px thick in its fill's colour" in shapes
 
     glossary = await mcp.read_resource("ai-clipper://glossary")
     assert "Candidate" in glossary.contents[0].text

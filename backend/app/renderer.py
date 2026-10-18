@@ -79,11 +79,12 @@ delayed to where it is heard, then mixed with the Clip's own sound (at its volum
 loudness is measured and normalized, so that the mix lands at −14 LUFS.
 Without music, and at its own volume, the Clip's sound goes as it did.
 
-The plan's picture layers (its Text Layers, docs/adr/0010; planner.py's `PictureLayer`) are pictures:
-each one's, made by app/text_pictures.py before the render, is one more input, drawn as an Overlay's
-image is (`_picture`) while it shows, over the captions and under the hook, in the plan's order. With
-any, the script is cut in two: the Watermark's text and the captions are burned before them, and the
-hook after. One that is keyed (docs/adr/0008), or comes on or goes off as the hook does (Fade, Pop,
+The plan's picture layers (its Shapes, docs/adr/0011, and its Text Layers, docs/adr/0010;
+planner.py's `PictureLayer`) are pictures: each one's, made by app/layer_pictures.py before the
+render, is one more input, drawn as an Overlay's image is (`_picture`) while it shows, over the
+captions and under the hook, in the plan's order (its Shapes under its Text Layers). With any, the
+script is cut in two: the Watermark's text and the captions are burned before them, and the hook
+after. One that is keyed (docs/adr/0008), or comes on or goes off as the hook does (Fade, Pop,
 Slide), is drawn by a frame process, as a keyed Overlay is: its picture sampled from its Keyframes,
 then faded, scaled and moved by the hook's curves on top (`layer_at`). Without picture layers, the
 command is as it was.
@@ -168,7 +169,7 @@ class Renderer:
         succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1. `logo`
         is the PNG of the plan's Logo Watermark, which isn't drawn without it; `files` has the file of
         each Media Library item the plan plays (songs and videos), by its id; `pictures` the picture of
-        each of its picture layers (app/text_pictures.py), by its name.
+        each of its picture layers (app/layer_pictures.py), by its name.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
@@ -277,7 +278,7 @@ class Renderer:
         inputs, index = _music_inputs(plan, files or {}, first=before_music)
         layers, layered = _overlay_inputs(plan, files or {}, before_music + len(index), feeds)
         scene_inputs, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
-        pictured, written = _layer_inputs(plan, pictures or {}, before_music + len(index) + len(layered) + len(drawn), feeds)
+        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + len(index) + len(layered) + len(drawn), feeds)
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
@@ -298,8 +299,8 @@ class Renderer:
                 frame += f";{joined}{ass_filter(subtitles, fonts)}[captioned]"
                 joined = "[captioned]"
             for i, (event, number, feed) in enumerate(written):
-                frame += f";{_picture_layer(event, joined, f'[pictured{i}]', number, i, feed)}"
-                joined = f"[pictured{i}]"
+                frame += f";{_picture_layer(event, joined, f'[with_layer{i}]', number, i, feed)}"
+                joined = f"[with_layer{i}]"
             subtitles = above
         burned = "" if subtitles is None else f"{ass_filter(subtitles, fonts)},"
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
@@ -322,7 +323,7 @@ class Renderer:
             codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *pictured,
+            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
@@ -759,7 +760,7 @@ def _picture_layer(event: PictureLayer, below: str, out: str, index: int, number
     process `feed`, laid at 0, 0. An unturned picture whose corner is at an odd pixel is padded by a
     transparent one, since an overlay onto 4:2:0 frames moves a picture to the even pixel before."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
-    name = f"pictured{number}"
+    name = f"layer_picture{number}"
     if feed is not None:
         return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}[{name}];{below}[{name}]overlay=0:0:{shows}:eof_action=pass{out}"
     picture = event.picture

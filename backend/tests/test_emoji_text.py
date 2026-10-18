@@ -14,15 +14,15 @@ from pydantic import TypeAdapter
 
 from app.candidates import TextLayer
 from app.config import load_settings
+from app.layer_pictures import rasterised
 from app.planner import TextEvent, TextRun, emoji_square, font_metrics, text_event
-from app.text_pictures import rasterised
 from emojifiles import FLAG, QUARTERS
 from test_planner import captioned, said, shown
 from test_render import HEARD, add, full_frame, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
 from test_render import from_render_video, plain_video, render_video  # noqa: F401
 from test_review import patch
-from test_text_pictures import picture_of
+from test_layer_pictures import picture_of
 
 _LAYER = TypeAdapter(TextLayer)
 STYLE_FONT = "montserrat-extrabold"

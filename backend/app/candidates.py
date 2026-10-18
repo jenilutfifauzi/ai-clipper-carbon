@@ -234,16 +234,27 @@ class ShapeKind(StrEnum):
     def all_stroke(self) -> bool:
         """Whether it is all stroke (a line, an arrow): its width its length, its stroke width its
         thickness, its colour the stroke's, and its height and fill not used."""
-        return self in (ShapeKind.LINE, ShapeKind.ARROW)
+        return self in _THICKNESSES_TALL
+
+    @property
+    def thicknesses_tall(self) -> int | None:
+        """How tall a figure that is all stroke is, in its thicknesses: a line one, an arrow its
+        head's ARROW_HEAD. None for a filled figure, whose height is its own."""
+        return _THICKNESSES_TALL.get(self)
 
 
+# How tall an arrow's head is, in its thicknesses.
+ARROW_HEAD = 4
+# The Shape Kinds that are all stroke, and how tall each is in its thicknesses.
+_THICKNESSES_TALL = {ShapeKind.LINE: 1, ShapeKind.ARROW: ARROW_HEAD}
+# How thick a figure with no stroke is made when it is switched to a line or an arrow, in output
+# pixels: the thickness of a new one (the editor's NEW_THICKNESS).
+SWITCHED_THICKNESS = 12
 # The least and the most a Shape Style's width and height are, in output pixels.
 SHAPE_SIZE = (2, 4096)
 ShapeSize = Annotated[int, Field(ge=SHAPE_SIZE[0], le=SHAPE_SIZE[1])]
 # The thickest a Shape's stroke is, in output pixels.
 SHAPE_STROKE_MAX = 200
-# How tall an arrow's head is, in its thicknesses.
-ARROW_HEAD = 4
 
 
 @dataclass(frozen=True)
@@ -271,12 +282,8 @@ class ShapeStyle:
     def size(self) -> tuple[int, int]:
         """The box its figure fills, in output pixels before its Transform's scale: its width and
         height; a line's length and thickness, an arrow's length and the height of its head."""
-        match self.kind:
-            case ShapeKind.LINE:
-                return self.width, self.stroke_width
-            case ShapeKind.ARROW:
-                return self.width, ARROW_HEAD * self.stroke_width
-        return self.width, self.height
+        tall = self.kind.thicknesses_tall
+        return (self.width, self.height) if tall is None else (self.width, tall * self.stroke_width)
 
 
 @dataclass(frozen=True)

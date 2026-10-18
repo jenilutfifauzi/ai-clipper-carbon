@@ -13,13 +13,13 @@ from pathlib import Path
 from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
+from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.planner import RenderPlan, match_edits
 from app.rendering import Analysis, analysed_range, candidate_plan, needed_analysis, saved_analysis, saved_words, transcript_words
 from app.segment_time import segment_time
 from app.styles import PresetStore
-from app.text_pictures import TEXTS_DIR, make_pictures
 from app.transcript import Transcript, Word
 
 
@@ -93,7 +93,7 @@ def preview_plan(
         candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
     )
     # Its picture layers' pictures, which the preview shows (docs/adr/0010): made now if they aren't there.
-    make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / TEXTS_DIR)
+    make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
     shown, at = [], 0.0
     for segment, heard in zip(segments, words):
         played = segment_time(segment)

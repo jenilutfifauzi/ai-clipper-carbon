@@ -1,5 +1,6 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
+import shutil
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, Literal
@@ -8,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError, WithJsonSchema
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
 
 from app import emoji, review
 from app.candidates import (
@@ -37,6 +38,7 @@ from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.migration import OLD_TEXT_LAYER
@@ -46,7 +48,6 @@ from app.profile import ChannelProfile, ProfileStore
 from app.rendering import NothingToRender, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
-from app.text_pictures import TEXTS_DIR, pictures_used, sweep as sweep_pictures
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
@@ -87,13 +88,9 @@ SHAPES_MAX = 50
 MUSIC_MAX = 50
 SEGMENTS_MAX = 100
 OVERLAYS_MAX = 50
-# The JSON schema of a list of Shapes, for edit_candidate and merge_candidate_items: a line, which
-# keeps the agent's tools within their budget. The MCP server's instructions say the rest.
-SHAPES_SCHEMA = WithJsonSchema({
-    "type": "array",
-    "description": "As Text Layers but style: kind (rectangle,ellipse,triangle,parallelogram,trapezoid,line,arrow),"
-    "width,height,fill,stroke_colour,stroke_width,radius,shadow",
-})
+# Where a Job's picture layers' pictures are served, under /api/jobs/<job id>/: named when only Text
+# Layers had them, and kept for the editors that ask for them there.
+PICTURES_ROUTE = "texts"
 
 _OPTIONS = TypeAdapter(JobOptions)
 _CANDIDATE = TypeAdapter(Candidate)
@@ -235,7 +232,7 @@ class CandidateUpdate(BaseModel):
     # Replaces the Candidate's Text Layers as a whole.
     text_layers: Annotated[list[TextLayer], Field(max_length=TEXT_LAYERS_MAX), BeforeValidator(no_old_text_layers)] | None = None
     # Replaces the Candidate's Shapes as a whole.
-    shapes: Annotated[list[Shape], Field(max_length=SHAPES_MAX), SHAPES_SCHEMA] | None = None
+    shapes: Annotated[list[Shape], Field(max_length=SHAPES_MAX)] | None = None
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
@@ -492,8 +489,8 @@ def list_jobs(
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, store: Store, library: Media, background: BackgroundTasks) -> JobDetail:
-    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies and Text
-    Layer pictures are swept (`sweep_unused`)."""
+    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies and picture
+    layers' pictures are swept (`sweep_unused`)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
@@ -588,12 +585,12 @@ def job_peaks(start: int, job: ExistingJob, store: Store, settings: AppSettings)
     return FileResponse(chunk, media_type="application/octet-stream", headers=_DERIVED)
 
 
-@router.get(f"/jobs/{{job_id}}/{TEXTS_DIR}/{{name}}")
-def job_text_picture(name: str, job: ExistingJob, store: Store) -> FileResponse:
-    """A picture layer's picture (app/text_pictures.py), by the name its event in a Preview Plan gives:
+@router.get(f"/jobs/{{job_id}}/{PICTURES_ROUTE}/{{name}}")
+def job_layer_picture(name: str, job: ExistingJob, store: Store) -> FileResponse:
+    """A picture layer's picture (app/layer_pictures.py), by the name its event in a Preview Plan gives:
     made with that plan, and named by a hash of what it shows, so never stale. 404 for one not made,
     or swept since."""
-    picture = store.job_dir(job.id) / TEXTS_DIR / name
+    picture = store.job_dir(job.id) / PICTURES_DIR / name
     if not name.endswith(".png") or name.startswith(".") or "/" in name or not picture.is_file():
         raise HTTPException(404, f"No picture {name} in Job {job.id}")
     return FileResponse(picture, media_type="image/png", headers=_DERIVED)
@@ -1233,7 +1230,8 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
     """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
     Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
-    History plays from; and the Job's picture layers' pictures (app/text_pictures.py) none of them shows."""
+    History plays from; and the Job's picture layers' pictures (app/layer_pictures.py) none of them
+    shows, and the folder they were kept in before (OLD_PICTURES_DIR), whole."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
@@ -1243,7 +1241,8 @@ def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
     for media_id in sorted(set().union(*(state.media_ids() for state in states)) & videos.keys()):
         if all(use.job_id == job_id for use in media_uses(store, media_id)):
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
-    sweep_pictures(store.job_dir(job_id) / TEXTS_DIR, pictures_used(states))
+    sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
+    shutil.rmtree(store.job_dir(job_id) / OLD_PICTURES_DIR, ignore_errors=True)
 
 
 def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:

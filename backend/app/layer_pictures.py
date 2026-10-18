@@ -1,7 +1,9 @@
-"""Picture layers' pictures (docs/adr/0010-text-layers-are-rasterised-pictures.md): a picture layer's
-layout (planner.py's `PictureLayout`), drawn once by libass onto a transparent picture, which the
-render lays over the Clip and the preview shows as it is. Each kind of layout is written as an ASS
-script of the picture's size by its own `layout_script`, and may have more pasted over what libass
+"""Picture layers' pictures: a picture layer, a Text Layer
+(docs/adr/0010-text-layers-are-rasterised-pictures.md) or a Shape
+(docs/adr/0011-shapes-are-pictures-like-text-layers.md), is drawn from its layout (planner.py's
+`PictureLayout`) once by libass onto a transparent picture, which the render lays over the Clip and
+the preview shows as it is. Each kind of layout is written as an ASS script of the picture's size by
+its own `layout_script` (in the same scaffold, `_script`), and may have more pasted over what libass
 drew (`pasted`); the rest is the same for every kind.
 
 A Text Layer's layout (planner.py's `TextLayout`) is written as an ASS script of the picture's size: its plate
@@ -15,13 +17,14 @@ image (app/emoji.py) is pasted onto the picture afterwards, in its square (plann
 `emoji_square`), over the plate and the shadow, in its own colours, with none of the text's
 colour, stroke or shadow.
 
-A Shape's layout (planner.py's `ShapeLayout`) is written as `\\p1` drawings of its figure, in the
-middle of the picture: its drop shadow, then its fill, then its stroke. The stroke is drawn inside
-the figure, as a ring: the figure, and the figure inset by the stroke's width gone round the other
-way, which libass leaves as a hole. The fill reaches under the middle of the stroke, so that no seam
-shows between them. The shadow is what is drawn (the figure, or the ring of an outline alone) again,
-moved and in the shadow's colour, blurred with `\\blur`, as a Text Layer's. A line and an arrow are
-all stroke: their outline is one drawing in the stroke's colour, and their shadow that again.
+A Shape's layout (planner.py's `ShapeLayout`, docs/adr/0011) is written as `\\p1` drawings of its
+figure, in the middle of the picture: its drop shadow, then its fill, then its stroke. The stroke is
+drawn inside the figure, as a ring: the figure, and the figure inset by the stroke's width gone
+round the other way, which libass leaves as a hole. The fill reaches under the middle of the
+stroke, so that no seam shows between them. The shadow is what is drawn (the figure, or the ring of
+an outline alone) again, moved and in the shadow's colour, blurred with `\\blur`, as a Text Layer's.
+A line and an arrow are all stroke: their outline is one drawing in the stroke's colour, and their
+shadow that again.
 
 ffmpeg's `ass` filter with `alpha=1` over a transparent canvas doesn't give straight alpha: where
 libass blends a partly covered pixel, the colour comes out multiplied by its coverage and the alpha
@@ -33,11 +36,12 @@ what shows over black divided by that.
 The fonts directory libass is given holds just the layout's Faces (app/fonts.py's `gather`), so that
 no other font is matched; a render fails clearly when a file is gone.
 
-Pictures are kept in the Job's TEXTS_DIR, named by their layout's hash, and written under a
+Pictures are kept in the Job's PICTURES_DIR, named by their layout's hash, and written under a
 temporary name renamed when complete, so a half-written one is never served. The preview's plan and
 a render each make the pictures they need that aren't there yet. When a Job is opened, those none of
 its Candidates nor any state in their Revision History shows are removed (`sweep`), never what one
-being made is writing.
+being made is writing; and the folder they were kept in before Shapes had them too
+(OLD_PICTURES_DIR), whose pictures are made again in PICTURES_DIR when asked for.
 """
 
 import math
@@ -63,7 +67,9 @@ from app.planner import PictureLayout, ShapeLayout, TextLayout, emoji_square, fo
 from app.renderer import last_lines
 
 # In a Job's directory.
-TEXTS_DIR = "texts"
+PICTURES_DIR = "layer-pictures"
+# Where they were kept when only Text Layers had them: removed whole by the Job's sweep.
+OLD_PICTURES_DIR = "texts"
 
 # What pictures being made are writing now, which the sweep leaves.
 _writing: set[Path] = set()
@@ -99,7 +105,7 @@ def rasterised(ffmpeg: Path, layout: PictureLayout) -> np.ndarray:
     """`layout` drawn by libass (`layout_script`) with what is pasted over that (`pasted`), as
     straight-alpha RGBA pixels of its raster size."""
     width, height = layout.raster
-    with tempfile.TemporaryDirectory(prefix="text-picture-") as work:
+    with tempfile.TemporaryDirectory(prefix="layer-picture-") as work:
         fonts = registry().gather(layout.faces, Path(work, "fonts"))
         script = Path(work, "layout.ass")
         script.write_text(layout_script(layout), encoding="utf-8")
@@ -216,26 +222,11 @@ def text_script(layout: TextLayout) -> str:
         tags = shadow_tags(style.shadow, style.stroke_width)
         events += [f"{{\\an5\\pos({x + dx:.3f},{y + dy:.1f}){run_tags}{tags}}}{words}" for x, y, run_tags, words in placed]
     events += [f"{{\\an5\\pos({x:.3f},{y:.1f}){run_tags}}}{words}" for x, y, run_tags, words in placed]
-    return "\n".join([
-        "[Script Info]",
-        "ScriptType: v4.00+",
-        f"PlayResX: {layout.width}",
-        f"PlayResY: {layout.height}",
-        "WrapStyle: 2",
-        "ScaledBorderAndShadow: yes",
-        "YCbCr Matrix: None",
-        "",
-        "[V4+ Styles]",
-        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
-        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
-        "MarginR, MarginV, Encoding",
-        f"Style: Text,{font(style.font).family},{style.size:g},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
-        f"{style.stroke_width},0,5,0,0,0,1",
-        "",
-        "[Events]",
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-        *(f"Dialogue: {layer},0:00:00.00,0:00:10.00,Text,,0,0,0,,{event}" for layer, event in enumerate(events)),
-    ]) + "\n"
+    look = (
+        f"Text,{font(style.font).family},{style.size:g},{text},{text},{edge},{edge},0,0,0,0,100,100,0,0,1,"
+        f"{style.stroke_width},0,5,0,0,0,1"
+    )
+    return _script(layout, look, events)
 
 
 @layout_script.register
@@ -248,14 +239,14 @@ def shape_script(layout: ShapeLayout) -> str:
     width, height = style.size
     left, top = (layout.width - width) / 2, (layout.height - height) / 2
     if style.kind.all_stroke:
-        cast = line_drawing(style)
-        drawn = [(cast, style.stroke_colour)]
+        shadowed = line_drawing(style)
+        drawn = [(shadowed, style.stroke_colour)]
     else:
         figure = figure_drawing(style)
         # Its stroke: the figure less its inside (all of it, when the stroke leaves no inside).
         inside = figure_drawing(style, style.stroke_width)
         ring = "" if not style.stroke_width else f"{figure} {reversed_drawing(inside)}" if inside else figure
-        cast = figure if style.fill is not None else ring
+        shadowed = figure if style.fill is not None else ring
         drawn = []
         if style.fill is not None and (filled := figure_drawing(style, style.stroke_width / 2)):
             drawn.append((filled, style.fill))
@@ -264,9 +255,17 @@ def shape_script(layout: ShapeLayout) -> str:
     events = []
     if style.shadow.on:
         dx, dy = style.shadow.offset
-        events.append(f"{{\\an7\\pos(0,0)\\p1{shadow_tags(style.shadow, 0)}}}{_moved(cast, left + dx, top + dy)}{{\\p0}}")
+        events.append(f"{{\\an7\\pos(0,0)\\p1{shadow_tags(style.shadow, 0)}}}{_moved(shadowed, left + dx, top + dy)}{{\\p0}}")
     for drawing, colour in drawn:
         events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(colour)}}}{_moved(drawing, left, top)}{{\\p0}}")
+    return _script(layout, "Shape,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1", events)
+
+
+def _script(layout: PictureLayout, style: str, events: list[str]) -> str:
+    """An ASS script of `layout`'s size at scale 1 that draws `events` (each an event's text) in
+    their order, each on a layer of its own over the one before, in the one Style `style` (its
+    fields, its name first)."""
+    name = style.partition(",")[0]
     return "\n".join([
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -281,11 +280,11 @@ def shape_script(layout: ShapeLayout) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
         "MarginR, MarginV, Encoding",
-        "Style: Shape,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+        f"Style: {style}",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-        *(f"Dialogue: {layer},0:00:00.00,0:00:10.00,Shape,,0,0,0,,{event}" for layer, event in enumerate(events)),
+        *(f"Dialogue: {layer},0:00:00.00,0:00:10.00,{name},,0,0,0,,{event}" for layer, event in enumerate(events)),
     ]) + "\n"
 
 
@@ -296,6 +295,8 @@ SLANT = 0.25
 ARROW_HEAD_LENGTH = 3
 # How far a quarter circle's Bézier control points are from its ends, as a share of its radius.
 KAPPA = 0.5523
+# How many short lines an inset ellipse is drawn with.
+ELLIPSE_STEPS = 360
 
 
 def figure_drawing(style: ShapeStyle, inset: float = 0.0) -> str:
@@ -406,10 +407,6 @@ def _ellipse(across: float, down: float, inset: float) -> str:
         nearest = np.sqrt(((curve[:, None, :] - edges[None, :, :]) ** 2).sum(axis=2)).min(axis=1)
         curve = curve[nearest >= inset - 0.01]
     return _polygon([(x + across, y + down) for x, y in curve.tolist()])
-
-
-# How many short lines an inset ellipse is drawn with.
-ELLIPSE_STEPS = 360
 
 
 def _moved(drawing: str, x: float, y: float) -> str:

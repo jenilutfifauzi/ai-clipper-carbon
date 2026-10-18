@@ -14,8 +14,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Shape
 from app.jobs import CANDIDATES_FILE
-from app.planner import MAX_TEXT_PICTURE, Box, ShapeEvent, plan_render, shape_event, text_event
-from app.text_pictures import TEXTS_DIR
+from app.layer_pictures import PICTURES_DIR
+from app.planner import MAX_LAYER_PICTURE, Box, ShapeEvent, plan_render, shape_event, text_event
 from app.video_source import SourceMetadata
 from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_through_mcp
@@ -24,7 +24,7 @@ from test_render import HEARD, add, full_frame, pixels, preview, render, rendere
 from test_render import from_render_video, plain_video, render_video  # noqa: F401
 from test_review import candidate_url, candidates, patch
 from test_text_layers import layer as text_layer
-from test_text_pictures import picture_of
+from test_layer_pictures import picture_of
 
 SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="h264")
 _SHAPE = TypeAdapter(Shape)
@@ -75,7 +75,7 @@ def test_a_shapes_picture_is_made_at_the_scale_it_reaches_and_never_larger_than_
     assert made(transform={"scale": 2}).picture_key == made().picture_key != made(style={"width": 401}).picture_key
     assert made(transform={"scale": 2}).image != made().image
     huge = made(transform={"scale": 8}, style={"width": 4000, "height": 1000})
-    assert max(huge.layout.raster) <= MAX_TEXT_PICTURE
+    assert max(huge.layout.raster) <= MAX_LAYER_PICTURE
 
 
 def test_shapes_are_picture_layers_drawn_after_the_captions_and_before_the_text_layers():
@@ -487,7 +487,7 @@ def test_shape_pictures_no_candidate_shows_are_swept_when_the_job_is_opened(clie
     candidate = patch(client, job, add(client, job, "halo", "ya"), shapes=[plate(style={"fill": "#00FF00"})])
     [kept] = preview(client, job, candidate)["plan"]["shapes"]
     [draft] = preview(client, job, candidate, {"shapes": [plate(style={"fill": "#FF00FF"})]})["plan"]["shapes"]
-    folder = settings.data_dir / "jobs" / job["id"] / TEXTS_DIR
+    folder = settings.data_dir / "jobs" / job["id"] / PICTURES_DIR
     assert sorted(path.name for path in folder.iterdir()) == sorted([kept["image"], draft["image"]])
     candidates(client, job)
     assert [path.name for path in folder.iterdir()] == [kept["image"]]
@@ -532,6 +532,49 @@ def test_a_shape_is_burned_in_at_its_bounds_over_the_captions_and_under_the_text
     assert len(pixels(plated, np.array([255, 0, 255]))[0]) > 0.9 * plated.shape[0] * plated.shape[1]
     # Not there before it starts.
     assert len(pixels(full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 2.6), np.array([0, 255, 0]))[0]) == 0
+
+
+def test_a_turned_shapes_corners_are_where_its_turned_bounds_say_in_a_rendered_frame(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    # A green bar 300x120, half as large again and turned 30° clockwise.
+    turned = plate(
+        start=0.0, secs=2.5, transform={"x": 540, "y": 600, "rotation": 30, "scale": 1.5},
+        style={"width": 300, "height": 120, "fill": "#00FF00"},
+    )
+    candidate = patch(client, job, candidate, shapes=[turned])
+    [event] = preview(client, job, candidate)["plan"]["shapes"]
+    # Its bounds are its 450x180 box stood on end by 30°.
+    angle = np.radians(30)
+    bounds = event["bounds"]
+    assert bounds["width"] == pytest.approx(450 * np.cos(angle) + 180 * np.sin(angle), abs=2)
+    assert bounds["height"] == pytest.approx(450 * np.sin(angle) + 180 * np.cos(angle), abs=2)
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    frame = full_frame(settings, settings.data_dir / "jobs" / job["id"] / clip["output"]["video"], 1.5)
+
+    # The bar reaches its bounds on every side, and no further.
+    rows, columns = pixels(frame, np.array([0, 255, 0]))
+    assert abs(rows.min() - bounds["y"]) <= 3 and abs(rows.max() + 1 - bounds["y"] - bounds["height"]) <= 3
+    assert abs(columns.min() - bounds["x"]) <= 3 and abs(columns.max() + 1 - bounds["x"] - bounds["width"]) <= 3
+    # Each corner of its area, scaled about its centre and turned 30° clockwise, is a corner of the bar.
+    area, (x, y) = event["area"], event["picture"]["centre"]
+    for across in (area["x"], area["x"] + area["width"]):
+        for down in (area["y"], area["y"] + area["height"]):
+            u, v = 1.5 * (across - x), 1.5 * (down - y)
+            row, column = y + u * np.sin(angle) + v * np.cos(angle), x + u * np.cos(angle) - v * np.sin(angle)
+            # Within its antialiased tip, which the colour's tolerance leaves out.
+            nearest = np.hypot(rows - row, columns - column).min()
+            assert nearest <= 5, (across, down, nearest)
+            # And green just inside it, towards the centre.
+            inside = np.array([row - y, column - x])
+            inside_row, inside_column = np.rint(np.array([row, column]) - 12 * inside / np.hypot(*inside)).astype(int)
+            assert frame[inside_row, inside_column].tolist() == pytest.approx([0, 255, 0], abs=40), (across, down)
 
 
 def test_a_shapes_shadow_falls_towards_its_angle_by_its_distance_in_a_rendered_frame(

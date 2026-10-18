@@ -11,7 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import EASE_OUT, Keyframe, KeyProperty, TextLayer
 from app.keyframes import value_at
-from app.planner import MAX_TEXT_PICTURE, bounds_at, picture_at, text_event
+from app.planner import MAX_LAYER_PICTURE, bounds_at, picture_at, text_event
 from app.renderer import layer_at
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
@@ -83,9 +83,9 @@ def test_a_keyed_text_layers_picture_is_made_at_the_largest_scale_it_reaches():
     assert made({"scale": 6}, {"scale": [{"at": 0, "value": 1.2}]}) == 1.5
     # Pop grows it to its full size, never past it: it peaks at the keyed scale.
     assert text_event(layer({}, {"size": 60}, keys=grows, animation_in="pop", animation_out="pop"), 10).layout.scale == 3
-    # Never more than MAX_TEXT_PICTURE on its longest side.
+    # Never more than MAX_LAYER_PICTURE on its longest side.
     huge = text_event(layer({}, {"size": 300}, text="Kalimat yang panjang", keys={"scale": [{"at": 0, "value": 8}]}), 10)
-    assert max(huge.picture.item_size) <= MAX_TEXT_PICTURE
+    assert max(huge.picture.item_size) <= MAX_LAYER_PICTURE
 
 
 def test_fade_pop_and_slide_are_stacked_on_a_keyed_text_layers_values():

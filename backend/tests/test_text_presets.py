@@ -16,7 +16,7 @@ from fontfiles import font_file
 from test_fonts import imported
 from test_render import add, preview, render, render_video, rendered, reviewed  # noqa: F401 (a fixture)
 from test_review import candidates, patch
-from test_text_pictures import picture_of
+from test_layer_pictures import picture_of
 
 OLD_LOOKS = {"text": "Text", "title": "Title", "label": "Label", "subtitle": "Subtitle"}
 URL = "/api/text-presets"

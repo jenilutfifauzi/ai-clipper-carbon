@@ -36,6 +36,7 @@ from app.candidates import Candidate, Framing, Layout, Segment
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
+from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
 from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
@@ -43,7 +44,6 @@ from app.renderer import Renderer, RenderStopped
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
 from app.segment_time import segment_time
-from app.text_pictures import TEXTS_DIR, make_pictures
 from app.storage import write_atomic
 from app.styles import PRESETS_FILE, PresetStore
 from app.transcript import Transcript
@@ -513,7 +513,7 @@ class Renders:
                 self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
             ))
             # Its picture layers' pictures, made now if they aren't there (docs/adr/0010).
-            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / TEXTS_DIR)
+            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
             encoder = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures
             )

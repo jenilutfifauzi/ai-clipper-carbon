@@ -60,11 +60,16 @@ Each line is split into runs by Face (`text_runs`): a character its Face hasn't 
 bundled CJK Face (FALLBACK_FACE) when that has it, and measured with it, or else left out. The line
 pitch stays its own Face's.
 
-Text Layers are the plan's picture layers (`PictureLayer`): items drawn as the picture libass makes
-once of their layout (`PictureLayout`), placed by their Transform and Keyframes as an Overlay's
-picture is (`layer_picture`), over the captions and under the hook, in the plan's order
-(`RenderPlan.picture_layers`). The renderer, the pictures' maker (app/text_pictures.py) and the
-preview read them by these alone, whatever kind of item each draws.
+Shapes (the Advanced Edit's figures, docs/adr/0011) are centred where the owner put them too, their
+figure its style's width and height (a line's or an arrow's its length by its thickness), drawn
+inside that box; each is drawn as a picture (`ShapeLayout`) of its figure and the room round it for
+its softened edge and its shadow.
+
+Shapes and Text Layers are the plan's picture layers (`PictureLayer`): items drawn as the picture
+libass makes once of their layout (`PictureLayout`), placed by their Transform and Keyframes as an
+Overlay's picture is (`layer_picture`), over the captions and under the hook, in the plan's order:
+its Shapes, then its Text Layers (`RenderPlan.picture_layers`). The renderer, the pictures' maker
+(app/layer_pictures.py) and the preview read them by these alone, whatever kind of item each draws.
 
 Music Clips are heard where the owner put them, cut where the Clip or the song ends, under the
 Clip's own sound at its `source_volume`. A keyed one's sound carries its volume Keyframes
@@ -211,11 +216,11 @@ TEXT_MARGIN = 48
 # for what its letters draw past their advances and above their capitals (accents, a slanted face).
 TEXT_INK_ROOM = 0.5
 # A picture layer's picture is at most this many pixels on its longest side, whatever its scale.
-MAX_TEXT_PICTURE = 4096
+MAX_LAYER_PICTURE = 4096
 # A picture layer's picture is made at the first of these scales the largest it is drawn at doesn't pass
 # (`reached_scale`): scaling it within one step is drawing the same picture smaller or larger, and
 # only a scale past it makes a new one, as sharp. Never at less than 1; MAX_SCALE is the last.
-TEXT_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
+LAYER_PICTURE_SCALES = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
 # A Shape's picture holds its figure and this many pixels round it, at scale 1: room for the edge
 # libass softens (and its shadow's reach past that).
 SHAPE_ROOM = 2
@@ -632,11 +637,12 @@ class TextRun:
 
 
 class PictureLayout:
-    """What a picture layer's picture shows (docs/adr/0010): in its own pixels, `width` x `height` at
-    scale 1, rasterised `scale` times as large, by libass from the ASS script app/text_pictures.py
-    writes of it (`layout_script`). Its picture's file is `name`, a hash of all of it, so that the
-    same picture is one file wherever the layer is; it is drawn in its `faces`. Each kind of picture
-    layer has a frozen dataclass of its own with these: a Text Layer's is a TextLayout."""
+    """What a picture layer's picture shows (docs/adr/0010, docs/adr/0011): in its own pixels,
+    `width` x `height` at scale 1, rasterised `scale` times as large, by libass from the ASS script
+    app/layer_pictures.py writes of it (`layout_script`). Its picture's file is `name`, a hash of all
+    of it, so that the same picture is one file wherever the layer is; it is drawn in its `faces`.
+    Each kind of picture layer has a frozen dataclass of its own with these: a Text Layer's is a
+    TextLayout, a Shape's a ShapeLayout."""
 
     width: int
     height: int
@@ -670,8 +676,8 @@ class TextLayout(PictureLayout):
     baseline) and drawn as its `runs`, over its plate's rectangles `plates` (its Block, or a Strip
     per line) with corners `radius` pixels round. Its shadow, when on, is its runs again moved by
     `shadow` (right and down), between them and the plate. The picture is rasterised `scale` times
-    as large (app/text_pictures.py; the largest scale the layer is drawn at, up to the next of
-    TEXT_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same picture is one
+    as large (app/layer_pictures.py; the largest scale the layer is drawn at, up to the next of
+    LAYER_PICTURE_SCALES), and named by a hash of all of it (`name`), so that the same picture is one
     file wherever the layer is."""
 
     style: TextStyle
@@ -715,7 +721,7 @@ class ShapeLayout(PictureLayout):
     its figure as its `style` draws it, centred, SHAPE_ROOM and its shadow's reach round it. Its
     stroke, corners and shadow are its style's, in its own pixels too. Rasterised `scale` times as
     large (as a Text Layer's, the largest scale the Shape is drawn at, up to the next of
-    TEXT_PICTURE_SCALES) and named by a hash of all of it and of SHAPE_PICTURE_FORMAT, so that the
+    LAYER_PICTURE_SCALES) and named by a hash of all of it and of SHAPE_PICTURE_FORMAT, so that the
     same picture is one file wherever the Shape is. It draws no text: it has no Faces."""
 
     style: ShapeStyle
@@ -729,8 +735,9 @@ class ShapeLayout(PictureLayout):
         return f"{hashlib.sha256(drawn.encode()).hexdigest()[:24]}.png"
 
 
+@dataclass(frozen=True)
 class PictureLayer:
-    """A picture layer as drawn (docs/adr/0010): an item of the Advanced Edit (`layer`: its id,
+    """A picture layer as drawn (docs/adr/0010, docs/adr/0011): an item of the Advanced Edit (`layer`: its id,
     Transform, Keyframes and in/out animations) drawn as the picture of its `layout`, from `start` to
     `end` seconds into the Clip, between the captions and the hook. It is placed as `picture` says,
     with the Overlay's maths (`layer_picture`). `area` is what its Grips hold (its box, without the
@@ -738,7 +745,8 @@ class PictureLayer:
     for a keyed one at a time). In its JSON too: its picture's file `image`, and `picture_key`, which
     names its pictures at every scale (PictureLayout.picture_key): the preview draws a larger picture
     of the same key it has rather than fetch a smaller one. Each kind has a frozen dataclass of its
-    own with these: a Text Layer's is a TextEvent, a Shape's a ShapeEvent."""
+    own made from it, which names its kind's item and layout: a Text Layer's is a TextEvent, a
+    Shape's a ShapeEvent."""
 
     layer: TextLayer | Shape
     start: float
@@ -771,13 +779,8 @@ class TextEvent(PictureLayer):
     too."""
 
     layer: TextLayer
-    start: float
-    end: float
-    area: Box
-    anchors: list[tuple[float, float]]
     layout: TextLayout
-    picture: Picture
-    bounds: Box
+    anchors: list[tuple[float, float]]
     box: Box | None = None
 
     @computed_field
@@ -794,12 +797,7 @@ class ShapeEvent(PictureLayer):
     that and SHAPE_ROOM and its shadow's reach round it, centred on the same centre."""
 
     layer: Shape
-    start: float
-    end: float
-    area: Box
     layout: ShapeLayout
-    picture: Picture
-    bounds: Box
 
 
 @dataclass(frozen=True)
@@ -1610,8 +1608,9 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     layout, origin = _text_layout(layer, lines, placed, area, anchors, plates, radius)
     picture = layer_picture(layout, origin, layer, start)
     return TextEvent(
-        layer, start, end, area, anchors, layout, picture, _turned_box(area, picture.centre, layer.transform),
-        area if style.plate.shape is HookShape.BLOCK else None,
+        layer=layer, start=start, end=end, area=area, layout=layout, picture=picture,
+        bounds=_turned_box(area, picture.centre, layer.transform), anchors=anchors,
+        box=area if style.plate.shape is HookShape.BLOCK else None,
     )
 
 
@@ -1632,7 +1631,10 @@ def shape_event(shape: Shape, duration: float) -> ShapeEvent | None:
     area = Box(round(x - figure_width / 2), round(y - figure_height / 2), figure_width, figure_height)
     picture = layer_picture(layout, (x - width / 2, y - height / 2), shape, start)
     end = round(min(start + shape.secs, duration), 3)
-    return ShapeEvent(shape, start, end, area, layout, picture, _turned_box(area, picture.centre, shape.transform))
+    return ShapeEvent(
+        layer=shape, start=start, end=end, area=area, layout=layout, picture=picture,
+        bounds=_turned_box(area, picture.centre, shape.transform),
+    )
 
 
 def text_lines(text: str, style: TextStyle) -> list[str]:
@@ -1736,10 +1738,10 @@ def reached_scale(layer: TextLayer | Shape) -> float:
 
 def picture_scale(layer: TextLayer | Shape, width: int, height: int) -> float:
     """The scale a picture layer's picture, `width` x `height` at scale 1, is rasterised at: the first
-    of TEXT_PICTURE_SCALES its item's reached scale doesn't pass, and no more than MAX_TEXT_PICTURE
+    of LAYER_PICTURE_SCALES its item's reached scale doesn't pass, and no more than MAX_LAYER_PICTURE
     on its longest side."""
-    stepped = next((step for step in TEXT_PICTURE_SCALES if reached_scale(layer) <= step), TEXT_PICTURE_SCALES[-1])
-    return round(min(stepped, MAX_TEXT_PICTURE / max(width, height)), 4)
+    stepped = next((step for step in LAYER_PICTURE_SCALES if reached_scale(layer) <= step), LAYER_PICTURE_SCALES[-1])
+    return round(min(stepped, MAX_LAYER_PICTURE / max(width, height)), 4)
 
 
 def layer_picture(layout: PictureLayout, origin: tuple[float, float], layer: TextLayer | Shape, start: float) -> Picture:

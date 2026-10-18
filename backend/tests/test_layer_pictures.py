@@ -1,6 +1,7 @@
-"""Text Layers as pictures (.scratch/text-advanced/issues/02-text-layers-as-pictures.md, docs/adr/0010):
-the picture libass draws of a Text Layer, served by its name and swept with the Job's derived files,
-and Seam A renders with the real ffmpeg of where, when and under what it is drawn.
+"""Picture layers' pictures (.scratch/text-advanced/issues/02-text-layers-as-pictures.md, docs/adr/0010),
+told through Text Layers (test_shapes.py tells Shapes'): the picture libass draws of a Text Layer,
+served by its name and swept with the Job's derived files, and Seam A renders with the real ffmpeg
+of where, when and under what it is drawn.
 """
 
 
@@ -11,8 +12,8 @@ import numpy as np
 import pytest
 
 from app.jobs import CANDIDATES_FILE
+from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, layout_script, make_pictures
 from app.planner import PictureLayout
-from app.text_pictures import TEXTS_DIR, layout_script, make_pictures
 from test_render import HEARD, add, full_frame, pixels, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
 from test_render import from_render_video, plain_video, render_video  # noqa: F401
@@ -24,8 +25,9 @@ def title(**fields) -> dict:
 
 
 def picture_of(client, job: dict, event: dict) -> np.ndarray:
-    """The picture a Text Layer's event names, as the preview fetches it: RGBA."""
-    response = client.get(f"/api/jobs/{job['id']}/{TEXTS_DIR}/{event['image']}")
+    """The picture a picture layer's event names, as the preview fetches it (at the path
+    frontend/src/api.ts asks for): RGBA."""
+    response = client.get(f"/api/jobs/{job['id']}/texts/{event['image']}")
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == "image/png" and "immutable" in response.headers["cache-control"]
     pixels = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_UNCHANGED)
@@ -50,7 +52,7 @@ def test_a_picture_is_clean_transparency_round_its_ink_and_made_once_for_its_loo
     assert picture[edges][:, :3].min() >= 250
 
     # The same look is the same file, made once: moving the layer asks for nothing new.
-    folder = settings.data_dir / "jobs" / job["id"] / TEXTS_DIR
+    folder = settings.data_dir / "jobs" / job["id"] / PICTURES_DIR
     made = (folder / event["image"]).stat().st_mtime_ns
     moved = patch(client, job, candidate, text_layers=[title(text="Halo Ägypten", style=white, transform={"x": 300, "y": 1500})])
     [there] = preview(client, job, moved)["plan"]["texts"]
@@ -66,14 +68,14 @@ def test_a_picture_is_clean_transparency_round_its_ink_and_made_once_for_its_loo
     assert picture_of(client, job, red)[..., 0].max() == 255
     assert sorted(path.name for path in folder.iterdir()) == sorted([event["image"], red["image"]])
 
-    assert client.get(f"/api/jobs/{job['id']}/{TEXTS_DIR}/{'0' * 24}.png").status_code == 404
-    assert client.get(f"/api/jobs/{job['id']}/{TEXTS_DIR}/..%2F{CANDIDATES_FILE}").status_code == 404
+    assert client.get(f"/api/jobs/{job['id']}/texts/{'0' * 24}.png").status_code == 404
+    assert client.get(f"/api/jobs/{job['id']}/texts/..%2F{CANDIDATES_FILE}").status_code == 404
 
 
 def test_pictures_no_candidate_nor_revision_shows_are_swept_when_the_job_is_opened(client, settings):
     job = reviewed(client)
     candidate = add(client, job, "halo", "ya")
-    folder = settings.data_dir / "jobs" / job["id"] / TEXTS_DIR
+    folder = settings.data_dir / "jobs" / job["id"] / PICTURES_DIR
     first = edit(client, job, candidate, "advanced-edit", text_layers=[title(style={"colour": "#00FF00"})])
     [kept] = preview(client, job, first)["plan"]["texts"]
     # A later look saved over it by another editor: the first stays in the Revision History.
@@ -87,6 +89,22 @@ def test_pictures_no_candidate_nor_revision_shows_are_swept_when_the_job_is_open
     candidates(client, job)
     assert sorted(path.name for path in folder.iterdir()) == sorted([kept["image"], shown["image"]])
     assert draft["image"] not in {kept["image"], shown["image"]}
+
+
+def test_the_folder_pictures_were_kept_in_before_shapes_is_removed_when_the_job_is_opened(client, settings):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    old = settings.data_dir / "jobs" / job["id"] / OLD_PICTURES_DIR
+    old.mkdir()
+    (old / f"{'0' * 24}.png").write_bytes(b"")
+    (old / ".cut.short.part.png").write_bytes(b"")
+
+    candidates(client, job)
+    assert not old.exists()
+    # Its pictures are made again where pictures are kept now, and served where they were.
+    [event] = preview(client, job, patch(client, job, candidate, text_layers=[title()]))["plan"]["texts"]
+    assert (settings.data_dir / "jobs" / job["id"] / PICTURES_DIR / event["image"]).is_file()
+    assert picture_of(client, job, event)[..., 3].max() == 255
 
 
 def test_a_text_layer_draws_its_colour_stroke_and_plate_over_the_captions_and_under_the_hook(
@@ -403,7 +421,7 @@ def _square_script(layout: Square) -> str:
 def test_a_layout_of_any_kind_is_drawn_by_its_own_script_and_kept_by_its_name(settings, tmp_path):
     square = Square(200, 100, 60, scale=2.0)
     assert square.raster == (400, 200) and square.picture_key == "square-200x100-60-1"
-    folder = tmp_path / TEXTS_DIR
+    folder = tmp_path / PICTURES_DIR
     [(name, path)] = make_pictures(settings.ffmpeg_bin, [square], folder).items()
     assert name == square.name and path == folder / square.name
     pixels = cv2.cvtColor(cv2.imread(str(path), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGRA2RGBA).astype(int)
