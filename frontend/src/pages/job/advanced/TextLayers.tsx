@@ -12,6 +12,7 @@ import { FRAME } from "../editor/picture";
 import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
 import { newId, newTiming } from "./edits";
+import type { PictureLayerKind } from "./pick";
 import { styled } from "./textStyle";
 import { ApplyTextPreset, SaveAsTextPreset } from "./TextPresets";
 import { layersStyle, layerStyle, PlateGroup, ShadowGroup, SpacingGroup } from "./TextStyleGroups";
@@ -25,7 +26,7 @@ const TEXT_MAX_CHARS = 300;
 // a Text Preset's sample in its Text Style (TextPresets.tsx' fromPreset).
 export type UntimedTextLayer = Omit<TextLayer, "id" | "start" | "secs" | "keys">;
 
-/** A Text Layer of `made` at `at` (the playhead, or where it was dropped), for TEXT_SECS or to the Clip's end. */
+/** A Text Layer of `made` at `at` (the playhead, or where it was dropped), for NEW_LAYER_SECS or to the Clip's end. */
 export function newTextLayer(made: UntimedTextLayer, at: number, duration: number): TextLayer {
   return { ...made, id: newId(), ...newTiming(at, duration), keys: {} };
 }
@@ -36,7 +37,7 @@ const ALIGNS = [
   { value: "right", label: "Right" },
 ] as const;
 
-export const ANIMATIONS = [
+const ANIMATIONS = [
   { value: "none", label: "None" },
   { value: "fade", label: "Fade" },
   { value: "pop", label: "Pop" },
@@ -134,7 +135,7 @@ type Animated = Pick<TextLayer, "id" | "animation_in" | "animation_out" | "anima
  * Slide), stacked on its Keyframes, and, once it does, for how long. Each field's changes are a step
  * of their own.
  */
-export function MotionFields<T extends Animated>({ item, kind, onChange }: { item: T; kind: "text" | "shape"; onChange: (item: T, group: string) => void }) {
+export function MotionFields<T extends Animated>({ item, kind, onChange }: { item: T; kind: PictureLayerKind; onChange: (item: T, group: string) => void }) {
   const set = <K extends keyof Animated>(field: K, value: Animated[K]) => onChange({ ...item, [field]: value }, `${kind}:${item.id}:${field}`);
   const animated = item.animation_in !== "none" || item.animation_out !== "none";
   return (
@@ -152,6 +153,60 @@ export function MotionFields<T extends Animated>({ item, kind, onChange }: { ite
           step={50}
           format={(v) => `${(v / 1000).toFixed(2)} s`}
           onChange={(ms) => set("animation_ms", ms)}
+        />
+      )}
+    </Group>
+  );
+}
+
+// The Motion fields, by name.
+type Motion = Exclude<keyof Animated, "id">;
+
+/**
+ * Several picked Text Layers' or Shapes' Motion fields, each set on every one of them at once, as
+ * one change named after its `prefix` and field ("texts:animation_in"). A field they differ in
+ * shows the first one's value, marked Mixed, until it is set.
+ */
+export function SeveralMotionFields<T extends Animated>({
+  items,
+  prefix,
+  onChange,
+}: {
+  items: T[];
+  prefix: "texts" | "shapes";
+  onChange: (change: (item: T) => T, group: string) => void;
+}) {
+  const onSet = <K extends Motion>(field: K, value: Animated[K]) => onChange((item) => ({ ...item, [field]: value }), `${prefix}:${field}`);
+  const mixed = (field: Motion) => shared(items, (item) => item[field]) === undefined;
+  const value = <K extends Motion>(field: K) => (shared(items, (item) => item[field]) ?? items[0][field]) as Animated[K];
+  const marker = (field: Motion) => (mixed(field) ? <Mixed /> : undefined);
+  return (
+    <Group title="Motion">
+      <div className="grid grid-cols-2 gap-3">
+        <Select
+          label="Comes on"
+          value={value("animation_in")}
+          options={ANIMATIONS}
+          onChange={(next: Animation) => onSet("animation_in", next)}
+          marker={marker("animation_in")}
+        />
+        <Select
+          label="Goes off"
+          value={value("animation_out")}
+          options={ANIMATIONS}
+          onChange={(next: Animation) => onSet("animation_out", next)}
+          marker={marker("animation_out")}
+        />
+      </div>
+      {items.some((item) => item.animation_in !== "none" || item.animation_out !== "none") && (
+        <Slider
+          label="Animation length"
+          value={value("animation_ms")}
+          min={100}
+          max={2000}
+          step={50}
+          format={(v) => (mixed("animation_ms") ? "Mixed" : `${(v / 1000).toFixed(2)} s`)}
+          onChange={(ms) => onSet("animation_ms", ms)}
         />
       )}
     </Group>
@@ -191,9 +246,6 @@ const READ = {
   stroke_width: (layer: TextLayer) => layer.style.stroke_width,
   stroke_colour: (layer: TextLayer) => layer.style.stroke_colour,
   align: (layer: TextLayer) => layer.style.align,
-  animation_in: (layer: TextLayer) => layer.animation_in,
-  animation_out: (layer: TextLayer) => layer.animation_out,
-  animation_ms: (layer: TextLayer) => layer.animation_ms,
 };
 type Field = keyof typeof READ;
 
@@ -224,7 +276,6 @@ export function TextLayersFields({
   const value = <F extends Field>(field: F) => (shared(layers, read(field)) ?? read(field)(layers[0])) as ReturnType<(typeof READ)[F]>;
   const mixed = (field: Field) => shared(layers, read(field)) === undefined;
   const marker = (field: Field) => (mixed(field) ? <Mixed /> : undefined);
-  const set = <K extends keyof TextLayer>(field: K, next: TextLayer[K]) => onChange((layer) => ({ ...layer, [field]: next }), `texts:${field}`);
   const setStyle = <K extends keyof TextStyle>(field: K, next: TextStyle[K]) =>
     onChange((layer) => ({ ...layer, style: styled(layer.style, field, next) }), `texts:style.${field}`);
   const access = layersStyle(layers, onChange);
@@ -274,35 +325,7 @@ export function TextLayersFields({
       <ShadowGroup style={access} />
       <PlateGroup style={access} />
       <SpacingGroup style={access} />
-      <Group title="Motion">
-        <div className="grid grid-cols-2 gap-3">
-          <Select
-            label="Comes on"
-            value={value("animation_in")}
-            options={ANIMATIONS}
-            onChange={(next: Animation) => set("animation_in", next)}
-            marker={marker("animation_in")}
-          />
-          <Select
-            label="Goes off"
-            value={value("animation_out")}
-            options={ANIMATIONS}
-            onChange={(next: Animation) => set("animation_out", next)}
-            marker={marker("animation_out")}
-          />
-        </div>
-        {any((layer) => layer.animation_in !== "none" || layer.animation_out !== "none") && (
-          <Slider
-            label="Animation length"
-            value={value("animation_ms")}
-            min={100}
-            max={2000}
-            step={50}
-            format={shown("animation_ms", (v) => `${(v / 1000).toFixed(2)} s`)}
-            onChange={(ms) => set("animation_ms", ms)}
-          />
-        )}
-      </Group>
+      <SeveralMotionFields items={layers} prefix="texts" onChange={onChange} />
     </div>
   );
 }

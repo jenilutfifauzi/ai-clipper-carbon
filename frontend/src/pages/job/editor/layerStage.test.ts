@@ -2,7 +2,7 @@
 // stage scale and turn it by its Transform, as an Overlay's do, and while one holds it the preview
 // draws the picture it has, placed, scaled and turned with it.
 import { describe, expect, test } from "vitest";
-import { textPictureUrl, type Picture, type RenderPlan, type TextEvent, type Transform } from "../../../api";
+import { layerPictureUrl, type Picture, type RenderPlan, type TextEvent, type Transform } from "../../../api";
 import { IDENTITY, pictureLayers } from "./picture";
 import { fingersHeld, fingerMoved, fingersOn, gripsOf, placed } from "./pictureGestures";
 import { heldPicture } from "./stagePicture";
@@ -68,7 +68,7 @@ describe("a Text Layer on the stage", () => {
     // Drawn from the gesture until the plan comes: the same picture, twice as large.
     const held = heldLayerEvent(planned, picture, heldPicture(picture, scaled, FRAME, fitted));
     expect(held.image).toBe(planned.image);
-    expect(wantedPicture("j", held).url).toBe(textPictureUrl("j", "abc.png"));
+    expect(wantedPicture("j", held).url).toBe(layerPictureUrl("j", "abc.png"));
     expect(held.picture).toMatchObject({ centre: [540, 600], width: 800, height: 400, rotation: 0 });
     expect(held.bounds).toEqual({ x: 240, y: 500, width: 600, height: 200 });
   });

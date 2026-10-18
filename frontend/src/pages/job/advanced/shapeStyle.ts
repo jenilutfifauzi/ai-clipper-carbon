@@ -1,5 +1,5 @@
 import type { Shape, ShapeKind, ShapeStyle, Transform } from "../../../api";
-import { FRAME, IDENTITY, SHAPE_SIZE_RANGE } from "../editor/picture";
+import { allStroke, FRAME, IDENTITY } from "../editor/picture";
 import type { Size } from "../editor/pictureGestures";
 import { NO_SHADOW } from "../editor/shadow";
 import type { Outcome } from "./actions";
@@ -10,19 +10,11 @@ import { picked } from "./pick";
 // Shapes (docs/adr/0011, GLOSSARY.md): figures added from the Stickers tab, each drawn by the backend
 // as a picture of its Shape Style, as a Text Layer is.
 
-// A Shape Style's least and most width and height, in output pixels.
-export const SHAPE_SIZE = { min: SHAPE_SIZE_RANGE[0], max: SHAPE_SIZE_RANGE[1] } as const;
 // The thickest a Shape's stroke is, in output pixels (SHAPE_STROKE_MAX in backend/app/candidates.py).
 export const SHAPE_STROKE_MAX = 200;
 
 // Every Shape Kind, in the Stickers tab's order.
 export const SHAPE_KINDS: readonly ShapeKind[] = ["rectangle", "ellipse", "triangle", "parallelogram", "trapezoid", "line", "arrow"];
-
-/**
- * Whether a Shape of `kind` is all stroke (a line, an arrow): its width is its length, its stroke
- * width its thickness and its stroke colour its colour, and its height and fill aren't used.
- */
-export const allStroke = (kind: ShapeKind): boolean => kind === "line" || kind === "arrow";
 
 // What a Stickers tile adds: white, 400 px square, before its Transform's scale, with no stroke,
 // square corners and no shadow (the backend's defaults); a line or an arrow 600 px long and 12 px
@@ -66,8 +58,8 @@ export const drawsSomething = (style: ShapeStyle): boolean =>
   allStroke(style.kind) ? style.stroke_width > 0 : style.fill !== null || style.stroke_width > 0;
 
 /**
- * A Shape of `kind` added at `at` (the playhead) in a Clip `duration` long: for a new Text Layer's
- * length (or to the Clip's end, `newTiming`), centred on the frame, in its tile's look, unanimated.
+ * A Shape of `kind` added at `at` (the playhead) in a Clip `duration` long: for NEW_LAYER_SECS, as
+ * a new Text Layer (or to the Clip's end, `newTiming`), centred on the frame, in its tile's look, unanimated.
  */
 export function newShape(kind: ShapeKind, at: number, duration: number, id: string = newId()): Shape {
   return {

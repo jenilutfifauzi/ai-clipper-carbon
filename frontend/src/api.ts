@@ -517,7 +517,7 @@ export interface PictureLayerItem {
 
 // A picture layer as drawn (backend/app/planner.py's PictureLayer): its item `layer`, on screen from
 // `start` to `end`, drawn as the picture the backend made of it (docs/adr/0010), the file `image`
-// (textPictureUrl), placed as `picture` says. `area` is what its Grips hold, and `bounds` that area
+// (layerPictureUrl), placed as `picture` says. `area` is what its Grips hold, and `bounds` that area
 // once turned and scaled. `picture_key` names what its picture shows at any scale: its pictures of
 // one key differ only in size.
 export interface PictureLayerEvent<Item extends PictureLayerItem = PictureLayerItem> {
@@ -1222,8 +1222,8 @@ export const api = {
 };
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
-// A Text Layer's picture, by the name its event gives (backend/app/text_pictures.py): never stale.
-export const textPictureUrl = (jobId: string, name: string) => `/api/jobs/${encodeURIComponent(jobId)}/texts/${encodeURIComponent(name)}`;
+// A picture layer's picture (a Text Layer's or a Shape's), by the name its event gives: never stale.
+export const layerPictureUrl = (jobId: string, name: string) => `/api/jobs/${encodeURIComponent(jobId)}/texts/${encodeURIComponent(name)}`;
 // A Media Library item's normalized file, a video's small copy for the preview, and its still.
 export const mediaItemUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`;
 export const mediaProxyUrl = (id: string) => `/api/media/${encodeURIComponent(id)}/proxy`;
