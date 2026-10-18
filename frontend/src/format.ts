@@ -33,6 +33,23 @@ export function formatPrecise(seconds: number): string {
   return `${formatClock(Math.floor(tenths / 10))}.${tenths % 10}`;
 }
 
+// Roughly how long is left: "almost done", "40s left" or "2:10 left". Not to the second, since
+// the estimate isn't.
+export function formatTimeLeft(seconds: number): string {
+  if (seconds <= 1) return "almost done";
+  const whole = Math.round(seconds);
+  return whole < 60 ? `${whole}s left` : `${formatClock(whole)} left`;
+}
+
+// A render's time left at its pace so far: the time since `startedAt` over the `percent` done,
+// times what remains. None until it passes 2%, before which the pace says little.
+export function timeLeft(startedAt: string, percent: number | null, now: number): string | null {
+  if (percent === null || percent <= 2) return null;
+  const done = percent / 100;
+  const elapsed = Math.max(0, now - Date.parse(startedAt)) / 1000;
+  return formatTimeLeft((elapsed / done) * (1 - done));
+}
+
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["second", 60],

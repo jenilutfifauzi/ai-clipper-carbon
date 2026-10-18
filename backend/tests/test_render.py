@@ -8,7 +8,9 @@ halo 0.1–0.5, semua –1.0, apa –1.3, kabar –1.6, kita –1.9, ngobrol –
 import json
 import re
 import subprocess
+import time
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -294,6 +296,26 @@ def test_review_goes_on_while_clips_wait_to_render(client, video_source, setting
     assert statuses(done)[-3:] == ["review", "rendering", "review"]
 
 
+def test_a_rendering_clip_says_when_it_started_and_a_finished_one_doesnt(client, transcriber):
+    job = reviewed(client)
+    add(client, job, "halo", "kabar")
+    # The Clip's transcription waits, so it stays rendering.
+    transcriber.hold(after=len(transcriber.calls))
+    before = datetime.now(UTC)
+    [queued] = render(client, job)
+    assert queued["started_at"] is None
+
+    deadline = time.monotonic() + 5
+    while (clip := client.get(f"/api/jobs/{job['id']}/clips").json()[0])["status"] != "rendering":
+        assert time.monotonic() < deadline, f"The Clip stayed {clip['status']}"
+        time.sleep(0.01)
+    assert before <= datetime.fromisoformat(clip["started_at"]) <= datetime.now(UTC)
+
+    transcriber.release()
+    [done] = rendered(client, job)["clips"]
+    assert (done["status"], done["started_at"]) == ("done", None)
+
+
 def test_render_requests_need_a_job_in_review_and_known_selected_candidates(client, video_source):
     job = reviewed(client)
     candidate = add(client, job, "halo", "kabar", selected=False)
@@ -328,7 +350,7 @@ def test_a_failed_encode_falls_back_to_libx264_and_a_failed_render_is_reported(
         candidate = add(client, job, "halo", "kabar")
         render(client, job)
         [failed] = rendered(client, job)["clips"]
-    assert failed["status"] == "error"
+    assert (failed["status"], failed["started_at"]) == ("error", None)
     assert "no_such_encoder" in failed["error"]
     assert failed["output"] is None
     # Nothing half-written is left; the plan stays for inspection.

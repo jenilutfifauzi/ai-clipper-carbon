@@ -1056,6 +1056,8 @@ export interface Clip {
   // The latest finished render; kept while it is rendered again, and when that fails.
   output: RenderedClip | null;
   error: string | null;
+  // When the worker started rendering it; null unless it is rendering.
+  started_at: string | null;
 }
 
 export interface JobDetail extends Job {
