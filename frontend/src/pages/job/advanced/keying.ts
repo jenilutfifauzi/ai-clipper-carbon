@@ -14,7 +14,7 @@ import type { TrackKind } from "./trackState";
 
 /**
  * Keyframe edits on the items of the edits (ADR 0008): the pure Keyframe actions of
- * ./keyActions.ts done to an Overlay, a Text Layer, a Music Clip, a video's Segment or a Manual Scene at
+ * ./keyActions.ts done to an Overlay, a Text Layer, a Shape, a Music Clip, a video's Segment or a Manual Scene at
  * the playhead, each one change of the edits, so one step of undo. A Keyframe is set at the playhead
  * minus the item's start on the Timeline (a Manual Scene's: the playhead's Source time minus its
  * Scene's start, which the plan gives as `keys_from`), and only with the playhead inside the item;
@@ -374,7 +374,7 @@ export function moveItemKeys(scene: KeyScene, ref: KeyedRef, from: number, to: n
 }
 
 /**
- * Whether some item of the Pick has Keyframes: an Overlay, a Text Layer, a Music Clip, a video's
+ * Whether some item of the Pick has Keyframes: an Overlay, a Text Layer, a Shape, a Music Clip, a video's
  * Segment, or a Segment of the Source one of whose Scenes (of `plan`; none without it) is a Manual
  * Scene with them. Keyframes are edited with one item picked.
  */
@@ -466,7 +466,7 @@ export function heldTransform(transform: Transform, keys: Keys, span: KeySpan, t
 /**
  * What item `ref` can key, in the Keyframes pane's order: a picture's Transform fields (an Overlay's,
  * a video Segment's Framing's) and, for a video with sound (`media`, its Media Library item), its
- * volume; a Music Clip's volume; a Text Layer's and a Manual Scene's Transform fields only.
+ * volume; a Music Clip's volume; a Text Layer's, a Shape's and a Manual Scene's Transform fields only.
  */
 export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_audio: boolean }): KeyProperty[] {
   return kindOf(ref).keyable(media);
