@@ -69,7 +69,7 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
-import { bottomPanelId, BottomTabs, useBottomTab } from "./BottomTabs";
+import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
 import {
   ASSET,
   BOTTOM,
@@ -101,7 +101,6 @@ import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
-import { KeyframesPane } from "./KeyframesPane";
 import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
 import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
@@ -1015,6 +1014,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       )}
     </AdvancedTimeline>
   );
+  // What each registered bottom tab renders from (BottomTabs.tsx's registry): the Timeline element and
+  // the Keyframes pane's inputs. A new tab registers against this shape, not against the shell here.
+  const bottomTabContext: BottomTabContext = { timeline, keying, fps, mediaById };
   const inspector = (
     <KeyingContext.Provider value={keying}>
       <Inspector
@@ -1245,19 +1247,25 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onReset={() => layout.setBottomH(BOTTOM.def)}
           />
           <BottomTabs value={bottomTab} onChange={setBottomTab} />
-          {/* The Timeline stays, hidden, under the Keyframes pane: its zoom and scroll are kept. */}
-          <div id={bottomPanelId("timeline")} role="tabpanel" aria-label="Timeline" hidden={bottomTab !== "timeline"}
-            className={cx("min-h-0 flex-1 flex-col", bottomTab === "timeline" ? "flex" : "hidden")}
-          >
-            {timeline}
-          </div>
-          {bottomTab === "keyframes" && (
-            <div id={bottomPanelId("keyframes")} role="tabpanel" aria-label="Keyframes" className="flex min-h-0 flex-1 flex-col">
-              <KeyingContext.Provider value={keying}>
-                <KeyframesPane keying={keying} fps={fps} mediaById={mediaById} />
-              </KeyingContext.Provider>
-            </div>
-          )}
+          {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
+              needs only a registry entry, no edit here. A panel's body renders while it is active or
+              `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
+              others mount on first activation. */}
+          {BOTTOM_TABS.map((tab) => {
+            const active = bottomTab === tab.value;
+            return (
+              <div
+                key={tab.value}
+                id={bottomPanelId(tab.value)}
+                role="tabpanel"
+                aria-label={tab.label}
+                hidden={!active}
+                className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
+              >
+                {(active || tab.keepMounted) && tab.render(bottomTabContext)}
+              </div>
+            );
+          })}
         </section>
       </div>
     );
