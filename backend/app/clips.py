@@ -77,6 +77,8 @@ class Clip:
     output: RenderedClip | None = None
     # Why the latest render failed.
     error: str | None = None
+    # When the worker started rendering it; None unless it is rendering.
+    started_at: datetime | None = None
 
 
 def clip_files(candidate_id: str) -> tuple[str, str, str]:

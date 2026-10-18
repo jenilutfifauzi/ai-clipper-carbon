@@ -398,7 +398,8 @@ class Renders:
 
         def requeue(_: Job, clips: list[Clip]) -> tuple[list[Clip], dict, None]:
             return [
-                replace(clip, status=ClipStatus.QUEUED) if clip.status is ClipStatus.RENDERING else clip for clip in clips
+                replace(clip, status=ClipStatus.QUEUED, started_at=None) if clip.status is ClipStatus.RENDERING else clip
+                for clip in clips
             ], {}, None
 
         self.store.change_clips(job_id, requeue, expect={JobStatus.RENDERING})
@@ -428,7 +429,7 @@ class Renders:
                 if (candidate := candidates.get(clip.candidate_id)) is None:
                     clips = _put(clips, replace(clip, status=ClipStatus.ERROR, error="Its Candidate no longer exists"))
                     continue
-                started = replace(clip, status=ClipStatus.RENDERING, error=None)
+                started = replace(clip, status=ClipStatus.RENDERING, error=None, started_at=datetime.now(UTC))
                 name = candidate.title or f"clip {candidate.id}"
                 message = f"Rendering clip {count + 1} of {count + len(queued)}: {name}"
                 return _put(clips, started), {"progress": 0.0, "message": message}, (job, started, candidate)
@@ -568,7 +569,9 @@ class Renders:
         def finish(_: Job, clips: list[Clip]) -> tuple[list[Clip], dict, Clip]:
             now = next(c for c in clips if c.candidate_id == clip.candidate_id)
             again = now.requested_at > clip.requested_at
-            ended = replace(outcome, status=ClipStatus.QUEUED if again else outcome.status, requested_at=now.requested_at)
+            ended = replace(
+                outcome, status=ClipStatus.QUEUED if again else outcome.status, requested_at=now.requested_at, started_at=None
+            )
             return _put(clips, ended), {}, ended
 
         return self.store.change_clips(job.id, finish)

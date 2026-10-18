@@ -1,12 +1,12 @@
 import { AlertCircle, Clapperboard, Download, Hourglass, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, mediaUrl, type Candidate, type Clip, type JobProgress, type RenderedClip, type StylePreset } from "../../api";
 import { Button, buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
 import { ScoreRing } from "../../components/ScoreRing";
 import { Skeleton } from "../../components/Skeleton";
-import { formatBytes } from "../../format";
+import { formatBytes, timeLeft } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
@@ -212,6 +212,11 @@ function ClipCard({
 }
 
 function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) {
+  // Worked out as progress comes in, not on every render in between.
+  const left = useMemo(
+    () => (clip.started_at ? timeLeft(clip.started_at, percent, Date.now()) : null),
+    [clip.started_at, percent],
+  );
   if (clip.status === "queued") {
     return (
       <p className="flex items-center gap-1.5 text-sm text-muted">
@@ -225,6 +230,7 @@ function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) 
       <p className="flex items-center gap-1.5 text-sm text-accent-text">
         <Loader2 aria-hidden size={14} className="motion-safe:animate-spin" />
         Rendering{percent !== null && <span className="tabular-nums">{Math.round(percent)}%</span>}
+        {left && <span className="tabular-nums text-muted">· {left}</span>}
       </p>
     );
   }
