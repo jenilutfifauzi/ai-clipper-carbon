@@ -16,7 +16,7 @@
 - [x] The chosen tab survives a reload, and a migrated `ai-clipper-keyframes-pane` opens Keyframes once (store write path + `migrateOnce` unit-tested). *(live reload browser-pending)*
 - [x] The Timeline keeps its zoom and scroll while hidden under another tab (`keepMounted: true` → rendered even when `hidden`). *(live confirm pending)*
 - [x] A throwaway registry entry proves a new tab needs no shell change (the shell maps over `BOTTOM_TABS`; adding an entry is self-contained).
-- [x] vitest for the registry and `useBottomTab`; full walkthrough deferred to the final browser pass.
+- [x] vitest for the registry and `useBottomTab`; full desktop-and-phone walkthrough done (see the walkthrough note below).
 
 ## Comments
 
@@ -26,3 +26,13 @@
 - **`AdvancedEdit.tsx`** builds `bottomTabContext` once and maps the bottom panels over `BOTTOM_TABS`: each `<div role="tabpanel" id={bottomPanelId(tab.value)} hidden={!active}>` renders `tab.render(ctx)` when `active || tab.keepMounted`, so the Timeline stays mounted (keeps zoom/scroll) and a Meters entry later needs no shell edit. Dropped the now-unused `KeyframesPane` import there.
 - Tests: `bottomTabs.test.ts` (+7: registry is exactly timeline+keyframes, `keepMounted` flags, `bottomPanelId`, `activeBottomTab` fallback, `setBottomTab` round-trip, stored `"meters"` reads back but resolves to `"timeline"`). `tsc --noEmit` clean; vitest **841 passed**.
 - **Browser-pending (final pass):** switching tabs; Timeline zoom/scroll surviving a hidden switch; reload persistence; a real `ai-clipper-keyframes-pane` opening Keyframes once after migration.
+
+**2026-10-18, browser walkthrough (covers 03/04/05/06):** driven with ego-browser against the backend from the main checkout (data + assets) and Vite serving this worktree, a real Candidate open in the Advanced Edit (`/jobs/1d5d363bec2e/candidates/2f6cdf1b/advanced`). The desktop branch needs a CSS viewport ≥ 64rem, so the viewport was forced to 1440×900 @ DPR 1 (the default window was 720 CSS px → the phone branch). All checks via DOM assertions (screenshots time out on the player's `<video>`, a tooling limit, not a feature fault):
+  - **Shell:** two asides, three separators ("Resize the Asset Panel/Inspector/Bottom tabs"), three layout buttons ("Hide the Asset Panel/Inspector", "Reset layout"), grid `272px 800px 320px` from `17rem minmax(0,1fr) 20rem`; bottom tabs are exactly Timeline + Keyframes (no Meters).
+  - **Collapse:** `a`/`p` and the buttons each drop the panel's grid track and widen the player (`1084px 320px` / `272px 1132px`), flip `aria-pressed` and the button label; revealing restores the stored width.
+  - **Dividers (keyboard, 05):** Arrow ±16px (1rem), Shift ±64px (4rem), `Enter` resets; `aria-valuenow/-min/-max` and `aria-orientation` correct; clamps at max 28 and min 14.
+  - **Dividers (pointer, 03):** drag resizes live; double-click resets; the bottom (horizontal) divider resizes in dvh and resets.
+  - **Bottom tabs (06):** clicking Keyframes/Timeline flips `aria-selected` and the visible `tabpanel`.
+  - **Persistence:** a keyboard resize to 22rem (and a collapse) both survived a reload (`352px 720px 320px` before and after).
+  - **Phone (390px):** untouched — zero separators, asides, layout buttons or grid override; the phone chrome (Player, Timeline, Tools, bottom sheets) is intact.
+  - **Note:** the Position scrubber is `type=range` with `data-shortcuts`, so it intentionally lets `a`/`p` through; typing-suppression in an ordinary field is covered by the keymap unit test.
