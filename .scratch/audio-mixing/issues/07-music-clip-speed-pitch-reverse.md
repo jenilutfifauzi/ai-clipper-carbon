@@ -57,3 +57,5 @@
 - **A Music Clip's read past its song's end is now refused** by the API, as the ticket asks. Before, the planner silently cut it. The editor never made one (its Timeline and fields stop at the song's end).
 - **Merged with main (workspace-layout) and feat/audio-mixing (01, 06, 13).** In `AdvancedEdit.tsx`, the bottom section is main's (resizable, `BOTTOM_TABS`) with 13's Meters column beside it in a row that takes the remembered height (`bottomHeightCss`). In `mcp_server.py`, `_plan_view`'s docstring keeps 06's "a Segment's" and adds the sounds' reads; a dry-run sound keeps `media: null` (a Source Segment's, from 06), with `keys` and the read added only when it has them. Full suites after the merge: backend 839 passed (the known `test_resilience.py::test_other_jobs_run_while_a_job_waits_for_quota` deselected); vitest 884 passed; `tsc` clean.
 
+
+**2026-10-18: merged.** On merging into `feat/audio-mixing`, the budget went back to 69 000 bytes: 04's `_untitled` (pydantic titles stripped from every tool schema) left the tool list well within it. `audio_events` uses 04's `fades_within`.
