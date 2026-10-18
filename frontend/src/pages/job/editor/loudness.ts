@@ -1,4 +1,4 @@
-import type { AudioEvent, SegmentPlan } from "../../../api";
+import type { AudioEvent, Keyframe } from "../../../api";
 import { valueAt } from "./keyframes";
 
 // A keyed sound's gain is set as a curve of this many values a second of the Clip's time (ADR 0008).
@@ -28,21 +28,38 @@ export function loudness(event: Heard, time: number): number {
 }
 
 /**
- * A Segment's sound as heard: its volume (a Source Segment's under the Clip's own, `sourceVolume`)
- * or its Keyframes, and its fades, from its start to its end on the Timeline (a Transition's overlap
- * included); taken away over `crossfade`, if any.
+ * A Segment's own sound as heard, from `start` to `end` seconds into the Clip (a Transition's overlap
+ * included): its volume, or its volume Keyframes (`gain`, in seconds from its start), a Source
+ * Segment's times the Clip's own sound (`sourceVolume`), as the renderer has it; through its fades,
+ * and taken away over `crossfade` (a Transition), if any. A Segment as planned, or as played from the
+ * draft (without its fades, which the plan fits).
  */
-export function segmentSound(segment: SegmentPlan, sourceVolume: number, crossfade?: { start: number; end: number }): Heard {
+export function segmentSound(
+  segment: {
+    id?: string;
+    start: number;
+    end: number;
+    source_start: number;
+    media?: string | null;
+    volume?: number;
+    gain?: Keyframe[];
+    fade_in?: number;
+    fade_out?: number;
+  },
+  sourceVolume: number,
+  crossfade?: { start: number; end: number },
+): Heard {
+  const own = segment.media ? 1 : sourceVolume;
   return {
     media: segment.media ?? "",
     start: segment.start,
     end: segment.end,
     offset: segment.source_start,
-    volume: segment.volume * (segment.media ? 1 : sourceVolume),
-    fade_in: segment.fade_in,
-    fade_out: segment.fade_out,
-    gain: segment.gain,
-    id: segment.id,
+    volume: own * (segment.volume ?? 1),
+    fade_in: segment.fade_in ?? 0,
+    fade_out: segment.fade_out ?? 0,
+    gain: (segment.gain ?? []).map((key) => ({ ...key, value: key.value * own })),
+    id: segment.id ?? "",
     ...(crossfade && { crossfade }),
   };
 }

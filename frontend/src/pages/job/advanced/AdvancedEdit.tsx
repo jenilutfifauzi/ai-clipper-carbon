@@ -106,6 +106,7 @@ import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
+import { Meters } from "./Meters";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
 import { DEFAULT_FPS, loopRegion, onFrame, type LoopMarks } from "./playhead";
@@ -990,7 +991,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
+              // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
               applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
             },
             onFade: (id, fade, secs, heard, group) => {
@@ -1232,53 +1233,55 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             </aside>
           )}
         </div>
-        <section
-          aria-label="Timeline and Keyframes"
-          // One remembered height for every bottom tab (ADR 0024).
-          className="glass relative mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
-          style={{ height: bottomHeightCss(ws) }}
-        >
-          <BottomTabs value={bottomTab} onChange={setBottomTab} />
-          {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
-              it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
-              source order so Tab reaches it last (ticket 05). */}
-          <Divider
-            orientation="horizontal"
-            label="Resize the Bottom tabs"
-            value={ws.bottomH}
-            min={BOTTOM.min}
-            max={BOTTOM.max}
-            onStart={() => {
-              const d = dividerDrag.current;
-              d.vhPx = window.innerHeight;
-              d.startH = ws.bottomH;
-            }}
-            onDrag={(deltaPx) => {
-              const d = dividerDrag.current;
-              layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
-            }}
-            onReset={() => layout.setBottomH(BOTTOM.def)}
-          />
-          {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
-              needs only a registry entry, no edit here. A panel's body renders while it is active or
-              `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
-              others mount on first activation. */}
-          {BOTTOM_TABS.map((tab) => {
-            const active = bottomTab === tab.value;
-            return (
-              <div
-                key={tab.value}
-                id={bottomPanelId(tab.value)}
-                role="tabpanel"
-                aria-label={tab.label}
-                hidden={!active}
-                className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
-              >
-                {(active || tab.keepMounted) && tab.render(bottomTabContext)}
-              </div>
-            );
-          })}
-        </section>
+        {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
+        <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
+          <section
+            aria-label="Timeline and Keyframes"
+            className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+          >
+            <BottomTabs value={bottomTab} onChange={setBottomTab} />
+            {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
+                it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
+                source order so Tab reaches it last (ticket 05). */}
+            <Divider
+              orientation="horizontal"
+              label="Resize the Bottom tabs"
+              value={ws.bottomH}
+              min={BOTTOM.min}
+              max={BOTTOM.max}
+              onStart={() => {
+                const d = dividerDrag.current;
+                d.vhPx = window.innerHeight;
+                d.startH = ws.bottomH;
+              }}
+              onDrag={(deltaPx) => {
+                const d = dividerDrag.current;
+                layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
+              }}
+              onReset={() => layout.setBottomH(BOTTOM.def)}
+            />
+            {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
+                needs only a registry entry, no edit here. A panel's body renders while it is active or
+                `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
+                others mount on first activation. */}
+            {BOTTOM_TABS.map((tab) => {
+              const active = bottomTab === tab.value;
+              return (
+                <div
+                  key={tab.value}
+                  id={bottomPanelId(tab.value)}
+                  role="tabpanel"
+                  aria-label={tab.label}
+                  hidden={!active}
+                  className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
+                >
+                  {(active || tab.keepMounted) && tab.render(bottomTabContext)}
+                </div>
+              );
+            })}
+          </section>
+          <Meters playback={playback} />
+        </div>
       </div>
     );
   }

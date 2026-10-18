@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { Keyframe, Keys } from "../../../api";
 import { previewSpeed } from "./follow";
 import { loopStart, wrapTarget, type LoopRegion } from "./loop";
 import { segmentCopy } from "./retimedCopy";
@@ -10,17 +11,18 @@ type Listener = () => void;
  * A Segment of the Clip as played: the Source from `source_start` to `source_end`, from `start` to
  * `end` seconds into the Clip, at its Speed, forwards or in Reverse, or held (segmentTime.ts); or,
  * with `media`, a Media Library video from `source_start` to `source_end` seconds into it, which the
- * preview plays itself while the Source waits. Its own sound is at `volume`, its pitch following its
- * Speed with `pitch`.
+ * preview plays itself while the Source waits. Its own sound is at `volume`, or by its volume
+ * Keyframes (`gain`, in seconds from its start), its pitch following its Speed with `pitch`.
  */
 export interface PlayedSegment extends PlayedRange {
   source_end: number;
   media?: string | null;
   volume?: number;
+  gain?: Keyframe[];
 }
 
 /** A Main Track of these Segments as played, back to back from 0 s. */
-export function playedFrom(segments: (SegmentRange & { media?: string | null; volume?: number })[]): PlayedSegment[] {
+export function playedFrom(segments: (SegmentRange & { media?: string | null; volume?: number; keys?: Keys })[]): PlayedSegment[] {
   let at = 0;
   return segments.map((segment) => {
     const played = {
@@ -31,6 +33,7 @@ export function playedFrom(segments: (SegmentRange & { media?: string | null; vo
       media: segment.media ?? null,
       volume: segment.volume ?? 1,
       ...retimingOf(segment),
+      ...(segment.keys?.volume?.length ? { gain: segment.keys.volume } : {}),
     };
     at = played.end;
     return played;

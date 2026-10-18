@@ -77,11 +77,11 @@ export function Inspector({
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
   const keyTime = useKeyTime(playback);
-  // Where the Segments play on the Timeline, which a video's Keyframes are set in.
+  // Where the Segments play on the Timeline, which their Keyframes are set in.
   const keying = useContext(KeyingContext);
   const track = keying?.track;
   // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's or
-  // video Segment's, as a Keyframe at the playhead.
+  // Segment's, as a Keyframe at the playhead.
   const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
     const keyed = !!keyedItem(edits, item, track)?.keys.volume?.length;
     const outcome = keyed ? writeItemKey({ edits, pick, track }, item, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);

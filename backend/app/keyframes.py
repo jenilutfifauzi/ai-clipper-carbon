@@ -11,8 +11,9 @@ of bisection where the curve is too flat for Newton; a linear Ease needs none.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 
-from app.candidates import Ease, Keyframe
+from app.candidates import KEY_GAP_SECS, LINEAR, Ease, Keyframe
 
 
 def value_at(keys: Sequence[Keyframe], time: float, constant: float) -> float:
@@ -29,6 +30,30 @@ def value_at(keys: Sequence[Keyframe], time: float, constant: float) -> float:
                 return key.value
             return before.value + (key.value - before.value) * eased(key.ease, (time - before.at) / (key.at - before.at))
     return keys[-1].value
+
+
+# How far outside a kept window a Keyframe can be and still be in it, for times rounded on the way.
+_WINDOW_REACH = 1e-6
+
+
+def rewindow(keys: Sequence[Keyframe], start: float, end: float) -> list[Keyframe]:
+    """`keys` (sorted, in seconds from their item's start) for the item once it plays only from
+    `start` to `end` of itself as it was (`start` below 0 when it starts earlier): each kept one moved
+    `start` earlier, each outside removed. When some were removed before `start`, one is added at 0
+    with the value there; when some were removed after `end`, one at the new end with the value there
+    and the Ease of the first one removed; neither closer than a frame to a kept one. As the editor's
+    rewindow (frontend/src/pages/job/advanced/keyActions.ts) does, but for a span cut short, which
+    keeps its whole Ease rather than the part it plays."""
+    kept = [key for key in keys if start - _WINDOW_REACH <= key.at <= end + _WINDOW_REACH]
+    if abs(start) <= _WINDOW_REACH and len(kept) == len(keys):
+        return list(keys)
+    if any(key.at < start - _WINDOW_REACH for key in keys) and not (kept and kept[0].at - start < KEY_GAP_SECS):
+        kept.insert(0, Keyframe(start, value_at(keys, start, 0), LINEAR))
+    after = next((key for key in keys if key.at > end + _WINDOW_REACH), None)
+    if after and not (kept and end - kept[-1].at < KEY_GAP_SECS):
+        kept.append(Keyframe(end, value_at(keys, end, 0), after.ease))
+    length = end - start
+    return [replace(key, at=round(min(max(key.at - start, 0.0), length), 6), value=round(key.value, 6)) for key in kept]
 
 
 # A keyed volume is rendered as straight lines between points of its curve (app/renderer.py): an

@@ -116,9 +116,9 @@ export function MediaSegment({
  * a Speed a browser won't play), shown until `end`, or within a Transition when `end` is its own, its
  * sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a Blur's background and
  * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
- * own playing the copy (`sourcePlay`), at the Clip's own volume times its own, through its fades.
- * Outside its span they wait at its start. Until the copy is made they hold the Source's `src` at the
- * frame the copy shows first, with its progress.
+ * own playing the copy (`sourcePlay`), at the Clip's own volume times its own (or its Keyframes'),
+ * through its fades. Outside its span they wait at its start. Until the copy is made they hold the
+ * Source's `src` at the frame the copy shows first, with its progress.
  */
 export function CopiedSourceSegment({
   plan,
@@ -150,6 +150,8 @@ export function CopiedSourceSegment({
   const scene = plan.scenes[sceneIndex];
 
   useEffect(() => {
+    // Its sound: its volume Keyframes when keyed, under the Clip's own, and its fades, taken away by
+    // the Transition, if any.
     const sound = segmentSound(segment, plan.source_volume, fade);
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;

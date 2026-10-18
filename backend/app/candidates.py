@@ -625,7 +625,8 @@ class Segment:
     to `end` on its timeline, snapped to Words as a Clip's edges are; or, with `media`, a video from
     the Media Library from `start` to `end` seconds into it, placed by its `framing` (which only it
     has: the Source is framed by its Layouts), its own sound at `volume`. A Clip's Segments play in
-    order, back to back. `id` names it in the editor. A video's Segment may have `keys` (docs/adr/0008).
+    order, back to back. `id` names it in the editor. It may have `keys` (docs/adr/0008): a video's
+    Segment for its Framing and sound, a Segment of the Source for its sound only.
     With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent."""
 
     id: ItemId
@@ -641,7 +642,7 @@ class Segment:
     reverse: bool = False
     # They move its Framing's centre, scale, rotation and opacity, and shape its sound's volume,
     # over its length, each `at` in seconds from its start (where it starts on the Timeline, which
-    # is `start` seconds into its video). A Segment of the Source has none: its Layouts frame it.
+    # is `start` seconds into its video). A Segment of the Source has only volume ones: its Layouts frame it.
     keys: Keys = field(default_factory=dict)
     # A Freeze frame's (docs/adr/0009): how long it holds the frame at `start`, silent; `end` is `start`.
     hold: TimelineSecs | None = None
@@ -651,8 +652,8 @@ class Segment:
     fade_out: Fade = 0.0
 
     def __post_init__(self) -> None:
-        if self.media is None and any(self.keys.values()):
-            raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
+        if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
+            raise ValueError(f"Segment {self.id} shows the episode, whose Layouts frame it: it has no {framed} Keyframes, only volume ones")
         if self.hold is not None:
             _check_held(self)
         length = segment_time(self).length

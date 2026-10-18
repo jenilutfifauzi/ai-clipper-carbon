@@ -405,7 +405,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{span:.3f}", "-i", str(read)]
     count = len(plan.segments)
     plain = all(
-        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None
+        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.gain
         and not (segment.fade_in or segment.fade_out)
         for segment in plan.segments
     )
@@ -423,7 +423,9 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         # Keyframes and fades are in.
         zeroed = [*sped, "asetpts=PTS-STARTPTS"] if segment.gain or faded else sped
         if segment.gain:
-            volume = _volume(segment.gain, segment.volume)
+            # The Source's then at the Clip's own volume too.
+            own = [] if segment.media or plan.source_volume == 1 else [f"volume={plan.source_volume:g}"]
+            volume = [*_volume(segment.gain, segment.volume), *own]
         else:
             volume = [f"volume={segment.volume * (1 if segment.media else plan.source_volume):g}"]
         chains.append(f"[{i}:a:0]{','.join([*zeroed, *volume, *faded])},{form}[a{i}]")

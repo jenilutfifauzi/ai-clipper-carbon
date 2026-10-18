@@ -22,6 +22,7 @@ import {
   peaksPyramid,
   previousEditPoint,
   sourceGain,
+  sourceHeard,
   tileWidth,
   volumeDragged,
   volumeHeight,
@@ -438,6 +439,19 @@ describe("a Source Segment's Waveform", () => {
 
   test("is scaled by a volume of the Segment's own, as the renderer hears it", () => {
     expect(sourceGain({ source_volume: 0.8 }, { ...segment, volume: 0.5 })).toBeCloseTo(0.4);
+  });
+
+  test("follows its volume Keyframes, times the Clip's own sound", () => {
+    const keys: Keyframe[] = [
+      { at: 1, value: 1, ease: LINEAR },
+      { at: 3, value: 0.25, ease: EASE_IN },
+    ];
+    const shown = { start: 10, end: 14 };
+    const heard = sourceHeard({ source_volume: 0.5 }, { ...segment, volume: 0.8, keys: { volume: keys } }, shown);
+    const own = segmentHeard({ volume: 0.8, keys: { volume: keys } }, shown);
+    for (const time of [0, 1, 1.7, 2.5, 3, 4]) expect(gainAt(time, heard)).toBeCloseTo(0.5 * gainAt(time, own), 9);
+    // Unkeyed: the Clip's own sound times its volume, all along.
+    expect(gainAt(2, sourceHeard({ source_volume: 0.8 }, { ...segment, volume: 0.5 }, shown))).toBeCloseTo(0.4);
   });
 });
 

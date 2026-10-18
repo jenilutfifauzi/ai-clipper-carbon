@@ -76,7 +76,7 @@ function Ghost({
       // The ghost plays at the main playback's rate, and its deck its Segment at its Speed.
       ghost.setRate(playback.rate);
       const video = master.current;
-      // Its sound through its fades, falling with the crossfade.
+      // Its sound (its Keyframes when keyed) through its fades, falling with the crossfade.
       if (video) setVolume(video, inside ? loudness(segmentSound(segment, plan.source_volume, transition), time) : 0);
       if (!inside) {
         if (ghost.playing) ghost.pause();

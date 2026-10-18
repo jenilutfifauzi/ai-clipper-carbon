@@ -126,7 +126,7 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
 }
 
 /**
- * A keyable volume's slider (a Music Clip's, an Overlay video's or a video Segment's sound, `item`
+ * A keyable volume's slider (a Music Clip's, an Overlay video's or a Segment's sound, `item`
  * playing over `span`): its value at the playhead (at the item's nearer end outside it), from its
  * Keyframes `keys` or its constant `volume`, with its ‹ ◆ ›; off outside the item once it is keyed.
  * `onChange` gets the playhead in the item's own seconds there (null outside it), where a keyed
