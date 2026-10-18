@@ -159,6 +159,7 @@ describe("Edit Points (.scratch/navigation-playback/spec.md)", () => {
     hook_secs: 2,
     segments: [segment("s1", 10, 14), segment("s2", 20, 23), segment("s3", 30, 33)],
     text_layers: [text("t1", 2, 2)],
+    shapes: [],
     music: [song("m1", 0, 7)],
     overlays: [overlay("o1", 5.5, 6)],
   } as unknown as AdvancedEdits;

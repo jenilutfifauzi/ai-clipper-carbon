@@ -232,8 +232,8 @@ export function CandidateEditor({
       }
     : undefined;
 
-  // The uncut Clip's start or end moved: on the Magnetic timeline its Text Layers, Music Clips,
-  // Overlays and hook move with it, in the same save (docs/adr/0004-layers-ripple-with-the-main-track.md).
+  // The uncut Clip's start or end moved: on the Magnetic timeline its Text Layers, Shapes, Music
+  // Clips, Overlays and hook move with it, in the same save (docs/adr/0004-layers-ripple-with-the-main-track.md).
   function trim(change: { start?: number; end?: number }): Promise<boolean> {
     if (!magnetic || cut) return onSave(change);
     const { start, end } = candidate;

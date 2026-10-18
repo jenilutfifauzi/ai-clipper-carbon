@@ -1041,7 +1041,7 @@ describe("locked Tracks", () => {
 
 describe("the clip editor's trim, on the Magnetic timeline", () => {
   // A Clip from 100 to 120 s of the Source, with a title at 5 s and the hook at 1 s.
-  const layers = { text_layers: [layer("title", 5, 2)], music: [music("song", 0, 20, { offset: 3 })], overlays: [], hook_start: 1, hook_secs: 3 };
+  const layers = { text_layers: [layer("title", 5, 2)], shapes: [], music: [music("song", 0, 20, { offset: 3 })], overlays: [], hook_start: 1, hook_secs: 3 };
   const range = { start: 100, end: 120 };
 
   test("a start 2 s later moves everything up 2 s, cutting what it took", () => {
@@ -1081,7 +1081,7 @@ describe("the magnetic timeline at the Clip's end", () => {
   });
 
   test("the hook inside an end trimmed off in the clip editor ends at the new end", () => {
-    const layers = { text_layers: [], music: [], overlays: [], hook_start: 15, hook_secs: 3 };
+    const layers = { text_layers: [], shapes: [], music: [], overlays: [], hook_start: 15, hook_secs: 3 };
 
     expect(clipTrimmed(layers, { start: 100, end: 120 }, { start: 100, end: 110 }).layers).toMatchObject({ hook_start: 7, hook_secs: 3 });
   });

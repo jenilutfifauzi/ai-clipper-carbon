@@ -76,7 +76,7 @@ describe("the Stickers tab", () => {
 
   test("its rectangle adds a picked 400×400 white Shape at the playhead, centred, for a new Text Layer's length, as one change", () => {
     const before = edits({ shapes: [shape("old", 0, 1)] });
-    const outcome = addShape({ edits: before }, "rectangle", 2.345, 10, "n1");
+    const outcome = addShape({ edits: before }, "rectangle", 2.345, 10, { id: "n1" });
     expect(outcome).toEqual({
       edits: { ...before, shapes: [shape("old", 0, 1), shape("n1", 2.35, 3)] },
       pick: picked(ref("n1")),

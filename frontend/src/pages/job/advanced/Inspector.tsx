@@ -7,7 +7,7 @@ import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -16,12 +16,13 @@ import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
-import { ShapeFields } from "./Shapes";
+import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
  * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's,
- * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them.
+ * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them
+ * (several Text Layers, or several Shapes, have their look edited together).
  */
 export function Inspector({
   pick,
@@ -97,6 +98,17 @@ export function Inspector({
           fonts={fonts}
           onChange={(change, group) => onEdits(restyle({ edits, pick }, change).edits, group)}
           onApplyTextStyle={(style) => onEdits(applyTextStyle({ edits, pick }, style).edits)}
+          onDuplicate={actions.duplicate}
+          onCopy={actions.copy}
+          onDelete={actions.remove}
+        />
+      );
+    }
+    if (items.every((item) => item.kind === "shape")) {
+      return (
+        <ShapesFields
+          shapes={edits.shapes.filter((shape) => items.some((item) => item.id === shape.id))}
+          onChange={(change, group) => onEdits(reshape({ edits, pick }, change).edits, group)}
           onDuplicate={actions.duplicate}
           onCopy={actions.copy}
           onDelete={actions.remove}

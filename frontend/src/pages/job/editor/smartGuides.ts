@@ -2,6 +2,7 @@
 // it is moved or scaled on the stage, worked out from numbers alone: the targets at the playhead,
 // and the snap of the picture's bounds (its box after rotation) with the lines that mark it.
 import type { Box, Picture, RenderPlan, Transform } from "../../../api";
+import { layerEventAt, layerStagePicture } from "./layerStage";
 import { pictureAt, SCALE_RANGE } from "./picture";
 import { boundsOf, placed, type Size } from "./pictureGestures";
 
@@ -45,22 +46,24 @@ const down = (box: Box) => [box.y, box.y + box.height / 2, box.y + box.height];
 /**
  * The pictures shown at the playhead (`time`), by their ids on the stage: the picture of the plan's
  * Scene `scene` ("picture:<n>"; none for an automatic Scene's, or with `scene` null, as while the
- * Video Track is hidden), then the Overlays showing ("overlay:<id>"); each keyed one where its
- * Keyframes have it then (`pictureAt`).
+ * Video Track is hidden), then the Overlays showing ("overlay:<id>"), then the Shapes showing
+ * ("shape:<id>", by their area, as their Grips are); each keyed one where its Keyframes have it then
+ * (`pictureAt`, `layerEventAt`).
  */
 export function picturesAt(plan: RenderPlan, time: number, scene: number | null): { id: string; picture: Picture }[] {
   const behind = scene === null ? null : plan.scenes[scene]?.picture;
-  const overlays = plan.overlays.filter((event) => event.start <= time && time < event.end);
+  const showing = <T extends { start: number; end: number }>(events: T[]) => events.filter((event) => event.start <= time && time < event.end);
   return [
     ...(behind ? [{ id: `picture:${scene}`, picture: pictureAt(behind, time) }] : []),
-    ...overlays.map((event) => ({ id: `overlay:${event.id}`, picture: pictureAt(event.picture, time) })),
+    ...showing(plan.overlays).map((event) => ({ id: `overlay:${event.id}`, picture: pictureAt(event.picture, time) })),
+    ...showing(plan.shapes).map((event) => ({ id: `shape:${event.layer.id}`, picture: layerStagePicture(layerEventAt(event, time)).picture })),
   ];
 }
 
 /**
  * What a picture dragged on the stage snaps to: the frame's edges and centre, the fixed guides, and
  * the edges and centres of the other pictures shown at the playhead by their `bounds` (all but the
- * `dragged` one). Text is not a target.
+ * `dragged` one). Text is not a target; a Shape is.
  */
 export function guideTargets(frame: Size, pictures: { id: string; bounds: Box }[], dragged: string): SmartGuides {
   const others = pictures.filter((picture) => picture.id !== dragged).map((picture) => picture.bounds);

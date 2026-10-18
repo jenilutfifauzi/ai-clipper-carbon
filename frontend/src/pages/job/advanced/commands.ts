@@ -54,7 +54,7 @@ export function commandsOf(
     keyframes: { toggle: () => boolean | void; around: (time: number, direction: -1 | 1) => number | null } | null;
   },
 ): Commands {
-  // The picked Text Layers, Music Clips and Overlays moved `frames` frames; a run of presses is
+  // The picked Text Layers, Shapes, Music Clips and Overlays moved `frames` frames; a run of presses is
   // undone as one. With nothing to move the key is still taken: Alt+← and → are the browser's Back
   // and Forward, which would leave the edit.
   const move = (frames: number) => more.move?.(frames / more.fps, "key:move");

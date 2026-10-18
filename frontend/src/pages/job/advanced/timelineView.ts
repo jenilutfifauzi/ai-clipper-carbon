@@ -111,8 +111,8 @@ const SAME_EDGE = 1e-6;
 
 /**
  * The edges items snap to, besides the playhead and the Clip's ends; the Edit Points are made of
- * them too, so that the two agree. They are the hook's (while it has text), the Text Layers', Music
- * Clips' and Overlays', and where each Segment gives way to the next, as `played`. Those on a
+ * them too, so that the two agree. They are the hook's (while it has text), the Text Layers',
+ * Shapes', Music Clips' and Overlays', and where each Segment gives way to the next, as `played`. Those on a
  * `hidden` Track are left out, and so are those of `moving` when it is a Pick of several, which move
  * together. Unsorted, and as they are, even past the Clip's end.
  */
@@ -124,7 +124,7 @@ export function edgesOf(
   const edges: number[] = [];
   if (edits.hook_text.trim() && !hidden.includes("hook")) edges.push(edits.hook_start, edits.hook_start + edits.hook_secs);
   const left = (kind: ItemKind, id: string) => hidden.includes(TRACK_OF[kind]) || (itemsOf(moving).length > 1 && isPicked(moving, kind, id));
-  for (const kind of ["text", "music", "overlay"] as const) {
+  for (const kind of ["text", "shape", "music", "overlay"] as const) {
     for (const item of edits[LISTS[kind]]) if (!left(kind, item.id)) edges.push(item.start, item.start + item.secs);
   }
   if (!hidden.includes("video")) for (const shown of played) edges.push(shown.end);

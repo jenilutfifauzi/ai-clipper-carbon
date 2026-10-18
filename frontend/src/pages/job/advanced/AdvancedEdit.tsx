@@ -84,6 +84,7 @@ import {
   type AssetTab,
 } from "./Chrome";
 import { commandsOf, type Commands } from "./commands";
+import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
@@ -461,9 +462,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ text_layers: [...edits.text_layers, layer] });
     added(picked({ kind: "text", id: layer.id }), true);
   }
-  function addNewShape(kind: ShapeKind, at = playback.time) {
+  // A Shape of `kind` at `at`; dropped on the preview, centred where it was dropped (`place`).
+  function addNewShape(kind: ShapeKind, at = playback.time, place?: { x: number; y: number }) {
     if (refused("shape")) return;
-    const outcome = addShape(scene, kind, at, duration);
+    const outcome = addShape(scene, kind, at, duration, { place });
     history.set(outcome.edits);
     added(outcome.pick);
   }
@@ -604,7 +606,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     history.set(outcome.edits);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
-  // The picked Text Layers, Music Clips and Overlays moved `delta` seconds, together.
+  // The picked Text Layers, Shapes, Music Clips and Overlays moved `delta` seconds, together.
   function moveLayers(delta: number, group: string) {
     const moved = move(scene, delta);
     if (moved) history.set(moved.edits, group);
@@ -869,6 +871,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         overlays: overlayControls,
         pictureAt,
         cropAsked,
+        // A Stickers tile dropped on the preview: its Shape there, at the playhead.
+        drop: { types: [DRAG_SHAPE], onDrop: (data, at) => addNewShape(data.getData(DRAG_SHAPE) as ShapeKind, playback.time, at) },
       }}
       fit
       rates={wide}
@@ -976,6 +980,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               const preset = textPresets?.find((p) => p.id === id);
               if (preset) addText(fromPreset(preset), time);
             },
+            onDropShape: (kind, time) => addNewShape(kind, time),
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
           }}
         />

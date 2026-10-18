@@ -32,6 +32,7 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
+import { framePoint } from "./pictureGestures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
@@ -182,6 +183,9 @@ export function ClipPreview({
   );
   // The plan as drawn: a picture held or moved with one is drawn where it is being put.
   const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex, keyedAt) : plan;
+  // What is dropped on the stage from the asset panel (a Stickers tile), at its point on the frame.
+  const [dropOver, setDropOver] = useState(false);
+  const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
   const scene = drawn?.scenes[sceneIndex];
 
   const frame = (
@@ -195,6 +199,21 @@ export function ClipPreview({
         fit && controls && "touch-none",
       )}
       style={{ "--scale": scale, ...(fit ? { width: fitted.width, height: fitted.height } : {}) } as CSSProperties}
+      onDragOver={(event) => {
+        if (!takes(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDropOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropOver(false);
+      }}
+      onDrop={(event) => {
+        setDropOver(false);
+        if (!takes(event.dataTransfer) || !plan) return;
+        event.preventDefault();
+        controls?.drop?.onDrop(event.dataTransfer, framePoint(event.currentTarget.getBoundingClientRect(), event, plan));
+      }}
     >
       {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
@@ -265,6 +284,7 @@ export function ClipPreview({
         />
       )}
       {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} scale={scale} />}
+      {dropOver && <div aria-hidden className="pointer-events-none absolute inset-0 bg-accent/10" />}
       {preview && editing && retype && (
         <InlineText
           // A keyed Text Layer is retyped where it is at the playhead.
@@ -588,6 +608,8 @@ export interface StageControls {
   pictureAt?: (segment: number, scene: number) => PictureTarget | null;
   // Counted up to open Crop mode on the picture picked alone (the inspector's Crop).
   cropAsked?: number;
+  // What the stage takes dropped on it (DataTransfer `types`), and where it was dropped, in output pixels.
+  drop?: { types: string[]; onDrop: (data: DataTransfer, at: { x: number; y: number }) => void };
 }
 
 // The sizes the hook and the captions can be set to (styles.py).

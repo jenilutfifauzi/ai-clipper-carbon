@@ -12,6 +12,7 @@ import {
   type RenderPlan,
   type Retiming,
   type Shape,
+  type ShapeKind,
   type SourceMetadata,
   type TextLayer,
   type TransitionKind,
@@ -25,7 +26,7 @@ import type { PlayedSegment, Playback } from "../editor/playback";
 import { offsetAt, overlayTime, rangeOf } from "../editor/segmentTime";
 import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
-import { DRAG_MEDIA, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
+import { DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
@@ -54,7 +55,7 @@ export interface TrackHandlers {
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
-  // The picked Text Layers, Music Clips and Overlays moved `delta` seconds, together.
+  // The picked Text Layers, Shapes, Music Clips and Overlays moved `delta` seconds, together.
   onMove: (delta: number, group: string) => void;
   // A Music Clip's or media Segment's volume set by its Volume Line.
   onVolume: (item: { kind: "music" | "segment"; id: string }, volume: number, group: string) => void;
@@ -63,9 +64,10 @@ export interface TrackHandlers {
   onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
-  // A Media Library item (its id) or a Text Preset (its id) dropped at `time`.
+  // A Media Library item (its id), a Text Preset (its id) or a Stickers tile (its Shape Kind) dropped at `time`.
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
   onDropText: (preset: string, time: number) => void;
+  onDropShape: (kind: ShapeKind, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
 }
@@ -82,8 +84,8 @@ const CAPTION_SEEK_IN = 0.05;
 /**
  * The tracks, top to bottom: the Text Layers' lanes, the Shapes' lanes, the Overlays' lanes, the
  * Main Track (its Segments as played over their Scenes, and the joins between them), the caption
- * lines, the hook, and the Music Clips' lanes. Each track but the Shape Track takes what is dropped
- * on it from the asset panel.
+ * lines, the hook, and the Music Clips' lanes. Each track takes what is dropped on it from the
+ * asset panel.
  */
 export function Tracks({
   geometry,
@@ -203,7 +205,13 @@ export function Tracks({
         </TrackRow>
       ))}
       {shapeLanes.map((lane, i) => (
-        <TrackRow key={`shape${shapeLanes.length - i}`} label={i === shapeLanes.length - 1 ? label("shape") : ""} dimmed={dimmed("shape")} locked={locked("shape")}>
+        <TrackRow
+          key={`shape${shapeLanes.length - i}`}
+          label={i === shapeLanes.length - 1 ? label("shape") : ""}
+          dimmed={dimmed("shape")}
+          locked={locked("shape")}
+          drop={{ types: [DRAG_SHAPE], onDrop: (data, clientX) => handlers.onDropShape(data.getData(DRAG_SHAPE) as ShapeKind, geometry.timeAt(clientX)) }}
+        >
           {lane.map((shape) => {
             const selected = isPicked(pick, "shape", shape.id);
             return (

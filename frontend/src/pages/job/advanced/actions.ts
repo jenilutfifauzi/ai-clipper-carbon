@@ -146,8 +146,9 @@ function rippledIf<T extends Layers>(next: T, changes: TrackChange[], on: boolea
 }
 
 /** The layers and the hook of `edits`: what a ripple changes. */
-export const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }: Layers): Layers => ({
+export const layersOf = ({ text_layers, shapes, music, overlays, hook_start, hook_secs }: Layers): Layers => ({
   text_layers,
+  shapes,
   music,
   overlays,
   hook_start,
@@ -156,7 +157,7 @@ export const layersOf = ({ text_layers, music, overlays, hook_start, hook_secs }
 
 /**
  * The picked items removed and their gaps closed, whatever the Magnetic timeline's switch says (Ripple
- * delete, GLOSSARY.md): the Text Layers, Music Clips and Overlays of a Track after a removed one of
+ * delete, GLOSSARY.md): the Text Layers, Shapes, Music Clips and Overlays of a Track after a removed one of
  * it move up by its length (those over it stay), and then the layers follow the removed Segments.
  */
 export function rippleRemove(scene: PickContext): Outcome | null {
@@ -269,10 +270,10 @@ export function dragSegment(
   return { edits: { ...scene.edits, segments, ...layersOf(edits) }, pick: scene.pick, ...(notice ? { notice } : {}) };
 }
 
-/** Every Segment, Text Layer, Music Clip and Overlay picked (not the hook, the captions or a join). */
+/** Every Segment, Text Layer, Shape, Music Clip and Overlay picked (not the hook, the captions or a join). */
 export function pickAll(edits: AdvancedEdits): Pick {
   const refs = (kind: ItemKind) => edits[LISTS[kind]].map((item) => ({ kind, id: item.id }));
-  return picked(...refs("segment"), ...refs("text"), ...refs("music"), ...refs("overlay"));
+  return picked(...refs("segment"), ...refs("text"), ...refs("shape"), ...refs("music"), ...refs("overlay"));
 }
 
 // The picked Segments in Main Track order, and the picked Text Layers, Shapes, Music Clips and
@@ -288,7 +289,7 @@ export function pickedItems(scene: PickContext) {
 
 /**
  * The Pick duplicated, the copies picked. Its Segments are copied as a block, in order, right after
- * the last of them. Its Text Layers, Music Clips and Overlays are copied as they are placed, right
+ * the last of them. Its Text Layers, Shapes, Music Clips and Overlays are copied as they are placed, right
  * after the group they make when there is room before the Clip's end, else each where its kind puts
  * it aside. On the Magnetic timeline, the layers after the copied Segments play later.
  */
@@ -390,7 +391,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
   return tails.length ? { edits: next, pick: picked(...tails) } : null;
 }
 
-// Every Segment, Text Layer, Music Clip and Overlay the playhead at `time` is inside, but on locked Tracks.
+// Every Segment, Text Layer, Shape, Music Clip and Overlay the playhead at `time` is inside, but on locked Tracks.
 function under(scene: PickContext, time: number): ItemRef[] {
   const locked = scene.locked ?? [];
   return itemsOf(pickAll(scene.edits)).filter((ref) => !locked.includes(TRACK_OF[ref.kind]) && inside(scene, ref, time));
@@ -403,7 +404,7 @@ export function canSplitAt(scene: PickContext, time: number): boolean {
 
 /**
  * Split at the playhead (`at`): the picked items there, or with nothing picked every Segment, Text
- * Layer, Music Clip and Overlay there (Split all, GLOSSARY.md). The hook is never split.
+ * Layer, Shape, Music Clip and Overlay there (Split all, GLOSSARY.md). The hook is never split.
  */
 export function splitAt(scene: PickContext, at: number): Outcome | null {
   if (scene.pick !== null) return split(scene, at);
@@ -583,8 +584,8 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   return { edits: next, pick: scene.pick };
 }
 
-/** The value `read` gives of every one of `layers`, or undefined where they differ (mixed). */
-export function shared<V>(layers: TextLayer[], read: (layer: TextLayer) => V): V | undefined {
+/** The value `read` gives of every one of `layers` (Text Layers, Shapes), or undefined where they differ (mixed). */
+export function shared<T, V>(layers: T[], read: (layer: T) => V): V | undefined {
   const [first, ...rest] = layers;
   return first && rest.every((layer) => read(layer) === read(first)) ? read(first) : undefined;
 }
@@ -593,6 +594,12 @@ export function shared<V>(layers: TextLayer[], read: (layer: TextLayer) => V): V
 export function restyle(scene: { edits: AdvancedEdits; pick: Pick }, change: (layer: TextLayer) => TextLayer): Outcome {
   const text_layers = scene.edits.text_layers.map((layer) => (isPicked(scene.pick, "text", layer.id) ? change(layer) : layer));
   return { edits: { ...scene.edits, text_layers }, pick: scene.pick };
+}
+
+/** Every picked Shape changed by `change` (its Shape Style's fill set, say), as `restyle` changes Text Layers. */
+export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (shape: Shape) => Shape): Outcome {
+  const shapes = scene.edits.shapes.map((shape) => (isPicked(scene.pick, "shape", shape.id) ? change(shape) : shape));
+  return { edits: { ...scene.edits, shapes }, pick: scene.pick };
 }
 
 /** Every picked Text Layer given `style`, a Text Preset's Text Style: their words, Transforms, Keyframes and times stay their own. */

@@ -1,11 +1,13 @@
-import { Copy, Trash2 } from "lucide-react";
+import { ClipboardCopy, Copy, Trash2 } from "lucide-react";
 import type { Shape, ShapeKind, ShapeStyle } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { FRAME } from "../editor/picture";
-import { Group } from "../editor/StyleFields";
+import { Group, Mixed } from "../editor/StyleFields";
+import { shared } from "./actions";
+import { DRAG_SHAPE } from "./drag";
 import { SHAPE_SIZE } from "./shapeStyle";
 import { TimingFields } from "./TimingFields";
 import { ShapeTransformFields } from "./TransformFields";
@@ -15,12 +17,15 @@ const TILES: { kind: ShapeKind; name: string; figure: string }[] = [{ kind: "rec
 
 /**
  * The Stickers tab (GLOSSARY.md): its one shelf, Shapes, with a tile per Shape Kind, each drawn as
- * the figure it adds (a rectangle as a square). A click adds it at the playhead.
+ * the figure it adds (a rectangle as a square). A click adds it at the playhead; dragged onto the
+ * Timeline or the preview, it is added where and when it is dropped.
  */
 export function ShapeAssets({ onAdd }: { onAdd: (kind: ShapeKind) => void }) {
   return (
     <div className="flex flex-col gap-3">
-      <Hint more="Drag it on the video to place it; its corners scale it and the handle above turns it.">Click a shape to add it at the playhead.</Hint>
+      <Hint more="Or drag it onto the timeline or the video. On the video, drag it to place it; its corners scale it and the handle above turns it.">
+        Click a shape to add it at the playhead.
+      </Hint>
       <section className="flex flex-col gap-2" aria-label="Shapes">
         <h3 className="text-sm font-medium text-muted">Shapes</h3>
         <div className="grid grid-cols-3 gap-2">
@@ -28,6 +33,11 @@ export function ShapeAssets({ onAdd }: { onAdd: (kind: ShapeKind) => void }) {
             <button
               key={tile.kind}
               type="button"
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData(DRAG_SHAPE, tile.kind);
+                event.dataTransfer.effectAllowed = "copy";
+              }}
               onClick={() => onAdd(tile.kind)}
               aria-label={`Add a ${tile.name}`}
               title={tile.name}
@@ -82,6 +92,70 @@ export function ShapeFields({
       </Group>
       <ShapeTransformFields shape={shape} onChange={onChange} />
       <TimingFields item={shape} duration={duration} labels={{ start: "Comes on at", secs: "Stays for" }} onChange={onChange} />
+    </div>
+  );
+}
+
+// How the several-Shapes fields read each of their values off a Shape.
+const READ = {
+  width: (shape: Shape) => shape.style.width,
+  height: (shape: Shape) => shape.style.height,
+  fill: (shape: Shape) => shape.style.fill,
+};
+type Field = keyof typeof READ;
+
+/**
+ * Several picked Shapes' Shape Style, set on every one of them at once, as TextLayersFields sets
+ * several Text Layers'. A field they differ in shows the first one's value, marked Mixed, until it is
+ * set. Their places and times stay their own.
+ */
+export function ShapesFields({
+  shapes,
+  onChange,
+  onDuplicate,
+  onCopy,
+  onDelete,
+}: {
+  shapes: Shape[];
+  // `change` made to them all; `group` names the field, so that its changes are undone as one.
+  onChange: (change: (shape: Shape) => Shape, group: string) => void;
+  onDuplicate: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+}) {
+  const read = (field: Field) => READ[field] as (shape: Shape) => unknown;
+  const value = <F extends Field>(field: F) => (shared(shapes, read(field)) ?? read(field)(shapes[0])) as ReturnType<(typeof READ)[F]>;
+  const mixed = (field: Field) => shared(shapes, read(field)) === undefined;
+  const setStyle = <K extends keyof ShapeStyle>(field: K, next: ShapeStyle[K]) =>
+    onChange((shape) => ({ ...shape, style: { ...shape.style, [field]: next } }), `shapes:style.${field}`);
+  // Whole pixels, as ShapeFields' (or Mixed).
+  const size = (field: "width" | "height", frame: number) => ({
+    min: SHAPE_SIZE.min,
+    max: Math.max(frame, ...shapes.map(read(field) as (shape: Shape) => number)),
+    format: (v: number) => (mixed(field) ? "Mixed" : `${Math.round(v)} px`),
+  });
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold">Editing {shapes.length} shapes</h2>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate them">
+            <Copy aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onCopy} aria-label="Copy them">
+            <ClipboardCopy aria-hidden size={17} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete them">
+            <Trash2 aria-hidden size={17} />
+          </Button>
+        </div>
+      </div>
+      <Hint more="Their places and times stay each one's own: change those one at a time.">A change here applies to every picked shape.</Hint>
+      <Group title="Look">
+        <Slider label="Width" value={value("width")} {...size("width", FRAME.width)} onChange={(width) => setStyle("width", Math.round(width))} />
+        <Slider label="Height" value={value("height")} {...size("height", FRAME.height)} onChange={(height) => setStyle("height", Math.round(height))} />
+        <ColorField label="Fill" value={value("fill") ?? "#FFFFFF"} onChange={(fill) => setStyle("fill", fill)} marker={mixed("fill") ? <Mixed /> : undefined} />
+      </Group>
     </div>
   );
 }

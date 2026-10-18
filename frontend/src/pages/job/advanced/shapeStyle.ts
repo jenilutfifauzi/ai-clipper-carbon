@@ -1,5 +1,5 @@
 import type { Shape, ShapeKind, ShapeStyle } from "../../../api";
-import { IDENTITY } from "../editor/picture";
+import { FRAME, IDENTITY } from "../editor/picture";
 import type { Outcome } from "./actions";
 import { newId, newTiming, type AdvancedEdits } from "./edits";
 import { picked } from "./pick";
@@ -34,8 +34,19 @@ export function newShape(kind: ShapeKind, at: number, duration: number, id: stri
   };
 }
 
-/** A new Shape of `kind` (`newShape`) put on top of the others, picked: one change. */
-export function addShape(scene: { edits: AdvancedEdits }, kind: ShapeKind, at: number, duration: number, id?: string): Outcome {
-  const shape = newShape(kind, at, duration, id);
+/**
+ * A new Shape of `kind` (`newShape`) put on top of the others, picked: one change. Dropped on the
+ * preview, its centre is at the drop point (`place`, in output pixels), whole pixels inside the frame.
+ */
+export function addShape(
+  scene: { edits: AdvancedEdits },
+  kind: ShapeKind,
+  at: number,
+  duration: number,
+  { id, place }: { id?: string; place?: { x: number; y: number } } = {},
+): Outcome {
+  const made = newShape(kind, at, duration, id);
+  const within = (value: number, most: number) => Math.round(Math.min(Math.max(value, 0), most));
+  const shape = place ? { ...made, transform: { ...made.transform, x: within(place.x, FRAME.width), y: within(place.y, FRAME.height) } } : made;
   return { edits: { ...scene.edits, shapes: [...scene.edits.shapes, shape] }, pick: picked({ kind: "shape", id: shape.id }) };
 }

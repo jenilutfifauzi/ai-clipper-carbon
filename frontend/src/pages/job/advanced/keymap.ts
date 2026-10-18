@@ -134,7 +134,7 @@ export const SHORTCUTS: Shortcut[] = [
     group: "editing",
     label: "Add or remove a Keyframe at the playhead, on the picked item's property last touched",
   },
-  { id: "move-back", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move the picked Text Layers, Music Clips and Overlays a frame earlier" },
+  { id: "move-back", keys: [{ key: "ArrowLeft", alt }], group: "editing", label: "Move the picked Text Layers, Shapes, Music Clips and Overlays a frame earlier" },
   { id: "move-forward", keys: [{ key: "ArrowRight", alt }], group: "editing", label: "Move them a frame later" },
   { id: "move-back-10", keys: [{ key: "ArrowLeft", alt, shift }], group: "editing", label: "Move them ten frames earlier" },
   { id: "move-forward-10", keys: [{ key: "ArrowRight", alt, shift }], group: "editing", label: "Move them ten frames later" },
