@@ -1,4 +1,4 @@
-import type { Background, Box, MediaItem, Panel, Picture, PictureLayerEvent, RenderPlan, ScenePlan, Transform } from "../../../api";
+import type { Background, Box, MediaItem, Panel, Picture, PictureLayerEvent, RenderPlan, ScenePlan, ShapeKind, Transform } from "../../../api";
 import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
 
 /**
@@ -16,6 +16,13 @@ export const SCALE_RANGE = [0.05, 8] as const;
 export const STRETCH_RANGE = [0.1, 10] as const;
 // A Shape Style's least and most width and height, in output pixels (SHAPE_SIZE in backend/app/candidates.py).
 export const SHAPE_SIZE_RANGE = [2, 4096] as const;
+
+/**
+ * Whether a Shape of `kind` is all stroke (a line, an arrow): its width is its length, its stroke
+ * width its thickness and its stroke colour its colour, and its height and fill aren't used. On the
+ * stage, its Grips are its two ends.
+ */
+export const allStroke = (kind: ShapeKind): boolean => kind === "line" || kind === "arrow";
 
 // Every field at its identity: fitted, centred, upright, unflipped and opaque.
 export const IDENTITY: Transform = { x: 540, y: 960, scale: 1, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1 };

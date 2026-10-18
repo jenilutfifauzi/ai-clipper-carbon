@@ -14,6 +14,7 @@ import type { Playback } from "../editor/playback";
 import { keyedRange, shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyCluster, KeyingContext, useKeyNotice, useKeyTime, useTouch, type Keying } from "./KeyCluster";
 import { heldKeyTime, keyedGroup, keyTime, resetTextLayer, type KeyedRef, type KeySpan } from "./keying";
+import type { PictureLayerKind } from "./pick";
 
 // A picture's fields that a Text Layer's Transform hasn't: its Crop, Fit, Fill and its stretch and flips.
 interface PictureFields {
@@ -244,7 +245,7 @@ function LayerTransformFields<T extends TextLayer | Shape>({
   layer,
   onChange,
 }: {
-  kind: "text" | "shape";
+  kind: PictureLayerKind;
   layer: T;
   onChange: (layer: T, group: string) => void;
 }) {
@@ -266,7 +267,7 @@ function KeyedLayerTransform<T extends TextLayer | Shape>({
   onChange,
 }: {
   keying: Keying;
-  kind: "text" | "shape";
+  kind: PictureLayerKind;
   layer: T;
   onChange: (layer: T, group: string) => void;
 }) {

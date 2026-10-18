@@ -9,6 +9,15 @@ import type { TrackKind } from "./trackState";
 export type ItemKind = "segment" | "text" | "shape" | "music" | "overlay";
 export const LISTS = { segment: "segments", text: "text_layers", shape: "shapes", music: "music", overlay: "overlays" } as const;
 
+// The kinds of item placed on the frame by a Transform, and picked on the stage: Text Layers,
+// Shapes and Overlays.
+export type PlacedKind = "text" | "shape" | "overlay";
+// The picture layers' kinds (GLOSSARY.md): Text Layers and Shapes.
+export type PictureLayerKind = Extract<PlacedKind, "text" | "shape">;
+
+/** Whether items of `kind` are placed on the frame by a Transform. */
+export const isPlaced = (kind: ItemKind): kind is PlacedKind => kind === "text" || kind === "shape" || kind === "overlay";
+
 export interface ItemRef {
   kind: ItemKind;
   id: string;
@@ -79,16 +88,14 @@ export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {
 /** The ids on the preview's stage (StageControls) of what is picked there: the hook, the captions, Text Layers, Shapes and Overlays. */
 export function stageIdsOf(pick: Pick): PickedOnStage[] {
   if (pick?.kind === "hook" || pick?.kind === "captions") return [pick.kind];
-  return itemsOf(pick).flatMap((item): PickedOnStage[] =>
-    item.kind === "text" || item.kind === "shape" || item.kind === "overlay" ? [`${item.kind}:${item.id}`] : [],
-  );
+  return itemsOf(pick).flatMap((item): PickedOnStage[] => (isPlaced(item.kind) ? [`${item.kind}:${item.id}`] : []));
 }
 
 /** What a stage id names: the hook, the captions, a Text Layer, a Shape or an Overlay. */
 export function stageItem(stageId: PickedOnStage): { kind: "hook" } | { kind: "captions" } | ItemRef {
   if (stageId === "hook" || stageId === "captions") return { kind: stageId };
   const [kind, ...id] = stageId.split(":");
-  return { kind: kind as "text" | "shape" | "overlay", id: id.join(":") };
+  return { kind: kind as PlacedKind, id: id.join(":") };
 }
 
 /** An item's key on the Timeline: its kind and id. */

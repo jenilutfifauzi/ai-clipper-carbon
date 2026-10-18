@@ -90,16 +90,16 @@ export const round = (seconds: number) => Math.round(seconds * 100) / 100;
 export const newId = () => crypto.randomUUID().slice(0, 8);
 
 // A new Text Layer or Shape stays this long, or to the Clip's end.
-export const TEXT_SECS = 3;
+export const NEW_LAYER_SECS = 3;
 
 /**
  * When a new Text Layer or Shape added at `at` (the playhead, or where it was dropped) shows in a
- * Clip `duration` long: for TEXT_SECS, from early enough to end with the Clip near its end, or the
+ * Clip `duration` long: for NEW_LAYER_SECS, from early enough to end with the Clip near its end, or the
  * whole of a shorter Clip.
  */
 export function newTiming(at: number, duration: number): { start: number; secs: number } {
-  const start = Math.max(0, Math.min(at, duration - Math.min(TEXT_SECS, duration)));
-  return { start: round(start), secs: round(Math.min(TEXT_SECS, duration - start)) };
+  const start = Math.max(0, Math.min(at, duration - Math.min(NEW_LAYER_SECS, duration)));
+  return { start: round(start), secs: round(Math.min(NEW_LAYER_SECS, duration - start)) };
 }
 
 /**

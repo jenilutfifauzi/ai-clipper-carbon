@@ -1,20 +1,20 @@
 import { ClipboardCopy, Copy, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { Animation, Shape, ShapeKind, ShapeStyle } from "../../../api";
+import type { Shape, ShapeKind, ShapeStyle } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { FRAME } from "../editor/picture";
+import { allStroke, FRAME, SHAPE_SIZE_RANGE } from "../editor/picture";
 import { shadowControls, type ShadowAccess } from "../editor/ShadowFields";
 import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
 import { cornersFormat } from "./DecorationFields";
 import { DRAG_SHAPE } from "./drag";
-import { allStroke, drawsSomething, NEW_FILL, NOTHING_TO_DRAW, SHAPE_KINDS, SHAPE_SIZE, SHAPE_STROKE_MAX, withKind } from "./shapeStyle";
-import { ANIMATIONS, MotionFields } from "./TextLayers";
+import { drawsSomething, NEW_FILL, NOTHING_TO_DRAW, SHAPE_KINDS, SHAPE_STROKE_MAX, withKind } from "./shapeStyle";
+import { MotionFields, SeveralMotionFields } from "./TextLayers";
 import { TimingFields } from "./TimingFields";
 import { ShapeTransformFields } from "./TransformFields";
 
@@ -108,7 +108,7 @@ export function ShapeFields({
     change: (change, field) => setStyle("shadow", change(style.shadow), field ? `shadow.${field}` : "shadow"),
   };
   // Whole pixels, up to the frame's side (or more, where it is already larger).
-  const size = (value: number, frame: number) => ({ min: SHAPE_SIZE.min, max: Math.max(frame, value), format: (v: number) => `${Math.round(v)} px` });
+  const size = (value: number, frame: number) => ({ min: SHAPE_SIZE_RANGE[0], max: Math.max(frame, value), format: (v: number) => `${Math.round(v)} px` });
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -172,9 +172,6 @@ const READ = {
   stroke_width: (shape: Shape) => shape.style.stroke_width,
   stroke_colour: (shape: Shape) => shape.style.stroke_colour,
   radius: (shape: Shape) => shape.style.radius,
-  animation_in: (shape: Shape) => shape.animation_in,
-  animation_out: (shape: Shape) => shape.animation_out,
-  animation_ms: (shape: Shape) => shape.animation_ms,
 };
 type Field = keyof typeof READ;
 
@@ -206,7 +203,6 @@ export function ShapesFields({
   const figures = shapes.filter((shape) => !allStroke(shape.style.kind));
   const rectangles = shapes.filter((shape) => shape.style.kind === "rectangle");
   const lines = figures.length === 0;
-  const set = <K extends keyof Shape>(field: K, next: Shape[K]) => onChange((shape) => ({ ...shape, [field]: next }), `shapes:${field}`);
   // `change` made to each one's style, but where it would leave one with nothing to draw.
   const restyle = (change: (style: ShapeStyle) => ShapeStyle, group: string) =>
     onChange((shape) => {
@@ -217,7 +213,6 @@ export function ShapesFields({
   // `field` set on those of them that use it (`uses`).
   const setUsed = <K extends keyof ShapeStyle>(uses: (style: ShapeStyle) => boolean, field: K, next: ShapeStyle[K]) =>
     restyle((style) => (uses(style) ? { ...style, [field]: next } : style), field);
-  const filledFigure = (style: ShapeStyle) => !allStroke(style.kind);
   const filled = !lines && value("fill", figures) !== null;
   // Turning the fill off would leave one with nothing to draw.
   const fillStays = figures.some((shape) => shape.style.fill !== null && !shape.style.stroke_width);
@@ -230,7 +225,7 @@ export function ShapesFields({
   };
   // Whole pixels, as ShapeFields' (or Mixed).
   const size = (field: "width" | "height", frame: number, among = shapes) => ({
-    min: SHAPE_SIZE.min,
+    min: SHAPE_SIZE_RANGE[0],
     max: Math.max(frame, ...among.map(read(field) as (shape: Shape) => number)),
     format: (v: number) => (mixed(field, among) ? "Mixed" : `${Math.round(v)} px`),
   });
@@ -271,12 +266,12 @@ export function ShapesFields({
               label="Height"
               value={value("height", figures)}
               {...size("height", FRAME.height, figures)}
-              onChange={(height) => setUsed(filledFigure, "height", Math.round(height))}
+              onChange={(height) => setUsed((style) => !allStroke(style.kind), "height", Math.round(height))}
             />
             <Switch
               checked={filled}
               disabled={filled && fillStays}
-              onChange={(on) => restyle((style) => (filledFigure(style) ? { ...style, fill: on ? (style.fill ?? NEW_FILL) : null } : style), "fill")}
+              onChange={(on) => restyle((style) => (!allStroke(style.kind) ? { ...style, fill: on ? (style.fill ?? NEW_FILL) : null } : style), "fill")}
             >
               <span className="flex items-center gap-1.5 text-sm font-medium">Fill {marker("fill", figures)}</span>
             </Switch>
@@ -284,7 +279,7 @@ export function ShapesFields({
               <ColorField
                 label="Fill colour"
                 value={figures.find((shape) => shape.style.fill !== null)?.style.fill ?? NEW_FILL}
-                onChange={(fill) => restyle((style) => (style.fill === null || !filledFigure(style) ? style : { ...style, fill }), "fill")}
+                onChange={(fill) => restyle((style) => (style.fill === null || allStroke(style.kind) ? style : { ...style, fill }), "fill")}
                 marker={marker("fill", figures)}
               />
             )}
@@ -320,35 +315,7 @@ export function ShapesFields({
         )}
       </Group>
       <Group title="Shadow">{shadowControls(shadow, { inspector: true })}</Group>
-      <Group title="Motion">
-        <div className="grid grid-cols-2 gap-3">
-          <Select
-            label="Comes on"
-            value={value("animation_in")}
-            options={ANIMATIONS}
-            onChange={(next: Animation) => set("animation_in", next)}
-            marker={marker("animation_in")}
-          />
-          <Select
-            label="Goes off"
-            value={value("animation_out")}
-            options={ANIMATIONS}
-            onChange={(next: Animation) => set("animation_out", next)}
-            marker={marker("animation_out")}
-          />
-        </div>
-        {shapes.some((shape) => shape.animation_in !== "none" || shape.animation_out !== "none") && (
-          <Slider
-            label="Animation length"
-            value={value("animation_ms")}
-            min={100}
-            max={2000}
-            step={50}
-            format={(v) => (mixed("animation_ms") ? "Mixed" : `${(v / 1000).toFixed(2)} s`)}
-            onChange={(ms) => set("animation_ms", ms)}
-          />
-        )}
-      </Group>
+      <SeveralMotionFields items={shapes} prefix="shapes" onChange={onChange} />
     </div>
   );
 }

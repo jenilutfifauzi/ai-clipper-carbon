@@ -22,7 +22,7 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -385,7 +385,7 @@ function stagePictures(
     const { picture, fitted } = layerStagePicture(event);
     const { id, style, keys } = event.layer;
     const onResize = shapes!.onResize;
-    const ends = style.kind === "line" || style.kind === "arrow";
+    const ends = allStroke(style.kind);
     pictures.push({
       id: `shape:${id}`,
       label: ends ? `Shape: ${style.kind}` : "Shape",

@@ -4,7 +4,7 @@ import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceA
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick } from "./pick";
+import { isPicked, isPlaced, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import { speedLabel, speedOf } from "./speed";
 import type { TrackKind } from "./trackState";
@@ -561,7 +561,7 @@ const keyedMiddles = (item: Placed, axis: "x" | "y") => (item.keys[axis] ?? []).
  * x and y Keyframes by as much, kept in the frame as its middle is.
  */
 export function nudge(scene: PickContext, dx: number, dy: number): Outcome | null {
-  const placed = pickedItems(scene).layers.filter(({ kind }) => kind !== "music") as { kind: "text" | "shape" | "overlay"; item: Placed }[];
+  const placed = pickedItems(scene).layers.filter(({ kind }) => isPlaced(kind)) as { kind: PlacedKind; item: Placed }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
   const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), FRAME.width);

@@ -103,6 +103,7 @@ import {
   bandPick,
   clicked,
   isPicked,
+  isPlaced,
   itemsOf,
   picked,
   prunedPick,
@@ -111,6 +112,7 @@ import {
   stageItem,
   unlockedPick,
   type Pick,
+  type PlacedKind,
 } from "./pick";
 import { addShape, resizeShape } from "./shapeStyle";
 import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
@@ -695,8 +697,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
 
   // Whether the Text Layer, Shape or Overlay `id` is one of several picked on the frame, which move with it.
-  const placedTogether = (kind: "text" | "shape" | "overlay", id: string) =>
-    isPicked(pick, kind, id) && itemsOf(pick).filter((item) => item.kind === "text" || item.kind === "shape" || item.kind === "overlay").length > 1;
+  const placedTogether = (kind: PlacedKind, id: string) => isPicked(pick, kind, id) && itemsOf(pick).filter((item) => isPlaced(item.kind)).length > 1;
   function moveOnFrame(dx: number, dy: number, group: string) {
     const moved = nudge(scene, dx, dy);
     if (moved) history.set(moved.edits, group);

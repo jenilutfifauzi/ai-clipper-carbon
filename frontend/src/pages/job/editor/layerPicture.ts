@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { textPictureUrl, type Picture, type PictureLayerEvent } from "../../../api";
+import { layerPictureUrl, type Picture, type PictureLayerEvent } from "../../../api";
 import { pictureAt } from "./picture";
 
 // A picture layer's picture as the preview draws it (docs/adr/0010): its URL, and the size it is drawn
@@ -27,7 +27,7 @@ const largest = new Map<string, Loaded>();
 export function wantedPicture(jobId: string, event: PictureLayerEvent): WantedPicture {
   const { picture } = event;
   return {
-    url: textPictureUrl(jobId, event.image),
+    url: layerPictureUrl(jobId, event.image),
     width: picture.width,
     height: picture.height,
     key: `${jobId}/${event.picture_key}`,
