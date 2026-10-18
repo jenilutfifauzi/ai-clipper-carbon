@@ -644,15 +644,18 @@ async def test_a_pill_is_added_under_a_text_layer_in_one_edit_and_the_dry_run_sh
     ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
     title = {"id": "title", "text": "Judul", "start": 0, "secs": 1, "transform": {"x": 540, "y": 960}}
 
-    edited = await call(mcp, "edit_candidate", **ids, changes={"text_layers": [title], "shapes": [PILL]})
-    [pill] = edited["shapes"]
+    # And an arrow under it, pointing right: 300 long, 10 thick, its head 40 tall.
+    arrow = {"id": "arrow", "start": 0, "secs": 1, "transform": {"x": 540, "y": 1200}, "style": {"kind": "arrow", "width": 300, "stroke_width": 10}}
+    edited = await call(mcp, "edit_candidate", **ids, changes={"text_layers": [title], "shapes": [PILL, arrow]})
+    pill, _ = edited["shapes"]
     assert (pill["id"], pill["style"]["radius"], pill["style"]["fill"]) == ("pill", 0.5, "#112233")
     assert [layer["id"] for layer in edited["text_layers"]] == ["title"]
 
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
-    [shape], [text] = plan["shapes"], plan["text_layers"]
+    [shape, pointer], [text] = plan["shapes"], plan["text_layers"]
     assert (shape["id"], shape["start"], shape["end"]) == ("pill", 0, 1)
     assert shape["bounds"] == {"x": 240, "y": 900, "width": 600, "height": 120}
+    assert pointer["bounds"] == {"x": 390, "y": 1180, "width": 300, "height": 40}
     assert text["id"] == "title" and abs(text["bounds"]["x"] + text["bounds"]["width"] / 2 - 540) <= 1
     for shown in (shape, text):
         picture = client.get(shown["picture"])
@@ -699,6 +702,10 @@ async def test_a_shape_the_model_refuses_is_a_clear_tool_error(mcp):
     assert "stretched" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "transform": {"stretch_x": 2}}])
     assert "flipped" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "transform": {"flip_h": True}}])
     assert "kind" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"kind": "hexagon"}}])
+    # A line or an arrow is all stroke: none with no stroke_width, its thickness.
+    assert "a line is all stroke" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "pill", "style": {"kind": "line"}}])
+    arrow = PILL | {"id": "arrow", "style": {"kind": "arrow", "stroke_width": 0}}
+    assert "an arrow is all stroke" in await fails(mcp, "edit_candidate", **ids, changes={"shapes": [arrow]})
     assert "secs" in await fails(mcp, "merge_candidate_items", **ids, shapes=[{"id": "new", "style": {"fill": "#FFFFFF"}}])
     # Nothing was saved by the refusals.
     [kept] = (await call(mcp, "get_candidate", **ids))["shapes"]

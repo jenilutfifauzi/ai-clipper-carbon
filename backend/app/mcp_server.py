@@ -148,8 +148,8 @@ Edits:
   px before scale), fill (null: an outline alone), stroke_colour and stroke_width (px, 0 for none;
   drawn inside width and height), radius (a rectangle's corners, 0..0.5 of its shorter side: 0.5 a
   pill) and shadow (a Text Style's). A line or an arrow is all stroke: width is its length,
-  stroke_width its thickness, its colour the stroke's (the fill's with no stroke); height is
-  unused. Refused: nothing to draw (no fill and no stroke; a line or arrow with no stroke_width).
+  stroke_width its thickness (an arrow's head 4 times as tall), stroke_colour its colour; height
+  and fill are unused. Refused: nothing to draw (no fill and no stroke; a line or arrow with no stroke_width).
   Shapes are drawn over the captions and under the Text Layers (a plate behind a title).
   merge_candidate_items changes only the style, shadow and transform fields given. The dry run
   lists each Shape's box (bounds) and picture.
