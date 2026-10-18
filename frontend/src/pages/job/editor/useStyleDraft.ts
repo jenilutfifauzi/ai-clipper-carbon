@@ -42,6 +42,16 @@ export interface StyleControls {
   deleted: (all: StylePreset[]) => void;
 }
 
+/** The Style Presets, loaded once, and a way to replace them once one is saved or deleted. */
+export function usePresets(): { presets: StylePreset[] | null; error: string | null; setPresets: (all: StylePreset[]) => void } {
+  const [presets, setPresets] = useState<StylePreset[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.listPresets().then(setPresets, (reason: Error) => setError(reason.message));
+  }, []);
+  return { presets, error, setPresets };
+}
+
 /**
  * The Candidate's Style Preset and the fields of it the Candidate overrides, shared by every tab that
  * edits them. Changes preview at once (`draft`) and are saved once they pause, and at once when the
@@ -53,56 +63,63 @@ export function useStyleDraft(
   // Another key starts the draft again from the Candidate (another Candidate, or one saved elsewhere).
   key: string = candidate.id,
 ): { draft: StyleDraft; controls: StyleControls | null; error: string | null } {
-  const [presets, setPresets] = useState<StylePreset[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { presets, error, setPresets } = usePresets();
   const [draft, change] = useDraftSave<StyleDraft>(
     // Overrides saved before Watermarks have none.
     { preset_id: candidate.preset_id, style_overrides: { ...EMPTY, ...candidate.style_overrides } },
     (value) => onSave(value),
     key,
   );
+  return { draft, error, controls: presets && styleControls(presets, draft, change, setPresets) };
+}
 
-  useEffect(() => {
-    api.listPresets().then(setPresets, (reason: Error) => setError(reason.message));
-  }, []);
-
-  if (!presets) return { draft, controls: null, error };
+/**
+ * The controls of the look `draft` gives, over `presets`: each change is a new draft passed to
+ * `change`, with the group it belongs to (a field's changes, while they keep coming, are one: a
+ * slider's drag); a Preset picked, saved or reset to has none. The clip editor saves the drafts as
+ * they pause, the Advanced Edit makes each a step of its undo.
+ */
+export function styleControls(
+  presets: StylePreset[],
+  { preset_id, style_overrides }: StyleDraft,
+  change: (draft: StyleDraft, group?: string) => void,
+  setPresets: (all: StylePreset[]) => void,
+): StyleControls {
+  // Overrides saved before Watermarks have none.
+  const draft = { preset_id, style_overrides: { ...EMPTY, ...style_overrides } };
   const preset = presets.find((p) => p.id === draft.preset_id) ?? presets[0];
   const base = (part: StylePart) => preset[part] as unknown as Record<string, StyleValue>;
 
-  function setMany(part: StylePart, values: Record<string, StyleValue>) {
+  function setFields(part: StylePart, values: Record<string, StyleValue>, group?: string) {
     const fields = { ...draft.style_overrides[part] } as Record<string, StyleValue>;
     for (const [field, value] of Object.entries(values)) {
       if (sameValue(base(part)[field], value)) delete fields[field];
       else fields[field] = value;
     }
-    change({ ...draft, style_overrides: { ...draft.style_overrides, [part]: fields } });
+    change({ ...draft, style_overrides: { ...draft.style_overrides, [part]: fields } }, group);
   }
+  const setMany = (part: StylePart, values: Record<string, StyleValue>) => setFields(part, values, `style:${part}.${Object.keys(values).join(",")}`);
   const set = (part: StylePart, field: string, value: StyleValue) => setMany(part, { [field]: value });
 
   return {
-    draft,
-    error,
-    controls: {
-      presets,
-      preset,
-      caption: overridden(preset.caption, draft.style_overrides.caption),
-      hook: overridden(preset.hook, draft.style_overrides.hook),
-      watermark: overridden(preset.watermark, draft.style_overrides.watermark),
-      overrides: draft.style_overrides,
-      set,
-      setMany,
-      reset: (part, field) => set(part, field, base(part)[field]),
-      pick: (id) => change({ preset_id: id, style_overrides: EMPTY }),
-      resetAll: () => change({ ...draft, style_overrides: EMPTY }),
-      saved: (made, all) => {
-        setPresets(all);
-        change({ preset_id: made.id, style_overrides: EMPTY });
-      },
-      deleted: (all) => {
-        setPresets(all);
-        change({ preset_id: "default", style_overrides: EMPTY });
-      },
+    presets,
+    preset,
+    caption: overridden(preset.caption, draft.style_overrides.caption),
+    hook: overridden(preset.hook, draft.style_overrides.hook),
+    watermark: overridden(preset.watermark, draft.style_overrides.watermark),
+    overrides: draft.style_overrides,
+    set,
+    setMany,
+    reset: (part, field) => setFields(part, { [field]: base(part)[field] }),
+    pick: (id) => change({ preset_id: id, style_overrides: EMPTY }),
+    resetAll: () => change({ ...draft, style_overrides: EMPTY }),
+    saved: (made, all) => {
+      setPresets(all);
+      change({ preset_id: made.id, style_overrides: EMPTY });
+    },
+    deleted: (all) => {
+      setPresets(all);
+      change({ preset_id: "default", style_overrides: EMPTY });
     },
   };
 }

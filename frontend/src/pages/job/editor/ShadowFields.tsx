@@ -76,10 +76,21 @@ export function shadowControls(access: ShadowAccess, { marker, inspector = false
 /**
  * The hook's or the captions' drop shadow, as a Text Layer's: on or off, and its colour, opacity,
  * blur, distance and angle. Each change is the whole shadow; `marker` resets it to the Preset's.
+ * In the Advanced Edit's `inspector`, one field to a row.
  */
-export function ShadowFields({ shadow, onChange, marker }: { shadow: DropShadow; onChange: (shadow: DropShadow) => void; marker: ReactNode }) {
+export function ShadowFields({
+  shadow,
+  onChange,
+  marker,
+  inspector = false,
+}: {
+  shadow: DropShadow;
+  onChange: (shadow: DropShadow) => void;
+  marker: ReactNode;
+  inspector?: boolean;
+}) {
   return shadowControls(
     { shadow, mixed: () => false, any: (test) => test(shadow), change: (change) => onChange(change(shadow)) },
-    { marker },
+    { marker, inspector },
   );
 }

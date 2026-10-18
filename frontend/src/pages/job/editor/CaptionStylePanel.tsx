@@ -5,6 +5,7 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
+import { cx } from "../../../format";
 import { FacePicker } from "./FacePicker";
 import { ShadowFields } from "./ShadowFields";
 import { highlightShape } from "./styleShape";
@@ -49,17 +50,21 @@ const MORE = [
  * The Caption Style: the controls used most, then More options (outline, shadow, the highlight box,
  * tracking and line breaks).
  * Each control shows the resolved value, with a reset button when it overrides the Preset.
+ * Shared by the clip editor (two fields to a row on a wide screen) and the Advanced Edit's narrow
+ * `inspector` (one to a row).
  */
 export function CaptionStylePanel({
   style,
   fonts,
   more,
   onMore,
+  inspector = false,
 }: {
   style: StyleControls;
   fonts: FontInfo[] | null;
   more: boolean;
   onMore: (open: boolean) => void;
+  inspector?: boolean;
 }) {
   const caption = style.caption;
   const set = (field: string, value: StyleValue) => style.set("caption", field, value);
@@ -67,11 +72,13 @@ export function CaptionStylePanel({
   // The highlight box drawn round a line at the style's size, its own until it is set.
   const box = highlightShape(caption, caption.size);
   const px = (v: number) => `${Math.round(v)} px`;
+  const grid = cx("grid grid-cols-1 gap-x-4 gap-y-3", !inspector && "sm:grid-cols-2");
+  const fullRow = inspector ? undefined : "sm:col-span-2";
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-        <FacePicker value={caption.font} fonts={fonts} onChange={(v) => set("font", v)} marker={marker("font", "font")} className="sm:col-span-2" />
+      <div className={grid}>
+        <FacePicker value={caption.font} fonts={fonts} onChange={(v) => set("font", v)} marker={marker("font", "font")} className={fullRow} />
         <Slider label="Size" value={caption.size} min={40} max={200} onChange={(v) => set("size", v)} marker={marker("size", "size")} />
         <ColorField label="Text colour" value={caption.colour} onChange={(v) => set("colour", v)} marker={marker("colour", "text colour")} />
         <ColorField
@@ -111,15 +118,15 @@ export function CaptionStylePanel({
 
       <MoreOptions open={more} onToggle={onMore} contents="Outline, shadow, highlight box, tracking, line breaks" changed={countChanged(style, "caption", MORE)}>
         <Group title="Outline and shadow">
-          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div className={grid}>
             <Slider label="Outline" value={caption.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("outline", v)} marker={marker("outline", "outline")} />
             <ColorField label="Outline colour" value={caption.outline_colour} onChange={(v) => set("outline_colour", v)} marker={marker("outline_colour", "outline colour")} />
           </div>
-          <ShadowFields shadow={caption.shadow} onChange={(v) => set("shadow", v)} marker={marker("shadow", "shadow")} />
+          <ShadowFields shadow={caption.shadow} onChange={(v) => set("shadow", v)} marker={marker("shadow", "shadow")} inspector={inspector} />
         </Group>
         {caption.highlight === "box" && (
           <Group title="Highlight box">
-            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+            <div className={grid}>
               <Slider label="Padding across" value={box.padX} min={0} max={200} format={px} onChange={(v) => set("padding_x", v)} marker={marker("padding_x", "box padding across")} />
               <Slider label="Padding down" value={box.padY} min={0} max={200} format={px} onChange={(v) => set("padding_y", v)} marker={marker("padding_y", "box padding down")} />
               <Slider label="Corner radius" value={box.radius} min={0} max={200} format={px} onChange={(v) => set("radius", v)} marker={marker("radius", "box corner radius")} />
@@ -127,7 +134,7 @@ export function CaptionStylePanel({
           </Group>
         )}
         <Group title="Tracking and line breaks">
-          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div className={grid}>
             {/* Counted by Most characters: a spaced-out line holds fewer. */}
             <Slider
               label="Tracking"
@@ -137,7 +144,7 @@ export function CaptionStylePanel({
               format={(v) => `${v} px`}
               onChange={(v) => set("tracking", v)}
               marker={marker("tracking", "tracking")}
-              className="sm:col-span-2"
+              className={fullRow}
             />
             <Slider label="Most characters" value={caption.max_chars} min={4} max={60} onChange={(v) => set("max_chars", v)} marker={marker("max_chars", "most characters")} />
             <Select
