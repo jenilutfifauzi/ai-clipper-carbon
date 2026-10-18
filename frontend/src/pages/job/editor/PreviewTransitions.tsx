@@ -4,6 +4,7 @@ import { PanelView } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
+import { loudness, segmentSound } from "./loudness";
 import { setVolume } from "./PreviewMusic";
 import { MediaSegment, CopiedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
@@ -15,7 +16,7 @@ const READY_SECS = 2;
  * The plan's Transitions, imitated: the preview's main playback goes on into the next Segment where
  * a Transition starts (playback.ts's `playable`), and over it the Segment before keeps playing on
  * a playback of its own (its "ghost": its panels, or its own videos), taken away as the Transition's kind
- * does it, its sound fading out, over exactly the Transition's time. Near xfade's look and
+ * does it, its sound fading out (times its own fades), over exactly the Transition's time. Near xfade's look and
  * acrossfade's sound, not the same.
  */
 export function PreviewTransitions({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
@@ -75,7 +76,8 @@ function Ghost({
       // The ghost plays at the main playback's rate, and its deck its Segment at its Speed.
       ghost.setRate(playback.rate);
       const video = master.current;
-      if (video) setVolume(video, inside ? (1 - share) * (plan.source_volume * segment.volume) : 0);
+      // Its sound through its fades, falling with the crossfade.
+      if (video) setVolume(video, inside ? loudness(segmentSound(segment, plan.source_volume, transition), time) : 0);
       if (!inside) {
         if (ghost.playing) ghost.pause();
         // Ready on the Transition's first frame.

@@ -1,5 +1,5 @@
 {
-  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
+  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. A sound whose `item` is \"segment\" is a Segment's, from its start on the Timeline (a Transition's overlap included) to its end, its fades fitted to that length; any other, a Music Clip's. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
   "tolerance": 1e-6,
   "sounds": [
     {
@@ -59,6 +59,34 @@
       "name": "fades longer than the sound, shortened by the same share",
       "sound": {"start": 7, "end": 10, "volume": 1.0, "fade_in": 3, "fade_out": 1},
       "at": [[6.9, 0], [7, 0], [8.125, 0.5], [9.25, 1.0], [9.625, 0.5], [10, 0], [10.1, 0]]
+    },
+    {
+      "name": "a Segment faded in and out",
+      "item": "segment",
+      "sound": {"start": 2, "end": 5, "volume": 1.5, "fade_in": 1, "fade_out": 0.5},
+      "at": [[1.9, 0], [2, 0], [2.25, 0.375], [2.5, 0.75], [3, 1.5], [4, 1.5], [4.5, 1.5], [4.75, 0.75], [5, 0], [5.1, 0]]
+    },
+    {
+      "name": "a Segment's fades longer than it, shortened by the same share",
+      "item": "segment",
+      "sound": {"start": 0, "end": 1.5, "volume": 1.0, "fade_in": 2, "fade_out": 1},
+      "at": [[0, 0], [0.5, 0.5], [1, 1.0], [1.25, 0.5], [1.5, 0], [1.6, 0]]
+    },
+    {
+      "name": "a keyed Segment, faded",
+      "item": "segment",
+      "sound": {
+        "start": 1,
+        "end": 4,
+        "volume": 0.5,
+        "fade_in": 0.5,
+        "fade_out": 1,
+        "keys": [
+          {"at": 0, "value": 2.0},
+          {"at": 2, "value": 1.0}
+        ]
+      },
+      "at": [[0.9, 0], [1, 0], [1.25, 0.9375], [1.5, 1.75], [2, 1.5], [3, 1.0], [3.5, 0.5], [4, 0], [4.1, 0]]
     }
   ]
 }

@@ -167,7 +167,7 @@ def test_freeze_frames_are_saved_unsnapped_and_validated(client):
     # Between two Words, where no edge would snap.
     still = {"id": "still", "start": 0.777, "end": 0.777, "hold": 1}
     saved = patch(client, job, candidate, segments=[head, still, tail])
-    assert saved["segments"][1] == still | {"media": None, "framing": None, "volume": 1, "speed": 1, "pitch": False, "reverse": False, "keys": {}}
+    assert saved["segments"][1] == still | {"media": None, "framing": None, "volume": 1, "speed": 1, "pitch": False, "reverse": False, "keys": {}, "fade_in": 0, "fade_out": 0}
     # The hull is of the Segments that play.
     assert (saved["start"], saved["end"]) == (saved["segments"][0]["start"], saved["segments"][2]["end"])
     planned = preview(client, job, saved)

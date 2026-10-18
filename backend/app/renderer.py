@@ -37,10 +37,12 @@ is drawn as above, in its own Scenes, and the Segments' frames and sounds are jo
 (concat). A video's Segment is one Scene of one picture: its Background (the blurred cover panel, or
 its colour) and then its Picture over it, as Overlays are drawn, only the part on the frame of it
 scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of the Source is drawn
-the same way from its own frames. With videos among them (or a Segment's own volume), each Segment's sound is set to its
-volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
-silence. A Freeze frame (docs/adr/0009) reads a moment of its video at its frame and holds the
-first frame for its hold (`tpad`), in silence. A join with a Transition is an
+the same way from its own frames. With videos among them (or a Segment's own volume, or fades),
+each Segment's sound is set to its volume (a Source Segment's also at the Clip's own) and faded in
+and out (linear `afade`s from its start on the Timeline, a Transition's overlap included, which the
+crossfade multiplies) before the join, and a video without sound adds silence. A Freeze frame
+(docs/adr/0009) reads a moment of its video at its frame and holds the first frame for its hold
+(`tpad`), in silence. A join with a Transition is an
 xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
 xfade needs) and an acrossfade of the sounds, over the length the two overlap.
 
@@ -390,10 +392,10 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, a Segment's own volume or Speed, or Transitions, each Segment's sound is first
-    played at its Speed (`speed_filters`) and set to its volume (a Source Segment's also to the
-    Clip's own, which the mix then leaves) in one format, and a video without sound, and a Freeze
-    frame, give silence."""
+    the Segments, a Segment's own volume, Speed or fades, or Transitions, each Segment's sound is
+    first played at its Speed (`speed_filters`), set to its volume (a Source Segment's also to the
+    Clip's own, which the mix then leaves) and faded (`_fades`) in one format, and a video without
+    sound, and a Freeze frame, give silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -403,7 +405,9 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{span:.3f}", "-i", str(read)]
     count = len(plan.segments)
     plain = all(
-        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None for segment in plan.segments
+        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None
+        and not (segment.fade_in or segment.fade_out)
+        for segment in plan.segments
     )
     if plain and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
@@ -414,12 +418,15 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
             continue
         sped = speed_filters(segment.speed, segment.pitch, rate)
+        faded = _fades(segment.fade_in, segment.fade_out, round(segment.end - segment.start, 3))
+        # Its time on the Timeline from 0 at its start (a Transition's overlap included), which its
+        # Keyframes and fades are in.
+        zeroed = [*sped, "asetpts=PTS-STARTPTS"] if segment.gain or faded else sped
         if segment.gain:
-            # Its time on the Timeline from 0 at its start, which its Keyframes' are from.
-            filters = [*sped, "asetpts=PTS-STARTPTS", *_volume(segment.gain, segment.volume)]
+            volume = _volume(segment.gain, segment.volume)
         else:
-            filters = [*sped, f"volume={segment.volume * (1 if segment.media else plan.source_volume):g}"]
-        chains.append(f"[{i}:a:0]{','.join(filters)},{form}[a{i}]")
+            volume = [f"volume={segment.volume * (1 if segment.media else plan.source_volume):g}"]
+        chains.append(f"[{i}:a:0]{','.join([*zeroed, *volume, *faded])},{form}[a{i}]")
     if plan.transitions:
         chains.append(_joins(plan, [f"[a{i}]" for i in range(count)], "a", "[srcv]"))
     else:
@@ -669,17 +676,22 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
             f"atrim=start={event.offset:g}:end={event.offset + read:g}", "asetpts=PTS-STARTPTS",
             # Then its time on the Timeline from 0 at its start, which its Keyframes and fades are in.
             *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *_volume(event.gain, event.volume),
+            *_fades(event.fade_in, event.fade_out, length), f"adelay={round(event.start * 1000)}:all=1",
         ]
-        if event.fade_in:
-            filters.append(f"afade=t=in:st=0:d={event.fade_in:g}")
-        if event.fade_out:
-            filters.append(f"afade=t=out:st={length - event.fade_out:g}:d={event.fade_out:g}")
-        filters.append(f"adelay={round(event.start * 1000)}:all=1")
         chains.append(f"[{index[event.media]}:a:0]{','.join(filters)},{form}[m{i}]")
     labels = "".join(f"[m{i}]" for i in range(len(heard) + 1))
     # The Clip's length is its own sound's; nothing is turned down to make room (normalize=0).
     chains.append(f"{labels}amix=inputs={len(heard) + 1}:duration=first:normalize=0[mix]")
     return ";".join(chains)
+
+
+def _fades(fade_in: float, fade_out: float, length: float) -> list[str]:
+    """Filters that fade a sound `length` seconds long, its time from 0 at its start, linearly in
+    over `fade_in` seconds and out over `fade_out` to its end."""
+    return [
+        *([f"afade=t=in:st=0:d={fade_in:g}"] if fade_in else []),
+        *([f"afade=t=out:st={length - fade_out:g}:d={fade_out:g}"] if fade_out else []),
+    ]
 
 
 # A keyed volume is worked out afresh for every block of this many samples (10 ms at 48 kHz).

@@ -201,6 +201,11 @@ Edits:
   is the one at `end`. It plays from a reversed copy of its range, which the render makes if the
   owner's preview hasn't (the dry run's `copy`). One of the episode has no captions; its Scenes and
   Layout Overrides are the forward ones, mirrored.
+- A Segment's sound (the episode's or a video's) fades in over `fade_in` seconds from its start and
+  out over `fade_out` to its end, linearly, 0..10 each (0 by default), as a Music Clip's: together
+  longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
+  a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
+  lists them under `segments`.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -687,7 +692,23 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """AI Clipper's domain words: Job, Candidate, Clip, Segment, Timeline time and the rest."""
         return GLOSSARY.read_text()
 
+    for registered in mcp._tool_manager.list_tools():
+        registered.parameters = _untitled(registered.parameters)
     return mcp
+
+
+def _untitled(schema: Any) -> Any:
+    """A tool's JSON schema without pydantic's titles, which only repeat each field's name: they
+    would take the tools past their budget. A property named title stays, and so do defaults."""
+    if isinstance(schema, list):
+        return [_untitled(value) for value in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        key: value if key == "default" else _untitled(value)
+        for key, value in schema.items()
+        if not (key == "title" and isinstance(value, str))
+    }
 
 
 class TextPresetGiven(BaseModel):
@@ -847,7 +868,7 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`)), each Scene's Layout and the Framing
+    (`copied`), its fades), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
@@ -872,7 +893,7 @@ def _plan_view(
             _compact({
                 **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
-                "reverse": segment["reverse"] or None,
+                "reverse": segment["reverse"] or None, "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
             })
             for segment in plan["segments"]

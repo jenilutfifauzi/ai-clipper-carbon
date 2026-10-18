@@ -96,6 +96,8 @@ Keyframes counted from its Scene's start on the Source's timeline in every Segme
 (`_keyed_manual`). A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
 is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
+Each Segment's sound is faded in from its start and out to its end (a Transition's overlap
+included), its fades fitted to its length as a Music Clip's are (`fades_within`).
 Everything else is planned over the whole Clip, in seconds into it.
 """
 
@@ -300,6 +302,9 @@ class SegmentInput:
     analysed: tuple[float, float] | None = None
     # Whether its sound's pitch follows its Speed.
     pitch: bool = False
+    # Its sound's fades as set, in seconds (the plan fits them to its length).
+    fade_in: float = 0.0
+    fade_out: float = 0.0
 
     @property
     def time(self) -> SegmentTime:
@@ -513,9 +518,9 @@ class SegmentPlan:
     """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
     `source_end`, at `speed`, forwards or in `reverse`, or its frame at `source_start` held for
     `hold` (docs/adr/0009), from `start` to `end` seconds into the Clip; a video's own sound at
-    `volume`, or none when it is `silent`. A keyed one's `gain` is its volume Keyframes
-    (docs/adr/0008), in seconds from its start, which set its volume in place of `volume`. `id` is
-    its Segment's."""
+    `volume`, or none when it is `silent`, faded in over `fade_in` and out over `fade_out`. A keyed
+    one's `gain` is its volume Keyframes (docs/adr/0008), in seconds from its start, which set its
+    volume in place of `volume`. `id` is its Segment's."""
 
     start: float
     end: float
@@ -536,6 +541,10 @@ class SegmentPlan:
     # The renderer's (app/retimed.py's `read_from_copies`): a Segment of the Source read from this
     # file of the render's, its Retimed copy, in place of the Source.
     read_from: str | None = None
+    # Fitted to its length (`fades_within`), from `start` and to `end`: under a Transition, they and
+    # its crossfade multiply.
+    fade_in: float = 0.0
+    fade_out: float = 0.0
 
     @property
     def time(self) -> SegmentTime:
@@ -936,10 +945,12 @@ def plan_render(
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
+            fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold, given.pitch,
+                    fade_in=fade_in, fade_out=fade_out,
                 )
             )
             at, before = round(at + length, 3), length
@@ -1371,13 +1382,19 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
     return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
 
 
+def fades_within(fade_in: float, fade_out: float, secs: float) -> tuple[float, float]:
+    """A sound's fades in a sound `secs` long: as set, or when together they are longer, both
+    shortened by the same share to fit. This is the rule, a Music Clip's and a Segment's; the
+    Timeline draws the fades by a copy of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts),
+    tested on the same cases (tests/fixtures/gain_vectors.json)."""
+    share = min(1.0, secs / ((fade_in + fade_out) or 1.0))
+    return round(fade_in * share, 3), round(fade_out * share, 3)
+
+
 def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
     """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
-    (whose length is in `items`) ends, its fades, when together they are longer than what is left,
-    both shortened by the same share to fit. This is the rule; the Timeline draws the fades by a copy
-    of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts), tested on the same cases
-    (tests/fixtures/gain_vectors.json). One whose song is gone, or that would start at or after
-    either end, isn't heard."""
+    (whose length is in `items`) ends, its fades fitted to what is left (`fades_within`). One whose
+    song is gone, or that would start at or after either end, isn't heard."""
     events = []
     for clip in music:
         item = items.get(clip.media)
@@ -1386,21 +1403,19 @@ def audio_events(music: list[MusicClip], duration: float, items: dict[str, "Medi
         if length is None or start >= duration or clip.offset >= length:
             continue
         end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
-        share = min(1.0, (end - start) / ((clip.fade_in + clip.fade_out) or 1.0))
+        fade_in, fade_out = fades_within(clip.fade_in, clip.fade_out, end - start)
         events.append(
-            AudioEvent(
-                clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3),
-                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id,
-            )
+            AudioEvent(clip.media, start, end, round(clip.offset, 3), clip.volume, fade_in, fade_out, clip.keys.get(KeyProperty.VOLUME, []), clip.id)
         )
     return events
 
 
-def gain_at(event: AudioEvent, time: float) -> float:
-    """How loud `event` is heard `time` seconds into the Clip: its volume, or its Keyframes sampled
-    there (app/keyframes.py), through its fades' linear ramps; silent outside it. The same rule as
-    the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are tested on the
-    cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
+def gain_at(event: AudioEvent | SegmentPlan, time: float) -> float:
+    """How loud `event` (a Music Clip's or an Overlay's sound, or a Segment's before the Clip's own
+    volume and a Transition's crossfade) is heard `time` seconds into the Clip: its volume, or its
+    Keyframes sampled there (app/keyframes.py), through its fades' linear ramps; silent outside it.
+    The same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are
+    tested on the cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
     into = time - event.start
     if into < 0 or time > event.end:
         return 0.0

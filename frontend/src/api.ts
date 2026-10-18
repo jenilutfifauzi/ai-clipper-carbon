@@ -761,6 +761,9 @@ export interface SegmentPlan extends Retiming {
   gain: Keyframe[];
   // Its Segment's id.
   id: string;
+  // Its sound's linear fades from `start` and to `end` (a Transition's overlap included), fitted to it.
+  fade_in: number;
+  fade_out: number;
 }
 
 export interface RenderPlan {
@@ -865,6 +868,9 @@ export interface ClipSegment extends Retiming {
   framing?: Framing | null;
   volume?: number;
   keys?: Keys;
+  // Its sound's fades in and out, 0 to 10 s each (the plan fits them to its length).
+  fade_in?: number;
+  fade_out?: number;
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at

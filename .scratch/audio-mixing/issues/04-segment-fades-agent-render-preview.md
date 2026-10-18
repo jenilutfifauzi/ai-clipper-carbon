@@ -15,12 +15,12 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A Source Segment with a 1 s fade in renders rising from silence: its level at 0.25 s and 0.5 s is within tolerance of a quarter and a half of its level at 1.5 s (tone).
-- [ ] A media Segment's fade out ends in silence at its end.
-- [ ] Fades of 3 s and 3 s on a 4 s Segment are fitted to 2 s and 2 s in the plan.
-- [ ] A fade on a Segment beside a Transition multiplies the crossfade; the render's Clip length is unchanged.
-- [ ] The API and MCP refuse fades on a Freeze frame and outside 0–10 s.
-- [ ] The shared gain vectors gain Segment fade cases, passing in pytest and vitest.
-- [ ] A stored Candidate without fades renders the same command as before.
+- [x] A Source Segment with a 1 s fade in renders rising from silence: its level at 0.25 s and 0.5 s is within tolerance of a quarter and a half of its level at 1.5 s (tone).
+- [x] A media Segment's fade out ends in silence at its end.
+- [x] Fades of 3 s and 3 s on a 4 s Segment are fitted to 2 s and 2 s in the plan.
+- [x] A fade on a Segment beside a Transition multiplies the crossfade; the render's Clip length is unchanged.
+- [x] The API and MCP refuse fades on a Freeze frame and outside 0–10 s.
+- [x] The shared gain vectors gain Segment fade cases, passing in pytest and vitest.
+- [x] A stored Candidate without fades renders the same command as before.

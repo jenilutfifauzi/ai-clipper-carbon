@@ -78,6 +78,8 @@ class WordEdit:
 MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
 Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
+# How long a sound's linear fade in or out lasts, in seconds.
+Fade = Annotated[FiniteFloat, Field(ge=0, le=10)]
 # A Speed (docs/adr/0009): how many seconds of its range an item plays in one on the Timeline.
 MIN_SPEED, MAX_SPEED = 0.0625, 16.0
 Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
@@ -523,8 +525,8 @@ class MusicClip:
     secs: TimelineSecs
     offset: FileOffset = 0.0
     volume: Volume = 1.0
-    fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
-    fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
+    fade_in: Fade = 0.0
+    fade_out: Fade = 0.0
     keys: Keys = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -643,6 +645,10 @@ class Segment:
     keys: Keys = field(default_factory=dict)
     # A Freeze frame's (docs/adr/0009): how long it holds the frame at `start`, silent; `end` is `start`.
     hold: TimelineSecs | None = None
+    # Its sound faded in from its start on the Timeline and out to its end (a Transition's overlap
+    # included), linearly, as a Music Clip's; the planner fits them to its length. A Freeze frame has none.
+    fade_in: Fade = 0.0
+    fade_out: Fade = 0.0
 
     def __post_init__(self) -> None:
         if self.media is None and any(self.keys.values()):
@@ -655,13 +661,15 @@ class Segment:
 
 def _check_held(segment: Segment) -> None:
     """ValueError unless a Freeze frame's other fields are a held frame's: its `end` at its `start`,
-    at 1x, forwards, and no volume Keyframes (it is silent)."""
+    at 1x, forwards, and no volume Keyframes nor fades (it is silent)."""
     if segment.end != segment.start:
         raise ValueError(f"Segment {segment.id} holds the frame at its start for {segment.hold:g} s: its end must equal its start")
     if segment.speed != 1 or segment.pitch or segment.reverse:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold): it has no Speed, pitch or Reverse")
     if KeyProperty.VOLUME in segment.keys:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no volume Keyframes")
+    if segment.fade_in or segment.fade_out:
+        raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no fades")
 
 
 class TransitionKind(StrEnum):
