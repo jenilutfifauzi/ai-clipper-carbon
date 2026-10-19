@@ -1,4 +1,4 @@
-import type { CandidateChange, RenderPlan } from "../../../api";
+import type { CandidateChange, Keys, RenderPlan } from "../../../api";
 
 // The Tracks of the Advanced Edit's Timeline (GLOSSARY.md), and what is hidden, muted or locked of
 // them. Kept in the editor only: never saved, never undone, and the Clip renders as if none were set.
@@ -51,10 +51,19 @@ export function heardDraft<T extends CandidateChange>(draft: T, { muted }: Track
   if (!muted.length) return draft;
   const next = { ...draft };
   if (muted.includes("music")) next.music = [];
-  if (muted.includes("overlay") && next.overlays) next.overlays = next.overlays.map((overlay) => ({ ...overlay, volume: 0 }));
+  if (muted.includes("overlay") && next.overlays) next.overlays = next.overlays.map(silenced);
   if (muted.includes("video")) {
-    next.source_volume = 0;
-    if (next.segments) next.segments = next.segments.map((segment) => ({ ...segment, volume: 0 }));
+    // Each Segment silenced, not `source_volume`: that also scales a Detached sound of the Source,
+    // which is on the Music Track. A draft without Segments is the Clip as filmed, all one sound.
+    if (next.segments) next.segments = next.segments.map(silenced);
+    else next.source_volume = 0;
   }
   return next;
+}
+
+// An item at volume 0, its volume Keyframes (which would stand in for `volume`) dropped.
+function silenced<I extends { volume?: number; keys?: Keys }>(item: I): I {
+  if (!item.keys?.volume) return { ...item, volume: 0 };
+  const { volume: _, ...keys } = item.keys;
+  return { ...item, volume: 0, keys };
 }

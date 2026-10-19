@@ -8,14 +8,14 @@ import { eventPlay, soundAsk, useRetimedCopies } from "./retimedCopy";
 
 let context: AudioContext | null = null;
 
-// The page's AudioContext, made on first need. A browser starts it suspended until a click or a key
-// press, so it is resumed on every one.
+// The page's AudioContext, made on first need. A browser starts it suspended until a click, a tap or a
+// key press, so it is resumed on every one: a mouse's pointerdown, or a touch's pointerup (a touch
+// grants user activation only as it lifts, so a phone's first tap on Play would leave it silent).
 function audioContext(): AudioContext | null {
   if (context || typeof AudioContext === "undefined") return context;
   context = new AudioContext();
   const resume = () => void context?.resume();
-  window.addEventListener("pointerdown", resume, true);
-  window.addEventListener("keydown", resume, true);
+  for (const type of ["pointerdown", "pointerup", "keydown"]) window.addEventListener(type, resume, true);
   return context;
 }
 

@@ -95,6 +95,22 @@ describe("the preview's master bus", () => {
     ]);
   });
 
+  // A touch grants the page user activation on its pointerup (touchend), not its pointerdown: a phone's
+  // first tap on Play left the context suspended, and the preview silent, until a second tap.
+  test("is resumed by a tap's pointerup, as well as by a click's pointerdown or a key", async () => {
+    const listeners = new Map<string, () => void>();
+    vi.stubGlobal("window", { addEventListener: (type: string, listener: () => void) => listeners.set(type, listener) });
+    const { setVolume } = await import("./PreviewMusic");
+    setVolume(element(), 1);
+    const [context] = contexts;
+    const resume = vi.spyOn(context, "resume");
+    for (const type of ["pointerdown", "pointerup", "keydown"]) {
+      resume.mockClear();
+      listeners.get(type)?.();
+      expect(resume, type).toHaveBeenCalledTimes(1);
+    }
+  });
+
   test("is not made before anything is heard", async () => {
     const { heardBus } = await import("./masterBus");
     expect(heardBus()).toBeNull();
