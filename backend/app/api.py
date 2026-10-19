@@ -37,6 +37,7 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, preview_plan
 from app.encoding import Codec
 from app.events import candidate_events, job_events
+from app.export_files import save_frame
 from app.export_presets import ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
@@ -407,6 +408,24 @@ class RenderRequest(BaseModel):
     export_preset_id: str | None = None
 
 
+class FrameRequest(BaseModel):
+    """The frame to save: at `at` seconds of Timeline time, of the Candidate or of `draft` (as a
+    Preview Plan's), at an Export Preset's size (the default's when left out)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: Annotated[FiniteFloat, Field(ge=0)]
+    draft: CandidateUpdate | None = None
+    export_preset_id: str | None = None
+
+
+class SavedFrame(BaseModel):
+    """A saved frame (an Export file): its path in the Job's directory, and its URL."""
+
+    file: str
+    url: str
+
+
 class RetimedRequest(BaseModel):
     """A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
     `speed`, its pitch following it with `pitch`."""
@@ -764,6 +783,52 @@ def candidate_preview_plan(
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
     edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
     edit; 409 for a Job without Candidates."""
+    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, body)
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/frame")
+def save_candidate_frame(
+    job_id: str,
+    candidate_id: str,
+    body: FrameRequest,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    export_presets: ExportPresets,
+    logos: Logos,
+    library: Media,
+) -> SavedFrame:
+    """Save the frame at `at` (Timeline time) of the Candidate, or of `draft` (as the Preview Plan
+    plans it: from cached analysis only), drawn as its render would draw it at the Export Preset's
+    frame rate and size (the default's when left out), as a PNG in the Job's exports/
+    (`<candidate>-<mm.ss.ff>.png`, overwritten). Synchronous, outside the render queue: the Job's
+    status doesn't change. 422 for an unknown Preset or a draft that isn't a valid edit."""
+    try:
+        export = (export_presets.default() if body.export_preset_id is None else export_presets.get(body.export_preset_id)).settings
+    except ExportPresetNotFound as exc:
+        raise HTTPException(422, f"No Export Preset {exc}") from None
+    planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, body.draft, export.fps)
+    job = store.get(job_id)
+    try:
+        file = save_frame(job, store.job_dir(job_id), candidate_id, planned.plan, body.at, export, settings, library, logos)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from None
+    return SavedFrame(file=file, url=f"/media/{job_id}/{file}")
+
+
+def _draft_plan(
+    job_id: str,
+    candidate_id: str,
+    store: JobStore,
+    settings: Settings,
+    presets: PresetStore,
+    logos: LogoStore,
+    library: MediaStore,
+    body: CandidateUpdate | None,
+    fps: float | None = None,
+) -> PreviewPlan:
+    """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved, at `fps` (the
+    Source's when None)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
@@ -780,7 +845,7 @@ def candidate_preview_plan(
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
         _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, fps)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:

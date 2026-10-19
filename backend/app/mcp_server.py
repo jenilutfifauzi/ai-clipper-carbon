@@ -577,6 +577,14 @@ def build_mcp(app: FastAPI) -> MCPServer:
         poster on this Mac, and its Export Settings (these never make a Clip stale)."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
 
+    @tool()
+    async def save_frame(job_id: str, candidate_id: str, at: float, export_preset_id: str | None = None) -> dict:
+        """Save the Candidate's frame at `at` (Timeline seconds) as a PNG, as its render would draw it,
+        at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued."""
+        body = {"at": at, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
+        return {"path": str(app.state.store.job_dir(job_id).resolve() / saved["file"])}
+
     # Styles, assets and the Channel Profile
 
     @tool(read_only=True)
