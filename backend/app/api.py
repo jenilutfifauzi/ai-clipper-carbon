@@ -9,7 +9,20 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from app import emoji, review
 from app.candidates import (
@@ -245,6 +258,23 @@ class CandidateUpdate(BaseModel):
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
     # is the Candidate's. Left out, the edit is saved over whatever is there.
     revision: Annotated[int, Field(ge=1)] | None = None
+    # The Music Clips (by id) sent without `duck`: a new song's then ducks by default (docs/adr/0016).
+    # Read from what was sent, so that an explicit null keeps it off.
+    _duck_unset: frozenset[str] = PrivateAttr(default=frozenset())
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _unset_ducks(cls, given: Any, handler: ModelWrapValidatorHandler["CandidateUpdate"]) -> "CandidateUpdate":
+        update = handler(given)
+        music = given.get("music") if isinstance(given, dict) else None
+        if isinstance(music, list):
+            update._duck_unset = frozenset(str(clip.get("id")) for clip in music if isinstance(clip, dict) and "duck" not in clip)
+        return update
+
+    @property
+    def change(self) -> CandidateChange:
+        """The edit, as `review.update` makes it."""
+        return CandidateChange(**{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset)
 
 
 class RestoreBody(BaseModel):
@@ -672,7 +702,7 @@ def update_candidate(
     if body.style_overrides is not None:
         _check_logo(logos, body.style_overrides.watermark.get("logo"))
     _check_media_of(library, body)
-    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields})
+    change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
         candidates, candidate = review.update(candidates, candidate_id, change, episode)
@@ -756,7 +786,7 @@ def candidate_preview_plan(
     if body is not None:
         _check_media_of(library, body)
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
-    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
+    change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
         _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)

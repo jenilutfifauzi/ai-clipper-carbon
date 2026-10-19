@@ -17,7 +17,17 @@ from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.planner import RenderPlan, match_edits
-from app.rendering import Analysis, analysed_range, candidate_plan, needed_analysis, saved_analysis, saved_words, transcript_words
+from app.rendering import (
+    Analysis,
+    analysed_range,
+    candidate_plan,
+    music_words,
+    needed_analysis,
+    saved_analysis,
+    saved_words,
+    transcript_words,
+    words_at_hand,
+)
 from app.segment_time import segment_time
 from app.styles import PresetStore
 from app.transcript import Transcript, Word
@@ -89,8 +99,11 @@ def preview_plan(
         )
         for segment, wanted in zip(segments, needed)
     ]
+    # Heard, captioned or not: they duck the music (docs/adr/0016), as its Music Clips of the Source's do.
+    language, model = job.options.language, settings.whisper_model
+    music = music_words(candidate, lambda start, end: words_at_hand(job_dir, transcript, start, end, source.duration, language, model))
     plan = candidate_plan(
-        candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
+        candidate, source, words, analyses, presets, settings.camera, logos, media, captioned=job.options.captions, music=music
     )
     # Its picture layers' pictures, which the preview shows (docs/adr/0010): made now if they aren't there.
     make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)

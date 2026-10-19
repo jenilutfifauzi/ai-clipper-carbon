@@ -549,7 +549,8 @@ export type ShapeEvent = PictureLayerEvent<Shape>;
 // into it (ADR 0016; in Reverse, backwards, as a video Overlay's sound), at `volume` (0 to 2), faded
 // in and out. Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades
 // multiply them.
-// Muted (ADR 0016), it is silent and keeps them.
+// Muted (ADR 0016), it is silent and keeps them. With `duck`, a depth in dB (-30 to -1), it is
+// turned down that far while speech is heard (ADR 0016); a Music Clip of the Source has none.
 export interface MusicClip extends Omit<Retiming, "hold"> {
   id: string;
   media: string | null;
@@ -561,6 +562,7 @@ export interface MusicClip extends Omit<Retiming, "hold"> {
   fade_out: number;
   keys: Keys;
   muted?: boolean;
+  duck?: number | null;
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
@@ -577,6 +579,8 @@ export interface Retiming {
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
 // `volume`; its fades multiply them. It plays (end − start) × speed of its item: with `source`, of
 // the Source (`media` null), at the Clip's `source_volume` too. A Muted one (ADR 0016) isn't heard.
+// A ducked one (`duck` dB) is turned down under the spans of `speech` that reach it, in seconds into
+// the Clip, by the plan's `ducking` (ADR 0016).
 export interface AudioEvent extends Omit<Retiming, "hold"> {
   media: string | null;
   source?: boolean;
@@ -589,6 +593,16 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   gain: Keyframe[];
   id: string;
   muted?: boolean;
+  duck?: number | null;
+  speech?: [number, number][];
+}
+
+// How a ducked sound follows speech (ADR 0016): down over `lead_secs` before a span, up over
+// `release_secs` after it; spans less than `bridge_secs` apart are one.
+export interface Ducking {
+  lead_secs: number;
+  release_secs: number;
+  bridge_secs: number;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -806,6 +820,8 @@ export interface RenderPlan {
   transitions: TransitionEvent[];
   // The Shapes that show, in drawing order, under the Text Layers.
   shapes: ShapeEvent[];
+  // Its ducked sounds' ramps.
+  ducking?: Ducking;
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the

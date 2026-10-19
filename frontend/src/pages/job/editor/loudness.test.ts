@@ -6,7 +6,7 @@ import cases from "../../../../../backend/tests/fixtures/gain_vectors.json";
 import type { AudioEvent, Ease, SegmentPlan } from "../../../api";
 import { fadesWithin } from "../advanced/edits";
 import { EASE_IN, LINEAR, valueAt } from "./keyframes";
-import { CURVE_RATE, eventSound, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
+import { changing, CURVE_RATE, eventSound, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
 import { playedFrom } from "./playback";
 
 describe("a sound", () => {
@@ -17,10 +17,12 @@ describe("a sound", () => {
       const keys: { at: number; value: number; ease?: number[] }[] = sound.keys ?? [];
       const gain = keys.map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
       const muted = sound.muted ?? false;
+      // A ducked one as the plan has it, with the cases' ramps (`eventSound`).
+      const ducked = "duck" in sound ? { duck: sound.duck, speech: sound.speech as [number, number][] } : {};
       const event: Heard =
         "item" in of && of.item === "segment"
           ? segmentSound(segment({ start: sound.start, end: sound.end, volume: sound.volume, gain, ...fades, muted }), 1)
-          : { id: "m", media: "song", start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades, muted };
+          : eventSound({ id: "m", media: "song", start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades, muted, ...ducked }, 1, cases.ducking);
       for (const [time, expected] of at) expect(Math.abs(loudness(event, time) - expected), `at ${time}`).toBeLessThan(cases.tolerance);
     });
   }
@@ -142,5 +144,24 @@ describe("a Music Clip of the Source's sound", () => {
     const song = { ...episode, media: "song", source: false };
     expect(eventSound(song, 0.5)).toBe(song);
     expect(eventSound(episode, 1)).toBe(episode);
+  });
+});
+
+// .scratch/audio-mixing/issues/10: a ducked song, as its gain node follows it.
+describe("a ducked sound", () => {
+  const ducking = { lead_secs: 0.25, release_secs: 0.5, bridge_secs: 0.8 };
+  const song: AudioEvent = { id: "m", media: "song", start: 0, end: 10, offset: 0, volume: 1, fade_in: 0, fade_out: 0, gain: [], duck: -20, speech: [[3, 5]] };
+
+  test("follows a curve that goes down under speech and comes back up, as the plan's ramps say", () => {
+    const sound = eventSound(song, 1, ducking);
+    expect(changing(sound)).toBe(true);
+    const curve = loudnessCurve(sound, 2);
+    // From 2 s, 100 values a second: down from 2.75 s, at a tenth from 3 to 5 s, up by 5.5 s.
+    for (const [i, expected] of [[0, 1], [85, 0.64], [150, 0.1], [325, 0.55], [400, 1]]) expect(curve[i]).toBeCloseTo(expected, 5);
+  });
+
+  test("isn't ducked without the plan's ramps, nor follows a curve without speech to duck under", () => {
+    expect(loudness(eventSound(song, 1), 4)).toBe(1);
+    expect(changing(eventSound({ ...song, speech: [] }, 1, ducking))).toBe(false);
   });
 });

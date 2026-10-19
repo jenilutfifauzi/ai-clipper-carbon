@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from uuid import uuid4
 
 from app.candidates import (
+    DEFAULT_DUCK,
     Candidate,
     Framing,
     Keys,
@@ -83,6 +84,9 @@ class CandidateChange:
     # The Revision the change was made from: StaleRevision unless it is the Candidate's. None: saved
     # over whatever is there.
     revision: int | None = None
+    # The Music Clips of `music` (by id) whose `duck` the edit didn't set: a new song's ducks by
+    # default (docs/adr/0016).
+    duck_unset: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -199,9 +203,11 @@ def update(
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
     if change.shapes is not None:
         _check_ids("Shape", [shape.id for shape in change.shapes])
+    music = old.music
     if change.music is not None:
         _check_ids("Music Clip", [clip.id for clip in change.music])
         episode.check_music(change.music)
+        music = _ducked_by_default(change.music, old.music, change.duck_unset)
     if change.overlays is not None:
         _check_ids("Overlay", [overlay.id for overlay in change.overlays])
     if change.layout_overrides is not None:
@@ -230,7 +236,7 @@ def update(
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
         text_layers=_pick(change.text_layers, old.text_layers),
         shapes=_pick(change.shapes, old.shapes),
-        music=_pick(change.music, old.music),
+        music=music,
         source_volume=_pick(change.source_volume, old.source_volume),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
@@ -293,6 +299,17 @@ def _merged(edits: list[WordEdit]) -> list[WordEdit]:
     """The edits in time order, leaving out those that change nothing; of two at the same time, the later."""
     by_time = {round(edit.at, 3): edit for edit in edits}
     return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
+
+
+def _ducked_by_default(music: list[MusicClip], old: list[MusicClip], unset: frozenset[str]) -> list[MusicClip]:
+    """The Music Clips an edit gives, a song's (or a video's sound's) that is new to the Candidate
+    and whose `duck` the edit didn't set (`unset`, by id) ducked by DEFAULT_DUCK: Music Clips added
+    from now on duck, and stored ones don't (docs/adr/0016)."""
+    had = {clip.id for clip in old}
+    return [
+        replace(clip, duck=DEFAULT_DUCK) if clip.id in unset and clip.id not in had and clip.media is not None else clip
+        for clip in music
+    ]
 
 
 def _joined(transitions: list[Transition], segments: list[Segment]) -> list[Transition]:

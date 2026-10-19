@@ -140,7 +140,8 @@ from app.candidates import (
     TransitionKind,
     WordEdit,
 )
-from app.config import CameraTuning
+from app.config import CameraTuning, DuckTuning
+from app.ducking import Span, duck_at, heard_words, speech_spans, touching
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
 from app.fonts import DEFAULT_FONT, FALLBACK_FACE, on_change, registry
 from app.keyframes import value_at
@@ -497,7 +498,9 @@ class AudioEvent:
     following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`. A
     `muted` one (docs/adr/0016) keeps its volume and Keyframes but isn't heard. With `source` it is
     the Source's sound, which the Clip's own volume scales too (and stays so once `media` names the
-    Retimed copy it is read from)."""
+    Retimed copy it is read from). A ducked one (a Music Clip's with `duck`, docs/adr/0016) is turned
+    down by that many dB under the spans of `speech` that reach it (app/ducking.py), in seconds into
+    the Clip, as the plan's `ducking` says."""
 
     media: str | None
     start: float
@@ -513,6 +516,8 @@ class AudioEvent:
     reverse: bool = False
     muted: bool = False
     source: bool = False
+    duck: float | None = None
+    speech: list[Span] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -850,6 +855,8 @@ class RenderPlan:
     transitions: list[TransitionEvent] = field(default_factory=list)
     # The Shapes that show, in drawing order, under the Text Layers.
     shapes: list[ShapeEvent] = field(default_factory=list)
+    # How its ducked sounds follow speech (docs/adr/0016): the render's and the preview's ramps.
+    ducking: DuckTuning = DuckTuning()
 
     @property
     def duration(self) -> float:
@@ -895,6 +902,9 @@ def plan_render(
     media_info: dict[str, MediaInfo] | None = None,
     framing: Framing | None = None,
     shapes: list[Shape] | None = None,
+    captioned: bool = True,
+    music_words: dict[str, list[Word]] | None = None,
+    ducking: DuckTuning = DuckTuning(),
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -918,7 +928,11 @@ def plan_render(
     With `main_track` (each Segment's SegmentInput), the Clip is cut into those Segments, back to back (`start` and `end` being the hull
     of what they show) but for their Transitions, each framed and captioned from its own (ignoring
     `scenes`, `faces`, `layout_overrides`, `words` and `word_edits`); the other times are all in
-    seconds into the Clip."""
+    seconds into the Clip.
+
+    The Words (the Clip's, or each Segment's) are speech, which ducks the music (`_ducked`, by
+    `ducking`), with those of its Music Clips of the Source (`music_words`, by id); not `captioned`,
+    they are heard and not captioned."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     segments: list[SegmentPlan] = []
@@ -965,11 +979,16 @@ def plan_render(
             at, before = round(at + length, 3), length
         duration = at
         words, word_edits = _segment_words(main_track, segments, cuts, duration)
+        # Speech is the Source's, not a Muted Segment's (docs/adr/0016).
+        unheard = [given if given.media is None and not given.muted else replace(given, words=None) for given in main_track]
+        heard = _segment_words(unheard, segments, cuts, duration)[0] or []
         plans = _keyed_manual(_frozen(plans, stills, showings, source), showings, rate)
     else:
         duration = round(SegmentTime(start, end).length, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
         plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
+        heard = heard_words(words or [], 0.0, duration)
+    audio = audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {})
     return RenderPlan(
         start=start,
         end=end,
@@ -977,19 +996,20 @@ def plan_render(
         source_height=source.height,
         fps=source.fps,
         scenes=plans,
-        captions=_captions(words or [], plans, duration, caption_style, word_edits or [], cuts),
+        captions=_captions((words or []) if captioned else [], plans, duration, caption_style, word_edits or [], cuts),
         hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
-        audio=audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {}),
+        audio=_ducked(audio, heard, music_words or {}, ducking),
         source_volume=source_volume,
         segments=segments,
         overlays=overlay_events(overlays or [], duration, media_info or {}),
         transitions=transitions,
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
+        ducking=ducking,
     )
 
 
@@ -1015,6 +1035,20 @@ def _segment_words(
                 words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
         edits += [replace(edit, at=round(time.offset_of(edit.at) + segment.start, 3)) for edit in given.word_edits]
     return words, sorted(edits, key=lambda edit: edit.at)
+
+
+def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, list[Word]], ducking: DuckTuning) -> list[AudioEvent]:
+    """The sounds, each ducked one with the spans of speech that reach it (app/ducking.py): `words`,
+    the Source Segments' as heard, and the Words of each Music Clip of the Source heard forwards and
+    not Muted (`music_words`, by its id, in seconds from its offset), where it plays."""
+    if all(event.duck is None for event in audio):
+        return audio
+    said = list(words)
+    for event in audio:
+        if event.source and not event.muted and not event.reverse:
+            said += heard_words(music_words.get(event.id, []), event.start, event.end, event.speed)
+    spans = speech_spans(said, ducking)
+    return [replace(event, speech=touching(spans, event.start, event.end, ducking)) if event.duck is not None else event for event in audio]
 
 
 def _framed(
@@ -1422,17 +1456,18 @@ def audio_events(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
                 clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
-                clip.media is None,
+                clip.media is None, clip.duck,
             )
         )
     return events
 
 
-def gain_at(event: AudioEvent | SegmentPlan, time: float) -> float:
+def gain_at(event: AudioEvent | SegmentPlan, time: float, ducking: DuckTuning = DuckTuning()) -> float:
     """How loud `event` (a Music Clip's or an Overlay's sound, or a Segment's before the Clip's own
     volume and a Transition's crossfade) is heard `time` seconds into the Clip: its volume, or its
-    Keyframes sampled there (app/keyframes.py), through its fades' linear ramps; silent outside it,
-    and Muted. The same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are
+    Keyframes sampled there (app/keyframes.py), through its fades' linear ramps, and a ducked one's
+    duck under its speech (`duck_at`, by its plan's `ducking`); silent outside it, and Muted. The
+    same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are
     tested on the cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
     into = time - event.start
     if into < 0 or time > event.end or event.muted:
@@ -1442,7 +1477,8 @@ def gain_at(event: AudioEvent | SegmentPlan, time: float) -> float:
         share = min(share, into / event.fade_in)
     if event.fade_out > 0:
         share = min(share, (event.end - time) / event.fade_out)
-    return value_at(event.gain, into, event.volume) * min(max(share, 0.0), 1.0)
+    ducked = duck_at(event.speech, event.duck, time, ducking) if isinstance(event, AudioEvent) and event.duck is not None else 1.0
+    return value_at(event.gain, into, event.volume) * min(max(share, 0.0), 1.0) * ducked
 
 
 def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[OverlayEvent]:

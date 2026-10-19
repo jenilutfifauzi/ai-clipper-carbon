@@ -1,4 +1,4 @@
-import type { AudioEvent, Keyframe } from "../../../api";
+import type { AudioEvent, Ducking, Keyframe } from "../../../api";
 import { valueAt } from "./keyframes";
 
 // A keyed sound's gain is set as a curve of this many values a second of the Clip's time (ADR 0008).
@@ -6,13 +6,31 @@ export const CURVE_RATE = 100;
 
 /**
  * A sound as the preview hears it: a Music Clip's (or an Overlay video's), or a Segment's
- * (`segmentSound`), which a Transition taking it away fades out over its `crossfade`.
+ * (`segmentSound`), which a Transition taking it away fades out over its `crossfade`. A ducked one
+ * carries its plan's `ducking` (`eventSound`).
  */
-export type Heard = AudioEvent & { crossfade?: { start: number; end: number } };
+export type Heard = AudioEvent & { crossfade?: { start: number; end: number }; ducking?: Ducking };
+
+/**
+ * How far a sound ducked `depth` dB under `spans` (seconds into the Clip) is turned down at `time`:
+ * 1 away from speech, the depth's gain over a span, in straight lines between over the lead before
+ * one and the release after it; the lowest of the spans'. As duck_at in backend/app/ducking.py.
+ */
+export function duckAt(spans: [number, number][], depth: number, time: number, ducking: Ducking): number {
+  const low = 10 ** (depth / 20);
+  let share = 1;
+  for (const [start, end] of spans) {
+    if (time < start) share = Math.min(share, 1 + (low - 1) * Math.max(0, (time - start + ducking.lead_secs) / ducking.lead_secs));
+    else if (time <= end) share = low;
+    else share = Math.min(share, low + (1 - low) * Math.min(1, (time - end) / ducking.release_secs));
+  }
+  return share;
+}
 
 /**
  * How loud a sound is heard `time` seconds into the Clip: its volume, or its Keyframes sampled there,
- * through its fades' linear ramps; silent outside it, and when Muted (ADR 0016). As the renderer has
+ * through its fades' linear ramps, and a ducked one's duck (`duckAt`); silent outside it, and when
+ * Muted (ADR 0016). Track mute doesn't reach the duck: speech counts by `muted` alone. As the renderer has
  * it (gain_at in backend/app/planner.py): both are tested on the cases in
  * backend/tests/fixtures/gain_vectors.json, so that they can't drift. Under a Transition's
  * `crossfade`, that falls linearly from 1 to 0 over it and multiplies the rest, as acrossfade does in
@@ -25,7 +43,8 @@ export function loudness(event: Heard, time: number): number {
   if (event.fade_out > 0) share = Math.min(share, (event.end - time) / event.fade_out);
   const { crossfade } = event;
   const taken = crossfade && time > crossfade.start ? (crossfade.end - time) / (crossfade.end - crossfade.start) : 1;
-  return valueAt(event.gain, time - event.start, event.volume) * Math.max(0, Math.min(1, share)) * Math.max(0, Math.min(1, taken));
+  const ducked = event.duck != null && event.ducking ? duckAt(event.speech ?? [], event.duck, time, event.ducking) : 1;
+  return valueAt(event.gain, time - event.start, event.volume) * Math.max(0, Math.min(1, share)) * Math.max(0, Math.min(1, taken)) * ducked;
 }
 
 /**
@@ -70,15 +89,18 @@ export function segmentSound(
 /**
  * A Music Clip's (or an Overlay video's) sound as heard, from its plan's `event`: a Music Clip of the
  * Source's (`source`) times the Clip's own sound (`sourceVolume`), its Keyframes' values too, as the
- * renderer has it; any other, and the Source's at 1, the event itself.
+ * renderer has it; a ducked one with its plan's `ducking`; any other, and the Source's at 1, the
+ * event itself.
  */
-export function eventSound(event: AudioEvent, sourceVolume: number): Heard {
+export function eventSound(event: AudioEvent, sourceVolume: number, ducking?: Ducking): Heard {
+  if (event.duck != null && ducking) return { ...eventSound(event, sourceVolume), ducking };
   if (!event.source || sourceVolume === 1) return event;
   return { ...event, volume: event.volume * sourceVolume, gain: event.gain.map((key) => ({ ...key, value: key.value * sourceVolume })) };
 }
 
-/** Whether a sound's loudness changes over its time: keyed, faded or taken away by a Transition. */
-export const changing = (event: Heard): boolean => event.gain.length > 0 || event.fade_in > 0 || event.fade_out > 0 || !!event.crossfade;
+/** Whether a sound's loudness changes over its time: keyed, faded, ducked under speech or taken away by a Transition. */
+export const changing = (event: Heard): boolean =>
+  event.gain.length > 0 || event.fade_in > 0 || event.fade_out > 0 || !!event.crossfade || (event.duck != null && !!event.speech?.length);
 
 /**
  * `event`'s loudness from `time` to its end, CURVE_RATE values a second of the Clip's time, the

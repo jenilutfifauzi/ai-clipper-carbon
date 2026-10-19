@@ -104,12 +104,12 @@ async def test_the_agent_mutes_and_unmutes_items_and_the_dry_run_marks_them(mcp,
 
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
     assert [segment.get("muted") for segment in plan["segments"]] == [None, True]
-    assert [(sound["id"], sound.get("muted")) for sound in plan["sounds"]] == [("b", True), ("m", True)]
+    assert [(sound["id"], sound.get("muted")) for sound in plan["sounds"]] == [("a", None), ("b", True), ("m", True)]
 
     merged = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "b", "muted": False}], music=[{"id": "m", "muted": False}])
     assert (merged["segments"][1]["muted"], merged["music"][0]["muted"], merged["music"][0]["volume"]) == (False, False, 0.7)
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
-    assert "sounds" not in plan and all("muted" not in segment for segment in plan["segments"])
+    assert all("muted" not in item for item in plan["segments"] + plan["sounds"])
 
 
 # Seam A: the real ffmpeg

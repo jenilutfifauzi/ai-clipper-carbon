@@ -240,6 +240,11 @@ Edits:
 - `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
   the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
   Muted ones (`segments`, `sounds`).
+- A Music Clip of a song or a video's sound with `duck` (dB, -30..-1; null: off) is turned down that
+  far while speech is heard: the Words of the episode's Segments and Music Clips without media
+  that aren't Muted, captions on or not. Down over 0.25 s before speech, through pauses under 0.8 s,
+  up over 0.5 s after. One added without `duck` gets -12, so give null to keep it off; one without
+  media has none. The dry run's `sounds` list every sound's span, fades, Muted and `ducked` stretches.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -470,6 +475,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         dry_run, nothing is saved: the Preview Plan of the changes comes back instead, its events in
         Timeline time, and its Words with the `at` a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
+        # A Music Clip given without `duck` is sent without it, so that a new song's ducks by default.
+        for clip in body.get("music") or []:
+            if clip["id"] in changes._duck_unset:
+                del clip["duck"]
         if dry_run:
             return _plan_view(
                 await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),
@@ -880,9 +889,10 @@ def _plan_view(
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
-    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a Segment's, a
-    Music Clip's, an Overlay's), which sounds are Muted, what a sound at a Speed or in Reverse reads
-    (`_video_read`), every Music Clip of the Source (`source`), each Shape's and each Text Layer's
+    Scene's Keyframes past its end (`ignored`), every sound (a Segment's, a Music Clip's, an
+    Overlay's) with its span, fades, volume Keyframes, whether it is Muted, a ducked one's depth and
+    where it is turned down (`_ducked`), what a sound at a Speed or in Reverse reads (`_video_read`),
+    and whether it is the Source's (`source`, a Music Clip's), each Shape's and each Text Layer's
     (with its lines) box and picture's URL (`picture_url`, by its name) as a picture layer's
     (`_layer_view`), and the Words."""
     plan = preview["plan"]
@@ -929,14 +939,25 @@ def _plan_view(
                 "id": event["id"], "media": event["media"], **({"source": True} if event.get("source") else {}),
                 **_times(event, "start", "end"),
                 **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
-                **({"muted": True} if event["muted"] else {}),
+                **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
+                **({"duck": event["duck"], "ducked": _ducked(event, plan["ducking"])} if event.get("duck") is not None else {}),
                 **(_video_read(event, copied) if _retimed(event) else {}),
             }
+            # A silent video's Segment and a Freeze frame have no sound.
             for event in plan["segments"] + plan["audio"]
-            if event["gain"] or event["muted"] or _retimed(event) or event.get("source")
+            if not event.get("silent") and event.get("hold") is None
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _ducked(event: dict, ducking: dict) -> list[list[float]]:
+    """Where a ducked sound is turned down, ramps included: around each span of its speech, within it."""
+    stretches = [
+        [round(max(event["start"], start - ducking["lead_secs"]), 2), round(min(event["end"], end + ducking["release_secs"]), 2)]
+        for start, end in event["speech"]
+    ]
+    return [stretch for stretch in stretches if stretch[0] < stretch[1]]
 
 
 def _retimed(event: dict) -> bool:

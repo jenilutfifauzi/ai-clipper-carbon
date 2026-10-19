@@ -1,20 +1,24 @@
 """The gain function (`gain_at`): how loud a sound is heard at a time, on the cases the preview's
 tests read too (fixtures/gain_vectors.json), so that the render's gain and the preview's can't drift.
 Seam B: its fades are fitted to the sound as the planner fits a Music Clip's (`audio_events`) or a
-Segment's (`plan_render`)."""
+Segment's (`plan_render`); a ducked one carries its spans of speech as the plan does, under the
+cases' ramps, which are the config's."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from app.candidates import LINEAR, Ease, Framing, Keyframe, MusicClip
+from app.config import DuckTuning
 from app.planner import AudioEvent, MediaInfo, SegmentInput, SegmentPlan, audio_events, gain_at, plan_render
 from app.video_source import SourceMetadata
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CASES = json.loads((FIXTURES / "gain_vectors.json").read_text())
 CLOSE = CASES["tolerance"]
+DUCKING = DuckTuning(**CASES["ducking"])
 SONG = "ef" * 16
 VIDEO = "ab" * 16
 SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="h264")
@@ -25,10 +29,10 @@ def heard(sound: dict) -> AudioEvent:
     secs = sound["end"] - sound["start"]
     clip = MusicClip(
         "m", media=SONG, start=sound["start"], secs=secs, volume=sound.get("volume", 1.0), fade_in=sound.get("fade_in", 0.0),
-        fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound), muted=sound.get("muted", False),
+        fade_out=sound.get("fade_out", 0.0), keys=keys_of(sound), muted=sound.get("muted", False), duck=sound.get("duck"),
     )
     [event] = audio_events([clip], sound["end"] + 1, {SONG: MediaInfo(0, 0, secs, True)})
-    return event
+    return replace(event, speech=[(start, end) for start, end in sound.get("speech", [])])
 
 
 def played(sound: dict) -> SegmentPlan:
@@ -55,4 +59,8 @@ def keys_of(sound: dict) -> dict:
 def test_a_sound_is_as_loud_as_the_shared_cases_say(case):
     event = played(case["sound"]) if case.get("item") == "segment" else heard(case["sound"])
     for time, gain in case["at"]:
-        assert gain_at(event, time) == pytest.approx(gain, abs=CLOSE), time
+        assert gain_at(event, time, DUCKING) == pytest.approx(gain, abs=CLOSE), time
+
+
+def test_the_cases_ramps_are_the_configs():
+    assert DUCKING == DuckTuning()

@@ -83,6 +83,10 @@ Fade = Annotated[FiniteFloat, Field(ge=0, le=10)]
 # A Speed (docs/adr/0009): how many seconds of its range an item plays in one on the Timeline.
 MIN_SPEED, MAX_SPEED = 0.0625, 16.0
 Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
+# How far a Music Clip is turned down while speech is heard (Ducking, docs/adr/0016), in dB; and how
+# far a song's added from now on is, unless the edit says (app/review.py).
+Duck = Annotated[FiniteFloat, Field(ge=-30, le=-1)]
+DEFAULT_DUCK = -12.0
 
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
@@ -516,7 +520,8 @@ class Shadow:
 class MusicClip:
     """A song (or a video's sound) from the Media Library under the Clip, or without `media` the
     Source's sound, heard from `start` for `secs` in Timeline time: secs * speed of it from `offset`
-    seconds in, at `volume` (its volume `keys` in place of it), faded in and out (docs/adr/0008, 0016)."""
+    seconds in, at `volume` (its volume `keys` in place of it), faded in and out, ducked under speech
+    by `duck` dB (docs/adr/0008, 0016)."""
     # Its read is kept within its file with the Media Library at hand (app/api.py), or within the
     # Source (app/review.py), and its fades multiply its keys. The Source's is also at the Clip's
     # own volume (`source_volume`), as a Segment of it is; `offset` is then a time on its timeline.
@@ -537,11 +542,16 @@ class MusicClip:
     keys: Keys = field(default_factory=dict)
     # Switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
     muted: bool = False
+    # Turned down by this many dB while speech is heard (docs/adr/0016); None: not ducked. The
+    # Source's sound is speech itself, and is never ducked.
+    duck: Duck | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.start, str):
             # `media` is given by name (it may be left out): MusicClip(id, start, secs, media=...).
             raise TypeError(f"Music Clip {self.id} was given its media in place of its start")
+        if self.media is None and self.duck is not None:
+            raise ValueError(f"Music Clip {self.id} plays the episode's sound, which is never ducked: it has no duck")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
 
 

@@ -84,7 +84,7 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * proxy) or its Retimed copy (of Job `jobId`), at the plan's `source_volume` too (`eventSound`). The Clip's own sound
  * (each deck's master video, heard while its deck is live) is set to the plan's `source_volume`, times the Segment's
  * own volume (a keyed one's Keyframes, as a curve), through its fades, or held at 0 while it is Muted, as a Muted
- * Music Clip or Overlay sound is (`loudness`). Every element is heard through Web Audio and its master bus
+ * Music Clip or Overlay sound is (`loudness`). A ducked Music Clip follows its curve, its duck included. Every element is heard through Web Audio and its master bus
  * (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
@@ -104,7 +104,9 @@ export function PreviewMusic({
   const events = useMemo(() => plan?.audio ?? [], [plan]);
   const sourceVolume = plan?.source_volume ?? 1;
   // As heard: a Music Clip of the Source's at the Clip's own sound too.
-  const sounds = useMemo(() => events.map((event) => eventSound(event, sourceVolume)), [events, sourceVolume]);
+  // A ducked one with the plan's ramps.
+  const ducking = plan?.ducking;
+  const sounds = useMemo(() => events.map((event) => eventSound(event, sourceVolume, ducking)), [events, sourceVolume, ducking]);
   // The Segments' sounds as planned (their fades fitted, each to its end past a Transition's start),
   // which the decks' masters play while the plan has the Segments the playback plays.
   const planned = useMemo(() => plan?.segments.map((segment) => segmentSound(segment, plan.source_volume)) ?? [], [plan]);
@@ -133,7 +135,7 @@ export function PreviewMusic({
       sounds.forEach((sound, i) => {
         const element = players.current.get(key(sound, i));
         if (element && follow(element, playback, plays.current[i].span)) {
-          if (sound.gain.length) followCurve(element, playback, sound);
+          if (changing(sound)) followCurve(element, playback, sound);
           else setVolume(element, loudness(sound, playback.shownTime));
         }
       });

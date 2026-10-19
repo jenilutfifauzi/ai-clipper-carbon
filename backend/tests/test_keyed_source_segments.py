@@ -102,7 +102,7 @@ async def test_the_agent_keys_a_source_segments_volume_and_dry_runs_it(mcp):
     assert "Segment b shows the episode, whose Layouts frame it: it has no scale Keyframes" in message, message
 
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
-    [sound] = plan["sounds"]
+    [sound] = [sound for sound in plan["sounds"] if sound["id"] == "b"]
     start = plan["segments"][1]["start"]
     assert sound == {
         "id": "b", "media": None, "start": start, "end": plan["segments"][1]["end"],
@@ -125,7 +125,8 @@ def test_a_source_segment_keyed_from_1_to_a_quarter_is_as_loud_as_its_sampled_ga
     assert candidate["end"] - candidate["start"] > 2.3
     dip = [{"at": 1, "value": 1}, {"at": 2, "value": 0.25, "ease": "ease_in"}]
     episode = {"id": "e", "start": candidate["start"], "end": candidate["end"], "keys": {"volume": dip}}
-    under = {"id": "m", "media": tone["id"], "start": 0.0, "secs": 2.3}
+    # Not ducked: it is the measure.
+    under = {"id": "m", "media": tone["id"], "start": 0.0, "secs": 2.3, "duck": None}
     candidate = patch(client, job, candidate, segments=[episode], music=[under])
 
     def ratios(video) -> dict[float, float]:

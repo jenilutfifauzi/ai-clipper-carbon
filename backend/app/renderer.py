@@ -112,6 +112,7 @@ from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shad
 from app.config import FONTS_DIR, RenderTuning
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
+from app.ducking import duck_steps
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
 from app.planner import (
@@ -687,8 +688,9 @@ def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str 
     """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into
     [mix]: each sound its part of what it reads (`reads`, by its place in the plan's audio), played
     at its Speed (`speed_filters`), at its volume (a Music Clip of the Source's at the Clip's own
-    too, as a Segment of it is), faded, delayed to its start. None without music at the Clip's own
-    volume, where the sound goes as it is."""
+    too, as a Segment of it is) ducked under its speech (`duck_steps`), faded, delayed to its start.
+    None without music at the Clip's own volume, where the sound goes as it is. The loudness passes
+    hear the mix after ducking."""
     heard = [(event, reads[i]) for i, event in enumerate(plan.audio) if i in reads]
     # Segments' sounds set to their volumes already (with videos among them) aren't set again.
     volume = 1.0 if source == "[srcv]" else plan.source_volume
@@ -704,10 +706,11 @@ def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str 
         sped = speed_filters(event.speed, event.pitch, rate)
         # The Source's at the Clip's own volume too (a keyed one's after its Keyframes, as a Segment's).
         own = plan.source_volume if event.source else 1.0
+        duck = duck_steps(event.speech, event.duck, plan.ducking, event.start) if event.duck is not None else []
         if event.gain:
-            level = [*_volume(event.gain, event.volume), *([f"volume={own:g}"] if own != 1 else [])]
+            level = [*_volume(event.gain, event.volume, duck), *([f"volume={own:g}"] if own != 1 else [])]
         else:
-            level = _volume(event.gain, event.volume * own)
+            level = _volume(event.gain, event.volume * own, duck)
         filters = [
             f"atrim=start={at:g}:end={at + read:g}", "asetpts=PTS-STARTPTS",
             # Then its time on the Timeline from 0 at its start, which its Keyframes and fades are in.
@@ -734,19 +737,28 @@ def _fades(fade_in: float, fade_out: float, length: float) -> list[str]:
 _GAIN_BLOCK = 480
 
 
-def _volume(gain: Sequence[Keyframe], volume: float) -> list[str]:
+def _volume(gain: Sequence[Keyframe], volume: float, duck: Sequence[tuple[float, float]] = ()) -> list[str]:
     """Filters that set a sound to `volume`, or to its `gain` track (its volume Keyframes, in its own
-    seconds, where its time starts at 0) when it has one: straight lines between points of the
+    seconds, where its time starts at 0) when it has one, times its `duck` (the points of a ducked
+    one's, `duck_steps`, in the same seconds) when it has one: straight lines between points of each
     curve (`linear_steps`, an eased span in 24), summed as one clipped ramp each, with no nesting,
-    evaluated per block of _GAIN_BLOCK samples."""
-    if not gain:
+    the two multiplied, evaluated per block of _GAIN_BLOCK samples."""
+    if not gain and not duck:
         return [f"volume={volume:g}"]
-    points = linear_steps(gain)
+    level = _ramps(linear_steps(gain)) if gain else f"{volume:.6g}"
+    expression = f"({level})*({_ramps(duck)})" if duck else level
+    return [f"asetnsamples=n={_GAIN_BLOCK}:p=0", f"volume=volume='{expression}':eval=frame"]
+
+
+def _ramps(points: Sequence[tuple[float, float]]) -> str:
+    """An expression of `t` that follows straight lines between `points` (time, value), holding the
+    first's value before it and the last's after it: one clipped ramp for each change."""
     terms = [f"{points[0][1]:.6g}"]
     for (start, before), (end, after) in zip(points, points[1:]):
         if after != before and end > start:
-            terms.append(f"{after - before:+.6g}*clip((t-{start:.6g})/{end - start:.6g},0,1)")
-    return [f"asetnsamples=n={_GAIN_BLOCK}:p=0", f"volume=volume='{''.join(terms)}':eval=frame"]
+            # A duck's lead may start before the sound does: t + 0.15 rather than t - -0.15.
+            terms.append(f"{after - before:+.6g}*clip((t{-start:+.6g})/{end - start:.6g},0,1)")
+    return "".join(terms)
 
 
 def _overlay_inputs(

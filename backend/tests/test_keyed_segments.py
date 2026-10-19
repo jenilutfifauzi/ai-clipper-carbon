@@ -139,7 +139,7 @@ async def test_the_agent_is_refused_a_range_that_strands_a_segments_keyframe_and
     }
     # 640x360 fits as 1080x607.5 about the frame's centre: at scale 1, then 2.
     assert [view["bounds"]["width"] for view in scene["bounds_at_keys"]] == [1080, 2160]
-    [sound] = plan["sounds"]
+    [sound] = [sound for sound in plan["sounds"] if sound["id"] == "v"]
     assert sound == {"id": "v", "media": item["id"], "start": start, "end": round(start + 1.5, 3), "keys": {"volume": [{"at": round(start + 0.5, 3), "value": 0.5, "ease": "linear"}]}}
 
 
