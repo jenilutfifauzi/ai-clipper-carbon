@@ -19,6 +19,7 @@ import {
   wordsOfCue,
   type CueScene,
 } from "./cueEdits";
+import { resetCuePosition } from "./cuePlace";
 import type { AdvancedEdits } from "./edits";
 
 const word = (text: string, start: number, end: number, edit: WordEdit | null = null): PreviewWord => ({
@@ -154,12 +155,17 @@ describe("Delete on a picked Cue", () => {
 });
 
 describe("Reset timing after a Split", () => {
-  test("keeps the Cue Edit that starts its Cue as a bare start, dropping one that doesn't", () => {
+  test("and Reset position keep the Cue Edit that starts its Cue as a bare start, dropping one that doesn't", () => {
     const state = edits({ cue_edits: [edit(103.1, { shift: 0.3 })] });
     // Nothing but its Cue Edit parts it from the Cue before: it stays, at 0.
     expect(resetCueTiming(scene(state, [first, second({ needs_join: false })]), SECOND)!.edits.cue_edits).toEqual([edit(103.1)]);
     // A sentence's end parts them anyway: it goes.
     expect(resetCueTiming(scene(state), SECOND)!.edits.cue_edits).toEqual([]);
+    // Reset position alike.
+    const placedAt = edits({ cue_edits: [edit(103.1, { y: 700 })] });
+    const unplaced = { ...edit(103.1), x: null, y: null, scale: null };
+    expect(resetCuePosition(scene(placedAt, [first, second({ needs_join: false })]), SECOND)!.edits.cue_edits).toEqual([unplaced]);
+    expect(resetCuePosition(scene(placedAt), SECOND)!.edits.cue_edits).toEqual([]);
     // A Split's bare start has no timing to reset.
     expect(resetCueTiming(scene(edits({ cue_edits: [edit(103.1)] })), SECOND)).toBeNull();
   });

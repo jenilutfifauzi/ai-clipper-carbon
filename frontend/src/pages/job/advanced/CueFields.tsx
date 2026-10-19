@@ -24,6 +24,7 @@ import {
   type CueScene,
   type ShownCue,
 } from "./cueEdits";
+import { CuePlaceFields } from "./CuePlaceFields";
 import type { AdvancedEdits } from "./edits";
 import { sameCue } from "./pick";
 import type { TrackKind } from "./trackState";
@@ -113,6 +114,7 @@ export function CueFields({
         <RotateCcw aria-hidden size={16} />
         Reset timing
       </Button>
+      {!blocked && <CuePlaceFields cueKey={cueKey} edits={edits} plan={plan} onEdits={(next, group) => onCue({ edits: next, pick: { kind: "cue", key: cueKey } }, group)} />}
     </div>
   );
 }

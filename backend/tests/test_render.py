@@ -1092,6 +1092,10 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
         assert client.patch(url, json={"word_edits": bad}).status_code == 422
 
 
+# A Cue Edit's own place and size, unset.
+UNPLACED = {"x": None, "y": None, "scale": None}
+
+
 def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_source, transcriber, plain_video):
     video_source.video = plain_video
     transcriber.words = HEARD
@@ -1112,8 +1116,8 @@ def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_sour
     candidate = patch(client, job, candidate, cue_edits=edits)
     assert candidate["edited"] is True
     assert candidate["cue_edits"] == [
-        {"at": first["key"]["at"] + 0.01, "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": -0.2, "join": False},
-        {"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": -9.0, "end_delta": 0.0, "join": False},
+        {"at": first["key"]["at"] + 0.01, "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": -0.2, **UNPLACED, "join": False},
+        {"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": -9.0, "end_delta": 0.0, **UNPLACED, "join": False},
     ]
     shown = preview(client, job, candidate)["plan"]
     after = shown["captions"]
@@ -1137,11 +1141,63 @@ def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_sour
         [{"at": 1.0, "shift": 10.5}], [{"at": 1.0, "start_delta": -11}], [{"at": 1.0, "end_delta": "inf"}],
         [{"at": 1.0, "media": "nope"}], [{"shift": 1.0}], [{"at": 1.0}] * 501,
         # A join sets nothing else.
-        [{"at": 1.0, "join": True, "shift": 0.5}], [{"at": 1.0, "join": True, "end_delta": -0.1}],
+        [{"at": 1.0, "join": True, "shift": 0.5}], [{"at": 1.0, "join": True, "end_delta": -0.1}], [{"at": 1.0, "join": True, "y": 700}],
     ):
         assert client.patch(url, json={"cue_edits": bad}).status_code == 422
     joined = patch(client, job, candidate, cue_edits=[{"at": second["key"]["at"], "join": True}])
-    assert joined["cue_edits"] == [{"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0, "join": True}]
+    assert joined["cue_edits"] == [{"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0, **UNPLACED, "join": True}]
+
+
+def test_a_cue_placed_and_scaled_alone_is_burned_at_its_place_and_the_next_at_the_styles(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    magenta = np.array([255, 0, 255])
+    candidate = patch(client, job, candidate, hook_text="", style_overrides={
+        "caption": {"colour": "#FF00FF", "highlight": "none", "outline": 0, "size": 80},
+    })
+    # Rendered once, its Cues are planned from the Clip's own Words.
+    render(client, job)
+    rendered(client, job)
+    first, second = preview(client, job, candidate)["plan"]["captions"][:2]
+    candidate = patch(client, job, candidate, cue_edits=[{"at": first["key"]["at"], "x": 360, "y": 600, "scale": 1.5}])
+    assert candidate["cue_edits"] == [{
+        "at": first["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0,
+        "x": 360, "y": 600, "scale": 1.5, "join": False,
+    }]
+    plan = preview(client, job, candidate)["plan"]
+    moved, after = plan["captions"][:2]
+    assert moved["size"] == 120 and after["size"] == 80 and after["area"] == second["area"]
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    assert json.loads((job_dir / clip["output"]["plan"]).read_text()) == plan
+    metrics = font_metrics()
+
+    def ink(cue: dict) -> tuple[float, float, int]:
+        """Where the cue's magenta ink is, mid-cue: its rows' and columns' middles, and its width."""
+        frame = full_frame(settings, job_dir / clip["output"]["video"], (cue["start"] + cue["end"]) / 2)
+        rows, columns = pixels(frame, magenta)
+        assert len(rows) > 300
+        return (rows.min() + rows.max()) / 2, (columns.min() + columns.max()) / 2, columns.max() - columns.min() + 1
+
+    # The moved Cue is centred at 600 px down, half as big again, and as near 360 px across as keeps
+    # its line in the frame; the next one is where the style puts it.
+    half = metrics.width(cue_text(moved), 120) / 2
+    assert half > 360 and moved["area"]["x"] + moved["area"]["width"] / 2 == round(half)
+    row, column, width = ink(moved)
+    assert row == pytest.approx(600, abs=30) and column == pytest.approx(half, abs=4)
+    assert width == pytest.approx(metrics.width(cue_text(moved), 120), abs=20)
+    row, column, width = ink(after)
+    assert after["area"]["y"] <= row <= after["area"]["y"] + after["area"]["height"] and column == pytest.approx(540, abs=4)
+    assert width == pytest.approx(metrics.width(cue_text(after), 80), abs=20)
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    for bad in ([{"at": 1.0, "scale": 4.5}], [{"at": 1.0, "scale": 0.1}], [{"at": 1.0, "x": 1081}], [{"at": 1.0, "y": -1}]):
+        assert client.patch(url, json={"cue_edits": bad}).status_code == 422
 
 
 def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_source, face_then_two):

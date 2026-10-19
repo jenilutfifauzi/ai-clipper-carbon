@@ -1,4 +1,4 @@
-import type { Cue, Word } from "../../../api";
+import type { Cue, CueKey, Word } from "../../../api";
 
 /** A Cue's Words, line after line. */
 export function cueWords(cue: Cue): Word[] {
@@ -25,4 +25,13 @@ export function cueWordAt(cue: Cue, index: number): [number, number] {
  */
 export function cueLineMiddle(cue: Cue, row: number): number {
   return cue.area.y + cue.area.height / 2 + (row - (cue.lines.length - 1) / 2) * cue.size;
+}
+
+/** A Cue on the preview's stage, by its key: "cue:<media>@<at>" (no media: the Source's). */
+export const cueStageId = (key: CueKey): `cue:${string}` => `cue:${key.media ?? ""}@${key.at.toFixed(3)}`;
+
+/** The key of the Cue a stage id names (cueStageId). */
+export function cueKeyOf(id: `cue:${string}`): CueKey {
+  const [media, at] = id.slice("cue:".length).split("@");
+  return { at: Number(at), media: media || null };
 }

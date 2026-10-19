@@ -135,11 +135,19 @@ export interface CueEdit {
   shift: number;
   start_delta: number;
   end_delta: number;
+  // Its own place, the middle of its lines in output pixels (as the Caption Style's custom position,
+  // kept in the frame), and its size, times the Caption Style's; null or missing: the style's.
+  x?: number | null;
+  y?: number | null;
+  scale?: number | null;
   join: boolean;
 }
 
 // The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
 export const CUE_SHIFT_MAX_SECS = 10;
+// The least and the most a Cue Edit scales its Cue (CUE_MIN_SCALE, CUE_MAX_SCALE in backend/app/candidates.py).
+export const CUE_MIN_SCALE = 0.25;
+export const CUE_MAX_SCALE = 4;
 
 export type Highlight = "colour" | "box" | "none";
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";

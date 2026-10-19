@@ -89,15 +89,18 @@ export function cueEditOf(edits: CueEdit[], plan: RenderPlan, key: CueKey): CueE
 // Seconds of a Cue Edit, to the millisecond, as far as it may go.
 const secs = (value: number) => Math.round(Math.min(Math.max(value, -CUE_SHIFT_MAX_SECS), CUE_SHIFT_MAX_SECS) * 1000) / 1000;
 
-// A Cue Edit whose timing changes nothing of its Cue.
-const untimed = (edit: CueEdit) => edit.shift === 0 && edit.start_delta === 0 && edit.end_delta === 0;
+// Whether a Cue Edit retimes its Cue, or places or sizes it (cuePlace.ts).
+const timed = (edit: CueEdit) => edit.shift !== 0 || edit.start_delta !== 0 || edit.end_delta !== 0;
+export const placed = (edit: CueEdit) => edit.x != null || edit.y != null || edit.scale != null;
+// A Cue Edit that changes nothing of its Cue but where it starts one.
+export const empty = (edit: CueEdit) => !timed(edit) && !placed(edit);
 
 // A Cue Edit at `at` on `media`'s timeline (the Source's when null) that only starts a Cue there, or
 // with `join` keeps it with the one before.
 const bare = (at: number, media: string | null, join = false): CueEdit => ({ at, media, shift: 0, start_delta: 0, end_delta: 0, join });
 
 /** `edits` with the Cue Edit `before` (or, when it is null, none) changed to `after` (or dropped, when it is null). */
-function withCueEdit(edits: AdvancedEdits, before: CueEdit | null, after: CueEdit | null): AdvancedEdits {
+export function withCueEdit(edits: AdvancedEdits, before: CueEdit | null, after: CueEdit | null): AdvancedEdits {
   const kept = edits.cue_edits.filter((edit) => edit !== before);
   return { ...edits, cue_edits: after ? [...kept, after].sort((a, b) => (a.media ?? "").localeCompare(b.media ?? "") || a.at - b.at) : kept };
 }
@@ -158,18 +161,26 @@ function startsByItsEdit(plan: RenderPlan, key: CueKey): boolean {
 }
 
 /**
+ * The Cue Edit of the Cue keyed `key` once Reset timing or Reset position has cleared some of its
+ * fields (`reset`): null (dropped) when nothing is left of it, unless it is what starts its Cue there
+ * (startsByItsEdit: a Split's), when it stays as a bare start.
+ */
+export function afterReset(plan: RenderPlan, key: CueKey, reset: CueEdit): CueEdit | null {
+  return empty(reset) && !startsByItsEdit(plan, key) ? null : reset;
+}
+
+/**
  * Reset timing on the picked Cue keyed `key`: its Cue Edit's `shift`, `start_delta` and
- * `end_delta` cleared. Left with nothing, the Cue Edit is dropped, unless it is what starts its Cue
- * there (startsByItsEdit: a Split's), when it stays as a bare start. Null when it has no timing to
- * reset, or while the Captions Track is locked.
+ * `end_delta` cleared, the Cue Edit kept as afterReset says. Null when it has no timing to reset, or
+ * while the Captions Track is locked.
  */
 export function resetCueTiming(scene: CueScene, key: CueKey): Outcome | null {
   const { edits, plan } = scene;
   if (scene.locked?.includes("captions") || !plan) return null;
   const current = cueEditOf(edits.cue_edits, plan, key);
-  if (!current || untimed(current)) return null;
+  if (!current || !timed(current)) return null;
   const reset = { ...current, shift: 0, start_delta: 0, end_delta: 0 };
-  return { edits: withCueEdit(edits, current, startsByItsEdit(plan, key) ? reset : null), pick: { kind: "cue", key } };
+  return { edits: withCueEdit(edits, current, afterReset(plan, key, reset)), pick: { kind: "cue", key } };
 }
 
 // A Media Library item's Words say which item (ticket 06); the Source's say none.
