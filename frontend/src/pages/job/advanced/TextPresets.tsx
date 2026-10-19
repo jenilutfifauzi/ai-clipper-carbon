@@ -1,9 +1,10 @@
 import { Check, MoreHorizontal, Plus, Save, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useId, useState, type CSSProperties } from "react";
 import type { FontInfo, TextPreset, TextStyle } from "../../../api";
 import { Button, buttonClass } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Hint } from "../../../components/InfoTip";
+import { Menu, MenuItem, useMenu } from "../../../components/Menu";
 import { Select } from "../../../components/Select";
 import { fontFamily } from "../../../fonts";
 import { chooseForNewTitles, deleteTextPreset, forNewTitles, renameTextPreset, saveTextPreset, shelvesOf, useTextPresets } from "../../../textPresets";
@@ -77,44 +78,13 @@ function sampleStyle(style: TextStyle, fonts: FontInfo[] | null): CSSProperties 
   };
 }
 
-// The menu's distance from its button, and from the window's edges.
-const GAP_PX = 4;
-const EDGE_PX = 8;
-
 /** One Preset on its shelf: a button that adds it, and its menu (Use for new titles; Rename and Delete for the owner's). */
 function PresetTile({ preset, fonts, onAdd }: { preset: TextPreset; fonts: FontInfo[] | null; onAdd: () => void }) {
-  const more = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
+  const { buttonRef, menuRef, open, hide, toggle } = useMenu();
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // The menu is a popover in the top layer, so that the scrolling panel doesn't clip it; light dismiss and Escape close it.
-  useEffect(() => {
-    const element = menu.current;
-    if (!element) return;
-    const toggled = (event: Event) => setOpen((event as ToggleEvent).newState === "open");
-    element.addEventListener("toggle", toggled);
-    return () => element.removeEventListener("toggle", toggled);
-  }, [renaming]);
-
-  function show() {
-    const anchor = more.current?.getBoundingClientRect();
-    const element = menu.current;
-    if (!anchor || !element) return;
-    element.showPopover();
-    // Under the button, its right edge at the button's, kept in the window.
-    const left = Math.min(Math.max(anchor.right - element.offsetWidth, EDGE_PX), window.innerWidth - element.offsetWidth - EDGE_PX);
-    const below = anchor.bottom + GAP_PX;
-    const top = below + element.offsetHeight > window.innerHeight - EDGE_PX ? anchor.top - GAP_PX - element.offsetHeight : below;
-    element.style.left = `${left}px`;
-    element.style.top = `${Math.max(EDGE_PX, top)}px`;
-  }
-  const hide = () => {
-    if (menu.current?.matches(":popover-open")) menu.current.hidePopover();
-  };
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -161,23 +131,17 @@ function PresetTile({ preset, fonts, onAdd }: { preset: TextPreset; fonts: FontI
       </button>
       {preset.default && <Check aria-hidden size={14} className="absolute top-1.5 left-1.5 text-accent-text" />}
       <button
-        ref={more}
+        ref={buttonRef}
         type="button"
         className={buttonClass("ghost", "icon", "absolute -top-1.5 -right-1.5 size-9!")}
         aria-label={`More for ${preset.name}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => (open ? hide() : show())}
+        onClick={toggle}
       >
         <MoreHorizontal aria-hidden size={16} />
       </button>
-      <div
-        ref={menu}
-        role="menu"
-        aria-label={preset.name}
-        {...{ popover: "auto" }}
-        className="glass fixed inset-auto m-0 min-w-44 flex-col rounded-[10px] bg-bg/90! p-1 text-text [&:popover-open]:flex"
-      >
+      <Menu ref={menuRef} label={preset.name}>
         <MenuItem disabled={busy || preset.default} onClick={() => void run(() => chooseForNewTitles(preset.id))}>
           {preset.default ? "Used for new titles" : "Use for new titles"}
         </MenuItem>
@@ -192,7 +156,7 @@ function PresetTile({ preset, fonts, onAdd }: { preset: TextPreset; fonts: FontI
           </>
         )}
         {error && !deleting && <p className="px-2 py-1 text-sm text-danger">{error}</p>}
-      </div>
+      </Menu>
       <ConfirmDialog
         open={deleting}
         title={`Delete the look “${preset.name}”?`}
@@ -206,20 +170,6 @@ function PresetTile({ preset, fonts, onAdd }: { preset: TextPreset; fonts: FontI
         Texts already made in it keep their look.{preset.default ? " New titles go back to Text." : ""}
       </ConfirmDialog>
     </div>
-  );
-}
-
-function MenuItem({ children, danger, disabled, onClick }: { children: string; danger?: boolean; disabled?: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      disabled={disabled}
-      onClick={onClick}
-      className={`min-h-9 rounded-md px-2 text-left text-sm hover:bg-fill disabled:opacity-60 disabled:hover:bg-transparent ${danger ? "text-danger" : ""}`}
-    >
-      {children}
-    </button>
   );
 }
 
