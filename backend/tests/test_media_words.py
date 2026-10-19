@@ -8,9 +8,11 @@ real ffmpeg.
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from app.candidates import Framing, Segment, TransitionKind, WordEdit, manual_candidate
 from app.config import CameraTuning
+from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
 from app.planner import LOWER_CAPTIONS, TOP_CAPTIONS, Join, SegmentInput, plan_render
 from app.rendering import candidate_plan
 from app.styles import CaptionPosition, CaptionStyle, PresetStore
@@ -217,6 +219,55 @@ def test_deleting_an_unused_item_deletes_its_media_words(client, settings, trans
     patch(client, job, candidate, segments=[candidate["segments"][1]])
     assert client.delete(f"/api/media/{red['id']}").status_code == 204
     assert not folder.exists()
+
+
+# Seam B: the Media Words store, across a restart.
+
+
+def fall_over() -> list[Word]:
+    raise RuntimeError("Whisper fell over")
+
+
+def test_a_failed_transcription_is_remembered_by_a_new_store_on_the_same_folder_until_a_retry(tmp_path):
+    store = MediaWordsStore(tmp_path, "large-v3")
+    with pytest.raises(MediaWordsFailed, match="Whisper fell over"):
+        store.transcribe("red", "id", fall_over)
+
+    # The app restarted: still failed, with its error, and not heard again.
+    restarted = MediaWordsStore(tmp_path, "large-v3")
+    assert restarted.status("red", "id") is MediaWordsStatus.FAILED
+    assert restarted.error("red", "id") == "Whisper fell over"
+    restarted.queue("red", "id")
+    assert restarted.status("red", "id") is MediaWordsStatus.FAILED
+    with pytest.raises(MediaWordsFailed, match="Whisper fell over"):
+        restarted.transcribe("red", "id", lambda: pytest.fail("heard again before a Retry"))
+    # Only for that language and model.
+    assert restarted.status("red", "en") is MediaWordsStatus.NONE
+    assert MediaWordsStore(tmp_path, "small").status("red", "id") is MediaWordsStatus.NONE
+
+    # Retry forgets it, in this store and the next.
+    restarted.retry("red", "id")
+    assert restarted.status("red", "id") is MediaWordsStatus.PENDING
+    assert MediaWordsStore(tmp_path, "large-v3").status("red", "id") is MediaWordsStatus.NONE
+    assert restarted.transcribe("red", "id", lambda: SAID) == SAID
+    assert MediaWordsStore(tmp_path, "large-v3").status("red", "id") is MediaWordsStatus.READY
+
+
+def test_a_failed_transcribe_again_is_remembered_and_its_retry_transcribes_again(tmp_path):
+    store = MediaWordsStore(tmp_path, "large-v3")
+    store.transcribe("red", "id", lambda: SAID)
+    store.retry("red", "id", again=True)
+    with pytest.raises(MediaWordsFailed):
+        store.transcribe("red", "id", fall_over)
+
+    # After a restart, its Retry still transcribes again, though saved.
+    restarted = MediaWordsStore(tmp_path, "large-v3")
+    assert restarted.status("red", "id") is MediaWordsStatus.FAILED
+    restarted.retry("red", "id")
+    assert restarted.status("red", "id") is MediaWordsStatus.PENDING
+    said_again = [Word("hai", 0.5, 1.3)]
+    assert restarted.transcribe("red", "id", lambda: said_again) == said_again
+    assert MediaWordsStore(tmp_path, "large-v3").status("red", "id") is MediaWordsStatus.READY
 
 
 # Seam B: Word Edits on Media Words (ticket 06).

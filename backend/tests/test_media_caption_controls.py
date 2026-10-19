@@ -5,6 +5,10 @@ ADR 0020).
 Seam A: through the API, the FakeTranscriber and the real ffmpeg.
 """
 
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from app.ports import Ports
 from app.transcript import Word
 from conftest import cue_text, wait_for
 from test_jobs_api import create_job
@@ -164,6 +168,43 @@ def test_a_failed_transcription_is_remembered_until_retry_and_transcribe_again_r
     assert transcriber.calls_for(red["id"]) == calls + 2
     assert [w["text"] for w in words_of(client, job, red["id"])["words"]] == ["hai"]
     assert [cue_text(cue) for cue in preview(client, job, candidate)["plan"]["captions"] if cue["key"]["media"]] == ["HAI"]
+
+
+def test_a_failed_transcription_is_remembered_after_the_app_restarts_until_retry(settings, video_source, transcriber, llm, clips):
+    with TestClient(create_app(settings, Ports(video_source, transcriber, llm))) as client:
+        red = upload(client, clips["red"], "red.mp4").json()
+        transcriber.fails[red["id"]] = "Whisper fell over"
+        job = reviewed(client)
+        candidate = talking_candidate(client, job, red["id"])
+        prepare(client, job, candidate)
+        rendered(client, job)
+        assert words_of(client, job, red["id"])["status"] == "failed"
+    calls = transcriber.calls_for(red["id"])
+    del transcriber.fails[red["id"]]
+    transcriber.heard[red["id"]] = SAID
+
+    try:
+        with TestClient(create_app(settings, Ports(video_source, transcriber, llm))) as client:
+            # Restarted: still failed, and neither preparing nor rendering hears it again.
+            status = words_of(client, job, red["id"])
+            assert status["status"] == "failed" and "Whisper fell over" in status["error"]
+            prepare(client, job, candidate)
+            rendered(client, job)
+            render(client, job, [candidate["id"]])
+            [clip] = rendered(client, job, timeout=60)["clips"]
+            assert clip["status"] == "error" and "red" in clip["error"]
+            assert transcriber.calls_for(red["id"]) == calls
+
+            # Retry clears it and runs it again.
+            media_words(client, job, red["id"])
+            rendered(client, job)
+            assert words_of(client, job, red["id"])["status"] == "ready"
+            assert transcriber.calls_for(red["id"]) == calls + 1
+            assert preview(client, job, candidate)["words_status"]["i"] == "media"
+    finally:
+        video_source.release()
+        transcriber.release()
+        transcriber.stop()
 
 
 def test_a_failed_transcription_fails_that_clips_render_naming_the_item_until_its_captions_are_off(client, transcriber, clips):
