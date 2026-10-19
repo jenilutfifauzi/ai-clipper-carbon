@@ -6,7 +6,8 @@ import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { TRANSITION_GROUPS, TRANSITION_KINDS, TRANSITIONS } from "../editor/transitions";
-import { DRAG_TRANSITION } from "./drag";
+import { TransitionFilters } from "../editor/TransitionFilters";
+import { TransitionCard } from "./TransitionCard";
 
 // How long a Transition can be (TRANSITION_SECS in backend/app/candidates.py), and a new one's length.
 export const TRANSITION_BOUNDS = { min: 0.1, max: 3 };
@@ -25,13 +26,14 @@ const SOUNDS = [
 ] as const;
 
 /**
- * The Transitions: a card per kind, by group under a sticky heading, put on the selected join by a
- * click (or dragged onto any join on the timeline); and, when the join has one, its length, its
+ * The Transitions: a card per kind, by group under a sticky heading, put by a click on the selected
+ * join or else the one nearest the playhead (or dragged onto any join on the timeline); and, when the join has one, its length, its
  * sound and a way to remove it.
  */
 export function TransitionPanel({
   transition,
   joined,
+  cuts = true,
   kinds = true,
   onPick,
   onChange,
@@ -41,8 +43,11 @@ export function TransitionPanel({
   transition: Transition | null;
   // Whether a join is selected.
   joined: boolean;
+  // Whether the Clip has a join at all (more than one Segment); without one the cards are disabled.
+  cuts?: boolean;
   // Whether to show the kinds to pick from (the desktop's inspector leaves them to the Transitions tab).
   kinds?: boolean;
+  // A card clicked: its kind for the selected join, else the one nearest the playhead.
   onPick: (kind: TransitionKind) => void;
   onChange: (transition: Transition, group?: string) => void;
   onRemove: () => void;
@@ -52,11 +57,15 @@ export function TransitionPanel({
       {!kinds && !transition && <Hint>Pick a transition in the Transitions tab.</Hint>}
       {kinds && (
         <>
-          {joined ? (
+          {!cuts ? (
+            <Hint more="Split the clip into Segments, and each join between two can have one.">A transition needs a cut.</Hint>
+          ) : joined ? (
             <Hint more="The two Segments overlap for its length, so the clip gets that much shorter.">Pick how one Segment gives way to the next.</Hint>
           ) : (
-            <Hint more="Or drag a transition onto a join.">Select a join (the diamond) on the Video track.</Hint>
+            <Hint more="Or drag one onto a join (a diamond on the Video track).">A transition goes on the join nearest the playhead.</Hint>
           )}
+          {/* Pixelize's filters, for its card. */}
+          <TransitionFilters />
           {SECTIONS.map(({ group, kinds }) => (
             <section key={group} aria-labelledby={`transitions-${group}`} className="flex flex-col gap-2">
               {/* Over the kinds while they scroll by, in the Asset Panel or the phone's sheet. */}
@@ -65,27 +74,7 @@ export function TransitionPanel({
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {kinds.map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData(DRAG_TRANSITION, kind);
-                      event.dataTransfer.effectAllowed = "copy";
-                    }}
-                    onClick={() => joined && onPick(kind)}
-                    aria-pressed={transition?.kind === kind}
-                    // Without a join selected it can still be dragged onto one.
-                    aria-disabled={!joined}
-                    className={cx(
-                      "raised flex min-h-12 items-center justify-center rounded-[10px] px-2 text-sm font-medium hover:bg-fill",
-                      "focus-visible:outline-2 focus-visible:outline-focus",
-                      !joined && "cursor-grab opacity-70",
-                      transition?.kind === kind && "ring-2 ring-accent",
-                    )}
-                  >
-                    {TRANSITIONS[kind].label}
-                  </button>
+                  <TransitionCard key={kind} kind={kind} current={transition?.kind === kind} disabled={!cuts} onPick={() => onPick(kind)} />
                 ))}
               </div>
             </section>

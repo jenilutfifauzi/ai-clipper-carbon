@@ -45,6 +45,7 @@ import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCand
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
+  cardTarget,
   changeMusic,
   dragSegment,
   freezer,
@@ -543,8 +544,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <TransitionPanel
       kinds={kinds}
       joined={joinedAfter !== null}
+      cuts={edits.segments.length > 1}
       transition={edits.transitions.find((transition) => transition.after === joinedAfter) ?? null}
-      onPick={(kind) => joinedAfter && setTransition(joinedAfter, kind)}
+      // The picked join's, else the one nearest the playhead's, which becomes the Pick.
+      onPick={(kind) => {
+        const after = cardTarget(pick, edits.segments, played, playback.time);
+        if (after) setTransition(after, kind);
+      }}
       onChange={updateTransition}
       onRemove={() => change({ transitions: edits.transitions.filter((transition) => transition.after !== joinedAfter) })}
     />

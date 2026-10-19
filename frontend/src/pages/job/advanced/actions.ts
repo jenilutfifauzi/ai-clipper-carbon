@@ -213,6 +213,22 @@ export function placeAfter(played: PlayedSegment[], time: number): number {
   return at === -1 ? played.length : at + 1;
 }
 
+/**
+ * The join a Transition card's click goes to, by the Segment it follows: the picked join, else the
+ * join nearest the playhead (`time`; the earlier of two as near), drawn where its Segment ends as
+ * played; none in a Clip of one Segment.
+ */
+export function cardTarget(pick: Pick, segments: { id: string }[], played: { end: number }[], time: number): string | null {
+  if (pick?.kind === "join") return pick.after;
+  let nearest: string | null = null;
+  let distance = Infinity;
+  for (const [i, segment] of segments.slice(0, -1).entries()) {
+    const away = Math.abs((played[i]?.end ?? Infinity) - time);
+    if (away < distance) [nearest, distance] = [segment.id, away];
+  }
+  return nearest;
+}
+
 /** Where a Segment dropped at `time` goes on the Main Track: after each Segment whose middle is before it. */
 export const placeDropped = (played: PlayedSegment[], time: number) => played.filter((shown) => (shown.start + shown.end) / 2 < time).length;
 
