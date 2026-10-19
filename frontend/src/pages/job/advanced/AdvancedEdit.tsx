@@ -43,6 +43,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
@@ -426,7 +427,20 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     onDeleted: () => end("deleted"),
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
-  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // Counted up to plan again while a media Segment's Media Words are being transcribed.
+  const [replan, setReplan] = useState(0);
+  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), `${job.status} ${replan}`);
+  useReplanWhilePending(preview?.words_status, setReplan);
+  // The clip as saved, prepared when this editor opens and when a video is added to its Main Track
+  // (placed or pasted): its Source Segments transcribed and analysed, and its videos' Media Words
+  // transcribed, in the render queue, so that its preview shows their own captions.
+  const savedVideos = [...new Set(candidate.segments.flatMap((segment) => (segment.media ? [segment.media] : [])))].sort().join(" ");
+  useEffect(() => {
+    api.prepareCandidate(job.id, candidate.id).then(
+      () => setReplan((n) => n + 1),
+      () => {},
+    );
+  }, [job.id, candidate.id, savedVideos]);
   // The plan as the player draws it, the hidden Tracks left out.
   const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
   const playback = useMemo(() => new Playback(), []);
@@ -988,6 +1002,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           edits={edits}
           pick={pick}
           played={played}
+          pending={pendingSpans(played, edits.segments, preview?.words_status)}
           playback={playback}
           mediaById={mediaById}
           mediaCache={mediaCache}

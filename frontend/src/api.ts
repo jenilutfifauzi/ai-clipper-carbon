@@ -814,11 +814,18 @@ export interface PreviewWord extends Word {
   at: number;
 }
 
+// Where a Segment's caption Words come from: "clip", transcribed for a Source Segment's range;
+// "transcript", the episode's until it is; "media", a video's Media Words; "pending", while they are
+// transcribed; "none" (a Freeze frame, Reverse, a silent video, or captions off).
+export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "none";
+
 export interface PreviewPlan {
   plan: RenderPlan;
   words: PreviewWord[];
   // "clip": transcribed for the Clip; "transcript": the episode's, until it is.
   words_source: "clip" | "transcript";
+  // Each Segment's, by its id.
+  words_status: Record<string, WordsStatus>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
 }

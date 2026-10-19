@@ -975,7 +975,7 @@ def plan_render(
         plans = _keyed_manual(_frozen(plans, stills, showings, source), showings, rate)
     else:
         duration = round(SegmentTime(start, end).length, 3)
-        keys = [round(start + (word.start + word.end) / 2, 3) for word in words or []]
+        keys = [CueKey(round(start + (word.start + word.end) / 2, 3)) for word in words or []]
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
         plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
     return RenderPlan(
@@ -1003,11 +1003,11 @@ def plan_render(
 
 def _segment_words(
     main_track: list[SegmentInput], segments: list[SegmentPlan], cuts: list[float], duration: float
-) -> tuple[list[Word] | None, list[float], list[WordEdit]]:
+) -> tuple[list[Word] | None, list[CueKey], list[WordEdit]]:
     """The Segments' Words and Word Edits in seconds into the Clip: each Segment's Words whose middle
     is between the cuts either side of it (where the Segment before ends, or a Transition's middle),
-    kept between them; and each of those Words' middle on the Source's timeline. None when no
-    Segment is captioned."""
+    kept between them; and each of those Words' middle on its own timeline: the Source's, or a media
+    Segment's item's (its Media Words). None when no Segment is captioned."""
     if all(given.words is None for given in main_track):
         return None, [], []
     edges = [0.0, *cuts, duration]
@@ -1022,7 +1022,7 @@ def _segment_words(
             on, off = time.offset_of(word.start) + segment.start, time.offset_of(word.end) + segment.start
             if low <= (on + off) / 2 < high:
                 words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
-                at.append(round(given.start + (word.start + word.end) / 2, 3))
+                at.append(CueKey(round(given.start + (word.start + word.end) / 2, 3), given.media))
         edits += [replace(edit, at=round(time.offset_of(edit.at) + segment.start, 3)) for edit in given.word_edits]
     return words, at, sorted(edits, key=lambda edit: edit.at)
 
@@ -2244,7 +2244,8 @@ on_change(font_metrics.cache_clear)
 @dataclass(frozen=True)
 class _Spoken:
     """A Word as captions show it, on the Clip's timeline; as it is written (`plain`, with its Word
-    Edit), and the middle of it on its own timeline (`at`, the Source's), which keys a Cue it starts."""
+    Edit), and the middle of it on its own timeline (the Source's or a Media Library item's), which
+    keys a Cue it starts."""
 
     text: str
     start: float
@@ -2253,7 +2254,7 @@ class _Spoken:
     # Edited to start a line.
     breaks_before: bool = False
     plain: str = ""
-    at: float = 0.0
+    key: CueKey = CueKey(0.0)
 
 
 def match_edits(words: list[Word], edits: list[WordEdit]) -> list[WordEdit | None]:
@@ -2281,13 +2282,13 @@ def _captions(
     style: CaptionStyle,
     edits: list[WordEdit],
     cuts: list[float] | None = None,
-    at: list[float] | None = None,
+    at: list[CueKey] | None = None,
 ) -> list[Cue]:
     """The Cues of `words` over the Clip, which lasts `duration` and is laid out in `scenes`, in
     `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's text
-    (none, when it is empty) and a Word edited to break starts a Cue. Each Word's middle on the
-    Source's timeline is in `at` (in the same order; without it, its middle into the Clip), which
-    keys the Cue it starts.
+    (none, when it is empty) and a Word edited to break starts a Cue. Each Word's middle on its own
+    timeline (the Source's, or its Media Library item's) is in `at` (in the same order; without it,
+    its middle into the Clip), which keys the Cue it starts.
 
     Each Cue is one line. The Words whose middle is in the Clip are taken in order into a line, in
     UPPERCASE (unless the style keeps their case) and without the punctuation at their ends, until
@@ -2303,7 +2304,7 @@ def _captions(
     the next starts. A Cue is joinable when it and the one before, in one Scene's place and not
     parted by a cut, would fit one line (`_fits`)."""
     cuts = cuts or []
-    keys = at if at is not None else [round((word.start + word.end) / 2, 3) for word in words]
+    keys = at if at is not None else [CueKey(round((word.start + word.end) / 2, 3)) for word in words]
     spoken = []
     heard = sorted(zip(words, keys), key=lambda pair: pair[0].start)
     ordered = [word for word, _ in heard]
@@ -2380,7 +2381,7 @@ def _captions(
                 plain=[" ".join(word.plain for word in line)],
                 area=_caption_placed(text, area, size, style),
                 size=size,
-                key=CueKey(line[0].at),
+                key=line[0].key,
                 joinable=joinable,
             ))
     return events

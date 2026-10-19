@@ -41,6 +41,7 @@ from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobSt
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.media_words import MediaWordsStore
 from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
@@ -129,6 +130,10 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _media_words(request: Request) -> MediaWordsStore:
+    return request.app.state.media_words
+
+
 def _faces(request: Request) -> Faces:
     return request.app.state.faces
 
@@ -154,6 +159,7 @@ Presets = Annotated[PresetStore, Depends(_presets)]
 TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
+MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 EditBy = Annotated[Edit, Depends(_edit)]
 ExistingJob = Annotated[Job, Depends(_job)]
@@ -739,6 +745,7 @@ def candidate_preview_plan(
     presets: Presets,
     logos: Logos,
     library: Media,
+    media_words: MediaWordsDep,
     body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
@@ -760,7 +767,7 @@ def candidate_preview_plan(
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
         _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
@@ -771,8 +778,8 @@ def candidate_preview_plan(
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)
 def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobWorker) -> Job:
-    """Queue the Candidate to be prepared for the editor: its caption Words transcribed and its range
-    analysed, in the render queue, so that its Preview Plan shows the Clip's own captions and Scenes.
+    """Queue the Candidate to be prepared for the editor: its caption Words transcribed (its media
+    Segments' Media Words among them) and its range analysed, in the render queue, so that its Preview Plan shows the Clip's own captions and Scenes.
     The Job is `rendering` meanwhile. Nothing is queued when both are saved already. 409 unless the
     Job is in review or rendering."""
     try:

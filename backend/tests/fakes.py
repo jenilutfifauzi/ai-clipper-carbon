@@ -74,8 +74,11 @@ class FakeVideoSource:
 
 
 class FakeTranscriber:
-    """Hears the scripted Words: those overlapping the requested range, clipped to it, the way
-    Whisper hears a word that the range cuts in two. All of a call's Words form one Segment.
+    """Hears the scripted Words: `words` in any file, or those in `heard` for a file whose stem is
+    there (a Media Library item's file is named by its id); those overlapping the requested range,
+    clipped to it, the way Whisper hears a word that the range cuts in two. All of a call's Words
+    form one Segment. `calls` records each call's language and range, `calls_for` how many were of
+    one file.
 
     `stall(n)` makes the next `n` calls hang like a stuck Whisper run, until `stop()`.
     `hold(after=n)` makes the calls after the first `n` wait for `release()`.
@@ -83,11 +86,17 @@ class FakeTranscriber:
 
     def __init__(self, words: list[Word]) -> None:
         self.words = words
+        self.heard: dict[str, list[Word]] = {}
         self.calls: list[tuple[str, float, float | None]] = []
+        self.files: list[str] = []
         self._stalls = 0
         self._stalled: list[threading.Event] = []
         self._hold_after: int | None = None
         self._released = threading.Event()
+
+    def calls_for(self, stem: str) -> int:
+        """How many calls were of the file with this stem (a media item's id, or "source")."""
+        return self.files.count(stem)
 
     def stall(self, times: int) -> None:
         self._stalls = times
@@ -105,6 +114,7 @@ class FakeTranscriber:
 
     def transcribe(self, media: Path, language: str, start: float = 0.0, end: float | None = None) -> Transcript:
         self.calls.append((language, start, end))
+        self.files.append(media.stem)
         if self._stalls:
             self._stalls -= 1
             stalled = threading.Event()
@@ -118,7 +128,7 @@ class FakeTranscriber:
         stop = float("inf") if end is None else end
         words = [
             Word(word.text, max(word.start, start), min(word.end, stop))
-            for word in self.words
+            for word in self.heard.get(media.stem, self.words)
             if word.end > start and word.start < stop
         ]
         segments = [Segment(" ".join(word.text for word in words), words[0].start, words[-1].end)] if words else []
