@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, ShapeKind, Transcript } from "../../../api";
 import type { AssetTab } from "./Chrome";
 import { SourcePicker } from "./MainTrack";
-import { MediaAssets, type MediaLibrary } from "./MediaLibrary";
+import { MediaAssets, type MediaLanguages, type MediaLibrary } from "./MediaLibrary";
 import { ShapeAssets } from "./Shapes";
 import type { UntimedTextLayer } from "./TextLayers";
 import { TextAssets } from "./TextPresets";
@@ -25,6 +25,7 @@ export function AssetPanel({
   onAddSource,
   onAddVideo,
   onAddOverlay,
+  languages,
 }: {
   tab: AssetTab;
   fonts: FontInfo[] | null;
@@ -39,6 +40,8 @@ export function AssetPanel({
   onAddSource: (range: { start: number; end: number }) => void;
   onAddVideo: (item: MediaItem) => void;
   onAddOverlay: (item: MediaItem) => void;
+  // Each video's language for its Media Words, set from its card.
+  languages?: MediaLanguages;
 }) {
   if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
   if (tab === "stickers") return <ShapeAssets onAdd={onAddShape} />;
@@ -52,6 +55,7 @@ export function AssetPanel({
           onAdd={onAddVideo}
           addable={(item) => item.kind === "video"}
           onOverlay={onAddOverlay}
+          languages={languages}
           hint="Click to add, or drag onto the timeline."
           details={
             <ul className="flex list-disc flex-col gap-1 pl-4">

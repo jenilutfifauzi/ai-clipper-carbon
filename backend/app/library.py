@@ -3,6 +3,7 @@ Library (app/media.py). Each keeps its items' files in a folder, with an index o
 file, changed under a lock; and each shrinks what it keeps to a longest side with ffmpeg."""
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -33,6 +34,17 @@ class Index[T: Identified]:
     def add(self, *items: T) -> None:
         with self._lock:
             self._save([*self.all(), *items])
+
+    def change(self, item_id: str, change: Callable[[T], T]) -> T | None:
+        """Replace the item with what `change` makes of it, and return that; None when there is no such item."""
+        with self._lock:
+            items = self.all()
+            found = next((i for i, item in enumerate(items) if item.id == item_id), None)
+            if found is None:
+                return None
+            items[found] = change(items[found])
+            self._save(items)
+            return items[found]
 
     def remove(self, item_id: str) -> bool:
         """Take the item out; False when there was no such item."""

@@ -56,8 +56,10 @@ class Watchdog:
         self.transcriber = transcriber
         self.tuning = tuning
 
-    def transcribe(self, media: Path, language: str, start: float, end: float) -> Transcript:
-        budget = self.tuning.budget_secs + self.tuning.budget_factor * (end - start)
+    def transcribe(self, media: Path, language: str, start: float, end: float, budget: float | None = None) -> Transcript:
+        """The range transcribed within `budget` seconds, by default the tuning's for its duration."""
+        if budget is None:
+            budget = self.tuning.budget_secs + self.tuning.budget_factor * (end - start)
         span = f"{clock(start)}–{clock(end)}"
         for attempt in range(2):
             transcript = self._within(budget, media, language, start, end)

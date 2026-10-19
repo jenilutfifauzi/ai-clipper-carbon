@@ -100,6 +100,8 @@ export function Tracks({
   pick,
   played,
   pending = [],
+  failed = new Set(),
+  captioned = true,
   playback,
   mediaById,
   mediaCache,
@@ -119,6 +121,10 @@ export function Tracks({
   played: PlayedSegment[];
   // Where the Segments whose captions are on their way play (their Media Words being transcribed).
   pending?: { id: string; start: number; end: number }[];
+  // The Segments whose video's transcription failed, by id.
+  failed?: Set<string>;
+  // Whether the Job is captioned: the Captions Track says so when it isn't.
+  captioned?: boolean;
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
   mediaById: Map<string, MediaItem>;
@@ -380,6 +386,7 @@ export function Tracks({
               <RetimingBadge retiming={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
               {pending.some((span) => span.id === segment.id) && <TranscribingBadge />}
+              {failed.has(segment.id) && <FailedBadge />}
             </TimelineItem>
           );
         })}
@@ -440,6 +447,9 @@ export function Tracks({
         dimmed={dimmed("captions")}
         locked={locked("captions")}
       >
+        {!captioned && (
+          <span className="pointer-events-none absolute inset-y-1 left-2 flex items-center text-[11px] text-muted">Captions are off for this Job</span>
+        )}
         {/* Over a Segment whose captions are on their way. */}
         {pending.map((span) => (
           <div
@@ -611,6 +621,19 @@ function TranscribingBadge() {
   return (
     <span role="status" className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white">
       Transcribing…
+    </span>
+  );
+}
+
+/** A media Segment's badge when its Media Words failed to be transcribed: its inspector offers Retry. */
+function FailedBadge() {
+  return (
+    <span
+      role="status"
+      title="Transcribing this video for its captions failed: pick it to retry"
+      className="relative shrink-0 self-start rounded bg-danger px-1 pt-0.5 text-[11px] font-semibold text-white"
+    >
+      Captions failed
     </span>
   );
 }

@@ -204,6 +204,10 @@ Edits:
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
+- A Segment of a video with sound is captioned from its video's Media Words (the whole video
+  transcribed once, in the video's own language if set, else the Job's), unless its `captions` (its
+  Captions switch) is false: then it has no captions and its video isn't transcribed for it. null
+  means on. A Segment of the episode has no `captions`.
 - A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
   lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
   into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
