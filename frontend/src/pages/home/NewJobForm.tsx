@@ -8,6 +8,7 @@ import { ProgressBar } from "../../components/ProgressBar";
 import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
 import { cx, formatBytes } from "../../format";
+import { LANGUAGES } from "../../languages";
 import { FileDrop } from "./FileDrop";
 
 type Origin = "url" | "upload";
@@ -16,14 +17,6 @@ const ORIGINS = [
   { value: "url", label: "YouTube URL" },
   { value: "upload", label: "Upload a file" },
 ] as const satisfies readonly { value: Origin; label: string }[];
-
-const LANGUAGES = [
-  ["id", "Indonesian"],
-  ["en", "English"],
-  ["ms", "Malay"],
-  ["jv", "Javanese"],
-  ["su", "Sundanese"],
-];
 
 const INPUT = cx(
   "w-full min-w-0 rounded-control border border-border bg-fill px-3.5 py-2.5 text-base text-text",

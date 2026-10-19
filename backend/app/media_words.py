@@ -6,9 +6,10 @@ into the item, in the shape of a Clip's Words (app/rendering.py's ClipWords, wit
 Segment, Candidate and Job that shows the item reads the same file, so trimming, splitting or reusing
 it never transcribes again; the file goes with the item's other derived files when it is deleted
 (MediaStore.delete). A transcription is queued by a Candidate's preparation or render (app/rendering.py),
-which hears the item on the Whisper worker; the store remembers what is queued in this process, so that
-the editor can say a Segment's captions are on their way. The item's own language, the Captions switch
-and remembered failures come with later tickets.
+or by a Retry, which hears the item on the Whisper worker. The store remembers, in this process, what is
+queued, so that the editor can say a Segment's captions are on their way, and what failed, with its
+error, until a Retry: a failed item isn't heard again by a preparation or a render (the render fails,
+naming it). "Transcribe again" re-runs a saved language and replaces its file.
 """
 
 import re
@@ -25,14 +26,20 @@ from app.transcript import Word
 
 
 class MediaWordsStatus(StrEnum):
-    """What a store has of an item's Media Words in a language. (A remembered failure comes with ticket 05.)"""
+    """What a store has of an item's Media Words in a language."""
 
     # Saved.
     READY = "ready"
-    # Queued to be transcribed by a preparation or a render.
+    # Queued to be transcribed (again) by a preparation, a render or a Retry.
     PENDING = "pending"
-    # Neither.
+    # Its transcription failed (`MediaWordsStore.error`), until a Retry.
+    FAILED = "failed"
+    # None of these.
     NONE = "none"
+
+
+class MediaWordsFailed(RuntimeError):
+    """The item's transcription failed, now or before a Retry: its message is the error."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,10 @@ class MediaWordsStore:
         self._queued: set[tuple[str, str]] = set()
         # One run per item and language at a time.
         self._runs: dict[tuple[str, str], threading.Lock] = {}
+        # The errors of those that failed, until a Retry.
+        self._failed: dict[tuple[str, str], str] = {}
+        # Those to transcribe again, though saved.
+        self._again: set[tuple[str, str]] = set()
 
     def file(self, media_id: str, language: str) -> Path:
         return self.folder / words_folder(media_id) / f"{language}-{re.sub(r'[^A-Za-z0-9._-]+', '_', self.model)}.json"
@@ -80,38 +91,83 @@ class MediaWordsStore:
         return saved.words if (saved.language, saved.model) == (language, self.model) else None
 
     def status(self, media_id: str, language: str) -> MediaWordsStatus:
-        if self.saved(media_id, language) is not None:
-            return MediaWordsStatus.READY
+        """Pending while queued (even when saved, to be transcribed again), failed until a Retry (even
+        when saved: transcribing it again failed), else ready or none."""
+        key = (media_id, language)
         with self._lock:
-            return MediaWordsStatus.PENDING if (media_id, language) in self._queued else MediaWordsStatus.NONE
+            if key in self._queued:
+                return MediaWordsStatus.PENDING
+            if key in self._failed:
+                return MediaWordsStatus.FAILED
+        return MediaWordsStatus.READY if self.saved(media_id, language) is not None else MediaWordsStatus.NONE
+
+    def error(self, media_id: str, language: str) -> str | None:
+        """Why the item's transcription in `language` failed, until a Retry."""
+        with self._lock:
+            return self._failed.get((media_id, language))
 
     def queue(self, media_id: str, language: str) -> None:
-        """Note that the item's transcription in `language` is queued, until `transcribe` runs it."""
+        """Note that the item's transcription in `language` is queued, until `transcribe` runs it;
+        not when it is saved, or failed (until a Retry)."""
         if self.saved(media_id, language) is None:
             with self._lock:
-                self._queued.add((media_id, language))
+                if (media_id, language) not in self._failed:
+                    self._queued.add((media_id, language))
+
+    def retry(self, media_id: str, language: str, again: bool = False) -> None:
+        """Forget the item's failure in `language` and queue it; with `again` (or when transcribing it
+        again is what failed), queue it even when it is saved, to be transcribed again and its file
+        replaced."""
+        key = (media_id, language)
+        with self._lock:
+            self._failed.pop(key, None)
+            if again:
+                self._again.add(key)
+            if key in self._again:
+                self._queued.add(key)
+                return
+        self.queue(media_id, language)
 
     def unqueue(self, media_id: str, language: str) -> None:
         """Note that the item's transcription in `language` is no longer queued (its preparation failed first)."""
         with self._lock:
             self._queued.discard((media_id, language))
 
-    def transcribe(self, media_id: str, language: str, hear: Callable[[], list[Word]]) -> list[Word]:
-        """The item's Words in `language`: those saved, else those `hear` gives (the item transcribed
-        whole, in seconds into it), saved. A second call for the same item and language waits for the
-        first and reads what it saved. Either way the item's transcription is no longer queued."""
+    def transcribe(
+        self, media_id: str, language: str, hear: Callable[[], list[Word]], interrupted: tuple[type[BaseException], ...] = (),
+    ) -> list[Word]:
+        """The item's Words in `language`: those saved (unless it is to be transcribed again), else
+        those `hear` gives (the item transcribed whole, in seconds into it), saved. A second call for
+        the same item and language waits for the first and reads what it saved. MediaWordsFailed when
+        `hear` raises anything but the `interrupted` exceptions (the app stopping), which is
+        remembered, or when it failed before, until a Retry. Either way the item's transcription is no
+        longer queued."""
+        key = (media_id, language)
         with self._lock:
-            run = self._runs.setdefault((media_id, language), threading.Lock())
+            run = self._runs.setdefault(key, threading.Lock())
         try:
             with run:
+                with self._lock:
+                    error, again = self._failed.get(key), key in self._again
+                if error is not None:
+                    raise MediaWordsFailed(error)
                 saved = self.saved(media_id, language)
-                if saved is not None:
+                if saved is not None and not again:
                     return saved
-                words = hear()
+                try:
+                    words = hear()
+                except interrupted:
+                    raise
+                except Exception as exc:
+                    with self._lock:
+                        self._failed[key] = str(exc)
+                    raise MediaWordsFailed(str(exc)) from exc
                 path = self.file(media_id, language)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 write_atomic(path, _WORDS.dump_json(MediaWords(language, self.model, words)))
+                with self._lock:
+                    self._again.discard(key)
                 return words
         finally:
             with self._lock:
-                self._queued.discard((media_id, language))
+                self._queued.discard(key)

@@ -54,6 +54,10 @@ class WordsStatus(StrEnum):
     MEDIA = "media"
     # A video's, while its item's Media Words are being transcribed.
     PENDING = "pending"
+    # A video's, whose item's Media Words failed to be transcribed (until a Retry).
+    FAILED = "failed"
+    # A video's whose Captions switch is off.
+    OFF = "off"
     # None: a Freeze frame, a reversed Segment, a video without sound or whose Media Words aren't
     # queued, or a Job with captions off.
     NONE = "none"
@@ -80,6 +84,8 @@ class PreviewPlan:
     words_source: WordsSource
     # Each Segment's, by its id.
     words_status: dict[str, WordsStatus]
+    # Why a `failed` Segment's item failed to be transcribed, by the Segment's id.
+    words_errors: dict[str, str]
     # Whether the Scenes and faces are the Clip's own: False while it is one Scene, unanalysed.
     analysed: bool
 
@@ -98,8 +104,9 @@ def preview_plan(
     """The Candidate's Preview Plan, `job_dir` being its Job's directory. Each of its Segments is
     planned from what is saved for its range: its Words are the Clip's own only when every Source
     Segment's are, and it is analysed only when every Segment is. A video's Segment is captioned from
-    its item's Media Words in `media_words`, pending while they are queued there or its Candidate is
-    being prepared."""
+    its item's Media Words in `media_words`, pending while they are queued there, its item is queued
+    for the Job, or its Candidate is being prepared; failed, with the error, until a Retry; off when
+    its Captions switch is."""
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
@@ -111,19 +118,29 @@ def preview_plan(
     ]
     words_source = WordsSource.CLIP if all(found is not None for found in saved) else WordsSource.TRANSCRIPT
     status: dict[str, WordsStatus] = {}
+    errors: dict[str, str] = {}
     for i, segment in enumerate(segments):
         if not job.options.captions or segment.hold is not None or segment.reverse:
             status[segment.id] = WordsStatus.NONE
         elif segment.media is None:
             status[segment.id] = WordsStatus.TRANSCRIPT if saved[i] is None else WordsStatus.CLIP
+        elif segment.captions is False:
+            status[segment.id] = WordsStatus.OFF
         elif (item := media.find(segment.media) if media else None) is None or media_words is None or not captioned_media(segment, item):
             status[segment.id] = WordsStatus.NONE
-        elif (heard := media_words.saved(item.id, media_language(job, item))) is not None:
-            saved[i] = media_segment_words(heard, segment)
-            status[segment.id] = WordsStatus.MEDIA
         else:
-            queued = media_words.status(item.id, media_language(job, item)) is MediaWordsStatus.PENDING
-            status[segment.id] = WordsStatus.PENDING if queued or candidate.id in job.preparing else WordsStatus.NONE
+            language = media_language(job, item)
+            found = media_words.status(item.id, language)
+            if (heard := media_words.saved(item.id, language)) is not None:
+                saved[i] = media_segment_words(heard, segment)
+            if found is MediaWordsStatus.FAILED:
+                status[segment.id] = WordsStatus.FAILED
+                errors[segment.id] = media_words.error(item.id, language) or "Transcribing it failed"
+            elif found is MediaWordsStatus.PENDING or (heard is None and candidate.id in job.preparing) or item.id in job.transcribing:
+                # (Transcribed again, it shows its earlier Words meanwhile.)
+                status[segment.id] = WordsStatus.PENDING
+            else:
+                status[segment.id] = WordsStatus.MEDIA if heard is not None else WordsStatus.NONE
     words = [
         found if found is not None else transcript_words(transcript, segment.start, segment.end, source.duration)
         for segment, found in zip(segments, saved)
@@ -163,4 +180,4 @@ def preview_plan(
         ]
         at += played.length
     analysed = all(analysis is not None for analysis, wanted in zip(analyses, needed) if wanted is not Analysis.NONE)
-    return PreviewPlan(plan, shown, words_source, status, analysed=analysed)
+    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed)

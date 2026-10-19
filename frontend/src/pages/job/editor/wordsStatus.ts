@@ -21,6 +21,11 @@ export function pendingSpans(
   );
 }
 
+/** The Segments whose Words failed (their video's transcription), by id. */
+export function failedSegments(status: Record<string, WordsStatus> | undefined): Set<string> {
+  return new Set(Object.entries(status ?? {}).flatMap(([id, words]) => (words === "failed" ? [id] : [])));
+}
+
 /** How long to wait before asking for the Preview Plan again: while any Segment's Words are pending, else never (null). */
 export function refreshWhilePending(status: Record<string, WordsStatus> | undefined): number | null {
   return Object.values(status ?? {}).includes("pending") ? PENDING_REFRESH_MS : null;

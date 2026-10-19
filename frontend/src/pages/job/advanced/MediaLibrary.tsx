@@ -1,4 +1,4 @@
-import { Film, ImagePlus, Layers, Music, Pause, Play, Plus, Trash2, Upload } from "lucide-react";
+import { ChevronDown, Film, ImagePlus, Layers, Music, Pause, Play, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -16,6 +16,7 @@ import { ProgressBar } from "../../../components/ProgressBar";
 import { Skeleton } from "../../../components/Skeleton";
 import { cx, formatBytes, formatPrecise } from "../../../format";
 import { DRAG_MEDIA } from "./drag";
+import { languageChoices } from "./mediaCaptions";
 
 // An item's card or row carries its id when dragged onto the timeline.
 const draggable = (item: MediaItem) => ({
@@ -43,6 +44,14 @@ export interface MediaLibrary {
   dismiss: (key: number) => void;
   // Resolves to the clips using it when it can't be deleted.
   remove: (item: MediaItem) => Promise<MediaUse[] | null>;
+  // A video's language for its Media Words, in every Job (null: each Job's).
+  setLanguage: (item: MediaItem, language: string | null) => Promise<void>;
+}
+
+// What a video's card needs to set its language: the Job's (its first choice), and what setting it does.
+export interface MediaLanguages {
+  job: string;
+  set: (item: MediaItem, language: string | null) => Promise<void>;
 }
 
 let uploadKeys = 0;
@@ -81,6 +90,10 @@ export function useMediaLibrary(): MediaLibrary {
       );
     },
     dismiss: (key) => setUploads((old) => old.filter((item) => item.key !== key)),
+    async setLanguage(item, language) {
+      const changed = await api.setMediaLanguage(item.id, language);
+      setItems((old) => (old ?? []).map((other) => (other.id === changed.id ? changed : other)));
+    },
     async remove(item) {
       try {
         await api.deleteMedia(item.id);
@@ -106,6 +119,7 @@ export function MediaAssets({
   onAdd,
   addable = () => true,
   onOverlay,
+  languages,
   hint,
   details,
 }: {
@@ -116,6 +130,8 @@ export function MediaAssets({
   addable?: (item: MediaItem) => boolean;
   // Adding a video or an image over the Clip instead.
   onOverlay?: (item: MediaItem) => void;
+  // Each video's language, set from its card.
+  languages?: MediaLanguages;
   // One sentence, and more in a tip.
   hint: ReactNode;
   details?: ReactNode;
@@ -197,6 +213,7 @@ export function MediaAssets({
               item={item}
               onAdd={addable(item) ? onAdd : onOverlay}
               onOverlay={addable(item) ? onOverlay : undefined}
+              languages={item.kind === "video" && item.has_audio ? languages : undefined}
               onDelete={() => setDeleting(item)}
             />
           ))}
@@ -265,12 +282,15 @@ function VisualCard({
   item,
   onAdd,
   onOverlay,
+  languages,
   onDelete,
 }: {
   item: MediaItem;
   onAdd?: (item: MediaItem) => void;
   // A second way to add it: over the Clip.
   onOverlay?: (item: MediaItem) => void;
+  // A video's language, which its captions are transcribed in.
+  languages?: MediaLanguages;
   onDelete: () => void;
 }) {
   return (
@@ -310,8 +330,44 @@ function VisualCard({
           </button>
         )}
       </span>
+      {languages && <LanguageSelect item={item} languages={languages} />}
       <DeleteButton name={item.name} onClick={onDelete} />
     </li>
+  );
+}
+
+/** A video's language for its captions, in every Job: "Job's language (xx)" first. */
+function LanguageSelect({ item, languages }: { item: MediaItem; languages: MediaLanguages }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <span className="relative">
+        <select
+          value={item.language ?? ""}
+          disabled={busy}
+          aria-label={`Captions language of ${item.name}, in every Job`}
+          title="Its captions' language, in every Job"
+          onChange={(event) => {
+            setBusy(true);
+            setError(null);
+            languages
+              .set(item, event.target.value || null)
+              .catch((reason: Error) => setError(reason.message))
+              .finally(() => setBusy(false));
+          }}
+          className="min-h-8 w-full appearance-none truncate rounded-[8px] border border-border bg-fill py-1 pr-6 pl-2 text-xs enabled:cursor-pointer disabled:opacity-60"
+        >
+          {languageChoices(languages.job, item.language).map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown aria-hidden size={12} className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-muted" />
+      </span>
+      {error && <span className="text-xs text-danger">{error}</span>}
+    </>
   );
 }
 

@@ -51,6 +51,7 @@ export function Inspector({
   copyOf,
   onHold,
   cropMode,
+  captionsOf,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -81,6 +82,8 @@ export function Inspector({
   onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
   cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
+  // A video's Segment's caption controls (MediaCaptionFields).
+  captionsOf?: (segment: ClipSegment, item: MediaItem) => ReactNode;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -158,6 +161,7 @@ export function Inspector({
         onCropMode={cropMode?.("segment", segment.id)}
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
+        captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}
