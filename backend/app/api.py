@@ -789,6 +789,7 @@ def candidate_captions(
     presets: Presets,
     logos: Logos,
     library: Media,
+    media_words: MediaWordsDep,
 ) -> Response:
     """The Candidate's captions as an SRT or VTT file (app/caption_files.py): the Cues of its Preview
     Plan as saved, without a render. (A rendered Clip's are beside its MP4: its `srt` and `vtt`.)
@@ -806,7 +807,7 @@ def candidate_captions(
     candidate = next((c for c in candidates if c.id == candidate_id), None)
     if candidate is None:
         raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
-    preview = preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
+    preview = preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words)
     if captions_pending(preview):
         raise HTTPException(409, "Its captions are still being transcribed: ask again once they are ready")
     return Response(caption_file(preview.plan.captions, format), media_type=SUBTITLE_TYPES[f".{format}"])

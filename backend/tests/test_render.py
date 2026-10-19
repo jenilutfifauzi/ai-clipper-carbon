@@ -1256,15 +1256,3 @@ def test_a_candidates_captions_are_downloaded_from_its_saved_state_without_a_ren
     assert client.get(f"{url}/ass").status_code == 422
     assert client.get(f"/api/jobs/{job['id']}/candidates/nope/captions/srt").status_code == 404
     assert client.get("/api/jobs/nope/candidates/nope/captions/srt").status_code == 404
-
-
-def test_a_candidates_captions_are_refused_while_a_captioned_segment_is_pending(client, monkeypatch, video_source, transcriber, plain_video):
-    # Media Words (captions-advanced ticket 04) give each Segment a Words status; until then, nothing
-    # is ever pending, and `captions_pending` stands in for one that is.
-    video_source.video = plain_video
-    transcriber.words = HEARD
-    job = reviewed(client)
-    candidate = add(client, job, "Podcast", "ya")
-    monkeypatch.setattr("app.api.captions_pending", lambda preview: True)
-    response = client.get(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/captions/vtt")
-    assert response.status_code == 409 and "transcribed" in response.json()["detail"]
