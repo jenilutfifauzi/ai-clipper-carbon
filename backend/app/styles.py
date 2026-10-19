@@ -236,9 +236,11 @@ class CaptionStyle(_ReadsOldShadow):
     # Each line's centre, in output pixels, at any position (the planner keeps the line in the
     # frame); None centres it in the frame.
     x: Width | None = None
-    # A line ends before a Word that would make it longer than max_chars characters, counted as wide
-    # as its tracking makes them (a single longer Word stands alone), hold more than max_words Words,
-    # or last more than max_secs, and after a pause of pause_secs.
+    # A Cue holds at most max_lines lines, each of at most max_chars characters, counted as wide as
+    # its tracking makes them (a single longer Word stands alone on its line), and max_words Words. It
+    # ends before a Word that wouldn't fit them, or would make it last more than max_secs, and after
+    # a pause of pause_secs.
+    max_lines: Annotated[int, Field(ge=1, le=3)] = 1
     max_chars: Annotated[int, Field(ge=4, le=60)] = 16
     max_words: Annotated[int, Field(ge=1, le=12)] | None = None
     max_secs: Annotated[float, Field(ge=0.3, le=10)] = 1.4

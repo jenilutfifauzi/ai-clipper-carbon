@@ -1359,3 +1359,79 @@ def test_a_wider_padding_leaves_less_room_for_the_hooks_lines():
     # A narrow padding leaves more.
     assert len(hooked("Setetes racun bisa bunuh").lines) == 2
     assert hooked("Setetes racun bisa bunuh", hook_style=HookStyle(padding_x=20)).lines == ["Setetes racun bisa bunuh"]
+
+
+# Cues of up to three lines (captions-advanced ticket 03).
+SENTENCE = CaptionStyle(max_lines=2, max_chars=24, max_secs=5, pause_secs=0.7)
+
+
+def rows(cues: list[Cue]) -> list[list[str]]:
+    return [[" ".join(word.text for word in line) for line in cue.lines] for cue in cues]
+
+
+def test_sentence_limits_give_two_balanced_lines_ending_at_a_sentences_end_or_a_pause():
+    talk = "satu dua tiga empat lima enam tujuh delapan. sembilan sepuluh"
+    cues = styled(said(talk) + said("oke lanjut", 6.0), 8, SENTENCE)
+    assert rows(cues) == [
+        # 43 characters in two lines of at most 24: the split whose longer line is shortest (19 and
+        # 23 characters, not the 24 and 18 of filling the first line).
+        ["SATU DUA TIGA EMPAT", "LIMA ENAM TUJUH DELAPAN"],
+        # After a sentence's end, a short sentence on one line; a pause of more than 0.7 s ends it.
+        ["SEMBILAN SEPULUH"],
+        ["OKE LANJUT"],
+    ]
+    assert cues[0].plain == ["satu dua tiga empat", "lima enam tujuh delapan."]
+    # The Cue is shown from its first Word to after its last, for as long as max_secs allows.
+    assert (cues[0].start, cues[0].words[-1].text) == (0.0, "DELAPAN")
+    # What doesn't fit two lines of 24 characters goes on in the next Cue. Of two splits as long,
+    # the one with the shorter first line.
+    long = styled(said("jadi waktu itu kita lagi ngobrol soal bisnis keluarga yang ternyata luar biasa ya"), 8, SENTENCE)
+    assert rows(long) == [["JADI WAKTU ITU KITA", "LAGI NGOBROL SOAL BISNIS"], ["KELUARGA YANG", "TERNYATA LUAR BIASA YA"]]
+
+
+def test_a_break_starts_a_line_inside_a_cue_and_a_cue_when_the_cue_has_all_its_lines():
+    words = said("satu dua tiga empat lima enam")
+    breaks = lambda *i: [WordEdit(at=words[n].start + 0.01, break_before=True) for n in i]  # noqa: E731
+    # Unbroken, balanced.
+    assert rows(styled(words, 8, SENTENCE)) == [["SATU DUA TIGA", "EMPAT LIMA ENAM"]]
+    # A break inside the Cue starts its second line, wherever balancing would have put it.
+    assert rows(edited(words, breaks(1), 8, caption_style=SENTENCE)) == [["SATU", "DUA TIGA EMPAT LIMA ENAM"]]
+    # A second break, with both lines taken, starts the next Cue.
+    assert rows(edited(words, breaks(1, 4), 8, caption_style=SENTENCE)) == [["SATU", "DUA TIGA EMPAT"], ["LIMA ENAM"]]
+    # On three lines, it is the third line.
+    three = replace(SENTENCE, max_lines=3)
+    assert rows(edited(words, breaks(1, 4), 8, caption_style=three)) == [["SATU", "DUA TIGA EMPAT", "LIMA ENAM"]]
+    # With one line, a break starts a Cue as before.
+    assert rows(edited(words, breaks(1), 8)) == [["SATU"], ["DUA TIGA EMPAT"], ["LIMA ENAM"]]
+
+
+def test_max_chars_and_max_words_count_per_line_and_the_widest_line_sizes_and_places_the_cue():
+    words = said("satu dua tiga empat lima enam tujuh")
+    # Two Words a line, three lines a Cue.
+    cues = styled(words, 8, CaptionStyle(max_lines=3, max_words=2, max_chars=40, max_secs=5))
+    assert rows(cues) == [["SATU DUA", "TIGA EMPAT", "LIMA ENAM"], ["TUJUH"]]
+    # Three lines a font size apart are taller than the area's 200 px: it grows about its middle.
+    big = styled(words, 8, CaptionStyle(max_lines=3, max_words=2, max_chars=40, max_secs=5, size=200))[0]
+    assert big.area.height == 2 * math.ceil(3 * big.size / 2) > LOWER_CAPTIONS.height
+    assert big.area.y + big.area.height / 2 == LOWER_CAPTIONS.y + LOWER_CAPTIONS.height / 2
+    assert cues[1].area == LOWER_CAPTIONS
+    # A line too wide for the area shrinks the whole Cue to fit it.
+    wide = styled(said("pendek ketidakberdayaannyaaaa"), 4, CaptionStyle(max_lines=2, max_chars=12, max_secs=5, size=200))
+    assert rows(wide) == [["PENDEK", "KETIDAKBERDAYAANNYAAAA"]]
+    assert wide[0].size == styled(said("ketidakberdayaannyaaaa"), 4, CaptionStyle(size=200))[0].size < 200
+
+
+def test_a_cue_is_joinable_when_both_fit_the_cues_lines():
+    # Parted by a sentence's end: "SATU DUA" and "TIGA EMPAT LIMA" fit two lines of 24 characters.
+    words = said("satu dua. tiga empat lima")
+    assert [(rows([cue]), cue.joinable) for cue in styled(words, 8, SENTENCE)] == [
+        ([["SATU DUA"]], False), ([["TIGA EMPAT LIMA"]], True),
+    ]
+    # On one line of 20 characters, they don't.
+    one = replace(SENTENCE, max_lines=1, max_chars=20)
+    assert [cue.joinable for cue in styled(words, 8, one)] == [False, False]
+    # A break before the later Cue's first Word doesn't stop it (merging lifts it); breaks inside
+    # them, needing a third line, do.
+    at = lambda n: WordEdit(at=words[n].start + 0.01, break_before=True)  # noqa: E731
+    assert [cue.joinable for cue in edited(words, [at(2)], 8, caption_style=SENTENCE)] == [False, True]
+    assert [cue.joinable for cue in edited(words, [at(1), at(3)], 8, caption_style=SENTENCE)] == [False, False]

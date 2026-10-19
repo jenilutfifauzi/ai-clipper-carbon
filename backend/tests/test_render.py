@@ -839,6 +839,50 @@ def test_tracking_and_line_height_space_the_burned_hook_and_captions_as_planned(
     assert (left + right) / 2 == pytest.approx(area["x"] + area["width"] / 2, abs=3)
 
 
+@pytest.mark.parametrize("font", ["montserrat-black", "anton", "bangers"])
+def test_a_two_line_cue_is_burned_on_two_rows_one_font_size_apart_with_the_box_on_the_second(
+    client, settings, video_source, transcriber, plain_video, font
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    start = candidate["start"]
+    # Sentence's line limits, with the box highlight.
+    candidate = patch(client, job, candidate, style_overrides={"caption": {
+        "max_lines": 2, "max_chars": 24, "max_secs": 5, "pause_secs": 0.7, "highlight": "box", "font": font,
+    }})
+    assert candidate["style_overrides"]["caption"]["max_lines"] == 2
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    [cue] = plan["captions"]
+    assert [" ".join(word["text"] for word in line) for line in cue["lines"]] == ["PODCAST INI", "SERU BANGET YA!"]
+    area, size = cue["area"], cue["size"]
+    middle = area["y"] + area["height"] / 2
+    metrics = font_metrics(font)
+    cap = metrics.cap_height / metrics.units * size
+
+    # "BANGET", the second line's second Word, is spoken: white text over an orange box.
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 5.2 - start)
+    rows, columns = pixels(frame, WHITE)
+    above, below = rows[rows < middle], rows[rows >= middle]
+    assert len(above) > 500 and len(below) > 500
+    # Two rows of capitals, each a capital tall, one font size apart about the area's middle (libass
+    # sets a line as tall as the font size).
+    assert above.max() - above.min() == pytest.approx(cap, abs=4)
+    assert below.max() - below.min() == pytest.approx(cap, abs=4)
+    assert below.min() - above.min() == pytest.approx(size, abs=2)
+    assert (above.min() + below.max()) / 2 == pytest.approx(middle, abs=size / 4)
+    # The box is behind the second line, from the middle of its line rightwards, and not the first.
+    box_rows, box_columns = pixels(frame, ORANGE)
+    assert len(box_rows) > 500
+    assert above.max() < box_rows.min() < below.min() and below.max() < box_rows.max()
+    second = columns[rows >= middle]
+    assert second.min() < box_columns.min() and box_columns.max() < second.max()
+
+
 def test_the_hooks_soft_shadow_and_its_boxs_padding_and_radius_are_burned_as_planned(
     client, settings, video_source, transcriber, plain_video
 ):

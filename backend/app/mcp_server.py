@@ -184,6 +184,11 @@ Edits:
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
   null is the default.
+- The captions are shown in Cues of up to the caption style's max_lines lines (1..3), each line of
+  at most max_chars characters and max_words Words, its lines balanced; a Cue lasts at most max_secs
+  and ends at a pause of pause_secs or a sentence's end. A Word Edit's break_before starts a line,
+  and a Cue when the Cue has all its lines. The editor's Phrase is 1 line, 16 characters, no word
+  limit, 1.4 s, 0.5 s pause; its Sentence 2 lines, 24 characters, no word limit, 5 s, 0.7 s pause.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A

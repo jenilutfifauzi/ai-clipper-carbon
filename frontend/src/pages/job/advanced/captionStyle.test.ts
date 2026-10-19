@@ -3,6 +3,7 @@
 // Overrides through its edits, each change one step of undo; a locked Captions Track refuses them.
 import { describe, expect, test } from "vitest";
 import type { CaptionStyle, HookStyle, StylePreset, WatermarkStyle } from "../../../api";
+import { LINE_LIMITS } from "../editor/lineLimits";
 import { mergeEdits } from "../editor/merge";
 import { styleControls, type StyleDraft } from "../editor/useStyleDraft";
 import { restyleCaptions } from "./actions";
@@ -112,6 +113,15 @@ describe("the Caption Style in the Advanced Edit", () => {
     space.undo();
     space.undo();
     expect(space.edits.style_overrides.caption).toEqual({ size: 110 });
+  });
+
+  test("Sentence fills the line limits in one undoable step", () => {
+    const space = workspace(edits());
+    space.controls().setMany("caption", LINE_LIMITS.sentence);
+    expect(space.controls().caption).toMatchObject(LINE_LIMITS.sentence);
+    expect(space.steps).toBe(1);
+    space.undo();
+    expect(space.edits.style_overrides.caption).toEqual({});
   });
 
   test("a value equal to the Preset's removes the override", () => {

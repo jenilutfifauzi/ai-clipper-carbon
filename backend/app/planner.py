@@ -434,8 +434,10 @@ class CueKey:
 @dataclass(frozen=True)
 class Cue:
     """A Cue: captions shown at once, from `start` to `end` (seconds into the Clip), centred in `area`
-    at font `size` (the Caption Style's, or smaller for a line too wide for the area). Its `lines` of
-    Words, as captions show them, are highlighted one after another, from its start to its end;
+    (its place's, made as tall as its lines when they are taller) at font `size` (the Caption Style's,
+    or smaller for a line too wide for the area). Its `lines` of Words (one font size apart, as
+    libass sets them), as captions show them, are highlighted one after another, from its start to
+    its end;
     `plain` is each line as its Words are written, with the Word Edits (not in the Caption Style's
     case, nor with its stripping), for subtitle files. `edited`: a Cue Edit applies to it;
     `joinable`: merged into the Cue before, it would still fit the line limits. A Cue moved at a
@@ -2289,19 +2291,20 @@ def _captions(
     Source's timeline is in `at` (in the same order; without it, its middle into the Clip), which
     keys the Cue it starts.
 
-    Each Cue is one line. The Words whose middle is in the Clip are taken in order into a line, in
-    UPPERCASE (unless the style keeps their case) and without the punctuation at their ends, until
-    the next would make it longer than the style's max_chars, max_words or max_secs, comes after a
-    pause of its pause_secs, follows the end of a sentence, or starts in a Scene whose captions go
-    elsewhere. A line starts
-    with its first Word and ends CAPTION_LINGER_SECS after its last, when the next line starts if
-    that is sooner, and after max_secs at most. A Word is highlighted from when it is spoken until
-    the next one is.
-    A line still being spoken at a Layout change that moves the captions moves there with it (unless
+    The Words whose middle is in the Clip are taken in order into a Cue, in UPPERCASE (unless the
+    style keeps their case) and without the punctuation at their ends, until the next wouldn't fit
+    its lines (`_fits`: the style's max_lines lines of max_chars and max_words, a Word edited to
+    break starting a line of its own), would make it last more than max_secs, comes after a pause of
+    its pause_secs, follows the end of a sentence, or starts in a Scene whose captions go elsewhere.
+    The Cue's Words are then set on its lines (`_lines`), its widest line sizing and placing it. A
+    Cue starts with its first Word and ends CAPTION_LINGER_SECS after its last, when the next Cue
+    starts if that is sooner, and after max_secs at most. A Word is highlighted from when it is
+    spoken until the next one is.
+    A Cue still being spoken at a Layout change that moves the captions moves there with it (unless
     that would show it for less than CAPTION_MIN_SECS in one place); one whose Words are all spoken
-    goes at the change. At each of `cuts` (where a Segment ends and the next starts), a line ends and
+    goes at the change. At each of `cuts` (where a Segment ends and the next starts), a Cue ends and
     the next starts. A Cue is joinable when it and the one before, in one Scene's place and not
-    parted by a cut, would fit one line (`_fits`)."""
+    parted by a cut, would fit one Cue's lines (`_fits`, the break before its first Word lifted)."""
     cuts = cuts or []
     keys = at if at is not None else [round((word.start + word.end) / 2, 3) for word in words]
     spoken = []
@@ -2327,35 +2330,37 @@ def _captions(
         # A Cue can't go on past a cut, nor into a Scene whose captions go elsewhere.
         return area_at(word.start) != area_at(before[0].start) or any(before[0].start < cut <= word.start for cut in cuts)
 
-    lines: list[list[_Spoken]] = []
+    cues: list[list[_Spoken]] = []
     for word in spoken:
-        line = lines[-1] if lines else None
+        cue = cues[-1] if cues else None
         if (
-            line is None
-            or word.breaks_before
-            or _caption_length(" ".join([*(w.text for w in line), word.text]), style) > style.max_chars
-            or (style.max_words is not None and len(line) >= style.max_words)
-            or word.end - line[0].start > style.max_secs
-            or word.start - line[-1].end >= style.pause_secs
-            or line[-1].ends_sentence
-            or parted(line, word)
+            cue is None
+            or not _fits([*cue, word], style)
+            or word.end - cue[0].start > style.max_secs
+            or word.start - cue[-1].end >= style.pause_secs
+            or cue[-1].ends_sentence
+            or parted(cue, word)
         ):
-            lines.append([word])
+            cues.append([word])
         else:
-            line.append(word)
+            cue.append(word)
 
+    metrics = font_metrics(style.font)
     events = []
-    for i, line in enumerate(lines):
-        start = line[0].start
-        end = min(line[-1].end + CAPTION_LINGER_SECS, start + style.max_secs, duration)
-        if i + 1 < len(lines):
-            end = min(end, lines[i + 1][0].start)
-        end = min([end, *(at for at in [*moves, *cuts] if line[-1].end <= at < end)])
+    for i, cue in enumerate(cues):
+        start = cue[0].start
+        end = min(cue[-1].end + CAPTION_LINGER_SECS, start + style.max_secs, duration)
+        if i + 1 < len(cues):
+            end = min(end, cues[i + 1][0].start)
+        end = min([end, *(at for at in [*moves, *cuts] if cue[-1].end <= at < end)])
         if end <= start:
             continue
-        text = " ".join(word.text for word in line)
-        starts = [max(word.start, start) for word in line]
-        highlights = list(zip(line, starts, [*starts[1:], end]))
+        lines = _lines(cue, style) or [cue]
+        texts = [" ".join(word.text for word in line) for line in lines]
+        widest = max(texts, key=lambda text: metrics.width(text, style.size, style.tracking))
+        starts = [max(word.start, start) for word in cue]
+        timed = iter(zip(starts, [*starts[1:], end]))
+        highlights = [[(word, *next(timed)) for word in line] for line in lines]
         edges = [start, *(at for at in moves if start < at < end), end]
         # Each part of the line between Layout changes, where it is shown: one too short joins the next
         # (the last, the one before it), taking the next one's place.
@@ -2369,29 +2374,75 @@ def _captions(
             else:
                 parts[short - 1][1] = parts[short][1]
             del parts[short]
-        joinable = i > 0 and not parted(lines[i - 1], line[0]) and _fits([*lines[i - 1], *line], style)
+        joined = [*cues[i - 1], replace(cue[0], breaks_before=False), *cue[1:]] if i > 0 else []
+        joinable = i > 0 and not parted(cues[i - 1], cue[0]) and _fits(joined, style)
         for a, b, area in parts:
-            size = _caption_size(text, area, style)
+            size = _caption_size(widest, area, style)
             events.append(Cue(
                 start=round(a, 3),
                 end=round(b, 3),
                 lines=[[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
-                        for word, on, off in highlights]],
-                plain=[" ".join(word.plain for word in line)],
-                area=_caption_placed(text, area, size, style),
+                        for word, on, off in line] for line in highlights],
+                plain=[" ".join(word.plain for word in line) for line in lines],
+                area=_caption_placed(widest, _caption_box(area, len(lines), size), size, style),
                 size=size,
-                key=CueKey(line[0].at),
+                key=CueKey(cue[0].at),
                 joinable=joinable,
             ))
     return events
 
 
 def _fits(words: list[_Spoken], style: CaptionStyle) -> bool:
-    """Whether `words` fit the style's line limits as one Cue: one line of at most its max_chars
-    characters and max_words Words."""
-    return _caption_length(" ".join(word.text for word in words), style) <= style.max_chars and (
-        style.max_words is None or len(words) <= style.max_words
-    )
+    """Whether `words` fit the style's line limits as one Cue (`_lines`)."""
+    return _lines(words, style) is not None
+
+
+def _lines(words: list[_Spoken], style: CaptionStyle) -> list[list[_Spoken]] | None:
+    """`words` as a Cue's lines: the fewest, up to the style's max_lines, that fit its line limits
+    (each line of at most max_chars characters, as _caption_length counts them, unless it is one
+    Word, and of at most max_words Words), broken where the longest line is shortest (of equals, with
+    the earliest breaks) and before each Word edited to start a line; None when even max_lines lines
+    don't fit."""
+    starts = {i for i, word in enumerate(words) if word.breaks_before and i}
+    # Each run of words that can be one line, by its ends, and how long it counts.
+    lengths: dict[tuple[int, int], float] = {}
+    for i in range(len(words)):
+        for j in range(i + 1, len(words) + 1):
+            if (j - 1 > i and j - 1 in starts) or (style.max_words is not None and j - i > style.max_words):
+                break
+            length = _caption_length(" ".join(word.text for word in words[i:j]), style)
+            if j - i > 1 and length > style.max_chars:
+                break
+            lengths[i, j] = length
+    # best[k][j]: the shortest longest line of words[:j] on k + 1 lines, and where its last line starts.
+    best = [{j: (length, 0) for (i, j), length in lengths.items() if i == 0}]
+    for _ in range(1, style.max_lines):
+        if len(words) in best[-1]:
+            break
+        more: dict[int, tuple[float, int]] = {}
+        for (i, j), length in lengths.items():
+            if i in best[-1]:
+                option = (max(best[-1][i][0], length), i)
+                if j not in more or option < more[j]:
+                    more[j] = option
+        best.append(more)
+    if len(words) not in best[-1]:
+        return None
+    lines, j = [], len(words)
+    for k in range(len(best) - 1, -1, -1):
+        i = best[k][j][1]
+        lines.insert(0, words[i:j])
+        j = i
+    return lines
+
+
+def _caption_box(area: Box, count: int, size: float) -> Box:
+    """`area`, as tall as `count` lines set at `size` (one each) when they are taller than it, about
+    its middle."""
+    height = 2 * math.ceil(count * size / 2)
+    if height <= area.height:
+        return area
+    return replace(area, y=round(area.y + area.height / 2 - height / 2), height=height)
 
 
 def _caption_length(text: str, style: CaptionStyle) -> float:

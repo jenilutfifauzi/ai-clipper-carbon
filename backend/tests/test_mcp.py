@@ -241,6 +241,31 @@ async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry
 
 
 @pytest.mark.anyio
+async def test_max_lines_is_a_caption_style_override_and_a_preset_field(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    sentence = {"max_lines": 2, "max_chars": 24, "max_secs": 5, "pause_secs": 0.7}
+
+    one = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert all(len(cue["lines"]) == 1 for cue in one["captions"])
+    # "halo semua apa kabar" in two lines of 12 characters.
+    narrow = {**sentence, "max_chars": 12}
+    two = await call(mcp, "edit_candidate", **ids, changes={"style_overrides": {"caption": narrow}}, dry_run=True)
+    assert [(cue["lines"], cue["plain"]) for cue in two["captions"]] == [(["HALO SEMUA", "APA KABAR"], ["halo semua", "apa kabar"])]
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"max_lines": 2}})
+    assert merged["style_overrides"]["caption"] == {"max_lines": 2}
+    assert "max_lines" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"max_lines": 4}})
+
+    # A Preset keeps it, and a Candidate on it plans two lines.
+    saved = await call(mcp, "save_preset", preset={"name": "Narrow", "caption": narrow})
+    assert saved["caption"]["max_lines"] == 2
+    await call(mcp, "edit_candidate", **ids, changes={"style_overrides": {}})
+    on_preset = await call(mcp, "edit_candidate", **ids, changes={"preset_id": saved["id"]}, dry_run=True)
+    assert [cue["lines"] for cue in on_preset["captions"]] == [["HALO SEMUA", "APA KABAR"]]
+
+
+@pytest.mark.anyio
 async def test_the_hook_and_caption_shadow_and_box_padding_are_style_overrides(mcp):
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)

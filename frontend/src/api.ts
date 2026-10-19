@@ -154,6 +154,9 @@ export interface CaptionStyle {
   y: number;
   // Each line's centre, at any position (the backend keeps the line in the frame); null: centred.
   x: number | null;
+  // A Cue holds at most max_lines lines (1 to 3), each of at most max_chars characters and max_words
+  // Words, its lines balanced; it lasts at most max_secs and ends after a pause of pause_secs.
+  max_lines: number;
   max_chars: number;
   max_words: number | null;
   max_secs: number;
