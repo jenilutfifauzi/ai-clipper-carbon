@@ -716,6 +716,32 @@ describe("pasting into another Candidate or Job", () => {
     expect(outcome.edits.text_layers).toEqual([layer("n2", 11, 2, { text: "a" })]);
     expect(outcome.notice).toBe("1 Segment of this episode left out: another Job's clips can't show it.");
   });
+
+  test("a video's Segment brings the Word Edits of its range of the video into a Candidate of another Job, but where it has its own", () => {
+    const before = edits({
+      segments: [segment("s1", 100, 105), segment("v1", 2, 6, { media: "intro" })],
+      word_edits: [
+        { at: 3, text: "dunia", break_before: false, media: "intro" },
+        { at: 5, text: null, break_before: true, media: "intro" },
+        // Outside its range of the video, of another video, and of the Source at the same time.
+        { at: 8, text: "later", break_before: false, media: "intro" },
+        { at: 3, text: "other", break_before: false, media: "outro" },
+        { at: 3, text: "source", break_before: false },
+      ],
+    });
+    const held = copy(scene(before, picked(seg("v1"))), here)!;
+    const target = edits({
+      segments: [segment("t1", 300, 310)],
+      word_edits: [{ at: 5, text: "own", break_before: false, media: "intro" }],
+    });
+
+    const pasted = paste(scene(target, null), held, 10, { job: "j2", candidate: "c9" }, []).edits;
+
+    expect(pasted.word_edits).toEqual([
+      { at: 3, text: "dunia", break_before: false, media: "intro" },
+      { at: 5, text: "own", break_before: false, media: "intro" },
+    ]);
+  });
 });
 
 describe("the magnetic timeline", () => {

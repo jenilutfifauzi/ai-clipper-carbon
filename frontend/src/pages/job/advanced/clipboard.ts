@@ -6,6 +6,7 @@ import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, 
 import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
+import { sameKey } from "../editor/wordEdits";
 
 // The Clipboard (GLOSSARY.md): the Advanced Edit's copied items, kept in memory while the browser tab
 // is open, keeping their order and their times relative to one another.
@@ -26,7 +27,8 @@ export interface Clipboard {
   // Segment's, as played, when Segments were copied, else the first of them.
   layers: { kind: TimedKind; item: Timed; at: number }[];
   // The Word Edits and Layout Overrides in the ranges of the Segments of the Source, which come along
-  // into another Candidate of the Job.
+  // into another Candidate of the Job; and the Word Edits in the ranges of the videos' Segments, of
+  // their videos (ADR 0020), which come along into any Candidate.
   word_edits: WordEdit[];
   layout_overrides: LayoutOverride[];
 }
@@ -42,13 +44,14 @@ export function copy(scene: PickContext, from: Place): Clipboard | null {
     const index = edits.segments.findIndex((segment) => segment.id === transition.after);
     return copied.has(transition.after) && copied.has(edits.segments[index + 1]?.id);
   });
-  const shows = (at: number) => segments.some((segment) => !segment.media && segment.start <= at && at <= segment.end);
+  const shows = (at: number, media: string | null = null) =>
+    segments.some((segment) => (segment.media ?? null) === media && segment.start <= at && at <= segment.end);
   return {
     from,
     segments: segments.map((segment) => ({ segment, at: round((played[edits.segments.indexOf(segment)]?.start ?? 0) - start) })),
     transitions,
     layers: layers.map(({ kind, item }) => ({ kind, item, at: round(item.start - start) })),
-    word_edits: edits.word_edits.filter((edit) => shows(edit.at)),
+    word_edits: edits.word_edits.filter((edit) => shows(edit.at, edit.media ?? null)),
     layout_overrides: edits.layout_overrides.filter((override) => shows(override.at)),
   };
 }
@@ -76,6 +79,8 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
  * Into another Candidate of the Job, Segments of the Source bring the Word Edits and Layout Overrides
  * of their ranges, but where it has its own: a Word Edit of the same Word (by the Source's `words`)
  * or a Layout Override in that range. Into another Job, they are left out, with their Transitions.
+ * Segments of videos bring the Word Edits of their ranges of their videos into any Candidate, but
+ * where it has its own at that key.
  */
 export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: Place, words: { start: number; end: number }[] = []): Outcome {
   const { edits, played } = scene;
@@ -118,6 +123,14 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     // On the Magnetic timeline, the layers already there after the join play later.
     if (scene.magnetic) Object.assign(next, ripple(next, [{ kind: "inserted", at: joins[place], secs: duration - scene.duration }]).edits);
   }
+  const videos = kept.filter(({ segment }) => segment.media).map(({ segment }) => segment);
+  const ofVideos = clipboard.word_edits.filter(
+    (edit) =>
+      edit.media &&
+      videos.some((segment) => segment.media === edit.media && segment.start <= edit.at && edit.at <= segment.end) &&
+      !edits.word_edits.some((own) => sameKey(own, edit)),
+  );
+  if (ofVideos.length) next.word_edits = [...edits.word_edits, ...ofVideos].sort((a, b) => a.at - b.at);
   if (sameJob && to.candidate !== clipboard.from.candidate && segments.length) {
     const pastedRanges = kept.filter(({ segment }) => !segment.media).map(({ segment }) => segment);
     const inRange = (at: number) => pastedRanges.some((segment) => segment.start <= at && at <= segment.end);
@@ -125,8 +138,10 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
       const word = wordAt(words, a);
       return word === -1 ? a === b : word === wordAt(words, b);
     };
-    const wordEdits = clipboard.word_edits.filter((edit) => inRange(edit.at) && !edits.word_edits.some((own) => sameWord(own.at, edit.at)));
-    if (wordEdits.length) next.word_edits = [...edits.word_edits, ...wordEdits];
+    const wordEdits = clipboard.word_edits.filter(
+      (edit) => !edit.media && inRange(edit.at) && !edits.word_edits.some((own) => !own.media && sameWord(own.at, edit.at)),
+    );
+    if (wordEdits.length) next.word_edits = [...next.word_edits, ...wordEdits].sort((a, b) => a.at - b.at);
     const theirs = pastedRanges.filter((segment) => !edits.layout_overrides.some((own) => segment.start <= own.at && own.at <= segment.end));
     const overrides = clipboard.layout_overrides.filter((override) => theirs.some((segment) => segment.start <= override.at && override.at <= segment.end));
     if (overrides.length) next.layout_overrides = [...edits.layout_overrides, ...overrides];

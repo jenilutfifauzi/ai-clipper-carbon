@@ -99,7 +99,7 @@ export function CaptionTextEditor({
       </Fold>
       {open !== null && words[open] && (
         <WordForm
-          key={editKey(words[open])}
+          key={`${words[open].media ?? ""}@${editKey(words[open])}`}
           word={words[open]}
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}
@@ -238,7 +238,7 @@ function WordForm({
     >
       <div className="flex flex-col gap-1">
         <label htmlFor={`${id}-text`} className="text-sm font-medium">
-          Word at {formatPrecise(word.at)}, heard as “{word.text}”
+          Word at {formatPrecise(word.at)}{word.media ? " of the video" : ""}, heard as “{word.text}”
         </label>
         <input
           ref={input}

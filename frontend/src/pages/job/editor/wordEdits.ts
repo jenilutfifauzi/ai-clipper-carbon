@@ -4,16 +4,27 @@ import { cueWords } from "./cues";
 // The longest a Word Edit's text can be (candidates.py's WORD_EDIT_MAX_CHARS).
 export const WORD_EDIT_MAX_CHARS = 40;
 
-// The time a Word's edit is keyed by: its edit's own, or its middle on the Source's timeline.
-// Edits are keyed by the Word's time on the Source's timeline, which a cut Clip may show twice.
+// The time a Word's edit is keyed by: its edit's own, or its middle on its timeline. Edits are keyed
+// by the Word's time on its timeline (the Source's, or with `media` its Media Library item's, ADR
+// 0020), which a cut Clip may show twice.
 export const editKey = (word: PreviewWord) => word.edit?.at ?? word.at;
+
+/** Whether `a` and `b` (Word Edits, or anything keyed as one) are keyed alike: one time of one timeline. */
+export const sameKey = (a: { at: number; media?: string | null }, b: { at: number; media?: string | null }) =>
+  Math.round(a.at * 1000) === Math.round(b.at * 1000) && (a.media ?? null) === (b.media ?? null);
 
 /** `edits` with `word`'s changed by `change`: an edit back to the Word as it is goes. */
 export function withWordEdit(edits: WordEdit[], word: PreviewWord, change: Partial<Pick<WordEdit, "text" | "break_before">>): WordEdit[] {
-  const at = editKey(word);
-  const next: WordEdit = { at, text: word.edit?.text ?? null, break_before: word.edit?.break_before ?? false, ...change };
+  const key = { at: editKey(word), media: word.media ?? null };
+  const next: WordEdit = {
+    at: key.at,
+    text: word.edit?.text ?? null,
+    break_before: word.edit?.break_before ?? false,
+    ...(key.media ? { media: key.media } : {}),
+    ...change,
+  };
   if (next.text === word.text) next.text = null;
-  const others = edits.filter((edit) => edit.at !== at);
+  const others = edits.filter((edit) => !sameKey(edit, key));
   return next.text === null && !next.break_before ? others : [...others, next].sort((a, b) => a.at - b.at);
 }
 

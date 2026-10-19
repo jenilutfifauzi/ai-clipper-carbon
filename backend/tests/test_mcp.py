@@ -24,7 +24,9 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
-TOOLS_BUDGET_BYTES = 69_000
+# Raised from 69_000 for Word Edits of Media Words (captions-advanced/06): `word_edits[].media` and
+# remove_candidate_items' {at, media} keys.
+TOOLS_BUDGET_BYTES = 70_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -505,6 +507,28 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
 
     message = await fails(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "media": "0" * 32, "start": 0, "secs": 1}])
     assert f"no song or video with sound {"0" * 32}" in message
+
+
+@pytest.mark.anyio
+async def test_word_edits_of_media_words_are_keyed_by_their_item_and_time(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    video = "a" * 32
+    keyed = lambda saved: [(edit["at"], edit["media"], edit["text"]) for edit in saved["word_edits"]]  # noqa: E731
+
+    # 0.5 s of the Source and 0.5 s of the video: two edits.
+    saved = await call(mcp, "edit_candidate", **ids, changes={"word_edits": [{"at": 0.5, "text": "Semua"}, {"at": 0.5, "text": "dunia", "media": video}]})
+    assert keyed(saved) == [(0.5, None, "Semua"), (0.5, video, "dunia")]
+    merged = await call(mcp, "merge_candidate_items", **ids, word_edits=[{"at": 0.5, "media": video, "text": "Dunia"}, {"at": 0.9, "media": video, "text": "kawan"}])
+    assert keyed(merged) == [(0.5, None, "Semua"), (0.5, video, "Dunia"), (0.9, video, "kawan")]
+
+    # A number names a Source Word Edit; {at, media} one of a video's.
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[{"at": 0.5, "media": video}])
+    assert keyed(removed) == [(0.5, None, "Semua"), (0.9, video, "kawan")]
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.5])
+    assert keyed(removed) == [(0.9, video, "kawan")]
+    assert "no word_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.9])
 
 
 @pytest.mark.anyio

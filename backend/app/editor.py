@@ -61,15 +61,16 @@ class WordsStatus(StrEnum):
 
 @dataclass(frozen=True)
 class PreviewWord:
-    """A Word the captions are made of, as heard (in seconds into the Clip), the middle of it on the
-    Source's timeline (`at`, which a Word Edit of it is keyed by), and the Candidate's Word Edit that
-    applies to it, if any."""
+    """A Word the captions are made of, as heard (in seconds into the Clip), the middle of it on its
+    timeline (`at`, on the Source's, or with `media` on that Media Library item's: which a Word Edit
+    of it is keyed by), and the Candidate's Word Edit that applies to it, if any."""
 
     text: str
     start: float
     end: float
     edit: WordEdit | None = None
     at: float = 0.0
+    media: str | None = None
 
 
 @dataclass(frozen=True)
@@ -144,19 +145,18 @@ def preview_plan(
     make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
     shown, at = [], 0.0
     for segment, heard in zip(segments, words):
-        if segment.media is not None:
-            # A video's Words are keyed on its item's timeline (their Word Edits come with ticket 06).
-            at += segment_time(segment).length
-            continue
         played = segment_time(segment)
         ordered = sorted(heard, key=lambda word: word.start)
-        # Matched in the Segment; given back as the Candidate holds them.
-        shifted = [replace(edit, at=edit.at - segment.start) for edit in candidate.word_edits]
-        original = {id(edit): kept for edit, kept in zip(shifted, candidate.word_edits)}
+        # Matched in the Segment, on its own timeline (the Source's, or its item's); given back as the
+        # Candidate holds them.
+        own = [edit for edit in candidate.word_edits if edit.media == segment.media]
+        shifted = [replace(edit, at=edit.at - segment.start) for edit in own]
+        original = {id(edit): kept for edit, kept in zip(shifted, own)}
         shown += [
             PreviewWord(
                 word.text, round(played.offset_of(word.start) + at, 3), round(played.offset_of(word.end) + at, 3),
                 None if edit is None else original[id(edit)], round(segment.start + (word.start + word.end) / 2, 3),
+                segment.media,
             )
             for word, edit in zip(ordered, match_edits(ordered, shifted))
             if 0 <= (word.start + word.end) / 2 < played.span

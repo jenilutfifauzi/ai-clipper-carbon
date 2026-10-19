@@ -276,9 +276,11 @@ def _look(candidate: Candidate) -> tuple:
 
 
 def _merged(edits: list[WordEdit]) -> list[WordEdit]:
-    """The edits in time order, leaving out those that change nothing; of two at the same time, the later."""
-    by_time = {round(edit.at, 3): edit for edit in edits}
-    return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
+    """The edits in time order, leaving out those that change nothing; of two at the same time of one
+    timeline (the Source's, or a Media Library item's), the later."""
+    by_key = {(edit.media, round(edit.at, 3)): edit for edit in edits}
+    ordered = sorted(by_key.items(), key=lambda pair: (pair[0][1], pair[0][0] or ""))
+    return [edit for _, edit in ordered if edit.text is not None or edit.break_before]
 
 
 def _joined(transitions: list[Transition], segments: list[Segment]) -> list[Transition]:

@@ -21,7 +21,8 @@ export interface Merged<T> {
   collisions: Collision[];
 }
 
-// Each list's items by this key: the MCP merge tool's keys.
+// Each list's items by this key (or these fields): the MCP merge tool's keys. A Word Edit's is its
+// time on its timeline, the Source's or (with `media`) a Media Library item's (ADR 0020).
 const KEYS = {
   segments: "id",
   text_layers: "id",
@@ -29,7 +30,7 @@ const KEYS = {
   music: "id",
   overlays: "id",
   transitions: "after",
-  word_edits: "at",
+  word_edits: ["at", "media"],
   layout_overrides: "at",
 } as const;
 
@@ -120,7 +121,9 @@ const fields = (edits: Edits) => edits as Record<string, unknown>;
 
 function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[], collisions: Collision[]): Item[] {
   const key = KEYS[field];
-  const byKey = (items: Item[]) => new Map(items.map((item) => [String(item[key]), item]));
+  const fields: readonly string[] = typeof key === "string" ? [key] : key;
+  const keyOf = (item: Item) => fields.map((name) => String(item[name] ?? "")).join("@");
+  const byKey = (items: Item[]) => new Map(items.map((item) => [keyOf(item), item]));
   const [b, m, t] = [byKey(base), byKey(mine), byKey(theirs)];
   const kept = new Map<string, Item>();
   for (const id of new Set([...b.keys(), ...m.keys(), ...t.keys()])) {
@@ -129,7 +132,7 @@ function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[],
     if (result.value) kept.set(id, result.value);
   }
   const order = ordered(
-    [base, mine, theirs].map((items) => items.map((item) => String(item[key]))) as [string[], string[], string[]],
+    [base, mine, theirs].map((items) => items.map(keyOf)) as [string[], string[], string[]],
     kept,
   );
   return order.map((id) => kept.get(id)!);

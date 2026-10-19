@@ -115,12 +115,14 @@ export interface LayoutOverride {
   keys?: Keys;
 }
 
-// The owner's correction of one caption Word, keyed by a time on the Source's timeline (the Word
-// whose span holds it). `text` replaces the Word's (null keeps it; "" removes the Word).
+// The owner's correction of one caption Word, keyed by a time on the Source's timeline, or with
+// `media` on that Media Library item's (the Word whose span holds it, of that timeline's Words).
+// `text` replaces the Word's (null keeps it; "" removes the Word).
 export interface WordEdit {
   at: number;
   text: string | null;
   break_before: boolean;
+  media?: string | null;
 }
 
 export type Highlight = "colour" | "box" | "none";
@@ -810,11 +812,13 @@ export interface RenderPlan {
   shapes: ShapeEvent[];
 }
 
-// A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
-// Source's timeline (what a Word Edit of it is keyed by) and its Word Edit.
+// A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
+// timeline (the Source's, or with `media` its Media Library item's: what a Word Edit of it is keyed
+// by) and its Word Edit.
 export interface PreviewWord extends Word {
   edit: WordEdit | null;
   at: number;
+  media?: string | null;
 }
 
 // Where a Segment's caption Words come from: "clip", transcribed for a Source Segment's range;
