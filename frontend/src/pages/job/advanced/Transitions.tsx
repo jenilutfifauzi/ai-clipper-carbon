@@ -103,7 +103,7 @@ export function TransitionPanel({
           {KINDS_BY_GROUP.map(({ group, kinds }) => (
             <section key={group} aria-labelledby={`transitions-${group}`} className="flex flex-col gap-2">
               {/* Over the kinds while they scroll by, in the Asset Panel or the phone's sheet. */}
-              <h3 id={`transitions-${group}`} className="sticky top-0 z-10 bg-surface/90 py-1 text-xs font-semibold tracking-wide text-muted uppercase backdrop-blur">
+              <h3 id={`transitions-${group}`} className="sticky top-0 z-10 [background:linear-gradient(var(--surface),var(--surface)),var(--bg)] py-1 text-xs font-semibold tracking-wide text-muted uppercase">
                 {group}
               </h3>
               <div className="grid grid-cols-2 gap-2">
