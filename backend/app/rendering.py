@@ -188,8 +188,10 @@ def candidate_plan(
     camera: CameraTuning,
     logos: LogoStore | None = None,
     media: "MediaFinder | None" = None,
+    fps: float | None = None,
 ) -> RenderPlan:
-    """The Render Plan of the Candidate as it is: each of its Segments (`candidate.main_track()`) captioned
+    """The Render Plan of the Candidate as it is, at `fps` (the export's frame rate; None, as the
+    preview always plans: the Source's): each of its Segments (`candidate.main_track()`) captioned
     with its `words` (None: no captions) and framed by its `analyses` (None: unanalysed, or a Source
     passed through), both in seconds into the Segment (a Freeze frame's analysis into its
     `analysed_range`); its Watermark's Logo from `logos`, and the
@@ -213,6 +215,7 @@ def candidate_plan(
         source_volume=candidate.source_volume,
         overlays=candidate.overlays,
         media_info=_info(media, candidate.media_ids()),
+        fps=fps,
     )
     if not candidate.segments:
         [analysis] = analyses
@@ -494,8 +497,12 @@ class Renders:
         try:
             words = self._all_words(job, candidate, step(1 / 3)) if job.options.captions else None
             analyses = self._all_analyses(job, candidate, step(1 / 3))
+            # Every Clip is rendered with the default Export Settings until Export Presets choose others,
+            # and planned at their frame rate (docs/adr/0021).
+            export = ExportSettings()
             plan = candidate_plan(
-                candidate, job.source.metadata, words, analyses, self.presets, self.settings.camera, self.logos, self.media
+                candidate, job.source.metadata, words, analyses, self.presets, self.settings.camera, self.logos, self.media,
+                export.fps,
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
@@ -516,10 +523,9 @@ class Renders:
             ))
             # Its picture layers' pictures, made now if they aren't there (docs/adr/0010).
             pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
-            # Every Clip is rendered with the default Export Settings until Export Presets choose others.
             encoder, _ = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures,
-                ExportSettings(),
+                export,
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:
