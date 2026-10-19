@@ -53,14 +53,14 @@
   - `detacher` wires both for the UI; Detach from a picked Segment acts on every picked Segment.
   - Split already copied `muted` and `detached_from` (spread); the tests pin it.
   - `stillDetached`: a new Music Clip (a split's tail, a duplicate, a paste) keeps `detached_from` only while its Segment is in the Candidate, else gets `null`, since the API refuses a new back-reference to a missing Segment. The Clipboard drops it pasting into another Candidate (or Job).
-- **Context menu** (new `ItemMenu.tsx`). `TimelineItem` takes `menu` entries. A right-click, or the menu key, picks the item (unless it is already picked) and opens a `popover="auto"` `role="menu"` at the pointer, kept in the window. It has light dismiss and Escape, arrow keys, Home and End, and the focus goes back to the item on close. `TrackHandlers.menu(item)` gives Segments "Detach audio" / "Reattach audio" and a Detached Music Clip "Reattach audio".
+- **Context menu.** Detach audio and Reattach audio are entries of 12's menu (`ItemMenu.tsx`, opened through `onItemMenu`, desktop only). `SoundMenu` takes `detaching` (`detachEntries` in `AdvancedEdit.tsx`) before its Save sound as WAV. A Segment gets "Detach audio" or "Reattach audio", whichever is offered. A Detached Music Clip gets "Reattach audio" while its Segment is there.
 - **Inspector.** A Segment shows a "Detach audio" or "Reattach audio" button under its Muted switch, whichever is offered. A Detached Music Clip whose Segment is there shows "Detached from Segment N" with "Reattach".
 - **MCP.** One instructions paragraph for Detach and Reattach. It says to add the Music Clip and set `muted` in one `merge_candidate_items` call, from the dry run's `segments`. The new field passes through both tools from the model. The tool list stays within 69 000 bytes.
 
 **Decided differently / worth knowing:**
 - **Detach and `muted` must be one edit for a lone unmuted Segment.** `review.update` folds a lone, as-filmed, unmuted Segment into `start`/`end`, so its id becomes `main`. A Music Clip naming its old id would then be refused. The instructions say to do both in one merge.
 - **No `duck` yet.** Ticket 10 adds the field and the −12 dB default for new Music Clips of a Media Library item. **When merging 10, `detach` must set `duck: null`** on a Detached video sound, or the server's default will duck it. A Music Clip of the Source never ducks anyway.
-- **Context menu shared with 12.** Ticket 12 needs "Save sound as WAV" on the same menus. It can add its entry in `itemMenu` (`AdvancedEdit.tsx`) through `TrackHandlers.menu`, and pass `menu` to the Overlay's `TimelineItem` too.
+- **Merged with 12.** This ticket first built its own context menu. On merging feat/audio-mixing it took 12's `ItemMenu`, `TimelineItem.onMenu` and `TrackHandlers.onItemMenu`, and moved its entries into that one menu.
 - **The inspector's buttons show on the phone's sheets too** (the Inspector is shared). Ticket 14 owns the phone's design of it.
 - **Not checked by hand in a browser.** No backend with a reviewed Job was running for this worktree. Typecheck, build and the action tests cover the wiring; ticket 15's walkthrough covers the J-cut by hand.
 - **Tests:**

@@ -17,7 +17,6 @@ import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import type { LoopRegion } from "../editor/loop";
 import { usePlayback, type Playback } from "../editor/playback";
-import { ItemMenu, type MenuEntry } from "./ItemMenu";
 import { onFrame, revealScroll, type LoopMarks } from "./playhead";
 import { setSkim, setSkimSound, useSkim, useSkimSound } from "./skim";
 import { MAX_ZOOM, zoomAboutPlayhead, type ZoomedView } from "./timelineView";
@@ -745,7 +744,7 @@ export function TimelineItem({
   onSelect,
   onChange,
   onDelete,
-  menu,
+  onMenu,
   children,
 }: {
   geometry: TimeGeometry;
@@ -774,14 +773,12 @@ export function TimelineItem({
   onSelect: (toggle: boolean) => void;
   onChange?: (range: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   onDelete?: (rippled: boolean) => void;
-  // What its context menu offers (ItemMenu.tsx); with none, the browser's own.
-  menu?: MenuEntry[];
+  // Its context menu asked for (a right-click, or the keyboard's menu key), at that point of the window.
+  onMenu?: (at: { x: number; y: number }) => void;
   children: ReactNode;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const [lifted, setLifted] = useState(false);
-  // Where its context menu was opened, while it is open.
-  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{
     edge: "move" | "start" | "end";
     pointer: number;
@@ -902,14 +899,14 @@ export function TimelineItem({
       stop();
     },
     onPointerCancel: stop,
-    // Opened on it, its context menu acts on it: picked first, unless it is picked already (with others).
     onContextMenu: (event: MouseEvent<HTMLDivElement>) => {
-      if (!menu?.length) return;
+      if (!onMenu) return;
       event.preventDefault();
+      // Picked alone first, unless it is in the Pick, as a right-click picks in a file list.
       if (!selected) onSelect(false);
-      // From the keyboard's menu key, at its bottom left.
+      // The keyboard's menu key gives no point (0, 0): the item's corner instead.
       const box = event.currentTarget.getBoundingClientRect();
-      setMenuAt(event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : { x: box.left, y: box.bottom });
+      onMenu(event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : { x: box.left, y: box.bottom });
     },
     onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
       if ((event.key === "Delete" || event.key === "Backspace") && onDelete) {
@@ -938,60 +935,47 @@ export function TimelineItem({
 
   const width = Math.max(4, (end - start) * pps - 1);
   return (
-    <>
-      <div
-        ref={element}
-        role="button"
-        tabIndex={0}
-        aria-label={label}
-        aria-pressed={selected}
-        data-pick={pickKey}
-        {...handlers}
-        className={cx(
-          "group absolute inset-y-1 overflow-hidden rounded-md text-left text-xs leading-none ring-1",
-          "focus-visible:outline-2 focus-visible:outline-focus",
-          onChange ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
-          TONES[tone],
-          selected && "ring-2 ring-text",
-          changed && "motion-safe:animate-[changed_1.6s_var(--ease-out)] motion-reduce:ring-2 motion-reduce:ring-accent",
-          lifted && "z-10 scale-y-110 shadow-raised",
-        )}
-        style={{ left: start * pps, width }}
-      >
-        <div className="pointer-events-none flex h-full items-center gap-1 overflow-hidden px-2 whitespace-nowrap">{children}</div>
-        {trim && onChange && (
-          <>
-            <span
-              data-edge="start"
-              aria-hidden
-              className={cx(
-                "absolute inset-y-0 left-0 w-3 cursor-ew-resize rounded-l-md bg-text/70",
-                selected ? "opacity-100" : "opacity-0 group-hover:opacity-60",
-              )}
-            />
-            <span
-              data-edge="end"
-              aria-hidden
-              className={cx(
-                "absolute inset-y-0 right-0 w-3 cursor-ew-resize rounded-r-md bg-text/70",
-                selected ? "opacity-100" : "opacity-0 group-hover:opacity-60",
-              )}
-            />
-          </>
-        )}
-      </div>
-      {menuAt && menu && (
-        <ItemMenu
-          at={menuAt}
-          label={label}
-          entries={menu}
-          onClose={() => {
-            setMenuAt(null);
-            element.current?.focus();
-          }}
-        />
+    <div
+      ref={element}
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      aria-pressed={selected}
+      data-pick={pickKey}
+      {...handlers}
+      className={cx(
+        "group absolute inset-y-1 overflow-hidden rounded-md text-left text-xs leading-none ring-1",
+        "focus-visible:outline-2 focus-visible:outline-focus",
+        onChange ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+        TONES[tone],
+        selected && "ring-2 ring-text",
+        changed && "motion-safe:animate-[changed_1.6s_var(--ease-out)] motion-reduce:ring-2 motion-reduce:ring-accent",
+        lifted && "z-10 scale-y-110 shadow-raised",
       )}
-    </>
+      style={{ left: start * pps, width }}
+    >
+      <div className="pointer-events-none flex h-full items-center gap-1 overflow-hidden px-2 whitespace-nowrap">{children}</div>
+      {trim && onChange && (
+        <>
+          <span
+            data-edge="start"
+            aria-hidden
+            className={cx(
+              "absolute inset-y-0 left-0 w-3 cursor-ew-resize rounded-l-md bg-text/70",
+              selected ? "opacity-100" : "opacity-0 group-hover:opacity-60",
+            )}
+          />
+          <span
+            data-edge="end"
+            aria-hidden
+            className={cx(
+              "absolute inset-y-0 right-0 w-3 cursor-ew-resize rounded-r-md bg-text/70",
+              selected ? "opacity-100" : "opacity-0 group-hover:opacity-60",
+            )}
+          />
+        </>
+      )}
+    </div>
   );
 }
 
