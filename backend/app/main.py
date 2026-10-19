@@ -34,7 +34,8 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     ports = ports or real_ports(settings)
     # One for the app, so that what the render queue has queued shows in the editor.
     media_words = MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
-    worker = Worker(store, Pipeline(store, ports, settings), Renders(store, settings, ports.transcriber, media_words))
+    renders = Renders(store, settings, ports.transcriber, media_words)
+    worker = Worker(store, Pipeline(store, ports, settings), renders)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -51,6 +52,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.state.text_presets = TextPresetStore(settings.data_dir / TEXT_PRESETS_FILE)
+    app.state.export_presets = renders.export_presets
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media
     app.state.media_words = media_words

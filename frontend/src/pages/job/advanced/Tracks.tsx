@@ -1,5 +1,5 @@
-import { Eye, EyeOff, Lock, LockOpen, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { Eye, EyeOff, Lock, LockOpen, Mic, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
+import { useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
   jobPeaksUrl,
@@ -16,6 +16,7 @@ import {
   type ShapeKind,
   type SourceMetadata,
   type TextLayer,
+  type Transition,
   type TransitionKind,
 } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -25,7 +26,8 @@ import { cueText } from "../editor/cues";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
-import { offsetAt, overlayTime, rangeOf } from "../editor/segmentTime";
+import { TRANSITIONS } from "../editor/transitions";
+import { offsetAt, overlayTime, rangeOf, transitionOverlap } from "../editor/segmentTime";
 import { keyText, sameKey } from "../editor/timelineKey";
 import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
@@ -41,7 +43,21 @@ import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
 import { speedLabel } from "./speed";
-import { gainAt, segmentHeard, sourceGain, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
+import {
+  gainAt,
+  musicDuck,
+  seamDragged,
+  segmentHeard,
+  sourceGain,
+  sourceHeard,
+  underSourceVolume,
+  underVolumeLine,
+  volumeDragged,
+  volumeHeight,
+  volumeLine,
+  type Heard,
+} from "./timelineView";
+import { musicName } from "./Music";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -63,12 +79,14 @@ export interface TrackHandlers {
   onMove: (delta: number, group: string) => void;
   // A Music Clip's or media Segment's volume set by its Volume Line.
   onVolume: (item: { kind: "music" | "segment"; id: string }, volume: number, group: string) => void;
-  // A Music Clip's fade in or fade out set by its Fade Ramp's handle.
-  // `heard`: the seconds of the Music Clip heard, where the Clip's end cuts it short.
+  // A Music Clip's or Segment's fade in or fade out set by its Fade Ramp's handle. `heard`: the
+  // seconds of it heard, where the Clip's end cuts it short or a Transition after it carries it on.
   onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
   // A picked Cue's edge or body dragged to `range`, from where the drag began.
   onCue: (key: CueKey, range: { start: number; end: number; edge: "move" | "start" | "end" }, group: string, from: CueDragStart) => void;
+  // A Transition's length set by its Seam's grips: one change, as the drag ends.
+  onTransition: (transition: Transition) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
   // A Media Library item (its id), a Text Preset (its id) or a Stickers tile (its Shape Kind) dropped at `time`.
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
@@ -76,6 +94,8 @@ export interface TrackHandlers {
   onDropShape: (kind: ShapeKind, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
+  // A Segment's, Music Clip's or Overlay's context menu asked for, at that point of the window (a desktop's).
+  onItemMenu?: (item: ItemRef, at: { x: number; y: number }) => void;
 }
 
 // A Waveform's colour on a Music Clip (its lane's), and on a media or Source Segment, where it takes
@@ -99,6 +119,7 @@ export function Tracks({
   plan,
   edits,
   pick,
+  track,
   played,
   pending = [],
   failed = new Set(),
@@ -118,7 +139,9 @@ export function Tracks({
   plan: RenderPlan | null;
   edits: AdvancedEdits;
   pick: Pick;
-  // The Main Track as it plays: snapped to Words once the plan has it, cut short at Transitions.
+  // The Main Track as planned (overlapping at Transitions once the plan has it), and as it plays:
+  // snapped to Words once the plan has it, cut short at Transitions.
+  track: PlayedSegment[];
   played: PlayedSegment[];
   // Where the Segments whose captions are on their way play (their Media Words being transcribed).
   pending?: { id: string; start: number; end: number }[];
@@ -150,6 +173,8 @@ export function Tracks({
   const cueDrag = useRef<(CueDragStart & { group: string }) | null>(null);
   // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
   const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
+  // An item's context menu, where there is one.
+  const menu = (item: ItemRef) => handlers.onItemMenu && ((at: { x: number; y: number }) => handlers.onItemMenu?.(item, at));
   // A picked item of several dragged or trimmed (or a Segment moved): picked alone.
   const alone = (item: ItemRef) => {
     if (itemsOf(pick).length > 1) onSelect(picked(item));
@@ -295,9 +320,10 @@ export function Tracks({
                 tone="overlay"
                 selected={selected}
                 changed={changed.has(overlay.id)}
-                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}`}
+                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}${overlay.muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
+                onMenu={menu({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
                   layerChanged({ kind: "overlay", id: overlay.id }, overlay.start, { start, edge }, group, () =>
                     handlers.onOverlay(
@@ -322,6 +348,7 @@ export function Tracks({
                 <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
                 <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
                 <RetimingBadge retiming={overlay} />
+                {overlay.muted && <MutedBadge />}
               </TimelineItem>
             );
           })}
@@ -335,10 +362,17 @@ export function Tracks({
           if (!segment) return null;
           const selected = isPicked(pick, "segment", segment.id);
           const volume = segment.media ? 1 : sourceGain(edits, segment);
-          // A video's sound, by its volume Keyframes once it has some.
-          const heard = segmentHeard(segment, shown);
-          // A Freeze frame is silent: no Waveform and no Volume Line.
+          // Heard on under the Transition into the next one, past what is drawn of it, as planned.
+          const handsOver = edits.transitions.some((transition) => transition.after === segment.id);
+          const whole = handsOver ? plan?.segments.find((other) => other.id === segment.id) : undefined;
+          const tail = whole && Math.abs(whole.start - shown.start) < 1e-6 ? Math.max(0, whole.end - shown.end) : 0;
+          // Its sound, by its volume Keyframes once it has some, through its fades.
+          const heard = segmentHeard(segment, shown, tail);
+          const keyed = !!segment.keys?.volume?.length;
+          // A Freeze frame is silent: no Waveform, no Volume Line and no Fade Ramps.
           const held = segment.hold != null;
+          // Muted, its Waveform is flat and dimmed, with no Volume Line nor Fade Ramps, and a crossed speaker.
+          const muted = !held && !!segment.muted;
           return (
             <TimelineItem
               key={segment.id}
@@ -351,9 +385,10 @@ export function Tracks({
               tone="video"
               selected={selected}
               changed={changed.has(segment.id)}
-              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${retimingName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}`}
+              label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${retimingName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}${muted ? ", Muted" : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
+              onMenu={menu({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => {
                 alone({ kind: "segment", id: segment.id });
                 handlers.onSegment(segment.id, moved, group);
@@ -368,24 +403,43 @@ export function Tracks({
                   media={segment.media}
                   item={mediaById.get(segment.media)}
                   heard={heard}
+                  muted={muted}
                 />
               ) : (
-                <SourceFilmstrip geometry={geometry} cache={mediaCache} shown={shown} source={source} gain={volume} />
-              )}
-              {segment.media && !held && mediaById.get(segment.media)?.has_audio !== false && (
-                <VolumeLine
-                  volume={segment.volume ?? 1}
-                  keyed={segment.keys?.volume?.length ? { heard, start: shown.start, playback } : undefined}
-                  grab={selected && !locked("video")}
-                  onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
+                <SourceFilmstrip
+                  geometry={geometry}
+                  cache={mediaCache}
+                  shown={shown}
+                  source={source}
+                  heard={sourceHeard(edits, segment, shown, tail)}
+                  muted={muted}
                 />
+              )}
+              {!held && !muted && (!segment.media || mediaById.get(segment.media)?.has_audio !== false) && (
+                <>
+                  <VolumeLine
+                    volume={segment.volume ?? 1}
+                    keyed={keyed ? { heard, start: shown.start, playback } : undefined}
+                    grab={selected && !locked("video")}
+                    onVolume={(next, group) => handlers.onVolume({ kind: "segment", id: segment.id }, next, group)}
+                  />
+                  <FadeRamps
+                    fades={heard}
+                    pps={pps}
+                    tail={tail}
+                    band={MEDIA_WAVE_BAND}
+                    grab={selected && !locked("video")}
+                    onFade={(fade, secs, group) => handlers.onFade(segment.id, fade, secs, heard.secs + tail, group)}
+                  />
+                </>
               )}
               <span className="relative self-start rounded bg-black/50 px-1 pt-0.5 text-[11px] font-medium text-white tabular-nums">
                 {segment.media ? (mediaById.get(segment.media)?.name ?? "Video") : formatPrecise(mediaAlong(shown).mediaStart)}
-                {volume !== 1 ? ` · ${Math.round(volume * 100)}%` : ""}
+                {volume !== 1 && !keyed ? ` · ${Math.round(volume * 100)}%` : ""}
               </span>
               <RetimingBadge retiming={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
+              {muted && <MutedBadge />}
               {pending.some((span) => span.id === segment.id) && <TranscribingBadge />}
               {failed.has(segment.id) && <FailedBadge />}
             </TimelineItem>
@@ -405,36 +459,56 @@ export function Tracks({
             </span>
           ))}
         </div>
-        {/* The joins, for Transitions: a diamond between each two Segments, filled when it has one. */}
+        {/* The joins, for Transitions: a Seam where one has a Transition, else a diamond. */}
         {played.slice(0, -1).map((shown, i) => {
           const after = edits.segments[i]?.id;
           if (!after) return null;
           const transition = edits.transitions.find((t) => t.after === after);
           const selected = pick?.kind === "join" && pick.after === after;
+          // Either takes a Transition card dropped on it.
+          const join = {
+            onClick: () => handlers.onJoin(after),
+            onDragOver: (event: DragEvent) => {
+              if (event.dataTransfer.types.includes(DRAG_TRANSITION)) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            },
+            onDrop: (event: DragEvent) => {
+              const kind = event.dataTransfer.getData(DRAG_TRANSITION) as TransitionKind;
+              if (!kind) return;
+              event.stopPropagation();
+              handlers.onDropTransition(after, kind);
+            },
+          };
+          if (transition) {
+            return (
+              <Seam
+                key={`join-${after}`}
+                join={join}
+                number={i + 1}
+                transition={transition}
+                outgoing={track[i]}
+                incoming={track[i + 1]}
+                pps={pps}
+                selected={selected}
+                grips={!locked("video")}
+                onLength={(secs) => handlers.onTransition({ ...transition, secs })}
+              />
+            );
+          }
           return (
             <button
               key={`join-${after}`}
               type="button"
-              onClick={() => handlers.onJoin(after)}
-              onDragOver={(event) => {
-                if (event.dataTransfer.types.includes(DRAG_TRANSITION)) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }
-              }}
-              onDrop={(event) => {
-                const kind = event.dataTransfer.getData(DRAG_TRANSITION) as TransitionKind;
-                if (!kind) return;
-                event.stopPropagation();
-                handlers.onDropTransition(after, kind);
-              }}
+              {...join}
               aria-pressed={selected}
-              aria-label={transition ? `Transition after Segment ${i + 1}: ${transition.kind}` : `Join after Segment ${i + 1}: add a transition`}
-              title={transition ? `${transition.kind}, ${transition.secs.toFixed(2)} s` : "Add a transition"}
+              aria-label={`Join after Segment ${i + 1}: add a transition`}
+              title="Add a transition"
               className={cx(
                 "absolute top-1/2 z-10 size-5 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[4px] ring-2 ring-bg",
                 "focus-visible:outline-2 focus-visible:outline-focus",
-                transition ? "bg-accent" : "bg-surface-raised hover:bg-fill",
+                "bg-surface-raised hover:bg-fill",
                 selected && "ring-text",
               )}
               style={{ left: shown.end * pps }}
@@ -529,12 +603,27 @@ export function Tracks({
         <TrackRow key={`music${i}`} label={i === 0 ? label("music") : ""} locked={locked("music")} drop={dropMedia("music")}>
           {lane.map((clip) => {
             const selected = isPicked(pick, "music", clip.id);
-            const song = mediaById.get(clip.media);
-            const length = song?.duration ?? clip.offset + clip.secs;
+            // Of a song, or of the Source's sound (the episode's).
+            const episode = clip.media === null;
+            const song = clip.media ? mediaById.get(clip.media) : undefined;
+            // Its song at its Speed, in Reverse from its end, as an Overlay's video: trimmed, each edge
+            // reaches as far as the song (or the episode) goes that way (as far as it plays now, while
+            // the library loads).
+            const time = overlayTime(clip);
+            const length = episode ? source.metadata.duration : (song?.duration ?? time.end);
+            const reach = {
+              before: clip.start + offsetAt(time, clip.reverse ? length : 0),
+              after: clip.start + offsetAt(time, clip.reverse ? 0 : length),
+            };
             const end = Math.min(clip.start + clip.secs, duration);
             // Its fades over what is heard of it, as the planner has them.
             const fades = fadesWithin(clip, end - clip.start);
             const heard: Heard = { volume: clip.volume, secs: end - clip.start, ...fades, keys: clip.keys.volume };
+            // Its Waveform's gain, ducked under the plan's speech (the Volume Line's stays as dragged).
+            const duck = musicDuck(clip, plan?.audio.find((event) => event.id === clip.id), plan?.ducking);
+            const ducked: Heard = duck ? { ...heard, duck } : heard;
+            const muted = !!clip.muted;
+            const name = musicName(clip, song);
             return (
               <TimelineItem
                 key={clip.id}
@@ -543,14 +632,15 @@ export function Tracks({
                 end={end}
                 max={duration}
                 minSecs={ITEM_MIN_SECS}
-                maxSecs={length - clip.offset}
-                trimMin={clip.start - clip.offset}
+                trimMin={reach.before}
+                trimMax={reach.after}
                 tone="audio"
                 selected={selected}
                 changed={changed.has(clip.id)}
-                label={`Music ${song?.name ?? ""}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s`}
+                label={`${episode ? name : `Music ${song?.name ?? ""}`}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}${muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
+                onMenu={menu({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>
                   layerChanged({ kind: "music", id: clip.id }, clip.start, { start, edge }, group, () =>
                     handlers.onMusic(
@@ -560,8 +650,8 @@ export function Tracks({
                           ...clip,
                           start: round(start),
                           secs: round(end - start),
-                          // Trimming its start starts it later in the song.
-                          offset: edge === "start" ? round(Math.max(0, clip.offset + start - clip.start)) : clip.offset,
+                          // Trimmed, it plays the part of its song its edges now reach.
+                          offset: edge !== "move" ? keptOffset(clip, start - clip.start, end - clip.start) : clip.offset,
                         },
                         edge,
                         group,
@@ -572,26 +662,55 @@ export function Tracks({
                 }
                 onDelete={selected ? onDelete : undefined}
               >
-                {song?.has_audio && !!song.duration && (
-                  <SongWaveform geometry={geometry} cache={mediaCache} clip={clip} heard={heard} length={song.duration} />
+                {episode ? (
+                  // The Source's Peaks, at the Clip's own sound too, as its Segments' are.
+                  <SongWaveform
+                    geometry={geometry}
+                    cache={mediaCache}
+                    clip={clip}
+                    heard={underSourceVolume(heard, edits)}
+                    length={length}
+                    peaks={(start) => jobPeaksUrl(source.job, start)}
+                    muted={muted}
+                  />
+                ) : (
+                  song?.has_audio &&
+                  !!song.duration && (
+                    <SongWaveform
+                      geometry={geometry}
+                      cache={mediaCache}
+                      clip={clip}
+                      heard={ducked}
+                      length={song.duration}
+                      peaks={(start) => mediaPeaksUrl(song.id, start)}
+                      muted={muted}
+                    />
+                  )
                 )}
-                <VolumeLine
-                  volume={clip.volume}
-                  keyed={clip.keys.volume?.length ? { heard, start: clip.start, playback } : undefined}
-                  grab={selected && !locked("music")}
-                  onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
-                />
-                <FadeRamps
-                  fades={fades}
-                  pps={pps}
-                  grab={selected && !locked("music")}
-                  onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, end - clip.start, group)}
-                />
-                <Music aria-hidden size={12} className="relative shrink-0" />
-                <span className="relative truncate font-medium">{song?.name ?? "Music"}</span>
+                {!muted && (
+                  <>
+                    <DuckedShade heard={ducked} />
+                    <VolumeLine
+                      volume={clip.volume}
+                      keyed={clip.keys.volume?.length ? { heard, start: clip.start, playback } : undefined}
+                      grab={selected && !locked("music")}
+                      onVolume={(next, group) => handlers.onVolume({ kind: "music", id: clip.id }, next, group)}
+                    />
+                    <FadeRamps
+                      fades={fades}
+                      pps={pps}
+                      grab={selected && !locked("music")}
+                      onFade={(fade, secs, group) => handlers.onFade(clip.id, fade, secs, end - clip.start, group)}
+                    />
+                  </>
+                )}
+                {episode ? <Mic aria-hidden size={12} className="relative shrink-0" /> : <Music aria-hidden size={12} className="relative shrink-0" />}
+                <span className="relative truncate font-medium">{name}</span>
                 {clip.volume !== 1 && !clip.keys.volume?.length && (
                   <span className="relative shrink-0 opacity-70 tabular-nums">{Math.round(clip.volume * 100)}%</span>
                 )}
+                <RetimingBadge retiming={clip} />
+                {muted && <MutedBadge />}
               </TimelineItem>
             );
           })}
@@ -601,13 +720,13 @@ export function Tracks({
   );
 }
 
-/** A Segment's or Overlay's Speed and Reverse, as its accessible name says them: ", at 2×", ", reversed at 2×", or nothing at 1× forwards. */
+/** A Segment's, Overlay's or Music Clip's Speed and Reverse, as its accessible name says them: ", at 2×", ", reversed at 2×", or nothing at 1× forwards. */
 function retimingName({ speed = 1, reverse }: Retiming): string {
   const atSpeed = speed !== 1 ? ` at ${speedLabel(speed)}` : "";
   return reverse ? `, reversed${atSpeed}` : atSpeed && `,${atSpeed}`;
 }
 
-/** A Segment's or Overlay's badge on the Timeline at a Speed or in Reverse: "2×", "◀", "◀ 2×"; none at 1× forwards. */
+/** A Segment's, Overlay's or Music Clip's badge on the Timeline at a Speed or in Reverse: "2×", "◀", "◀ 2×"; none at 1× forwards. */
 function RetimingBadge({ retiming: { speed = 1, reverse } }: { retiming: Retiming }) {
   if (speed === 1 && !reverse) return null;
   return (
@@ -639,6 +758,15 @@ function FailedBadge() {
   );
 }
 
+/** A Muted item's crossed speaker on the Timeline. */
+function MutedBadge() {
+  return (
+    <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 p-0.5 text-white">
+      <VolumeX size={12} />
+    </span>
+  );
+}
+
 /** A Freeze frame's hold, as its badge and name say it: "1 s", "2.5 s". */
 const holdLabel = (hold: number) => `${Math.round(hold * 100) / 100} s`;
 
@@ -663,7 +791,7 @@ const mediaAlong = (shown: PlayedSegment) => ({
 /**
  * A media Segment's picture: its video's frames along it (its Filmstrip), over the video's still,
  * tiled, which shows until they arrive. A video with sound has its Waveform along the bottom, as it
- * is `heard` (at its volume or by its volume Keyframes).
+ * is `heard` (at its volume or by its volume Keyframes); flat and dimmed when `muted`.
  */
 function MediaFilmstrip({
   geometry,
@@ -672,6 +800,7 @@ function MediaFilmstrip({
   media,
   item,
   heard,
+  muted,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
@@ -679,6 +808,7 @@ function MediaFilmstrip({
   media: string;
   item?: MediaItem;
   heard: Heard;
+  muted: boolean;
 }) {
   const { pps } = geometry;
   return (
@@ -711,6 +841,7 @@ function MediaFilmstrip({
                     gain: (time) => gainAt(time, heard),
                     color: MEDIA_WAVE,
                     band: MEDIA_WAVE_BAND,
+                    muted,
                   }),
                 ]
               : []),
@@ -723,20 +854,23 @@ function MediaFilmstrip({
 
 /**
  * A Source Segment's picture: the Source's frames along it (its Filmstrip), over the plain lane until
- * they arrive, and the speech's Waveform along its bottom at `gain`, the Clip's own sound's volume.
+ * they arrive, and the speech's Waveform along its bottom as it is `heard` (its volume or volume
+ * Keyframes, under the Clip's own sound); flat and dimmed when `muted`.
  */
 function SourceFilmstrip({
   geometry,
   cache,
   shown,
   source,
-  gain,
+  heard,
+  muted,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   shown: PlayedSegment;
   source: { job: string; metadata: SourceMetadata };
-  gain: number;
+  heard: Heard;
+  muted: boolean;
 }) {
   const { pps } = geometry;
   return (
@@ -761,9 +895,10 @@ function SourceFilmstrip({
                 url: (start) => jobPeaksUrl(source.job, start),
                 ...mediaAlong(shown),
                 duration: source.metadata.duration,
-                gain: () => gain,
+                gain: (time) => gainAt(time, heard),
                 color: MEDIA_WAVE,
                 band: MEDIA_WAVE_BAND,
+                muted,
               }),
             ]),
       ]}
@@ -772,9 +907,11 @@ function SourceFilmstrip({
 }
 
 /**
- * A Music Clip's Waveform: the part of its song it plays, across its body, as `heard` over the secs
- * it is heard for, at its volume or by its volume Keyframes, through its fades (as the planner has
- * them over those). `length` is the song's.
+ * A Music Clip's Waveform: the part of its song it plays, across its body, at its Speed (from the
+ * part's end, backwards, in Reverse), as `heard` over the secs it is heard for, at its volume or by
+ * its volume Keyframes, through its fades (as the planner has them over those); flat and dimmed when
+ * `muted`. `length` is the song's, whose Peaks are at `peaks` (a Media Library item's, or the
+ * Source's for its sound).
  */
 function SongWaveform({
   geometry,
@@ -782,12 +919,16 @@ function SongWaveform({
   clip,
   heard,
   length,
+  peaks,
+  muted,
 }: {
   geometry: TimeGeometry;
   cache: MediaCache;
   clip: MusicClip;
   heard: Heard;
   length: number;
+  peaks: (start: number) => string;
+  muted: boolean;
 }) {
   const { pps } = geometry;
   const { secs } = heard;
@@ -801,14 +942,137 @@ function SongWaveform({
       layers={[
         waveformLayer({
           cache,
-          url: (start) => mediaPeaksUrl(clip.media, start),
-          mediaStart: clip.offset,
+          url: peaks,
+          mediaStart: clip.reverse ? overlayTime(clip, length).end : clip.offset,
+          speed: clip.speed,
+          reverse: clip.reverse,
           duration: length,
           gain: (time) => gainAt(time, heard),
           color: SONG_WAVE,
+          muted,
         }),
       ]}
     />
+  );
+}
+
+/**
+ * A join's Transition as the Timeline draws it, its Seam: a band over the two Segments' overlap, the
+ * end of the `outgoing` one less the overlap to its end (`incoming`'s start, once the plan has it).
+ * A click picks the join, and it takes a Transition card dropped on it (`join`). With `grips` (an
+ * unlocked Video Track), a grip at each edge drags the length out or in from both edges at once
+ * (`seamDragged`), with a tooltip of it; the band stays centred where it was while it does, and
+ * `onLength` has it as the drag ends, one step of undo. No snapping. A finger's grips are wider.
+ */
+function Seam({
+  join,
+  number,
+  transition,
+  outgoing,
+  incoming,
+  pps,
+  selected,
+  grips,
+  onLength,
+}: {
+  join: { onClick: () => void; onDragOver: (event: DragEvent) => void; onDrop: (event: DragEvent) => void };
+  // Which Segment it follows, counted from 1.
+  number: number;
+  transition: Transition;
+  outgoing: PlayedSegment;
+  incoming: PlayedSegment;
+  pps: number;
+  selected: boolean;
+  grips: boolean;
+  onLength: (secs: number) => void;
+}) {
+  const before = outgoing.end - outgoing.start;
+  const after = incoming.end - incoming.start;
+  const overlap = transitionOverlap(transition.secs, before, after);
+  const drag = useRef<{ pointer: number; x: number; outward: 1 | -1; centre: number } | null>(null);
+  // While a grip is dragged: the length it gives, about the band's centre as it was grabbed.
+  const [live, setLive] = useState<{ secs: number; centre: number } | null>(null);
+  const centre = live?.centre ?? outgoing.end - overlap / 2;
+  const secs = live?.secs ?? overlap;
+  const stop = () => {
+    drag.current = null;
+    setLive(null);
+  };
+  const grip = (outward: 1 | -1) => ({
+    onPointerDown: (event: PointerEvent<HTMLSpanElement>) => {
+      if (event.button !== 0) return;
+      // Not the Timeline's scrub or rubber band.
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      drag.current = { pointer: event.pointerId, x: event.clientX, outward, centre };
+    },
+    onPointerMove: (event: PointerEvent<HTMLSpanElement>) => {
+      const gesture = drag.current;
+      if (gesture?.pointer !== event.pointerId) return;
+      event.stopPropagation();
+      const travel = (gesture.outward * (event.clientX - gesture.x)) / pps;
+      setLive({ secs: seamDragged(transition.secs, travel, before, after), centre: gesture.centre });
+    },
+    onPointerUp: (event: PointerEvent<HTMLSpanElement>) => {
+      if (drag.current?.pointer !== event.pointerId) return;
+      event.stopPropagation();
+      if (live && live.secs !== transition.secs) onLength(live.secs);
+      stop();
+    },
+    onPointerCancel: stop,
+  });
+  const name = `${TRANSITIONS[transition.kind].label}, ${secs.toFixed(2)} s`;
+  const edge = "absolute inset-y-0 w-4 -translate-x-1/2 cursor-ew-resize touch-none pointer-coarse:w-10";
+  const bar = "absolute inset-y-1 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-accent";
+  return (
+    <button
+      type="button"
+      {...join}
+      aria-pressed={selected}
+      aria-label={`Transition after Segment ${number}: ${name}`}
+      title={name}
+      className={cx(
+        "absolute inset-y-1 z-10 -translate-x-1/2 rounded-sm bg-accent/30 ring-1 ring-accent",
+        "focus-visible:outline-2 focus-visible:outline-focus",
+        selected && "ring-2 ring-text",
+      )}
+      style={{ left: centre * pps, width: Math.max(4, secs * pps) }}
+    >
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-text/50" />
+      {grips && (
+        <>
+          <span aria-hidden data-grip="start" className={cx(edge, "left-0")} {...grip(-1)}>
+            <span className={bar} />
+          </span>
+          <span aria-hidden data-grip="end" className={cx(edge, "left-full")} {...grip(1)}>
+            <span className={bar} />
+          </span>
+        </>
+      )}
+      {live && (
+        <span className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-black/75 px-1 py-0.5 text-[11px] leading-none font-medium whitespace-nowrap text-white tabular-nums">
+          {live.secs.toFixed(2)} s
+        </span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * A ducked Music Clip's ducked stretches (the plan's, ramps included: musicDuck), shaded under its Volume
+ * Line (GLOSSARY.md, Volume Line), as `heard` over the secs it is heard for.
+ */
+function DuckedShade({ heard }: { heard: Heard }) {
+  const { secs } = heard;
+  const stretches = heard.duck?.stretches ?? [];
+  if (!stretches.length) return null;
+  return (
+    <svg aria-hidden className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 1 1" preserveAspectRatio="none">
+      {stretches.map((stretch) => {
+        const line = underVolumeLine(heard, stretch).map(({ time, height }) => `${time / secs},${1 - height}`);
+        return <polygon key={stretch[0]} points={`${stretch[0] / secs},1 ${line.join(" ")} ${stretch[1] / secs},1`} fill="oklch(0.88 0.16 90 / 0.28)" />;
+      })}
+    </svg>
   );
 }
 
@@ -816,7 +1080,7 @@ function SongWaveform({
 const VOLUME_HIT_PX = 24;
 
 /**
- * A Music Clip's or media Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
+ * A Music Clip's or Segment's Volume Line: a line at its `volume`, 100% at two thirds of its
  * height. On a picked item of an unlocked Track (`grab`), it drags up and down to set the volume, with
  * a % label while it does; elsewhere on the item, a drag moves or trims it as ever. With volume
  * Keyframes (`keyed`), it is their line (KeyedVolumeLine).
@@ -907,34 +1171,43 @@ function KeyedVolumeLine({
   );
 }
 
-// A Fade Ramp's handle: a hit area this many pixels square, kept clear of the item's trim edges.
-const FADE_HIT_PX = 24;
+// A Fade Ramp's handle: a hit area 24 pixels square (44 for a finger, where the pointer is coarse; the
+// item's height cuts it), its side the `--fade-hit` its class sets, kept clear of the item's trim edges.
+const FADE_HIT = "[--fade-hit:24px] pointer-coarse:[--fade-hit:44px]";
 const TRIM_EDGE_PX = 12;
 
 /**
- * A Music Clip's Fade Ramps: its fade in and fade out (`fades`, as heard), at `pps` pixels a second,
- * as slopes at its ends that shade what they quieten. On a picked Music Clip of an unlocked Track
- * (`grab`), a handle at the top of each slope drags that fade's length, with its seconds while it does;
- * elsewhere on the item, a drag moves or trims it as ever.
+ * A Music Clip's or Segment's Fade Ramps: its fade in and fade out (`fades`, as heard), at `pps`
+ * pixels a second, as slopes at its ends that shade what they quieten; a Segment's over the sound
+ * `band` of its Filmstrip, its fade out ending `tail` seconds past its drawn end (under the Transition
+ * into the next). On a picked item of an unlocked Track (`grab`), a handle at the top of each slope
+ * drags that fade's length, with its seconds while it does; elsewhere on the item, a drag moves or
+ * trims it as ever.
  */
 function FadeRamps({
   fades,
   pps,
+  tail = 0,
+  band,
   grab,
   onFade,
 }: {
   fades: { fade_in: number; fade_out: number };
   pps: number;
+  tail?: number;
+  // Its height in pixels, along the item's bottom; all of the item's without it.
+  band?: number;
   grab: boolean;
   onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
 }) {
   const ramp = (fade: "fade_in" | "fade_out") => {
     const width = fades[fade] * pps;
-    // From the Clip's start for the fade in, from its end for the fade out.
+    // From the item's start for the fade in, from where it is last heard for the fade out.
     const side = fade === "fade_in" ? "left" : "right";
+    const past = side === "right" ? tail * pps : 0;
     return [
       width > 0 && (
-        <svg key={`${fade}:ramp`} className={cx("absolute inset-y-0 h-full", side === "left" ? "left-0" : "right-0")} style={{ width }} viewBox="0 0 1 1" preserveAspectRatio="none">
+        <svg key={`${fade}:ramp`} className="absolute inset-y-0 h-full" style={{ width, [side]: -past }} viewBox="0 0 1 1" preserveAspectRatio="none">
           <path d={side === "left" ? "M0 0 H1 L0 1 Z" : "M0 0 H1 V1 Z"} fill="rgb(0 0 0 / 0.35)" />
           <path d={side === "left" ? "M0 1 L1 0" : "M0 0 L1 1"} stroke="oklch(0.88 0.16 90)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" fill="none" />
         </svg>
@@ -942,11 +1215,11 @@ function FadeRamps({
       grab && (
         <ItemHandle
           key={`${fade}:handle`}
-          className="absolute top-0 cursor-ew-resize"
+          className={cx("absolute size-(--fade-hit) cursor-ew-resize", FADE_HIT)}
           style={{
-            width: FADE_HIT_PX,
-            height: FADE_HIT_PX,
-            [side]: `clamp(${TRIM_EDGE_PX}px, ${width - FADE_HIT_PX / 2}px, calc(100% - ${TRIM_EDGE_PX + FADE_HIT_PX}px))`,
+            // Across the top of a band; at the top of the item without one.
+            top: band ? "calc(var(--fade-hit) / -2)" : 0,
+            [side]: `clamp(${TRIM_EDGE_PX}px, calc(${width - past}px - var(--fade-hit) / 2), calc(100% - ${TRIM_EDGE_PX}px - var(--fade-hit)))`,
           }}
           label={`${fades[fade].toFixed(1)} s`}
           labelBefore={side === "right"}
@@ -956,13 +1229,18 @@ function FadeRamps({
             return ({ dx }, group) => onFade(fade, from + (side === "left" ? dx : -dx) / pps, group);
           }}
         >
-          <span className="absolute top-0.5 left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_1px_rgb(0_0_0/0.5)]" />
+          <span
+            className={cx(
+              "absolute left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-[oklch(0.88_0.16_90)] shadow-[0_0_0_1px_rgb(0_0_0/0.5)]",
+              band ? "top-1/2 -translate-y-1/2" : "top-0.5",
+            )}
+          />
         </ItemHandle>
       ),
     ];
   };
   return (
-    <span aria-hidden className="pointer-events-none absolute inset-0">
+    <span aria-hidden className={cx("pointer-events-none absolute inset-x-0 bottom-0", !band && "top-0")} style={band ? { height: band } : undefined}>
       {ramp("fade_in")}
       {ramp("fade_out")}
     </span>

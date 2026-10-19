@@ -39,6 +39,8 @@ const segmentPlan = (id: string, start: number, end: number, source_start: numbe
   silent: false,
   scenes: 1,
   gain: [],
+  fade_in: 0,
+  fade_out: 0,
   ...changes,
 });
 

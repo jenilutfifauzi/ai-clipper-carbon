@@ -3,6 +3,7 @@ to the app's MCP server, on the app with fake ports, its Worker running. The too
 app's real routes. One test posts to /mcp over HTTP."""
 
 import json
+import re
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -15,6 +16,7 @@ from app import uploads
 from app.config import load_settings
 from app.main import create_app
 from app.ports import Ports
+from app.transition_kinds import TransitionKind
 from fontfiles import RESTRICTED, font_file
 from app.transcript import Word
 from test_jobs_api import URL
@@ -25,13 +27,27 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
+# Raised from 69_000 for xfade's 21 further Transition kinds (transitions-expanded/02), named in
+# edit_candidate's and merge_candidate_items' schemas; their groups are in the instructions. And for
+# Overlay animations (transitions-expanded/10): an Overlay's animation_in, animation_out and
+# animation_ms in the same schemas. And for a Transition's sound (transitions-expanded/06): its three
+# values wherever a Transition is given; what they do is in the instructions (70_961 with all three).
+# And for a Transition's knobs (transitions-expanded/04): its strength and colour, and the four kinds
+# that read them, wherever a Transition is given (71_798). And for a Style Preset's Join Transition
+# (transitions-expanded/09): save_preset's join_transition, a Transition's kinds and knobs again (73_832).
+# Merged with audio-mixing, which adds a Segment's fades and `muted`, a Music Clip's speed, pitch,
+# reverse, `duck` and `detached_from`, and an Overlay's `muted`, but drops pydantic's titles from every
+# schema (`_untitled`): 66_741 with both features.
+# Then merged with Export Settings (export-settings/04, 05, 07, 08): render_clips' `export_preset_id`, the
+# presets tools' kind "export" and save_preset's use_as_default, save_frame and export_audio: 68_636 with all three.
 # Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
 # merge_candidate_items; the Captions switch (captions-advanced/05): `segments[].captions` in each
 # editing tool's Segment schema; Word Edits of Media Words (captions-advanced/06): `word_edits[].media`
 # and remove_candidate_items' {at, media} keys; a Cue Edit's `x`, `y` and `scale` (captions-advanced/08);
 # and its join (captions-advanced/09). Raised from 73_700 for the captions tools (captions-advanced/11):
 # set_media_language, get_media_words and get_captions; the rest of what an agent needs is in the server's instructions.
-TOOLS_BUDGET_BYTES = 75_700
+# Merged with captions-advanced, the two features' increases summed (+400 and +6_700 over 69_000).
+TOOLS_BUDGET_BYTES = 76_100
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -391,6 +407,66 @@ async def test_selected_candidates_render_into_clips_with_their_paths(mcp):
     assert clip["duration"] == pytest.approx(candidate["end"] - candidate["start"], abs=0.05)
     # Rendered from this Revision: a Clip is stale once its Candidate's is another.
     assert clip["revision"] == candidate["revision"]
+
+
+@pytest.mark.anyio
+async def test_a_render_takes_an_export_preset_which_its_clip_records(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    assert "No Export Preset nope" in await fails(mcp, "render_clips", job_id=job["id"], export_preset_id="nope")
+
+    await call(mcp, "render_clips", job_id=job["id"], candidate_ids=[candidate["id"]], export_preset_id="small")
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=60)
+    assert waited["reached"] and waited["job"]["status"] == "review"
+    [clip] = (await call(mcp, "list_clips", job_id=job["id"]))["clips"]
+    assert clip["status"] == "done", clip
+    assert clip["export_preset_id"] == "small"
+    assert (clip["export"]["resolution"], clip["export"]["codec"], clip["export"]["quality"]) == (720, "h264", "smallest")
+
+
+@pytest.mark.anyio
+async def test_export_presets_are_listed_saved_made_the_default_and_deleted_but_not_builtin_ones(mcp):
+    listed = await call(mcp, "list_presets", kind="export")
+    presets = {preset["id"]: preset for preset in listed["presets"]}
+    assert listed["default"] == "shorts" and "h264" in listed["available"]
+    assert presets["small"]["builtin"] and presets["small"]["settings"]["resolution"] == 720
+
+    settings = presets["shorts"]["settings"] | {"resolution": 720, "codec": "hevc"}
+    saved = await call(mcp, "save_preset", kind="export", preset={"name": "Review", "settings": settings}, use_as_default=True)
+    assert (saved["name"], saved["builtin"], saved["settings"]) == ("Review", False, settings)
+    assert (await call(mcp, "list_presets", kind="export"))["default"] == saved["id"]
+    # Given a preset_id, the fields given change and the rest stay.
+    renamed = await call(mcp, "save_preset", kind="export", preset_id=saved["id"], preset={"name": "Review 2", "settings": {"fps": 60}})
+    assert (renamed["name"], renamed["settings"]) == ("Review 2", settings | {"fps": 60})
+
+    # render_clips without an id renders with the default.
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    [queued] = (await call(mcp, "render_clips", job_id=job["id"], candidate_ids=[candidate["id"]]))["clips"]
+    assert queued["export_preset_id"] == saved["id"]
+
+    assert "built in" in await fails(mcp, "save_preset", kind="export", preset_id="small", preset={"name": "x"})
+    assert "built in" in await fails(mcp, "delete_preset", kind="export", preset_id="small")
+    assert "codec" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"codec": "prores"}})
+    assert "resolution" in await fails(mcp, "save_preset", kind="export", preset_id=saved["id"], preset={"settings": {"resolution": 900}})
+    assert "kbps" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"bitrate": {"mode": "cbr", "kbps": 1}}})
+    assert await call(mcp, "delete_preset", kind="export", preset_id=saved["id"]) == {"deleted": saved["id"]}
+    assert (await call(mcp, "list_presets", kind="export"))["default"] == "shorts"
+
+
+@pytest.mark.anyio
+async def test_save_frame_gives_the_path_of_a_png_on_this_mac_of_the_saved_revision(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+
+    saved = await call(mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="small")
+    path = Path(saved["path"])
+    assert path.is_absolute() and path.is_file() and path.suffix == ".png"
+    assert path.name == f"{candidate['id']}-00.00.12.png"
+    assert (await call(mcp, "get_job", job_id=job["id"]))["status"] == "review"
+    assert "No Export Preset nope" in await fails(
+        mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="nope",
+    )
 
 
 # 06: Style Presets, assets and the Channel Profile
@@ -1029,3 +1105,32 @@ async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
 
     glossary = await mcp.read_resource("ai-clipper://glossary")
     assert "Candidate" in glossary.contents[0].text
+
+
+# transitions-expanded/02: every Transition kind, and the dry run's Transitions
+
+
+@pytest.mark.anyio
+async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transitions(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    # "apa kabar", then "halo semua".
+    segments = [{"id": "a", "start": 1.0, "end": 1.6}, {"id": "b", "start": 0.1, "end": 0.9}]
+    for kind in ("fadegrays", "dissolve", "coverleft", "coverright", "coverup", "coverdown", "wiperight", "wipeup", "wipedown",
+                 "radial", "circleclose", "circlecrop", "rectcrop", "vertopen", "horzopen", "squeezeh", "squeezev",
+                 "pixelize", "hblur", "distance", "hlslice"):
+        plan = await call(mcp, "edit_candidate", **ids, changes={"segments": segments, "transitions": [{"after": "a", "kind": kind, "secs": 0.2}]}, dry_run=True)
+        [event] = plan["transitions"]
+        assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear", "strength": None, "colour": None} and event["start"] > 0, event
+    edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
+    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None}]
+    assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])
+
+    # The instructions name each group with its kinds, and how long a Transition can be.
+    transitions = mcp.instructions[mcp.instructions.index("- A Transition") :]
+    assert "0.1..3 s" in transitions
+    for group, kinds in (("Basic", "fade, fadeblack"), ("Glitch", "glitch, rgbsplit, pixelize, hblur, distance, hlslice")):
+        assert f"{group} ({kinds}" in transitions
+    named = set(re.findall(r"[a-z]+", transitions[: transitions.index("\n- ")]))
+    assert set(TransitionKind) <= named

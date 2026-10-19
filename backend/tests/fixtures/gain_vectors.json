@@ -1,0 +1,159 @@
+{
+  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. A sound whose `item` is \"segment\" is a Segment's, from its start on the Timeline (a Transition's overlap included) to its end, its fades fitted to that length; any other, a Music Clip's. A `muted` one (docs/adr/0016) is silent throughout, whatever its volume, Keyframes and fades. A ducked one (a Music Clip's `duck`, in dB, docs/adr/0016) is multiplied by its duck too: 1 away from its `speech` spans (seconds into the Clip), the depth's gain over one, and straight lines between over the `ducking` lead before one and its release after it; where spans' ducks overlap, the lower wins. A `source` one is the Source's sound (a Source Segment, or a Music Clip of the Source), its volume or Keyframes times the Clip's own volume, `source_volume`. A Segment's `tail` is the last seconds of it that the Transition into the next overlaps (its `end` includes them, and its fades are fitted to all of it): the Timeline draws it to where that Transition starts, heard on under it. With `crossfade`, the gains are also those of that Transition taking it away: falling in a straight line from 1 to 0 over its `tail`, as the render's acrossfade does. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
+  "tolerance": 1e-6,
+  "ducking": {"lead_secs": 0.25, "release_secs": 0.5, "bridge_secs": 0.8},
+  "sounds": [
+    {
+      "name": "a constant volume",
+      "sound": {"start": 3, "end": 7, "volume": 0.5},
+      "at": [[2.9, 0], [3, 0.5], [5, 0.5], [7, 0.5], [7.1, 0]]
+    },
+    {
+      "name": "a fade in and out",
+      "sound": {"start": 2, "end": 6, "volume": 0.8, "fade_in": 1, "fade_out": 2},
+      "at": [
+        [1.9, 0], [2, 0], [2.5, 0.4], [2.75, 0.6], [3, 0.8], [3.25, 0.8],
+        [3.75, 0.8], [4, 0.8], [5, 0.4], [5.5, 0.2], [6, 0], [6.1, 0]
+      ]
+    },
+    {
+      "name": "keyed, Linear then eased in-out",
+      "sound": {
+        "start": 2,
+        "end": 8,
+        "volume": 0.5,
+        "keys": [
+          {"at": 1, "value": 0.2},
+          {"at": 3, "value": 1.0, "ease": [0, 0, 1, 1]},
+          {"at": 5, "value": 0.2, "ease": [0.42, 0, 0.58, 1]}
+        ]
+      },
+      "at": [
+        [1.9, 0], [2, 0.2], [3, 0.2], [4, 0.6], [5, 1.0], [5.5, 0.8966704551624],
+        [6, 0.6], [6.5, 0.3033295448376], [7, 0.2], [8, 0.2], [8.1, 0]
+      ]
+    },
+    {
+      "name": "keyed and faded",
+      "sound": {
+        "start": 3,
+        "end": 7,
+        "volume": 0.5,
+        "fade_in": 0.5,
+        "fade_out": 1,
+        "keys": [
+          {"at": 1, "value": 1.0},
+          {"at": 2, "value": 0.25, "ease": [0.42, 0, 1, 1]}
+        ]
+      },
+      "at": [
+        [2.9, 0], [3, 0], [3.25, 0.5], [3.5, 1.0], [4, 1.0], [4.5, 0.76348239057025],
+        [5, 0.25], [5.5, 0.25], [6, 0.25], [6.5, 0.125], [7, 0], [7.1, 0]
+      ]
+    },
+    {
+      "name": "fades twice as long as the sound, halved",
+      "sound": {"start": 1, "end": 3, "volume": 1.0, "fade_in": 3, "fade_out": 3},
+      "at": [[0.9, 0], [1, 0], [1.5, 0.5], [2, 1.0], [2.5, 0.5], [3, 0], [3.1, 0]]
+    },
+    {
+      "name": "fades longer than the sound, shortened by the same share",
+      "sound": {"start": 7, "end": 10, "volume": 1.0, "fade_in": 3, "fade_out": 1},
+      "at": [[6.9, 0], [7, 0], [8.125, 0.5], [9.25, 1.0], [9.625, 0.5], [10, 0], [10.1, 0]]
+    },
+    {
+      "name": "a Segment faded in and out",
+      "item": "segment",
+      "sound": {"start": 2, "end": 5, "volume": 1.5, "fade_in": 1, "fade_out": 0.5},
+      "at": [[1.9, 0], [2, 0], [2.25, 0.375], [2.5, 0.75], [3, 1.5], [4, 1.5], [4.5, 1.5], [4.75, 0.75], [5, 0], [5.1, 0]]
+    },
+    {
+      "name": "a Segment's fades longer than it, shortened by the same share",
+      "item": "segment",
+      "sound": {"start": 0, "end": 1.5, "volume": 1.0, "fade_in": 2, "fade_out": 1},
+      "at": [[0, 0], [0.5, 0.5], [1, 1.0], [1.25, 0.5], [1.5, 0], [1.6, 0]]
+    },
+    {
+      "name": "a keyed Segment, faded",
+      "item": "segment",
+      "sound": {
+        "start": 1,
+        "end": 4,
+        "volume": 0.5,
+        "fade_in": 0.5,
+        "fade_out": 1,
+        "keys": [
+          {"at": 0, "value": 2.0},
+          {"at": 2, "value": 1.0}
+        ]
+      },
+      "at": [[0.9, 0], [1, 0], [1.25, 0.9375], [1.5, 1.75], [2, 1.5], [3, 1.0], [3.5, 0.5], [4, 0], [4.1, 0]]
+    },
+    {
+      "name": "Muted, keyed and faded",
+      "sound": {
+        "start": 3,
+        "end": 7,
+        "volume": 0.5,
+        "fade_in": 0.5,
+        "keys": [{"at": 1, "value": 1.0, "ease": [0, 0, 1, 1]}, {"at": 2, "value": 0.25, "ease": [0, 0, 1, 1]}],
+        "muted": true
+      },
+      "at": [[2.9, 0], [3, 0], [3.25, 0], [4, 0], [4.5, 0], [5.5, 0], [7, 0], [7.1, 0]]
+    },
+    {
+      "name": "a Muted Segment, faded",
+      "item": "segment",
+      "sound": {"start": 2, "end": 5, "volume": 1.5, "fade_in": 1, "fade_out": 0.5, "muted": true},
+      "at": [[1.9, 0], [2, 0], [2.5, 0], [3, 0], [4.75, 0], [5, 0], [5.1, 0]]
+    },
+    {
+      "name": "a constant volume, ducked under a sentence",
+      "sound": {"start": 0, "end": 10, "volume": 0.5, "duck": -20, "speech": [[3, 5]]},
+      "at": [[2.5, 0.5], [2.75, 0.5], [2.875, 0.275], [3, 0.05], [4, 0.05], [5, 0.05], [5.25, 0.275], [5.5, 0.5], [6, 0.5], [10, 0.5], [10.1, 0]]
+    },
+    {
+      "name": "keyed and faded, ducked",
+      "sound": {"start": 2, "end": 8, "volume": 0.5, "fade_in": 1, "keys": [{"at": 0, "value": 1.0}, {"at": 6, "value": 0.4}], "duck": -20, "speech": [[4, 5]]},
+      "at": [[1.9, 0], [2.5, 0.475], [3.5, 0.85], [3.875, 0.446875], [4.5, 0.075], [5.25, 0.37125], [6, 0.6], [8, 0.4], [8.1, 0]]
+    },
+    {
+      "name": "ducked under overlapping spans, the lower wins",
+      "sound": {"start": 0, "end": 6, "volume": 1.0, "duck": -20, "speech": [[1, 3], [2, 4], [4.6, 5]]},
+      "at": [[0.5, 1.0], [0.875, 0.55], [2.5, 0.1], [3.5, 0.1], [4.25, 0.55], [4.45, 0.64], [4.8, 0.1], [5.5, 1.0]]
+    },
+    {
+      "name": "ducked by spans at its edges",
+      "sound": {"start": 3, "end": 6, "volume": 1.0, "duck": -20, "speech": [[1, 3.1], [6.1, 7]]},
+      "at": [[2.9, 0], [3, 0.1], [3.1, 0.1], [3.35, 0.55], [3.6, 1.0], [5.8, 1.0], [5.975, 0.55], [6, 0.46], [6.05, 0]]
+    },
+    {
+      "name": "ducked by a span longer than it, faded",
+      "sound": {"start": 2, "end": 4, "volume": 0.8, "fade_out": 1, "duck": -20, "speech": [[0, 10]]},
+      "at": [[1.9, 0], [2, 0.08], [3, 0.08], [3.5, 0.04], [4, 0], [4.1, 0]]
+    },
+    {
+      "name": "a Music Clip of the Source, keyed and faded, under the Clip's own volume",
+      "sound": {"start": 1, "end": 5, "volume": 0.5, "fade_in": 1, "keys": [{"at": 0, "value": 1.0}, {"at": 4, "value": 0.2}], "source": true, "source_volume": 1.5},
+      "at": [[0.9, 0], [1, 0], [1.5, 0.675], [2, 1.2], [3, 0.9], [5, 0.3], [5.1, 0]]
+    },
+    {
+      "name": "a Source Segment, keyed and faded, under the Clip's own volume",
+      "item": "segment",
+      "sound": {"start": 2, "end": 6, "volume": 0.5, "fade_out": 1, "keys": [{"at": 0, "value": 2.0}, {"at": 4, "value": 1.0}], "source": true, "source_volume": 0.5},
+      "at": [[1.9, 0], [2, 1.0], [3, 0.875], [4, 0.75], [5, 0.625], [5.5, 0.28125], [6, 0], [6.1, 0]]
+    },
+    {
+      "name": "a Segment faded out to its end under the Transition into the next",
+      "item": "segment",
+      "sound": {"start": 0, "end": 4, "volume": 1.0, "fade_out": 2, "tail": 1},
+      "at": [[1, 1.0], [2, 1.0], [3, 0.5], [3.5, 0.25], [4, 0], [4.1, 0]]
+    },
+    {
+      "name": "a Segment faded out and taken away by the Transition's crossfade",
+      "item": "segment",
+      "sound": {"start": 0, "end": 4, "volume": 0.8, "fade_out": 2, "tail": 1, "crossfade": true},
+      "at": [[1, 0.8], [2, 0.8], [3, 0.4], [3.25, 0.225], [3.5, 0.1], [4, 0], [4.1, 0]]
+    }
+  ]
+}

@@ -76,9 +76,9 @@ class Worker:
         self.submit(job_id)
         return job
 
-    def render(self, job_id: str, candidate_ids: list[str] | None = None) -> None:
+    def render(self, job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> None:
         """Queue Clips of the Job's Candidates (see Renders.request); they are rendered in the Job's turn."""
-        if self._renders.request(job_id, candidate_ids):
+        if self._renders.request(job_id, candidate_ids, export_preset_id):
             self.submit(job_id)
 
     def prepare(self, job_id: str, candidate_id: str) -> None:

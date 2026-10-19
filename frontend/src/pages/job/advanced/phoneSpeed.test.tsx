@@ -97,6 +97,7 @@ describe("Speed in the phone's toolbar", () => {
         playback={new Playback()}
         picking={false}
         paste={null}
+        mute={null}
         onAsset={() => {}}
         onInspect={() => {}}
         onTransform={() => {}}
@@ -135,6 +136,7 @@ describe("the Speed sheet", () => {
         onHold: () => {},
         onSegment: (changed, group) => steps.push({ edits: { ...now(), segments: now().segments.map((s) => (s.id === changed.id ? changed : s)) }, group }),
         onOverlay: () => {},
+        onMusic: () => {},
       }) as ReactElement<Parameters<typeof SpeedFields>[0]>;
     return { steps, sheet };
   }

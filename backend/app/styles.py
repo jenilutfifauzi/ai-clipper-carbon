@@ -1,4 +1,4 @@
-"""Styles: how captions, the hook and the Watermark look, as Style Presets shared by every Job and
+"""Styles: how captions, the hook, the Watermark and new joins look, as Style Presets shared by every Job and
 Style Overrides on a Candidate.
 
 A Candidate uses one Preset (`Candidate.preset_id`) and may replace any of its fields
@@ -33,6 +33,7 @@ from pydantic_core import core_schema
 
 from app.fonts import DEFAULT_FONT, registry
 from app.storage import write_atomic
+from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
 
 # In DATA_DIR.
 PRESETS_FILE = "presets.json"
@@ -330,6 +331,19 @@ class WatermarkStyle:
     opacity: Annotated[float, Field(ge=0.05, le=1)] = 0.8
 
 
+@dataclass(frozen=True)
+class JoinTransition:
+    """A Style Preset's Join Transition: a Transition (app/candidates.py) without the Segment it
+    follows, copied onto each new join of its Candidates with none (candidates.with_join_transition).
+    Copied, never linked: changing the Preset leaves the joins it gave as they are."""
+
+    kind: TransitionKind = TransitionKind.FADE
+    secs: Annotated[FiniteFloat, Field(ge=TRANSITION_SECS[0], le=TRANSITION_SECS[1])] = TRANSITION_DEFAULT_SECS
+    sound: TransitionSound = TransitionSound.LINEAR
+    strength: Annotated[FiniteFloat, Field(ge=0, le=1)] | None = None
+    colour: Colour | None = None
+
+
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 # A Style Override's value: what a style field holds, or, for a field that is itself a value of
 # several fields (a shadow), some of those by name, which replace the Preset's. Its schema is short,
@@ -348,6 +362,8 @@ class StylePreset:
     hook: HookStyle = HookStyle()
     builtin: bool = False
     watermark: WatermarkStyle = WatermarkStyle()
+    # None for none, the built-in Presets' and those stored before it.
+    join_transition: JoinTransition | None = None
 
 
 @dataclass(frozen=True)
@@ -520,21 +536,39 @@ class PresetStore:
             preset = DEFAULT
         return resolve(preset, overrides)
 
+    def join_transition(self, preset_id: str) -> JoinTransition | None:
+        """The Join Transition of a Candidate's Preset (Default's, none, if it has been deleted)."""
+        try:
+            return self.get(preset_id).join_transition
+        except PresetNotFound:
+            return DEFAULT.join_transition
+
     def create(
-        self, name: str, caption: CaptionStyle, hook: HookStyle, watermark: WatermarkStyle = WatermarkStyle()
+        self,
+        name: str,
+        caption: CaptionStyle,
+        hook: HookStyle,
+        watermark: WatermarkStyle = WatermarkStyle(),
+        join_transition: JoinTransition | None = None,
     ) -> StylePreset:
         with self._lock:
-            preset = StylePreset(uuid4().hex[:8], name, caption, hook, watermark=watermark)
+            preset = StylePreset(uuid4().hex[:8], name, caption, hook, watermark=watermark, join_transition=join_transition)
             self._save([*self._saved(), preset])
             return preset
 
     def update(
-        self, preset_id: str, name: str, caption: CaptionStyle, hook: HookStyle, watermark: WatermarkStyle = WatermarkStyle()
+        self,
+        preset_id: str,
+        name: str,
+        caption: CaptionStyle,
+        hook: HookStyle,
+        watermark: WatermarkStyle = WatermarkStyle(),
+        join_transition: JoinTransition | None = None,
     ) -> StylePreset:
         with self._lock:
             saved = self._saved()
             i = self._index(saved, preset_id)
-            preset = replace(saved[i], name=name, caption=caption, hook=hook, watermark=watermark)
+            preset = replace(saved[i], name=name, caption=caption, hook=hook, watermark=watermark, join_transition=join_transition)
             self._save([*saved[:i], preset, *saved[i + 1 :]])
             return preset
 

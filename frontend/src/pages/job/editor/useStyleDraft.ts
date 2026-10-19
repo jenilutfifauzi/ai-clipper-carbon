@@ -5,6 +5,8 @@ import {
   type CandidateChange,
   type CaptionStyle,
   type HookStyle,
+  type JoinTransition,
+  type NewPreset,
   type StyleOverrides,
   type StylePreset,
   type StyleValue,
@@ -29,6 +31,11 @@ export interface StyleControls {
   hook: HookStyle;
   watermark: WatermarkStyle;
   overrides: StyleOverrides;
+  // The Preset's Join Transition, as changed here until saved into a Preset (it has no Style
+  // Override: it is copied onto new joins, never linked), and whether it was changed.
+  join: JoinTransition | null;
+  joinChanged: boolean;
+  setJoin: (join: JoinTransition | null) => void;
   // Sets a field; a value equal to the Preset's removes its override.
   set: (part: StylePart, field: string, value: StyleValue) => void;
   // Sets several fields of `part` at once, as one change.
@@ -64,14 +71,19 @@ export function useStyleDraft(
   key: string = candidate.id,
 ): { draft: StyleDraft; controls: StyleControls | null; error: string | null } {
   const { presets, error, setPresets } = usePresets();
+  // The Join Transition as changed for its Preset, not saved yet.
+  const joinDraft = useState<JoinDraft>(null);
   const [draft, change] = useDraftSave<StyleDraft>(
     // Overrides saved before Watermarks have none.
     { preset_id: candidate.preset_id, style_overrides: { ...EMPTY, ...candidate.style_overrides } },
     (value) => onSave(value),
     key,
   );
-  return { draft, error, controls: presets && styleControls(presets, draft, change, setPresets) };
+  return { draft, error, controls: presets && styleControls(presets, draft, change, setPresets, joinDraft) };
 }
+
+/** A Join Transition as changed for the Preset `preset`, not saved yet (none: the Preset's own). */
+export type JoinDraft = { preset: string; join: JoinTransition | null } | null;
 
 /**
  * The controls of the look `draft` gives, over `presets`: each change is a new draft passed to
@@ -84,11 +96,16 @@ export function styleControls(
   { preset_id, style_overrides }: StyleDraft,
   change: (draft: StyleDraft, group?: string) => void,
   setPresets: (all: StylePreset[]) => void,
+  // The Join Transition as changed for a Preset, not saved yet, and a way to change it: none kept
+  // without it.
+  [joinDraft, setJoinDraft]: [JoinDraft, (draft: JoinDraft) => void] = [null, () => {}],
 ): StyleControls {
   // Overrides saved before Watermarks have none.
   const draft = { preset_id, style_overrides: { ...EMPTY, ...style_overrides } };
   const preset = presets.find((p) => p.id === draft.preset_id) ?? presets[0];
   const base = (part: StylePart) => preset[part] as unknown as Record<string, StyleValue>;
+  const presetJoin = preset.join_transition ?? null;
+  const join = joinDraft?.preset === preset.id ? joinDraft.join : presetJoin;
 
   function setFields(part: StylePart, values: Record<string, StyleValue>, group?: string) {
     const fields = { ...draft.style_overrides[part] } as Record<string, StyleValue>;
@@ -108,6 +125,9 @@ export function styleControls(
     hook: overridden(preset.hook, draft.style_overrides.hook),
     watermark: overridden(preset.watermark, draft.style_overrides.watermark),
     overrides: draft.style_overrides,
+    join,
+    joinChanged: JSON.stringify(join) !== JSON.stringify(presetJoin),
+    setJoin: (next) => setJoinDraft({ preset: preset.id, join: next }),
     set,
     setMany,
     reset: (part, field) => setFields(part, { [field]: base(part)[field] }),
@@ -115,6 +135,7 @@ export function styleControls(
     resetAll: () => change({ ...draft, style_overrides: EMPTY }),
     saved: (made, all) => {
       setPresets(all);
+      setJoinDraft(null);
       change({ preset_id: made.id, style_overrides: EMPTY });
     },
     deleted: (all) => {
@@ -123,6 +144,14 @@ export function styleControls(
     },
   };
 }
+
+/** What a Preset is saved with: the styles as edited, and the Join Transition. */
+export const savedLook = ({ caption, hook, watermark, join }: StyleControls): Omit<NewPreset, "name"> => ({
+  caption,
+  hook,
+  watermark,
+  join_transition: join,
+});
 
 type Fields = Record<string, StyleValue>;
 

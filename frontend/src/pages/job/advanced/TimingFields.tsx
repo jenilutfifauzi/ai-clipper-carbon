@@ -19,6 +19,7 @@ export function TimingFields<T extends { id: string; start: number; secs: number
   duration,
   length,
   labels,
+  offsetFormat = (v) => `${v.toFixed(1)} s`,
   onChange,
 }: {
   item: T;
@@ -27,6 +28,8 @@ export function TimingFields<T extends { id: string; start: number; secs: number
   // Of its song or video; undefined for an item without a file's time (a Text Layer, an image).
   length?: number;
   labels: { start: string; secs: string; offset?: string };
+  // How where in its file it starts reads (seconds, by default).
+  offsetFormat?: (value: number) => string;
   onChange: (item: T, group: string) => void;
 }) {
   // Moved or trimmed, its Keyframes (if it has any) re-anchored from where they were as the slider's drag began.
@@ -47,7 +50,7 @@ export function TimingFields<T extends { id: string; start: number; secs: number
           min={0}
           max={Math.max(0, length - (time.end - time.start))}
           step={0.1}
-          format={(v) => `${v.toFixed(1)} s`}
+          format={offsetFormat}
           onChange={(value) => onChange({ ...item, offset: value }, `${item.id}:offset`)}
         />
       )}

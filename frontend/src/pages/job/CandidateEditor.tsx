@@ -34,10 +34,12 @@ import { sceneAt, SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { pictureSource } from "./editor/stagePicture";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
 import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
+import { JoinTransitionPanel } from "./editor/JoinTransitionPanel";
 import { PresetBar } from "./editor/PresetBar";
 import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
 import { RevisionHistory } from "./editor/RevisionHistory";
+import { SaveFrameButton } from "./editor/SaveFrameButton";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { placedFields } from "./editor/placing";
@@ -45,6 +47,7 @@ import { useStyleDraft } from "./editor/useStyleDraft";
 import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
+import { SaveAudioButton } from "./SaveAudio";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
 
 type Mode = "start" | "end" | "new";
@@ -61,13 +64,14 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
-type Tab = "text" | "captions" | "hook" | "watermark" | "trim";
+type Tab = "text" | "captions" | "hook" | "watermark" | "transitions" | "trim";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "captions", label: "Captions" },
   { value: "hook", label: "Hook" },
   { value: "watermark", label: "Watermark" },
+  { value: "transitions", label: "Transitions" },
   { value: "trim", label: "Trim" },
 ];
 
@@ -112,6 +116,7 @@ export function CandidateEditor({
   onSave,
   onAdd,
   onPrepare,
+  exportPresetId,
 }: {
   job: JobDetail;
   transcript: Transcript;
@@ -126,6 +131,8 @@ export function CandidateEditor({
   onAdd: (range: { start: number; end: number }) => Promise<boolean>;
   // Queues the Candidate's transcription and analysis, for the preview.
   onPrepare: (candidateId: string) => Promise<void>;
+  // The Export Preset picked on the Render button, whose loudness "Save audio" takes (null: the default).
+  exportPresetId?: string | null;
 }) {
   const [mode, setMode] = useState<Mode>("start");
   const [view, setView] = useState<"clip" | "source">("clip");
@@ -302,6 +309,7 @@ export function CandidateEditor({
               onRestore={onRestore}
               size="sm"
             />
+            <SaveAudioButton jobId={job.id} candidate={candidate} exportPresetId={exportPresetId} />
             <Switch checked={candidate.selected} onChange={(selected) => void onSave({ selected })}>
               <span className="text-sm">Render this clip</span>
             </Switch>
@@ -378,6 +386,17 @@ export function CandidateEditor({
                   start={candidate.start}
                   end={candidate.end}
                 />
+              )}
+              {(view === "clip" || cut) && (
+                <div className="flex items-center gap-2">
+                  <SaveFrameButton
+                    jobId={job.id}
+                    candidateId={candidate.id}
+                    title={name}
+                    draft={draft}
+                    at={() => playback.time}
+                  />
+                </div>
               )}
               {(view === "clip" || cut) && (
                 <PreviewNotes
@@ -485,6 +504,14 @@ export function CandidateEditor({
                   Watermark
                 </h4>
                 {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} /> : !style.error && <StyleFieldsSkeleton />}
+              </section>
+            )}
+            {tab === "transitions" && (
+              <section aria-labelledby="transitions-heading" className="flex flex-col gap-3">
+                <h4 id="transitions-heading" className="sr-only">
+                  Transitions
+                </h4>
+                {style.controls ? <JoinTransitionPanel style={style.controls} /> : !style.error && <StyleFieldsSkeleton />}
               </section>
             )}
             {tab === "trim" && (

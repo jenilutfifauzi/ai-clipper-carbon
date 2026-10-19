@@ -1,8 +1,8 @@
 """Retimed copies (docs/adr/0009-speed-keeps-the-range-and-reverse-is-a-derived-copy.md): a file of a
-range of a Source or a Media Library video played backwards, picture and sound, which the preview
-(that can't play a video backwards) and the render (that won't hold a range in memory) play forwards.
-A copy can also be retimed at a Speed, with its sound made as the render makes it, for the preview of
-a Speed a browser won't play.
+range of a Source or a Media Library video played backwards, picture and sound (a song's, its sound
+alone), which the preview (that can't play a video backwards) and the render (that won't hold a range
+in memory) play forwards. A copy can also be retimed at a Speed, with its sound made as the render
+makes it, for the preview of a Speed a browser won't play.
 
 A copy is one of two sizes: `preview`, from the item's proxy (its `preview.mp4`, or a media item's
 `.proxy.mp4`), no larger than PREVIEW_SIDE; and `full`, from the item's own video, at its size. Copies
@@ -150,11 +150,11 @@ class Making:
 
 
 class Copies:
-    """The Retimed copies of one item (a Source or a Media Library video), in `folder`, made from
-    `videos` (its proxy for the preview size, its own video for the full size), whose full-size
-    picture is `frame` (width, height, frames a second)."""
+    """The Retimed copies of one item (a Source, or a Media Library video or song), in `folder`, made
+    from `videos` (its proxy for the preview size, its own file for the full size), whose full-size
+    picture is `frame` (width, height, frames a second); a song's, None, are sound alone."""
 
-    def __init__(self, folder: Path, videos: Mapping[CopySize, Path], frame: tuple[int, int, float]) -> None:
+    def __init__(self, folder: Path, videos: Mapping[CopySize, Path], frame: tuple[int, int, float] | None) -> None:
         self.folder = folder
         self.videos = videos
         self.frame = frame
@@ -184,7 +184,8 @@ class Copies:
             return found
         path = self.folder / retime.name(size)
         frame = self._frame(size)
-        _reverse_in_pieces(ffmpeg, self.videos[size], retime, size, path, frame[2], piece_secs(*frame), progress, threads(), nice)
+        fps, piece = (frame[2], piece_secs(*frame)) if frame else (None, PIECE_SECS[1])
+        _reverse_in_pieces(ffmpeg, self.videos[size], retime, size, path, fps, piece, progress, threads(), nice)
         named = Retime.named(path.name)
         assert named is not None
         return Copy(path, size, named[1])
@@ -226,7 +227,9 @@ class Copies:
         threading.Thread(target=run, name=f"retime {target.name}", daemon=True).start()
         return Making(0.0)
 
-    def _frame(self, size: CopySize) -> tuple[int, int, float]:
+    def _frame(self, size: CopySize) -> tuple[int, int, float] | None:
+        if self.frame is None:
+            return None
         width, height, fps = self.frame
         if size is CopySize.PREVIEW and max(width, height) > PREVIEW_SIDE:
             scale = PREVIEW_SIDE / max(width, height)
@@ -255,9 +258,9 @@ def piece_secs(width: int, height: int, fps: float) -> float:
 def read_from_copies(
     plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str | None, SegmentTime], Copy]
 ) -> tuple[RenderPlan, dict[str, Path]]:
-    """The Render Plan as the renderer reads it, and its files: each reversed Segment, and each
-    reversed Overlay's picture and sound, played forwards from the full-size copy `copy_of` gives for
-    its video (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
+    """The Render Plan as the renderer reads it, and its files: each reversed Segment, each reversed
+    Overlay's picture and sound, and each reversed Music Clip, played forwards from the full-size copy
+    `copy_of` gives for its item (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
     media Segment's or an Overlay's stands in for its video; a Source Segment's is its `read_from`,
     still a Segment of the Source (its Scenes' panels, the Clip's own volume)."""
     segments = []
@@ -310,8 +313,9 @@ def copies_played(start: float, end: float, speed: float = 1.0, reverse: bool = 
 
 def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float]) -> dict[str | None, list[tuple[CopySize, Retime]]]:
     """The Retimed copies `candidates` play from (`copies_played`), by their item: a Media Library
-    video's id, or None for the Source. An Overlay is of one of the videos `durations` gives (an
-    image's has none), its range cut where its video and the Clip end (`overlay_time`)."""
+    video's or song's id, or None for the Source. An Overlay or a Music Clip is of one of the items
+    `durations` gives (an image has none), or a Music Clip of the Source, its range cut where its
+    file (the Source's read being kept within it) and the Clip end (`overlay_time`)."""
     used: dict[str | None, list[tuple[CopySize, Retime]]] = defaultdict(list)
     for candidate in candidates:
         for segment in candidate.main_track():
@@ -322,6 +326,11 @@ def copies_used(candidates: Iterable[Candidate], durations: Mapping[str, float])
                 shown = candidate.duration - overlay.start
                 time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, durations[overlay.media], shown)
                 used[overlay.media] += copies_played(time.start, time.end, overlay.speed, overlay.reverse, overlay.pitch)
+        for clip in candidate.music:
+            if clip.media is None or clip.media in durations:
+                length = math.inf if clip.media is None else durations[clip.media]
+                time = overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse, length, candidate.duration - clip.start)
+                used[clip.media] += copies_played(time.start, time.end, clip.speed, clip.reverse, clip.pitch)
     return used
 
 
@@ -355,7 +364,7 @@ def _reverse_in_pieces(
     retime: Retime,
     size: CopySize,
     target: Path,
-    fps: float,
+    fps: float | None,
     piece: float,
     progress: Callable[[float], None],
     threads: int,
@@ -366,7 +375,8 @@ def _reverse_in_pieces(
     first (or first to last), under a temporary name renamed when complete. At a Speed, its picture is
     brought back to `fps` frames a second, as a render's is (every 8th frame at 8×, each frame 8
     times at 0.125×), and each piece's sound, made by the render's filters, is cut or padded to the
-    piece's length (`atempo` drops a little of a sound's end), so that the joins keep in step."""
+    piece's length (`atempo` drops a little of a sound's end), so that the joins keep in step. A
+    song's copy (no `fps`) is its sound alone."""
     span = retime.end - retime.start
     count = max(1, math.ceil(span / piece - 1e-9))
     length = span / count
@@ -380,10 +390,11 @@ def _reverse_in_pieces(
     if retime.reverse:
         picture.append("reverse")
         sound.append("areverse")
-    if retime.speed != 1:
+    if retime.speed != 1 and fps:
         # Each frame of the copy is the last of the item's at or before its time: a frame landing on
         # one of the copy's (a thousandth of a frame early, against rounding) is that one.
         picture += ["settb=AVTB", f"setpts=PTS/{retime.speed:.6g}-{0.001 / fps:.6g}/TB", f"fps={fps:.6g}:round=up"]
+    if retime.speed != 1:
         played = length / retime.speed
         sound += [*speed_filters(retime.speed, retime.pitch, AUDIO_RATE), f"apad=whole_dur={played:.6f}", f"atrim=duration={played:.6f}"]
     with _writing_lock:
@@ -393,11 +404,11 @@ def _reverse_in_pieces(
         pieces = []
         for i in range(count):
             out = work / f"{i}.mov"
+            shown = ["-map", "0:v:0", "-vf", ",".join(picture), *_ENCODE[size]] if fps else []
             command = [
                 *run, *base, "-ss", f"{retime.start + i * length:.6f}", "-t", f"{length:.6f}", "-i", str(video),
-                "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(picture),
-                *(["-af", ",".join(sound)] if sound else []),
-                *_ENCODE[size], "-threads", str(threads), "-c:a", "pcm_s16le", "-ar", str(AUDIO_RATE), str(out),
+                *shown, "-map", "0:a:0?", *(["-af", ",".join(sound)] if sound else []),
+                "-threads", str(threads), "-c:a", "pcm_s16le", "-ar", str(AUDIO_RATE), str(out),
             ]
             _run(command, f"piece {i + 1} of {count} of a copy of {video.name}")
             pieces.append(out)
@@ -410,7 +421,7 @@ def _reverse_in_pieces(
         _run(
             [
                 *run, *base, "-f", "concat", "-safe", "0", "-i", str(listing),
-                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", _AUDIO_BITRATE[size],
+                *(["-map", "0:v:0", "-c:v", "copy"] if fps else []), "-map", "0:a:0?", "-c:a", "aac", "-b:a", _AUDIO_BITRATE[size],
                 "-movflags", "+faststart", "-f", "mp4", str(part),
             ],
             f"a copy of {video.name}",

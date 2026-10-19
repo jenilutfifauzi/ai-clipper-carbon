@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setFade, setVolume, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -40,6 +40,7 @@ export function Inspector({
   presetsError,
   actions,
   mediaById,
+  sourceLength,
   playback,
   transition,
   onEdits,
@@ -56,6 +57,7 @@ export function Inspector({
   locked = [],
   onCue,
   captionsOf,
+  detaching,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -67,6 +69,8 @@ export function Inspector({
   presetsError: string | null;
   actions: ItemActions | null;
   mediaById: Map<string, MediaItem>;
+  // The Source's length, which a Music Clip of the Source reads within.
+  sourceLength: number;
   playback: Playback;
   // The Transitions' panel, for a picked join.
   transition: ReactNode;
@@ -76,11 +80,11 @@ export function Inspector({
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
-  // A Segment's or video Overlay's Speed set (actions.ts' setSpeed), a change of `group`.
+  // A Segment's, video Overlay's or Music Clip's Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (item: SpeedRef, speed: number, group: string) => void;
-  // A Segment's or video Overlay's Reverse turned on or off (actions.ts' setReverse).
+  // A Segment's, video Overlay's or Music Clip's Reverse turned on or off (actions.ts' setReverse).
   onReverse: (item: SpeedRef, reverse: boolean) => void;
-  // The Retimed copy the preview plays a Segment or video Overlay from, as the plan has it, if any.
+  // The Retimed copy the preview plays a Segment, video Overlay or Music Clip from, as the plan has it, if any.
   copyOf: (item: SpeedRef) => RetimedAsk | null;
   // A Freeze frame's hold set (actions.ts' setHold).
   onHold: (id: string, hold: number) => void;
@@ -92,21 +96,29 @@ export function Inspector({
   onCue: (outcome: Outcome, group?: string) => void;
   // A video's Segment's caption controls (MediaCaptionFields).
   captionsOf?: (segment: ClipSegment, item: MediaItem) => ReactNode;
+  // Detach and Reattach of a Segment's sound (GLOSSARY.md).
+  detaching?: Detacher;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
   const find = <T extends { id: string }>(items: T[], kind: string) => (only?.kind === kind ? items.find((item) => item.id === only.id) : undefined);
   const keyTime = useKeyTime(playback);
-  // Where the Segments play on the Timeline, which a video's Keyframes are set in.
+  // Where the Segments play on the Timeline, which their Keyframes are set in.
   const keying = useContext(KeyingContext);
   const track = keying?.track;
   // An item's volume set from its slider, as its Volume Line sets it; a keyed Music Clip's or
-  // video Segment's, as a Keyframe at the playhead.
+  // Segment's, as a Keyframe at the playhead.
   const volumeOf = (item: { kind: "music" | "segment"; id: string }) => (volume: number, group: string) => {
     const keyed = !!keyedItem(edits, item, track)?.keys.volume?.length;
     const outcome = keyed ? writeItemKey({ edits, pick, track }, item, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
     if (outcome?.notice) keying?.onNotice?.(outcome.notice);
     else if (outcome) onEdits(outcome.edits, keyedGroup(group, keyed, keyTime));
+  };
+
+  // A Detached sound's Segment, while it is there to Reattach it to.
+  const detachedOf = ({ detached_from }: MusicClip) => {
+    const index = edits.segments.findIndex((segment) => segment.id === detached_from);
+    return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
 
   const items = itemsOf(pick);
@@ -161,12 +173,18 @@ export function Inspector({
         onDelete={actions.remove}
         onChange={onSegment}
         onVolume={volumeOf({ kind: "segment", id: segment.id })}
+        onFade={(fade, secs, group) => {
+          const outcome = setFade({ edits, pick }, segment.id, fade, secs);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
         onSpeed={(speed, group) => onSpeed({ kind: "segment", id: segment.id }, speed, group)}
         onReverse={(reverse) => onReverse({ kind: "segment", id: segment.id }, reverse)}
         copy={copyOf({ kind: "segment", id: segment.id })}
         onHold={(hold) => onHold(segment.id, hold)}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
         onCropMode={cropMode?.("segment", segment.id)}
+        onDetach={detaching?.canDetach(segment.id) ? () => detaching.detach(segment.id) : undefined}
+        onReattach={detaching?.canReattach(segment.id) ? () => detaching.reattach(segment.id) : undefined}
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
@@ -209,17 +227,26 @@ export function Inspector({
       <MusicFields
         key={clip.id}
         clip={clip}
-        item={mediaById.get(clip.media)}
+        item={clip.media ? mediaById.get(clip.media) : undefined}
+        sourceLength={sourceLength}
         duration={duration}
         playback={playback}
         onChange={onMusic}
+        onSpeed={(speed, group) => onSpeed({ kind: "music", id: clip.id }, speed, group)}
+        onReverse={(reverse) => onReverse({ kind: "music", id: clip.id }, reverse)}
+        copy={copyOf({ kind: "music", id: clip.id })}
         onVolume={volumeOf({ kind: "music", id: clip.id })}
         onFade={(fade, secs, group) => {
           const outcome = setFade({ edits, pick }, clip.id, fade, secs);
           if (outcome) onEdits(outcome.edits, group);
         }}
+        onDuck={(duck, group) => {
+          const outcome = setDuck({ edits, pick }, clip.id, duck);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
+        detached={detachedOf(clip)}
       />
     );
   }

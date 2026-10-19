@@ -16,7 +16,7 @@ const caption = {
   ...LINE_LIMITS.phrase,
 } as unknown as CaptionStyle;
 const PRESETS: StylePreset[] = [
-  { id: "default", name: "Default", caption, hook: {} as HookStyle, watermark: {} as WatermarkStyle, builtin: true },
+  { id: "default", name: "Default", caption, hook: {} as HookStyle, watermark: {} as WatermarkStyle, join_transition: null, builtin: true },
 ];
 
 /** The clip editor's controls: each change a new draft, kept. */

@@ -40,11 +40,7 @@ def test_a_music_clip_is_kept_inside_the_clip_and_its_song():
     assert audio_events([music(start=10.0)], 10, SONGS) == []
     assert audio_events([music(offset=30.0)], 10, SONGS) == []
     assert audio_events([music()], 10, {}) == []
-    # Fades that fit are heard as set; longer together than it, both shorten by the same share.
-    [long_in] = audio_events([music(secs=4.0, fade_in=3.0, fade_out=0.5)], 10, SONGS)
-    assert (long_in.fade_in, long_in.fade_out) == (3.0, 0.5)
-    [faded] = audio_events([music(secs=2.0, fade_in=3.0, fade_out=3.0)], 10, SONGS)
-    assert (faded.fade_in, faded.fade_out) == (1.0, 1.0)
+    # Fades are fitted to what is heard (test_gain.py's shared cases), so to what the Clip's end leaves.
     [cut] = audio_events([music(start=7.0, fade_in=3.0, fade_out=1.0)], 10, SONGS)
     assert (cut.fade_in, cut.fade_out) == (2.25, 0.75)
 

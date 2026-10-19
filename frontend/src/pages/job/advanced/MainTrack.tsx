@@ -1,4 +1,4 @@
-import { Clapperboard, Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Film, Link2, Plus, Scissors, Trash2, Unlink2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { ClipSegment, Framing, MediaItem, Transcript } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -11,7 +11,8 @@ import { IDENTITY, mediaSize } from "../editor/picture";
 import type { Playback, PlayedSegment } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
-import { KeyedVolume } from "./KeyCluster";
+import { FADE_MAX_SECS } from "./edits";
+import { KeyedVolume, MutedSwitch } from "./KeyCluster";
 import { resetFraming, type KeySpan } from "./keying";
 import { HoldFields, SpeedFields } from "./SpeedFields";
 import { BackgroundFields, TransformFields, useKeyedTransform } from "./TransformFields";
@@ -116,11 +117,14 @@ export function SegmentFields({
   onDelete,
   onSourceVolume,
   onVolume,
+  onFade,
   onSpeed,
   onReverse,
   onHold,
   onChange,
   onCropMode,
+  onDetach,
+  onReattach,
   scene,
   captions,
   playback,
@@ -138,8 +142,10 @@ export function SegmentFields({
   onDuplicate: () => void;
   onDelete: () => void;
   onSourceVolume: (volume: number) => void;
-  // A video's Segment's volume.
+  // Its own volume (a keyed one's as a Keyframe at the playhead).
   onVolume: (volume: number, group: string) => void;
+  // A fade set (actions.ts' setFade), as its Fade Ramp's handle sets it.
+  onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void;
   // Its Speed set (actions.ts' setSpeed), a change of `group`.
   onSpeed: (speed: number, group: string) => void;
   // Its Reverse turned on or off (actions.ts' setReverse).
@@ -149,12 +155,16 @@ export function SegmentFields({
   onChange: (segment: ClipSegment, group: string) => void;
   // A video's Segment's Crop mode on the stage, when it can be opened there.
   onCropMode?: () => void;
+  // Its sound Detached onto a Music Clip, or the Music Clips Detached from it deleted (GLOSSARY.md,
+  // Detach), each where it is offered.
+  onDetach?: () => void;
+  onReattach?: () => void;
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
   // A video's Segment's captions: its Captions switch, its video's language and its Words status.
   captions?: ReactNode;
   playback: Playback;
-  // Where it plays on the Timeline (keying.ts' segmentSpan), which a video's Keyframes are set in.
+  // Where it plays on the Timeline (keying.ts' segmentSpan), which its Keyframes are set in.
   span: KeySpan | null;
   // The Retimed copy the preview plays it from, if any.
   copy: RetimedAsk | null;
@@ -182,6 +192,12 @@ export function SegmentFields({
       onPitch={(pitch) => onChange({ ...segment, pitch }, `segment:${segment.id}:pitch`)}
       onReverse={onReverse}
     />
+  );
+  const muteSwitch = (
+    <>
+      <MutedSwitch muted={segment.muted ?? false} onChange={(muted) => onChange({ ...segment, muted }, `segment:${segment.id}:muted`)} />
+      <DetachButton onDetach={onDetach} onReattach={onReattach} />
+    </>
   );
   return (
     <div className="flex flex-col gap-4">
@@ -212,17 +228,21 @@ export function SegmentFields({
           {held ? null : item?.has_audio === false ? (
             <p className="text-sm text-muted">This video has no sound.</p>
           ) : (
-            <KeyedVolume
-              item={{ kind: "segment", id: segment.id }}
-              span={span}
-              keys={segment.keys?.volume ?? []}
-              volume={segment.volume ?? 1}
-              label="Its sound"
-              format={(v) => `${Math.round(v * 100)}%`}
-              playback={playback}
-              onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
-            />
+            <>
+              <KeyedVolume
+                item={{ kind: "segment", id: segment.id }}
+                span={span}
+                keys={segment.keys?.volume ?? []}
+                volume={segment.volume ?? 1}
+                label="Its sound"
+                format={(v) => `${Math.round(v * 100)}%`}
+                playback={playback}
+                onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
+              />
+              {muteSwitch}
+            </>
           )}
+          {!held && item?.has_audio !== false && <FadeFields segment={segment} onFade={onFade} />}
           {!held && !segment.reverse && item?.has_audio !== false && captions}
         </>
       ) : (
@@ -239,15 +259,18 @@ export function SegmentFields({
           {speed}
           {!held && (
             <>
-              <Slider
+              <KeyedVolume
+                item={{ kind: "segment", id: segment.id }}
+                span={span}
+                keys={segment.keys?.volume ?? []}
+                volume={segment.volume ?? 1}
                 label="This Segment's sound"
-                value={segment.volume ?? 1}
-                min={0}
-                max={2}
-                step={0.05}
                 format={(v) => `${Math.round(v * 100)}%`}
-                onChange={(volume) => onChange({ ...segment, volume }, `segment:${segment.id}:volume`)}
+                playback={playback}
+                onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
               />
+              {muteSwitch}
+              <FadeFields segment={segment} onFade={onFade} />
               <Slider
                 label="The episode's sound, in every Segment"
                 value={sourceVolume}
@@ -263,6 +286,61 @@ export function SegmentFields({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Detach audio, or Reattach audio once its sound is Detached (GLOSSARY.md, Detach): whichever is
+ * offered, if either is.
+ */
+function DetachButton({ onDetach, onReattach }: { onDetach?: () => void; onReattach?: () => void }) {
+  if (onReattach) {
+    return (
+      <Button size="sm" className="self-start in-data-sheet:min-h-11" onClick={onReattach} title="Delete the Music Clips its sound was Detached onto, and unmute it">
+        <Link2 aria-hidden size={16} />
+        Reattach audio
+      </Button>
+    );
+  }
+  if (!onDetach) return null;
+  return (
+    <Button size="sm" className="self-start in-data-sheet:min-h-11" onClick={onDetach} title="Move its sound onto a Music Clip that slides on its own (a J-cut or an L-cut), and Mute it">
+      <Unlink2 aria-hidden size={16} />
+      Detach audio
+    </Button>
+  );
+}
+
+/**
+ * A Segment's fades, as a Music Clip's: each as long as 10 s, or as what the other leaves of it on the
+ * Timeline (the plan fits them to it as heard, a Transition's overlap included).
+ */
+function FadeFields({ segment, onFade }: { segment: ClipSegment; onFade: (fade: "fade_in" | "fade_out", secs: number, group: string) => void }) {
+  const length = segmentLength(segment);
+  const most = (other: number) => Math.max(0, Math.min(FADE_MAX_SECS, length - other));
+  const [fadeIn, fadeOut] = [segment.fade_in ?? 0, segment.fade_out ?? 0];
+  const fade = (field: "fade_in" | "fade_out") => (secs: number) => onFade(field, secs, `segment:${segment.id}:${field}`);
+  return (
+    <>
+      <Slider
+        label="Fade in"
+        value={Math.min(fadeIn, most(fadeOut))}
+        min={0}
+        max={most(fadeOut)}
+        step={0.1}
+        format={(v) => `${v.toFixed(1)} s`}
+        onChange={fade("fade_in")}
+      />
+      <Slider
+        label="Fade out"
+        value={Math.min(fadeOut, most(fadeIn))}
+        min={0}
+        max={most(fadeIn)}
+        step={0.1}
+        format={(v) => `${v.toFixed(1)} s`}
+        onChange={fade("fade_out")}
+      />
+    </>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Picture } from "../../../api";
+import { animatedPicture, type Look } from "./animation";
 import { isKeyed, pictureAt, pictureStyle } from "./picture";
 import type { Playback } from "./playback";
 
@@ -13,7 +14,9 @@ import type { Playback } from "./playback";
  *
  * A keyed picture (ADR 0008) moves with `playback`: on every frame of its clock (and every seek) it
  * is sampled at the time shown (`pictureAt`) and its box, turn and opacity are written to its
- * elements directly, so that a frame doesn't render the stage again.
+ * elements directly, so that a frame doesn't render the stage again. So does an animated one (an
+ * Overlay coming on or going off), its animations' `look` at the time shown stacked on its keyed
+ * values (animatedPicture), as the renderer's overlay_at draws it.
  */
 export function PicturePanel({
   picture,
@@ -22,6 +25,7 @@ export function PicturePanel({
   faded,
   hidden,
   playback,
+  look,
 }: {
   picture: Picture;
   frame: { width: number; height: number };
@@ -29,19 +33,20 @@ export function PicturePanel({
   faded?: number;
   hidden?: boolean;
   playback?: Playback;
+  look?: (time: number) => Look;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const shown = useRef<HTMLDivElement>(null);
   const edge = useRef<HTMLDivElement>(null);
-  const moving = isKeyed(picture) ? playback : undefined;
-  const drawn = moving ? pictureAt(picture, moving.shownTime) : picture;
+  const moving = isKeyed(picture) || look ? playback : undefined;
+  const drawn = moving ? drawnAt(picture, moving.shownTime, look) : picture;
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
   const visibility = hidden ? "hidden" : "visible";
 
   useLayoutEffect(() => {
     if (!moving) return;
     const paint = () => {
-      const { left, top, width, height, transform, opacity, radius } = pictureStyle(pictureAt(picture, moving.shownTime), frame);
+      const { left, top, width, height, transform, opacity, radius } = pictureStyle(drawnAt(picture, moving.shownTime, look), frame);
       if (box.current) Object.assign(box.current.style, { left, top, width, height, transform });
       if (shown.current) {
         if (faded === undefined) shown.current.style.opacity = String(opacity);
@@ -51,7 +56,7 @@ export function PicturePanel({
     };
     paint();
     return moving.subscribe(paint);
-  }, [moving, picture, frame, faded]);
+  }, [moving, picture, frame, faded, look]);
 
   return (
     <div className="pointer-events-none absolute inset-0" style={{ filter: shadow, visibility }}>
@@ -66,3 +71,7 @@ export function PicturePanel({
     </div>
   );
 }
+
+// A moving `picture` as drawn at `time`: sampled from its Keyframes, and animated by its `look` there when it has one.
+const drawnAt = (picture: Picture, time: number, look?: (time: number) => Look) =>
+  look ? animatedPicture(picture, time, look(time)) : pictureAt(picture, time);

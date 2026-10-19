@@ -10,7 +10,7 @@ import { playedFrom } from "../editor/playback";
 import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { rewindow } from "./keyActions";
-import { keyedInPick, keyedItem, resetFraming, segmentSpan, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
+import { keyedInPick, keyedItem, keyRows, resetFraming, segmentSpan, toggleItemKey, writeItemKey, writeItemTransform } from "./keying";
 import { picked } from "./pick";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
@@ -120,8 +120,7 @@ describe("a Keyframe edit on a video Segment", () => {
     expect(writeItemKey({ edits: edits(), pick: picked(V), track }, V, "volume", 0.6, 14)).toBeNull();
   });
 
-  test("a Segment of the episode has none, and a locked Video Track refuses them", () => {
-    expect(keyedItem(edits(), { kind: "segment", id: "e" })).toBeNull();
+  test("a locked Video Track refuses them", () => {
     expect(toggleItemKey({ edits: edits(), pick: picked(V), locked: ["video"] }, V, "x", 11)).toBeNull();
   });
 
@@ -140,5 +139,50 @@ describe("a Keyframe edit on a video Segment", () => {
 
   test("Reset of its Transform drops the Transform's Keyframes and keeps its sound's", () => {
     expect(resetFraming(video(), IDENTITY).keys).toEqual({ volume: dip });
+  });
+});
+
+// .scratch/audio-mixing/issues/06: a Segment of the episode keys its sound's volume, as a video's does.
+describe("a Segment of the episode's volume Keyframes", () => {
+  const E = { kind: "segment", id: "e" } as const;
+  const keyedEpisode = (keys: Keys = { volume: dip }): ClipSegment => ({ ...episode, volume: 0.9, keys });
+
+  test("are its only row: its picture is framed by its Layouts, and a Freeze frame of it has none", () => {
+    expect(keyedItem(edits(), E)).toMatchObject({ start: 0, secs: 10, keys: {}, volume: 1 });
+    expect(keyedItem(edits(), E)?.transform).toBeUndefined();
+    expect(keyRows(edits(), E, new Map())).toEqual(["volume"]);
+    expect(writeItemTransform({ edits: edits(), pick: picked(E) }, E, { ...IDENTITY, scale: 2 }, 1)).toBeNull();
+    const still: ClipSegment = { id: "f", start: 104, end: 104, hold: 1 };
+    expect(keyedItem(edits([episode, still]), { kind: "segment", id: "f" })).toBeNull();
+  });
+
+  test("its Volume Line drag sets its volume, and once its sound is keyed writes a Keyframe at the playhead (Auto-key)", () => {
+    const set = writeItemKey({ edits: edits(), pick: picked(E) }, E, "volume", 0.5, 3);
+    expect(set?.edits.segments[0]).toEqual({ ...episode, volume: 0.5, keys: {} });
+    const keyed = edits([keyedEpisode(), video()]);
+    const written = writeItemKey({ edits: keyed, pick: picked(E) }, E, "volume", 0.6, 4);
+    expect(written?.edits.segments[0]).toEqual({ ...keyedEpisode(), keys: { volume: [...dip, key(4, 0.6)] } });
+    // Outside it (in the video after it), a keyed one isn't written.
+    expect(writeItemKey({ edits: keyed, pick: picked(E) }, E, "volume", 0.6, 12)).toBeNull();
+    // Its diamond keys the value at the playhead, so nothing changes until it is dragged.
+    const toggled = toggleItemKey({ edits: edits([keyedEpisode({}), video()]), pick: picked(E) }, E, "volume", 3);
+    expect(toggled?.edits.segments[0].keys).toEqual({ volume: [key(3, 0.9)] });
+  });
+
+  test("are re-anchored by a trim and a split as a video Segment's are", () => {
+    const before = edits([keyedEpisode(), video()]);
+    const origin = { edits: before, shown: playedFrom(before.segments), planned: playedFrom(before.segments) };
+    const pick = (state: AdvancedEdits) => ({ ...scene(state), pick: picked(E) });
+    // Its start trimmed 1.5 s later: its Keyframes 1.5 s earlier, one added at 0 with the value there.
+    const [trimmed] = dragSegment(pick(before), origin, "e", { start: 1.5, end: 10, edge: "start" }, () => 200).edits.segments;
+    expect([trimmed.start, trimmed.end]).toEqual([101.5, 110]);
+    expect(trimmed.keys).toEqual({ volume: rewindow(dip, 1.5, 10) });
+    // Split at 1.5 s (in the gap there): each piece plays what the whole did at the same Timeline times.
+    const [head, tail] = split(pick(before), 1.5)!.edits.segments;
+    const played = playedFrom([head, tail]);
+    for (let time = 0; time <= 10; time += 0.05) {
+      const [piece, start] = time < 1.5 ? [head, played[0].start] : [tail, played[1].start];
+      expect(valueAt(piece.keys!.volume!, time - start, NaN)).toBeCloseTo(valueAt(dip, time, NaN), 3);
+    }
   });
 });

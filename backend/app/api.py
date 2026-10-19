@@ -1,15 +1,31 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
 import shutil
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
+from starlette.background import BackgroundTask
 
 from app import emoji, review
 from app.candidates import (
@@ -37,8 +53,12 @@ from app.clips import Clip
 from app.config import Settings
 from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
 from app.editor import PreviewPlan, captions_pending, preview_plan
+from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
+from app.export_files import SavedExport, save_audio, save_frame, saved_export
+from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
+from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
@@ -48,6 +68,7 @@ from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
+from app.renderer import AudioFormat, available_codecs
 from app.rendering import NothingToRender, has_media_words, media_language, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
@@ -60,6 +81,7 @@ from app.styles import (
     CaptionStyle,
     HookStyle,
     InvalidStyle,
+    JoinTransition,
     Name,
     PresetNotFound,
     PresetStore,
@@ -80,7 +102,7 @@ media = APIRouter(prefix="/media")
 EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 # What /media serves from a Job's directory: its video (or preview proxy), and its Clips with their
 # posters and caption files. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
-MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png", ".srt", ".vtt"})
+MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".wav", ".jpg", ".png", ".srt", ".vtt"})
 # The caption files' types (app/caption_files.py): not every system's MIME table knows them.
 SUBTITLE_TYPES = {".srt": "application/x-subrip", ".vtt": "text/vtt"}
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
@@ -127,6 +149,10 @@ def _text_presets(request: Request) -> TextPresetStore:
     return request.app.state.text_presets
 
 
+def _export_presets(request: Request) -> ExportPresetStore:
+    return request.app.state.export_presets
+
+
 def _logos(request: Request) -> LogoStore:
     return request.app.state.logos
 
@@ -162,6 +188,7 @@ JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
+ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
@@ -258,6 +285,23 @@ class CandidateUpdate(BaseModel):
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
     # is the Candidate's. Left out, the edit is saved over whatever is there.
     revision: Annotated[int, Field(ge=1)] | None = None
+    # The Music Clips (by id) sent without `duck`: a new song's then ducks by default (docs/adr/0016).
+    # Read from what was sent, so that an explicit null keeps it off.
+    _duck_unset: frozenset[str] = PrivateAttr(default=frozenset())
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _unset_ducks(cls, given: Any, handler: ModelWrapValidatorHandler["CandidateUpdate"]) -> "CandidateUpdate":
+        update = handler(given)
+        music = given.get("music") if isinstance(given, dict) else None
+        if isinstance(music, list):
+            update._duck_unset = frozenset(str(clip.get("id")) for clip in music if isinstance(clip, dict) and "duck" not in clip)
+        return update
+
+    @property
+    def change(self) -> CandidateChange:
+        """The edit, as `review.update` makes it."""
+        return CandidateChange(**{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset)
 
 
 class MediaWordsRequest(BaseModel):
@@ -298,6 +342,8 @@ class PresetBody(BaseModel):
     caption: CaptionStyle = CaptionStyle()
     hook: HookStyle = HookStyle()
     watermark: WatermarkStyle = WatermarkStyle()
+    # What each new join of its Candidates gets; None for none.
+    join_transition: JoinTransition | None = None
 
 
 class TextPresetBody(BaseModel):
@@ -335,6 +381,44 @@ class TextPresetInfo(TextPreset):
     @classmethod
     def of(cls, preset: TextPreset, default: TextPreset) -> "TextPresetInfo":
         return cls(**vars(preset), default=preset.id == default.id)
+
+
+@dataclass(frozen=True)
+class ExportPresetList:
+    """The Export Presets, built-in ones first; the one a render uses when none is asked for; and the
+    codecs this Mac's ffmpeg can encode."""
+
+    presets: list[ExportPreset]
+    default: str
+    available: list[Codec]
+
+
+class ExportPresetBody(BaseModel):
+    """An Export Preset as the owner saves it: a name and Export Settings, each of them on its list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name
+    settings: ExportSettings
+
+
+class ExportPresetChoice(BaseModel):
+    """The Export Preset a render uses when none is asked for."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    preset_id: str
+
+
+class ExportEstimate(BaseModel):
+    """A batch of Clips `secs` long in all, made as `settings` say; at the Source's frame rate `fps`
+    when they keep it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    settings: ExportSettings
+    secs: Annotated[float, Field(ge=0, le=86_400)]
+    fps: Annotated[float, Field(gt=0, le=240)]
 
 
 class ManualCandidate(BaseModel):
@@ -418,6 +502,29 @@ class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_ids: list[str] | None = None
+    # The Export Preset the batch is rendered with; the default when left out.
+    export_preset_id: str | None = None
+
+
+class FrameRequest(BaseModel):
+    """The frame to save: at `at` seconds of Timeline time, of the Candidate or of `draft` (as a
+    Preview Plan's), at an Export Preset's size (the default's when left out)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: Annotated[FiniteFloat, Field(ge=0)]
+    draft: CandidateUpdate | None = None
+    export_preset_id: str | None = None
+
+
+class SaveAudioRequest(BaseModel):
+    """The format a Candidate's sound is saved alone in, and the Export Preset whose loudness it
+    takes; the default when left out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: AudioFormat = "wav"
+    export_preset_id: str | None = None
 
 
 class RetimedRequest(BaseModel):
@@ -705,10 +812,10 @@ def update_candidate(
     if body.style_overrides is not None:
         _check_logo(logos, body.style_overrides.watermark.get("logo"))
     _check_media_of(library, body)
-    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields})
+    change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
-        candidates, candidate = review.update(candidates, candidate_id, change, episode)
+        candidates, candidate = review.update(candidates, candidate_id, change, episode, presets.join_transition)
         try:
             presets.styles(candidate.preset_id, candidate.style_overrides)
         except InvalidStyle as exc:
@@ -778,6 +885,105 @@ def candidate_preview_plan(
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
     edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
     edit; 409 for a Job without Candidates."""
+    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body)
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/frame")
+def save_candidate_frame(
+    job_id: str,
+    candidate_id: str,
+    body: FrameRequest,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    export_presets: ExportPresets,
+    logos: Logos,
+    library: Media,
+    media_words: MediaWordsDep,
+) -> SavedExport:
+    """Save the frame at `at` (Timeline time) of the Candidate, or of `draft` (as the Preview Plan
+    plans it: from cached analysis only), drawn as its render would draw it at the Export Preset's
+    frame rate and size (the default's when left out), as a PNG in the Job's exports/
+    (`<candidate>-<mm.ss.ff>.png`, overwritten). Synchronous, outside the render queue: the Job's
+    status doesn't change. 422 for an unknown Preset or a draft that isn't a valid edit."""
+    export = _export_preset(export_presets, body.export_preset_id).settings
+    planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
+    job, job_dir = store.get(job_id), store.job_dir(job_id)
+    try:
+        path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from None
+    return saved_export(job_id, job_dir, path)
+
+
+def _draft_plan(
+    job_id: str,
+    candidate_id: str,
+    store: JobStore,
+    settings: Settings,
+    presets: PresetStore,
+    logos: LogoStore,
+    library: MediaStore,
+    media_words: MediaWordsStore,
+    body: CandidateUpdate | None,
+    fps: float | None = None,
+) -> PreviewPlan:
+    """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved, at `fps` (the
+    Source's when None)."""
+    job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    try:
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps)
+    except InvalidEdit as exc:
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/sound/{kind}/{item_id}", response_class=FileResponse)
+def save_sound(
+    job_id: str,
+    candidate_id: str,
+    kind: SoundOf,
+    item_id: str,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    body: CandidateUpdate | None = None,
+) -> FileResponse:
+    """Save sound as WAV: the sound of the Candidate's Segment, Music Clip or Overlay `item_id`, or
+    of that item of `body` (a draft of edits, as the Preview Plan takes it), alone as it is heard in
+    the Clip, Muted or not (app/item_sound.py): `audio/wav`, 48 kHz stereo 16-bit PCM, to download
+    under a name made of the Candidate's and the item's. 404 for an item the draft hasn't; 422 for
+    a Freeze frame, an image or an item without sound, and for a draft that isn't a valid edit."""
+    job, _, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    folder = Path(tempfile.mkdtemp(prefix=".sound-", dir=store.job_dir(job_id)))
+    try:
+        name = save_item_sound(job, store.job_dir(job_id), candidate, kind, item_id, folder / "sound.wav", settings, presets, logos, library)
+    except NoItem as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(404, f"Candidate {candidate_id} has {exc}") from None
+    except NoSound as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return FileResponse(
+        folder / "sound.wav", media_type="audio/wav", filename=name, background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True),
+    )
+
+
+def _drafted(
+    job_id: str, candidate_id: str, body: CandidateUpdate | None, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore
+) -> tuple[Job, Transcript, Candidate]:
+    """The Job, its Transcript and the Candidate as `body`, a draft of its edits, would make it, applied
+    as an update would apply them but not saved. 404 for an unknown Job or Candidate; 409 for a Job
+    without Candidates; 422 for a draft that isn't a valid edit."""
     try:
         job = store.get(job_id)
     except JobNotFound:
@@ -790,17 +996,47 @@ def candidate_preview_plan(
     if body is not None:
         _check_media_of(library, body)
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
-    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
+    change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
-        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words)
+        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode, presets.join_transition)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
-    except InvalidStyle as exc:
-        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    return job, transcript, candidate
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/audio")
+def save_candidate_audio(
+    job_id: str,
+    candidate_id: str,
+    body: SaveAudioRequest,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    export_presets: ExportPresets,
+    library: Media,
+) -> SavedExport:
+    """Save the Candidate's sound alone (app/export_files.py), as its saved Revision's Clip would mix
+    it, at `export_preset_id`'s loudness (the default Preset's when left out): a 48 kHz 16-bit WAV or
+    an AAC M4A, written to the Job's exports/ as <candidate>.wav or .m4a, overwriting it. At once,
+    outside the render queue: the Job's status doesn't change. 422 for an unknown Export Preset; 409
+    for a Job without Candidates."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    candidates = store.load_candidates(job_id)
+    if job.source is None or candidates is None:
+        raise HTTPException(409, f"Job {job_id} has no Candidates yet")
+    candidate = next((c for c in candidates if c.id == candidate_id), None)
+    if candidate is None:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+    export = _export_preset(export_presets, body.export_preset_id).settings
+    job_dir = store.job_dir(job_id)
+    path = save_audio(job, job_dir, store.load_transcript(job_id), candidate, body.format, export, settings, presets, library)
+    return saved_export(job_id, job_dir, path)
 
 
 @router.get("/jobs/{job_id}/candidates/{candidate_id}/captions/{format}")
@@ -943,12 +1179,15 @@ def _review(
 
 
 @router.post("/jobs/{job_id}/render")
-def render(job_id: str, store: Store, worker: JobWorker, body: RenderRequest | None = None) -> list[Clip]:
+def render(job_id: str, store: Store, worker: JobWorker, export_presets: ExportPresets, body: RenderRequest | None = None) -> list[Clip]:
     """Queue Clips of the selected Candidates (or of `candidate_ids`); the Job is `rendering` until
     they are done. A Candidate rendered before is rendered again, replacing its Clip. Returns the
-    Job's Clips. 422 when no Candidate is selected; 409 unless the Job is in review or rendering."""
+    Job's Clips. Each Clip renders with `export_preset_id` (the default when left out) as it is when
+    its render starts; a Clip asked for again while queued takes the latest. 422 when no Candidate is
+    selected, or for an unknown Export Preset; 409 unless the Job is in review or rendering."""
+    preset = _export_preset(export_presets, body.export_preset_id if body else None)
     try:
-        worker.render(job_id, body.candidate_ids if body else None)
+        worker.render(job_id, body.candidate_ids if body else None, preset.id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     except CandidateNotFound as exc:
@@ -1120,6 +1359,61 @@ def delete_text_preset(preset_id: str, text_presets: TextPresets) -> None:
         raise HTTPException(409, f"Text Preset {preset_id} is built in and can't be deleted") from None
 
 
+@router.get("/export-presets")
+def list_export_presets(export_presets: ExportPresets, settings: AppSettings) -> ExportPresetList:
+    """The built-in Export Presets by their order, then the owner's, with the default's id and the
+    codecs that can be encoded here (a Preset of another codec fails to render)."""
+    available = available_codecs(settings.ffmpeg_bin, settings.render)
+    return ExportPresetList(export_presets.all(), export_presets.default().id, [codec for codec in Codec if codec in available])
+
+
+@router.post("/export-presets", status_code=201)
+def create_export_preset(body: ExportPresetBody, export_presets: ExportPresets) -> ExportPreset:
+    """Save Export Settings as a new Export Preset of the owner's (a built-in one duplicated, say)."""
+    return export_presets.create(body.name, body.settings)
+
+
+@router.post("/export-presets/estimate")
+def estimate_export(body: ExportEstimate) -> dict[str, int]:
+    """The bytes Clips `secs` long in all come to as `settings` say: what the encoders aim for, video
+    and sound (app/encoding.py). The sheet's MB per minute and the Render menu's total both ask here."""
+    return {"bytes": estimated_bytes(body.settings, body.settings.fps or body.fps, body.secs)}
+
+
+@router.put("/export-presets/default")
+def use_export_preset_as_default(body: ExportPresetChoice, export_presets: ExportPresets) -> ExportPreset:
+    """Make an Export Preset, built-in or the owner's, the one a render uses when none is asked for.
+    404 for an unknown one."""
+    try:
+        return export_presets.use_as_default(body.preset_id)
+    except ExportPresetNotFound:
+        raise HTTPException(404, f"No Export Preset {body.preset_id}") from None
+
+
+@router.put("/export-presets/{preset_id}")
+def change_export_preset(preset_id: str, body: ExportPresetBody, export_presets: ExportPresets) -> ExportPreset:
+    """Give one of the owner's Export Presets another name and settings. Its Clips keep theirs and
+    never go stale; rendered again, they use these. 409 for a built-in Preset."""
+    try:
+        return export_presets.change(preset_id, body.name, body.settings)
+    except ExportPresetNotFound:
+        raise HTTPException(404, f"No Export Preset {preset_id}") from None
+    except BuiltinExportPreset:
+        raise HTTPException(409, f"Export Preset {preset_id} is built in: duplicate it instead") from None
+
+
+@router.delete("/export-presets/{preset_id}", status_code=204)
+def delete_export_preset(preset_id: str, export_presets: ExportPresets) -> None:
+    """Delete one of the owner's Export Presets; its Clips render again with the default, and when it
+    was the default, "Shorts / TikTok / Reels" is again. 409 for a built-in Preset."""
+    try:
+        export_presets.delete(preset_id)
+    except ExportPresetNotFound:
+        raise HTTPException(404, f"No Export Preset {preset_id}") from None
+    except BuiltinExportPreset:
+        raise HTTPException(409, f"Export Preset {preset_id} is built in and can't be deleted") from None
+
+
 @router.get("/presets")
 def list_presets(presets: Presets) -> list[StylePreset]:
     """The built-in Style Presets, then the owner's."""
@@ -1130,7 +1424,7 @@ def list_presets(presets: Presets) -> list[StylePreset]:
 def create_preset(body: PresetBody, presets: Presets, logos: Logos) -> StylePreset:
     """Save a new Preset. 422 for a Watermark whose Logo isn't one of the Logos."""
     _check_logo(logos, body.watermark.logo)
-    return presets.create(body.name, body.caption, body.hook, body.watermark)
+    return presets.create(body.name, body.caption, body.hook, body.watermark, body.join_transition)
 
 
 @router.put("/presets/{preset_id}")
@@ -1139,7 +1433,7 @@ def update_preset(preset_id: str, body: PresetBody, presets: Presets, logos: Log
     built-in Preset; 422 for a Watermark whose Logo isn't one of the Logos."""
     _check_logo(logos, body.watermark.logo)
     try:
-        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark)
+        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark, body.join_transition)
     except PresetNotFound:
         raise HTTPException(404, f"No Preset {preset_id}") from None
     except BuiltinPreset:
@@ -1300,26 +1594,27 @@ def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
 
 @router.post("/media/{media_id}/retimed")
 def media_retimed(media_id: str, body: RetimedRequest, library: Media, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
-    """The preview-size Retimed copy of a video's range from `start` to `end` seconds, as the editor
-    asks for it while it previews a reversed item, or one at a Speed a browser won't play, then polls
-    (app/retimed.py): any copy that serves it, or the one being made, or one queued now and made
-    outside the Worker, on every core unless the Worker is running a Job. 404 for an item that isn't
-    a video; 422 for a range outside it, or one played forwards at 1×."""
+    """The preview-size Retimed copy of a video's or a song's range from `start` to `end` seconds, as
+    the editor asks for it while it previews a reversed item, or one at a Speed a browser won't play,
+    then polls (app/retimed.py): any copy that serves it, or the one being made, or one queued now and
+    made outside the Worker, on every core unless the Worker is running a Job. 404 for an image; 422
+    for a range outside it, or one played forwards at 1×."""
     try:
         item = library.get(media_id)
         copies = library.retimed(media_id)
     except MediaNotFound:
-        raise HTTPException(404, f"No video {media_id}") from None
-    return _ask_retimed(copies, item.duration or 0.0, "the video", body, f"/api/media/{media_id}/retimed", settings, worker)
+        raise HTTPException(404, f"No video or song {media_id}") from None
+    what = "the song" if item.kind is MediaKind.AUDIO else "the video"
+    return _ask_retimed(copies, item.duration or 0.0, what, body, f"/api/media/{media_id}/retimed", settings, worker)
 
 
 @router.get("/media/{media_id}/retimed/{name}")
 def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse:
-    """A video's Retimed copy, by the name its `url` gives."""
+    """A video's or a song's Retimed copy, by the name its `url` gives."""
     try:
         copies = library.retimed(media_id)
     except MediaNotFound:
-        raise HTTPException(404, f"No video {media_id}") from None
+        raise HTTPException(404, f"No video or song {media_id}") from None
     file = copies.folder / name
     if Retime.named(name) is None or not file.is_file():
         raise HTTPException(404, f"No copy {name} of {media_id}")
@@ -1356,17 +1651,17 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
 
 
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
-    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
-    Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
+    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos and songs no
+    other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
     History plays from; and the Job's picture layers' pictures (app/layer_pictures.py) none of them
     shows, and the folder they were kept in before (OLD_PICTURES_DIR), whole."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
-    videos = {item.id: item.duration or 0.0 for item in library.all() if item.kind is MediaKind.VIDEO}
-    used = copies_used(states, videos)
+    timed = {item.id: item.duration or 0.0 for item in library.all() if item.kind is not MediaKind.IMAGE}
+    used = copies_used(states, timed)
     sweep(store.job_dir(job_id) / RETIMED_DIR, used.get(None, []))
-    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & videos.keys()):
+    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & timed.keys()):
         if all(use.job_id == job_id for use in media_uses(store, media_id)):
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
     sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
@@ -1385,12 +1680,19 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
 
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
-    be a song or a video with sound, a Segment a video, within its length, and an Overlay within its
-    video's at its Speed, an image's having no Speed nor Reverse."""
+    be a song or a video with sound, within its length at its Speed, a Segment a video, within its
+    length, and an Overlay within its video's at its Speed, an image's having no Speed nor Reverse.
+    (Music of the Source is kept within it by `review.update`.)"""
     for clip in body.music or []:
+        if clip.media is None:
+            continue
         item = library.find(clip.media)
         if item is None or not item.has_audio:
             raise HTTPException(422, f"Music Clip {clip.id}: no song or video with sound {clip.media} in the Media Library")
+        if item.duration is not None and overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse).end > item.duration + 0.05:
+            at_speed = f" at {clip.speed:g}x" if clip.speed != 1 else ""
+            song = "song" if item.kind is MediaKind.AUDIO else "video"
+            raise HTTPException(422, f"Music Clip {clip.id} runs past the end of its {song} ({item.duration:g} s){at_speed}")
     for segment in body.segments or []:
         if segment.media is None:
             continue
@@ -1417,6 +1719,14 @@ _KEEP = {"Cache-Control": "public, max-age=604800"}
 # Nor do Filmstrips and Peaks, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md),
 # nor Retimed copies, named by their range (docs/adr/0009).
 _DERIVED = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
+def _export_preset(export_presets: ExportPresetStore, preset_id: str | None) -> ExportPreset:
+    """The Export Preset `preset_id`, or the default when None; 422 for an unknown one."""
+    try:
+        return export_presets.default() if preset_id is None else export_presets.get(preset_id)
+    except ExportPresetNotFound:
+        raise HTTPException(422, f"No Export Preset {preset_id}") from None
 
 
 def _preset(presets: PresetStore, preset_id: str) -> StylePreset:

@@ -22,7 +22,10 @@ import {
   peaksPyramid,
   previousEditPoint,
   sourceGain,
+  sourceHeard,
+  underSourceVolume,
   tileWidth,
+  seamDragged,
   volumeDragged,
   volumeHeight,
   volumeLine,
@@ -439,6 +442,31 @@ describe("a Source Segment's Waveform", () => {
   test("is scaled by a volume of the Segment's own, as the renderer hears it", () => {
     expect(sourceGain({ source_volume: 0.8 }, { ...segment, volume: 0.5 })).toBeCloseTo(0.4);
   });
+
+  test("follows its volume Keyframes, times the Clip's own sound", () => {
+    const keys: Keyframe[] = [
+      { at: 1, value: 1, ease: LINEAR },
+      { at: 3, value: 0.25, ease: EASE_IN },
+    ];
+    const shown = { start: 10, end: 14 };
+    const heard = sourceHeard({ source_volume: 0.5 }, { ...segment, volume: 0.8, keys: { volume: keys } }, shown);
+    const own = segmentHeard({ volume: 0.8, keys: { volume: keys } }, shown);
+    for (const time of [0, 1, 1.7, 2.5, 3, 4]) expect(gainAt(time, heard)).toBeCloseTo(0.5 * gainAt(time, own), 9);
+    // Unkeyed: the Clip's own sound times its volume, all along.
+    expect(gainAt(2, sourceHeard({ source_volume: 0.8 }, { ...segment, volume: 0.5 }, shown))).toBeCloseTo(0.4);
+  });
+
+  // .scratch/audio-mixing/issues/08: a Music Clip of the Source's Waveform.
+  test("in a Music Clip of the Source, is heard through its fades and Keyframes times the Clip's own sound", () => {
+    const keys: Keyframe[] = [
+      { at: 1, value: 1, ease: LINEAR },
+      { at: 3, value: 0.25, ease: EASE_IN },
+    ];
+    for (const own of [{ volume: 0.8, secs: 4, fade_in: 0.5, fade_out: 1 }, { volume: 0.8, secs: 4, fade_in: 0.5, fade_out: 1, keys }]) {
+      const heard = underSourceVolume(own, { source_volume: 0.5 });
+      for (const time of [0.25, 1, 1.7, 2.5, 3.5]) expect(gainAt(time, heard)).toBeCloseTo(0.5 * gainAt(time, own), 9);
+    }
+  });
 });
 
 describe("the Volume Line", () => {
@@ -537,5 +565,29 @@ describe("dragging the Volume Line", () => {
   test("in a lane at least 120 px tall, the line follows the pointer", () => {
     // A third of 240 px down from 100% (2/3) lands at 1/3 of the height: 31%.
     expect(volumeDragged(1, 80, 240)).toBe(0.31);
+  });
+});
+
+describe("dragging a Seam's grip", () => {
+  test("a grip dragged outward by x Timeline seconds lengthens the Transition by 2x, inward shortens it", () => {
+    // A 0.5 s Transition between Segments of 10 and 8 s.
+    expect(seamDragged(0.5, 0.25, 10, 8)).toBe(1);
+    expect(seamDragged(0.5, -0.1, 10, 8)).toBe(0.3);
+  });
+
+  test("it stops at 0.1 s and at 3 s", () => {
+    expect(seamDragged(0.5, -1, 10, 8)).toBe(0.1);
+    expect(seamDragged(0.5, 5, 10, 8)).toBe(3);
+  });
+
+  test("it stops at half the shorter Segment", () => {
+    // Segments of 10 and 1.6 s: 0.8 s at most.
+    expect(seamDragged(0.5, 1, 10, 1.6)).toBe(0.8);
+    expect(seamDragged(0.5, 1, 1.6, 10)).toBe(0.8);
+  });
+
+  test("a Transition longer than its Segments allow is dragged from the length it overlaps them by", () => {
+    // 3 s stored, between Segments of 2 and 8 s: it overlaps them by 1 s, which a 0.1 s pull inward makes 0.8.
+    expect(seamDragged(3, -0.1, 2, 8)).toBe(0.8);
   });
 });

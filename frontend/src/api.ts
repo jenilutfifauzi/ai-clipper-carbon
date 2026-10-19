@@ -324,6 +324,9 @@ export interface StylePreset {
   watermark: WatermarkStyle;
   // Built-in Presets can't be changed or deleted.
   builtin: boolean;
+  // What each new join of its Candidates gets (pages/job/editor/joinTransition.ts); null for none, as
+  // on the built-in ones. Copied, never linked.
+  join_transition: JoinTransition | null;
 }
 
 // A Text Preset (GLOSSARY): a named Text Style a new Text Layer copies, never linked to it.
@@ -612,12 +615,17 @@ export interface TextEvent extends PictureLayerEvent<TextLayer> {
 // about its Transform's centre; its picture holds that and a little room round it.
 export type ShapeEvent = PictureLayerEvent<Shape>;
 
-// A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
-// seconds into the file, heard from `start` in Timeline time, at `volume` (0 to 2), faded in and out.
-// Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades multiply them.
-export interface MusicClip {
+// A song (or a video's sound) from the Media Library under the Clip, or with `media` null the Source's
+// sound (scaled by the Clip's `source_volume`, `offset` then a time on the Source's timeline): heard
+// from `start` for `secs` in Timeline time, playing `secs` × speed of its file from `offset` seconds
+// into it (ADR 0016; in Reverse, backwards, as a video Overlay's sound), at `volume` (0 to 2), faded
+// in and out. Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades
+// multiply them.
+// Muted (ADR 0016), it is silent and keeps them. With `duck`, a depth in dB (-30 to -1), it is
+// turned down that far while speech is heard (ADR 0016); a Music Clip of the Source has none.
+export interface MusicClip extends Omit<Retiming, "hold"> {
   id: string;
-  media: string;
+  media: string | null;
   start: number;
   secs: number;
   offset: number;
@@ -625,6 +633,10 @@ export interface MusicClip {
   fade_in: number;
   fade_out: number;
   keys: Keys;
+  muted?: boolean;
+  duck?: number | null;
+  // The Segment whose sound was Detached onto it (ADR 0016), which Reattach finds it by.
+  detached_from?: string | null;
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
@@ -639,9 +651,13 @@ export interface Retiming {
 
 // A Music Clip (or an Overlay video's sound, `id` its item's) as heard, cut where the Clip or its
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
-// `volume`; its fades multiply them. An Overlay's sound plays (end − start) × speed of its item.
+// `volume`; its fades multiply them. It plays (end − start) × speed of its item: with `source`, of
+// the Source (`media` null), at the Clip's `source_volume` too. A Muted one (ADR 0016) isn't heard.
+// A ducked one (`duck` dB) is turned down under the spans of `speech` that reach it, in seconds into
+// the Clip, by the plan's `ducking` (ADR 0016).
 export interface AudioEvent extends Omit<Retiming, "hold"> {
-  media: string;
+  media: string | null;
+  source?: boolean;
   start: number;
   end: number;
   offset: number;
@@ -650,6 +666,20 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   fade_out: number;
   gain: Keyframe[];
   id: string;
+  muted?: boolean;
+  duck?: number | null;
+  speech?: [number, number][];
+  // Where a ducked one is turned down, ramps included, within it (the planner's ducked_stretches).
+  ducked?: [number, number][];
+  detached_from?: string | null;
+}
+
+// How a ducked sound follows speech (ADR 0016): down over `lead_secs` before a span, up over
+// `release_secs` after it; spans less than `bridge_secs` apart are one.
+export interface Ducking {
+  lead_secs: number;
+  release_secs: number;
+  bridge_secs: number;
 }
 
 // Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
@@ -732,8 +762,9 @@ export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
 // side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
 // and opacity over its length, replacing those fields of its Transform, and a video's volume.
 // A video's shows `secs` × speed of it from `offset` (docs/adr/0009); in Reverse its left edge shows
-// `offset + secs × speed`, its right edge `offset`.
-export interface Overlay extends Omit<Retiming, "hold"> {
+// `offset + secs × speed`, its right edge `offset`. It comes on and goes off as a Text Layer does.
+// A video's sound may be Muted (ADR 0016), keeping its volume and Keyframes.
+export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   id: string;
   media: string;
   start: number;
@@ -746,6 +777,15 @@ export interface Overlay extends Omit<Retiming, "hold"> {
   border: Border | null;
   shadow: Shadow | null;
   keys: Keys;
+  muted?: boolean;
+}
+
+// How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
+// Left out, they are none, none and 300 ms.
+export interface OverlayAnimation {
+  animation_in?: Animation;
+  animation_out?: Animation;
+  animation_ms?: number;
 }
 
 // A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
@@ -773,9 +813,10 @@ export interface Picture {
   unscaled?: [number, number] | null;
 }
 
-// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still. A video's
-// shows (end − start) × speed of it from `offset` (docs/adr/0009).
-export interface OverlayEvent extends Omit<Retiming, "hold"> {
+// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`, coming on and going off by its
+// animations; `image` for a still. A video's shows (end − start) × speed of it from `offset`
+// (docs/adr/0009).
+export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   id: string;
   media: string;
   picture: Picture;
@@ -785,31 +826,80 @@ export interface OverlayEvent extends Omit<Retiming, "hold"> {
   image: boolean;
 }
 
-// How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
+// How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
 export type TransitionKind =
   | "fade"
   | "fadeblack"
   | "fadewhite"
+  | "fadegrays"
+  | "dipcolour"
+  | "dissolve"
+  | "blurdissolve"
   | "slideleft"
   | "slideright"
   | "slideup"
   | "slidedown"
+  | "coverleft"
+  | "coverright"
+  | "coverup"
+  | "coverdown"
+  | "whipleft"
+  | "whipright"
   | "wipeleft"
+  | "wiperight"
+  | "wipeup"
+  | "wipedown"
+  | "radial"
+  | "circleopen"
+  | "circleclose"
+  | "circlecrop"
+  | "rectcrop"
+  | "vertopen"
+  | "horzopen"
   | "zoomin"
-  | "circleopen";
+  | "squeezeh"
+  | "squeezev"
+  | "zoomblur"
+  | "spin"
+  | "filmburn"
+  | "lightleak"
+  | "glitch"
+  | "rgbsplit"
+  | "pixelize"
+  | "hblur"
+  | "distance"
+  | "hlslice";
 
-// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.2 to 1.5).
-export interface Transition {
+// How a Transition's sound crosses, whatever its kind: in straight lines, along quarter sines, or
+// switched at its middle (pages/job/editor/transitionSound.ts).
+export type TransitionSound = "linear" | "equal_power" | "cut";
+
+// A Transition's knobs, read by the kinds that have them (pages/job/editor/transitions.ts): its
+// strength (0 to 1; unset, its kind's own) and Dip to colour's colour (#RRGGBB; unset, black). Kept
+// on a kind that doesn't read them. Always sent; one made by hand may leave them out.
+export interface TransitionKnobs {
+  strength?: number | null;
+  colour?: string | null;
+}
+
+// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.1 to 3).
+// Its sound is always sent; one made by hand may leave it out (linear).
+export interface Transition extends TransitionKnobs {
   after: string;
   kind: TransitionKind;
   secs: number;
+  sound?: TransitionSound;
 }
 
+// A Style Preset's Join Transition (GLOSSARY): a Transition without the Segment it follows.
+export type JoinTransition = Omit<Transition, "after">;
+
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
-export interface TransitionEvent {
+export interface TransitionEvent extends TransitionKnobs {
   kind: TransitionKind;
   start: number;
   end: number;
+  sound?: TransitionSound;
 }
 
 // A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,
@@ -830,6 +920,11 @@ export interface SegmentPlan extends Retiming {
   gain: Keyframe[];
   // Its Segment's id.
   id: string;
+  // Its sound's linear fades from `start` and to `end` (a Transition's overlap included), fitted to it.
+  fade_in: number;
+  fade_out: number;
+  // Its sound switched silent (ADR 0016), keeping its volume, Keyframes and fades.
+  muted?: boolean;
 }
 
 export interface RenderPlan {
@@ -864,6 +959,8 @@ export interface RenderPlan {
   unused_cue_edits: CueEdit[];
   // The shortest a Cue Edit leaves its Cue shown, where it has room.
   cue_min_secs: number;
+  // Its ducked sounds' ramps.
+  ducking?: Ducking;
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
@@ -881,6 +978,16 @@ export interface PreviewWord extends Word {
 // off; "none" (a Freeze frame, Reverse, a silent video, or the Job's captions off). A Segment's, not
 // its video's MediaWords status ("ready" there is "media" here).
 export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "failed" | "off" | "none";
+
+/**
+ * A saved Export file (a frame or a sound): its path on this Mac, its name, and the URL it downloads
+ * from, with its time, since a file saved again keeps its name.
+ */
+export interface SavedExport {
+  path: string;
+  name: string;
+  url: string;
+}
 
 export interface PreviewPlan {
   plan: RenderPlan;
@@ -900,6 +1007,7 @@ export interface NewPreset {
   caption?: Partial<CaptionStyle>;
   hook?: Partial<HookStyle>;
   watermark?: Partial<WatermarkStyle>;
+  join_transition?: JoinTransition | null;
 }
 
 // A Face (GLOSSARY): a bundled or imported font file of one weight and slant, with what its font says
@@ -942,7 +1050,7 @@ export interface FontImported {
 // A video's `keys` move its Framing's Transform and shape its volume (ADR 0008), each `at` in
 // seconds from its start; the Source's have none. Its range plays in (end − start) ÷ speed on the
 // Timeline (docs/adr/0009), its left edge showing `end` in Reverse; a Freeze frame holds the frame
-// at `start`, silent, and its `end` is `start`.
+// at `start`, silent, and its `end` is `start`. Muted (ADR 0016), its sound is silent and keeps its volume and Keyframes.
 export interface ClipSegment extends Retiming {
   id: string;
   start: number;
@@ -953,6 +1061,10 @@ export interface ClipSegment extends Retiming {
   keys?: Keys;
   // A video's Captions switch: false leaves it uncaptioned; empty means on. The Source's have none.
   captions?: boolean | null;
+  // Its sound's fades in and out, 0 to 10 s each (the plan fits them to its length).
+  fade_in?: number;
+  fade_out?: number;
+  muted?: boolean;
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
@@ -1027,6 +1139,9 @@ export interface Candidate {
 export const mainTrackOf = (candidate: Pick<Candidate, "start" | "end" | "segments">): ClipSegment[] =>
   candidate.segments.length ? candidate.segments : [{ id: "main", start: candidate.start, end: candidate.end }];
 
+// The items whose sound can be saved as a WAV.
+export type SoundKind = "segment" | "music" | "overlay";
+
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
 export interface CandidateChange {
   start?: number;
@@ -1094,6 +1209,42 @@ export interface CandidateEvent {
   parts: string[];
 }
 
+export type Codec = "h264" | "hevc" | "av1";
+
+// How a Clip is encoded (backend/app/encoding.py). The frame is 9:16, `resolution` its short side.
+export interface ExportSettings {
+  codec: Codec;
+  resolution: 720 | 1080 | 1440 | 2160;
+  // null for the Source's.
+  fps: number | null;
+  quality: "high" | "recommended" | "smallest";
+  // A bitrate of their own, in place of the quality tier.
+  bitrate: { mode: "vbr" | "cbr"; kbps: number } | null;
+  // The loudness target in LUFS; null for none.
+  loudness: -14 | -16 | null;
+}
+
+// Named, global Export Settings that a render uses for its whole batch.
+export interface ExportPreset {
+  id: string;
+  name: string;
+  builtin: boolean;
+  order: number;
+  settings: ExportSettings;
+}
+
+export interface ExportPresetList {
+  // The built-in ones first.
+  presets: ExportPreset[];
+  // The one a render uses when none is asked for.
+  default: string;
+  // The codecs this Mac's ffmpeg can encode.
+  available: Codec[];
+}
+
+// The formats a Candidate's sound is saved alone in: a 48 kHz 16-bit WAV, or AAC in an M4A.
+export type AudioFormat = "wav" | "m4a";
+
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
   start: number;
@@ -1139,6 +1290,12 @@ export interface RenderedClip {
   // before caption files.
   srt: string | null;
   vtt: string | null;
+  // The Export Preset it was asked for (perhaps deleted since) and the Export Settings it was made
+  // with, for display only; null in a Clip rendered before Export Presets (1080p H.264).
+  export_preset_id: string | null;
+  export: ExportSettings | null;
+  // CBR was asked for and the encoder did VBR.
+  bitrate_fallback: boolean;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -1155,6 +1312,10 @@ export interface Clip {
   // The latest finished render; kept while it is rendered again, and when that fails.
   output: RenderedClip | null;
   error: string | null;
+  // When the worker started rendering it; null unless it is rendering.
+  started_at: string | null;
+  // The Export Preset its latest request asked for; null in a Clip asked for before Export Presets.
+  export_preset_id: string | null;
 }
 
 export interface JobDetail extends Job {
@@ -1271,11 +1432,33 @@ export const api = {
     }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>
     request<Candidate>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(range) }),
-  // Queues Clips of the given Candidates, or of the selected ones; answers with the Job's Clips.
-  render: (jobId: string, candidateIds?: string[]) =>
+  // Queues Clips of the given Candidates, or of the selected ones, with an Export Preset (the
+  // default without one); answers with the Job's Clips.
+  render: (jobId: string, candidateIds?: string[], exportPresetId?: string) =>
     request<Clip[]>(`/jobs/${jobId}/render`, {
       method: "POST",
-      body: candidateIds ? JSON.stringify({ candidate_ids: candidateIds }) : undefined,
+      body: JSON.stringify({ candidate_ids: candidateIds, export_preset_id: exportPresetId }),
+    }),
+  listExportPresets: () => request<ExportPresetList>("/export-presets"),
+  // The owner's Export Presets: a built-in one is refused (409) a change or a delete.
+  createExportPreset: (name: string, settings: ExportSettings) =>
+    request<ExportPreset>("/export-presets", { method: "POST", body: JSON.stringify({ name, settings }) }),
+  changeExportPreset: (id: string, name: string, settings: ExportSettings) =>
+    request<ExportPreset>(`/export-presets/${id}`, { method: "PUT", body: JSON.stringify({ name, settings }) }),
+  deleteExportPreset: (id: string) => request<void>(`/export-presets/${id}`, { method: "DELETE" }),
+  useExportPresetAsDefault: (id: string) =>
+    request<ExportPreset>("/export-presets/default", { method: "PUT", body: JSON.stringify({ preset_id: id }) }),
+  // The bytes Clips `secs` long in all come to as `settings` say, at the Source's frame rate `fps`
+  // when they keep it: the formula is the backend's alone.
+  estimateExport: (settings: ExportSettings, secs: number, fps: number) =>
+    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
+      (answer) => answer.bytes,
+    ),
+  // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).
+  saveAudio: (jobId: string, candidateId: string, format: AudioFormat, exportPresetId?: string) =>
+    request<SavedExport>(`/jobs/${jobId}/candidates/${candidateId}/audio`, {
+      method: "POST",
+      body: JSON.stringify({ format, export_preset_id: exportPresetId }),
     }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   listFonts: () => request<FontInfo[]>("/fonts"),
@@ -1291,6 +1474,24 @@ export const api = {
       body: draft ? JSON.stringify(draft) : undefined,
       signal,
     }),
+  // The frame at `at` (Timeline time) as the render draws it, of the Candidate or of an unsaved
+  // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
+  saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
+    request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
+  // Save sound as WAV: the sound of the Candidate's item of `kind`, alone as heard in the Clip, from an
+  // unsaved draft of its edits; the WAV, and the Content-Disposition that names the file.
+  saveSound: async (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange) => {
+    const response = await fetch(`/api/jobs/${jobId}/candidates/${id}/sound/${kind}/${encodeURIComponent(item)}`, {
+      method: "POST",
+      body: JSON.stringify(draft),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      const [message, detail] = await errorMessage(response);
+      throw new ApiError(response.status, message, detail);
+    }
+    return { wav: await response.blob(), disposition: response.headers.get("Content-Disposition") };
+  },
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
   // The Candidate's captions as an SRT or VTT file, from its saved state, without a render. Rejects

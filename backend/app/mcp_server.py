@@ -30,6 +30,7 @@ from app.api import (
     PICTURES_ROUTE,
     SHAPES_MAX,
     CandidateUpdate,
+    ExportPresetBody,
     PresetBody,
     TextPresetBody,
     TextPresetChange,
@@ -168,7 +169,13 @@ Edits:
   A video Overlay's `speed` and `pitch` are as a Segment's (below), but it keeps its start and
   secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
-  (source_start, source_end).
+  (source_start, source_end). A Music Clip's speed, pitch and reverse are the same (secs * speed of
+  its song from offset); the dry run's `sounds` give what it reads.
+  An Overlay comes on and goes off as a Text Layer does: animation_in and animation_out (none, fade,
+  pop, slide) over animation_ms (100..2000, 300 by default; each end at most half its secs). They
+  move its picture only: a video's sound keeps its volume and Keyframes. The dry run lists them.
+- A Music Clip without `media` plays the episode's sound, anywhere in the Clip: its offset is
+  Source time, its read within the Source, and source_volume scales it (`sounds` lists it, source true).
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
   may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
   are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the
@@ -263,6 +270,11 @@ Edits:
   is the one at `end`. It plays from a reversed copy of its range, which the render makes if the
   owner's preview hasn't (the dry run's `copy`). One of the episode has no captions; its Scenes and
   Layout Overrides are the forward ones, mirrored.
+- A Segment's sound (the episode's or a video's) fades in over `fade_in` seconds from its start and
+  out over `fade_out` to its end, linearly, 0..10 each (0 by default), as a Music Clip's: together
+  longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
+  a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
+  lists them under `segments`.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -274,9 +286,10 @@ Edits:
   output pixels, or null for none; merge_candidate_items changes only the fields given.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
-  Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
-  of the episode, another Layout and the Candidate's own framing have none. `at` is seconds from the
-  item's start (a Segment's: where it starts in the Clip, its `start` in the video; a Manual
+  Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
+  source_volume an episode Segment's. A Segment of the episode has no picture Keyframes; another
+  Layout and the Candidate's own framing have none. `at` is seconds from the
+  item's start (a Segment's: where it starts in the Clip, its `start`; a Manual
   override's: its Scene's start on the Source's timeline, so every Segment showing that Scene moves
   alike; the dry run lists those past the Scene's end as `ignored`), value in the field's own units (rotation -3600..3600, to
   turn several times). A keyed property's transform field is unused. The value holds before the
@@ -284,11 +297,49 @@ Edits:
   default), ease_in, ease_out, ease_in_out, or a cubic-bezier [x1, y1, x2, y2] (x 0..1; y may
   overshoot). At most 100 per property, 1/30 s apart at least. merge_candidate_items replaces the
   lists of the properties given ([] clears one) and keeps the others. Moving an item moves its
-  Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
-  leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
+  Keyframes; the server never re-times them (but an episode Segment's, kept on their moments as its
+  ends snap to Words), and refuses a length or a Segment's range that would leave one past its item's
+  end: send its keys too. The dry run lists them in Timeline time, with
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
-  volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
-  its keyed values.
+  volume's under `sounds`. A Text Layer's, a Shape's and an Overlay's animations (fade, pop, slide)
+  play on top of its keyed values.
+- `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
+  the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
+  Muted ones (`segments`, `sounds`).
+- A Music Clip of a song or a video's sound with `duck` (dB, -30..-1; null: off) is turned down that
+  far while speech is heard: the Words of the episode's Segments and Music Clips without media
+  that aren't Muted, captions on or not. Down over 0.25 s before speech, through pauses under 0.8 s,
+  up over 0.5 s after. One added without `duck` gets -12 (not a Detached one), so give null to keep
+  it off; one without media has none. The dry run's `sounds` list every sound's span, fades, Muted and `ducked` stretches.
+- Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
+  J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
+  Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
+  reverse, volume, fades and volume keys (the same `at`), start and secs where it plays in the Clip
+  (the dry run's `segments`, a Transition's overlap included), and set the Segment's `muted`.
+  Reattach: remove every Music Clip Detached from it, then clear its `muted`. A `detached_from` added
+  or changed must name one of the Candidate's Segments; a saved one stays after its Segment is removed.
+- A Transition joins a Segment (`after`, its id) to the next: the two overlap for its secs
+  (0.1..3 s, 0.5 by default; half the shorter Segment at most), so the Clip is that much shorter.
+  Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dipcolour, dissolve,
+  blurdissolve), Slide (slideleft, slideright, slideup, slidedown push both pictures along;
+  coverleft, coverright, coverup, coverdown slide the next over a still one; whipleft, whipright
+  push them smeared), Wipe (wipeleft, wiperight, wipeup, wipedown, radial: a clock wipe), Shape
+  (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen), Zoom (zoomin, squeezeh,
+  squeezev, zoomblur, spin), Light (filmburn, lightleak),
+  Glitch (glitch, rgbsplit, pixelize, hblur, distance, hlslice). Its knobs: `strength` (0..1; unset, the kind's own) is the heat of filmburn,
+  the brightness of lightleak, the spread of rgbsplit, the blur of blurdissolve, whipleft and
+  whipright, the zoom and blur of zoomblur, the turns of spin (half a turn to two) and the tearing
+  of glitch. `colour` (#RRGGBB, black unset) is dipcolour's. A knob is kept on any kind, read only
+  by those. Its sound, for every kind (a dip never drops the sound out on its own): linear (the default; the two sides crossfade in
+  straight lines, dipping in the middle), equal_power (quarter sines, the level held through the
+  middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
+  it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in
+  the Clip, its sound and its knobs (null when unset).
+- A Style Preset's join_transition (none, or a Transition without `after`; built-in ones have none)
+  is copied onto every new join of its Candidates: when an edit changes the Segments without
+  stating `transitions`, each pair of adjacent Segments that wasn't adjacent before and has no
+  Transition gets it. A stated `transitions` list is taken as is, so state it to leave a new join a
+  cut. Removing a Transition, or changing or switching the Preset, touches no join.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -522,6 +573,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         Timeline time, its Cues with the key a Cue Edit names, each Segment's words_status, and its
         Words with the `at` (and `media`) a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
+        # A Music Clip given without `duck` is sent without it, so that a new song's ducks by default.
+        for clip in body.get("music") or []:
+            if clip["id"] in changes._duck_unset:
+                del clip["duck"]
         if dry_run:
             return _plan_view(
                 await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),
@@ -634,17 +689,37 @@ def build_mcp(app: FastAPI) -> MCPServer:
     # Render
 
     @tool()
-    async def render_clips(job_id: str, candidate_ids: list[str] | None = None) -> dict:
+    async def render_clips(job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> dict:
         """Render Clips of the selected Candidates, or of `candidate_ids`, one at a time, replacing
-        Clips rendered before. The Job is rendering until they are done: wait_for_job, then list_clips."""
-        body = None if candidate_ids is None else {"candidate_ids": candidate_ids}
+        Clips rendered before, with an Export Preset (else the default; Export Settings never make a
+        Clip stale). The Job is rendering until they are done: wait_for_job, then list_clips."""
+        body = {"candidate_ids": candidate_ids, "export_preset_id": export_preset_id}
         return {"clips": clips(job_id, await api("POST", f"/jobs/{job_id}/render", json=body))}
 
     @tool(read_only=True)
     async def list_clips(job_id: str) -> dict:
         """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path),
-        poster and caption files (srt_path, vtt_path; none with captions off) on this Mac."""
+        poster and caption files (srt_path, vtt_path; none with captions off) on this Mac, and its
+        Export Settings (these never make a Clip stale)."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
+
+    @tool()
+    async def save_frame(job_id: str, candidate_id: str, at: float, export_preset_id: str | None = None) -> dict:
+        """Save the Candidate's frame at `at` (Timeline seconds) as a PNG, as its render would draw it,
+        at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued."""
+        body = {"at": at, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
+        return {"path": saved["path"]}
+
+    @tool()
+    async def export_audio(
+        job_id: str, candidate_id: str, format: Literal["wav", "m4a"] = "wav", export_preset_id: str | None = None
+    ) -> dict:
+        """Save a Candidate's sound alone (its saved Revision's mix) at an Export Preset's loudness
+        (else the default's). Not a Clip; not queued."""
+        body = {"format": format, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/audio", json=body)
+        return {"path": saved["path"]}
 
     # Captions
 
@@ -683,10 +758,34 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     # Styles, assets and the Channel Profile
 
+    async def save_export_preset(given: BaseModel | None, preset_id: str | None, use_as_default: bool) -> dict:
+        """An Export Preset made, or the owner's `preset_id` changed in the fields given; then made the
+        default when asked."""
+        saved = None
+        if given is not None:
+            body = _validated(NamedPresetGiven, given)
+            if preset_id is None:
+                saved = await api("POST", "/export-presets", json=_validated(ExportPresetBody, NamedPresetGiven(**body)))
+            else:
+                listed = (await api("GET", "/export-presets"))["presets"]
+                current = next((preset for preset in listed if preset["id"] == preset_id), None)
+                if current is None:
+                    raise ToolError(f"No Export Preset {preset_id}")
+                body = {"name": current["name"], **body, "settings": current["settings"] | body.get("settings", {})}
+                saved = await api("PUT", f"/export-presets/{preset_id}", json=_validated(ExportPresetBody, NamedPresetGiven(**body)))
+        elif not (preset_id and use_as_default):
+            raise ToolError("Give the preset to save, or a preset_id with use_as_default")
+        if use_as_default:
+            return await api("PUT", "/export-presets/default", json={"preset_id": saved["id"] if saved else preset_id})
+        return saved
+
     @tool(read_only=True)
-    async def list_presets(kind: Literal["style", "text"] = "style", include_styles: bool = False) -> dict:
+    async def list_presets(kind: Literal["style", "text", "export"] = "style", include_styles: bool = False) -> dict:
         """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
-        then the owner's. With include_styles, their styles (a Style Override replaces their fields)."""
+        then the owner's. With include_styles, their styles (a Style Override replaces their fields).
+        Export Presets: with their settings, the `default` and the codecs `available`."""
+        if kind == "export":
+            return await api("GET", "/export-presets")
         if kind == "text":
             presets = await api("GET", "/text-presets")
             keys = ("id", "name", "category", "builtin", "default", *(("sample", "style") if include_styles else ()))
@@ -698,14 +797,18 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool()
     async def save_preset(
-        preset: PresetBody | TextPresetGiven | None = None,
+        preset: PresetBody | NamedPresetGiven | None = None,
         preset_id: str | None = None,
-        kind: Literal["style", "text"] = "style",
+        kind: Literal["style", "text", "export"] = "style",
         use_for_new_titles: bool = False,
+        use_as_default: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
+        Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
-        preset_id alone)."""
+        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise)."""
+        if kind == "export":
+            return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":
             body = _validated(PresetBody, preset)
             if preset_id is None:
@@ -724,10 +827,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return saved
 
     @tool(destructive=True)
-    async def delete_preset(preset_id: str, kind: Literal["style", "text"] = "style") -> dict:
+    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export"] = "style") -> dict:
         """Delete one of the owner's Presets. Candidates using a Style Preset render in Default; Text
-        Layers keep their look."""
-        await api("DELETE", f"/{'text-presets' if kind == 'text' else 'presets'}/{preset_id}")
+        Layers keep their look; Clips of an Export Preset render again with the default."""
+        await api("DELETE", f"/{ {'text': 'text-presets', 'export': 'export-presets'}.get(kind, 'presets')}/{preset_id}")
         return {"deleted": preset_id}
 
     @tool(read_only=True)
@@ -792,16 +895,34 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """AI Clipper's domain words: Job, Candidate, Clip, Segment, Timeline time and the rest."""
         return GLOSSARY.read_text()
 
+    for registered in mcp._tool_manager.list_tools():
+        registered.parameters = _untitled(registered.parameters)
     return mcp
 
 
-class TextPresetGiven(BaseModel):
-    """A Text Preset: a name and a Text Style, as a Text Layer's."""
+def _untitled(schema: Any) -> Any:
+    """A tool's JSON schema without pydantic's titles, which only repeat each field's name: they
+    would take the tools past their budget. A property named title stays, and so do defaults."""
+    if isinstance(schema, list):
+        return [_untitled(value) for value in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        key: value if key == "default" else _untitled(value)
+        for key, value in schema.items()
+        if not (key == "title" and isinstance(value, str))
+    }
+
+
+class NamedPresetGiven(BaseModel):
+    """A Text Preset: a name and a Text Style, as a Text Layer's; or an Export Preset: a name and
+    Export Settings."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
     style: dict[str, Any] | None = None
+    settings: dict[str, Any] | None = None
 
 
 class StaleCandidate(ToolError):
@@ -893,7 +1014,8 @@ def _candidate_view(candidate: dict) -> dict:
 
 
 def _clip_view(job_dir: Path, clip: dict) -> dict:
-    view = {"candidate_id": clip["candidate_id"], "status": clip["status"], "error": clip.get("error")}
+    # A queued Clip's Preset is the one asked for; a rendered one's what it was made with.
+    view = {"candidate_id": clip["candidate_id"], "status": clip["status"], "error": clip.get("error"), "export_preset_id": clip.get("export_preset_id")}
     if output := clip.get("output"):
         view |= {
             "video_path": str(job_dir / output["video"]),
@@ -903,6 +1025,8 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
             "rendered_at": output["at"],
             "revision": output.get("revision"),
             **{f"{format}_path": str(job_dir / output[format]) for format in ("srt", "vtt") if output.get(format)},
+            "export_preset_id": output.get("export_preset_id"),
+            "export": output.get("export"),
         }
     return _compact(view)
 
@@ -953,15 +1077,19 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`)), each Scene's Layout and the Framing
+    (`copied`), its fades), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
-    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
-    Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
-    Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
-    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), each
-    Segment's Words status (and a failed one's error), the Cues (`_cue_view`), the unused Cue Edits
-    and the Words."""
+    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
+    animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
+    (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
+    comes `after`, every sound (a Segment's, a Music Clip's, an Overlay's) with its span, fades,
+    volume Keyframes, whether it is Muted, a ducked one's depth and where it is turned down (the
+    plan's `ducked`), the Segment a Detached one is from, what a sound at a Speed or in Reverse
+    reads (`_video_read`), and whether it is the Source's (`source`, a Music Clip's), each Shape's
+    and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
+    picture layer's (`_layer_view`), each Segment's Words status (and a failed one's error), the
+    Cues (`_cue_view`), the unused Cue Edits and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -979,11 +1107,16 @@ def _plan_view(
             _compact({
                 **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
-                "reverse": segment["reverse"] or None,
+                "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
+                "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
+        ],
+        "transitions": [
+            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound", "strength", "colour")}
+            for event in plan["transitions"]
         ],
         "captions": [_cue_view(cue) for cue in plan["captions"]],
         **_compact({"unused_cue_edits": [_cue_edit_view(edit) for edit in plan["unused_cue_edits"]]}),
@@ -999,13 +1132,23 @@ def _plan_view(
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
+                **_animation_view(event),
             }
             for event in plan["overlays"]
         ],
         **_compact({"sounds": [
-            {"id": event["id"], "media": event["media"], **_times(event, "start", "end"), "keys": _keys_view({"volume": event["gain"]}, event["start"])}
+            {
+                "id": event["id"], "media": event["media"], **({"source": True} if event.get("source") else {}),
+                **_times(event, "start", "end"),
+                **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
+                **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
+                **({"duck": event["duck"], "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]]} if event.get("duck") is not None else {}),
+                **({"detached_from": event["detached_from"]} if event.get("detached_from") else {}),
+                **(_video_read(event, copied) if _retimed(event) else {}),
+            }
+            # A silent video's Segment and a Freeze frame have no sound.
             for event in plan["segments"] + plan["audio"]
-            if event["gain"]
+            if not event.get("silent") and event.get("hold") is None
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "media": word["media"], "edit": word["edit"]}) for word in preview["words"]],
     }
@@ -1037,9 +1180,26 @@ def _cue_edit_view(edit: dict) -> dict:
     return {name: value for name, value in edit.items() if name == "at" or value not in (None, 0, 0.0)}
 
 
+def _ended(segments: list[dict], transition: dict) -> dict:
+    """The Segment a Transition takes away: the one it ends, which started before it."""
+    return next(s for s in segments if s["start"] < transition["start"] and abs(s["end"] - transition["end"]) < _SAME_SECS)
+
+
+def _animation_view(event: dict) -> dict:
+    """How an Overlay comes on and goes off: each end's animation but none, and their length when it
+    has one; nothing unanimated."""
+    animated = _compact({key: event[key] if event[key] != "none" else None for key in ("animation_in", "animation_out")})
+    return animated | {"animation_ms": event["animation_ms"]} if animated else {}
+
+
+def _retimed(event: dict) -> bool:
+    """Whether a plan's sound event (a Music Clip's or an Overlay's) plays at a Speed or in Reverse."""
+    return "offset" in event and (event["speed"] != 1 or event["reverse"])
+
+
 def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
-    """What of its video an Overlay shows: seconds into it, its Speed and pitch when not the default,
-    and in Reverse whether its copy is made (`copied`)."""
+    """What of its video an Overlay shows, or of its song a sound plays: seconds into it, its Speed
+    and pitch when not the default, and in Reverse whether its copy is made (`copied`)."""
     read = {"media": event["media"], "source_start": event["offset"], "source_end": event["offset"] + (event["end"] - event["start"]) * event["speed"]}
     return _compact({
         "source_start": round(read["source_start"], 2), "source_end": round(read["source_end"], 2),

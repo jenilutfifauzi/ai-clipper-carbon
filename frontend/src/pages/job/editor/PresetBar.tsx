@@ -4,7 +4,7 @@ import { api } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Skeleton } from "../../../components/Skeleton";
-import type { StyleControls } from "./useStyleDraft";
+import { savedLook, type StyleControls } from "./useStyleDraft";
 
 /**
  * The Style Preset picker and its actions, above the editor's tabs: a Preset sets the captions, the
@@ -30,8 +30,8 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
       </div>
     );
   }
-  const { presets, preset, caption, hook, watermark } = style;
-  const overridden = Object.values(style.overrides).some((fields) => Object.keys(fields).length > 0);
+  const { presets, preset } = style;
+  const overridden = Object.values(style.overrides).some((fields) => Object.keys(fields).length > 0) || style.joinChanged;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -47,14 +47,14 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
 
   const saveNew = () =>
     run(async () => {
-      const made = await api.createPreset({ name, caption, hook, watermark });
+      const made = await api.createPreset({ name, ...savedLook(style) });
       setNaming(false);
       setName("");
       style.saved(made, [...presets, made]);
     });
   const saveInto = () =>
     run(async () => {
-      const updated = await api.updatePreset(preset.id, { name: preset.name, caption, hook, watermark });
+      const updated = await api.updatePreset(preset.id, { name: preset.name, ...savedLook(style) });
       style.saved(updated, presets.map((p) => (p.id === updated.id ? updated : p)));
     });
   const remove = () =>
@@ -93,7 +93,7 @@ export function PresetBar({ style, error: loadError }: { style: StyleControls | 
           </Button>
         )}
       </div>
-      <p className="text-sm text-muted">Sets the captions, the hook and the watermark together.</p>
+      <p className="text-sm text-muted">Sets the captions, the hook, the watermark and the transition of new joins together.</p>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="xs" onClick={() => setNaming((open) => !open)} disabled={busy} aria-expanded={naming}>
           <Save aria-hidden size={15} />

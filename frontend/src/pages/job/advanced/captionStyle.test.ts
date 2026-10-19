@@ -18,6 +18,7 @@ const preset = (id: string, size: number): StylePreset => ({
   caption: { ...caption, size },
   hook: {} as HookStyle,
   watermark: {} as WatermarkStyle,
+  join_transition: null,
   builtin: true,
 });
 const PRESETS = [preset("default", 80), preset("bold", 120)];

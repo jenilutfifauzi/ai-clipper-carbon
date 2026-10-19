@@ -2,11 +2,23 @@
 
 Each Clip is one encode, a single ffmpeg process that cuts the range (an accurate seek: ffmpeg
 decodes from the keyframe before the start and drops what comes before it), draws each Scene in its
-Layout, normalizes the audio, and writes the poster from the same frames. Before it, an audio-only
-pass measures the range's loudness, so that the encode can apply the gain that takes it to −14 LUFS
-(loudnorm's two-pass linear mode). One pass would have to adjust the gain as it goes (loudnorm's
-dynamic mode), which can pump and lands less exactly on the target; the measurement only decodes
-the range's audio, which takes about a second for a 90 s Clip.
+Layout, normalizes the audio, and writes the poster from the same frames. It is encoded as its
+Export Settings say (app/encoding.py): their codec's encoders are tried in turn, the hardware one
+first. Before it, an audio-only pass measures the range's loudness, so that the encode can apply the
+gain that takes it to the settings' loudness target, −14 LUFS by default (loudnorm's two-pass linear
+mode). One pass would have to adjust the gain as it goes (loudnorm's dynamic mode), which can pump
+and lands less exactly on the target; the measurement only decodes the range's audio, which takes
+about a second for a 90 s Clip. Without a target, nothing is measured and the mix is left as it is.
+The same mix, measured and normalized the same way, is what "Save audio" writes alone
+(`Renderer.render_audio`).
+
+The Render Plan is in 1080×1920 output pixels; the Clip is the Export Settings' size, and the plan
+is drawn at it (app/scaled_plan.py, docs/adr/0021): every coordinate and size the filter graph is
+given comes from the plan scaled to that size, the keyed pictures' frames are that size, and the
+picture layers' pictures are rasterised at it (`picture_layouts` names them; they are made before
+the render). The ASS script for the captions, the hook and a text Watermark is written from the plan
+in its own pixels, and libass scales it to the frame (its PlayRes), drawing the text sharp at any
+size. The poster is a frame of the Clip, at its size.
 
 The decoded video is split into one branch per Scene, each trimmed to its Scene and drawn there:
 every panel is a crop of the frame, moved at its change points by commands that ffmpeg sends it
@@ -37,12 +49,17 @@ is drawn as above, in its own Scenes, and the Segments' frames and sounds are jo
 (concat). A video's Segment is one Scene of one picture: its Background (the blurred cover panel, or
 its colour) and then its Picture over it, as Overlays are drawn, only the part on the frame of it
 scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of the Source is drawn
-the same way from its own frames. With videos among them (or a Segment's own volume), each Segment's sound is set to its
-volume (a Source Segment's also at the Clip's own) before the join, and a video without sound adds
-silence. A Freeze frame (docs/adr/0009) reads a moment of its video at its frame and holds the
-first frame for its hold (`tpad`), in silence. A join with a Transition is an
-xfade of the pictures (each Segment first brought to the Clip's frame rate and time base, which
-xfade needs) and an acrossfade of the sounds, over the length the two overlap.
+the same way from its own frames. With videos among them (or a Segment's own volume, or fades),
+each Segment's sound is set to its volume (a Source Segment's also at the Clip's own) and faded in
+and out (linear `afade`s from its start on the Timeline, a Transition's overlap included, which the
+crossfade multiplies) before the join, and a video without sound adds silence. A Freeze frame
+(docs/adr/0009) reads a moment of its video at its frame and holds the first frame for its hold
+(`tpad`), in silence; a Muted Segment (docs/adr/0016) is heard as silence too, and a Muted Music
+Clip or Overlay is left out of the mix. A join with a Transition is drawn by its kind's recipe
+(app/transitions.py, docs/adr/0012): its chains on the two pictures, then one xfade of them (each
+Segment first brought to the Clip's frame rate and time base, which xfade needs); and an
+acrossfade of the sounds, over the length the two overlap, along the Transition's sound: straight
+lines, quarter sines, or a cut at the middle (`_sounds_crossed`).
 
 A Segment at a Speed (docs/adr/0009) has its frames' times divided by it and then brought to the
 Clip's frame rate (frames dropped or repeated, none blended); its sound is played at it, its pitch
@@ -63,9 +80,10 @@ A keyed Overlay (docs/adr/0008) is drawn by a frame process instead (app/frames.
 this process that draws the picture as it is at each frame of its span with OpenCV (a video's frames
 decoded for it by an ffmpeg of their own), decorated, and writes it, the whole frame in raw RGBA, to a
 pipe that the encode reads as one more input, laid over at 0, 0 in the same place of the graph, each
-frame over the Clip's frame of its number. With any, the joined
-frames are first brought to the Clip's frame rate (`fps`), so that frame n is at n / fps exactly, the
-time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
+frame over the Clip's frame of its number. So is one that comes on or goes off as a picture layer
+does (Fade, Pop, Slide): faded, scaled and moved on top of its keyed values (`overlay_at`), its
+sound left as it is. With any, the joined frames are first brought to the Clip's frame rate
+(`fps`), so that frame n is at n / fps exactly, the time its picture is sampled at. A frame process that fails stops the encode, and an encode that fails
 or is stopped ends its frame processes. Without keyed pictures the command is as it was.
 
 A keyed video Segment's picture is drawn by a frame process too, in seconds into its Segment, and
@@ -76,7 +94,7 @@ an expression of its own time in its own sound's chain, as a Music Clip's is.
 Music Clips are more inputs (their songs, from app/media.py), each trimmed to its part of the song,
 set to its volume (a keyed one's by an expression of its own time, from its Keyframes), faded, and
 delayed to where it is heard, then mixed with the Clip's own sound (at its volume) before the
-loudness is measured and normalized, so that the mix lands at −14 LUFS.
+loudness is measured and normalized, so that the mix lands at the loudness target.
 Without music, and at its own volume, the Clip's sound goes as it did.
 
 The plan's picture layers (its Shapes, docs/adr/0011, and its Text Layers, docs/adr/0010;
@@ -90,6 +108,7 @@ then faded, scaled and moved by the hook's curves on top (`layer_at`). Without p
 command is as it was.
 """
 
+import functools
 import json
 import logging
 import math
@@ -98,38 +117,48 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
+from fractions import Fraction
+from functools import partial
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.config import FONTS_DIR, RenderTuning
+from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
+from app.ducking import duck_steps
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
 from app.planner import (
-    FRAME,
     HOOK_LEADING,
     HOOK_PAD_Y,
     Box,
     Cue,
     HookEvent,
     Panel,
+    PictureLayout,
     RenderPlan,
     ScenePlan,
     PictureLayer,
     OverlayEvent,
     Picture,
+    TransitionEvent,
     WatermarkEvent,
     font_metrics,
     on_frame,
+    own_volume,
     picture_at,
 )
 from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.scaled_plan import drawn_scale, scaled_plan
+from app.transition_kinds import TransitionSound
+from app.transitions import RECIPES, Side
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -141,8 +170,32 @@ HIGHLIGHT_PAD_Y = 0.08
 HIGHLIGHT_RADIUS = 0.12
 
 
+# The formats a Clip's sound is saved alone in (`Renderer.render_audio`).
+AudioFormat = Literal["wav", "m4a"]
+
+
 class RenderStopped(RuntimeError):
     """The render was cut short because the app is stopping."""
+
+
+class _Drawing(NamedTuple):
+    """What an encode draws with (Renderer._drawing): the plan at the output's size, the scripts
+    burned under and over its picture layers, the Faces they set text in, the Logo, and the keyed
+    pictures' items."""
+
+    plan: RenderPlan
+    subtitles: Path | None
+    above: Path | None
+    fonts: Path
+    logo: Path | None
+    keyed: "dict[Keyed, np.ndarray | Path]"
+
+
+class Encoded(NamedTuple):
+    """What made a Clip: its video encoder, and whether that encoder did VBR where CBR was asked for."""
+
+    encoder: str
+    bitrate_fallback: bool
 
 
 class Renderer:
@@ -163,13 +216,16 @@ class Renderer:
         logo: Path | None = None,
         files: dict[str, Path] | None = None,
         pictures: dict[str, Path] | None = None,
-    ) -> str:
+        export: ExportSettings = ExportSettings(),
+    ) -> Encoded:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
-        (JPEG), and return the video encoder that made them: the first of RenderTuning.encoders that
-        succeeds. `progress` is called with the share of the Clip encoded so far, from 0 to 1. `logo`
-        is the PNG of the plan's Logo Watermark, which isn't drawn without it; `files` has the file of
-        each Media Library item the plan plays (songs and videos), by its id; `pictures` the picture of
-        each of its picture layers (app/layer_pictures.py), by its name.
+        (JPEG), encoded as `export` says, and return what made them: the first of its codec's encoders
+        (RenderTuning.codec_encoders) that succeeds. The Clip is `export`'s size, the plan drawn at it
+        (`scaled_plan`), at the plan's frame rate. `progress` is called with the share of the Clip
+        encoded so far, from 0 to 1. `logo` is the PNG of the plan's Logo Watermark, which isn't drawn
+        without it; `files` has the file of each Media Library item the plan plays (songs and videos),
+        by its id; `pictures` the picture of each of its picture layers at that size
+        (app/layer_pictures.py, of `picture_layouts`), by its name.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
@@ -177,45 +233,161 @@ class Renderer:
         _check(plan)
         files = files or {}
         pictures = pictures or {}
-        if missing := [event.layer.id for event in plan.picture_layers if event.image not in pictures]:
-            raise RuntimeError(f"The pictures of picture layers {', '.join(missing)} weren't made")
-        loudness = self._measure(source, plan, files)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
+        failures = []
+        try:
+            with self._drawing(source, plan, video, logo, files, pictures, export) as drawing:
+                loudness = None if export.loudness is None else self._measure(source, plan, export.loudness, files)
+                for encoder in self.tuning.codec_encoders(export.codec):
+                    feeds = _feeds(drawing.plan, drawing.keyed, self.ffmpeg)
+                    command = self._command(
+                        source, drawing.plan, loudness, encoder, *parts, drawing.subtitles, drawing.logo, files, feeds,
+                        drawing.fonts, pictures, drawing.above, export,
+                    )
+                    stderr = self._run(command, plan.duration, progress, list(feeds.values()))
+                    if stderr is None and parts[1].is_file():
+                        os.replace(parts[0], video)
+                        os.replace(parts[1], poster)
+                        return Encoded(encoder, encoder_args(export, plan.fps, encoder).bitrate_fallback)
+                    stderr = stderr or "no poster frame was written"
+                    logger.warning("Rendering with %s failed: %s", encoder, stderr)
+                    failures.append(f"{encoder}: {last_lines(stderr)}")
+        finally:
+            for part in parts:
+                part.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
+
+    def frame(
+        self,
+        source: Path,
+        plan: RenderPlan,
+        at: float,
+        still: Path,
+        logo: Path | None = None,
+        files: dict[str, Path] | None = None,
+        pictures: dict[str, Path] | None = None,
+        export: ExportSettings = ExportSettings(),
+    ) -> None:
+        """Write the frame of the Clip `render` would make that shows at `at` seconds into it
+        (`shown_frame`) to `still` (PNG): the same graph at `export`'s size, without the sound. The
+        other arguments are `render`'s. It is written under a temporary name and then renamed."""
+        _check(plan)
+        files = files or {}
+        pictures = pictures or {}
+        # Between the frame before it and it, which a frame's time rounded either way still selects.
+        between = max(0.0, (shown_frame(at, plan.fps, plan.duration) - 0.5) / plan.fps)
+        part = still.with_name(f".{still.stem}.part{still.suffix}")
+        stderr = None
+        try:
+            with self._drawing(source, plan, still, logo, files, pictures, export) as drawing:
+                feeds = _feeds(drawing.plan, drawing.keyed, self.ffmpeg)
+                command = self._command(
+                    source, drawing.plan, None, "png", part, part, drawing.subtitles, drawing.logo, files, feeds,
+                    drawing.fonts, pictures, drawing.above, export, still_at=between,
+                )
+                stderr = self._run(command, plan.duration, lambda done: None, list(feeds.values()))
+                if stderr is None and part.is_file():
+                    os.replace(part, still)
+                    return
+        finally:
+            part.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg couldn't draw the frame at {at:.3f} s ({last_lines(stderr or 'no frame was written')})")
+
+    @contextmanager
+    def _drawing(
+        self,
+        source: Path,
+        plan: RenderPlan,
+        output: Path,
+        logo: Path | None,
+        files: dict[str, Path],
+        pictures: dict[str, Path],
+        export: ExportSettings,
+    ) -> Iterator["_Drawing"]:
+        """What an encode of `plan` as `export` says draws with: its scripts and Faces written beside
+        `output` for as long as the block runs."""
+        # The plan at the output's size, which the graph and the frame processes draw; the ASS script
+        # is written from the plan in its own pixels, which libass scales to the frame.
+        drawn = scaled_plan(plan, output_size(export))
+        if missing := [event.layer.id for event in drawn.picture_layers if event.image not in pictures]:
+            raise RuntimeError(f"The pictures of picture layers {', '.join(missing)} weren't made")
         # With picture layers, the script is cut in two about them: what they are drawn over, then the hook.
         below, above = (replace(plan, hook=None), replace(plan, captions=[], watermark=None)) if plan.picture_layers else (plan, None)
         scripts = {
-            name: (video.with_name(f".{video.stem}.part{suffix}.ass"), script)
+            name: (output.with_name(f".{output.stem}.part{suffix}.ass"), script)
             for name, suffix, script in (("below", "", below), ("above", "-above", above))
             if script is not None and (script.captions or script.hook or _text_watermark(script))
         }
-        fonts = video.with_name(f".{video.stem}.part.fonts")
+        fonts = output.with_name(f".{output.stem}.part.fonts")
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
-        keyed = _keyed_items(plan, files, source, pictures)
-        failures = []
+        keyed = _keyed_items(drawn, files, source, pictures)
         try:
             if scripts:
                 registry().gather(_faces(plan), fonts)
             for path, script in scripts.values():
                 path.write_text(_ass(script), encoding="utf-8")
-            subtitles, over = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
-            for encoder in self.tuning.encoders:
-                feeds = _feeds(plan, keyed, self.ffmpeg)
-                command = self._command(source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over)
-                stderr = self._run(command, plan.duration, progress, list(feeds.values()))
-                if stderr is None and parts[1].is_file():
-                    os.replace(parts[0], video)
-                    os.replace(parts[1], poster)
-                    return encoder
-                stderr = stderr or "no poster frame was written"
-                logger.warning("Rendering with %s failed: %s", encoder, stderr)
-                failures.append(f"{encoder}: {last_lines(stderr)}")
+            subtitles, above_script = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
+            yield _Drawing(drawn, subtitles, above_script, fonts, logo, keyed)
         finally:
-            for part in (*parts, *(path for path, _ in scripts.values())):
-                part.unlink(missing_ok=True)
+            for path, _ in scripts.values():
+                path.unlink(missing_ok=True)
             shutil.rmtree(fonts, ignore_errors=True)
-        raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
+
+    def render_audio(
+        self, source: Path, plan: RenderPlan, audio: Path, format: AudioFormat, lufs: float | None, files: dict[str, Path] | None = None
+    ) -> None:
+        """Write the Clip's sound alone to `audio`, mixed as the Clip's own is (the Clip's sound or
+        its Segments', its Music Clips and its Overlays' sound) and normalized to `lufs` (left as it is
+        without one): a 48 kHz 16-bit WAV, or AAC in an M4A. Nothing of the picture is decoded.
+        Written under a temporary name and then renamed, as a Clip's files are."""
+        tuning = self.tuning
+        files = files or {}
+        loudness = None if lufs is None else self._measure(source, plan, lufs, files)
+        sources, inputs, _, heard = _sound(plan, source, files, tuning.audio_rate)
+        part = audio.with_name(f".{audio.stem}.part{audio.suffix}")
+        encode = ["-c:a", "pcm_s16le", "-f", "wav"] if format == "wav" else ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-f", "mp4"]
+        command = [
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", *sources, *inputs,
+            "-filter_complex", f"{heard}{_normalized(tuning, lufs, loudness)}[a]",
+            "-map", "[a]", "-map_metadata", "-1", *encode, str(part),
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, errors="replace")
+            if result.returncode:
+                raise RuntimeError(f"ffmpeg couldn't render the sound: {last_lines(result.stderr)}")
+            os.replace(part, audio)
+        finally:
+            part.unlink(missing_ok=True)
+
+    def save_sound(self, source: Path, plan: RenderPlan, wav: Path, files: dict[str, Path] | None = None) -> None:
+        """Write the sound of `plan`'s one item to `wav`, 16-bit PCM at the Clip's sample rate in
+        stereo: its one Segment (or its range) heard as the Clip's own sound is (`_source_inputs`,
+        then `_audio_mix` without music); or its one sound of `audio`, mixed as the Clip's music is
+        (`_music_inputs`, `_audio_mix`) over silence as long as it, in place of the Clip's own sound.
+        Nothing is normalized. Read from the Source, or from its video or song in `files`."""
+        rate = self.tuning.audio_rate
+        if plan.audio:
+            [event] = plan.audio
+            inputs, reads = _music_inputs(plan, files or {}, 0, source)
+            bed = f"anullsrc=r={rate}:cl=stereo,atrim=duration={event.end - event.start:.3f}[bed];"
+            heard = f"{bed}{_audio_mix(plan, reads, rate, '[bed]')};[mix]"
+        else:
+            inputs, sounds, sound = _source_inputs(plan, source, files or {}, rate)
+            mix = _audio_mix(plan, {}, rate, sound)
+            heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+        part = wav.with_name(f".{wav.stem}.part{wav.suffix}")
+        command = [
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y",
+            *inputs, "-filter_complex", f"{heard}aresample={rate}[a]", "-map", "[a]",
+            "-map_metadata", "-1", "-c:a", "pcm_s16le", "-ar", str(rate), "-ac", "2", "-f", "wav", str(part),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, errors="replace")
+        if result.returncode:
+            part.unlink(missing_ok=True)
+            raise RuntimeError(f"ffmpeg couldn't make the sound: {last_lines(result.stderr)}")
+        os.replace(part, wav)
 
     def stop(self) -> None:
         """Kill the running encode, if any; renders from now on raise RenderStopped."""
@@ -224,22 +396,15 @@ class Renderer:
             if self._process is not None:
                 self._process.kill()
 
-    def _measure(self, source: Path, plan: RenderPlan, files: dict[str, Path] | None = None) -> dict[str, str] | None:
-        """loudnorm's measurement of the range's audio, mixed with its music; None when it is silent,
-        with nothing to normalize."""
+    def _measure(self, source: Path, plan: RenderPlan, lufs: float, files: dict[str, Path] | None = None) -> dict[str, str] | None:
+        """loudnorm's measurement of the range's audio, mixed with its music, for normalizing it to
+        `lufs`; None when it is silent, with nothing to normalize."""
         tuning = self.tuning
-        measure = f"loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
-        sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
-        inputs, index = _music_inputs(plan, files or {}, first=len(sources) // _INPUT_ARGS)
-        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
-        if mix is None and not sounds:
-            audio = ["-map", "0:a:0", "-af", measure]
-        else:
-            heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
-            audio = ["-filter_complex", f"{heard}aresample={tuning.audio_rate},{measure}[measured]", "-map", "[measured]"]
+        measure = f"loudnorm=I={lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
+        sources, inputs, _, heard = _sound(plan, source, files or {}, tuning.audio_rate)
         command = [
-            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
-            *sources, *inputs, *audio, "-f", "null", "-",
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info", *sources, *inputs,
+            "-filter_complex", f"{heard}aresample={tuning.audio_rate},{measure}[measured]", "-map", "[measured]", "-f", "null", "-",
         ]
         result = subprocess.run(command, capture_output=True, text=True, errors="replace")
         output = result.stderr
@@ -263,27 +428,32 @@ class Renderer:
         fonts: Path = FONTS_DIR,
         pictures: dict[str, Path] | None = None,
         above: Path | None = None,
+        export: ExportSettings = ExportSettings(),
+        still_at: float | None = None,
     ) -> list[str]:
-        """The encode's command. `feeds` are the frame processes of the plan's keyed pictures (its
-        Overlays', its keyed Scenes' and its animated picture layers', by their places among them); a
-        keyed one without is drawn still, at its constants. `fonts` holds the Faces the `subtitles`
-        set text in, burned under the picture layers (drawn from `pictures`, by their names), and
-        `above` over them."""
+        """The encode's command: `plan` (drawn at the Clip's size, its width x height) is encoded by
+        `encoder` as `export` says, and the sound is normalized to its loudness target from the
+        `loudness` measured (left as it is without one). `feeds` are the frame processes of the plan's
+        keyed pictures (its Overlays', its keyed Scenes' and its animated picture layers', by their
+        places among them); a keyed one without is drawn still, at its constants. `fonts` holds the
+        Faces the `subtitles` set text in, burned under the picture layers (drawn from `pictures`, by
+        their names), and `above` over them. With `still_at`, only the frame at that time is written,
+        to `video` (PNG), and `encoder`, `poster` and the sound are unused."""
         tuning = self.tuning
         feeds = feeds or {}
-        sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
+        # The music's inputs come after the Source's and its videos', and the logo's.
+        sources, inputs, songs, heard = _sound(plan, source, files or {}, tuning.audio_rate, between=0 if logo is None else 1)
         count = len(sources) // _INPUT_ARGS
-        # The music's first input: after the Source's and its videos', and the logo's.
         before_music = count + (1 if logo is not None else 0)
-        inputs, index = _music_inputs(plan, files or {}, first=before_music)
-        layers, layered = _overlay_inputs(plan, files or {}, before_music + len(index), feeds)
-        scene_inputs, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
-        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + len(index) + len(layered) + len(drawn), feeds)
+        layers, layered = _overlay_inputs(plan, files or {}, before_music + songs, feeds)
+        scene_inputs, drawn = _scene_inputs(plan, before_music + songs + len(layered), feeds)
+        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + len(layered) + len(drawn), feeds)
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
-        if any(feed is not None for _, _, feed in layered + written):
-            # At n / fps exactly, the times the Overlays' frame processes draw their frames at.
+        if any(feed is not None for _, _, feed in layered + written) or _resampled(plan):
+            # At n / fps exactly, the times the Overlays' frame processes draw their frames at; and
+            # at another rate than the Source's, the Clip's frames.
             frame += f";[frame]fps={_rate(plan)}[timed]"
             joined = "[timed]"
         for i, (event, number, feed) in enumerate(layered):
@@ -303,31 +473,23 @@ class Renderer:
                 joined = f"[with_layer{i}]"
             subtitles = above
         burned = "" if subtitles is None else f"{ass_filter(subtitles, fonts)},"
-        frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
-        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
-        heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
-        audio = f"{heard}aresample={tuning.audio_rate}[a]"
-        if loudness is not None:
-            audio = (
-                f"{heard}aresample={tuning.audio_rate},loudnorm=I={tuning.loudness_lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
-                f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
-                f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
-                f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}[a]"
-            )
-        if encoder == "libx264":
-            codec = [
-                "-c:v", "libx264", "-preset", tuning.x264_preset, "-crf", str(tuning.x264_crf),
-                "-maxrate", tuning.x264_maxrate, "-bufsize", tuning.x264_maxrate,
+        if still_at is not None:
+            frame += f";{joined}{burned}format=yuv420p,select='gte(t\\,{still_at:.4f})',trim=end_frame=1[still]"
+            return [
+                str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
+                *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
+                "-filter_complex", frame, "-map", "[still]", "-frames:v", "1", "-c:v", "png",
+                "-f", "image2", "-update", "1", str(video),
             ]
-        else:
-            codec = ["-c:v", encoder, "-b:v", tuning.bitrate if plan.fps <= 30 else tuning.high_fps_bitrate]
+        frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
+        audio = f"{heard}{_normalized(tuning, export.loudness, loudness)}[a]"
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
             *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
-            *codec, "-profile:v", "high", "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
-            "-c:a", "aac", "-b:a", tuning.audio_bitrate,
+            *encoder_args(export, plan.fps, encoder).args, "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
+            "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
             "-movflags", "+faststart", "-f", "mp4", str(video),
             "-map", "[poster]", "-frames:v", "1", "-q:v", "3", "-f", "image2", "-update", "1", str(poster),
         ]
@@ -374,6 +536,34 @@ class Renderer:
                 feed.close()
 
 
+def shown_frame(at: float, fps: float, duration: float) -> int:
+    """The number of the frame of a Clip `duration` long at `fps` that shows at `at` seconds into
+    it: the last that starts by then, within the Clip."""
+    return max(0, min(math.floor(at * fps + 1e-6), math.ceil(duration * fps - 1e-6) - 1))
+
+
+def picture_layouts(plan: RenderPlan, export: ExportSettings) -> list[PictureLayout]:
+    """The layouts of the pictures a render of `plan` as `export` says draws, rasterised at its size
+    (docs/adr/0010, 0021): what to make (app/layer_pictures.py) before the render, which takes them
+    by their names."""
+    return [event.layout for event in scaled_plan(plan, output_size(export)).picture_layers]
+
+
+def available_codecs(ffmpeg: Path, tuning: RenderTuning) -> frozenset[Codec]:
+    """The codecs `ffmpeg` has at least one of the encoders of."""
+    encoders = _encoders(ffmpeg)
+    return frozenset(codec for codec in Codec if any(encoder in encoders for encoder in tuning.codec_encoders(codec)))
+
+
+@functools.cache
+def _encoders(ffmpeg: Path) -> frozenset[str]:
+    """The names of `ffmpeg`'s encoders, read once per process from its list: a line each after the
+    legend, its flags and then its name."""
+    result = subprocess.run([str(ffmpeg), "-hide_banner", "-encoders"], capture_output=True, text=True, errors="replace")
+    listed = result.stdout.partition("------")[2]
+    return frozenset(line.split()[1] for line in listed.splitlines() if len(line.split()) > 1)
+
+
 def _check(plan: RenderPlan) -> None:
     """Refuse a Render Plan with nothing to draw."""
     if not plan.scenes or not all(scene.panels or scene.picture for scene in plan.scenes):
@@ -390,10 +580,10 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, a Segment's own volume or Speed, or Transitions, each Segment's sound is first
-    played at its Speed (`speed_filters`) and set to its volume (a Source Segment's also to the
-    Clip's own, which the mix then leaves) in one format, and a video without sound, and a Freeze
-    frame, give silence."""
+    the Segments, a Segment's own volume, Speed or fades, a Muted one, or Transitions, each Segment's
+    sound is first played at its Speed (`speed_filters`), set to its volume (a Source Segment's also
+    to the Clip's own, which the mix then leaves) and faded (`_fades`) in one format, and a video
+    without sound, a Freeze frame and a Muted Segment give silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -403,28 +593,59 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         inputs += ["-ss", f"{segment.source_start:.3f}", "-t", f"{span:.3f}", "-i", str(read)]
     count = len(plan.segments)
     plain = all(
-        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None for segment in plan.segments
+        segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.gain
+        and not (segment.fade_in or segment.fade_out) and not segment.muted
+        for segment in plan.segments
     )
     if plain and not plan.transitions:
         return inputs, "".join(f"[{i}:a:0]" for i in range(count)) + f"concat=n={count}:v=0:a=1[src];", "[src]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = []
     for i, segment in enumerate(plan.segments):
-        if segment.silent or segment.hold is not None:
+        if segment.silent or segment.hold is not None or segment.muted:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
             continue
         sped = speed_filters(segment.speed, segment.pitch, rate)
+        faded = _fades(segment.fade_in, segment.fade_out, round(segment.end - segment.start, 3))
+        # Its time on the Timeline from 0 at its start (a Transition's overlap included), which its
+        # Keyframes and fades are in.
+        zeroed = [*sped, "asetpts=PTS-STARTPTS"] if segment.gain or faded else sped
+        # The Source's at the Clip's own volume too (`own_volume`), a keyed one's after its Keyframes.
+        own = own_volume(segment, plan.source_volume)
         if segment.gain:
-            # Its time on the Timeline from 0 at its start, which its Keyframes' are from.
-            filters = [*sped, "asetpts=PTS-STARTPTS", *_volume(segment.gain, segment.volume)]
+            volume = [*_volume(segment.gain, segment.volume), *([f"volume={own:g}"] if own != 1 else [])]
         else:
-            filters = [*sped, f"volume={segment.volume * (1 if segment.media else plan.source_volume):g}"]
-        chains.append(f"[{i}:a:0]{','.join(filters)},{form}[a{i}]")
+            volume = [f"volume={segment.volume * own:g}"]
+        chains.append(f"[{i}:a:0]{','.join([*zeroed, *volume, *faded])},{form}[a{i}]")
     if plan.transitions:
         chains.append(_joins(plan, [f"[a{i}]" for i in range(count)], "a", "[srcv]"))
     else:
         chains.append("".join(f"[a{i}]" for i in range(count)) + f"concat=n={count}:v=0:a=1[srcv]")
     return inputs, ";".join(chains) + ";", "[srcv]"
+
+
+def _sound(plan: RenderPlan, source: Path, files: dict[str, Path], rate: int, between: int = 0) -> tuple[list[str], list[str], int, str]:
+    """The Clip's sound as the encode and the measurement hear it: the input options of the Source
+    (`_source_inputs`), those its music reads (`_music_inputs`, after `between` other inputs), how
+    many those are, and the filters that mix them (`_audio_mix`), ending with the link the mix is
+    heard from, for the filters that follow."""
+    sources, sounds, sound = _source_inputs(plan, source, files, rate)
+    inputs, reads = _music_inputs(plan, files, len(sources) // _INPUT_ARGS + between, source)
+    mix = _audio_mix(plan, reads, rate, sound)
+    return sources, inputs, _music_count(reads), f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+
+
+def _normalized(tuning: RenderTuning, lufs: float | None, loudness: dict[str, str] | None) -> str:
+    """Filters that take the mix to `lufs` with the `loudness` measured of it (loudnorm's linear
+    second pass), at the audio rate; only resampled without either."""
+    if lufs is None or loudness is None:
+        return f"aresample={tuning.audio_rate}"
+    return (
+        f"aresample={tuning.audio_rate},loudnorm=I={lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
+        f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
+        f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
+        f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}"
+    )
 
 
 def speed_filters(speed: float, pitch: bool, rate: int) -> list[str]:
@@ -452,7 +673,8 @@ def tempo_stages(speed: float) -> list[float]:
 
 def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
     """Filters that join the Segments' pictures (`kind` "v") or sounds ("a"), from `links`, into
-    `out`, one after another: by the Transition at a join (xfade, acrossfade), else back to back."""
+    `out`, one after another: by the Transition at a join (its recipe's xfade, an acrossfade by its
+    sound), else back to back."""
     into = {transition.start: transition for transition in plan.transitions}
     chains, joined = [], links[0]
     for i in range(1, len(links)):
@@ -462,12 +684,50 @@ def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
         if transition is None:
             chains.append(f"{joined}{links[i]}concat=n=2:v={int(kind == 'v')}:a={int(kind == 'a')}{label}")
         elif kind == "v":
-            length = transition.end - transition.start
-            chains.append(f"{joined}{links[i]}xfade=transition={transition.kind.value}:duration={length:.3f}:offset={transition.start:.3f}{label}")
+            chains += _crossed(plan, transition, joined, links[i], label, f"x{i}")
         else:
-            chains.append(f"{joined}{links[i]}acrossfade=d={transition.end - transition.start:.3f}{label}")
+            chains += _sounds_crossed(transition, joined, links[i], label, f"x{i}")
         joined = label
     return ";".join(chains)
+
+
+# How long each side's sound takes to give way to the other's at the middle of a Cut.
+_CUT_SECS = 0.02
+
+
+def _sounds_crossed(transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:
+    """Filters that join the sounds `outgoing` (in seconds into the Clip) and `incoming` (from 0 at its
+    start) into `out` by `transition`'s sound: acrossfade's straight lines (its default `tri`), its
+    quarter sines (`qsin`), or, for a Cut, each side switched off or on by a short afade at the
+    overlap's middle (named after `name`), then summed as they are (`nofade`)."""
+    length = transition.length
+    if transition.sound == TransitionSound.CUT:
+        middle = length / 2 - _CUT_SECS / 2
+        return [
+            f"{outgoing}afade=t=out:st={transition.start + middle:.3f}:d={_CUT_SECS}[{name}ao]",
+            f"{incoming}afade=t=in:st={middle:.3f}:d={_CUT_SECS}[{name}ai]",
+            f"[{name}ao][{name}ai]acrossfade=d={length:.3f}:c1=nofade:c2=nofade{out}",
+        ]
+    curves = ":c1=qsin:c2=qsin" if transition.sound == TransitionSound.EQUAL_POWER else ""
+    return [f"{outgoing}{incoming}acrossfade=d={length:.3f}{curves}{out}"]
+
+
+def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:
+    """Filters that join the pictures `outgoing` (in seconds into the Clip) and `incoming` (from 0 at
+    its start) into `out` by `transition`'s recipe: each side through its chain, if it has one, named
+    after `name`; then the recipe's xfade."""
+    recipe, chains = RECIPES[transition.kind], []
+    if recipe.outgoing is not None:
+        side = Side(transition.start, False, plan.width, plan.height, f"{name}o")
+        chains.append(f"{outgoing}{recipe.outgoing(transition, side)}[{name}o]")
+        outgoing = f"[{name}o]"
+    if recipe.incoming is not None:
+        side = Side(0.0, True, plan.width, plan.height, f"{name}i")
+        chains.append(f"{incoming}{recipe.incoming(transition, side)}[{name}i]")
+        incoming = f"[{name}i]"
+    length = transition.length
+    chains.append(f"{outgoing}{incoming}xfade=transition={recipe.xfade}:duration={length:.3f}:offset={transition.start:.3f}{out}")
+    return chains
 
 
 def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
@@ -482,28 +742,35 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
         first += segment.scenes
         given = f"[{i}:v]"
         if segment.hold is not None:
-            given += _held(segment.hold)
+            given += _held(segment.hold, _rate(plan) if _resampled(plan) else None)
         elif segment.speed != 1:
             # Its frames moved onto the Timeline, then dropped or repeated to the Clip's frame rate:
             # each frame is the last of the video's at or before its time, as a Retimed copy's (a
             # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
             rate = _rate(plan)
-            given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / float(rate):.6g}/TB,fps={rate}:round=up,"
+            given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
         chains.append(_scenes(plan, tuning, scenes, given, f"[g{i}]", f"g{i}s", segment.start, keyed))
     count = len(plan.segments)
-    if not plan.transitions:
+    if not plan.transitions and not _resampled(plan):
         chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
         return ";".join(chains)
+    if not plan.transitions:
+        # At another rate than the Source's, each Segment is brought to it first, so that the cuts
+        # are on the Clip's frames.
+        chains += [f"[g{i}]fps={_rate(plan)},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
+        chains.append("".join(f"[n{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
+        return ";".join(chains)
     # xfade takes pictures of one frame rate and time base.
-    rate = plan.fps if plan.fps > 0 else 30
-    chains += [f"[g{i}]fps={rate:g},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
+    chains += [f"[g{i}]fps={_rate(plan)},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
     chains.append(_joins(plan, [f"[n{i}]" for i in range(count)], "v", "[frame]"))
     return ";".join(chains)
 
 
-def _held(hold: float) -> str:
-    """Filters that make a Freeze frame's picture of its input: the first frame, held `hold` seconds."""
-    return f"trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={hold:.3f},trim=duration={hold:.3f},"
+def _held(hold: float, rate: str | None = None) -> str:
+    """Filters that make a Freeze frame's picture of its input: the first frame, held `hold` seconds
+    (in frames of `rate`, when given, else of its input's)."""
+    timed = "" if rate is None else f"fps={rate},"
+    return f"trim=end_frame=1,setpts=PTS-STARTPTS,{timed}tpad=stop_mode=clone:stop_duration={hold:.3f},trim=duration={hold:.3f},"
 
 
 def _scenes(
@@ -576,7 +843,7 @@ def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out
     Picture on the frame over it. A picture that covers the frame hides its Background, which is
     then not blurred."""
     assert scene.picture is not None
-    picture = on_frame(scene.picture)
+    picture = on_frame(scene.picture, (plan.width, plan.height))
     covers = picture.opacity >= 1 and not picture.rotation % 360 and picture.bounds == Box(0, 0, plan.width, plan.height)
     chains = [f"{given}split=2[{name}b][{name}f]"]
     if scene.panels and not covers:
@@ -626,8 +893,10 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
     area = panel.area
     drawn = f"{moving}crop@{name}=w={panel.crop_width}:h={panel.crop_height}:x={first.x}:y={first.y},"
     if panel.blur:
-        # Blurred small and scaled up: cheaper than blurring the full size, and as smooth.
-        small_width, small_height = (max(2, round(side / tuning.blur_shrink / 2) * 2) for side in (area.width, area.height))
+        # Blurred small and scaled up: cheaper than blurring the full size, and as smooth. Shrunk by
+        # the plan's scale too, so that the blur is the same at every output size.
+        shrink = tuning.blur_shrink * drawn_scale(plan)
+        small_width, small_height = (max(2, round(side / shrink / 2) * 2) for side in (area.width, area.height))
         drawn += (
             f"scale={small_width}:{small_height},gblur=sigma={tuning.blur_sigma},"
             f"eq=brightness={tuning.blur_brightness},scale={area.width}:{area.height}"
@@ -637,22 +906,49 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
     return drawn + ",setsar=1"
 
 
-def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int) -> tuple[list[str], dict[str, int]]:
-    """The input options of the songs the plan's music plays, each once, numbered from `first`, and
-    each song's input number by its id."""
-    index: dict[str, int] = {}
-    for event in plan.audio:
-        if event.media not in index and event.media in music:
-            index[event.media] = first + len(index)
-    return [arg for media in index for arg in ("-i", str(music[media]))], index
+# Where a sound of the plan's audio is read: its input's number, and how far into that input its part starts.
+Read = tuple[int, float]
 
 
-def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str = "[0:a:0]") -> str | None:
-    """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into [mix]: each Music Clip its part of its song (input
-    `index[media]`), at its volume, faded, delayed to its start; an Overlay's sound played at its
-    Speed first (`speed_filters`). None without music at the Clip's own volume, where the sound goes
-    as it is."""
-    heard = [event for event in plan.audio if event.media in index]
+def _music_inputs(plan: RenderPlan, music: dict[str, Path], first: int, source: Path) -> tuple[list[str], dict[int, Read]]:
+    """The input options of what the plan's music plays, numbered from `first`: each song once,
+    whole; and for each Music Clip of the Source, the Source (`source`) from its offset for its read,
+    as a Segment's is, so that a long episode isn't decoded from its start. And where each sound of
+    the plan's audio is read, by its place there; one of a song not in `music` isn't heard. A Muted
+    sound is left out of the mix, and so is a song only it plays."""
+    inputs: list[str] = []
+    songs: dict[str, int] = {}
+    reads: dict[int, Read] = {}
+    count = 0
+    for i, event in enumerate(plan.audio):
+        if event.muted:
+            continue
+        if event.media is None:
+            reads[i] = (first + count, 0.0)
+            inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}", "-i", str(source)]
+            count += 1
+        elif event.media in music:
+            if event.media not in songs:
+                songs[event.media] = first + count
+                inputs += ["-i", str(music[event.media])]
+                count += 1
+            reads[i] = (songs[event.media], event.offset)
+    return inputs, reads
+
+
+def _music_count(reads: dict[int, Read]) -> int:
+    """How many inputs the music reads (`_music_inputs`): each is read by a sound at least."""
+    return len({number for number, _ in reads.values()})
+
+
+def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str = "[0:a:0]") -> str | None:
+    """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into
+    [mix]: each sound its part of what it reads (`reads`, by its place in the plan's audio), played
+    at its Speed (`speed_filters`), at its volume (a Music Clip of the Source's at the Clip's own
+    too, as a Segment of it is) ducked under its speech (`duck_steps`), faded, delayed to its start.
+    None without music at the Clip's own volume, where the sound goes as it is. The loudness passes
+    hear the mix after ducking."""
+    heard = [(event, reads[i]) for i, event in enumerate(plan.audio) if i in reads]
     # Segments' sounds set to their volumes already (with videos among them) aren't set again.
     volume = 1.0 if source == "[srcv]" else plan.source_volume
     if not heard and volume == 1:
@@ -661,44 +957,65 @@ def _audio_mix(plan: RenderPlan, index: dict[str, int], rate: int, source: str =
         return f"{source}volume={volume:g}[mix]"
     form = f"aformat=sample_rates={rate}:channel_layouts=stereo"
     chains = [f"{source}volume={volume:g},{form}[m0]"]
-    for i, event in enumerate(heard, 1):
+    for i, (event, (number, at)) in enumerate(heard, 1):
         length = round(event.end - event.start, 3)
         read = round(event.time.span, 3)
         sped = speed_filters(event.speed, event.pitch, rate)
+        # The Source's at the Clip's own volume too (a keyed one's after its Keyframes, as a Segment's).
+        own = own_volume(event, plan.source_volume)
+        duck = duck_steps(event.speech, event.duck, plan.ducking, event.start) if event.duck is not None else []
+        if event.gain:
+            level = [*_volume(event.gain, event.volume, duck), *([f"volume={own:g}"] if own != 1 else [])]
+        else:
+            level = _volume(event.gain, event.volume * own, duck)
         filters = [
-            f"atrim=start={event.offset:g}:end={event.offset + read:g}", "asetpts=PTS-STARTPTS",
+            f"atrim=start={at:g}:end={at + read:g}", "asetpts=PTS-STARTPTS",
             # Then its time on the Timeline from 0 at its start, which its Keyframes and fades are in.
-            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *_volume(event.gain, event.volume),
+            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *level,
+            *_fades(event.fade_in, event.fade_out, length), f"adelay={round(event.start * 1000)}:all=1",
         ]
-        if event.fade_in:
-            filters.append(f"afade=t=in:st=0:d={event.fade_in:g}")
-        if event.fade_out:
-            filters.append(f"afade=t=out:st={length - event.fade_out:g}:d={event.fade_out:g}")
-        filters.append(f"adelay={round(event.start * 1000)}:all=1")
-        chains.append(f"[{index[event.media]}:a:0]{','.join(filters)},{form}[m{i}]")
+        chains.append(f"[{number}:a:0]{','.join(filters)},{form}[m{i}]")
     labels = "".join(f"[m{i}]" for i in range(len(heard) + 1))
     # The Clip's length is its own sound's; nothing is turned down to make room (normalize=0).
     chains.append(f"{labels}amix=inputs={len(heard) + 1}:duration=first:normalize=0[mix]")
     return ";".join(chains)
 
 
+def _fades(fade_in: float, fade_out: float, length: float) -> list[str]:
+    """Filters that fade a sound `length` seconds long, its time from 0 at its start, linearly in
+    over `fade_in` seconds and out over `fade_out` to its end."""
+    return [
+        *([f"afade=t=in:st=0:d={fade_in:g}"] if fade_in else []),
+        *([f"afade=t=out:st={length - fade_out:g}:d={fade_out:g}"] if fade_out else []),
+    ]
+
+
 # A keyed volume is worked out afresh for every block of this many samples (10 ms at 48 kHz).
 _GAIN_BLOCK = 480
 
 
-def _volume(gain: Sequence[Keyframe], volume: float) -> list[str]:
+def _volume(gain: Sequence[Keyframe], volume: float, duck: Sequence[tuple[float, float]] = ()) -> list[str]:
     """Filters that set a sound to `volume`, or to its `gain` track (its volume Keyframes, in its own
-    seconds, where its time starts at 0) when it has one: straight lines between points of the
+    seconds, where its time starts at 0) when it has one, times its `duck` (the points of a ducked
+    one's, `duck_steps`, in the same seconds) when it has one: straight lines between points of each
     curve (`linear_steps`, an eased span in 24), summed as one clipped ramp each, with no nesting,
-    evaluated per block of _GAIN_BLOCK samples."""
-    if not gain:
+    the two multiplied, evaluated per block of _GAIN_BLOCK samples."""
+    if not gain and not duck:
         return [f"volume={volume:g}"]
-    points = linear_steps(gain)
+    level = _ramps(linear_steps(gain)) if gain else f"{volume:.6g}"
+    expression = f"({level})*({_ramps(duck)})" if duck else level
+    return [f"asetnsamples=n={_GAIN_BLOCK}:p=0", f"volume=volume='{expression}':eval=frame"]
+
+
+def _ramps(points: Sequence[tuple[float, float]]) -> str:
+    """An expression of `t` that follows straight lines between `points` (time, value), holding the
+    first's value before it and the last's after it: one clipped ramp for each change."""
     terms = [f"{points[0][1]:.6g}"]
     for (start, before), (end, after) in zip(points, points[1:]):
         if after != before and end > start:
-            terms.append(f"{after - before:+.6g}*clip((t-{start:.6g})/{end - start:.6g},0,1)")
-    return [f"asetnsamples=n={_GAIN_BLOCK}:p=0", f"volume=volume='{''.join(terms)}':eval=frame"]
+            # A duck's lead may start before the sound does: t + 0.15 rather than t - -0.15.
+            terms.append(f"{after - before:+.6g}*clip((t{-start:+.6g})/{end - start:.6g},0,1)")
+    return "".join(terms)
 
 
 def _overlay_inputs(
@@ -773,38 +1090,62 @@ def _picture_layer(event: PictureLayer, below: str, out: str, index: int, number
     return _picture(picture, f"[{index}:v]", below, out, name, padded, f"{shows}:eof_action=repeat")
 
 
-def layer_at(event: PictureLayer, time: float) -> Picture:
-    """A picture layer's picture as drawn at `time` seconds into the Clip: as its Keyframes have it
-    then (`picture_at`), and on top of that faded, scaled about its centre and moved down as its
-    animations have it (`layer_animation`): its keyed opacity and scale multiplied, its drop added."""
-    opacity, scale, below = layer_animation(event, time)
-    picture = picture_at(event.picture, time)
+# What is animated as the hook is: the hook in its style, a picture layer in its item's, or an Overlay
+# in its own.
+type _Shown = HookEvent | PictureLayer | OverlayEvent
+type _Motion = HookStyle | TextLayer | Shape | OverlayEvent
+
+
+def layer_at(event: PictureLayer, time: float, drawn: float = 1.0) -> Picture:
+    """A picture layer's picture as drawn at `time` seconds into the Clip, animated by its item's
+    animations (`animated_at`), in a plan drawn `drawn` times its size."""
+    return animated_at(event, event.layer, event.picture, time, drawn)
+
+
+def overlay_at(event: OverlayEvent, time: float, drawn: float = 1.0) -> Picture:
+    """An Overlay's picture as drawn at `time` seconds into the Clip, animated as a picture layer is
+    (`animated_at`), in a plan drawn `drawn` times its size."""
+    return animated_at(event, event, event.picture, time, drawn)
+
+
+def animated_at(shown: _Shown, style: _Motion, picture: Picture, time: float, drawn: float = 1.0) -> Picture:
+    """`picture`, of an item shown from `shown`'s start to its end and animated as `style` says, as
+    drawn at `time` seconds into the Clip: as its Keyframes have it then (`picture_at`), and on top
+    of that faded, scaled about its centre (its corners with it) and moved down as its animations
+    have it (`animation_at`): its keyed opacity and scale multiplied, its drop added, `drawn` times
+    as far for a plan drawn at another size (`drawn_scale`)."""
+    opacity, scale, below = animation_at(shown, style, time)
+    picture = picture_at(picture, time)
     if (opacity, scale, below) == (1.0, 1.0, 0.0):
         return picture
     x, y = picture.centre
     return replace(
-        picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below), opacity=picture.opacity * opacity
+        picture,
+        width=picture.width * scale,
+        height=picture.height * scale,
+        radius=picture.radius * scale,
+        centre=(x, y + below * drawn),
+        opacity=picture.opacity * opacity,
     )
 
 
-def layer_animation(event: PictureLayer, time: float) -> tuple[float, float, float]:
-    """A picture layer's opacity, scale and how far below its place it is at `time` seconds into the
-    Clip, coming on and going off as the hook does (_hook_phases, _hook_motion): faded in and out
-    over its animation_ms (Fade alone), or for _hook_ends' time grown from POP_FROM percent (Pop) or
-    risen SLIDE_PX (Slide) as it fades, each in a straight line. The preview's twin is hookLook in
-    frontend/src/pages/job/editor/ClipPreview.tsx."""
-    layer = event.layer
+def animation_at(shown: _Shown, style: _Motion, time: float) -> tuple[float, float, float]:
+    """An item's opacity, scale and how far below its place it is at `time` seconds into the Clip,
+    coming on and going off as the hook does (_hook_phases, _hook_motion): faded in and out over its
+    animation_ms (Fade alone), or for _hook_ends' time grown from POP_FROM percent (Pop) or risen
+    SLIDE_PX (Slide) as it fades, each in a straight line. The preview's twin is hookLook in
+    frontend/src/pages/job/editor/animation.ts."""
     moving = {Animation.POP, Animation.SLIDE}
-    if layer.animation_in not in moving and layer.animation_out not in moving:
-        ms = layer.animation_ms / 1000
-        on = (time - event.start) / ms if layer.animation_in == Animation.FADE else 1.0
-        off = (event.end - time) / ms if layer.animation_out == Animation.FADE else 1.0
+    if style.animation_in not in moving and style.animation_out not in moving:
+        ms = style.animation_ms / 1000
+        on = (time - shown.start) / ms if style.animation_in == Animation.FADE else 1.0
+        off = (shown.end - time) / ms if style.animation_out == Animation.FADE else 1.0
         return min(max(min(on, off), 0.0), 1.0), 1.0, 0.0
-    on, off = _hook_ends(event, layer)
-    if on and time < event.start + on:
-        return _animated(layer.animation_in, (time - event.start) / on)
-    if off and time >= event.end - off:
-        return _animated(layer.animation_out, (event.end - time) / off)
+    on, off = _hook_ends(shown, style)
+    if on and time < shown.start + on:
+        return _animated(style.animation_in, (time - shown.start) / on)
+    if off and time >= shown.end - off:
+        return _animated(style.animation_out, (shown.end - time) / off)
     return 1.0, 1.0, 0.0
 
 
@@ -831,19 +1172,37 @@ def _scene_inputs(plan: RenderPlan, first: int, feeds: "Feeds") -> tuple[list[st
 
 
 def _piped(plan: RenderPlan, feed: FrameFeed) -> list[str]:
-    """The input options that read a frame process's frames from its pipe, at the Clip's frame rate."""
-    width, height = FRAME
+    """The input options that read a frame process's frames (of the Clip's size) from its pipe, at
+    the Clip's frame rate."""
     return [
-        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{width}x{height}", "-framerate", _rate(plan), "-i", f"pipe:{feed.fd}",
+        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{plan.width}x{plan.height}", "-framerate", _rate(plan),
+        "-i", f"pipe:{feed.fd}",
     ]
 
 
+# The NTSC rates, as the Export Settings name them, and as they are: so many thousand frames in 1001 s.
+_NTSC_RATES = {23.976: "24000/1001", 29.97: "30000/1001", 59.94: "60000/1001"}
+
+
 def _rate(plan: RenderPlan) -> str:
-    """The Clip's frame rate, as the frame processes and the frames they are laid over keep it."""
-    return f"{plan.fps if plan.fps > 0 else 30:.6g}"
+    """The Clip's frame rate, as the frame processes and the frames they are laid over keep it: an
+    NTSC one exactly."""
+    fps = plan.fps if plan.fps > 0 else 30
+    return _NTSC_RATES.get(fps, f"{fps:.6g}")
 
 
-# A keyed picture of the plan: ("overlay", its place among the Overlays), ("scene", its Scene's
+def _rate_value(plan: RenderPlan) -> float:
+    """The Clip's frame rate in frames a second, exactly as `_rate` gives it to ffmpeg."""
+    return float(Fraction(_rate(plan)))
+
+
+def _resampled(plan: RenderPlan) -> bool:
+    """Whether the Clip is planned at another frame rate than its Source's (docs/adr/0021): its
+    Segments, and then its frames, are brought to it, the Source's frames repeated or dropped."""
+    return plan.fps != plan.source_fps
+
+
+# A keyed picture of the plan: ("overlay", a keyed or animated Overlay's place among them), ("scene", its Scene's
 # place among the Scenes) or ("layer", a keyed or animated picture layer's place among the plan's);
 # and each one's frame process.
 Keyed = tuple[str, int]
@@ -854,12 +1213,13 @@ def _keyed_items(
     plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
-    an Overlay's image's pixels, or a video's file (an Overlay's or a Segment's), or the `source`
-    for a Manual Scene; and a keyed or animated picture layer's picture's pixels, from `pictures`."""
+    a keyed or animated Overlay's image's pixels, or a video's file (such an Overlay's or a keyed
+    Segment's), or the `source` for a Manual Scene; and a keyed or animated picture layer's
+    picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {
         ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
         for i, event in enumerate(plan.overlays)
-        if event.picture.motion and event.media in files
+        if (_comes_animated(event) or event.picture.motion) and event.media in files
     }
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
@@ -867,14 +1227,15 @@ def _keyed_items(
         elif media in files:
             items[("scene", i)] = files[media]
     for i, event in enumerate(plan.picture_layers):
-        if (_comes_animated(event) or event.picture.motion) and pictures and event.image in pictures:
+        if (_comes_animated(event.layer) or event.picture.motion) and pictures and event.image in pictures:
             items[("layer", i)] = read_image(pictures[event.image])
     return items
 
 
-def _comes_animated(event: PictureLayer) -> bool:
-    """Whether a picture layer comes on or goes off animated, so that a frame process draws it."""
-    return event.layer.animation_in != Animation.NONE or event.layer.animation_out != Animation.NONE
+def _comes_animated(style: _Motion) -> bool:
+    """Whether an item (a picture layer's, or an Overlay) comes on or goes off animated, so that a
+    frame process draws it."""
+    return style.animation_in != Animation.NONE or style.animation_out != Animation.NONE
 
 
 def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]:
@@ -899,11 +1260,12 @@ def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]
 
 
 def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
-    """A frame process for each keyed picture whose item is in `items`, over its span: an image's
-    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn. A Scene's are
-    drawn in seconds into the Scene, its frame n at n / fps from its start, as the Scene's own frames
-    are once brought to the Clip's frame rate (`_keyed_scene`)."""
-    rate = float(_rate(plan))
+    """A frame process for each keyed picture whose item is in `items`, over its span, drawing frames
+    of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`)
+    and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
+    as the Scene's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
+    rate = _rate_value(plan)
+    frame, drawn = (plan.width, plan.height), drawn_scale(plan)
     scenes = _keyed_scenes(plan)
     layers = plan.picture_layers
     feeds = {}
@@ -914,20 +1276,22 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             picture = _later(scene.picture, -scene.start)
             length = scene.end - scene.start
             video = VideoDecode(ffmpeg, item, picture, 0.0, length, scenes[i][1], rate)
-            feeds[(kind, i)] = FrameFeed(PictureFrames(picture), 0.0, length, rate, video)
+            feeds[(kind, i)] = FrameFeed(PictureFrames(picture, frame=frame), 0.0, length, rate, video)
             continue
         if kind == "layer":
             layer = layers[i]
             assert isinstance(item, np.ndarray)
-            frames = PictureFrames(layer.picture, item, sampled=lambda time, layer=layer: layer_at(layer, time))
+            frames = PictureFrames(layer.picture, item, frame, lambda time, layer=layer: layer_at(layer, time, drawn))
             feeds[(kind, i)] = FrameFeed(frames, layer.start, layer.end, rate)
             continue
         event = plan.overlays[i]
+        sampled = partial(overlay_at, event, drawn=drawn)
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
-            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
+            frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
+            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
         else:
-            frames, video = PictureFrames(event.picture, item), None
+            frames, video = PictureFrames(event.picture, item, frame, sampled), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
     return feeds
 
@@ -1378,11 +1742,6 @@ HOOK_STAGGER_SECS = 0.08
 # up from (or goes down to) this many pixels below its place.
 POP_FROM = 70
 SLIDE_PX = 60
-
-
-# What is animated as the hook is: the hook in its style, or a picture layer in its own.
-type _Shown = HookEvent | PictureLayer
-type _Motion = HookStyle | TextLayer | Shape
 
 
 def _hook_ends(hook: _Shown, style: _Motion) -> tuple[float, float]:

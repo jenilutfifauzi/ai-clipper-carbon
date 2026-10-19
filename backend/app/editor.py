@@ -26,10 +26,12 @@ from app.rendering import (
     captioned_media,
     media_language,
     media_segment_words,
+    music_words,
     needed_analysis,
     saved_analysis,
     saved_words,
     transcript_words,
+    words_at_hand,
 )
 from app.segment_time import segment_time
 from app.styles import PresetStore
@@ -110,13 +112,15 @@ def preview_plan(
     logos: LogoStore | None = None,
     media: MediaStore | None = None,
     media_words: MediaWordsStore | None = None,
+    fps: float | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan, `job_dir` being its Job's directory. Each of its Segments is
     planned from what is saved for its range: its Words are the Clip's own only when every Source
     Segment's are, and it is analysed only when every Segment is. A video's Segment is captioned from
     its item's Media Words in `media_words`, pending while they are queued there, its item is queued
     for the Job, or its Candidate is being prepared; failed, with the error, until a Retry; off when
-    its Captions switch is."""
+    its Captions switch is. It is planned at the Source's frame rate, or at `fps` (a saved frame's,
+    at its Export Preset's)."""
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
@@ -164,8 +168,11 @@ def preview_plan(
         )
         for segment, wanted in zip(segments, needed)
     ]
+    # Heard, captioned or not: they duck the music (docs/adr/0016), as its Music Clips of the Source's do.
+    language, model = job.options.language, settings.whisper_model
+    music = music_words(candidate, lambda start, end: words_at_hand(job_dir, transcript, start, end, source.duration, language, model))
     plan = candidate_plan(
-        candidate, source, words if job.options.captions else None, analyses, presets, settings.camera, logos, media
+        candidate, source, words, analyses, presets, settings.camera, logos, media, fps, captioned=job.options.captions, music=music
     )
     # Its picture layers' pictures, which the preview shows (docs/adr/0010): made now if they aren't there.
     make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)

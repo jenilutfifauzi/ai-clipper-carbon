@@ -109,7 +109,7 @@ def overlay_time(
     its range: `secs × speed` of it from `offset`, backwards when `reverse`. Cut where the video ends,
     `video` seconds into it, and after the `shown` seconds of it before the Clip ends, as the planner
     cuts it: the part it shows first is kept, which in Reverse is its range's end, so that its range
-    then starts later. Its sound plays alike, and a Music Clip's song at 1×."""
+    then starts later. Its sound plays alike, and so does a Music Clip's song."""
     whole = min(offset + secs * speed, video)
     if shown >= secs:
         return SegmentTime(offset, whole, speed, reverse)

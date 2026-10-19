@@ -15,6 +15,7 @@ export type ShortcutId =
   | "split"
   | "freeze-frame"
   | "reverse"
+  | "mute"
   | "copy"
   | "cut"
   | "paste"
@@ -118,7 +119,8 @@ export const SHORTCUTS: Shortcut[] = [
     label: "Split at the playhead: the picked items, or with nothing picked, everything there",
   },
   { id: "freeze-frame", keys: [{ key: "f", shift }], group: "editing", label: "Freeze frame: hold the frame at the playhead for a second" },
-  { id: "reverse", keys: [{ key: "r" }], group: "editing", label: "Reverse the picked Segment or video Overlay, or play it forwards again" },
+  { id: "reverse", keys: [{ key: "r" }], group: "editing", label: "Reverse the picked Segment, video Overlay or Music Clip, or play it forwards again" },
+  { id: "mute", keys: [{ key: "m" }], group: "editing", label: "Mute the picked items with sound, or unmute them when all are Muted" },
   { id: "copy", keys: [{ key: "c", command }], group: "editing", label: "Copy the picked items" },
   { id: "cut", keys: [{ key: "x", command }], group: "editing", label: "Cut the picked items" },
   { id: "paste", keys: [{ key: "v", command }], group: "editing", label: "Paste at the playhead" },
