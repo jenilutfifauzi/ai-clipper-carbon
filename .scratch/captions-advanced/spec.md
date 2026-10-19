@@ -302,6 +302,18 @@ Good tests check what is seen and stored: text and pixels of a rendered frame, C
 - **Retiming or moving single Cues in the clip editor.**
 - **Caption files without burned-in captions** (a Job with captions off writes none).
 
+## Accepted additions
+
+The code review of 2026-10-19 found behaviour that this spec didn't ask for. These additions are kept, as part of what the feature is:
+
+- **`needs_join` on each Cue** (plan and dry run): whether a pause, a sentence's end or the longest Cue parts it from the Cue before, so that Merge adds a `join` only when one is needed without the editor repeating the planner's break rules.
+- **`get_media_words(…, again, timeout_secs)`:** `again` transcribes ready Media Words again; `timeout_secs` bounds the wait (120 s by default).
+- **`centre` and `size` per Cue in the dry run,** so the agent can place a Cue Edit's `x`, `y` and `scale` from where the Cue is.
+- **Words status `none` also covers** a silent video and a video whose Media Words are neither saved nor queued yet.
+- **A wider Whisper budget for whole Media Library items** (`TranscriptionTuning.media_budget_secs` and `media_budget_factor`: 120 s + 2.5 × length), since a cold model load on a busy Mac overran the Clip-range budget.
+- **A Transcribe button** in a media Segment's inspector for a video whose Media Words aren't queued, beside Retry and Transcribe again.
+- **Reset timing and Reset position keep a bare Cue Edit** that is all that starts its Cue (as after a Split), instead of dropping it.
+
 ## Further Notes
 
 - Decided in a grilling session on 2026-10-18. See ADR 0020 and GLOSSARY: Media Words, Cue, Cue Edit, Caption Style, Word Edit, Segment, Pick, Clipboard, Grips.
