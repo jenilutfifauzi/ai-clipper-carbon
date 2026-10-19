@@ -567,8 +567,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
     @tool()
     async def render_clips(job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> dict:
         """Render Clips of the selected Candidates, or of `candidate_ids`, one at a time, replacing
-        Clips rendered before, with an Export Preset (else the default). The Job is rendering until
-        they are done: wait_for_job, then list_clips."""
+        Clips rendered before, with an Export Preset (else the default; Export Settings never make a
+        Clip stale). The Job is rendering until they are done: wait_for_job, then list_clips."""
         body = {"candidate_ids": candidate_ids, "export_preset_id": export_preset_id}
         return {"clips": clips(job_id, await api("POST", f"/jobs/{job_id}/render", json=body))}
 
@@ -584,7 +584,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued."""
         body = {"at": at, "export_preset_id": export_preset_id}
         saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
-        return {"path": str(app.state.store.job_dir(job_id).resolve() / saved["file"])}
+        return {"path": saved["path"]}
 
     @tool()
     async def export_audio(
@@ -645,7 +645,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
-        preset_id alone). An Export Preset is {name, settings}; use_as_default: renders use it (likewise)."""
+        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise)."""
         if kind == "export":
             return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":

@@ -2,7 +2,7 @@ import { Camera, ImagePlus, Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { uploadMedia, type CandidateChange } from "../../../api";
 import { buttonClass } from "../../../components/Button";
-import { frameFileName, saveFrame } from "./saveFrame";
+import { saveFrame } from "./saveFrame";
 
 // The menu's distance from its button, and from the window's edges.
 const GAP_PX = 4;
@@ -22,8 +22,6 @@ export function SaveFrameButton({
   title,
   draft,
   at,
-  fps,
-  duration,
   toLibrary = (file) => uploadMedia(file, () => {}).done,
   compact = false,
 }: {
@@ -32,8 +30,6 @@ export function SaveFrameButton({
   title: string;
   draft: CandidateChange;
   at: () => number;
-  fps: number;
-  duration: number;
   toLibrary?: (file: File) => Promise<unknown> | void;
   // An icon only, for a toolbar.
   compact?: boolean;
@@ -80,7 +76,7 @@ export function SaveFrameButton({
     setBusy(true);
     setNote(null);
     try {
-      const file = await saveFrame(jobId, candidateId, draft, time, frameFileName(title, time, fps, duration));
+      const file = await saveFrame(jobId, candidateId, draft, time, title);
       if (library) {
         // The Advanced Edit's Media Library shows its upload under way itself, and gives nothing to wait for.
         const adding = toLibrary(file);

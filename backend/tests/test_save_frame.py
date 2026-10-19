@@ -51,18 +51,20 @@ def test_a_frame_has_the_presets_size_or_the_defaults_and_leaves_the_job_and_its
     job_dir = settings.data_dir / "jobs" / job["id"]
 
     small = saved_frame(client, job, candidate, at=0.5, export_preset_id="small")
-    # Named after the Candidate and the time (mm.ss.ff, at the Source's 25 fps), in the Job's exports/.
-    assert small["file"] == f"exports/{candidate['id']}-00.00.12.png"
-    assert small["url"] == f"/media/{job['id']}/{small['file']}"
-    [stream] = probe(settings, job_dir / small["file"])["streams"]
+    # Named after the Candidate and the time (mm.ss.ff, at 25 fps), in the Job's exports/,
+    # its path on this Mac, its URL with its time, as a saved sound's.
+    name = f"{candidate['id']}-00.00.12.png"
+    path = job_dir / "exports" / name
+    assert small == {"path": str(path), "name": name, "url": f"/media/{job['id']}/exports/{name}?v={path.stat().st_mtime_ns}"}
+    [stream] = probe(settings, path)["streams"]
     assert (stream["codec_name"], stream["width"], stream["height"]) == ("png", 720, 1280)
     served = client.get(small["url"])
-    assert served.status_code == 200 and served.content == (job_dir / small["file"]).read_bytes()
+    assert served.status_code == 200 and served.content == path.read_bytes()
 
-    # Without a Preset, the default's size; the same name is overwritten.
+    # Without a Preset, the default's size; the same name is overwritten, at another URL.
     default = saved_frame(client, job, candidate, at=0.5)
-    assert default["file"] == small["file"]
-    [stream] = probe(settings, job_dir / default["file"])["streams"]
+    assert default["path"] == small["path"] and default["url"] != small["url"]
+    [stream] = probe(settings, path)["streams"]
     assert (stream["width"], stream["height"]) == (1080, 1920)
 
     now = client.get(f"/api/jobs/{job['id']}").json()
@@ -80,11 +82,10 @@ def test_a_frame_has_the_presets_size_or_the_defaults_and_leaves_the_job_and_its
 def test_a_frame_shows_an_unsaved_draft_text_layer_at_its_planned_place(client, settings):
     job = reviewed(client)
     candidate = add(client, job, "halo", "kabar")
-    job_dir = settings.data_dir / "jobs" / job["id"]
-    plain = pixels_of(settings, job_dir / saved_frame(client, job, candidate, at=1.0)["file"])
+    plain = pixels_of(settings, Path(saved_frame(client, job, candidate, at=1.0)["path"]))
 
     draft = {"text_layers": [GREEN_TITLE]}
-    drawn = pixels_of(settings, job_dir / saved_frame(client, job, candidate, at=1.0, draft=draft)["file"])
+    drawn = pixels_of(settings, Path(saved_frame(client, job, candidate, at=1.0, draft=draft)["path"]))
     planned = client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan", json=draft).json()["plan"]
     [event] = planned["texts"]
     box = event["picture"]["bounds"]
@@ -112,7 +113,7 @@ def test_a_frames_caption_hook_and_shape_match_the_rendered_clips_frame_at_that_
     job_dir = settings.data_dir / "jobs" / job["id"]
 
     for at in (0.4, 1.2):
-        frame = pixels_of(settings, job_dir / saved_frame(client, job, candidate, at=at)["file"])
+        frame = pixels_of(settings, Path(saved_frame(client, job, candidate, at=at)["path"]))
         clip_at = clip_frame(settings, job_dir / clip["output"]["video"], at)
         difference = np.abs(frame - clip_at).sum(axis=2)
         # Only the Clip's encoding tells them apart.
@@ -125,10 +126,9 @@ def test_a_frames_caption_hook_and_shape_match_the_rendered_clips_frame_at_that_
 def test_a_saved_frame_goes_into_the_media_library_as_an_image_that_can_be_an_overlay(client, settings):
     job = reviewed(client)
     candidate = add(client, job, "halo", "kabar")
-    job_dir = settings.data_dir / "jobs" / job["id"]
     saved = saved_frame(client, job, candidate, at=0.5)
 
-    png = (job_dir / saved["file"]).read_bytes()
+    png = Path(saved["path"]).read_bytes()
     uploaded = client.post("/api/media", files={"file": ("Judul-00.00.12.png", png, "image/png")})
     assert uploaded.status_code == 201, uploaded.text
     item = uploaded.json()

@@ -37,7 +37,7 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, preview_plan
 from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
-from app.export_files import save_frame
+from app.export_files import SavedExport, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
@@ -50,7 +50,6 @@ from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.renderer import AudioFormat, available_codecs
 from app.rendering import NothingToRender, ranked_clips, source_copies
-from app.saved_audio import save_audio
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -448,13 +447,6 @@ class FrameRequest(BaseModel):
     export_preset_id: str | None = None
 
 
-class SavedFrame(BaseModel):
-    """A saved frame (an Export file): its path in the Job's directory, and its URL."""
-
-    file: str
-    url: str
-
-
 class SaveAudioRequest(BaseModel):
     """The format a Candidate's sound is saved alone in, and the Export Preset whose loudness it
     takes; the default when left out."""
@@ -463,14 +455,6 @@ class SaveAudioRequest(BaseModel):
 
     format: AudioFormat = "wav"
     export_preset_id: str | None = None
-
-
-@dataclass(frozen=True)
-class SavedAudio:
-    """A Candidate's saved sound: its path on this Mac and its URL, served from the Job's directory."""
-
-    path: str
-    url: str
 
 
 class RetimedRequest(BaseModel):
@@ -844,23 +828,20 @@ def save_candidate_frame(
     export_presets: ExportPresets,
     logos: Logos,
     library: Media,
-) -> SavedFrame:
+) -> SavedExport:
     """Save the frame at `at` (Timeline time) of the Candidate, or of `draft` (as the Preview Plan
     plans it: from cached analysis only), drawn as its render would draw it at the Export Preset's
     frame rate and size (the default's when left out), as a PNG in the Job's exports/
     (`<candidate>-<mm.ss.ff>.png`, overwritten). Synchronous, outside the render queue: the Job's
     status doesn't change. 422 for an unknown Preset or a draft that isn't a valid edit."""
-    try:
-        export = (export_presets.default() if body.export_preset_id is None else export_presets.get(body.export_preset_id)).settings
-    except ExportPresetNotFound as exc:
-        raise HTTPException(422, f"No Export Preset {exc}") from None
+    export = _export_preset(export_presets, body.export_preset_id).settings
     planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, body.draft, export.fps)
-    job = store.get(job_id)
+    job, job_dir = store.get(job_id), store.job_dir(job_id)
     try:
-        file = save_frame(job, store.job_dir(job_id), candidate_id, planned.plan, body.at, export, settings, library, logos)
+        path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos)
     except RuntimeError as exc:
         raise HTTPException(500, str(exc)) from None
-    return SavedFrame(file=file, url=f"/media/{job_id}/{file}")
+    return saved_export(job_id, job_dir, path)
 
 
 def _draft_plan(
@@ -911,8 +892,8 @@ def save_candidate_audio(
     presets: Presets,
     export_presets: ExportPresets,
     library: Media,
-) -> SavedAudio:
-    """Save the Candidate's sound alone (app/saved_audio.py), as its saved Revision's Clip would mix
+) -> SavedExport:
+    """Save the Candidate's sound alone (app/export_files.py), as its saved Revision's Clip would mix
     it, at `export_preset_id`'s loudness (the default Preset's when left out): a 48 kHz 16-bit WAV or
     an AAC M4A, written to the Job's exports/ as <candidate>.wav or .m4a, overwriting it. At once,
     outside the render queue: the Job's status doesn't change. 422 for an unknown Export Preset; 409
@@ -927,14 +908,10 @@ def save_candidate_audio(
     candidate = next((c for c in candidates if c.id == candidate_id), None)
     if candidate is None:
         raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
-    try:
-        preset = export_presets.default() if body.export_preset_id is None else export_presets.get(body.export_preset_id)
-    except ExportPresetNotFound as exc:
-        raise HTTPException(422, f"No Export Preset {exc}") from None
+    export = _export_preset(export_presets, body.export_preset_id).settings
     job_dir = store.job_dir(job_id)
-    path = save_audio(job, job_dir, candidate, body.format, preset.settings, settings, presets, library)
-    url = f"/media/{job_id}/{path.relative_to(job_dir).as_posix()}?v={path.stat().st_mtime_ns}"
-    return SavedAudio(str(path), url)
+    path = save_audio(job, job_dir, candidate, body.format, export, settings, presets, library)
+    return saved_export(job_id, job_dir, path)
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)
@@ -1004,14 +981,15 @@ def _review(
 
 
 @router.post("/jobs/{job_id}/render")
-def render(job_id: str, store: Store, worker: JobWorker, body: RenderRequest | None = None) -> list[Clip]:
+def render(job_id: str, store: Store, worker: JobWorker, export_presets: ExportPresets, body: RenderRequest | None = None) -> list[Clip]:
     """Queue Clips of the selected Candidates (or of `candidate_ids`); the Job is `rendering` until
     they are done. A Candidate rendered before is rendered again, replacing its Clip. Returns the
     Job's Clips. Each Clip renders with `export_preset_id` (the default when left out) as it is when
     its render starts; a Clip asked for again while queued takes the latest. 422 when no Candidate is
     selected, or for an unknown Export Preset; 409 unless the Job is in review or rendering."""
+    preset = _export_preset(export_presets, body.export_preset_id if body else None)
     try:
-        worker.render(job_id, body.candidate_ids if body else None, body.export_preset_id if body else None)
+        worker.render(job_id, body.candidate_ids if body else None, preset.id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     except CandidateNotFound as exc:
@@ -1020,8 +998,6 @@ def render(job_id: str, store: Store, worker: JobWorker, body: RenderRequest | N
         raise HTTPException(409, f"{exc}: Candidates can be rendered once it is in review") from None
     except NothingToRender as exc:
         raise HTTPException(422, str(exc)) from None
-    except ExportPresetNotFound as exc:
-        raise HTTPException(422, f"No Export Preset {exc}") from None
     return list_clips(job_id, store)
 
 
@@ -1516,6 +1492,14 @@ _KEEP = {"Cache-Control": "public, max-age=604800"}
 # Nor do Filmstrips and Peaks, whose format is in their URL (docs/adr/0005-timeline-media-is-derived-per-chunk.md),
 # nor Retimed copies, named by their range (docs/adr/0009).
 _DERIVED = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
+def _export_preset(export_presets: ExportPresetStore, preset_id: str | None) -> ExportPreset:
+    """The Export Preset `preset_id`, or the default when None; 422 for an unknown one."""
+    try:
+        return export_presets.default() if preset_id is None else export_presets.get(preset_id)
+    except ExportPresetNotFound:
+        raise HTTPException(422, f"No Export Preset {preset_id}") from None
 
 
 def _preset(presets: PresetStore, preset_id: str) -> StylePreset:

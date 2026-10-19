@@ -324,7 +324,7 @@ class Renderer:
             shutil.rmtree(fonts, ignore_errors=True)
 
     def render_audio(
-        self, source: Path, plan: RenderPlan, audio: Path, kind: AudioFormat, lufs: float | None, files: dict[str, Path] | None = None
+        self, source: Path, plan: RenderPlan, audio: Path, format: AudioFormat, lufs: float | None, files: dict[str, Path] | None = None
     ) -> None:
         """Write the Clip's sound alone to `audio`, mixed as the Clip's own is (the Clip's sound or
         its Segments', its Music Clips and its Overlays' sound) and normalized to `lufs` (left as it is
@@ -335,7 +335,7 @@ class Renderer:
         loudness = None if lufs is None else self._measure(source, plan, lufs, files)
         sources, inputs, _, heard = _sound(plan, source, files, tuning.audio_rate)
         part = audio.with_name(f".{audio.stem}.part{audio.suffix}")
-        encode = ["-c:a", "pcm_s16le", "-f", "wav"] if kind == "wav" else ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-f", "mp4"]
+        encode = ["-c:a", "pcm_s16le", "-f", "wav"] if format == "wav" else ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-f", "mp4"]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", *sources, *inputs,
             "-filter_complex", f"{heard}{_normalized(tuning, lufs, loudness)}[a]",

@@ -1120,8 +1120,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               title={candidateName(candidate, index)}
               draft={draft}
               at={() => playback.time}
-              fps={fps}
-              duration={duration}
               toLibrary={library.upload}
               compact
             />

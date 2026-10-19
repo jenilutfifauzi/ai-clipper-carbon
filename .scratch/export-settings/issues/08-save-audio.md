@@ -33,3 +33,7 @@
 - **Frontend**: `pages/job/SaveAudio.tsx`: `SaveAudioButton` (a popover menu, WAV / M4A, like the Render button's) and `saveAudio()`, which posts and then clicks a link whose `download` is named after the Candidate's title. The Clip card's uses that Clip's Preset (`againPreset`); the clip editor header's (the Candidate's actions, next to Revision History) uses the Preset picked on the Render button. `downloadName(title, id, ext)` moved to `format.ts` (the Clip's MP4 download uses it too).
 - **For merging with 07**: 07 also writes to `exports/`; if it defines its own EXPORTS_DIR, keep one.
 - Tests: `backend/tests/test_save_audio.py` (WAV 48 kHz s16 with the Clip's length at −14 LUFS by default, served by its URL; M4A AAC; overwritten; the Job stays in review with no Clips; Archive leaves a −30 dB tone under −40 LUFS while Shorts brings it to −14; a reversed counter Segment's sweep falls, and a song's 1 s fade-out halves at its middle and is gone after; its Retimed copy made; refusals; MCP `export_audio`) and `frontend/src/pages/job/SaveAudio.test.tsx` (download names, the menu's markup).
+
+**2026-10-19, agent:** Review fixes.
+- `app/saved_audio.py` is gone: `save_audio` and `audio_name` (was `audio_file`) live in `app/export_files.py`, with the frame's, sharing one EXPORTS_DIR and tail. The response is the shared `SavedExport` `{path, name, url}`; api.ts has one `SavedExport` type for both.
+- The audio format is `format` throughout (`Renderer.render_audio`, `save_audio`, the API and api.ts), not `kind`.

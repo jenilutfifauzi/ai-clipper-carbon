@@ -800,9 +800,13 @@ export interface PreviewWord extends Word {
   at: number;
 }
 
-/** A saved frame (an Export file): its path in the Job's directory, and its URL. */
-export interface SavedFrame {
-  file: string;
+/**
+ * A saved Export file (a frame or a sound): its path on this Mac, its name, and the URL it downloads
+ * from, with its time, since a file saved again keeps its name.
+ */
+export interface SavedExport {
+  path: string;
+  name: string;
   url: string;
 }
 
@@ -1045,12 +1049,6 @@ export interface ExportPresetList {
 // The formats a Candidate's sound is saved alone in: a 48 kHz 16-bit WAV, or AAC in an M4A.
 export type AudioFormat = "wav" | "m4a";
 
-// A saved sound, an Export file: its path on this Mac and the URL it downloads from.
-export interface SavedAudio {
-  path: string;
-  url: string;
-}
-
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
   start: number;
@@ -1248,7 +1246,7 @@ export const api = {
     ),
   // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).
   saveAudio: (jobId: string, candidateId: string, format: AudioFormat, exportPresetId?: string) =>
-    request<SavedAudio>(`/jobs/${jobId}/candidates/${candidateId}/audio`, {
+    request<SavedExport>(`/jobs/${jobId}/candidates/${candidateId}/audio`, {
       method: "POST",
       body: JSON.stringify({ format, export_preset_id: exportPresetId }),
     }),
@@ -1269,7 +1267,7 @@ export const api = {
   // The frame at `at` (Timeline time) as the render draws it, of the Candidate or of an unsaved
   // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
   saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
-    request<SavedFrame>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
+    request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
   listPresets: () => request<StylePreset[]>("/presets"),

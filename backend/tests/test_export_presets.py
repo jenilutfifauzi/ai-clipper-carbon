@@ -152,8 +152,8 @@ def test_a_clip_renders_with_its_preset_as_it_is_when_the_render_starts_or_the_d
     wait_for(client, other["id"], "review")
     [clip] = rendered(client, job)["clips"]
     assert size_of(settings, job, clip) == (1080, 1920)
-    # It records the Preset asked for, and the settings it was made with.
-    assert (clip["output"]["export_preset_id"], clip["output"]["export"]["resolution"]) == ("mine", 1080)
+    # It records the Preset it was made with, the default, not the deleted one, and its settings.
+    assert (clip["output"]["export_preset_id"], clip["output"]["export"]["resolution"]) == ("shorts", 1080)
     # Deleted, the Preset can no longer be asked for.
     assert render(client, job, preset="mine").status_code == 422
 

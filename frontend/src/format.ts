@@ -80,11 +80,16 @@ export function jobTitle(job: Pick<Job, "url" | "upload">): string {
   return job.upload ? job.upload.name : shortUrl(job.url);
 }
 
-// The name a file of a Candidate downloads as (`extension` such as "mp4"): its title without the
-// characters file systems refuse, or "clip-<id>" without one.
+// What a file of a Candidate is named after when downloaded: its title without the characters file
+// systems refuse, or "clip-<id>" without one.
+export function fileTitle(title: string | undefined, candidateId: string): string {
+  const name = (title ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim();
+  return name || `clip-${candidateId}`;
+}
+
+// The name a file of a Candidate downloads as (`extension` such as "mp4"): its `fileTitle`.
 export function downloadName(title: string | undefined, candidateId: string, extension: string): string {
-  const name = (title ?? "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
-  return `${name || `clip-${candidateId}`}.${extension}`;
+  return `${fileTitle(title, candidateId)}.${extension}`;
 }
 
 // A still of what a Job is of: YouTube's own thumbnail, known from the URL before anything is

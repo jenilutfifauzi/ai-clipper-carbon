@@ -39,7 +39,6 @@ import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
 import { RevisionHistory } from "./editor/RevisionHistory";
 import { SaveFrameButton } from "./editor/SaveFrameButton";
-import { DEFAULT_FPS } from "./advanced/playhead";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { placedFields } from "./editor/placing";
@@ -394,8 +393,6 @@ export function CandidateEditor({
                     title={name}
                     draft={draft}
                     at={() => playback.time}
-                    fps={plan?.fps || DEFAULT_FPS}
-                    duration={playback.duration}
                   />
                 </div>
               )}

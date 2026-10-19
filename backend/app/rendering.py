@@ -606,7 +606,7 @@ class Renders:
                 overlays=candidate.overlays,
                 transitions=candidate.transitions,
                 revision=candidate.revision,
-                export_preset_id=clip.export_preset_id or preset.id,
+                export_preset_id=preset.id,
                 export=export,
                 bitrate_fallback=bitrate_fallback,
             )

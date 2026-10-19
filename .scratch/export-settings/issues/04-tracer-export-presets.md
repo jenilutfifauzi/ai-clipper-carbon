@@ -53,3 +53,8 @@
 - **Not done: the Advanced Edit has no render action today** (nor CandidateList), so only Review's "Render selected" and the Clip cards' buttons became split buttons. The menu's batch estimate and "Export Presets…" item are 05's.
 - Tests: `backend/tests/test_export_presets.py` (the built-ins and default; Small gives 720×1280 and the default replaces it with 1080×1920; an unknown id is 422 with nothing queued; a queued Candidate asked again renders with the latest, and its Revision is unchanged; a Preset as it is when the render starts, and the default once deleted; a Clip from before Presets reads and renders again with the default), `test_mcp.py` (render_clips' `export_preset_id`, list_clips, an unknown id's tool error) and `frontend/src/pages/job/exportPresets.test.tsx` (the menu's default pick and markup, Render again's Preset and fallback, the settings line including the legacy one). The menu was checked in markup, not in a browser.
 
+
+**2026-10-19, agent:** Review fixes.
+- A rendered Clip's `RenderedClip.export_preset_id` is now the Preset it was actually made with (`get_or_default`'s), so the default's id once the asked-for one was deleted, not the deleted id (`test_export_presets.py` asserts "shorts").
+- `api.py` has one `_export_preset(store, id)` (the default for None, 422 "No Export Preset <id>"), used by the render, frame and audio routes; the render route resolves it before queueing.
+- `render_clips`' and `save_preset`'s descriptions say Export Settings never make a Clip stale (within the existing TOOLS_BUDGET_BYTES).

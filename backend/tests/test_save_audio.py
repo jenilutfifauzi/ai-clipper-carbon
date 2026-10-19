@@ -63,6 +63,8 @@ def test_the_wav_is_48khz_16bit_as_long_as_the_clip_and_the_m4a_is_aac_both_in_t
     assert float(container["duration"]) == pytest.approx(length, abs=0.05)
     # Loudness is the default Preset's.
     assert loudness(settings, path) == pytest.approx(-14, abs=1)
+    # Its name, and its URL with its time, as a saved frame's.
+    assert wav["name"] == path.name and wav["url"] == f"/media/{job['id']}/exports/{path.name}?v={path.stat().st_mtime_ns}"
     downloaded = client.get(wav["url"])
     assert downloaded.status_code == 200 and downloaded.content == path.read_bytes()
 
