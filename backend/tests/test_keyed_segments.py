@@ -88,7 +88,7 @@ def test_a_picture_turned_or_faded_doesnt_cover_the_frame():
 # Seam A: the API and MCP
 
 
-def test_keyframes_on_a_source_segment_are_refused_and_a_videos_are_kept(client, clips):
+def test_picture_keyframes_on_a_source_segment_are_refused_and_a_videos_are_kept(client, clips):
     red = upload(client, clips["red"], "red.mp4").json()
     job = reviewed(client)
     candidate = add(client, job, "halo", "ya")
@@ -101,7 +101,7 @@ def test_keyframes_on_a_source_segment_are_refused_and_a_videos_are_kept(client,
     assert saved["segments"][1]["keys"] == {}
 
     for segments, message in (
-        ([video, episode | {"keys": {"x": [{"at": 0, "value": 300}]}}], "Segment e shows the episode, which has no Keyframes"),
+        ([video, episode | {"keys": {"x": [{"at": 0, "value": 300}]}}], "Segment e shows the episode, whose Layouts frame it: it has no x Keyframes"),
         # Its length is its range of the video: 1.5 s.
         ([video | {"end": 1.5}, episode], "Segment v's scale Keyframe at 1.5 s is past its length of 1.25 s; send its keys too"),
         ([video | {"keys": {"volume": [{"at": 0, "value": 3}]}}, episode], "volume is 0 to 2"),
@@ -139,7 +139,7 @@ async def test_the_agent_is_refused_a_range_that_strands_a_segments_keyframe_and
     }
     # 640x360 fits as 1080x607.5 about the frame's centre: at scale 1, then 2.
     assert [view["bounds"]["width"] for view in scene["bounds_at_keys"]] == [1080, 2160]
-    [sound] = plan["sounds"]
+    [sound] = [sound for sound in plan["sounds"] if sound["id"] == "v"]
     assert sound == {"id": "v", "media": item["id"], "start": start, "end": round(start + 1.5, 3), "keys": {"volume": [{"at": round(start + 0.5, 3), "value": 0.5, "ease": "linear"}]}}
 
 

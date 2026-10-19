@@ -3,11 +3,11 @@
 // chunks an item needs, the frame each tile shows, the Peaks level for a zoom, the gain along an
 // item, and the Volume Line's curve; for .scratch/navigation-playback/spec.md, the Edit Points; and
 // for .scratch/keyframes/spec.md, the ruler's diamonds.
-import type { Keyframe, Keys, Retiming } from "../../../api";
-import { valueAt } from "../editor/keyframes";
+import type { AudioEvent, Ducking, Keyframe, Keys, MusicClip, Retiming } from "../../../api";
+import { loudness } from "../editor/loudness";
 import type { PlayedSegment } from "../editor/playback";
 import { playingFrom, sourceAt } from "../editor/segmentTime";
-import type { AdvancedEdits } from "./edits";
+import { fadesWithin, type AdvancedEdits } from "./edits";
 import { KEY_GAP_SECS, toMillionth } from "./keyActions";
 import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
@@ -373,31 +373,69 @@ export function peaksExtremes(peaks: Peaks, from: number, to: number): [number, 
   return [low / 127, high / 127];
 }
 
-/** How an item `secs` long is heard: at `volume`, or by its volume Keyframes (`keys`), through its fades. */
+/**
+ * How an item `secs` long is heard: at `volume`, or by its volume Keyframes (`keys`), through its
+ * fades. A Segment under the Transition into the next is heard on `tail` seconds past what is drawn
+ * of it, and its fade out ends there. A ducked Music Clip is turned down by its `duck` (musicDuck).
+ */
 export interface Heard {
   volume: number;
   secs: number;
   fade_in: number;
   fade_out: number;
   keys?: readonly Keyframe[];
+  tail?: number;
+  duck?: Duck;
+}
+
+/**
+ * How a Music Clip is Ducked: `depth` dB under its `speech`, by the plan's `ducking`, and turned down
+ * over its `stretches` (GLOSSARY.md, Volume Line: the plan's `ducked`, ramps included), all in seconds
+ * into it.
+ */
+export interface Duck {
+  depth: number;
+  speech: [number, number][];
+  stretches: [number, number][];
+  ducking: Ducking;
 }
 
 /**
  * How loud an item `secs` long is `time` seconds into it: its volume, or its volume Keyframes
- * sampled there (keyframes.ts), through its fade in's and fade out's linear ramps (none for a fade
- * of 0), as the renderer has it.
+ * sampled there, through its fades, heard on `tail` seconds past its `secs`, and its duck: the
+ * preview's gain (loudness.ts' loudness), which the shared cases pin to the renderer's, of the item as
+ * a sound from 0 to its end.
  */
-export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [] }: Heard): number {
-  const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
-  return valueAt(keys, time, volume) * ramp(time, fade_in) * ramp(secs - time, fade_out);
+export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [], tail = 0, duck }: Heard): number {
+  const sound: AudioEvent = { id: "", media: null, start: 0, end: secs + tail, offset: 0, volume, fade_in, fade_out, gain: [...keys] };
+  return loudness(duck ? { ...sound, duck: duck.depth, speech: duck.speech, ducking: duck.ducking } : sound, time);
 }
 
 /**
- * How a media Segment is heard along what is drawn of it (`shown`, from where it starts on the
- * Timeline, as keyedItem's segmentSpan starts it): its volume, or its volume Keyframes, with no fades.
+ * How Music Clip `clip` is Ducked on the Timeline: at its own depth (as drafted, so that the
+ * inspector's change shows at once), under the speech and over the stretches its plan's `event` has
+ * (Clip seconds, made seconds into it), by the plan's `ducking`. None when it is switched off, of the
+ * Source (never Ducked), or not planned yet.
  */
-export function segmentHeard(segment: { volume?: number; keys?: Keys }, shown: { start: number; end: number }): Heard {
-  return { volume: segment.volume ?? 1, secs: shown.end - shown.start, fade_in: 0, fade_out: 0, keys: segment.keys?.volume };
+export function musicDuck(clip: MusicClip, event: AudioEvent | undefined, ducking: Ducking | undefined): Duck | undefined {
+  if (clip.media === null || clip.duck == null || !event || !ducking) return undefined;
+  const into = (spans: [number, number][] = []) => spans.map(([start, end]): [number, number] => [start - clip.start, end - clip.start]);
+  return { depth: clip.duck, speech: into(event.speech), stretches: into(event.ducked), ducking };
+}
+
+/** A Segment's sound: its volume, its Keyframes and its fades. */
+type SegmentSound = { volume?: number; keys?: Keys; fade_in?: number; fade_out?: number };
+
+/**
+ * How a Segment is heard along what is drawn of it (`shown`, from where it starts on the Timeline, as
+ * keyedItem's segmentSpan starts it), and `tail` seconds on under the Transition into the next: its
+ * volume, or its volume Keyframes, through its fades fitted to all it is heard for, as the plan fits
+ * them. Its Volume Line's; a Source Segment's Waveform is at sourceHeard.
+ */
+export function segmentHeard(segment: SegmentSound, shown: { start: number; end: number }, tail = 0): Heard {
+  const secs = shown.end - shown.start;
+  const fades = fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, secs + tail);
+  return { volume: segment.volume ?? 1, secs, ...fades, keys: segment.keys?.volume, ...(tail > 0 && { tail }) };
 }
 
 /**
@@ -406,6 +444,24 @@ export function segmentHeard(segment: { volume?: number; keys?: Keys }, shown: {
  */
 export function sourceGain({ source_volume }: { source_volume: number }, segment: { volume?: number }): number {
   return source_volume * (segment.volume ?? 1);
+}
+
+/**
+ * How a Source Segment is heard along what is drawn of it (segmentHeard) under the Clip's own sound:
+ * its volume or its volume Keyframes, each times `source_volume`, as the renderer has it.
+ */
+export function sourceHeard({ source_volume }: { source_volume: number }, segment: SegmentSound, shown: { start: number; end: number }, tail = 0): Heard {
+  const heard = segmentHeard(segment, shown, tail);
+  return { ...heard, volume: sourceGain({ source_volume }, segment), keys: heard.keys?.map((key) => ({ ...key, value: key.value * source_volume })) };
+}
+
+/**
+ * How an item of the Source's sound other than a Segment (a Music Clip of the Source) is heard: as
+ * it is `heard` on its own, times the Clip's own sound, its Keyframes' values too, as the renderer
+ * has it. Its Waveform's, as sourceHeard is a Source Segment's.
+ */
+export function underSourceVolume(heard: Heard, { source_volume }: { source_volume: number }): Heard {
+  return { ...heard, volume: heard.volume * source_volume, keys: heard.keys?.map((key) => ({ ...key, value: key.value * source_volume })) };
 }
 
 // --- The Volume Line ---
@@ -441,13 +497,25 @@ const VOLUME_LINE_POINTS = 120;
  * to be drawn straight between.
  */
 export function volumeLine(heard: Heard): { time: number; height: number }[] {
-  const { secs, fade_in, fade_out, keys = [] } = heard;
-  const times = new Set([fade_in, secs - fade_out, ...keys.map((key) => key.at)]);
+  const { secs, fade_in, fade_out, keys = [], tail = 0 } = heard;
+  const times = new Set([fade_in, secs + tail - fade_out, ...keys.map((key) => key.at)]);
   for (let i = 0; i <= VOLUME_LINE_POINTS; i++) times.add((secs * i) / VOLUME_LINE_POINTS);
   return [...times]
     .filter((time) => time >= 0 && time <= secs)
     .sort((a, b) => a - b)
     .map((time) => ({ time, height: volumeHeight(gainAt(time, heard)) }));
+}
+
+/**
+ * The Volume Line over `stretch` (seconds into the item), the top of its shading there: flat at its
+ * volume, or along its Keyframes through its fades (volumeLine) when it has some. Never the duck: the
+ * line stays at the volume dragged.
+ */
+export function underVolumeLine(heard: Heard, [from, to]: [number, number]): { time: number; height: number }[] {
+  const line = { ...heard, duck: undefined };
+  if (!heard.keys?.length) return [from, to].map((time) => ({ time, height: volumeHeight(heard.volume) }));
+  const inside = volumeLine(line).filter(({ time }) => time > from && time < to);
+  return [{ time: from, height: volumeHeight(gainAt(from, line)) }, ...inside, { time: to, height: volumeHeight(gainAt(to, line)) }];
 }
 
 // A drag of the Volume Line goes as if over at least this many pixels, so that in a short lane (a

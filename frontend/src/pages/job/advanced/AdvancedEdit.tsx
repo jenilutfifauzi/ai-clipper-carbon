@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
+import { ArrowLeft, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -43,9 +43,10 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
+import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   changeMusic,
+  detacher,
   dragSegment,
   freezer,
   gestureSpeed,
@@ -62,6 +63,8 @@ import {
   setHold,
   setReverse,
   speedSheetItem,
+  muter,
+  toggleMute,
   type Outcome,
   type SegmentDrag,
   type SpeedRef,
@@ -99,6 +102,8 @@ import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
+import { ItemMenu, type MenuEntry } from "./ItemMenu";
+import { attachmentName, canDownload, download, itemSound, sheetSound, type ItemSound } from "./itemSound";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
 import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
@@ -106,6 +111,7 @@ import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { useMediaLibrary } from "./MediaLibrary";
+import { Meters } from "./Meters";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
 import { DEFAULT_FPS, loopRegion, onFrame, type LoopMarks } from "./playhead";
@@ -115,12 +121,14 @@ import {
   isPicked,
   isPlaced,
   itemsOf,
+  LISTS,
   picked,
   prunedPick,
   samePick,
   stageIdsOf,
   stageItem,
   unlockedPick,
+  type ItemRef,
   type Pick,
   type PlacedKind,
 } from "./pick";
@@ -128,7 +136,7 @@ import { addShape, resizeShape } from "./shapeStyle";
 import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
-import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
+import { heardDraft, heardTrack, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
@@ -425,6 +433,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // A Timeline item's context menu (a desktop's), where it was asked for.
+  const [itemMenu, setItemMenu] = useState<{ item: ItemRef; at: { x: number; y: number } } | null>(null);
+  // Save sound as WAV: the item alone as heard, from the draft (the unsaved edits too, but not the
+  // Track mutes, a listening aid), made by the backend while a notice says so, then downloaded.
+  const [savingSound, setSavingSound] = useState(false);
+  async function saveSound(sound: ItemSound) {
+    setSavingSound(true);
+    setNotice({ id: Date.now(), text: `Making a WAV of ${sound.name}…`, busy: true });
+    try {
+      const { wav, disposition } = await api.saveSound(job.id, candidate.id, sound.kind, sound.id, draft);
+      download(wav, attachmentName(disposition) ?? `${sound.name}.wav`);
+      setNotice({ id: Date.now(), text: `Saved a WAV of ${sound.name}` });
+    } catch (reason) {
+      setNotice({ id: Date.now(), text: `Couldn't save a WAV of ${sound.name}: ${(reason as Error).message}` });
+    } finally {
+      setSavingSound(false);
+    }
+  }
   // The plan as the player draws it, the hidden Tracks left out.
   const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
   const playback = useMemo(() => new Playback(), []);
@@ -433,9 +459,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // draft's Segments, else as drafted; and as played, one Segment at a time. Everything placed on
   // the Main Track goes by these, as the playhead does (docs/adr/0002-segments-and-timeline-time.md).
   const planned = preview?.plan.segments ?? [];
-  const track: PlayedSegment[] = planned.length > 1 && planned.length === edits.segments.length ? planned : playedFrom(edits.segments);
+  // As drafted, it overlaps at Transitions too, so that a Detach before the plan catches up covers them.
+  const track: PlayedSegment[] =
+    planned.length > 1 && planned.length === edits.segments.length ? planned : playedFrom(edits.segments, edits.transitions);
   const played = playable(track);
-  playback.setSegments(played);
+  // Heard as the plan is, the muted Tracks silent (Track mute, a listening aid).
+  playback.setSegments(heardTrack(played, tracks));
   const duration = playback.duration;
   // The Clip's frame rate, the Source's, which the playhead steps by.
   const fps = preview?.plan.fps || DEFAULT_FPS;
@@ -557,10 +586,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
   // A notice told once while the change that makes it keeps coming (a drag), not at every step.
   const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
-  // A Segment's or video Overlay's Speed set from the inspector: one change of `group`, its ripple included.
+  // A Segment's, video Overlay's or Music Clip's Speed set from the inspector: one change of `group`, its ripple included.
   function setItemSpeed(item: SpeedRef, speed: number, group: string) {
-    const overlay = item.kind === "overlay" ? edits.overlays.find((other) => other.id === item.id) : undefined;
-    const video = overlay ? (mediaById.get(overlay.media)?.duration ?? undefined) : undefined;
+    const timed =
+      item.kind === "overlay"
+        ? edits.overlays.find((other) => other.id === item.id)
+        : item.kind === "music"
+          ? edits.music.find((other) => other.id === item.id)
+          : undefined;
+    // How far its file goes: its item's length, or the Source's for a Music Clip of the Source.
+    const video = !timed ? undefined : timed.media ? (mediaById.get(timed.media)?.duration ?? undefined) : sourceLength;
     const outcome = speedGesture(scene, item, speed, group, { longest, video });
     if (!outcome) return;
     if (outcome.edits !== edits) history.set(outcome.edits, group);
@@ -597,16 +632,29 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const actions = itemActions(scene, () => playback.time, apply, clip);
   const splits = splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
-  // A Segment's or video Overlay's Reverse turned on or off (the inspector's switch, R): one change.
+  // Detach and Reattach (GLOSSARY.md), from a Segment's or a Music Clip's context menu and the inspector.
+  const detaching = detacher(scene, track, (media) => mediaById.get(media)?.has_audio === true, apply);
+  function detachEntries(item: ItemRef): MenuEntry[] {
+    const segment = item.kind === "segment" ? item.id : item.kind === "music" ? edits.music.find((clip) => clip.id === item.id)?.detached_from : null;
+    if (!segment) return [];
+    return [
+      ...(item.kind === "segment" && detaching.canDetach(segment) ? [{ label: "Detach audio", onSelect: () => detaching.detach(segment) }] : []),
+      ...(detaching.canReattach(segment) ? [{ label: "Reattach audio", onSelect: () => detaching.reattach(segment) }] : []),
+    ];
+  }
+  // A Segment's, video Overlay's or Music Clip's Reverse turned on or off (the inspector's switch, R): one change.
   function setItemReverse(item: SpeedRef, reverse: boolean) {
     const outcome = setReverse(scene, item, reverse);
     if (outcome) history.set(outcome.edits);
   }
-  // The one picked Segment or video Overlay, which R reverses.
+  // The one picked Segment, video Overlay or Music Clip, which R reverses.
   const reversed = reversible(scene, (media) => mediaById.get(media)?.kind === "video");
-  // The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens.
+  // The one picked Segment, video Overlay or Music Clip, whose Speed sheet the phone's toolbar opens.
   const speedSheet = speedSheetItem(scene, (media) => mediaById.get(media)?.kind === "video");
-  // The Retimed copy the preview plays a Segment or Overlay from, as the plan has it (retimedCopy.ts).
+  // The phone's toolbar Mute of the Pick, as M does it; and the one picked item's Save sound as WAV in its sheet.
+  const muting = muter(scene, (media) => mediaById.get(media)?.has_audio === true, apply);
+  const savable = sheetSound(pick, edits, mediaById, canDownload());
+  // The Retimed copy the preview plays a Segment, Overlay or Music Clip from, as the plan has it (retimedCopy.ts).
   function copyOf(item: SpeedRef): RetimedAsk | null {
     const plan = preview?.plan;
     if (item.kind === "segment") {
@@ -614,6 +662,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       const range = shown && segmentCopy(shown);
       if (!range) return null;
       return shown.media ? { media: shown.media, range } : { job: job.id, range };
+    }
+    if (item.kind === "music") {
+      const heard = plan?.audio.find((sound) => sound.id === item.id);
+      return heard ? soundAsk(heard, job.id) : null;
     }
     const event = plan?.overlays.find((overlay) => overlay.id === item.id);
     const range = event && !event.image ? eventCopy(event) : null;
@@ -683,8 +735,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     freeze: () => (freezes.canFreeze(playback.time) ? freezes.freeze() : false),
     reverse: () => {
       if (!reversed) return false;
-      const items: { id: string; reverse?: boolean }[] = reversed.kind === "segment" ? edits.segments : edits.overlays;
+      const items: { id: string; reverse?: boolean }[] = edits[LISTS[reversed.kind]];
       setItemReverse(reversed, !items.find((item) => item.id === reversed.id)?.reverse);
+    },
+    mute: () => {
+      const outcome = toggleMute(scene, (media) => mediaById.get(media)?.has_audio === true);
+      if (!outcome) return false;
+      apply(outcome);
     },
     fit: () => fitTimeline.current?.(),
     zoom: (direction) => zoomTimeline.current?.(direction),
@@ -990,7 +1047,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onSegment: moveSegment,
             onMove: moveLayers,
             onVolume: (item, volume, group) => {
-              // A Music Clip or video Segment with volume Keyframes gets one at the playhead (auto-key).
+              // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
               applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
             },
             onFade: (id, fade, secs, heard, group) => {
@@ -1009,6 +1066,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
+            onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
           }}
         />
       )}
@@ -1027,6 +1085,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         fonts={fonts}
         actions={actions}
         mediaById={mediaById}
+        sourceLength={sourceLength}
         playback={playback}
         transition={transitionPanel(!wide)}
         onEdits={history.set}
@@ -1040,6 +1099,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
+        detaching={detaching}
       />
     </KeyingContext.Provider>
   );
@@ -1131,6 +1191,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
       </ConfirmDialog>
       <ChangeNotice notice={notice} onClose={closeNotice} />
+      {itemMenu && <SoundMenu opened={itemMenu} sound={itemSound(itemMenu.item, edits, mediaById)} detaching={detachEntries(itemMenu.item)} saving={savingSound} onSave={saveSound} onClose={setItemMenu} />}
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
@@ -1232,53 +1293,55 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             </aside>
           )}
         </div>
-        <section
-          aria-label="Timeline and Keyframes"
-          // One remembered height for every bottom tab (ADR 0024).
-          className="glass relative mx-3 flex min-h-0 flex-col overflow-hidden rounded-panel"
-          style={{ height: bottomHeightCss(ws) }}
-        >
-          <BottomTabs value={bottomTab} onChange={setBottomTab} />
-          {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
-              it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
-              source order so Tab reaches it last (ticket 05). */}
-          <Divider
-            orientation="horizontal"
-            label="Resize the Bottom tabs"
-            value={ws.bottomH}
-            min={BOTTOM.min}
-            max={BOTTOM.max}
-            onStart={() => {
-              const d = dividerDrag.current;
-              d.vhPx = window.innerHeight;
-              d.startH = ws.bottomH;
-            }}
-            onDrag={(deltaPx) => {
-              const d = dividerDrag.current;
-              layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
-            }}
-            onReset={() => layout.setBottomH(BOTTOM.def)}
-          />
-          {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
-              needs only a registry entry, no edit here. A panel's body renders while it is active or
-              `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
-              others mount on first activation. */}
-          {BOTTOM_TABS.map((tab) => {
-            const active = bottomTab === tab.value;
-            return (
-              <div
-                key={tab.value}
-                id={bottomPanelId(tab.value)}
-                role="tabpanel"
-                aria-label={tab.label}
-                hidden={!active}
-                className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
-              >
-                {(active || tab.keepMounted) && tab.render(bottomTabContext)}
-              </div>
-            );
-          })}
-        </section>
+        {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
+        <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
+          <section
+            aria-label="Timeline and Keyframes"
+            className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+          >
+            <BottomTabs value={bottomTab} onChange={setBottomTab} />
+            {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
+                it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
+                source order so Tab reaches it last (ticket 05). */}
+            <Divider
+              orientation="horizontal"
+              label="Resize the Bottom tabs"
+              value={ws.bottomH}
+              min={BOTTOM.min}
+              max={BOTTOM.max}
+              onStart={() => {
+                const d = dividerDrag.current;
+                d.vhPx = window.innerHeight;
+                d.startH = ws.bottomH;
+              }}
+              onDrag={(deltaPx) => {
+                const d = dividerDrag.current;
+                layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
+              }}
+              onReset={() => layout.setBottomH(BOTTOM.def)}
+            />
+            {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
+                needs only a registry entry, no edit here. A panel's body renders while it is active or
+                `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
+                others mount on first activation. */}
+            {BOTTOM_TABS.map((tab) => {
+              const active = bottomTab === tab.value;
+              return (
+                <div
+                  key={tab.value}
+                  id={bottomPanelId(tab.value)}
+                  role="tabpanel"
+                  aria-label={tab.label}
+                  hidden={!active}
+                  className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
+                >
+                  {(active || tab.keepMounted) && tab.render(bottomTabContext)}
+                </div>
+              );
+            })}
+          </section>
+          <Meters playback={playback} />
+        </div>
       </div>
     );
   }
@@ -1305,6 +1368,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         }}
         picking={picking}
         paste={pasteHere}
+        mute={muting}
         onInspect={() => setSheet("inspector")}
         onTransform={() => setSheet("transform")}
         onSpeed={speedSheet && (() => setSheet("speed"))}
@@ -1341,6 +1405,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 <SheetEase mediaById={mediaById} />
               </KeyingContext.Provider>
               {inspector}
+              {/* The desktop's context menu entry, here at the foot of the item's sheet. */}
+              {savable && (
+                <div className="flex flex-col gap-1 border-t border-border pt-3">
+                  <Button className="self-start" disabled={!!savable.silent || savingSound} onClick={() => saveSound(savable)}>
+                    <Download aria-hidden size={16} />
+                    Save sound as WAV
+                  </Button>
+                  {savable.silent && <p className="text-sm text-muted">{savable.silent}</p>}
+                </div>
+              )}
             </>
           ) : sheet === "transform" ? (
             <KeyingContext.Provider value={keying}>
@@ -1369,9 +1443,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 onHold={setFreezeHold}
                 onSegment={updateSegment}
                 onOverlay={updateOverlay}
+                onMusic={updateMusic}
               />
             ) : (
-              <p className="text-sm text-pretty text-muted">Pick a Segment or a video Overlay to change its Speed.</p>
+              <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
             )
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
@@ -1383,6 +1458,39 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         </Sheet>
       )}
     </div>
+  );
+}
+
+/**
+ * A Segment's, Music Clip's or Overlay's context menu: Detach or Reattach audio where offered
+ * (`detaching`), then Save sound as WAV, off while another is being made or when the item has no
+ * sound to save. It closes itself, unless another has opened since.
+ */
+function SoundMenu({
+  opened,
+  sound,
+  detaching,
+  saving,
+  onSave,
+  onClose,
+}: {
+  opened: { item: ItemRef; at: { x: number; y: number } };
+  sound: ItemSound | null;
+  detaching: MenuEntry[];
+  saving: boolean;
+  onSave: (sound: ItemSound) => void;
+  onClose: (close: (now: typeof opened | null) => typeof opened | null) => void;
+}) {
+  const close = useCallback(() => onClose((now) => (now === opened ? null : now)), [onClose, opened]);
+  if (!sound) return null;
+  return (
+    <ItemMenu
+      key={`${opened.item.kind}:${opened.item.id}:${opened.at.x}:${opened.at.y}`}
+      label={sound.name}
+      at={opened.at}
+      entries={[...detaching, { label: "Save sound as WAV", onSelect: () => onSave(sound), disabled: sound.silent ?? (saving ? "A WAV is being made" : null) }]}
+      onClose={close}
+    />
   );
 }
 

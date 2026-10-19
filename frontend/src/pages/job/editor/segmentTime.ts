@@ -100,7 +100,7 @@ export interface OverlayPlay extends Omit<Retiming, "hold"> {
  * `offset`, backwards in Reverse. Cut where the video ends, `video` seconds into it, and after the
  * `shown` seconds of it before the Clip ends, as the planner cuts it: the part it shows first is kept,
  * which in Reverse is its range's end, so that its range then starts later. Its sound plays alike,
- * and a Music Clip's song at 1×. (The backend's twin: `overlay_time` in backend/app/segment_time.py.)
+ * and so does a Music Clip's song. (The backend's twin: `overlay_time` in backend/app/segment_time.py.)
  */
 export function overlayTime({ offset, secs, speed = 1, reverse = false }: OverlayPlay, video = Infinity, shown = Infinity): SegmentRange {
   const whole = Math.min(offset + secs * speed, video);

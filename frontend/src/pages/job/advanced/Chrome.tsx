@@ -28,6 +28,8 @@ import {
   Trash2,
   Type,
   Undo2,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
@@ -36,7 +38,7 @@ import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
 import type { LoopRegion } from "../editor/loop";
 import { RATES, usePlayback, type Playback } from "../editor/playback";
-import type { Freezer, ItemActions, Splitter } from "./actions";
+import type { Freezer, ItemActions, Muter, Splitter } from "./actions";
 import type { Commands } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { keyNames, shortcutSheet } from "./keymap";
@@ -186,6 +188,7 @@ export function Toolbar({
   playback,
   picking,
   paste,
+  mute,
   onAsset,
   onInspect,
   onTransform,
@@ -202,6 +205,8 @@ export function Toolbar({
   playback: Playback;
   picking: boolean;
   paste: (() => void) | null;
+  // Mute or unmute the Pick, by M's rule (actions.ts' `muter`): null, and shown off, when it has no sound.
+  mute: Muter | null;
   onAsset: (tab: AssetTab) => void;
   onInspect: () => void;
   // Opens the Transform sheet: the picked picture's Transform, Crop and Background or decoration.
@@ -231,6 +236,7 @@ export function Toolbar({
             {count} picked
           </p>
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} disabled={!count} />
+          <MuteButton mute={mute} />
           <ToolButton icon={Copy} label="Duplicate" onClick={() => actions?.duplicate()} disabled={!actions} />
           <ToolButton icon={ClipboardCopy} label="Copy" onClick={() => actions?.copy()} disabled={!actions} />
           <ToolButton icon={ClipboardPaste} label="Paste" onClick={() => paste?.()} disabled={!paste} />
@@ -243,6 +249,7 @@ export function Toolbar({
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
           {picture && <ToolButton icon={Scaling} label="Transform" onClick={onTransform} />}
           {onSpeed && <ToolButton icon={FastForward} label="Speed" onClick={onSpeed} />}
+          <MuteButton mute={mute} />
           {actions && (
             <>
               <SplitButton splitter={splitter} playback={playback} />
@@ -267,6 +274,15 @@ export function Toolbar({
         </>
       )}
     </nav>
+  );
+}
+
+// The toolbar's Mute: Unmute, with a speaker, once every picked item with sound is Muted; off without one.
+function MuteButton({ mute }: { mute: Muter | null }) {
+  return mute?.muted ? (
+    <ToolButton icon={Volume2} label="Unmute" onClick={mute.toggle} />
+  ) : (
+    <ToolButton icon={VolumeX} label="Mute" onClick={() => mute?.toggle()} disabled={!mute} />
   );
 }
 

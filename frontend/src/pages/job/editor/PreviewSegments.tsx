@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { AudioEvent, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan } from "../../../api";
+import type { RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
-import { loudness } from "./loudness";
+import { changing, loudness, segmentSound } from "./loudness";
 import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
@@ -43,7 +43,7 @@ export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undef
  * its Speed, its pitch kept or not (`follow`). It is drawn from its
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
- * with the playback (PicturePanel), and a keyed sound follows its volume Keyframes (followCurve).
+ * with the playback (PicturePanel), and a keyed or faded sound follows its gain curve (followCurve).
  * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
  * frame held with the copy's progress until the copy is made (`mediaPlay`).
  */
@@ -68,22 +68,12 @@ export function MediaSegment({
   const { src, span } = useMemo(() => mediaPlay(segment, end, copy), [segment, end, copy]);
 
   useEffect(() => {
-    // Its sound: its volume Keyframes when keyed, faded out by the Transition taking it away.
-    const sound: AudioEvent = {
-      media: segment.media!,
-      start: segment.start,
-      end: fade ? fade.end : segment.end,
-      offset: segment.source_start,
-      volume: segment.volume,
-      fade_in: 0,
-      fade_out: fade ? fade.end - fade.start : 0,
-      gain: segment.gain,
-      id: segment.id,
-    };
+    // Its sound: its volume Keyframes when keyed, and its fades, taken away by the Transition, if any.
+    const sound = segmentSound(segment, 1, fade);
     const sync = () => {
       const inside = main.current ? follow(main.current, playback, span, true) : false;
       if (back.current) follow(back.current, playback, span, true);
-      if (main.current && !segment.silent && segment.gain.length) followCurve(main.current, playback, sound);
+      if (main.current && !segment.silent && changing(sound)) followCurve(main.current, playback, sound);
       else if (main.current) setVolume(main.current, segment.silent ? 0 : loudness(sound, playback.shownTime));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
@@ -126,9 +116,9 @@ export function MediaSegment({
  * a Speed a browser won't play), shown until `end`, or within a Transition when `end` is its own, its
  * sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a Blur's background and
  * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
- * own playing the copy (`sourcePlay`), at the Clip's own volume times its own. Outside its span they
- * wait at its start. Until the copy is made they hold the Source's `src` at the frame the copy shows
- * first, with its progress.
+ * own playing the copy (`sourcePlay`), at the Clip's own volume times its own (or its Keyframes'),
+ * through its fades. Outside its span they wait at its start. Until the copy is made they hold the
+ * Source's `src` at the frame the copy shows first, with its progress.
  */
 export function CopiedSourceSegment({
   plan,
@@ -160,21 +150,14 @@ export function CopiedSourceSegment({
   const scene = plan.scenes[sceneIndex];
 
   useEffect(() => {
-    const sound: AudioEvent = {
-      media: "",
-      start: segment.start,
-      end: fade ? fade.end : segment.end,
-      offset: segment.source_start,
-      volume: plan.source_volume * segment.volume,
-      fade_in: 0,
-      fade_out: fade ? fade.end - fade.start : 0,
-      gain: [],
-      id: segment.id,
-    };
+    // Its sound: its volume Keyframes when keyed, under the Clip's own, and its fades, taken away by
+    // the Transition, if any.
+    const sound = segmentSound(segment, plan.source_volume, fade);
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;
       if (follower.current) follow(follower.current, playback, span, true);
-      if (master.current) setVolume(master.current, loudness(sound, playback.shownTime));
+      if (master.current && changing(sound)) followCurve(master.current, playback, sound);
+      else if (master.current) setVolume(master.current, loudness(sound, playback.shownTime));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
     sync();
