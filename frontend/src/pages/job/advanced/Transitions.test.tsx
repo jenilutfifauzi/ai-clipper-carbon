@@ -8,10 +8,10 @@ describe("the Transitions tab", () => {
     const html = renderToStaticMarkup(<TransitionPanel transition={null} joined onPick={() => {}} onChange={() => {}} onRemove={() => {}} />);
     const headings = [...html.matchAll(/<h3 [^>]*class="([^"]*)"[^>]*>([^<]*)<\/h3>/g)].map(([, classes, text]) => ({ text, sticky: classes.split(" ").includes("sticky") }));
     expect(headings).toEqual(["Basic", "Slide", "Wipe", "Shape", "Zoom", "Light", "Glitch"].map((text) => ({ text, sticky: true })));
-    // Each section's kinds follow its heading: the Slide group's Pushes then its Covers.
+    // Each section's kinds follow its heading: the Slide group's Pushes, its Covers, then its Whip pans.
     const slide = html.slice(html.indexOf(">Slide</h3>"), html.indexOf(">Wipe</h3>"));
     expect([...slide.matchAll(/<span[^>]*>([^<]*)<\/span><\/button>/g)].map(([, label]) => label)).toEqual([
-      "Push left", "Push right", "Push up", "Push down", "Cover left", "Cover right", "Cover up", "Cover down",
+      "Push left", "Push right", "Push up", "Push down", "Cover left", "Cover right", "Cover up", "Cover down", "Whip pan left", "Whip pan right",
     ]);
   });
 });

@@ -76,8 +76,12 @@ BUILT_INS = [
     TransitionKind.PIXELIZE, TransitionKind.HBLUR, TransitionKind.DISTANCE, TransitionKind.HLSLICE,
 ]
 
-# Each strength-reading kind's strength when its Transition's is unset.
-STRENGTHS = {TransitionKind.FILMBURN: 0.6, TransitionKind.LIGHTLEAK: 0.7, TransitionKind.RGBSPLIT: 0.5}
+# Each strength-reading kind's strength when its Transition's is unset (a Spin's third is one turn).
+STRENGTHS = {
+    TransitionKind.FILMBURN: 0.6, TransitionKind.LIGHTLEAK: 0.7, TransitionKind.RGBSPLIT: 0.5,
+    TransitionKind.BLURDISSOLVE: 0.5, TransitionKind.WHIPLEFT: 0.5, TransitionKind.WHIPRIGHT: 0.5,
+    TransitionKind.ZOOMBLUR: 0.5, TransitionKind.SPIN: 1 / 3, TransitionKind.GLITCH: 0.5,
+}
 
 
 def strength(event: TransitionEvent) -> float:
@@ -133,20 +137,84 @@ def _leaked(event: TransitionEvent, side: Side) -> str:
     )
 
 
-def _split(event: TransitionEvent, side: Side) -> str:
-    """RGB split: the red picture moved one way and the blue the other by the spread (at most a 27th
-    of the width), over the overlap only. `rgbashift` takes planar RGB, so the overlap alone is
-    taken out (trimmed), shifted and brought back to the Clip's pixel format, and the side put back
-    together, so the rest of the side isn't converted."""
-    spread, name = round(strength(event) * side.width / 27), side.name
-    shifted = f"rgbashift=rh={-spread}:bh={spread},format=yuv420p"
+def _overlapped(event: TransitionEvent, side: Side, filters: str) -> str:
+    """`filters` on the overlap alone, for those that take planar RGB (`rgbashift`): the overlap is
+    taken out (trimmed), filtered and brought back to the Clip's pixel format, and the side put back
+    together, so the rest of the side isn't converted (5 ms a frame at 1080x1920)."""
+    name, filtered = side.name, f"{filters},format=yuv420p"
     # The outgoing side's overlap is its end, the incoming side's its start.
     if side.incoming:
         edge = event.end - event.start
-        before, after = f"trim=end={edge:.4f},{shifted}", f"trim=start={edge:.4f},setpts=PTS-STARTPTS"
+        before, after = f"trim=end={edge:.4f},{filtered}", f"trim=start={edge:.4f},setpts=PTS-STARTPTS"
     else:
-        before, after = f"trim=end={side.start:.4f}", f"trim=start={side.start:.4f},setpts=PTS-STARTPTS,{shifted}"
+        before, after = f"trim=end={side.start:.4f}", f"trim=start={side.start:.4f},setpts=PTS-STARTPTS,{filtered}"
     return f"split[{name}a][{name}b];[{name}a]{before}[{name}c];[{name}b]{after}[{name}d];[{name}c][{name}d]concat=n=2:v=1:a=0"
+
+
+def _split(event: TransitionEvent, side: Side) -> str:
+    """RGB split: the red picture moved one way and the blue the other by the spread (at most a 27th
+    of the width), over the overlap only."""
+    spread = round(strength(event) * side.width / 27)
+    return _overlapped(event, side, f"rgbashift=rh={-spread}:bh={spread}")
+
+
+def _blurred(event: TransitionEvent, side: Side, sigma: float, across: bool = False) -> str:
+    """`gblur` over the overlap, rising to `sigma` at its middle and falling back, or `across` only.
+    gblur's sigma takes no expression, so `sendcmd` steps it 30 times a second."""
+    length, blur = event.end - event.start, f"gblur@{side.name}"
+    steps = max(2, round(length * 30))
+    sigmas = (sigma * (1 - abs(2 * k / steps - 1)) for k in range(steps + 1))
+    commands = ";".join(f"{side.start + length * k / steps:.4f} {blur} sigma {each:.2f}" for k, each in enumerate(sigmas))
+    return f"sendcmd=c='{commands}',{blur}=sigma=0{':sigmaV=0' if across else ''}:{_overlap(event, side)}"
+
+
+def _dissolved(event: TransitionEvent, side: Side) -> str:
+    """Blur dissolve: both pictures blurred, most at the middle, by up to a 27th of the width."""
+    return _blurred(event, side, strength(event) * side.width / 27)
+
+
+def _whipped(event: TransitionEvent, side: Side) -> str:
+    """Whip pan: both pictures smeared across, most at the middle, by up to an eighth of the width,
+    as xfade's push carries them along."""
+    return _blurred(event, side, strength(event) * side.width / 8, across=True)
+
+
+def _zoomed(event: TransitionEvent, side: Side) -> str:
+    """Zoom blur: both pictures scaled up about their middles, most at the middle of the overlap (by
+    up to 60% of their size), cut back to the frame, and blurred along with it. Outside the overlap
+    the scale is 1, so `scale` passes the picture on."""
+    zoom = f"{0.6 * strength(event):.3f}*{_peak(event, side)}"
+    width, height = side.width, side.height
+    return (
+        f"scale=w='2*trunc({width}*(1+{zoom})/2)':h='2*trunc({height}*(1+{zoom})/2)':eval=frame:flags=fast_bilinear,"
+        f"crop={width}:{height}:x='{width / 2}*{zoom}':y='{height / 2}*{zoom}',"
+        + _blurred(event, side, strength(event) * side.width / 54)
+    )
+
+
+def _spun(event: TransitionEvent, side: Side) -> str:
+    """Spin: both pictures turned together by the turns (half a turn to two), easing in and out, the
+    outgoing one from upright and the incoming one to it; and shrunk by up to 30% at the middle so
+    their corners show. `rotate` fills what it uncovers with black."""
+    turns, length = 0.5 + 1.5 * strength(event), event.end - event.start
+    share = f"clip((t-{side.start:.4f})/{length:.4f},0,1)"
+    eased = f"({share}*{share}*(3-2*{share}){'-1' if side.incoming else ''})"
+    size = f"(1-0.3*{_peak(event, side)})"
+    width, height = side.width, side.height
+    return (
+        f"scale=w='2*trunc({width}*{size}/2)':h='2*trunc({height}*{size}/2)':eval=frame:flags=fast_bilinear,"
+        f"pad={width}:{height}:x='(ow-iw)/2':y='(oh-ih)/2':eval=frame,"
+        f"rotate=a='{2 * turns:.4f}*PI*{eased}':c=black:{_overlap(event, side)}"
+    )
+
+
+def _glitched(event: TransitionEvent, side: Side) -> str:
+    """Glitch: the colours torn apart (red one way, blue the other, green down) by up to an 18th of
+    the width, and flickering noise, over the overlap only, while xfade slices one picture into the
+    other."""
+    amount = strength(event)
+    spread = round(amount * side.width / 18)
+    return _overlapped(event, side, f"rgbashift=rh={-spread}:bh={spread}:gv={spread // 3},noise=alls={round(60 * amount)}:allf=t+u")
 
 
 RECIPES: dict[TransitionKind, Recipe] = {kind: Recipe(xfade=kind.value) for kind in BUILT_INS} | {
@@ -154,4 +222,10 @@ RECIPES: dict[TransitionKind, Recipe] = {kind: Recipe(xfade=kind.value) for kind
     TransitionKind.FILMBURN: Recipe(xfade="fade", outgoing=_burnt, incoming=_burnt),
     TransitionKind.LIGHTLEAK: Recipe(xfade="fade", outgoing=_leaked, incoming=_leaked),
     TransitionKind.RGBSPLIT: Recipe(xfade="fade", outgoing=_split, incoming=_split),
+    TransitionKind.BLURDISSOLVE: Recipe(xfade="fade", outgoing=_dissolved, incoming=_dissolved),
+    TransitionKind.WHIPLEFT: Recipe(xfade="slideleft", outgoing=_whipped, incoming=_whipped),
+    TransitionKind.WHIPRIGHT: Recipe(xfade="slideright", outgoing=_whipped, incoming=_whipped),
+    TransitionKind.ZOOMBLUR: Recipe(xfade="fade", outgoing=_zoomed, incoming=_zoomed),
+    TransitionKind.SPIN: Recipe(xfade="fade", outgoing=_spun, incoming=_spun),
+    TransitionKind.GLITCH: Recipe(xfade="hlslice", outgoing=_glitched, incoming=_glitched),
 }

@@ -1,4 +1,4 @@
-import { PIXELIZE_BLOCKS, pixelizeFilter, RGBSPLIT_LEVELS, rgbsplitFilter } from "./transitions";
+import { PIXELIZE_BLOCKS, pixelizeFilter, RGBSPLIT_LEVELS, rgbsplitFilter, WHIP_LEVELS, whipFilter } from "./transitions";
 
 // Colour matrices keeping one of a picture's red, green and blue (and its alpha).
 const ONLY = {
@@ -14,6 +14,8 @@ const ONLY = {
  * - RGB split's, one per tenth of strength. Each parts the red picture to the left and the blue to
  *   the right, by a share of the picture's width (in its bounding box's units), and adds the three
  *   back up.
+ * - Whip pan's, one per tenth of its blur. Each blurs the picture across only, by a share of its
+ *   width (an eighth at most).
  *
  * Drawn once wherever a look is shown: the preview, and the Transitions tab's cards. A browser
  * without them shows the look's crossfade alone.
@@ -45,6 +47,11 @@ export function TransitionFilters() {
             </filter>
           );
         })}
+        {Array.from({ length: WHIP_LEVELS }, (_, i) => i + 1).map((level) => (
+          <filter key={level} id={whipFilter(level)} x="0" y="0" width="1" height="1" primitiveUnits="objectBoundingBox" colorInterpolationFilters="sRGB">
+            <feGaussianBlur stdDeviation={`${level / WHIP_LEVELS / 8} 0`} edgeMode="duplicate" />
+          </filter>
+        ))}
       </defs>
     </svg>
   );

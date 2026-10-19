@@ -35,6 +35,11 @@ export const pixelizeFilter = (level: number) => `transition-pixelize-${level}`;
 export const RGBSPLIT_LEVELS = 10;
 export const rgbsplitFilter = (level: number) => `transition-rgbsplit-${level}`;
 
+// Whip pan's SVG filters (TransitionFilters.tsx draws them): one per tenth of its blur, each smearing
+// a picture across by that much of an eighth of its width, as the render does at most.
+export const WHIP_LEVELS = 10;
+export const whipFilter = (level: number) => `transition-whip-${level}`;
+
 // A look reads the Transition's knobs (backend/app/transitions.py): those a kind doesn't read are ignored.
 type Look = (progress: number, knobs?: TransitionKnobs) => TransitionLook;
 type Side = "top" | "right" | "bottom" | "left";
@@ -158,6 +163,53 @@ function split(p: number, strength: number) {
   return layers({ opacity: 1 - p, filter }, { filter });
 }
 
+// Blur dissolve: a crossfade with both pictures blurred by the strength, most halfway.
+const blurred = (p: number, strength: number) => through((amount) => (strength * amount ? `blur(${24 * strength * amount}px)` : undefined))(p);
+
+// Whip pan: a push of both pictures, each smeared across by the strength, most halfway.
+const whip = (from: Side) => (p: number, strength: number) => {
+  const pushed = push(from)(p);
+  const level = Math.round(strength * peak(p) * WHIP_LEVELS);
+  if (!level) return pushed;
+  const filter = `url(#${whipFilter(level)})`;
+  return layers({ ...pushed.outgoing, filter }, { ...pushed.incoming, filter });
+};
+
+// Zoom blur: a crossfade with both pictures scaled up about their middles (by up to 60%) and
+// blurred, by the strength, most halfway.
+function zoomBlur(p: number, strength: number) {
+  const amount = strength * peak(p);
+  if (!amount) return layers({ opacity: 1 - p });
+  const zoomed = { transform: `scale(${1 + 0.6 * amount})`, filter: `blur(${12 * amount}px)` };
+  return layers({ opacity: 1 - p, ...zoomed }, zoomed);
+}
+
+// Spin: a crossfade with both pictures turned together by the turns (half a turn to two, by the
+// strength), easing in and out, the outgoing one from upright and the incoming one to it; and
+// shrunk by up to 30% halfway.
+function spin(p: number, strength: number) {
+  if (p <= 0 || p >= 1) return layers({ opacity: 1 - p });
+  const turns = 360 * (0.5 + 1.5 * strength);
+  const turned = turns * p * p * (3 - 2 * p);
+  const size = `scale(${1 - 0.3 * peak(p)})`;
+  const rotate = (angle: number) => `rotate(${Math.round(angle * 100) / 100}deg) ${size}`;
+  return layers({ opacity: 1 - p, transform: rotate(turned) }, { transform: rotate(turned - turns) });
+}
+
+// Ten slices across, each keeping less of the outgoing picture from its left.
+const slices: Look = (p) =>
+  layers({ maskImage: `repeating-linear-gradient(to right, black 0%, black ${10 - 10 * p}%, transparent ${10 - 10 * p}%, transparent 10%)` });
+
+// Glitch: Slices of one picture into the other, both torn apart (red one way, blue the other, by up
+// to an 18th of the width: RGB split's filters by half as much again) and shaken across, by the strength.
+function glitch(p: number, strength: number) {
+  const sliced = slices(p);
+  const level = Math.min(RGBSPLIT_LEVELS, Math.round(strength * 1.5 * RGBSPLIT_LEVELS));
+  if (p <= 0 || p >= 1 || !level) return sliced;
+  const torn = { filter: `url(#${rgbsplitFilter(level)})`, transform: `translateX(${Math.round(200 * strength * Math.sin(97 * p)) / 100}%)` };
+  return layers({ ...sliced.outgoing, ...torn }, torn);
+}
+
 /**
  * Every Transition kind (docs/adr/0012-transitions-are-recipes-around-one-xfade.md): its name, its
  * section of the Transitions tab, and its look, near what its recipe renders (backend/app/transitions.py)
@@ -172,6 +224,7 @@ export const TRANSITIONS: Record<TransitionKind, { label: string; group: Transit
   dipcolour: { label: "Dip to colour", group: "Basic", look: (p, knobs) => dip(knobs?.colour ?? "#000000")(p), colour: "#000000" },
   // Clear where a noise is below the progress: at the ends, all or none of it.
   dissolve: { label: "Dissolve", group: "Basic", look: (p) => layers(p <= 0 ? {} : p >= 1 ? { opacity: 0 } : { maskImage: noise(p) }) },
+  blurdissolve: { label: "Blur dissolve", group: "Basic", ...strong(0.5, blurred) },
   slideleft: { label: "Push left", group: "Slide", look: push("right") },
   slideright: { label: "Push right", group: "Slide", look: push("left") },
   slideup: { label: "Push up", group: "Slide", look: push("bottom") },
@@ -180,6 +233,8 @@ export const TRANSITIONS: Record<TransitionKind, { label: string; group: Transit
   coverright: { label: "Cover right", group: "Slide", look: cover("left") },
   coverup: { label: "Cover up", group: "Slide", look: cover("bottom") },
   coverdown: { label: "Cover down", group: "Slide", look: cover("top") },
+  whipleft: { label: "Whip pan left", group: "Slide", ...strong(0.5, whip("right")) },
+  whipright: { label: "Whip pan right", group: "Slide", ...strong(0.5, whip("left")) },
   wipeleft: { label: "Wipe left", group: "Wipe", look: wipe("right") },
   wiperight: { label: "Wipe right", group: "Wipe", look: wipe("left") },
   wipeup: { label: "Wipe up", group: "Wipe", look: wipe("bottom") },
@@ -200,8 +255,11 @@ export const TRANSITIONS: Record<TransitionKind, { label: string; group: Transit
   // The outgoing picture squeezed into a line across the middle (or down it), the incoming one still behind.
   squeezeh: { label: "Squeeze across", group: "Zoom", look: (p) => layers({ transform: `scaleY(${1 - p})` }) },
   squeezev: { label: "Squeeze down", group: "Zoom", look: (p) => layers({ transform: `scaleX(${1 - p})` }) },
+  zoomblur: { label: "Zoom blur", group: "Zoom", ...strong(0.5, zoomBlur) },
+  spin: { label: "Spin", group: "Zoom", ...strong(1 / 3, spin) },
   filmburn: { label: "Film burn", group: "Light", ...strong(0.6, burn) },
   lightleak: { label: "Light leak", group: "Light", ...strong(0.7, leak) },
+  glitch: { label: "Glitch", group: "Glitch", ...strong(0.5, glitch) },
   rgbsplit: { label: "RGB split", group: "Glitch", ...strong(0.5, split) },
   pixelize: {
     label: "Pixelize",
@@ -213,12 +271,7 @@ export const TRANSITIONS: Record<TransitionKind, { label: string; group: Transit
   },
   hblur: { label: "Blur", group: "Glitch", look: through((amount) => `blur(${8 * amount}px)`) },
   distance: { label: "Distance", group: "Glitch", look: (p) => layers({ opacity: 1 - p }) },
-  // Ten slices across, each keeping less of the outgoing picture from its left.
-  hlslice: {
-    label: "Slices",
-    group: "Glitch",
-    look: (p) => layers({ maskImage: `repeating-linear-gradient(to right, black 0%, black ${10 - 10 * p}%, transparent ${10 - 10 * p}%, transparent 10%)` }),
-  },
+  hlslice: { label: "Slices", group: "Glitch", look: slices },
 };
 
 export const TRANSITION_KINDS = Object.keys(TRANSITIONS) as TransitionKind[];

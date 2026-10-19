@@ -4,8 +4,9 @@ import { cx } from "../../../format";
 import { showLook, TRANSITIONS, type LayerLook } from "../editor/transitions";
 import { DRAG_TRANSITION } from "./drag";
 
-// The moment a card rests at, where mid-way reads badly: before a dip's or a crop's middle, which is all colour.
-const CARD_MOMENTS: Partial<Record<TransitionKind, number>> = { fadeblack: 0.3, fadewhite: 0.3, circlecrop: 0.3, rectcrop: 0.3 };
+// The moment a card rests at, where mid-way reads badly: before a dip's or a crop's middle, which is
+// all colour, and before a Spin's, where its one turn has both pictures upside down rather than turning.
+const CARD_MOMENTS: Partial<Record<TransitionKind, number>> = { fadeblack: 0.3, fadewhite: 0.3, circlecrop: 0.3, rectcrop: 0.3, spin: 0.35 };
 const restingAt = (kind: TransitionKind) => CARD_MOMENTS[kind] ?? 0.5;
 
 // A hovered card plays its kind over this long, then holds the incoming picture until the loop's end.

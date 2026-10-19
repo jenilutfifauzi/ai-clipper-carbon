@@ -85,7 +85,7 @@ def test_transitions_are_saved_and_dropped_with_their_join(client):
     ])
     assert [(t["after"], t["kind"], t["secs"]) for t in candidate["transitions"]] == [("s0", "fade", 0.4), ("s1", "wipeleft", 0.5)]
     assert [event["kind"] for event in preview(client, job, candidate)["plan"]["transitions"]] == ["fade", "wipeleft"]
-    for bad in ([{"after": "s0", "kind": "spin"}], [{"after": "s0", "kind": "fade", "secs": 3.5}]):
+    for bad in ([{"after": "s0", "kind": "swirl"}], [{"after": "s0", "kind": "fade", "secs": 3.5}]):
         response = client.patch(f"/api/jobs/{job['id']}/candidates/{candidate['id']}", json={"transitions": bad})
         assert response.status_code == 422, bad
     # Deleting s1, and moving s0 to the end, leaves neither join.
@@ -398,6 +398,10 @@ def test_the_new_looks_render_their_middles_by_their_knobs_in_a_shorter_clip(cli
         assert np.abs(strongest - weakest).mean() > 6, kind
 
 
+# Every look made of native filters around an xfade (tickets 04 and 05).
+NEW_LOOKS = ("dipcolour", "filmburn", "lightleak", "rgbsplit", "blurdissolve", "whipleft", "whipright", "zoomblur", "spin", "glitch")
+
+
 # How much longer than a fade join a 0.5 s join of any kind may take to render.
 RENDER_BUDGET_SECS = 3.0
 
@@ -407,7 +411,7 @@ def test_a_join_of_each_new_look_renders_within_its_budget_of_a_fade(client, set
     job = reviewed(client)
     took: dict[str, float] = {}
     # The fade both first and last, its quicker render kept: the first render of a session is slower.
-    for kind in ("fade", "dipcolour", "filmburn", "lightleak", "rgbsplit", "fade"):
+    for kind in ("fade", *NEW_LOOKS, "fade"):
         candidate = joined(client, job, kind)
         began = time.monotonic()
         render(client, job, [candidate["id"]])
@@ -415,6 +419,59 @@ def test_a_join_of_each_new_look_renders_within_its_budget_of_a_fade(client, set
         took[kind] = min(took.get(kind, float("inf")), time.monotonic() - began)
         assert clip["status"] == "done", (kind, clip["error"])
     assert all(secs < took["fade"] + RENDER_BUDGET_SECS for secs in took.values()), took
+
+
+# .scratch/transitions-expanded/issues/05: Concat's moving looks.
+
+
+def turned(frame: np.ndarray) -> bool:
+    """Whether the shot's upright stripes lie across in the middle of the frame: it changes more
+    from row to row than from column to column there."""
+    shot = frame[800:1120, 300:780].mean(axis=2)
+    return np.abs(np.diff(shot, axis=0)).mean() > np.abs(np.diff(shot, axis=1)).mean()
+
+
+def across(frame: np.ndarray) -> float:
+    """How sharp the shot's upright stripes are: the mean change from column to column."""
+    return float(np.abs(np.diff(frame[700:1220].mean(axis=2), axis=1)).mean())
+
+
+def test_the_moving_looks_render_their_middles_by_their_strength_in_a_shorter_clip(client, settings, video_source, striped_video):
+    video_source.video = striped_video
+    job = reviewed(client)
+    kinds = ("blurdissolve", "whipleft", "whipright", "zoomblur", "spin", "glitch")
+    looks = {
+        **{kind: joined(client, job, kind) for kind in (*kinds, "fade", "slideleft")},
+        **{(kind, strength): joined(client, job, kind, strength=strength) for kind in kinds for strength in (0, 1)},
+    }
+    render(client, job)
+    clips = {clip["candidate_id"]: clip for clip in rendered(client, job, timeout=240)["clips"]}
+    frames = {}
+    for look, candidate in looks.items():
+        planned = preview(client, job, candidate)["plan"]
+        [event] = planned["transitions"]
+        clip = clips[candidate["id"]]
+        assert clip["status"] == "done", (look, clip["error"])
+        assert clip["output"]["duration"] == pytest.approx(planned["segments"][1]["end"], abs=0.1)
+        video = settings.data_dir / "jobs" / job["id"] / clip["output"]["video"]
+        frames[look] = [full_frame(settings, video, at) for at in (event["start"] - 0.2, (event["start"] + event["end"]) / 2, event["end"] + 0.2)]
+    for kind in kinds:
+        before, middle, after = frames[kind]
+        assert np.abs(middle - before).mean() > 8 and np.abs(middle - after).mean() > 8, kind
+    # A spin turns both pictures: half a turn in all is a quarter of one at the middle.
+    assert not turned(frames["spin"][0]) and turned(frames[("spin", 0)][1]) and not turned(frames["spin"][2])
+    # A whip pan smears the pictures across as they move: the outgoing one is going off the side
+    # the whip heads for, the incoming one coming in from the other.
+    assert across(frames["whipleft"][1]) < across(frames["slideleft"][1]) / 2
+    before, after = luma(frames["fade"][0]), luma(frames["fade"][2])
+    for kind, (outgoing, incoming) in {"whipleft": (slice(0, 540), slice(540, 1080)), "whipright": (slice(540, 1080), slice(0, 540))}.items():
+        middle = frames[kind][1][700:1220]
+        assert abs(middle[:, outgoing].mean() - before) < abs(middle[:, outgoing].mean() - after), kind
+        assert abs(middle[:, incoming].mean() - after) < abs(middle[:, incoming].mean() - before), kind
+    # Their strength shows: none and all of it give unlike middles.
+    for kind in kinds:
+        weakest, strongest = frames[(kind, 0)][1], frames[(kind, 1)][1]
+        assert np.abs(strongest - weakest).mean() > 6, kind
 
 
 @pytest.mark.anyio
@@ -438,4 +495,6 @@ async def test_the_agent_sets_a_transitions_knobs_alone_and_the_dry_run_shows_th
     told = told[: told.index("\n- ")]
     assert "Light (filmburn, lightleak)" in told
     strength, colour = told[told.index("`strength`") : told.index("`colour`")], told[told.index("`colour`") : told.index("Its sound")]
-    assert all(kind in strength for kind in ("filmburn", "lightleak", "rgbsplit")) and "dipcolour" in colour
+    assert all(kind in strength for kind in ("filmburn", "lightleak", "rgbsplit", "blurdissolve", "whipleft", "whipright", "zoomblur", "spin", "glitch"))
+    assert "dipcolour" in colour
+    assert "whipleft" in told[told.index("Slide (") :].split(")")[0] and "spin" in told[told.index("Zoom (") :].split(")")[0]

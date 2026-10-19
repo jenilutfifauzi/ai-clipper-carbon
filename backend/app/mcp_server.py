@@ -232,15 +232,17 @@ Edits:
   play on top of its keyed values.
 - A Transition joins a Segment (`after`, its id) to the next: the two overlap for its secs
   (0.1..3 s, 0.5 by default; half the shorter Segment at most), so the Clip is that much shorter.
-  Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dipcolour, dissolve), Slide
-  (slideleft, slideright, slideup, slidedown push both pictures along; coverleft, coverright,
-  coverup, coverdown slide the next over a still one), Wipe (wipeleft, wiperight, wipeup, wipedown,
-  radial: a clock wipe), Shape (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen),
-  Zoom (zoomin, squeezeh, squeezev), Light (filmburn, lightleak),
-  Glitch (rgbsplit, pixelize, hblur, distance, hlslice). Its knobs: `strength` (0..1; unset, the kind's own) is the heat of filmburn,
-  the brightness of lightleak and the spread of rgbsplit. `colour` (#RRGGBB, black unset) is
-  dipcolour's. A knob is kept on any kind, read only by those. Its sound, for every kind (a
-  dip never drops the sound out on its own): linear (the default; the two sides crossfade in
+  Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dipcolour, dissolve,
+  blurdissolve), Slide (slideleft, slideright, slideup, slidedown push both pictures along;
+  coverleft, coverright, coverup, coverdown slide the next over a still one; whipleft, whipright
+  push them smeared), Wipe (wipeleft, wiperight, wipeup, wipedown, radial: a clock wipe), Shape
+  (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen), Zoom (zoomin, squeezeh,
+  squeezev, zoomblur, spin), Light (filmburn, lightleak),
+  Glitch (glitch, rgbsplit, pixelize, hblur, distance, hlslice). Its knobs: `strength` (0..1; unset, the kind's own) is the heat of filmburn,
+  the brightness of lightleak, the spread of rgbsplit, the blur of blurdissolve, whipleft and
+  whipright, the zoom and blur of zoomblur, the turns of spin (half a turn to two) and the tearing
+  of glitch. `colour` (#RRGGBB, black unset) is dipcolour's. A knob is kept on any kind, read only
+  by those. Its sound, for every kind (a dip never drops the sound out on its own): linear (the default; the two sides crossfade in
   straight lines, dipping in the middle), equal_power (quarter sines, the level held through the
   middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
   it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in

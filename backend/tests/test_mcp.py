@@ -789,7 +789,7 @@ async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transiti
     # The instructions name each group with its kinds, and how long a Transition can be.
     transitions = mcp.instructions[mcp.instructions.index("- A Transition") :]
     assert "0.1..3 s" in transitions
-    for group, kinds in (("Basic", "fade, fadeblack"), ("Glitch", "rgbsplit, pixelize, hblur, distance, hlslice")):
+    for group, kinds in (("Basic", "fade, fadeblack"), ("Glitch", "glitch, rgbsplit, pixelize, hblur, distance, hlslice")):
         assert f"{group} ({kinds}" in transitions
     named = set(re.findall(r"[a-z]+", transitions[: transitions.index("\n- ")]))
     assert set(TransitionKind) <= named
