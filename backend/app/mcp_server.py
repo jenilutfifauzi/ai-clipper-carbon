@@ -898,8 +898,9 @@ def _plan_view(
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), every sound (a Segment's, a Music Clip's, an
     Overlay's) with its span, fades, volume Keyframes, whether it is Muted, a ducked one's depth and
-    where it is turned down (`_ducked`), what a sound at a Speed or in Reverse reads (`_video_read`),
-    and whether it is the Source's (`source`, a Music Clip's), each Shape's and each Text Layer's
+    where it is turned down (the plan's `ducked`), the Segment a Detached one is from, what a sound
+    at a Speed or in Reverse reads (`_video_read`), and whether it is the Source's (`source`, a Music
+    Clip's), each Shape's and each Text Layer's
     (with its lines) box and picture's URL (`picture_url`, by its name) as a picture layer's
     (`_layer_view`), and the Words."""
     plan = preview["plan"]
@@ -947,7 +948,8 @@ def _plan_view(
                 **_times(event, "start", "end"),
                 **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
                 **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
-                **({"duck": event["duck"], "ducked": _ducked(event, plan["ducking"])} if event.get("duck") is not None else {}),
+                **({"duck": event["duck"], "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]]} if event.get("duck") is not None else {}),
+                **({"detached_from": event["detached_from"]} if event.get("detached_from") else {}),
                 **(_video_read(event, copied) if _retimed(event) else {}),
             }
             # A silent video's Segment and a Freeze frame have no sound.
@@ -956,15 +958,6 @@ def _plan_view(
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
-
-
-def _ducked(event: dict, ducking: dict) -> list[list[float]]:
-    """Where a ducked sound is turned down, ramps included: around each span of its speech, within it."""
-    stretches = [
-        [round(max(event["start"], start - ducking["lead_secs"]), 2), round(min(event["end"], end + ducking["release_secs"]), 2)]
-        for start, end in event["speech"]
-    ]
-    return [stretch for stretch in stretches if stretch[0] < stretch[1]]
 
 
 def _retimed(event: dict) -> bool:

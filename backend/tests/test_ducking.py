@@ -12,6 +12,7 @@ import pytest
 
 from app.candidates import MusicClip, TransitionKind
 from app.config import DuckTuning
+from app.ducking import ducked_stretches
 from app.planner import Join, MediaInfo, SegmentInput, gain_at, plan_render
 from app.transcript import Word
 from conftest import wait_for
@@ -118,6 +119,15 @@ def test_a_ducked_sound_carries_the_spans_whose_ramps_reach_it_and_the_plan_its_
     # Its release reaches 5.1 s, past its start; the next's lead begins at 7.85 s, before its end.
     assert plan.audio[0].speech == [(4.4, 4.6), (8.1, 9.0)]
     assert plan.ducking == DuckTuning(lead_secs=0.25, release_secs=0.5, bridge_secs=0.8)
+    # Where it is turned down, ramps included, cut to it: what the dry run lists and the Timeline shades.
+    assert plan.audio[0].ducked == [(5.0, 5.1), (7.85, 8.0)]
+
+
+def test_the_ducked_stretches_are_joined_where_they_meet_and_cut_to_the_sound():
+    # Spans as given (the planner's are joined already): overlapping, meeting, apart, and past either end.
+    spans = [(2.0, 3.0), (0.5, 1.0), (3.2, 3.4), (5.0, 5.2), (9.9, 12.0)]
+    assert ducked_stretches(spans, 1.0, 10.0, DuckTuning()) == [(1.0, 1.5), (1.75, 3.9), (4.75, 5.7), (9.65, 10.0)]
+    assert ducked_stretches([(20.0, 21.0)], 1.0, 10.0, DuckTuning()) == []
 
 
 def test_an_unducked_song_carries_no_speech_and_a_music_clip_of_the_source_refuses_a_duck():

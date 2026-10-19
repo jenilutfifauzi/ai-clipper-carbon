@@ -141,7 +141,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.config import CameraTuning, DuckTuning
-from app.ducking import Span, duck_at, heard_words, speech_spans, touching
+from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
 from app.fonts import DEFAULT_FONT, FALLBACK_FACE, on_change, registry
 from app.keyframes import value_at
@@ -500,7 +500,8 @@ class AudioEvent:
     the Source's sound, which the Clip's own volume scales too (and stays so once `media` names the
     Retimed copy it is read from). A ducked one (a Music Clip's with `duck`, docs/adr/0016) is turned
     down by that many dB under the spans of `speech` that reach it (app/ducking.py), in seconds into
-    the Clip, as the plan's `ducking` says."""
+    the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included, within it
+    (`ducked_stretches`). A Music Clip's Detached from a Segment names it (`detached_from`)."""
 
     media: str | None
     start: float
@@ -518,6 +519,8 @@ class AudioEvent:
     source: bool = False
     duck: float | None = None
     speech: list[Span] = field(default_factory=list)
+    ducked: list[Span] = field(default_factory=list)
+    detached_from: str | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -1038,9 +1041,9 @@ def _segment_words(
 
 
 def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, list[Word]], ducking: DuckTuning) -> list[AudioEvent]:
-    """The sounds, each ducked one with the spans of speech that reach it (app/ducking.py): `words`,
-    the Source Segments' as heard, and the Words of each Music Clip of the Source heard forwards and
-    not Muted (`music_words`, by its id, in seconds from its offset), where it plays."""
+    """The sounds, each ducked one with the spans of speech that reach it and where it is turned down
+    (app/ducking.py): `words`, the Source Segments' as heard, and the Words of each Music Clip of the
+    Source heard forwards and not Muted (`music_words`, by its id, in seconds from its offset), where it plays."""
     if all(event.duck is None for event in audio):
         return audio
     said = list(words)
@@ -1048,7 +1051,11 @@ def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, l
         if event.source and not event.muted and not event.reverse:
             said += heard_words(music_words.get(event.id, []), event.start, event.end, event.speed)
     spans = speech_spans(said, ducking)
-    return [replace(event, speech=touching(spans, event.start, event.end, ducking)) if event.duck is not None else event for event in audio]
+    return [
+        replace(event, speech=touching(spans, event.start, event.end, ducking), ducked=ducked_stretches(spans, event.start, event.end, ducking))
+        if event.duck is not None else event
+        for event in audio
+    ]
 
 
 def _framed(
@@ -1456,19 +1463,27 @@ def audio_events(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
                 clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
-                clip.media is None, clip.duck,
+                clip.media is None, clip.duck, detached_from=clip.detached_from,
             )
         )
     return events
 
 
-def gain_at(event: AudioEvent | SegmentPlan, time: float, ducking: DuckTuning = DuckTuning()) -> float:
-    """How loud `event` (a Music Clip's or an Overlay's sound, or a Segment's before the Clip's own
-    volume and a Transition's crossfade) is heard `time` seconds into the Clip: its volume, or its
-    Keyframes sampled there (app/keyframes.py), through its fades' linear ramps, and a ducked one's
-    duck under its speech (`duck_at`, by its plan's `ducking`); silent outside it, and Muted. The
-    same rule as the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are
-    tested on the cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
+def gain_at(
+    event: AudioEvent | SegmentPlan,
+    time: float,
+    ducking: DuckTuning = DuckTuning(),
+    source_volume: float = 1.0,
+    crossfade: TransitionEvent | None = None,
+) -> float:
+    """How loud `event` (a Music Clip's or an Overlay's sound, or a Segment's) is heard `time` seconds
+    into the Clip: its volume, or its Keyframes sampled there (app/keyframes.py), the Source's times
+    the Clip's own volume (`source_volume`, `own_volume`), through its fades' linear ramps, and a
+    ducked one's duck under its speech (`duck_at`, by its plan's `ducking`); silent outside it, and
+    Muted. A Segment taken away by the Transition into the next (`crossfade`) falls from 1 to 0 over
+    it too, as the render's acrossfade does (its default curves are straight lines). The same rule as
+    the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are tested on the
+    cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
     into = time - event.start
     if into < 0 or time > event.end or event.muted:
         return 0.0
@@ -1477,8 +1492,18 @@ def gain_at(event: AudioEvent | SegmentPlan, time: float, ducking: DuckTuning = 
         share = min(share, into / event.fade_in)
     if event.fade_out > 0:
         share = min(share, (event.end - time) / event.fade_out)
+    taken = (crossfade.end - time) / (crossfade.end - crossfade.start) if crossfade and time > crossfade.start else 1.0
     ducked = duck_at(event.speech, event.duck, time, ducking) if isinstance(event, AudioEvent) and event.duck is not None else 1.0
-    return value_at(event.gain, into, event.volume) * min(max(share, 0.0), 1.0) * ducked
+    level = value_at(event.gain, into, event.volume) * own_volume(event, source_volume)
+    return level * min(max(share, 0.0), 1.0) * min(max(taken, 0.0), 1.0) * ducked
+
+
+def own_volume(event: AudioEvent | SegmentPlan, source_volume: float) -> float:
+    """What the Clip's own volume (`source_volume`) scales `event` by: all of it for the Source's
+    sound (a Source Segment's, a Music Clip of the Source's), after its volume or Keyframes; 1 for
+    any other."""
+    source = event.source if isinstance(event, AudioEvent) else event.media is None
+    return source_volume if source else 1.0
 
 
 def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[OverlayEvent]:

@@ -4,8 +4,7 @@
 // item, and the Volume Line's curve; for .scratch/navigation-playback/spec.md, the Edit Points; and
 // for .scratch/keyframes/spec.md, the ruler's diamonds.
 import type { AudioEvent, Ducking, Keyframe, Keys, MusicClip, Retiming } from "../../../api";
-import { valueAt } from "../editor/keyframes";
-import { duckAt } from "../editor/loudness";
+import { loudness } from "../editor/loudness";
 import type { PlayedSegment } from "../editor/playback";
 import { playingFrom, sourceAt } from "../editor/segmentTime";
 import { fadesWithin, type AdvancedEdits } from "./edits";
@@ -389,54 +388,39 @@ export interface Heard {
   duck?: Duck;
 }
 
-/** How a Music Clip is Ducked: `depth` dB under its `speech` (seconds into it), by the plan's `ducking`. */
+/**
+ * How a Music Clip is Ducked: `depth` dB under its `speech`, by the plan's `ducking`, and turned down
+ * over its `stretches` (GLOSSARY.md, Volume Line: the plan's `ducked`, ramps included), all in seconds
+ * into it.
+ */
 export interface Duck {
   depth: number;
   speech: [number, number][];
+  stretches: [number, number][];
   ducking: Ducking;
 }
 
 /**
  * How loud an item `secs` long is `time` seconds into it: its volume, or its volume Keyframes
- * sampled there (keyframes.ts), through its fade in's and fade out's linear ramps (none for a fade
- * of 0), and its duck (loudness.ts' duckAt), as the renderer has it.
+ * sampled there, through its fades, heard on `tail` seconds past its `secs`, and its duck: the
+ * preview's gain (loudness.ts' loudness), which the shared cases pin to the renderer's, of the item as
+ * a sound from 0 to its end.
  */
 export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [], tail = 0, duck }: Heard): number {
-  const ramp = (into: number, fade: number) => (fade > 0 ? Math.min(Math.max(into / fade, 0), 1) : 1);
-  const ducked = duck ? duckAt(duck.speech, duck.depth, time, duck.ducking) : 1;
-  return valueAt(keys, time, volume) * ramp(time, fade_in) * ramp(secs + tail - time, fade_out) * ducked;
+  const sound: AudioEvent = { id: "", media: null, start: 0, end: secs + tail, offset: 0, volume, fade_in, fade_out, gain: [...keys] };
+  return loudness(duck ? { ...sound, duck: duck.depth, speech: duck.speech, ducking: duck.ducking } : sound, time);
 }
 
 /**
  * How Music Clip `clip` is Ducked on the Timeline: at its own depth (as drafted, so that the
- * inspector's change shows at once), under the speech its plan's `event` has (Clip seconds, made
- * seconds into it), by the plan's `ducking`. None when it is switched off, of the Source (never
- * Ducked), or not planned yet.
+ * inspector's change shows at once), under the speech and over the stretches its plan's `event` has
+ * (Clip seconds, made seconds into it), by the plan's `ducking`. None when it is switched off, of the
+ * Source (never Ducked), or not planned yet.
  */
 export function musicDuck(clip: MusicClip, event: AudioEvent | undefined, ducking: Ducking | undefined): Duck | undefined {
   if (clip.media === null || clip.duck == null || !event || !ducking) return undefined;
-  const speech = (event.speech ?? []).map(([start, end]): [number, number] => [start - clip.start, end - clip.start]);
-  return { depth: clip.duck, speech, ducking };
-}
-
-/**
- * Where a ducked item is turned down (GLOSSARY.md, Volume Line): each span of its speech with the
- * lead before it and the release after it, joined where they meet and cut to the `secs` it is heard,
- * in seconds into it; as the dry run's `ducked` stretches. None for an item that isn't ducked.
- */
-export function duckedStretches({ secs, duck }: Heard): [number, number][] {
-  if (!duck) return [];
-  const stretches: [number, number][] = [];
-  const ramped = duck.speech
-    .map(([start, end]): [number, number] => [Math.max(0, start - duck.ducking.lead_secs), Math.min(secs, end + duck.ducking.release_secs)])
-    .filter(([start, end]) => end > start)
-    .sort((a, b) => a[0] - b[0]);
-  for (const [start, end] of ramped) {
-    const last = stretches.at(-1);
-    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
-    else stretches.push([start, end]);
-  }
-  return stretches.map(([start, end]) => [toMillionth(start), toMillionth(end)]);
+  const into = (spans: [number, number][] = []) => spans.map(([start, end]): [number, number] => [start - clip.start, end - clip.start]);
+  return { depth: clip.duck, speech: into(event.speech), stretches: into(event.ducked), ducking };
 }
 
 /** A Segment's sound: its volume, its Keyframes and its fades. */

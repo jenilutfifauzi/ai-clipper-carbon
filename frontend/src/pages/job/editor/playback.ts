@@ -3,7 +3,16 @@ import type { Keyframe, Keys } from "../../../api";
 import { previewSpeed } from "./follow";
 import { loopStart, wrapTarget, type LoopRegion } from "./loop";
 import { segmentCopy } from "./retimedCopy";
-import { playedSourceAt, playedTimeAt, playedUntil, retimingOf, segmentLength, type PlayedRange, type SegmentRange } from "./segmentTime";
+import {
+  playedSourceAt,
+  playedTimeAt,
+  playedUntil,
+  retimingOf,
+  segmentLength,
+  transitionOverlap,
+  type PlayedRange,
+  type SegmentRange,
+} from "./segmentTime";
 
 type Listener = () => void;
 
@@ -23,12 +32,17 @@ export interface PlayedSegment extends PlayedRange {
   muted?: boolean;
 }
 
-/** A Main Track of these Segments as played, back to back from 0 s. */
+/**
+ * A Main Track of these Segments as played from 0 s: back to back, or, where one of `transitions`
+ * follows a Segment, the next overlapping it for that Transition's overlap, as the planner places them
+ * (transitionOverlap).
+ */
 export function playedFrom(
-  segments: (SegmentRange & { media?: string | null; volume?: number; keys?: Keys; muted?: boolean })[],
+  segments: (SegmentRange & { id?: string; media?: string | null; volume?: number; keys?: Keys; muted?: boolean })[],
+  transitions: readonly { after: string; secs: number }[] = [],
 ): PlayedSegment[] {
   let at = 0;
-  return segments.map((segment) => {
+  return segments.map((segment, i) => {
     const played = {
       start: at,
       end: at + segmentLength(segment),
@@ -40,7 +54,9 @@ export function playedFrom(
       ...retimingOf(segment),
       ...(segment.keys?.volume?.length ? { gain: segment.keys.volume } : {}),
     };
-    at = played.end;
+    const join = transitions.find((transition) => transition.after === segment.id);
+    const next = segments[i + 1];
+    at = join && next ? played.end - transitionOverlap(join.secs, played.end - played.start, segmentLength(next)) : played.end;
     return played;
   });
 }

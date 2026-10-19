@@ -2,7 +2,8 @@
 // the heard draft silences muted Tracks by volume 0 and never writes an item's saved `muted`.
 import { describe, expect, test } from "vitest";
 import type { CandidateChange } from "../../../api";
-import { heardDraft, UNTOUCHED } from "./trackState";
+import { playedFrom } from "../editor/playback";
+import { heardDraft, heardTrack, UNTOUCHED } from "./trackState";
 
 const draft: CandidateChange = {
   segments: [{ id: "a", start: 1, end: 3, volume: 0.5, muted: true }, { id: "b", start: 5, end: 7 }],
@@ -54,5 +55,16 @@ describe("a muted Track", () => {
     expect(heard.source_volume).toBe(0.8);
     expect(heard.music).toEqual(detached.music);
     expect(heard.segments?.map(({ volume }) => volume)).toEqual([0, 0]);
+  });
+
+  test("silences the Main Track the preview plays from the edits (a lone Segment), keyed or not", () => {
+    const gain = [{ at: 0, value: 1, ease: [0, 0, 1, 1] as [number, number, number, number] }];
+    const played = playedFrom([{ start: 1, end: 3, volume: 0.5, keys: { volume: gain } }, { start: 5, end: 7 }]);
+    const heard = heardTrack(played, { ...UNTOUCHED, muted: ["video"] });
+    expect(heard.map(({ volume, gain, muted }) => ({ volume, gain, muted }))).toEqual([
+      { volume: 0, gain: undefined, muted: false },
+      { volume: 0, gain: undefined, muted: false },
+    ]);
+    expect(heardTrack(played, { ...UNTOUCHED, muted: ["music"] })).toBe(played);
   });
 });

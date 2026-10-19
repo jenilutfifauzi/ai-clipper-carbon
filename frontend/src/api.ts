@@ -597,6 +597,9 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   muted?: boolean;
   duck?: number | null;
   speech?: [number, number][];
+  // Where a ducked one is turned down, ramps included, within it (the planner's ducked_stretches).
+  ducked?: [number, number][];
+  detached_from?: string | null;
 }
 
 // How a ducked sound follows speech (ADR 0016): down over `lead_secs` before a span, up over

@@ -5,25 +5,77 @@ import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/gain_vectors.json";
 import type { AudioEvent, Ease, SegmentPlan } from "../../../api";
 import { fadesWithin } from "../advanced/edits";
+import { gainAt, segmentHeard, sourceHeard, underSourceVolume, type Heard as TimelineHeard } from "../advanced/timelineView";
 import { EASE_IN, LINEAR, valueAt } from "./keyframes";
 import { changing, CURVE_RATE, eventSound, loudness, loudnessCurve, segmentSound, type Heard } from "./loudness";
 import { playedFrom } from "./playback";
 
+// A case's sound, its optional fields said.
+type Case = {
+  start: number;
+  end: number;
+  volume: number;
+  fade_in?: number;
+  fade_out?: number;
+  keys?: { at: number; value: number; ease?: number[] }[];
+  muted?: boolean;
+  duck?: number;
+  speech?: number[][];
+  source?: boolean;
+  source_volume?: number;
+  tail?: number;
+  crossfade?: boolean;
+};
+
 describe("a sound", () => {
-  for (const { name, sound, at, ...of } of cases.sounds) {
+  for (const { name, sound: given, at, ...of } of cases.sounds) {
+    const sound = given as Case;
+    const isSegment = "item" in of && of.item === "segment";
+    // Its fades fitted to it as the planner fits a Music Clip's and a Segment's.
+    const fades = fadesWithin({ fade_in: sound.fade_in ?? 0, fade_out: sound.fade_out ?? 0 }, sound.end - sound.start);
+    const gain = (sound.keys ?? []).map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
+    const muted = sound.muted ?? false;
+    const sourceVolume = sound.source_volume ?? 1;
+    const speech = (sound.speech ?? []) as [number, number][];
+    const tail = sound.tail ?? 0;
+
     test(`${name}: is as loud as the shared cases say`, () => {
-      // Its fades fitted to it as the planner fits a Music Clip's and a Segment's.
-      const fades = fadesWithin({ fade_in: sound.fade_in ?? 0, fade_out: sound.fade_out ?? 0 }, sound.end - sound.start);
-      const keys: { at: number; value: number; ease?: number[] }[] = sound.keys ?? [];
-      const gain = keys.map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
-      const muted = sound.muted ?? false;
-      // A ducked one as the plan has it, with the cases' ramps (`eventSound`).
-      const ducked = "duck" in sound ? { duck: sound.duck, speech: sound.speech as [number, number][] } : {};
-      const event: Heard =
-        "item" in of && of.item === "segment"
-          ? segmentSound(segment({ start: sound.start, end: sound.end, volume: sound.volume, gain, ...fades, muted }), 1)
-          : eventSound({ id: "m", media: "song", start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades, muted, ...ducked }, 1, cases.ducking);
+      // A ducked one as the plan has it, with the cases' ramps (`eventSound`); a Segment taken away by
+      // the Transition into the next over its tail.
+      const ducked = sound.duck != null ? { duck: sound.duck, speech } : {};
+      const crossfade = sound.crossfade ? { start: sound.end - tail, end: sound.end } : undefined;
+      const media = sound.source ? null : isSegment ? "video" : "song";
+      const event: Heard = isSegment
+        ? segmentSound(segment({ media, start: sound.start, end: sound.end, volume: sound.volume, gain, ...fades, muted }), sourceVolume, crossfade)
+        : eventSound(
+            { id: "m", media, source: sound.source, start: sound.start, end: sound.end, offset: 0, volume: sound.volume, gain, ...fades, muted, ...ducked },
+            sourceVolume,
+            cases.ducking,
+          );
       for (const [time, expected] of at) expect(Math.abs(loudness(event, time) - expected), `at ${time}`).toBeLessThan(cases.tolerance);
+    });
+
+    // The Timeline draws neither Muted (it draws the Muted look) nor a Transition's crossfade.
+    if (muted || sound.crossfade) continue;
+    test(`${name}: is drawn on the Timeline as loud as the shared cases say`, () => {
+      // Drawn from its start to where the Transition into the next starts, heard on under it.
+      const shown = { start: 0, end: sound.end - sound.start - tail };
+      const own = { volume: sound.volume, keys: { volume: gain }, fade_in: sound.fade_in, fade_out: sound.fade_out };
+      const into = (spans: [number, number][]) => spans.map(([start, end]): [number, number] => [start - sound.start, end - sound.start]);
+      const duck = sound.duck != null ? { depth: sound.duck, speech: into(speech), stretches: [], ducking: cases.ducking } : undefined;
+      const clip: TimelineHeard = { volume: sound.volume, secs: shown.end, ...fades, keys: gain, duck };
+      const heard = isSegment
+        ? sound.source
+          ? sourceHeard({ source_volume: sourceVolume }, own, shown, tail)
+          : segmentHeard(own, shown, tail)
+        : sound.source
+          ? underSourceVolume(clip, { source_volume: sourceVolume })
+          : clip;
+      for (const [time, expected] of at) {
+        // Within what is drawn of it, and under the Transition (its tail).
+        if (time < sound.start || time > sound.end) continue;
+        expect(Math.abs(gainAt(time - sound.start, heard) - expected), `at ${time}`).toBeLessThan(cases.tolerance);
+      }
     });
   }
 });

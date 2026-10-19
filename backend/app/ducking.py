@@ -50,6 +50,23 @@ def touching(spans: Sequence[Span], start: float, end: float, tuning: DuckTuning
     return [(low, high) for low, high in spans if low - tuning.lead_secs < end and high + tuning.release_secs > start]
 
 
+def ducked_stretches(spans: Sequence[Span], start: float, end: float, tuning: DuckTuning) -> list[Span]:
+    """Where a sound heard from `start` to `end` seconds into the Clip and ducked under `spans` is
+    turned down, ramps included: each span with the lead before it and the release after it, cut to
+    the sound, those that meet joined, in order. What the dry run lists and the Timeline shades under
+    the Volume Line (GLOSSARY.md), so that neither works them out again (ADR 0001)."""
+    stretches: list[Span] = []
+    for low, high in sorted(spans):
+        low, high = round(max(start, low - tuning.lead_secs), 6), round(min(end, high + tuning.release_secs), 6)
+        if low >= high:
+            continue
+        if stretches and low <= stretches[-1][1]:
+            stretches[-1] = (stretches[-1][0], max(stretches[-1][1], high))
+        else:
+            stretches.append((low, high))
+    return stretches
+
+
 def duck_gain(depth: float) -> float:
     """The gain a depth in dB turns a sound down to."""
     return 10 ** (depth / 20)

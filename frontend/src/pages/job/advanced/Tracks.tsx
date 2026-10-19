@@ -38,7 +38,6 @@ import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
 import { speedLabel } from "./speed";
 import {
-  duckedStretches,
   gainAt,
   musicDuck,
   segmentHeard,
@@ -848,12 +847,12 @@ function SongWaveform({
 }
 
 /**
- * A ducked Music Clip's ducked stretches (duckedStretches, ramps included), shaded under its Volume
+ * A ducked Music Clip's ducked stretches (the plan's, ramps included: musicDuck), shaded under its Volume
  * Line (GLOSSARY.md, Volume Line), as `heard` over the secs it is heard for.
  */
 function DuckedShade({ heard }: { heard: Heard }) {
   const { secs } = heard;
-  const stretches = duckedStretches(heard);
+  const stretches = heard.duck?.stretches ?? [];
   if (!stretches.length) return null;
   return (
     <svg aria-hidden className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 1 1" preserveAspectRatio="none">

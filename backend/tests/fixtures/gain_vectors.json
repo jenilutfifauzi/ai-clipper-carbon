@@ -1,5 +1,5 @@
 {
-  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. A sound whose `item` is \"segment\" is a Segment's, from its start on the Timeline (a Transition's overlap included) to its end, its fades fitted to that length; any other, a Music Clip's. A `muted` one (docs/adr/0016) is silent throughout, whatever its volume, Keyframes and fades. A ducked one (a Music Clip's `duck`, in dB, docs/adr/0016) is multiplied by its duck too: 1 away from its `speech` spans (seconds into the Clip), the depth's gain over one, and straight lines between over the `ducking` lead before one and its release after it; where spans' ducks overlap, the lower wins. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
+  "about": "How loud a sound is heard at a time: its volume, or its volume Keyframes (in seconds from its start, each approached by its `ease`, Linear when none) sampled there, times its linear fades; silent before its `start` and after its `end` (seconds into the Clip). Its `fade_in` and `fade_out` (none when absent) are as set: when together they are longer than the sound, both are shortened by the same share to fit. A sound whose `item` is \"segment\" is a Segment's, from its start on the Timeline (a Transition's overlap included) to its end, its fades fitted to that length; any other, a Music Clip's. A `muted` one (docs/adr/0016) is silent throughout, whatever its volume, Keyframes and fades. A ducked one (a Music Clip's `duck`, in dB, docs/adr/0016) is multiplied by its duck too: 1 away from its `speech` spans (seconds into the Clip), the depth's gain over one, and straight lines between over the `ducking` lead before one and its release after it; where spans' ducks overlap, the lower wins. A `source` one is the Source's sound (a Source Segment, or a Music Clip of the Source), its volume or Keyframes times the Clip's own volume, `source_volume`. A Segment's `tail` is the last seconds of it that the Transition into the next overlaps (its `end` includes them, and its fades are fitted to all of it): the Timeline draws it to where that Transition starts, heard on under it. With `crossfade`, the gains are also those of that Transition taking it away: falling in a straight line from 1 to 0 over its `tail`, as the render's acrossfade does. Each of `at` is [seconds into the Clip, the gain heard there]. Read by backend/tests/test_gain.py and frontend/src/pages/job/editor/loudness.test.ts, so that the render's gain and the preview's can't drift.",
   "tolerance": 1e-6,
   "ducking": {"lead_secs": 0.25, "release_secs": 0.5, "bridge_secs": 0.8},
   "sounds": [
@@ -131,6 +131,29 @@
       "name": "ducked by a span longer than it, faded",
       "sound": {"start": 2, "end": 4, "volume": 0.8, "fade_out": 1, "duck": -20, "speech": [[0, 10]]},
       "at": [[1.9, 0], [2, 0.08], [3, 0.08], [3.5, 0.04], [4, 0], [4.1, 0]]
+    },
+    {
+      "name": "a Music Clip of the Source, keyed and faded, under the Clip's own volume",
+      "sound": {"start": 1, "end": 5, "volume": 0.5, "fade_in": 1, "keys": [{"at": 0, "value": 1.0}, {"at": 4, "value": 0.2}], "source": true, "source_volume": 1.5},
+      "at": [[0.9, 0], [1, 0], [1.5, 0.675], [2, 1.2], [3, 0.9], [5, 0.3], [5.1, 0]]
+    },
+    {
+      "name": "a Source Segment, keyed and faded, under the Clip's own volume",
+      "item": "segment",
+      "sound": {"start": 2, "end": 6, "volume": 0.5, "fade_out": 1, "keys": [{"at": 0, "value": 2.0}, {"at": 4, "value": 1.0}], "source": true, "source_volume": 0.5},
+      "at": [[1.9, 0], [2, 1.0], [3, 0.875], [4, 0.75], [5, 0.625], [5.5, 0.28125], [6, 0], [6.1, 0]]
+    },
+    {
+      "name": "a Segment faded out to its end under the Transition into the next",
+      "item": "segment",
+      "sound": {"start": 0, "end": 4, "volume": 1.0, "fade_out": 2, "tail": 1},
+      "at": [[1, 1.0], [2, 1.0], [3, 0.5], [3.5, 0.25], [4, 0], [4.1, 0]]
+    },
+    {
+      "name": "a Segment faded out and taken away by the Transition's crossfade",
+      "item": "segment",
+      "sound": {"start": 0, "end": 4, "volume": 0.8, "fade_out": 2, "tail": 1, "crossfade": true},
+      "at": [[1, 0.8], [2, 0.8], [3, 0.4], [3.25, 0.225], [3.5, 0.1], [4, 0], [4.1, 0]]
     }
   ]
 }

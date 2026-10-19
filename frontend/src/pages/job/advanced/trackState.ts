@@ -1,4 +1,5 @@
 import type { CandidateChange, Keys, RenderPlan } from "../../../api";
+import type { PlayedSegment } from "../editor/playback";
 
 // The Tracks of the Advanced Edit's Timeline (GLOSSARY.md), and what is hidden, muted or locked of
 // them. Kept in the editor only: never saved, never undone, and the Clip renders as if none were set.
@@ -59,6 +60,16 @@ export function heardDraft<T extends CandidateChange>(draft: T, { muted }: Track
     else next.source_volume = 0;
   }
   return next;
+}
+
+/**
+ * The Main Track as the preview plays it, to be heard as the heard draft is (heardDraft): each
+ * Segment silent while the Video Track is muted. The plan's Segments are heard already, but a Main
+ * Track made from the edits (a lone Segment, or a plan not yet caught up) isn't.
+ */
+export function heardTrack(segments: PlayedSegment[], { muted }: TrackState): PlayedSegment[] {
+  if (!muted.includes("video")) return segments;
+  return segments.map(({ gain: _, ...segment }) => ({ ...segment, volume: 0 }));
 }
 
 // An item at volume 0, its volume Keyframes (which would stand in for `volume`) dropped.

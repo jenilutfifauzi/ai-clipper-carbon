@@ -136,7 +136,7 @@ import { addShape, resizeShape } from "./shapeStyle";
 import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
-import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
+import { heardDraft, heardTrack, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
@@ -459,9 +459,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // draft's Segments, else as drafted; and as played, one Segment at a time. Everything placed on
   // the Main Track goes by these, as the playhead does (docs/adr/0002-segments-and-timeline-time.md).
   const planned = preview?.plan.segments ?? [];
-  const track: PlayedSegment[] = planned.length > 1 && planned.length === edits.segments.length ? planned : playedFrom(edits.segments);
+  // As drafted, it overlaps at Transitions too, so that a Detach before the plan catches up covers them.
+  const track: PlayedSegment[] =
+    planned.length > 1 && planned.length === edits.segments.length ? planned : playedFrom(edits.segments, edits.transitions);
   const played = playable(track);
-  playback.setSegments(played);
+  // Heard as the plan is, the muted Tracks silent (Track mute, a listening aid).
+  playback.setSegments(heardTrack(played, tracks));
   const duration = playback.duration;
   // The Clip's frame rate, the Source's, which the playhead steps by.
   const fps = preview?.plan.fps || DEFAULT_FPS;

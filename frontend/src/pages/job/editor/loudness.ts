@@ -32,7 +32,8 @@ export function duckAt(spans: [number, number][], depth: number, time: number, d
  * through its fades' linear ramps, and a ducked one's duck (`duckAt`); silent outside it, and when
  * Muted (ADR 0016). Track mute doesn't reach the duck: speech counts by `muted` alone. As the renderer has
  * it (gain_at in backend/app/planner.py): both are tested on the cases in
- * backend/tests/fixtures/gain_vectors.json, so that they can't drift. Under a Transition's
+ * backend/tests/fixtures/gain_vectors.json, so that they can't drift. The Timeline's Volume Line and
+ * Waveform are drawn by it too (timelineView.ts' gainAt). Under a Transition's
  * `crossfade`, that falls linearly from 1 to 0 over it and multiplies the rest, as acrossfade does in
  * the render.
  */

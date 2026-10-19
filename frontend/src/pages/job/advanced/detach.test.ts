@@ -114,6 +114,23 @@ describe("Detach", () => {
     expect(outcome.pick).toEqual(picked({ kind: "music", id: "n1" }, { kind: "music", id: "n2" }));
   });
 
+  test("covers a Transition's overlap before the plan catches up, from the Main Track as drafted", () => {
+    // The same Transitions, as the edits have them: the drafted Main Track overlaps as the planned one does.
+    const state = edits({
+      segments: [segment("s1", 100, 110), segment("s2", 200, 210), segment("s3", 300, 305)],
+      transitions: [
+        { after: "s1", kind: "fade", secs: 1 },
+        { after: "s2", kind: "fade", secs: 2 },
+      ],
+    });
+    const track = playedFrom(state.segments, state.transitions);
+    expect(track).toEqual(planned(state, [1, 2]));
+    // Half the shorter at most: a 4 s Transition before s3 overlaps 2.5 s.
+    expect(playedFrom(state.segments, [{ after: "s2", secs: 4 }])[2].start).toBe(17.5);
+    const outcome = detach(scene(state, null, { played: track }), ["s2"], track, sounded)!;
+    expect(outcome.edits.music.map(({ start, secs }) => ({ start, secs }))).toEqual([{ start: 9, secs: 10 }]);
+  });
+
   test("a video's Segment's sound becomes a Music Clip of the video, in Reverse as it plays", () => {
     const state = edits({ segments: [segment("s1", 100, 104), video("v", "clip", { reverse: true })] });
     const [clip] = detach(scene(state), ["v"], planned(state), sounded)!.edits.music;

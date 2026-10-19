@@ -131,6 +131,7 @@ from app.planner import (
     WatermarkEvent,
     font_metrics,
     on_frame,
+    own_volume,
     picture_at,
 )
 from app.candidates import Keyframe, Shadow, Shape, TextLayer
@@ -453,12 +454,12 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
         # Its time on the Timeline from 0 at its start (a Transition's overlap included), which its
         # Keyframes and fades are in.
         zeroed = [*sped, "asetpts=PTS-STARTPTS"] if segment.gain or faded else sped
+        # The Source's at the Clip's own volume too (`own_volume`), a keyed one's after its Keyframes.
+        own = own_volume(segment, plan.source_volume)
         if segment.gain:
-            # The Source's then at the Clip's own volume too.
-            own = [] if segment.media or plan.source_volume == 1 else [f"volume={plan.source_volume:g}"]
-            volume = [*_volume(segment.gain, segment.volume), *own]
+            volume = [*_volume(segment.gain, segment.volume), *([f"volume={own:g}"] if own != 1 else [])]
         else:
-            volume = [f"volume={segment.volume * (1 if segment.media else plan.source_volume):g}"]
+            volume = [f"volume={segment.volume * own:g}"]
         chains.append(f"[{i}:a:0]{','.join([*zeroed, *volume, *faded])},{form}[a{i}]")
     if plan.transitions:
         chains.append(_joins(plan, [f"[a{i}]" for i in range(count)], "a", "[srcv]"))
@@ -733,7 +734,7 @@ def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str 
         read = round(event.time.span, 3)
         sped = speed_filters(event.speed, event.pitch, rate)
         # The Source's at the Clip's own volume too (a keyed one's after its Keyframes, as a Segment's).
-        own = plan.source_volume if event.source else 1.0
+        own = own_volume(event, plan.source_volume)
         duck = duck_steps(event.speech, event.duck, plan.ducking, event.start) if event.duck is not None else []
         if event.gain:
             level = [*_volume(event.gain, event.volume, duck), *([f"volume={own:g}"] if own != 1 else [])]

@@ -1,6 +1,6 @@
 // .scratch/audio-mixing/issues/11-ducking-in-the-advanced-edit.md: a new Music Clip ducks at −12 dB;
 // Duck under speech switched and its depth set (setDuck), each one change; and on the Timeline, a
-// ducked Music Clip's shaded stretches and its Waveform's gain, duck included (timelineView).
+// ducked Music Clip's shaded stretches (the plan's) and its Waveform's gain, duck included (timelineView).
 import { describe, expect, test } from "vitest";
 import type { AudioEvent, Ducking, MediaItem, MusicClip } from "../../../api";
 import { LINEAR } from "../editor/keyframes";
@@ -8,7 +8,7 @@ import { setDuck } from "./actions";
 import { DEFAULT_DUCK, type AdvancedEdits } from "./edits";
 import { newMusicClip } from "./Music";
 import { picked } from "./pick";
-import { duckedStretches, gainAt, musicDuck, underVolumeLine, volumeHeight, type Heard } from "./timelineView";
+import { gainAt, musicDuck, underVolumeLine, volumeHeight, type Heard } from "./timelineView";
 
 const DUCKING: Ducking = { lead_secs: 0.25, release_secs: 0.5, bridge_secs: 0.8 };
 
@@ -73,10 +73,13 @@ describe("setDuck", () => {
 });
 
 describe("a ducked Music Clip on the Timeline", () => {
-  test("takes its depth from the draft and its speech from the plan, in seconds into it", () => {
+  test("takes its depth from the draft, and its speech and shaded stretches from the plan, in seconds into it", () => {
     const clip = music("a", { start: 2, duck: -12 });
-    const planned = event("a", { duck: -6, speech: [[4, 5]] });
-    expect(musicDuck(clip, planned, DUCKING)).toEqual({ depth: -12, speech: [[2, 3]], ducking: DUCKING });
+    // The plan's stretches, ramps included, joined and cut to the clip (ducked_stretches in backend/app/ducking.py).
+    const planned = event("a", { duck: -6, speech: [[4, 5]], ducked: [[3.75, 5.5]] });
+    expect(musicDuck(clip, planned, DUCKING)).toEqual({ depth: -12, speech: [[2, 3]], stretches: [[1.75, 3.5]], ducking: DUCKING });
+    // Planned before the plan carried them: none shaded.
+    expect(musicDuck(clip, event("a", { duck: -6, speech: [[4, 5]] }), DUCKING)?.stretches).toEqual([]);
   });
 
   test("isn't ducked when switched off, of the Source, unplanned or without the plan's ducking", () => {
@@ -92,7 +95,7 @@ describe("a ducked Music Clip on the Timeline", () => {
     secs: 10,
     fade_in: 0,
     fade_out: 0,
-    duck: { depth: -20, speech, ducking: DUCKING },
+    duck: { depth: -20, speech, stretches: [], ducking: DUCKING },
     ...changes,
   });
 
@@ -104,17 +107,6 @@ describe("a ducked Music Clip on the Timeline", () => {
     expect(gainAt(3.875, heard)).toBeCloseTo(0.5 * (1 + 0.1) / 2);
     expect(gainAt(5.25, heard)).toBeCloseTo(0.5 * (0.1 + 1) / 2);
     expect(gainAt(6, heard)).toBe(0.5);
-  });
-
-  test("its shaded stretches include the ramps, are joined where they meet, and are cut to it", () => {
-    expect(duckedStretches(ducked([[4, 5]]))).toEqual([[3.75, 5.5]]);
-    expect(duckedStretches(ducked([[2, 3], [3.6, 4]]))).toEqual([[1.75, 4.5]]);
-    expect(duckedStretches(ducked([[-3, 0.1], [9.9, 14]]))).toEqual([
-      [0, 0.6],
-      [9.65, 10],
-    ]);
-    expect(duckedStretches(ducked([[-3, -1]]))).toEqual([]);
-    expect(duckedStretches({ volume: 1, secs: 10, fade_in: 0, fade_out: 0 })).toEqual([]);
   });
 
   test("shades under its Volume Line, which stays at the volume dragged", () => {

@@ -92,6 +92,9 @@ async def test_the_agent_detaches_and_reattaches_with_ordinary_edits(mcp):
     detached = {"id": "d", "start": a["start"], "secs": round(a["end"] - a["start"], 3), "offset": a["source_start"], "detached_from": "a"}
     saved = await call(mcp, "merge_candidate_items", **ids, music=[detached], segments=[{"id": "a", "muted": True}])
     assert (saved["music"][0]["detached_from"], saved["segments"][0]["muted"]) == ("a", True)
+    # The dry run says whose sound it is, as the plan does.
+    sounds = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["sounds"]
+    assert [sound.get("detached_from") for sound in sounds] == [None, None, "a"]
 
     # Reattach: the Music Clips Detached from it removed, then its `muted` cleared.
     await call(mcp, "remove_candidate_items", **ids, kind="music", keys=["d"])
@@ -166,3 +169,43 @@ def test_a_detached_sound_is_heard_as_its_segment_was_and_a_second_later_once_mo
     later, where_it_was = heard(candidate, 1.0)
     assert later == pytest.approx(before, abs=1)
     assert all(now < was - 20 for now, was in zip(where_it_was, before)), where_it_was
+
+
+def test_a_reversed_segments_detached_sound_reads_the_same_range_backwards(client, settings, steady_song):
+    """A reversed Source Segment, halo..kabar, Detached as the editor does it (`detach` in
+    frontend/src/pages/job/advanced/actions.ts): a Music Clip in Reverse whose `offset` is its planned
+    range's start. It plays that same range from its end back to its start, as the Segment did: the
+    sweep's pitch at each moment is the same before and after."""
+    song = upload(client, steady_song, "steady.wav").json()
+    job = reviewed(client)
+    words = _words(job)
+    candidate = add(client, job, "halo", "ya")
+    a = {"id": "a", "start": words["halo"]["start"], "end": words["kabar"]["end"], "reverse": True}
+    b = {"id": "b", "start": words["Podcast"]["start"], "end": words["ya"]["end"]}
+    measure = {"id": "m", "media": song["id"], "start": 0.0, "secs": 3.0, "duck": None}
+    candidate = patch(client, job, candidate, segments=[a, b], music=[measure])
+    [played, _] = preview(client, job, candidate)["plan"]["segments"]
+    length = played["end"] - played["start"]
+    # Near its start (its range's end), its middle, and near its end (its range's start).
+    moments = (0.1, length / 2, length - 0.1)
+
+    def heard(candidate: dict) -> list[float]:
+        """The level (dB) of the Source's moment heard `at` seconds into a, in Reverse, against the
+        steady song there, for each of the `moments`."""
+        video = clip_of(client, settings, job, candidate)
+
+        def level(at: float) -> float:
+            moment, when = sweep_at(played["source_end"] - at), played["start"] + at
+            return 20 * np.log10(tone_level(settings, video, moment, when, secs=0.02) / tone_level(settings, video, STEADY, when, secs=0.02))
+
+        return [level(at) for at in moments]
+
+    before = heard(candidate)
+    assert min(before) > -20, before
+
+    detached = {
+        "id": "d", "start": played["start"], "secs": round(length, 3), "offset": played["source_start"],
+        "reverse": True, "detached_from": "a",
+    }
+    candidate = patch(client, job, candidate, segments=[{**a, "muted": True}, b], music=[measure, detached])
+    assert heard(candidate) == pytest.approx(before, abs=1)
