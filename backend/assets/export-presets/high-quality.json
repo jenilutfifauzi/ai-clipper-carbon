@@ -1,0 +1,13 @@
+{
+  "id": "high-quality",
+  "name": "High quality",
+  "order": 20,
+  "settings": {
+    "codec": "hevc",
+    "resolution": 1440,
+    "fps": null,
+    "quality": "high",
+    "bitrate": null,
+    "loudness": -14
+  }
+}

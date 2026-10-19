@@ -1,0 +1,13 @@
+{
+  "id": "shorts",
+  "name": "Shorts / TikTok / Reels",
+  "order": 0,
+  "settings": {
+    "codec": "h264",
+    "resolution": 1080,
+    "fps": null,
+    "quality": "recommended",
+    "bitrate": null,
+    "loudness": -14
+  }
+}

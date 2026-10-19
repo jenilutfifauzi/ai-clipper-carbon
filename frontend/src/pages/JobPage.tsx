@@ -1,7 +1,7 @@
 import { ExternalLink, FileVideo } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import { api, ApiError, type Clip, type JobDetail, type JobProgress } from "../api";
+import { api, ApiError, type Clip, type ExportPresetList, type JobDetail, type JobProgress } from "../api";
 import { Panel } from "../components/Panel";
 import { StageProgress } from "../components/StageProgress";
 import { StatusBadge } from "../components/StatusBadge";
@@ -32,6 +32,11 @@ function JobView({ jobId }: { jobId: string }) {
   const events = useJobEvents(jobId);
   // Whether the Job was in review when last loaded: then only its Clips change by themselves.
   const reviewing = useRef(false);
+  // The Export Presets for the Render buttons, and the one picked for this page's session: the
+  // default until another is.
+  const [exportPresets, setExportPresets] = useState<ExportPresetList | null>(null);
+  const [pickedExport, setPickedExport] = useState<string | null>(null);
+  useEffect(() => void api.listExportPresets().then(setExportPresets, () => {}), []);
 
   const load = useCallback(
     () =>
@@ -78,9 +83,10 @@ function JobView({ jobId }: { jobId: string }) {
     clips.length > 0 ? stageIndex("rendering") : -1,
   );
 
-  // Queue Clips of the given Candidates (the selected ones by default), and follow the renders.
-  async function render(candidateIds?: string[]) {
-    setClips(await api.render(jobId, candidateIds));
+  // Queue Clips of the given Candidates (the selected ones by default) with an Export Preset (the
+  // default without one), and follow the renders.
+  async function render(candidateIds?: string[], exportPresetId?: string) {
+    setClips(await api.render(jobId, candidateIds, exportPresetId));
     events.reconnect();
   }
 
@@ -159,7 +165,17 @@ function JobView({ jobId }: { jobId: string }) {
       {progress.warnings.length > 0 && <Warnings warnings={progress.warnings} uploaded={job.upload !== null} />}
 
       {(progress.status === "review" || progress.status === "rendering") && job.candidates && (
-        <Review key={job.updated_at} job={job} clips={clips} progress={progress} onRender={render} onPrepare={prepare} />
+        <Review
+          key={job.updated_at}
+          job={job}
+          clips={clips}
+          progress={progress}
+          exportPresets={exportPresets}
+          pickedExport={pickedExport}
+          onPickExport={setPickedExport}
+          onRender={render}
+          onPrepare={prepare}
+        />
       )}
     </div>
   );

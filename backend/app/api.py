@@ -35,7 +35,9 @@ from app.clips import Clip
 from app.config import Settings
 from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
 from app.editor import PreviewPlan, preview_plan
+from app.encoding import Codec
 from app.events import candidate_events, job_events
+from app.export_presets import ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
@@ -45,6 +47,7 @@ from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
+from app.renderer import available_codecs
 from app.rendering import NothingToRender, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
@@ -121,6 +124,10 @@ def _text_presets(request: Request) -> TextPresetStore:
     return request.app.state.text_presets
 
 
+def _export_presets(request: Request) -> ExportPresetStore:
+    return request.app.state.export_presets
+
+
 def _logos(request: Request) -> LogoStore:
     return request.app.state.logos
 
@@ -152,6 +159,7 @@ JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
+ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
@@ -304,6 +312,16 @@ class TextPresetInfo(TextPreset):
         return cls(**vars(preset), default=preset.id == default.id)
 
 
+@dataclass(frozen=True)
+class ExportPresetList:
+    """The Export Presets, built-in ones first; the one a render uses when none is asked for; and the
+    codecs this Mac's ffmpeg can encode."""
+
+    presets: list[ExportPreset]
+    default: str
+    available: list[Codec]
+
+
 class ManualCandidate(BaseModel):
     """A transcript range to make a manual Candidate of, snapped to Words."""
 
@@ -385,6 +403,8 @@ class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_ids: list[str] | None = None
+    # The Export Preset the batch is rendered with; the default when left out.
+    export_preset_id: str | None = None
 
 
 class RetimedRequest(BaseModel):
@@ -839,9 +859,11 @@ def _review(
 def render(job_id: str, store: Store, worker: JobWorker, body: RenderRequest | None = None) -> list[Clip]:
     """Queue Clips of the selected Candidates (or of `candidate_ids`); the Job is `rendering` until
     they are done. A Candidate rendered before is rendered again, replacing its Clip. Returns the
-    Job's Clips. 422 when no Candidate is selected; 409 unless the Job is in review or rendering."""
+    Job's Clips. Each Clip renders with `export_preset_id` (the default when left out) as it is when
+    its render starts; a Clip asked for again while queued takes the latest. 422 when no Candidate is
+    selected, or for an unknown Export Preset; 409 unless the Job is in review or rendering."""
     try:
-        worker.render(job_id, body.candidate_ids if body else None)
+        worker.render(job_id, body.candidate_ids if body else None, body.export_preset_id if body else None)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     except CandidateNotFound as exc:
@@ -850,6 +872,8 @@ def render(job_id: str, store: Store, worker: JobWorker, body: RenderRequest | N
         raise HTTPException(409, f"{exc}: Candidates can be rendered once it is in review") from None
     except NothingToRender as exc:
         raise HTTPException(422, str(exc)) from None
+    except ExportPresetNotFound as exc:
+        raise HTTPException(422, f"No Export Preset {exc}") from None
     return list_clips(job_id, store)
 
 
@@ -1011,6 +1035,14 @@ def delete_text_preset(preset_id: str, text_presets: TextPresets) -> None:
         raise HTTPException(404, f"No Text Preset {preset_id}") from None
     except BuiltinTextPreset:
         raise HTTPException(409, f"Text Preset {preset_id} is built in and can't be deleted") from None
+
+
+@router.get("/export-presets")
+def list_export_presets(export_presets: ExportPresets, settings: AppSettings) -> ExportPresetList:
+    """The built-in Export Presets by their order, then the owner's, with the default's id and the
+    codecs that can be encoded here (a Preset of another codec fails to render)."""
+    available = available_codecs(settings.ffmpeg_bin, settings.render)
+    return ExportPresetList(export_presets.all(), export_presets.default().id, [codec for codec in Codec if codec in available])
 
 
 @router.get("/presets")

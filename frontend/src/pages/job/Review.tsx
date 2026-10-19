@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Check, Clapperboard, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Loader2 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
@@ -7,6 +7,7 @@ import {
   type Candidate,
   type CandidateChange,
   type Clip,
+  type ExportPresetList,
   type JobDetail,
   type JobProgress,
   type SavedBy,
@@ -20,6 +21,8 @@ import { ChangeNotice, type Notice } from "./editor/ChangeNotice";
 import { collidedParts, fieldsOf, mergeEdits, type Collision } from "./editor/merge";
 import { entryToRestore } from "./editor/RevisionHistory";
 import { changedText, useCandidateEvents } from "./editor/useCandidateEvents";
+import { pickedPreset } from "./exportPresets";
+import { RenderButton } from "./RenderButton";
 
 /**
  * Review of a Job's Candidates: the ranked list beside the open Candidate's editor, then the
@@ -30,14 +33,21 @@ export function Review({
   job,
   clips,
   progress,
+  exportPresets,
+  pickedExport,
+  onPickExport,
   onRender,
   onPrepare,
 }: {
   job: JobDetail;
   clips: Clip[];
   progress: JobProgress;
-  // Queues Clips of these Candidates, or of the selected ones.
-  onRender: (candidateIds?: string[]) => Promise<void>;
+  // The Export Presets (null until loaded), and the one picked for the page's session (null for the default).
+  exportPresets: ExportPresetList | null;
+  pickedExport: string | null;
+  onPickExport: (exportPresetId: string) => void;
+  // Queues Clips of these Candidates, or of the selected ones, with an Export Preset (else the default).
+  onRender: (candidateIds?: string[], exportPresetId?: string) => Promise<void>;
   // Queues a Candidate's transcription and analysis, for its preview.
   onPrepare: (candidateId: string) => Promise<void>;
 }) {
@@ -258,11 +268,11 @@ export function Review({
     }
   }
 
-  async function render(candidateIds?: string[]) {
+  async function render(candidateIds?: string[], exportPresetId?: string) {
     setQueueing(true);
     setError(null);
     try {
-      await onRender(candidateIds);
+      await onRender(candidateIds, exportPresetId);
     } catch (reason) {
       setError(`Not queued: ${(reason as Error).message}`);
     } finally {
@@ -296,15 +306,17 @@ export function Review({
             </h2>
             <div className="flex items-center gap-3">
               <span className="text-sm text-muted tabular-nums">{selected} selected</span>
-              <Button
+              <RenderButton
+                label="Render selected"
                 variant="primary"
-                onClick={() => void render()}
+                presets={exportPresets}
+                picked={exportPresets && pickedPreset(exportPresets, pickedExport)}
+                onRender={(exportPresetId) => {
+                  if (exportPresetId) onPickExport(exportPresetId);
+                  void render(undefined, exportPresetId);
+                }}
                 disabled={selected === 0 || queueing}
-                size="sm"
-              >
-                <Clapperboard aria-hidden size={16} />
-                Render selected
-              </Button>
+              />
             </div>
           </div>
           <CandidateList
@@ -362,7 +374,14 @@ export function Review({
           )}
         </Panel>
       </div>
-      <Clips jobId={job.id} clips={clips} candidates={candidates} progress={progress} onRender={render} />
+      <Clips
+        jobId={job.id}
+        clips={clips}
+        candidates={candidates}
+        progress={progress}
+        exportPresets={exportPresets}
+        onRender={(candidateIds, exportPresetId) => render(candidateIds, exportPresetId)}
+      />
       <ChangeNotice notice={notice} onClose={closeNotice} />
     </div>
   );

@@ -1,0 +1,13 @@
+{
+  "id": "archive",
+  "name": "Archive",
+  "order": 30,
+  "settings": {
+    "codec": "hevc",
+    "resolution": 2160,
+    "fps": null,
+    "quality": "high",
+    "bitrate": null,
+    "loudness": null
+  }
+}

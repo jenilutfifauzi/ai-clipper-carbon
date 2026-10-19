@@ -15,6 +15,8 @@ MODELS_DIR = BACKEND_DIR / "models"
 FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
 # The built-in Text Presets, a data file each (app/text_presets.py).
 TEXT_PRESETS_DIR = BACKEND_DIR / "assets" / "text-presets"
+# The built-in Export Presets, a data file each (app/export_presets.py).
+EXPORT_PRESETS_DIR = BACKEND_DIR / "assets" / "export-presets"
 # Noto Color Emoji's images, which Text Layers draw emoji from (app/emoji.py).
 EMOJI_DIR = BACKEND_DIR / "assets" / "emoji"
 # MediaPipe's full-range BlazeFace, which also finds the smaller and turned faces of wide shots (the

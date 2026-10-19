@@ -564,16 +564,17 @@ def build_mcp(app: FastAPI) -> MCPServer:
     # Render
 
     @tool()
-    async def render_clips(job_id: str, candidate_ids: list[str] | None = None) -> dict:
+    async def render_clips(job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> dict:
         """Render Clips of the selected Candidates, or of `candidate_ids`, one at a time, replacing
-        Clips rendered before. The Job is rendering until they are done: wait_for_job, then list_clips."""
-        body = None if candidate_ids is None else {"candidate_ids": candidate_ids}
+        Clips rendered before, with an Export Preset (else the default). The Job is rendering until
+        they are done: wait_for_job, then list_clips."""
+        body = {"candidate_ids": candidate_ids, "export_preset_id": export_preset_id}
         return {"clips": clips(job_id, await api("POST", f"/jobs/{job_id}/render", json=body))}
 
     @tool(read_only=True)
     async def list_clips(job_id: str) -> dict:
         """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path) and
-        poster on this Mac."""
+        poster on this Mac, and its Export Settings (these never make a Clip stale)."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
 
     # Styles, assets and the Channel Profile
@@ -797,6 +798,8 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
             "size_bytes": output["size_bytes"],
             "rendered_at": output["at"],
             "revision": output.get("revision"),
+            "export_preset_id": output.get("export_preset_id"),
+            "export": output.get("export"),
         }
     return _compact(view)
 

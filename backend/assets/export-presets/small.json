@@ -1,0 +1,13 @@
+{
+  "id": "small",
+  "name": "Small",
+  "order": 10,
+  "settings": {
+    "codec": "h264",
+    "resolution": 720,
+    "fps": null,
+    "quality": "smallest",
+    "bitrate": null,
+    "loudness": -14
+  }
+}

@@ -1003,6 +1003,39 @@ export interface CandidateEvent {
   parts: string[];
 }
 
+export type Codec = "h264" | "hevc" | "av1";
+
+// How a Clip is encoded (backend/app/encoding.py). The frame is 9:16, `resolution` its short side.
+export interface ExportSettings {
+  codec: Codec;
+  resolution: 720 | 1080 | 1440 | 2160;
+  // null for the Source's.
+  fps: number | null;
+  quality: "high" | "recommended" | "smallest";
+  // A bitrate of their own, in place of the quality tier.
+  bitrate: { mode: "vbr" | "cbr"; kbps: number } | null;
+  // The loudness target in LUFS; null for none.
+  loudness: -14 | -16 | null;
+}
+
+// Named, global Export Settings that a render uses for its whole batch.
+export interface ExportPreset {
+  id: string;
+  name: string;
+  builtin: boolean;
+  order: number;
+  settings: ExportSettings;
+}
+
+export interface ExportPresetList {
+  // The built-in ones first.
+  presets: ExportPreset[];
+  // The one a render uses when none is asked for.
+  default: string;
+  // The codecs this Mac's ffmpeg can encode.
+  available: Codec[];
+}
+
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
   start: number;
@@ -1044,6 +1077,12 @@ export interface RenderedClip {
   transitions: Transition[];
   // The Candidate's Revision it was rendered from; null in a Clip rendered before Revisions.
   revision: number | null;
+  // The Export Preset it was asked for (perhaps deleted since) and the Export Settings it was made
+  // with, for display only; null in a Clip rendered before Export Presets (1080p H.264).
+  export_preset_id: string | null;
+  export: ExportSettings | null;
+  // CBR was asked for and the encoder did VBR.
+  bitrate_fallback: boolean;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -1058,6 +1097,8 @@ export interface Clip {
   error: string | null;
   // When the worker started rendering it; null unless it is rendering.
   started_at: string | null;
+  // The Export Preset its latest request asked for; null in a Clip asked for before Export Presets.
+  export_preset_id: string | null;
 }
 
 export interface JobDetail extends Job {
@@ -1168,12 +1209,14 @@ export const api = {
     }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>
     request<Candidate>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(range) }),
-  // Queues Clips of the given Candidates, or of the selected ones; answers with the Job's Clips.
-  render: (jobId: string, candidateIds?: string[]) =>
+  // Queues Clips of the given Candidates, or of the selected ones, with an Export Preset (the
+  // default without one); answers with the Job's Clips.
+  render: (jobId: string, candidateIds?: string[], exportPresetId?: string) =>
     request<Clip[]>(`/jobs/${jobId}/render`, {
       method: "POST",
-      body: candidateIds ? JSON.stringify({ candidate_ids: candidateIds }) : undefined,
+      body: JSON.stringify({ candidate_ids: candidateIds, export_preset_id: exportPresetId }),
     }),
+  listExportPresets: () => request<ExportPresetList>("/export-presets"),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   listFonts: () => request<FontInfo[]>("/fonts"),
   importFont: (file: File) => {

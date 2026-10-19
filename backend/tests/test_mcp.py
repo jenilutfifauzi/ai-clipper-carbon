@@ -24,7 +24,8 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
-TOOLS_BUDGET_BYTES = 69_000
+# Raised from 69_000 for Export Presets (export-settings/04): render_clips' `export_preset_id`.
+TOOLS_BUDGET_BYTES = 69_250
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -273,6 +274,21 @@ async def test_selected_candidates_render_into_clips_with_their_paths(mcp):
     assert clip["duration"] == pytest.approx(candidate["end"] - candidate["start"], abs=0.05)
     # Rendered from this Revision: a Clip is stale once its Candidate's is another.
     assert clip["revision"] == candidate["revision"]
+
+
+@pytest.mark.anyio
+async def test_a_render_takes_an_export_preset_which_its_clip_records(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    assert "No Export Preset nope" in await fails(mcp, "render_clips", job_id=job["id"], export_preset_id="nope")
+
+    await call(mcp, "render_clips", job_id=job["id"], candidate_ids=[candidate["id"]], export_preset_id="small")
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=60)
+    assert waited["reached"] and waited["job"]["status"] == "review"
+    [clip] = (await call(mcp, "list_clips", job_id=job["id"]))["clips"]
+    assert clip["status"] == "done", clip
+    assert clip["export_preset_id"] == "small"
+    assert (clip["export"]["resolution"], clip["export"]["codec"], clip["export"]["quality"]) == (720, "h264", "smallest")
 
 
 # 06: Style Presets, assets and the Channel Profile
