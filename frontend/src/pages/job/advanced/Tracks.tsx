@@ -960,8 +960,9 @@ function KeyedVolumeLine({
   );
 }
 
-// A Fade Ramp's handle: a hit area this many pixels square, kept clear of the item's trim edges.
-const FADE_HIT_PX = 24;
+// A Fade Ramp's handle: a hit area 24 pixels square (44 for a finger, where the pointer is coarse; the
+// item's height cuts it), its side the `--fade-hit` its class sets, kept clear of the item's trim edges.
+const FADE_HIT = "[--fade-hit:24px] pointer-coarse:[--fade-hit:44px]";
 const TRIM_EDGE_PX = 12;
 
 /**
@@ -1003,13 +1004,11 @@ function FadeRamps({
       grab && (
         <ItemHandle
           key={`${fade}:handle`}
-          className="absolute cursor-ew-resize"
+          className={cx("absolute size-(--fade-hit) cursor-ew-resize", FADE_HIT)}
           style={{
-            width: FADE_HIT_PX,
-            height: FADE_HIT_PX,
             // Across the top of a band; at the top of the item without one.
-            top: band ? -FADE_HIT_PX / 2 : 0,
-            [side]: `clamp(${TRIM_EDGE_PX}px, ${width - past - FADE_HIT_PX / 2}px, calc(100% - ${TRIM_EDGE_PX + FADE_HIT_PX}px))`,
+            top: band ? "calc(var(--fade-hit) / -2)" : 0,
+            [side]: `clamp(${TRIM_EDGE_PX}px, calc(${width - past}px - var(--fade-hit) / 2), calc(100% - ${TRIM_EDGE_PX}px - var(--fade-hit)))`,
           }}
           label={`${fades[fade].toFixed(1)} s`}
           labelBefore={side === "right"}

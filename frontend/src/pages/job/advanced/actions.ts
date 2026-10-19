@@ -636,14 +636,42 @@ export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { k
  */
 export function toggleMute(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Outcome | null {
   const { edits, pick } = scene;
-  const segments = edits.segments.filter((segment) => isPicked(pick, "segment", segment.id) && segment.hold == null && (!segment.media || sounded(segment.media)));
-  const music = edits.music.filter((clip) => isPicked(pick, "music", clip.id));
-  const overlays = edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id) && sounded(overlay.media));
-  const chosen = new Set<{ muted?: boolean }>([...segments, ...music, ...overlays]);
+  const chosen = new Set(pickedSounds(scene, sounded));
   if (!chosen.size) return null;
   const muted = [...chosen].some((item) => !item.muted);
   const set = <T extends { muted?: boolean }>(items: T[]) => items.map((item) => (chosen.has(item) ? { ...item, muted } : item));
   return { edits: { ...edits, segments: set(edits.segments), music: set(edits.music), overlays: set(edits.overlays) }, pick };
+}
+
+// The picked items with sound, which M Mutes or unmutes (toggleMute).
+function pickedSounds({ edits, pick }: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): { muted?: boolean }[] {
+  return [
+    ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id) && segment.hold == null && (!segment.media || sounded(segment.media))),
+    ...edits.music.filter((clip) => isPicked(pick, "music", clip.id)),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id) && sounded(overlay.media)),
+  ];
+}
+
+// The phone's toolbar Mute: `muted` once every picked item with sound is Muted, when it reads Unmute.
+export interface Muter {
+  muted: boolean;
+  toggle: () => void;
+}
+
+/**
+ * The phone's toolbar Mute of the Pick, by M's rule (toggleMute), its outcome applied (`apply`) as one
+ * change. Null when nothing with sound is picked: the button is then off.
+ */
+export function muter(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, apply: (outcome: Outcome) => void): Muter | null {
+  const sounds = pickedSounds(scene, sounded);
+  if (!sounds.length) return null;
+  return {
+    muted: sounds.every((item) => item.muted),
+    toggle: () => {
+      const outcome = toggleMute(scene, sounded);
+      if (outcome) apply(outcome);
+    },
+  };
 }
 
 /**

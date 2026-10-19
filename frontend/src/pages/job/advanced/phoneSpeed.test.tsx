@@ -96,6 +96,7 @@ describe("Speed in the phone's toolbar", () => {
         playback={new Playback()}
         picking={false}
         paste={null}
+        mute={null}
         onAsset={() => {}}
         onInspect={() => {}}
         onTransform={() => {}}

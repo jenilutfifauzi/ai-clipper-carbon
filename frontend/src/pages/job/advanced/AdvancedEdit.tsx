@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
+import { ArrowLeft, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -63,6 +63,7 @@ import {
   setHold,
   setReverse,
   speedSheetItem,
+  muter,
   toggleMute,
   type Outcome,
   type SegmentDrag,
@@ -102,7 +103,7 @@ import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { ItemMenu, type MenuEntry } from "./ItemMenu";
-import { attachmentName, download, itemSound, type ItemSound } from "./itemSound";
+import { attachmentName, canDownload, download, itemSound, sheetSound, type ItemSound } from "./itemSound";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
 import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
@@ -647,6 +648,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const reversed = reversible(scene, (media) => mediaById.get(media)?.kind === "video");
   // The one picked Segment, video Overlay or Music Clip, whose Speed sheet the phone's toolbar opens.
   const speedSheet = speedSheetItem(scene, (media) => mediaById.get(media)?.kind === "video");
+  // The phone's toolbar Mute of the Pick, as M does it; and the one picked item's Save sound as WAV in its sheet.
+  const muting = muter(scene, (media) => mediaById.get(media)?.has_audio === true, apply);
+  const savable = sheetSound(pick, edits, mediaById, canDownload());
   // The Retimed copy the preview plays a Segment, Overlay or Music Clip from, as the plan has it (retimedCopy.ts).
   function copyOf(item: SpeedRef): RetimedAsk | null {
     const plan = preview?.plan;
@@ -1361,6 +1365,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         }}
         picking={picking}
         paste={pasteHere}
+        mute={muting}
         onInspect={() => setSheet("inspector")}
         onTransform={() => setSheet("transform")}
         onSpeed={speedSheet && (() => setSheet("speed"))}
@@ -1397,6 +1402,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 <SheetEase mediaById={mediaById} />
               </KeyingContext.Provider>
               {inspector}
+              {/* The desktop's context menu entry, here at the foot of the item's sheet. */}
+              {savable && (
+                <div className="flex flex-col gap-1 border-t border-border pt-3">
+                  <Button className="self-start" disabled={!!savable.silent || savingSound} onClick={() => saveSound(savable)}>
+                    <Download aria-hidden size={16} />
+                    Save sound as WAV
+                  </Button>
+                  {savable.silent && <p className="text-sm text-muted">{savable.silent}</p>}
+                </div>
+              )}
             </>
           ) : sheet === "transform" ? (
             <KeyingContext.Provider value={keying}>

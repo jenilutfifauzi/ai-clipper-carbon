@@ -292,7 +292,7 @@ export function SegmentFields({
 function DetachButton({ onDetach, onReattach }: { onDetach?: () => void; onReattach?: () => void }) {
   if (onReattach) {
     return (
-      <Button size="sm" className="self-start" onClick={onReattach} title="Delete the Music Clips its sound was Detached onto, and unmute it">
+      <Button size="sm" className="self-start in-data-sheet:min-h-11" onClick={onReattach} title="Delete the Music Clips its sound was Detached onto, and unmute it">
         <Link2 aria-hidden size={16} />
         Reattach audio
       </Button>
@@ -300,7 +300,7 @@ function DetachButton({ onDetach, onReattach }: { onDetach?: () => void; onReatt
   }
   if (!onDetach) return null;
   return (
-    <Button size="sm" className="self-start" onClick={onDetach} title="Move its sound onto a Music Clip that slides on its own (a J-cut or an L-cut), and Mute it">
+    <Button size="sm" className="self-start in-data-sheet:min-h-11" onClick={onDetach} title="Move its sound onto a Music Clip that slides on its own (a J-cut or an L-cut), and Mute it">
       <Unlink2 aria-hidden size={16} />
       Detach audio
     </Button>

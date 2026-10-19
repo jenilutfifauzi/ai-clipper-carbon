@@ -3,7 +3,7 @@
 // too) and downloaded by the browser.
 import type { MediaItem, SoundKind } from "../../../api";
 import type { AdvancedEdits } from "./edits";
-import type { ItemRef } from "./pick";
+import { onlyItem, type ItemRef, type Pick } from "./pick";
 
 // What "Save sound as WAV" saves of an item.
 export interface ItemSound {
@@ -57,6 +57,18 @@ export function itemSound(item: ItemRef, edits: AdvancedEdits, mediaById: Map<st
   }
   return null;
 }
+
+/**
+ * Save sound as WAV in a phone's sheet: the sound of the one picked item (`itemSound`), where the
+ * browser can save a file from a link (`downloads`, as `download` needs); else null.
+ */
+export function sheetSound(pick: Pick, edits: AdvancedEdits, mediaById: Map<string, MediaItem>, downloads: boolean): ItemSound | null {
+  const only = onlyItem(pick);
+  return downloads && only ? itemSound(only, edits, mediaById) : null;
+}
+
+/** Whether this browser saves a link's file under its `download` name. */
+export const canDownload = () => typeof document !== "undefined" && "download" in document.createElement("a");
 
 /** The file name a Content-Disposition header gives (its UTF-8 `filename*` first); null without one. */
 export function attachmentName(header: string | null): string | null {

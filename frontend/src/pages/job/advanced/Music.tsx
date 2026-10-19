@@ -101,7 +101,7 @@ export function MusicFields({
       {detached && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted">Detached from Segment {detached.index + 1}</p>
-          <Button size="sm" onClick={detached.onReattach} title="Delete every Music Clip Detached from that Segment, and unmute it">
+          <Button size="sm" className="in-data-sheet:min-h-11" onClick={detached.onReattach} title="Delete every Music Clip Detached from that Segment, and unmute it">
             <Link2 aria-hidden size={16} />
             Reattach
           </Button>
