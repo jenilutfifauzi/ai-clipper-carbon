@@ -38,6 +38,8 @@ import { PresetBar } from "./editor/PresetBar";
 import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
 import { RevisionHistory } from "./editor/RevisionHistory";
+import { SaveFrameButton } from "./editor/SaveFrameButton";
+import { DEFAULT_FPS } from "./advanced/playhead";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
 import { placedFields } from "./editor/placing";
@@ -378,6 +380,19 @@ export function CandidateEditor({
                   start={candidate.start}
                   end={candidate.end}
                 />
+              )}
+              {(view === "clip" || cut) && (
+                <div className="flex items-center gap-2">
+                  <SaveFrameButton
+                    jobId={job.id}
+                    candidateId={candidate.id}
+                    title={name}
+                    draft={draft}
+                    at={() => playback.time}
+                    fps={plan?.fps || DEFAULT_FPS}
+                    duration={playback.duration}
+                  />
+                </div>
               )}
               {(view === "clip" || cut) && (
                 <PreviewNotes

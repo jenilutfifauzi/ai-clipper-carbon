@@ -800,6 +800,12 @@ export interface PreviewWord extends Word {
   at: number;
 }
 
+/** A saved frame (an Export file): its path in the Job's directory, and its URL. */
+export interface SavedFrame {
+  file: string;
+  url: string;
+}
+
 export interface PreviewPlan {
   plan: RenderPlan;
   words: PreviewWord[];
@@ -1245,6 +1251,10 @@ export const api = {
       body: draft ? JSON.stringify(draft) : undefined,
       signal,
     }),
+  // The frame at `at` (Timeline time) as the render draws it, of the Candidate or of an unsaved
+  // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
+  saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
+    request<SavedFrame>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
   listPresets: () => request<StylePreset[]>("/presets"),

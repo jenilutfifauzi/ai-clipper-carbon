@@ -26,7 +26,8 @@ KITA_SOAL = (1.6, 2.6)
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for Export Presets (export-settings/04): render_clips' `export_preset_id`; and
 # from 69_250 (export-settings/05) for the presets tools' kind "export" and save_preset's use_as_default.
-TOOLS_BUDGET_BYTES = 69_700
+# Raised again for Save frame (export-settings/07): save_frame.
+TOOLS_BUDGET_BYTES = 70_400
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -320,6 +321,21 @@ async def test_export_presets_are_listed_saved_made_the_default_and_deleted_but_
     assert "kbps" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"bitrate": {"mode": "cbr", "kbps": 1}}})
     assert await call(mcp, "delete_preset", kind="export", preset_id=saved["id"]) == {"deleted": saved["id"]}
     assert (await call(mcp, "list_presets", kind="export"))["default"] == "shorts"
+
+
+@pytest.mark.anyio
+async def test_save_frame_gives_the_path_of_a_png_on_this_mac_of_the_saved_revision(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+
+    saved = await call(mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="small")
+    path = Path(saved["path"])
+    assert path.is_absolute() and path.is_file() and path.suffix == ".png"
+    assert path.name == f"{candidate['id']}-00.00.12.png"
+    assert (await call(mcp, "get_job", job_id=job["id"]))["status"] == "review"
+    assert "No Export Preset nope" in await fails(
+        mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="nope",
+    )
 
 
 # 06: Style Presets, assets and the Channel Profile

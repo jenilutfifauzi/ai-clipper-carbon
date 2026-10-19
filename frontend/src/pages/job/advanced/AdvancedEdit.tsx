@@ -41,6 +41,7 @@ import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
 import { placedOverrides } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
+import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
@@ -1113,6 +1114,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         actions={
           <>
             {layoutControls}
+            <SaveFrameButton
+              jobId={job.id}
+              candidateId={candidate.id}
+              title={candidateName(candidate, index)}
+              draft={draft}
+              at={() => playback.time}
+              fps={fps}
+              duration={duration}
+              toLibrary={library.upload}
+              compact
+            />
             <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
           </>
         }

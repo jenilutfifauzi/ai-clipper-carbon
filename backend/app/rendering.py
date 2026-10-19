@@ -35,6 +35,7 @@ from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.candidates import Candidate, Framing, Layout, Segment
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
+from app.encoding import ExportSettings
 from app.export_presets import EXPORT_PRESETS_FILE, ExportPresetStore
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
@@ -290,6 +291,39 @@ class NothingToRender(ValueError):
     pass
 
 
+def drawing_inputs(
+    plan: RenderPlan,
+    export: ExportSettings,
+    job_dir: Path,
+    source: Source,
+    settings: Settings,
+    media: MediaStore,
+    logos: LogoStore,
+    progress: Callable[[int], Callable[[float], None]] = lambda copies: lambda done: None,
+) -> tuple[RenderPlan, Path | None, dict[str, Path], dict[str, Path]]:
+    """What the renderer draws `plan` (of the Job in `job_dir`, of `source`) as `export` says from:
+    the plan reading its reversed Segments and Overlays from their full-size Retimed copies, made
+    now if they aren't there (`progress(copies)` gives each copy's progress); its Logo's file; the
+    file of each Media Library item it plays, by id; and its picture layers' pictures at the export's
+    size, made now if they aren't there (docs/adr/0010), by name. A render and a saved frame both
+    draw from these."""
+    logo = logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
+    used = (
+        {event.media for event in plan.audio}
+        | {segment.media for segment in plan.segments if segment.media}
+        | {overlay.media for overlay in plan.overlays}
+    )
+    files = {media_id: media.file(media_id) for media_id in used}
+    copies = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
+        1 for event in plan.overlays + plan.audio if event.reverse
+    )
+    plan, files = read_from_copies(plan, files, lambda media_id, played: (
+        media.retimed(media_id) if media_id is not None else source_copies(job_dir, source)
+    ).make(settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), progress(copies)))
+    pictures = make_pictures(settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)
+    return plan, logo, files, pictures
+
+
 class Renders:
     def __init__(self, store: JobStore, settings: Settings, transcriber: Transcriber) -> None:
         self.store = store
@@ -511,24 +545,9 @@ class Renders:
                 export.fps,
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
-            logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
-            used = (
-                {event.media for event in plan.audio}
-                | {segment.media for segment in plan.segments if segment.media}
-                | {overlay.media for overlay in plan.overlays}
+            plan, logo, files, pictures = drawing_inputs(
+                plan, export, job_dir, job.source, self.settings, self.media, self.logos, lambda copies: step((1 - shown / 100) / 2 / copies),
             )
-            files = {media_id: self.media.file(media_id) for media_id in used}
-            # A reversed Segment or Overlay reads its full-size Retimed copy, made now if it isn't there.
-            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
-                1 for event in plan.overlays + plan.audio if event.reverse
-            )
-            plan, files = read_from_copies(plan, files, lambda media_id, played: (
-                self.media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
-            ).make(
-                self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
-            ))
-            # Its picture layers' pictures at the export's size, made now if they aren't there (docs/adr/0010).
-            pictures = make_pictures(self.settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)
             encoder, bitrate_fallback = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures, export,
             )

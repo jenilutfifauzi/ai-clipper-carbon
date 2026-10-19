@@ -109,7 +109,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
@@ -159,6 +160,19 @@ class RenderStopped(RuntimeError):
     """The render was cut short because the app is stopping."""
 
 
+class _Drawing(NamedTuple):
+    """What an encode draws with (Renderer._drawing): the plan at the output's size, the scripts
+    burned under and over its picture layers, the Faces they set text in, the Logo, and the keyed
+    pictures' items."""
+
+    plan: RenderPlan
+    subtitles: Path | None
+    above: Path | None
+    fonts: Path
+    logo: Path | None
+    keyed: "dict[Keyed, np.ndarray | Path]"
+
+
 class Encoded(NamedTuple):
     """What made a Clip: its video encoder, and whether that encoder did VBR where CBR was asked for."""
 
@@ -201,50 +215,107 @@ class Renderer:
         _check(plan)
         files = files or {}
         pictures = pictures or {}
+        parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
+        failures = []
+        try:
+            with self._drawing(source, plan, video, logo, files, pictures, export) as drawing:
+                loudness = None if export.loudness is None else self._measure(source, plan, export.loudness, files)
+                for encoder in self.tuning.codec_encoders(export.codec):
+                    feeds = _feeds(drawing.plan, drawing.keyed, self.ffmpeg)
+                    command = self._command(
+                        source, drawing.plan, loudness, encoder, *parts, drawing.subtitles, drawing.logo, files, feeds,
+                        drawing.fonts, pictures, drawing.above, export,
+                    )
+                    stderr = self._run(command, plan.duration, progress, list(feeds.values()))
+                    if stderr is None and parts[1].is_file():
+                        os.replace(parts[0], video)
+                        os.replace(parts[1], poster)
+                        return Encoded(encoder, encoder_args(export, plan.fps, encoder).bitrate_fallback)
+                    stderr = stderr or "no poster frame was written"
+                    logger.warning("Rendering with %s failed: %s", encoder, stderr)
+                    failures.append(f"{encoder}: {last_lines(stderr)}")
+        finally:
+            for part in parts:
+                part.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
+
+    def frame(
+        self,
+        source: Path,
+        plan: RenderPlan,
+        at: float,
+        still: Path,
+        logo: Path | None = None,
+        files: dict[str, Path] | None = None,
+        pictures: dict[str, Path] | None = None,
+        export: ExportSettings = ExportSettings(),
+    ) -> None:
+        """Write the frame of the Clip `render` would make that shows at `at` seconds into it
+        (`shown_frame`) to `still` (PNG): the same graph at `export`'s size, without the sound. The
+        other arguments are `render`'s. It is written under a temporary name and then renamed."""
+        _check(plan)
+        files = files or {}
+        pictures = pictures or {}
+        # Between the frame before it and it, which a frame's time rounded either way still selects.
+        between = max(0.0, (shown_frame(at, plan.fps, plan.duration) - 0.5) / plan.fps)
+        part = still.with_name(f".{still.stem}.part{still.suffix}")
+        stderr = None
+        try:
+            with self._drawing(source, plan, still, logo, files, pictures, export) as drawing:
+                feeds = _feeds(drawing.plan, drawing.keyed, self.ffmpeg)
+                command = self._command(
+                    source, drawing.plan, None, "png", part, part, drawing.subtitles, drawing.logo, files, feeds,
+                    drawing.fonts, pictures, drawing.above, export, still_at=between,
+                )
+                stderr = self._run(command, plan.duration, lambda done: None, list(feeds.values()))
+                if stderr is None and part.is_file():
+                    os.replace(part, still)
+                    return
+        finally:
+            part.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg couldn't draw the frame at {at:.3f} s ({last_lines(stderr or 'no frame was written')})")
+
+    @contextmanager
+    def _drawing(
+        self,
+        source: Path,
+        plan: RenderPlan,
+        output: Path,
+        logo: Path | None,
+        files: dict[str, Path],
+        pictures: dict[str, Path],
+        export: ExportSettings,
+    ) -> Iterator["_Drawing"]:
+        """What an encode of `plan` as `export` says draws with: its scripts and Faces written beside
+        `output` for as long as the block runs."""
         # The plan at the output's size, which the graph and the frame processes draw; the ASS script
         # is written from the plan in its own pixels, which libass scales to the frame.
         drawn = scaled_plan(plan, output_size(export))
         if missing := [event.layer.id for event in drawn.picture_layers if event.image not in pictures]:
             raise RuntimeError(f"The pictures of picture layers {', '.join(missing)} weren't made")
-        loudness = None if export.loudness is None else self._measure(source, plan, export.loudness, files)
-        parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
         # With picture layers, the script is cut in two about them: what they are drawn over, then the hook.
         below, above = (replace(plan, hook=None), replace(plan, captions=[], watermark=None)) if plan.picture_layers else (plan, None)
         scripts = {
-            name: (video.with_name(f".{video.stem}.part{suffix}.ass"), script)
+            name: (output.with_name(f".{output.stem}.part{suffix}.ass"), script)
             for name, suffix, script in (("below", "", below), ("above", "-above", above))
             if script is not None and (script.captions or script.hook or _text_watermark(script))
         }
-        fonts = video.with_name(f".{video.stem}.part.fonts")
+        fonts = output.with_name(f".{output.stem}.part.fonts")
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
         keyed = _keyed_items(drawn, files, source, pictures)
-        failures = []
         try:
             if scripts:
                 registry().gather(_faces(plan), fonts)
             for path, script in scripts.values():
                 path.write_text(_ass(script), encoding="utf-8")
-            subtitles, over = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
-            for encoder in self.tuning.codec_encoders(export.codec):
-                feeds = _feeds(drawn, keyed, self.ffmpeg)
-                command = self._command(
-                    source, drawn, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over, export
-                )
-                stderr = self._run(command, plan.duration, progress, list(feeds.values()))
-                if stderr is None and parts[1].is_file():
-                    os.replace(parts[0], video)
-                    os.replace(parts[1], poster)
-                    return Encoded(encoder, encoder_args(export, plan.fps, encoder).bitrate_fallback)
-                stderr = stderr or "no poster frame was written"
-                logger.warning("Rendering with %s failed: %s", encoder, stderr)
-                failures.append(f"{encoder}: {last_lines(stderr)}")
+            subtitles, above_script = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
+            yield _Drawing(drawn, subtitles, above_script, fonts, logo, keyed)
         finally:
-            for part in (*parts, *(path for path, _ in scripts.values())):
-                part.unlink(missing_ok=True)
+            for path, _ in scripts.values():
+                path.unlink(missing_ok=True)
             shutil.rmtree(fonts, ignore_errors=True)
-        raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
     def stop(self) -> None:
         """Kill the running encode, if any; renders from now on raise RenderStopped."""
@@ -293,6 +364,7 @@ class Renderer:
         pictures: dict[str, Path] | None = None,
         above: Path | None = None,
         export: ExportSettings = ExportSettings(),
+        still_at: float | None = None,
     ) -> list[str]:
         """The encode's command: `plan` (drawn at the Clip's size, its width x height) is encoded by
         `encoder` as `export` says, and the sound is normalized to its loudness target from the
@@ -300,7 +372,8 @@ class Renderer:
         keyed pictures (its Overlays', its keyed Scenes' and its animated picture layers', by their
         places among them); a keyed one without is drawn still, at its constants. `fonts` holds the
         Faces the `subtitles` set text in, burned under the picture layers (drawn from `pictures`, by
-        their names), and `above` over them."""
+        their names), and `above` over them. With `still_at`, only the frame at that time is written,
+        to `video` (PNG), and `encoder`, `poster` and the sound are unused."""
         tuning = self.tuning
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
@@ -336,6 +409,14 @@ class Renderer:
                 joined = f"[with_layer{i}]"
             subtitles = above
         burned = "" if subtitles is None else f"{ass_filter(subtitles, fonts)},"
+        if still_at is not None:
+            frame += f";{joined}{burned}format=yuv420p,select='gte(t\\,{still_at:.4f})',trim=end_frame=1[still]"
+            return [
+                str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
+                *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
+                "-filter_complex", frame, "-map", "[still]", "-frames:v", "1", "-c:v", "png",
+                "-f", "image2", "-update", "1", str(video),
+            ]
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         mix = _audio_mix(plan, index, tuning.audio_rate, sound)
         heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
@@ -398,6 +479,12 @@ class Renderer:
                 process.wait()
             for feed in feeds:
                 feed.close()
+
+
+def shown_frame(at: float, fps: float, duration: float) -> int:
+    """The number of the frame of a Clip `duration` long at `fps` that shows at `at` seconds into
+    it: the last that starts by then, within the Clip."""
+    return max(0, min(math.floor(at * fps + 1e-6), math.ceil(duration * fps - 1e-6) - 1))
 
 
 def picture_layouts(plan: RenderPlan, export: ExportSettings) -> list[PictureLayout]:
