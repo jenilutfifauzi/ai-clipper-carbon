@@ -16,6 +16,7 @@ from app.config import load_settings
 from app.main import create_app
 from app.ports import Ports
 from fontfiles import RESTRICTED, font_file
+from app.transcript import Word
 from test_jobs_api import URL
 
 # tests/fixtures/captions.json3's Words "halo" to "kabar", and "kita" to "soal" (Source time).
@@ -28,8 +29,9 @@ KITA_SOAL = (1.6, 2.6)
 # merge_candidate_items; the Captions switch (captions-advanced/05): `segments[].captions` in each
 # editing tool's Segment schema; Word Edits of Media Words (captions-advanced/06): `word_edits[].media`
 # and remove_candidate_items' {at, media} keys; a Cue Edit's `x`, `y` and `scale` (captions-advanced/08);
-# and its join (captions-advanced/09).
-TOOLS_BUDGET_BYTES = 73_700
+# and its join (captions-advanced/09). Raised from 73_700 for the captions tools (captions-advanced/11):
+# set_media_language, get_media_words and get_captions; the rest of what an agent needs is in the server's instructions.
+TOOLS_BUDGET_BYTES = 75_700
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -895,6 +897,112 @@ async def test_a_shape_the_model_refuses_is_a_clear_tool_error(mcp):
     assert kept["style"]["fill"] == "#112233" and kept["transform"]["stretch_x"] == 1
 
 
+# captions-advanced/11: the agent's captions tools
+
+
+async def talking(mcp: Client, transcriber, tmp_path: Path) -> tuple[dict, dict, dict]:
+    """A Job in review, a red video with sound heard saying "halo semua" (0.5 to 1.3 s into it), and a
+    Candidate showing its first 1.5 s and then "halo" to "kabar" of the episode."""
+    red = make(
+        tmp_path / "red.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-f", "lavfi", "-i",
+        "sine=frequency=1000:duration=2", "-c:v", "libx264", "-c:a", "aac", "-shortest",
+    )
+    item = await call(mcp, "add_asset", kind="media", path=str(red))
+    transcriber.heard[item["id"]] = [Word("halo", 0.5, 0.9), Word("semua", 0.9, 1.3)]
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    candidate = await call(mcp, "merge_candidate_items", job_id=job["id"], candidate_id=candidate["id"], segments=[
+        {"id": "i", "media": item["id"], "start": 0, "end": 1.5, "framing": {}},
+        {"id": "e", "start": candidate["start"], "end": candidate["end"]},
+    ])
+    return job, item, candidate
+
+
+@pytest.mark.anyio
+async def test_a_media_segments_words_are_got_and_the_dry_run_lists_its_cues_and_each_segments_status(mcp, transcriber, tmp_path):
+    job, item, candidate = await talking(mcp, transcriber, tmp_path)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    # Not yet queued: the video's Segment has no Cues, and says so.
+    before = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert [(segment["id"], segment["words_status"]) for segment in before["segments"]] == [("i", "none"), ("e", "transcript")]
+    assert all(cue["key"].get("media") is None for cue in before["captions"])
+
+    # get_media_words queues the video, waits for it and gives its Words in the Job's language.
+    words = await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+    assert (words["status"], words["language"]) == ("ready", "id")
+    assert [(word["text"], word["start"], word["end"]) for word in words["words"]] == [("halo", 0.5, 0.9), ("semua", 0.9, 1.3)]
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert plan["segments"][0]["words_status"] == "media"
+    [intro, *_] = plan["captions"]
+    assert (intro["lines"], intro["key"]) == (["HALO SEMUA"], {"at": 0.7, "media": item["id"]})
+
+
+@pytest.mark.anyio
+async def test_a_failed_media_segment_says_why_in_the_dry_run_and_get_media_words_gives_the_status(mcp, transcriber, tmp_path):
+    job, item, candidate = await talking(mcp, transcriber, tmp_path)
+    transcriber.fails[item["id"]] = "Whisper fell over"
+
+    words = await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+    assert (words["status"], words.get("words")) == ("failed", None) and "Whisper fell over" in words["error"]
+    plan = await call(mcp, "edit_candidate", job_id=job["id"], candidate_id=candidate["id"], changes={}, dry_run=True)
+    assert plan["segments"][0]["words_status"] == "failed" and "Whisper fell over" in plan["segments"][0]["words_error"]
+
+    # Asked again, it is transcribed again (a Retry).
+    del transcriber.fails[item["id"]]
+    assert (await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"]))["status"] == "ready"
+
+
+@pytest.mark.anyio
+async def test_a_media_items_language_is_set_and_its_words_come_in_it(mcp, transcriber, tmp_path):
+    job, item, _ = await talking(mcp, transcriber, tmp_path)
+    await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+
+    assert (await call(mcp, "set_media_language", media_id=item["id"], language="en"))["language"] == "en"
+    words = await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+    assert (words["status"], words["language"], len(words["words"])) == ("ready", "en", 2)
+    assert transcriber.calls[-1][0] == "en"
+
+    # Cleared, it is the Job's again, whose Words are kept.
+    assert (await call(mcp, "set_media_language", media_id=item["id"], language=None))["language"] is None
+    assert (await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"]))["language"] == "id"
+    assert [language for language, *_ in transcriber.calls] == ["id", "en"]  # the video's, once in each
+    assert "isn't a video with sound" in await fails(mcp, "get_media_words", media_id=(await call(mcp, "add_asset", kind="media", path=str(
+        make(tmp_path / "still.png", "-f", "lavfi", "-i", "color=c=red:size=8x8", "-frames:v", "1")
+    )))["id"], job_id=job["id"])
+
+
+@pytest.mark.anyio
+async def test_get_captions_gives_srt_and_vtt_of_the_dry_runs_cues_and_list_clips_their_files(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    cues = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"]
+
+    srt = (await call(mcp, "get_captions", **ids, format="srt"))["text"]
+    vtt = (await call(mcp, "get_captions", **ids, format="vtt"))["text"]
+    assert srt.startswith("1\n") and vtt.startswith("WEBVTT")
+    for number, cue in enumerate(cues, 1):
+        assert f"\n{number}\n" in f"\n{srt}" and all(line in srt and line in vtt for line in cue["plain"])
+    assert "-->" in srt and srt.count("-->") == vtt.count("-->") == len(cues)
+    assert "format" in await fails(mcp, "get_captions", **ids, format="ass")
+
+    await call(mcp, "render_clips", job_id=job["id"])
+    assert (await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=60))["reached"]
+    [clip] = (await call(mcp, "list_clips", job_id=job["id"]))["clips"]
+    # The rendered Clip's files beside its MP4 are those of its Candidate as rendered.
+    assert Path(clip["srt_path"]).read_text() == (await call(mcp, "get_captions", **ids, format="srt"))["text"]
+    assert Path(clip["vtt_path"]).read_text() == (await call(mcp, "get_captions", **ids, format="vtt"))["text"]
+
+
+@pytest.mark.anyio
+async def test_get_captions_is_refused_for_a_job_with_captions_off(mcp):
+    job = await reviewed(mcp, captions=False)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    assert "captions off" in await fails(mcp, "get_captions", job_id=job["id"], candidate_id=candidate["id"], format="srt")
+
+
 # 08: agent guidance
 
 
@@ -912,6 +1020,12 @@ async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
     shapes = mcp.instructions[mcp.instructions.index("- A Shape is a figure") :]
     assert "stroke_colour (#000000 by default)" in shapes
     assert "a stroke 12 px thick in its fill's colour" in shapes
+
+    # The captions: the Word Edit key on its Word's own timeline, the Cues and Cue Edits, Media Words.
+    assert "any time within its Word on that Word's timeline" in mcp.instructions
+    assert {"set_media_language", "get_media_words", "get_captions"} <= {tool.name for tool in tools}
+    for field in ("joinable", "needs_join", "`join`", "unused_cue_edits", "words_status", "words_error", "`captions`", "srt_path", "centre"):
+        assert field in mcp.instructions, field
 
     glossary = await mcp.read_resource("ai-clipper://glossary")
     assert "Candidate" in glossary.contents[0].text

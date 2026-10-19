@@ -80,6 +80,9 @@ TRANSCRIPT_PAGE_LINES = 400
 # How long `wait_for_job` waits by default, and at most, before it returns the Job as it is.
 WAIT_SECS = 120
 WAIT_MAX_SECS = 600
+# How long `get_media_words` waits by default for a video's Media Words, and how often it looks.
+MEDIA_WORDS_WAIT_SECS = 120
+MEDIA_WORDS_POLL_SECS = 0.25
 # How often merge_candidate_items and remove_candidate_items make their change again when another
 # edit saves first.
 STALE_RETRIES = 5
@@ -112,14 +115,16 @@ Workflow:
    Preset, Style Overrides and the rest. dry_run=true shows the Preview Plan (captions, hook, Words)
    without saving.
 5. render_clips renders the selected Candidates; wait_for_job until review again; list_clips gives
-   each Clip's video_path.
+   each Clip's video_path and its caption files (srt_path, vtt_path). get_captions gives a
+   Candidate's SRT or VTT without a render.
 
 Times:
 - A Candidate's start and end, Segments, the Transcript and Words are Source time: seconds into the
-  Source video. A Word Edit's `at` is any time within its Word in Source time (the editor uses
-  the Word's middle; dry run lists them). With `media` (a video's id), it is a time on that video's
-  own timeline, of its Media Words, and applies in every Segment showing that time of it; a Source
-  Word Edit never touches a video's Words, nor the other way round.
+  Source video. A Word Edit's `at` is any time within its Word on that Word's timeline: Source time,
+  or with `media` (a video's id) seconds into that video, of its Media Words (the editor uses the
+  Word's middle; the dry run lists each Word's `at` and `media`). One with `media` applies in every
+  Segment showing that time of the video; a Source Word Edit never touches a video's Words, nor the
+  other way round.
 - Text Layers, Shapes, Music Clips, Overlays, hook_start and the Preview Plan's events are
   Timeline time: seconds into the Clip, from 0.
 
@@ -196,10 +201,15 @@ Edits:
   and ends at a pause of pause_secs or a sentence's end. A Word Edit's break_before starts a line,
   and a Cue when the Cue has all its lines. The editor's Phrase is 1 line, 16 characters, no word
   limit, 1.4 s, 0.5 s pause; its Sentence 2 lines, 24 characters, no word limit, 5 s, 0.7 s pause.
-- A Cue Edit (cue_edits) changes one Cue. It is keyed by `at`, any time within the Cue's first
-  Word in Source time (the dry run gives each Cue's `key`), and that Word then always starts a Cue.
-  `shift` moves the Cue and its highlight; `start_delta` and `end_delta` move only its start or its
-  end (negative: earlier). All are -10..10 seconds of Source time, so a Segment at 2x halves them.
+- The dry run's `captions` are the Cues: start and end (Timeline time), `lines` as shown, `plain`
+  (the Words as written, with the Word Edits), `key` (the {{at, media}} a Cue Edit of it names),
+  `edited` when a Cue Edit applies, `joinable` (whether it fits merged into the Cue before),
+  `needs_join` when merging it takes a `join` (below), `centre` and `size`.
+- A Cue Edit (cue_edits) changes one Cue. It is keyed as a Word Edit: `at`, any time within the
+  Cue's first Word on its timeline, with `media` for a video's (the Cue's `key`), and that Word then
+  always starts a Cue. `shift` moves the Cue and its highlight; `start_delta` and `end_delta` move
+  only its start or its end (negative: earlier). All are -10..10 seconds of that timeline, so a
+  Segment at 2x halves them.
   The Cue is kept in its Segment, after the Cue before ends and before the Cue after starts, and
   0.2 s long at least. Its `x` and `y` (output pixels, as the caption style's custom position)
   centre that Cue alone, kept in the frame, and `scale` ({CUE_MIN_SCALE}..{CUE_MAX_SCALE}) times the
@@ -220,7 +230,13 @@ Edits:
 - A Segment of a video with sound is captioned from its video's Media Words (the whole video
   transcribed once, in the video's own language if set, else the Job's), unless its `captions` (its
   Captions switch) is false: then it has no captions and its video isn't transcribed for it. null
-  means on. A Segment of the episode has no `captions`.
+  means on. A Segment of the episode has no `captions`. Media Words are transcribed when a
+  Candidate showing the video is prepared or rendered, or by get_media_words, which queues them,
+  waits and gives them. set_media_language sets a video's language (null: the Job's); Words in
+  other languages are kept. The dry run gives each Segment's `words_status`: clip or transcript (the
+  episode's), media (ready), pending (no Cues yet: get_captions is refused meanwhile), failed (with
+  `words_error`; get_media_words retries), off (its Captions switch) or none (not queued, silent,
+  reversed, a Freeze frame or captions off).
 - A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
   lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
   into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
@@ -298,13 +314,15 @@ def build_mcp(app: FastAPI) -> MCPServer:
             annotations=ToolAnnotations(readOnlyHint=read_only, destructiveHint=destructive),
         )
 
-    async def api(method: str, path: str, *, json: Any = None, params: dict | None = None, files: dict | None = None) -> Any:
-        """The API route's response (None for 204), or a ToolError with its message."""
+    async def api(
+        method: str, path: str, *, json: Any = None, params: dict | None = None, files: dict | None = None, text: bool = False
+    ) -> Any:
+        """The API route's response (None for 204; with `text`, its body as text), or a ToolError with its message."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://ai-clipper") as client:
             response = await client.request(method, f"/api{path}", json=json, params=params, files=files, headers=EDIT_SOURCE)
         if response.is_success:
-            return None if response.status_code == 204 else response.json()
+            return None if response.status_code == 204 else response.text if text else response.json()
         if (current := _stale_candidate(response)) is not None:
             raise StaleCandidate(_message(response), current)
         raise ToolError(_message(response))
@@ -488,7 +506,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
         merge_candidate_items). With changes.revision (the `revision` you read), an edit made after
         someone else's is refused with the Candidate as it is now, instead of saved over it. With
         dry_run, nothing is saved: the Preview Plan of the changes comes back instead, its events in
-        Timeline time, and its Words with the `at` (and `media`) a Word Edit names."""
+        Timeline time, its Cues with the key a Cue Edit names, each Segment's words_status, and its
+        Words with the `at` (and `media`) a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         if dry_run:
             return _plan_view(
@@ -610,9 +629,44 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool(read_only=True)
     async def list_clips(job_id: str) -> dict:
-        """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path) and
-        poster on this Mac."""
+        """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path),
+        poster and caption files (srt_path, vtt_path; none with captions off) on this Mac."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
+
+    # Captions
+
+    @tool()
+    async def set_media_language(media_id: str, language: str | None) -> dict:
+        """Set a video's language (ISO 639-1; null: each Job's), which its Media Words are heard in."""
+        return await api("PATCH", f"/media/{media_id}", json={"language": language})
+
+    @tool()
+    async def get_media_words(
+        media_id: str, job_id: str, again: bool = False, timeout_secs: int = Field(MEDIA_WORDS_WAIT_SECS, ge=5, le=WAIT_MAX_SECS)
+    ) -> dict:
+        """A video's Media Words for the Job (seconds into it), in its language. Queues them when
+        none or failed (`again`: even when ready), waits up to timeout_secs, and returns their
+        `status` (ready, pending: call again, failed with `error`, none) and `words` when ready."""
+        path = f"/jobs/{job_id}/media/{media_id}/words"
+        words = await api("GET", path)
+        if again or words["status"] in ("none", "failed"):
+            words = await api("POST", path, json={"again": again})
+        try:
+            async with asyncio.timeout(timeout_secs):
+                while words["status"] == "pending":
+                    await asyncio.sleep(MEDIA_WORDS_POLL_SECS)
+                    words = await api("GET", path)
+        except TimeoutError:
+            pass
+        if words["words"] is not None:
+            words["words"] = [_times(word, "text", "start", "end") for word in words["words"]]
+        return _compact(words)
+
+    @tool(read_only=True)
+    async def get_captions(job_id: str, candidate_id: str, format: Literal["srt", "vtt"]) -> dict:
+        """The Candidate's captions as SRT or VTT `text`: its saved Cues, without a render. Refused
+        while a Segment's Words are pending, and with captions off."""
+        return {"format": format, "text": await api("GET", f"/jobs/{job_id}/candidates/{candidate_id}/captions/{format}", text=True)}
 
     # Styles, assets and the Channel Profile
 
@@ -835,6 +889,7 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
             "size_bytes": output["size_bytes"],
             "rendered_at": output["at"],
             "revision": output.get("revision"),
+            **{f"{format}_path": str(job_dir / output[format]) for format in ("srt", "vtt") if output.get(format)},
         }
     return _compact(view)
 
@@ -891,8 +946,9 @@ def _plan_view(
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
-    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the
-    Words."""
+    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), each
+    Segment's Words status (and a failed one's error), the Cues (`_cue_view`), the unused Cue Edits
+    and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -912,6 +968,7 @@ def _plan_view(
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
                 "reverse": segment["reverse"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
+                "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
         ],
