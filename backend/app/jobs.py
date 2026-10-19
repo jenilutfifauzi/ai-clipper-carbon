@@ -26,7 +26,7 @@ from app.profile import ChannelProfile
 from app.revisions import Edit, HistoryEntry, recorded
 from app.selection import Selection
 from app.storage import write_atomic
-from app.transcript import Transcript
+from app.transcript import Language, Transcript
 from app.video_source import Source
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ RUNNING = frozenset({JobStatus.DOWNLOADING, JobStatus.TRANSCRIBING, JobStatus.AN
 
 @dataclass(frozen=True)
 class JobOptions:
-    language: Annotated[str, Field(pattern=r"^[A-Za-z]{2,3}(-[A-Za-z0-9]+)*$")] = DEFAULT_LANGUAGE
+    language: Language = DEFAULT_LANGUAGE
     min_secs: Annotated[float, Field(gt=0)] = 20
     max_secs: Annotated[float, Field(gt=0)] = 90
     captions: bool = True
@@ -162,6 +162,9 @@ class Job:
     # Candidates queued to be prepared for the clip editor (their caption Words transcribed and their
     # range analysed, without an encode), by the render queue before its Clips.
     preparing: list[str] = field(default_factory=list)
+    # Media Library videos queued to have their Media Words transcribed in their language for this
+    # Job (a Retry or "Transcribe again"), by the render queue before its preparations.
+    transcribing: list[str] = field(default_factory=list)
 
 
 # Called with a Job's id and its new state each time the store saves it, or None once it's deleted.

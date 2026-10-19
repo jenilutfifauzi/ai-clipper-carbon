@@ -78,7 +78,7 @@ class FakeTranscriber:
     there (a Media Library item's file is named by its id); those overlapping the requested range,
     clipped to it, the way Whisper hears a word that the range cuts in two. All of a call's Words
     form one Segment. `calls` records each call's language and range, `calls_for` how many were of
-    one file.
+    one file. A call of a file whose stem is in `fails` raises RuntimeError with its message.
 
     `stall(n)` makes the next `n` calls hang like a stuck Whisper run, until `stop()`.
     `hold(after=n)` makes the calls after the first `n` wait for `release()`.
@@ -87,6 +87,7 @@ class FakeTranscriber:
     def __init__(self, words: list[Word]) -> None:
         self.words = words
         self.heard: dict[str, list[Word]] = {}
+        self.fails: dict[str, str] = {}
         self.calls: list[tuple[str, float, float | None]] = []
         self.files: list[str] = []
         self._stalls = 0
@@ -124,6 +125,8 @@ class FakeTranscriber:
         if self._hold_after is not None and len(self.calls) > self._hold_after:
             if not self._released.wait(timeout=10):
                 raise TimeoutError("FakeTranscriber was held and never released")
+        if media.stem in self.fails:
+            raise RuntimeError(self.fails[media.stem])
 
         stop = float("inf") if end is None else end
         words = [
