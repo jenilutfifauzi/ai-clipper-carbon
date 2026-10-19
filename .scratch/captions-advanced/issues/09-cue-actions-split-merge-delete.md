@@ -22,11 +22,48 @@ On a phone, these come in the bottom sheet.
 
 **Blocked by:** 03, 07.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Planner: `join` keeps two Cues parted by a pause together, but not past `max_chars` × `max_lines`. `joinable` agrees.
-- [ ] HTTP: a `join` Cue Edit with a shift is refused.
-- [ ] vitest: Split at a playhead inside a Cue adds a Cue Edit at the right Word. Merge clears the next Cue's start, and adds `join` only when needed. Delete empties every Word in one undo step. All are refused on a locked Track.
-- [ ] vitest: chips retype and remove Words, and the start and end fields write the deltas.
-- [ ] The MCP accepts `join` in `cue_edits`.
-- [ ] Browser walkthrough at desktop and phone widths.
+- [x] Planner: `join` keeps two Cues parted by a pause together, but not past `max_chars` × `max_lines`. `joinable` agrees.
+- [x] HTTP: a `join` Cue Edit with a shift is refused.
+- [x] vitest: Split at a playhead inside a Cue adds a Cue Edit at the right Word. Merge clears the next Cue's start, and adds `join` only when needed. Delete empties every Word in one undo step. All are refused on a locked Track.
+- [x] vitest: chips retype and remove Words, and the start and end fields write the deltas.
+- [x] The MCP accepts `join` in `cue_edits`.
+- [x] Browser walkthrough at desktop and phone widths.
+
+## Comments
+
+**2026-10-19, agent:** Built.
+
+**Model.** `CueEdit.join: bool` (default false, `app/candidates.py`). Its `__post_init__` refuses a join with any other field off its default (written over `fields()`, so ticket 08's `x`, `y`, `scale` are covered too). `join` is in `api.ts`'s `CueEdit`.
+
+**Planner** (`_captions`):
+- A join Cue Edit's Word goes on in the Cue before when it fits its lines (`_fits`) and isn't parted by a cut or a Layout change, despite a pause, a sentence's end or `max_secs`. Otherwise it starts a Cue, unmoved (its timing is never applied; `edited` stays false).
+- A join takes only its own Word; the following Words are broken as before. So the longest-Cue clock restarts at the joined Word (per Cue, `clocks`), for its Words and for the shown end (`clock + max_secs`), so that merging two Cues keeps the whole of the second. Without joins every Cue's clock is its first Word's start: nothing else changes.
+- New on each Cue: `needs_join` (true when a pause, the sentence's end, or `max_secs` from the Cue before's clock to this Cue's last Word parts it from the Cue before). Merge reads it to decide whether to add a join; without it the frontend would have had to repeat the planner's break rules. This is a field the spec doesn't list (deviation). The dry run shows it only when true. `joinable` is unchanged and agrees: a join takes exactly when `joinable`.
+
+**MCP:** `join` is in `cue_edits` (schema from the model). The instructions explain join, and how to merge (remove the Cue Edit and break_before, add a join when `needs_join`) and split (a Cue Edit with no fields). TOOLS_BUDGET_BYTES is 72_200 after merging 05.
+
+**Frontend** (`advanced/cueEdits.ts`, new `advanced/CueFields.tsx`):
+- `splitCue`/`splitWord`/`cueSplitter`: Split takes the first Word after the Cue's first whose highlight starts after the playhead, while the Cue is shown (in the entry shown at the playhead, at a Layout change). It writes a bare Cue Edit at that Word's `at`, putting it in place of a join on that Word. Cmd/Ctrl+B and the Timeline's/phone toolbar Split use it while a Cue is picked. **Deviation:** the split Cue stays picked, not the new one. The new key isn't in the plan until it is planned again, and AdvancedEdit's `prunedCue` sync would drop it.
+- `mergeCue`: disabled unless the next Cue is `joinable`. It drops the next Cue's Cue Edit (`cueEditOf`) and its first Word's `break_before`, and adds `{join: true}` at its key only when `needs_join`.
+- `deleteCue`: an empty-text Word Edit for each of the Cue's Words, in one outcome, picking nothing. The Delete key does it too (`commands.ts`'s new `removeCue`).
+- **Reset timing** (choice): a Cue Edit left with no timing is kept as a bare start when its Cue is `joinable` and not `needs_join`, that is, when only its Cue Edit (or a break) parts it from the Cue before, as after a Split. Otherwise it is dropped as before. Reset is disabled on a bare start (nothing to reset).
+- Retiming a Cue whose Cue Edit is a failed join turns it into a start (`join: false`), so a drag never writes join with a shift.
+- The Words of a Cue are the Preview Plan's Words on its timeline (`lineWords`, filtered by a `media` field on PreviewWord, expected from ticket 06, read through `mediaOf`). Until then, a video's Cue has no Words listed, so its chips show "Its words can't be listed yet", and Split and Delete are disabled for it. Merge works.
+- Inspector of a picked Cue (`CueFields`):
+  - Split, Merge with next and Delete as header icon buttons (Merge's title says why when the next Cue doesn't fit);
+  - its Words as chips: the shared `CaptionTextEditor` with a new `only` prop, whose Restore all restores only those Words;
+  - Starts and Ends sliders, bounded as the planner bounds them, writing `start_delta`/`end_delta` through `cueTimeGesture` (a run goes on from where the Cue was as it began, and the value set is held while the plan catches up), one undo group per field;
+  - Reset timing.
+
+  A locked Captions Track refuses all of them. On a phone they come in the Edit bottom sheet.
+- The Captions Track's aria label says "edited" instead of "retimed" for a Cue with a Cue Edit.
+
+**Checks:**
+- Backend: test_planner (2 new: join with a pause, sentence end and the longest Cue, not past the line limits, joinable agreeing; needs_join false for a Split's Cue). test_render's Cue Edit HTTP test refuses join with shift or end_delta and saves a join. test_mcp: needs_join in the dry run, a join merging two Cues, join refused with another field in a merge. Full suite: see the commit report.
+- Frontend: `advanced/cueActions.test.tsx` (13): Split at the right Word, its disabled cases, replacing a join; Merge with and without join, clearing break_before; Delete in one change; a video's Cue not matched to Source Words; Reset timing after a Split; all refused on a locked Track; chips retype and remove; the start and end fields and their gesture. vitest 905 passed, typecheck clean, build clean (after merging feat/captions-advanced with 05; main had nothing new).
+- Browser walkthrough (built frontend, copy of one Job in a scratch DATA_DIR, a manual Candidate):
+  - Desktop 1440×900: picked "IYA MENURUT SAYA"; the inspector showed chips, Starts 11.30 s and Ends 12.24 s. Cmd+B saved `{at: 21.86}` and the Track showed "IYA" and a dotted "MENURUT SAYA". Merge with next on "IYA" saved `[]`. Delete key on "KESUKSESAN" saved one empty Word Edit, and one Undo restored it.
+  - Phone 390×844: picking a Cue and tapping Edit opened the bottom sheet with the same panel. Retyping the chip "kadang" saved `kadang-kadang`. 20 arrow steps on Starts saved `start_delta: 0.24`. A first try saved 0.04, because the slider read the lagging plan; it is fixed by holding the set value.
+  - Not seen in the browser: a Merge that adds a join (this Job's Cues, under Phrase, Sentence and 3 lines, had no joinable pair parted by a pause). The planner and vitest cover it. No Clip was rendered.
