@@ -203,7 +203,8 @@ export function splitWord(scene: CueScene, key: CueKey, time: number): PreviewWo
 
 /**
  * Split (Cmd/Ctrl+B) on the picked Cue keyed `key` at the playhead (`time`): a Cue Edit at the first
- * of its Words after it (splitWord), which then starts a Cue, picked. A join on that Word gives way
+ * of its Words after it (splitWord), which then starts a Cue; this one stays picked (the new one isn't in
+ * the plan until it is planned again, and would drop out of the Pick). A join on that Word gives way
  * to it. Null when there is no such Word, or while the Captions Track is locked.
  */
 export function splitCue(scene: CueScene, key: CueKey, time: number): Outcome | null {
@@ -220,7 +221,7 @@ export function splitCue(scene: CueScene, key: CueKey, time: number): Outcome | 
       Math.abs(edit.at - word.at) < REACH_SECS &&
       words.every((other) => Math.abs(edit.at - word.at) <= Math.abs(edit.at - other.at)),
   );
-  return { edits: withCueEdit(edits, there ?? null, bare(word.at, media)), pick: { kind: "cue", key: { at: word.at, media } } };
+  return { edits: withCueEdit(edits, there ?? null, bare(word.at, media)), pick: { kind: "cue", key } };
 }
 
 /** Split at the playhead (`now`) on the picked Cue keyed `key`, from the Timeline's bar, the phone's toolbar and Cmd/Ctrl+B. */

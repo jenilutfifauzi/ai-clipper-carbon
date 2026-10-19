@@ -470,7 +470,7 @@ export function Tracks({
                 trimMax={shown.high}
                 tone="neutral"
                 selected={selected || pick?.kind === "captions"}
-                label={`Caption "${text}", from ${shown.start.toFixed(2)} s to ${shown.end.toFixed(2)} s${shown.edited ? ", retimed" : ""}`}
+                label={`Caption "${text}", from ${shown.start.toFixed(2)} s to ${shown.end.toFixed(2)} s${shown.edited ? ", edited" : ""}`}
                 onSelect={() => {
                   // Just inside the Cue, which a frame's rounding of its start can miss.
                   playback.seek(shown.start + Math.min(CAPTION_SEEK_IN, (shown.end - shown.start) / 2));

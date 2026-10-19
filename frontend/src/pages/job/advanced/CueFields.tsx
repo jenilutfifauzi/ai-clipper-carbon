@@ -1,6 +1,6 @@
 import { Captions, Merge, RotateCcw, Scissors, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { CueKey, PreviewPlan } from "../../../api";
+import type { CueEdit, CueKey, PreviewPlan } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
@@ -10,6 +10,7 @@ import { Group } from "../editor/StyleFields";
 import type { Outcome } from "./actions";
 import {
   CUE_MIN_SECS,
+  cueEditOf,
   cueOf,
   cueTimeGesture,
   deleteCue,
@@ -53,6 +54,8 @@ export function CueFields({
   const scene: CueScene = { edits, plan, words: preview?.words, locked };
   // The fields' runs of changes, each from where the Cue was shown as it began.
   const [retime] = useState(cueTimeGesture);
+  // The value last set in a field, shown while its Cue Edit is the one it wrote: the plan of it comes later.
+  const [held, setHeld] = useState<{ edge: "start" | "end"; time: number; made: CueEdit | null } | null>(null);
   const splittable = usePlayback(playback, (time) => !!splitWord(scene, cueKey, time));
   const cue = plan?.captions.find((other) => sameCue(other.key, cueKey));
   const shown = plan && cueOf(plan, cueKey);
@@ -94,7 +97,18 @@ export function CueFields({
           onChange={(next) => run(retypeCue(scene, cueKey, next))}
         />
       )}
-      {shown && <CueTimeFields shown={shown} disabled={blocked} onTime={(edge, time) => run(retime(scene, cueKey, edge, time), `cue:${edge}`)} />}
+      {shown && (
+        <CueTimeFields
+          shown={held && plan && held.made === cueEditOf(edits.cue_edits, plan, cueKey) ? { ...shown, [held.edge]: held.time } : shown}
+          disabled={blocked}
+          onTime={(edge, time) => {
+            const outcome = retime(scene, cueKey, edge, time);
+            if (!outcome || !plan) return;
+            run(outcome, `cue:${edge}`);
+            setHeld({ edge, time, made: cueEditOf(outcome.edits.cue_edits, plan, cueKey) });
+          }}
+        />
+      )}
       <Button size="sm" className="self-start" disabled={!reset} onClick={() => run(reset)}>
         <RotateCcw aria-hidden size={16} />
         Reset timing

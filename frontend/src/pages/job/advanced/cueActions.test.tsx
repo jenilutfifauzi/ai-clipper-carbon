@@ -92,10 +92,10 @@ const scene = (state = edits(), captions = [first, second()], words = WORDS, loc
 });
 
 describe("Split on a picked Cue", () => {
-  test("adds a Cue Edit at the first of its Words after the playhead, and picks the Cue it starts", () => {
+  test("adds a Cue Edit at the first of its Words after the playhead, keeping this one picked", () => {
     const split = splitCue(scene(), FIRST, 1.2)!;
     expect(split.edits.cue_edits).toEqual([edit(101.7)]);
-    expect(split.pick).toEqual({ kind: "cue", key: { at: 101.7, media: null } });
+    expect(split.pick).toEqual({ kind: "cue", key: FIRST });
     expect(cueSplitter(scene(), FIRST, () => 1.2, () => {}).canSplit(1.2)).toBe(true);
   });
 
