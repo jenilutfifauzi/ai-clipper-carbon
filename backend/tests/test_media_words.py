@@ -135,6 +135,9 @@ def test_preparing_a_candidate_transcribes_its_talking_media_segment_and_caption
     transcriber.hold()
     assert prepare(client, job, candidate)["status"] == "rendering"
     assert preview(client, job, candidate)["words_status"] == {"i": "pending", "e": "transcript"}
+    # Its caption files would be missing the video's Cues, so they are refused until it is heard.
+    refused = client.get(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/captions/srt")
+    assert refused.status_code == 409 and "transcribed" in refused.json()["detail"]
     transcriber.release()
     rendered(client, job)
     ready = preview(client, job, candidate)

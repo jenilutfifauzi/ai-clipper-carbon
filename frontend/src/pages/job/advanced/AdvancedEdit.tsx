@@ -133,6 +133,7 @@ import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
+import { Downloads } from "./Downloads";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
@@ -1176,6 +1177,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         actions={
           <>
             {layoutControls}
+            {job.options.captions && (
+              <Downloads jobId={job.id} candidateId={initial.id} title={candidate.title} saving={saving > 0} />
+            )}
             <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
           </>
         }
