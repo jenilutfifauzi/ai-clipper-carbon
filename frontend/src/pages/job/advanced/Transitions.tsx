@@ -1,7 +1,8 @@
 import { Trash2 } from "lucide-react";
-import type { Transition, TransitionKind } from "../../../api";
+import type { Transition, TransitionKind, TransitionSound } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { TRANSITION_KINDS, TRANSITIONS } from "../editor/transitions";
@@ -11,9 +12,16 @@ import { DRAG_TRANSITION } from "./drag";
 const SECS = { min: 0.2, max: 1.5 };
 export const TRANSITION_SECS = 0.5;
 
+// How a Transition's sound crosses (TransitionSound in backend/app/candidates.py).
+const SOUNDS = [
+  { value: "linear", label: "Linear" },
+  { value: "equal_power", label: "Equal power" },
+  { value: "cut", label: "Cut" },
+] as const;
+
 /**
  * The Transitions: a card per kind, put on the selected join by a click (or dragged onto any join on
- * the timeline); and, when the join has one, its length and a way to remove it.
+ * the timeline); and, when the join has one, its length, its sound and a way to remove it.
  */
 export function TransitionPanel({
   transition,
@@ -30,7 +38,7 @@ export function TransitionPanel({
   // Whether to show the kinds to pick from (the desktop's inspector leaves them to the Transitions tab).
   kinds?: boolean;
   onPick: (kind: TransitionKind) => void;
-  onChange: (transition: Transition, group: string) => void;
+  onChange: (transition: Transition, group?: string) => void;
   onRemove: () => void;
 }) {
   return (
@@ -81,6 +89,13 @@ export function TransitionPanel({
             step={0.05}
             format={(v) => `${v.toFixed(2)} s`}
             onChange={(secs) => onChange({ ...transition, secs }, `transition:${transition.after}`)}
+          />
+          <Segmented
+            legend="Sound"
+            options={SOUNDS}
+            value={transition.sound ?? "linear"}
+            // Each choice its own step of undo.
+            onChange={(sound: TransitionSound) => onChange({ ...transition, sound })}
           />
           <Button variant="ghost" onClick={onRemove} className="self-start">
             <Trash2 aria-hidden size={16} />

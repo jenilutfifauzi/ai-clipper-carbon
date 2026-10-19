@@ -8,6 +8,7 @@ import { setVolume } from "./PreviewMusic";
 import { MediaSegment, CopiedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
 import { showLook, TRANSITIONS, type TransitionLook } from "./transitions";
+import { crossedVolumes } from "./transitionSound";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
 const READY_SECS = 2;
@@ -17,10 +18,11 @@ const UNSTYLED: TransitionLook = { outgoing: {}, incoming: {}, veil: {} };
 /**
  * The plan's Transitions, imitated: the preview's main playback goes on into the next Segment where
  * a Transition starts (playback.ts's `playable`), and over it the Segment before keeps playing on
- * a playback of its own (its "ghost": its panels, or its own videos), its sound fading out, over
- * exactly the Transition's time. The kind's look (transitions.ts) styles the ghost, the `incoming`
- * Segments' picture layer under it and a veil over both. Near the render's look and acrossfade's
- * sound, not the same.
+ * a playback of its own (its "ghost": its panels, or its own videos), over exactly the Transition's
+ * time. The kind's look (transitions.ts) styles the ghost, the `incoming` Segments' picture layer
+ * under it and a veil over both; the ghost's sound gives way to the incoming one's along the
+ * Transition's sound (transitionSound.ts, the incoming side's in PreviewMusic and PreviewSegments).
+ * Near the render's look, not the same.
  */
 export function PreviewTransitions({
   plan,
@@ -107,7 +109,7 @@ function Ghost({
       // The ghost plays at the main playback's rate, and its deck its Segment at its Speed.
       ghost.setRate(playback.rate);
       const video = master.current;
-      if (video) setVolume(video, inside ? (1 - share) * (plan.source_volume * segment.volume) : 0);
+      if (video) setVolume(video, inside ? crossedVolumes(transition, time).outgoing * (plan.source_volume * segment.volume) : 0);
       if (!inside) {
         if (ghost.playing) ghost.pause();
         // Ready on the Transition's first frame.

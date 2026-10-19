@@ -227,6 +227,10 @@ Edits:
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
   volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
   its keyed values.
+- A Transition's sound, for every kind (a dip never drops the sound out on its own): linear (the
+  default; the two sides crossfade in straight lines, dipping in the middle), equal_power (quarter
+  sines, the level held through the middle) or cut (the first side's sound alone until the middle of
+  the overlap, the second's after it). The dry run lists each Transition's kind, span and sound.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -853,8 +857,8 @@ def _plan_view(
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
     Scene's Keyframes past its end (`ignored`), the keyed sounds' volume Keyframes (a video
     Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's (with its lines)
-    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), and the
-    Words."""
+    box and picture's URL (`picture_url`, by its name) as a picture layer's (`_layer_view`), each
+    Transition's kind, span and sound, and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -877,6 +881,7 @@ def _plan_view(
             })
             for segment in plan["segments"]
         ],
+        "transitions": [_times(transition, "kind", "start", "end", "sound") for transition in plan["transitions"]],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { AudioEvent, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan } from "../../../api";
+import type { AudioEvent, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { FRAME, panelStyle, slotView } from "./picture";
@@ -9,6 +9,7 @@ import { loudness } from "./loudness";
 import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
 import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
+import { crossedBy } from "./transitionSound";
 
 /**
  * The plan's Segments on videos of their own (`onOwnVideos`), over the Source's panels while they
@@ -21,13 +22,31 @@ import { firstSceneOf, sceneAt } from "./ScenesTrack";
 export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
   if (!plan || !plan.segments.some(onOwnVideos)) return null;
   const played = playable(plan.segments);
+  // The Transition that brings Segment `i` in, if any.
+  const into = (i: number) => plan.transitions.find((transition) => Math.abs(transition.start - plan.segments[i].start) < 0.01);
   return (
     <>
       {plan.segments.map((segment, i) =>
         segment.media ? (
-          <MediaSegment key={`${i}:${segment.start}`} segment={segment} end={played[i].end} scene={segmentScene(plan, i)} playback={playback} />
+          <MediaSegment
+            key={`${i}:${segment.start}`}
+            segment={segment}
+            end={played[i].end}
+            scene={segmentScene(plan, i)}
+            playback={playback}
+            into={into(i)}
+          />
         ) : onOwnVideos(segment) ? (
-          <CopiedSourceSegment key={`${i}:${segment.start}`} plan={plan} index={i} end={played[i].end} playback={playback} src={src} jobId={jobId} />
+          <CopiedSourceSegment
+            key={`${i}:${segment.start}`}
+            plan={plan}
+            index={i}
+            end={played[i].end}
+            playback={playback}
+            src={src}
+            jobId={jobId}
+            into={into(i)}
+          />
         ) : null,
       )}
     </>
@@ -39,7 +58,8 @@ export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undef
 
 /**
  * A video's Segment, shown until `end` (where it gives way), or within a Transition when `end` is its
- * own; its sound faded out over `fade` (the Transition taking it away), if any. Its video plays at
+ * own; its sound brought in by `into` and taken away by `fade` (the Transitions either side), if any,
+ * as their sounds say (`crossedVolumes`). Its video plays at
  * its Speed, its pitch kept or not (`follow`). It is drawn from its
  * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
@@ -53,12 +73,14 @@ export function MediaSegment({
   scene,
   playback,
   fade,
+  into,
 }: {
   segment: SegmentPlan;
   end: number;
   scene: ScenePlan | undefined;
   playback: Playback;
-  fade?: { start: number; end: number };
+  fade?: TransitionEvent;
+  into?: TransitionEvent;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLVideoElement>(null);
@@ -68,7 +90,7 @@ export function MediaSegment({
   const { src, span } = useMemo(() => mediaPlay(segment, end, copy), [segment, end, copy]);
 
   useEffect(() => {
-    // Its sound: its volume Keyframes when keyed, faded out by the Transition taking it away.
+    // Its sound: its volume Keyframes when keyed, across the Transitions either side.
     const sound: AudioEvent = {
       media: segment.media!,
       start: segment.start,
@@ -76,20 +98,21 @@ export function MediaSegment({
       offset: segment.source_start,
       volume: segment.volume,
       fade_in: 0,
-      fade_out: fade ? fade.end - fade.start : 0,
+      fade_out: 0,
       gain: segment.gain,
       id: segment.id,
     };
+    const crossed = crossedBy(into, fade);
     const sync = () => {
       const inside = main.current ? follow(main.current, playback, span, true) : false;
       if (back.current) follow(back.current, playback, span, true);
-      if (main.current && !segment.silent && segment.gain.length) followCurve(main.current, playback, sound);
-      else if (main.current) setVolume(main.current, segment.silent ? 0 : loudness(sound, playback.shownTime));
+      if (main.current && !segment.silent && segment.gain.length) followCurve(main.current, playback, sound, crossed);
+      else if (main.current) setVolume(main.current, segment.silent ? 0 : loudness(sound, playback.shownTime, crossed));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, segment, end, fade, span]);
+  }, [playback, segment, end, fade, into, span]);
 
   const picture = scene?.picture;
   const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
@@ -124,7 +147,7 @@ export function MediaSegment({
 /**
  * Segment `index` of `plan`, of the Source played from a Retimed copy (`segmentCopy`: reversed, or at
  * a Speed a browser won't play), shown until `end`, or within a Transition when `end` is its own, its
- * sound faded out over `fade`, if any: its Scenes' panels (a Split's two, a Blur's background and
+ * sound brought in by `into` and taken away by `fade`, as MediaSegment's: its Scenes' panels (a Split's two, a Blur's background and
  * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
  * own playing the copy (`sourcePlay`), at the Clip's own volume times its own. Outside its span they
  * wait at its start. Until the copy is made they hold the Source's `src` at the frame the copy shows
@@ -138,6 +161,7 @@ export function CopiedSourceSegment({
   src,
   jobId,
   fade,
+  into,
 }: {
   plan: RenderPlan;
   index: number;
@@ -145,7 +169,8 @@ export function CopiedSourceSegment({
   playback: Playback;
   src: string;
   jobId: string;
-  fade?: { start: number; end: number };
+  fade?: TransitionEvent;
+  into?: TransitionEvent;
 }) {
   const segment = plan.segments[index];
   const box = useRef<HTMLDivElement>(null);
@@ -167,19 +192,20 @@ export function CopiedSourceSegment({
       offset: segment.source_start,
       volume: plan.source_volume * segment.volume,
       fade_in: 0,
-      fade_out: fade ? fade.end - fade.start : 0,
+      fade_out: 0,
       gain: [],
       id: segment.id,
     };
+    const crossed = crossedBy(into, fade);
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;
       if (follower.current) follow(follower.current, playback, span, true);
-      if (master.current) setVolume(master.current, loudness(sound, playback.shownTime));
+      if (master.current) setVolume(master.current, loudness(sound, playback.shownTime, crossed));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, segment, fade, span, plan.source_volume]);
+  }, [playback, segment, fade, into, span, plan.source_volume]);
 
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden" }}>

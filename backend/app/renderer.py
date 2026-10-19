@@ -43,7 +43,8 @@ silence. A Freeze frame (docs/adr/0009) reads a moment of its video at its frame
 first frame for its hold (`tpad`), in silence. A join with a Transition is drawn by its kind's
 recipe (app/transitions.py, docs/adr/0012): its chains on the two pictures, then one xfade of them
 (each Segment first brought to the Clip's frame rate and time base, which xfade needs); and an
-acrossfade of the sounds, over the length the two overlap.
+acrossfade of the sounds, over the length the two overlap, along the Transition's sound: straight
+lines, quarter sines, or a cut at the middle (`_sounds_crossed`).
 
 A Segment at a Speed (docs/adr/0009) has its frames' times divided by it and then brought to the
 Clip's frame rate (frames dropped or repeated, none blended); its sound is played at it, its pitch
@@ -131,7 +132,7 @@ from app.planner import (
     on_frame,
     picture_at,
 )
-from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.candidates import Keyframe, Shadow, Shape, TextLayer, TransitionSound
 from app.transitions import RECIPES
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
@@ -455,7 +456,8 @@ def tempo_stages(speed: float) -> list[float]:
 
 def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
     """Filters that join the Segments' pictures (`kind` "v") or sounds ("a"), from `links`, into
-    `out`, one after another: by the Transition at a join (its recipe's xfade, acrossfade), else back to back."""
+    `out`, one after another: by the Transition at a join (its recipe's xfade, an acrossfade by its
+    sound), else back to back."""
     into = {transition.start: transition for transition in plan.transitions}
     chains, joined = [], links[0]
     for i in range(1, len(links)):
@@ -467,9 +469,30 @@ def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
         elif kind == "v":
             chains += _crossed(transition, joined, links[i], label, f"x{i}")
         else:
-            chains.append(f"{joined}{links[i]}acrossfade=d={transition.end - transition.start:.3f}{label}")
+            chains += _sounds_crossed(transition, joined, links[i], label, f"x{i}")
         joined = label
     return ";".join(chains)
+
+
+# How long each side's sound takes to give way to the other's at the middle of a Cut.
+_CUT_SECS = 0.02
+
+
+def _sounds_crossed(transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:
+    """Filters that join the sounds `outgoing` (in seconds into the Clip) and `incoming` (from 0 at its
+    start) into `out` by `transition`'s sound: acrossfade's straight lines (its default `tri`), its
+    quarter sines (`qsin`), or, for a Cut, each side switched off or on by a short afade at the
+    overlap's middle (named after `name`), then summed as they are (`nofade`)."""
+    length = transition.end - transition.start
+    if transition.sound == TransitionSound.CUT:
+        middle = length / 2 - _CUT_SECS / 2
+        return [
+            f"{outgoing}afade=t=out:st={transition.start + middle:.3f}:d={_CUT_SECS}[{name}ao]",
+            f"{incoming}afade=t=in:st={middle:.3f}:d={_CUT_SECS}[{name}ai]",
+            f"[{name}ao][{name}ai]acrossfade=d={length:.3f}:c1=nofade:c2=nofade{out}",
+        ]
+    curves = ":c1=qsin:c2=qsin" if transition.sound == TransitionSound.EQUAL_POWER else ""
+    return [f"{outgoing}{incoming}acrossfade=d={length:.3f}{curves}{out}"]
 
 
 def _crossed(transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:

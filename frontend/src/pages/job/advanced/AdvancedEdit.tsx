@@ -527,11 +527,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       addSegment(newMediaSegment(item, newId()), placeDropped(played, time));
     }
   }
-  // The Transition at the join after Segment `after`: set to `kind` (its length kept), changed, or removed.
+  // The Transition at the join after Segment `after`: set to `kind` (its length and sound kept), changed, or removed.
   function setTransition(after: string, kind: TransitionKind) {
     if (refused("video")) return;
     const old = edits.transitions.find((transition) => transition.after === after);
-    const next = { after, kind, secs: old?.secs ?? TRANSITION_SECS };
+    const next = { ...old, after, kind, secs: old?.secs ?? TRANSITION_SECS };
     change({ transitions: [...edits.transitions.filter((transition) => transition.after !== after), next] });
     select({ kind: "join", after });
   }
