@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { layerPictureUrl, type Picture, type PictureLayerEvent } from "../../../api";
-import { pictureAt } from "./picture";
+import { animatedPicture, type Look } from "./animation";
 
 // A picture layer's picture as the preview draws it (docs/adr/0010): its URL, and the size it is drawn
 // at, in output pixels, Transform scale included.
@@ -68,13 +68,13 @@ export interface PlacedLayer {
 
 /**
  * A picture layer's `picture` as drawn at `time` seconds into the Clip, its animations' `look` there
- * being its opacity, scale and drop (hookLook): as its Keyframes have it (pictureAt, ADR 0008), then
- * faded, scaled about its centre and moved down on top, as the renderer's layer_at draws it.
+ * being its opacity, scale and drop (hookLook): as an Overlay's is (animatedPicture), as the
+ * renderer's layer_at draws it.
  */
-export function placedLayer(picture: Picture, time: number, [opacity, scale, below]: readonly [number, number, number]): PlacedLayer {
-  const drawn = pictureAt(picture, time);
+export function placedLayer(picture: Picture, time: number, look: Look): PlacedLayer {
+  const drawn = animatedPicture(picture, time, look);
   const [x, y] = drawn.centre;
-  return { x, y: y + below, width: drawn.width * scale, height: drawn.height * scale, rotation: drawn.rotation, opacity: drawn.opacity * opacity };
+  return { x, y, width: drawn.width, height: drawn.height, rotation: drawn.rotation, opacity: drawn.opacity };
 }
 
 /** The picture a picture layer draws now (`pictureToShow`), loading the one it wants when it needs to (`needsLoading`). */

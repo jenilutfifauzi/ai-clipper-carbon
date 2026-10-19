@@ -74,6 +74,7 @@ from app.styles import (
     CaptionStyle,
     HookStyle,
     InvalidStyle,
+    JoinTransition,
     Name,
     PresetNotFound,
     PresetStore,
@@ -299,6 +300,8 @@ class PresetBody(BaseModel):
     caption: CaptionStyle = CaptionStyle()
     hook: HookStyle = HookStyle()
     watermark: WatermarkStyle = WatermarkStyle()
+    # What each new join of its Candidates gets; None for none.
+    join_transition: JoinTransition | None = None
 
 
 class TextPresetBody(BaseModel):
@@ -709,7 +712,7 @@ def update_candidate(
     change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
-        candidates, candidate = review.update(candidates, candidate_id, change, episode)
+        candidates, candidate = review.update(candidates, candidate_id, change, episode, presets.join_transition)
         try:
             presets.styles(candidate.preset_id, candidate.style_overrides)
         except InvalidStyle as exc:
@@ -847,7 +850,7 @@ def _drafted(
     change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
-        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
+        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode, presets.join_transition)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
@@ -1109,7 +1112,7 @@ def list_presets(presets: Presets) -> list[StylePreset]:
 def create_preset(body: PresetBody, presets: Presets, logos: Logos) -> StylePreset:
     """Save a new Preset. 422 for a Watermark whose Logo isn't one of the Logos."""
     _check_logo(logos, body.watermark.logo)
-    return presets.create(body.name, body.caption, body.hook, body.watermark)
+    return presets.create(body.name, body.caption, body.hook, body.watermark, body.join_transition)
 
 
 @router.put("/presets/{preset_id}")
@@ -1118,7 +1121,7 @@ def update_preset(preset_id: str, body: PresetBody, presets: Presets, logos: Log
     built-in Preset; 422 for a Watermark whose Logo isn't one of the Logos."""
     _check_logo(logos, body.watermark.logo)
     try:
-        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark)
+        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark, body.join_transition)
     except PresetNotFound:
         raise HTTPException(404, f"No Preset {preset_id}") from None
     except BuiltinPreset:

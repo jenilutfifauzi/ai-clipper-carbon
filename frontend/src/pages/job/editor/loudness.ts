@@ -1,15 +1,20 @@
 import type { AudioEvent, Ducking, Keyframe } from "../../../api";
 import { valueAt } from "./keyframes";
+import { crossedVolumes, type Crossing } from "./transitionSound";
 
 // A keyed sound's gain is set as a curve of this many values a second of the Clip's time (ADR 0008).
 export const CURVE_RATE = 100;
 
+// A share of a sound's loudness at a time into the Clip: across a Transition (transitionSound.ts).
+export type Share = (time: number) => number;
+
 /**
  * A sound as the preview hears it: a Music Clip's (or an Overlay video's), or a Segment's
- * (`segmentSound`), which a Transition taking it away fades out over its `crossfade`. A ducked one
+ * (`segmentSound`), which a Transition taking it away fades out over its `crossfade`, along its sound
+ * (transitionSound.ts). A ducked one
  * carries its plan's `ducking` (`eventSound`).
  */
-export type Heard = AudioEvent & { crossfade?: { start: number; end: number }; ducking?: Ducking };
+export type Heard = AudioEvent & { crossfade?: Crossing; ducking?: Ducking };
 
 /**
  * How far a sound ducked `depth` dB under `spans` (seconds into the Clip) is turned down at `time`:
@@ -34,18 +39,19 @@ export function duckAt(spans: [number, number][], depth: number, time: number, d
  * it (gain_at in backend/app/planner.py): both are tested on the cases in
  * backend/tests/fixtures/gain_vectors.json, so that they can't drift. The Timeline's Volume Line and
  * Waveform are drawn by it too (timelineView.ts' gainAt). Under a Transition's
- * `crossfade`, that falls linearly from 1 to 0 over it and multiplies the rest, as acrossfade does in
- * the render.
+ * `crossfade`, that falls from 1 to 0 over it along the Transition's sound (the outgoing side of
+ * `crossedVolumes`) and multiplies the rest, as acrossfade does in the render; times `crossed`, a
+ * Segment's share as the side a Transition brings in (transitionSound.ts' `crossedBy`).
  */
-export function loudness(event: Heard, time: number): number {
+export function loudness(event: Heard, time: number, crossed: Share = () => 1): number {
   if (event.muted || time < event.start || time > event.end) return 0;
   let share = 1;
   if (event.fade_in > 0) share = Math.min(share, (time - event.start) / event.fade_in);
   if (event.fade_out > 0) share = Math.min(share, (event.end - time) / event.fade_out);
   const { crossfade } = event;
-  const taken = crossfade && time > crossfade.start ? (crossfade.end - time) / (crossfade.end - crossfade.start) : 1;
+  const taken = crossfade && time > crossfade.start ? crossedVolumes(crossfade, time).outgoing : 1;
   const ducked = event.duck != null && event.ducking ? duckAt(event.speech ?? [], event.duck, time, event.ducking) : 1;
-  return valueAt(event.gain, time - event.start, event.volume) * Math.max(0, Math.min(1, share)) * Math.max(0, Math.min(1, taken)) * ducked;
+  return valueAt(event.gain, time - event.start, event.volume) * Math.max(0, Math.min(1, share)) * Math.max(0, Math.min(1, taken)) * ducked * crossed(time);
 }
 
 /**
@@ -69,7 +75,7 @@ export function segmentSound(
     muted?: boolean;
   },
   sourceVolume: number,
-  crossfade?: { start: number; end: number },
+  crossfade?: Crossing,
 ): Heard {
   const own = segment.media ? 1 : sourceVolume;
   return {
@@ -104,13 +110,13 @@ export const changing = (event: Heard): boolean =>
   event.gain.length > 0 || event.fade_in > 0 || event.fade_out > 0 || !!event.crossfade || (event.duck != null && !!event.speech?.length);
 
 /**
- * `event`'s loudness from `time` to its end, CURVE_RATE values a second of the Clip's time, the
- * first at `time` (at least two): the curve its gain node follows while it plays. The last, which
- * may fall just past its end, is its loudness at its end.
+ * `event`'s loudness (times `crossed`) from `time` to its end, CURVE_RATE values a second of the
+ * Clip's time, the first at `time` (at least two): the curve its gain node follows while it plays.
+ * The last, which may fall just past its end, is its loudness at its end.
  */
-export function loudnessCurve(event: Heard, time: number): Float32Array<ArrayBuffer> {
+export function loudnessCurve(event: Heard, time: number, crossed?: Share): Float32Array<ArrayBuffer> {
   const count = Math.max(2, Math.ceil((event.end - time) * CURVE_RATE) + 1);
   const curve = new Float32Array(count);
-  for (let i = 0; i < count; i++) curve[i] = loudness(event, Math.min(time + i / CURVE_RATE, event.end));
+  for (let i = 0; i < count; i++) curve[i] = loudness(event, Math.min(time + i / CURVE_RATE, event.end), crossed);
   return curve;
 }

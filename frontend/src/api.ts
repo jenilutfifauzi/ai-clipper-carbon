@@ -280,6 +280,9 @@ export interface StylePreset {
   watermark: WatermarkStyle;
   // Built-in Presets can't be changed or deleted.
   builtin: boolean;
+  // What each new join of its Candidates gets (pages/job/editor/joinTransition.ts); null for none, as
+  // on the built-in ones. Copied, never linked.
+  join_transition: JoinTransition | null;
 }
 
 // A Text Preset (GLOSSARY): a named Text Style a new Text Layer copies, never linked to it.
@@ -690,9 +693,9 @@ export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
 // side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
 // and opacity over its length, replacing those fields of its Transform, and a video's volume.
 // A video's shows `secs` × speed of it from `offset` (docs/adr/0009); in Reverse its left edge shows
-// `offset + secs × speed`, its right edge `offset`. A video's sound may be Muted (ADR 0016),
-// keeping its volume and Keyframes.
-export interface Overlay extends Omit<Retiming, "hold"> {
+// `offset + secs × speed`, its right edge `offset`. It comes on and goes off as a Text Layer does.
+// A video's sound may be Muted (ADR 0016), keeping its volume and Keyframes.
+export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   id: string;
   media: string;
   start: number;
@@ -706,6 +709,14 @@ export interface Overlay extends Omit<Retiming, "hold"> {
   shadow: Shadow | null;
   keys: Keys;
   muted?: boolean;
+}
+
+// How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
+// Left out, they are none, none and 300 ms.
+export interface OverlayAnimation {
+  animation_in?: Animation;
+  animation_out?: Animation;
+  animation_ms?: number;
 }
 
 // A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
@@ -733,9 +744,10 @@ export interface Picture {
   unscaled?: [number, number] | null;
 }
 
-// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still. A video's
-// shows (end − start) × speed of it from `offset` (docs/adr/0009).
-export interface OverlayEvent extends Omit<Retiming, "hold"> {
+// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`, coming on and going off by its
+// animations; `image` for a still. A video's shows (end − start) × speed of it from `offset`
+// (docs/adr/0009).
+export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   id: string;
   media: string;
   picture: Picture;
@@ -745,31 +757,80 @@ export interface OverlayEvent extends Omit<Retiming, "hold"> {
   image: boolean;
 }
 
-// How one Segment gives way to the next (ffmpeg's xfade transitions of these names).
+// How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
 export type TransitionKind =
   | "fade"
   | "fadeblack"
   | "fadewhite"
+  | "fadegrays"
+  | "dipcolour"
+  | "dissolve"
+  | "blurdissolve"
   | "slideleft"
   | "slideright"
   | "slideup"
   | "slidedown"
+  | "coverleft"
+  | "coverright"
+  | "coverup"
+  | "coverdown"
+  | "whipleft"
+  | "whipright"
   | "wipeleft"
+  | "wiperight"
+  | "wipeup"
+  | "wipedown"
+  | "radial"
+  | "circleopen"
+  | "circleclose"
+  | "circlecrop"
+  | "rectcrop"
+  | "vertopen"
+  | "horzopen"
   | "zoomin"
-  | "circleopen";
+  | "squeezeh"
+  | "squeezev"
+  | "zoomblur"
+  | "spin"
+  | "filmburn"
+  | "lightleak"
+  | "glitch"
+  | "rgbsplit"
+  | "pixelize"
+  | "hblur"
+  | "distance"
+  | "hlslice";
 
-// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.2 to 1.5).
-export interface Transition {
+// How a Transition's sound crosses, whatever its kind: in straight lines, along quarter sines, or
+// switched at its middle (pages/job/editor/transitionSound.ts).
+export type TransitionSound = "linear" | "equal_power" | "cut";
+
+// A Transition's knobs, read by the kinds that have them (pages/job/editor/transitions.ts): its
+// strength (0 to 1; unset, its kind's own) and Dip to colour's colour (#RRGGBB; unset, black). Kept
+// on a kind that doesn't read them. Always sent; one made by hand may leave them out.
+export interface TransitionKnobs {
+  strength?: number | null;
+  colour?: string | null;
+}
+
+// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.1 to 3).
+// Its sound is always sent; one made by hand may leave it out (linear).
+export interface Transition extends TransitionKnobs {
   after: string;
   kind: TransitionKind;
   secs: number;
+  sound?: TransitionSound;
 }
 
+// A Style Preset's Join Transition (GLOSSARY): a Transition without the Segment it follows.
+export type JoinTransition = Omit<Transition, "after">;
+
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
-export interface TransitionEvent {
+export interface TransitionEvent extends TransitionKnobs {
   kind: TransitionKind;
   start: number;
   end: number;
+  sound?: TransitionSound;
 }
 
 // A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,
@@ -850,6 +911,7 @@ export interface NewPreset {
   caption?: Partial<CaptionStyle>;
   hook?: Partial<HookStyle>;
   watermark?: Partial<WatermarkStyle>;
+  join_transition?: JoinTransition | null;
 }
 
 // A Face (GLOSSARY): a bundled or imported font file of one weight and slant, with what its font says

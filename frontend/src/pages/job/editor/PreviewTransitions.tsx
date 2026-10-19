@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from "react";
-import type { RenderPlan, TransitionEvent, TransitionKind } from "../../../api";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
+import type { RenderPlan, TransitionEvent } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
@@ -8,18 +8,37 @@ import { loudness, segmentSound } from "./loudness";
 import { setVolume } from "./PreviewMusic";
 import { MediaSegment, CopiedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
+import { TransitionFilters } from "./TransitionFilters";
+import { showLook, TRANSITIONS, type TransitionLook } from "./transitions";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
 const READY_SECS = 2;
+// Outside a Transition: each layer as it is.
+const UNSTYLED: TransitionLook = { outgoing: {}, incoming: {}, veil: {} };
 
 /**
  * The plan's Transitions, imitated: the preview's main playback goes on into the next Segment where
  * a Transition starts (playback.ts's `playable`), and over it the Segment before keeps playing on
- * a playback of its own (its "ghost": its panels, or its own videos), taken away as the Transition's kind
- * does it, its sound fading out (times its own fades), over exactly the Transition's time. Near xfade's look and
- * acrossfade's sound, not the same.
+ * a playback of its own (its "ghost": its panels, or its own videos), over exactly the Transition's
+ * time. The kind's look (transitions.ts) styles the ghost, the `incoming` Segments' picture layer
+ * under it and a veil over both; the ghost's sound (times its own fades) gives way to the incoming
+ * one's along the Transition's sound (transitionSound.ts, the incoming side's in PreviewMusic and
+ * PreviewSegments). Near the render's look, not the same.
  */
-export function PreviewTransitions({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
+export function PreviewTransitions({
+  plan,
+  playback,
+  src,
+  jobId,
+  incoming,
+}: {
+  plan: RenderPlan | null;
+  playback: Playback;
+  src: string;
+  jobId: string;
+  // The Segments' picture layer: never the Overlays, captions, Picture layers, hook or Watermark over it.
+  incoming: RefObject<HTMLDivElement>;
+}) {
   const transitions = plan?.transitions ?? [];
   const near = useShown(playback, (time) => transitions.findIndex((t) => time >= t.start - READY_SECS && time < t.end));
   if (!plan || near === -1) return null;
@@ -27,7 +46,18 @@ export function PreviewTransitions({ plan, playback, src, jobId }: { plan: Rende
   // The Segment it takes away: the one it ends, which started before it.
   const index = plan.segments.findIndex((segment) => segment.start < transition.start && Math.abs(segment.end - transition.end) < 0.01);
   if (index === -1) return null;
-  return <Ghost key={`${near}:${transition.start}`} plan={plan} transition={transition} index={index} playback={playback} src={src} jobId={jobId} />;
+  return (
+    <Ghost
+      key={`${near}:${transition.start}`}
+      plan={plan}
+      transition={transition}
+      index={index}
+      playback={playback}
+      src={src}
+      jobId={jobId}
+      incoming={incoming}
+    />
+  );
 }
 
 function Ghost({
@@ -37,6 +67,7 @@ function Ghost({
   playback,
   src,
   jobId,
+  incoming,
 }: {
   plan: RenderPlan;
   transition: TransitionEvent;
@@ -44,6 +75,7 @@ function Ghost({
   playback: Playback;
   src: string;
   jobId: string;
+  incoming: RefObject<HTMLDivElement>;
 }) {
   const layer = useRef<HTMLDivElement>(null);
   const veil = useRef<HTMLDivElement>(null);
@@ -67,16 +99,19 @@ function Ghost({
       const time = playback.shownTime;
       const inside = time >= transition.start && time < transition.end;
       const share = (time - transition.start) / (transition.end - transition.start);
-      if (layer.current && veil.current) {
+      // By its knobs, which the event carries.
+      const look = inside ? TRANSITIONS[transition.kind].look(Math.min(1, Math.max(0, share)), transition) : UNSTYLED;
+      if (layer.current) {
         layer.current.style.visibility = inside ? "visible" : "hidden";
-        if (inside) look(transition.kind, share, layer.current, veil.current);
-        else veil.current.style.opacity = "0";
+        showLook(look.outgoing, layer.current);
       }
+      if (incoming.current) showLook(look.incoming, incoming.current);
+      if (veil.current) showLook(look.veil, veil.current);
       if (own) return;
       // The ghost plays at the main playback's rate, and its deck its Segment at its Speed.
       ghost.setRate(playback.rate);
       const video = master.current;
-      // Its sound (its Keyframes when keyed) through its fades, falling with the crossfade.
+      // Its sound (its Keyframes when keyed) through its fades, giving way along the Transition's sound.
       if (video) setVolume(video, inside ? loudness(segmentSound(segment, plan.source_volume, transition), time) : 0);
       if (!inside) {
         if (ghost.playing) ghost.pause();
@@ -99,11 +134,18 @@ function Ghost({
       }
     };
     sync();
-    return playback.subscribe(sync);
-  }, [playback, ghost, transition, segment, own, plan.source_volume]);
+    const unsubscribe = playback.subscribe(sync);
+    const picture = incoming.current;
+    return () => {
+      unsubscribe();
+      // The Segments' picture as it is again once the Transition is gone.
+      if (picture) showLook({}, picture);
+    };
+  }, [playback, ghost, transition, segment, own, plan.source_volume, incoming]);
 
   return (
     <>
+      <TransitionFilters />
       <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
         {segment.media ? (
           <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
@@ -118,51 +160,4 @@ function Ghost({
       <div ref={veil} aria-hidden className="pointer-events-none absolute inset-0" style={{ opacity: 0 }} />
     </>
   );
-}
-
-// The Segment taken away (and, for a dip, a veil of black or white) `share` of the way through `kind`.
-function look(kind: TransitionKind, share: number, layer: HTMLDivElement, veil: HTMLDivElement) {
-  const p = Math.min(1, Math.max(0, share));
-  const style = layer.style;
-  style.opacity = "1";
-  style.transform = "";
-  style.clipPath = "";
-  style.maskImage = "";
-  veil.style.opacity = "0";
-  switch (kind) {
-    case "fade":
-      style.opacity = String(1 - p);
-      break;
-    case "fadeblack":
-    case "fadewhite":
-      // Into the colour over the first half, out of it over the second.
-      veil.style.background = kind === "fadeblack" ? "#000" : "#fff";
-      veil.style.opacity = String(p < 0.5 ? 2 * p : 2 * (1 - p));
-      style.opacity = p < 0.5 ? "1" : "0";
-      break;
-    case "slideleft":
-      style.transform = `translateX(${-100 * p}%)`;
-      break;
-    case "slideright":
-      style.transform = `translateX(${100 * p}%)`;
-      break;
-    case "slideup":
-      style.transform = `translateY(${-100 * p}%)`;
-      break;
-    case "slidedown":
-      style.transform = `translateY(${100 * p}%)`;
-      break;
-    case "wipeleft":
-      style.clipPath = `inset(0 ${100 * p}% 0 0)`;
-      break;
-    case "zoomin":
-      style.transform = `scale(${1 + p})`;
-      style.opacity = String(1 - p);
-      break;
-    case "circleopen": {
-      const radius = 80 * p;
-      style.maskImage = `radial-gradient(circle at center, transparent ${radius}%, black ${radius}%)`;
-      break;
-    }
-  }
 }

@@ -6,11 +6,12 @@
 import type { AudioEvent, Ducking, Keyframe, Keys, MusicClip, Retiming } from "../../../api";
 import { loudness } from "../editor/loudness";
 import type { PlayedSegment } from "../editor/playback";
-import { playingFrom, sourceAt } from "../editor/segmentTime";
+import { playingFrom, sourceAt, transitionOverlap } from "../editor/segmentTime";
 import { fadesWithin, type AdvancedEdits } from "./edits";
 import { KEY_GAP_SECS, toMillionth } from "./keyActions";
 import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
+import { TRANSITION_BOUNDS } from "./Transitions";
 
 // Zoom to fit (GLOSSARY.md).
 
@@ -528,4 +529,18 @@ const VOLUME_TRAVEL_PX = 120;
  */
 export function volumeDragged(volume: number, dy: number, height: number): number {
   return volumeOfHeight(volumeHeight(volume) - dy / Math.max(height, VOLUME_TRAVEL_PX));
+}
+
+// A Seam (GLOSSARY.md).
+
+/**
+ * The length a drag of a Seam's grip `travel` Timeline seconds outward (inward: negative) gives a
+ * Transition `secs` long between Segments `before` and `after` long on the Timeline: twice the
+ * travel, since both edges move, from the length it overlaps them by; within its bounds and half the
+ * shorter Segment (as transitionOverlap clamps it), but never under its least length.
+ */
+export function seamDragged(secs: number, travel: number, before: number, after: number): number {
+  const { min, max } = TRANSITION_BOUNDS;
+  const next = transitionOverlap(secs, before, after) + 2 * travel;
+  return Math.round(Math.max(Math.min(next, max, before / 2, after / 2), min) * 100) / 100;
 }

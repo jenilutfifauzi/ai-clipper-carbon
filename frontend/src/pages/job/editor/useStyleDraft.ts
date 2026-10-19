@@ -5,6 +5,8 @@ import {
   type CandidateChange,
   type CaptionStyle,
   type HookStyle,
+  type JoinTransition,
+  type NewPreset,
   type StyleOverrides,
   type StylePreset,
   type StyleValue,
@@ -29,6 +31,11 @@ export interface StyleControls {
   hook: HookStyle;
   watermark: WatermarkStyle;
   overrides: StyleOverrides;
+  // The Preset's Join Transition, as changed here until saved into a Preset (it has no Style
+  // Override: it is copied onto new joins, never linked), and whether it was changed.
+  join: JoinTransition | null;
+  joinChanged: boolean;
+  setJoin: (join: JoinTransition | null) => void;
   // Sets a field; a value equal to the Preset's removes its override.
   set: (part: StylePart, field: string, value: StyleValue) => void;
   // Sets several fields of `part` at once, as one change.
@@ -55,6 +62,8 @@ export function useStyleDraft(
 ): { draft: StyleDraft; controls: StyleControls | null; error: string | null } {
   const [presets, setPresets] = useState<StylePreset[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The Join Transition as changed for the Preset `preset`, not saved yet.
+  const [joinDraft, setJoinDraft] = useState<{ preset: string; join: JoinTransition | null } | null>(null);
   const [draft, change] = useDraftSave<StyleDraft>(
     // Overrides saved before Watermarks have none.
     { preset_id: candidate.preset_id, style_overrides: { ...EMPTY, ...candidate.style_overrides } },
@@ -69,6 +78,8 @@ export function useStyleDraft(
   if (!presets) return { draft, controls: null, error };
   const preset = presets.find((p) => p.id === draft.preset_id) ?? presets[0];
   const base = (part: StylePart) => preset[part] as unknown as Record<string, StyleValue>;
+  const presetJoin = preset.join_transition ?? null;
+  const join = joinDraft?.preset === preset.id ? joinDraft.join : presetJoin;
 
   function setMany(part: StylePart, values: Record<string, StyleValue>) {
     const fields = { ...draft.style_overrides[part] } as Record<string, StyleValue>;
@@ -90,6 +101,9 @@ export function useStyleDraft(
       hook: overridden(preset.hook, draft.style_overrides.hook),
       watermark: overridden(preset.watermark, draft.style_overrides.watermark),
       overrides: draft.style_overrides,
+      join,
+      joinChanged: JSON.stringify(join) !== JSON.stringify(presetJoin),
+      setJoin: (next) => setJoinDraft({ preset: preset.id, join: next }),
       set,
       setMany,
       reset: (part, field) => set(part, field, base(part)[field]),
@@ -97,6 +111,7 @@ export function useStyleDraft(
       resetAll: () => change({ ...draft, style_overrides: EMPTY }),
       saved: (made, all) => {
         setPresets(all);
+        setJoinDraft(null);
         change({ preset_id: made.id, style_overrides: EMPTY });
       },
       deleted: (all) => {
@@ -106,6 +121,14 @@ export function useStyleDraft(
     },
   };
 }
+
+/** What a Preset is saved with: the styles as edited, and the Join Transition. */
+export const savedLook = ({ caption, hook, watermark, join }: StyleControls): Omit<NewPreset, "name"> => ({
+  caption,
+  hook,
+  watermark,
+  join_transition: join,
+});
 
 type Fields = Record<string, StyleValue>;
 

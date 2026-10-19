@@ -137,7 +137,6 @@ from app.candidates import (
     TextLayer,
     TextStyle,
     Transform,
-    TransitionKind,
     WordEdit,
 )
 from app.config import CameraTuning, DuckTuning
@@ -149,6 +148,7 @@ from app.line_breaks import broken_lines
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
 from app.styles import (
+    Animation,
     CaptionPosition,
     CaptionStyle,
     HookAlign,
@@ -160,6 +160,7 @@ from app.styles import (
     WatermarkStyle,
 )
 from app.transcript import Word
+from app.transition_kinds import TransitionKind, TransitionSound
 from app.video_source import SourceMetadata
 
 OUTPUT_WIDTH = 1080
@@ -261,10 +262,14 @@ class Face:
 
 @dataclass(frozen=True)
 class Join:
-    """A Transition into a Segment from the one before: its kind, and how long the two overlap."""
+    """A Transition into a Segment from the one before: its kind, how long the two overlap, and how
+    its sound crosses, and its knobs (unset: its kind's own)."""
 
     kind: TransitionKind
     secs: float
+    sound: TransitionSound = TransitionSound.LINEAR
+    strength: float | None = None
+    colour: str | None = None
 
 
 @dataclass(frozen=True)
@@ -572,11 +577,20 @@ class SegmentPlan:
 @dataclass(frozen=True)
 class TransitionEvent:
     """A Transition as drawn: from `start` to `end` seconds into the Clip, the Segment before gives way
-    to the next one as `kind` says."""
+    to the next one as `kind` says (by its knobs `strength` and `colour`, unset for its kind's own),
+    their sounds crossing as `sound` says."""
 
     kind: TransitionKind
     start: float
     end: float
+    sound: TransitionSound = TransitionSound.LINEAR
+    strength: float | None = None
+    colour: str | None = None
+
+    @property
+    def length(self) -> float:
+        """How long the two Segments overlap."""
+        return self.end - self.start
 
 
 @dataclass(frozen=True)
@@ -627,7 +641,7 @@ class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
-    the Clip. `id` is the Overlay's."""
+    the Clip, coming on and going off by its Overlay's animations. `id` is the Overlay's."""
 
     media: str
     picture: Picture
@@ -639,6 +653,9 @@ class OverlayEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: int = 300
 
     @property
     def time(self) -> SegmentTime:
@@ -951,7 +968,7 @@ def plan_render(
                 # Overlapping the one before by the Transition's length, half the shorter at most.
                 overlap = transition_overlap(given.join.secs, before, length)
                 at = round(at - overlap, 3)
-                transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3)))
+                transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3), given.join.sound, given.join.strength, given.join.colour))
                 cuts.append(round(at + overlap / 2, 3))
             elif i:
                 cuts.append(at)
@@ -1551,7 +1568,8 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
     return OverlayEvent(
-        overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse
+        overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
+        overlay.animation_in, overlay.animation_out, overlay.animation_ms,
     )
 
 

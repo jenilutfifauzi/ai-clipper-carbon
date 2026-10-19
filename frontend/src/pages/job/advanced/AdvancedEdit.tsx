@@ -9,6 +9,7 @@ import {
   type CandidateChange,
   type ClipSegment,
   type JobDetail,
+  type JoinTransition,
   type KeyProperty,
   type SavedBy,
   type MediaItem,
@@ -45,6 +46,8 @@ import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCand
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
+  appliedToAll,
+  cardTarget,
   changeMusic,
   detacher,
   dragSegment,
@@ -58,6 +61,8 @@ import {
   pickAll,
   placeAfter,
   placeDropped,
+  randomCardKind,
+  randomisedTransitions,
   reversible,
   setFade,
   setHold,
@@ -140,7 +145,7 @@ import { heardDraft, heardTrack, shownPlan, toggledTrack, TRACKS, type TrackCont
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
-import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
+import { TRANSITION_DEFAULT_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory } from "./useEditHistory";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
@@ -206,6 +211,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saveError, setSaveError] = useState<string | null>(null);
   const fonts = useFonts();
   const textPresets = useTextPresets();
+  // The Join Transition of the Candidate's Style Preset, which each new join an action makes gets
+  // (none until the Presets are loaded, and for a deleted Preset: Default has none).
+  const [join, setJoin] = useState<JoinTransition | null>(null);
+  useEffect(() => {
+    let current = true;
+    api.listPresets().then(
+      (presets) => current && setJoin(presets.find((preset) => preset.id === candidate.preset_id)?.join_transition ?? null),
+      () => {},
+    );
+    return () => void (current = false);
+  }, [candidate.preset_id]);
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
@@ -556,11 +572,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       addSegment(newMediaSegment(item, newId()), placeDropped(played, time));
     }
   }
-  // The Transition at the join after Segment `after`: set to `kind` (its length kept), changed, or removed.
+  // The Transition at the join after Segment `after`: set to `kind` (its length and sound kept), changed, or removed.
   function setTransition(after: string, kind: TransitionKind) {
     if (refused("video")) return;
     const old = edits.transitions.find((transition) => transition.after === after);
-    const next = { after, kind, secs: old?.secs ?? TRANSITION_SECS };
+    const next = { ...old, after, kind, secs: old?.secs ?? TRANSITION_DEFAULT_SECS };
     change({ transitions: [...edits.transitions.filter((transition) => transition.after !== after), next] });
     select({ kind: "join", after });
   }
@@ -568,14 +584,34 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ transitions: edits.transitions.map((old) => (old.after === transition.after ? transition : old)) }, group);
   }
   const joinedAfter = pick?.kind === "join" ? pick.after : null;
+  const joinedTransition = edits.transitions.find((transition) => transition.after === joinedAfter) ?? null;
+  // Every join's Transitions at once (one step of undo), refused on a locked Video Track.
+  function setAllTransitions(transitions: Transition[]) {
+    if (!refused("video")) change({ transitions });
+  }
   const transitionPanel = (kinds: boolean) => (
     <TransitionPanel
       kinds={kinds}
       joined={joinedAfter !== null}
-      transition={edits.transitions.find((transition) => transition.after === joinedAfter) ?? null}
-      onPick={(kind) => joinedAfter && setTransition(joinedAfter, kind)}
+      cuts={edits.segments.length > 1}
+      any={edits.transitions.length > 0}
+      locked={tracks.locked.includes("video")}
+      transition={joinedTransition}
+      // The picked join's, else the one nearest the playhead's, which becomes the Pick.
+      onPick={(kind) => {
+        const after = cardTarget(pick, edits.segments, played, playback.time);
+        if (after) setTransition(after, kind);
+      }}
+      // The same join, a kind unlike its neighbours'.
+      onRandom={() => {
+        const after = cardTarget(pick, edits.segments, played, playback.time);
+        if (after) setTransition(after, randomCardKind(edits.transitions, edits.segments, after));
+      }}
       onChange={updateTransition}
       onRemove={() => change({ transitions: edits.transitions.filter((transition) => transition.after !== joinedAfter) })}
+      onApplyAll={() => joinedTransition && setAllTransitions(appliedToAll(joinedTransition, edits.segments))}
+      onRandomiseAll={() => joinedTransition && setAllTransitions(randomisedTransitions(joinedTransition, edits.segments))}
+      onRemoveAll={() => setAllTransitions([])}
     />
   );
   const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
@@ -612,7 +648,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
-  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked };
+  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join };
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
   const clipboard = useClipboard();
@@ -1028,6 +1064,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           plan={preview?.plan ?? null}
           edits={edits}
           pick={pick}
+          track={track}
           played={played}
           playback={playback}
           mediaById={mediaById}
@@ -1057,6 +1094,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onJoin: (after) => {
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");
+            },
+            onTransition: (transition) => {
+              if (!refused("video")) updateTransition(transition);
             },
             onDropTransition: setTransition,
             onDropMedia: dropMedia,

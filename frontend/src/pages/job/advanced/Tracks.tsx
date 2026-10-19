@@ -1,5 +1,5 @@
 import { Eye, EyeOff, Lock, LockOpen, Mic, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
   jobPeaksUrl,
@@ -15,6 +15,7 @@ import {
   type ShapeKind,
   type SourceMetadata,
   type TextLayer,
+  type Transition,
   type TransitionKind,
 } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -23,7 +24,8 @@ import { cx, formatPrecise } from "../../../format";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
-import { offsetAt, overlayTime, rangeOf } from "../editor/segmentTime";
+import { TRANSITIONS } from "../editor/transitions";
+import { offsetAt, overlayTime, rangeOf, transitionOverlap } from "../editor/segmentTime";
 import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
@@ -40,6 +42,7 @@ import { speedLabel } from "./speed";
 import {
   gainAt,
   musicDuck,
+  seamDragged,
   segmentHeard,
   sourceGain,
   sourceHeard,
@@ -76,6 +79,8 @@ export interface TrackHandlers {
   // seconds of it heard, where the Clip's end cuts it short or a Transition after it carries it on.
   onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
+  // A Transition's length set by its Seam's grips: one change, as the drag ends.
+  onTransition: (transition: Transition) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
   // A Media Library item (its id), a Text Preset (its id) or a Stickers tile (its Shape Kind) dropped at `time`.
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
@@ -108,6 +113,7 @@ export function Tracks({
   plan,
   edits,
   pick,
+  track,
   played,
   playback,
   mediaById,
@@ -124,7 +130,9 @@ export function Tracks({
   plan: RenderPlan | null;
   edits: AdvancedEdits;
   pick: Pick;
-  // The Main Track as it plays: snapped to Words once the plan has it, cut short at Transitions.
+  // The Main Track as planned (overlapping at Transitions once the plan has it), and as it plays:
+  // snapped to Words once the plan has it, cut short at Transitions.
+  track: PlayedSegment[];
   played: PlayedSegment[];
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
@@ -432,36 +440,56 @@ export function Tracks({
             </span>
           ))}
         </div>
-        {/* The joins, for Transitions: a diamond between each two Segments, filled when it has one. */}
+        {/* The joins, for Transitions: a Seam where one has a Transition, else a diamond. */}
         {played.slice(0, -1).map((shown, i) => {
           const after = edits.segments[i]?.id;
           if (!after) return null;
           const transition = edits.transitions.find((t) => t.after === after);
           const selected = pick?.kind === "join" && pick.after === after;
+          // Either takes a Transition card dropped on it.
+          const join = {
+            onClick: () => handlers.onJoin(after),
+            onDragOver: (event: DragEvent) => {
+              if (event.dataTransfer.types.includes(DRAG_TRANSITION)) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            },
+            onDrop: (event: DragEvent) => {
+              const kind = event.dataTransfer.getData(DRAG_TRANSITION) as TransitionKind;
+              if (!kind) return;
+              event.stopPropagation();
+              handlers.onDropTransition(after, kind);
+            },
+          };
+          if (transition) {
+            return (
+              <Seam
+                key={`join-${after}`}
+                join={join}
+                number={i + 1}
+                transition={transition}
+                outgoing={track[i]}
+                incoming={track[i + 1]}
+                pps={pps}
+                selected={selected}
+                grips={!locked("video")}
+                onLength={(secs) => handlers.onTransition({ ...transition, secs })}
+              />
+            );
+          }
           return (
             <button
               key={`join-${after}`}
               type="button"
-              onClick={() => handlers.onJoin(after)}
-              onDragOver={(event) => {
-                if (event.dataTransfer.types.includes(DRAG_TRANSITION)) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }
-              }}
-              onDrop={(event) => {
-                const kind = event.dataTransfer.getData(DRAG_TRANSITION) as TransitionKind;
-                if (!kind) return;
-                event.stopPropagation();
-                handlers.onDropTransition(after, kind);
-              }}
+              {...join}
               aria-pressed={selected}
-              aria-label={transition ? `Transition after Segment ${i + 1}: ${transition.kind}` : `Join after Segment ${i + 1}: add a transition`}
-              title={transition ? `${transition.kind}, ${transition.secs.toFixed(2)} s` : "Add a transition"}
+              aria-label={`Join after Segment ${i + 1}: add a transition`}
+              title="Add a transition"
               className={cx(
                 "absolute top-1/2 z-10 size-5 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[4px] ring-2 ring-bg",
                 "focus-visible:outline-2 focus-visible:outline-focus",
-                transition ? "bg-accent" : "bg-surface-raised hover:bg-fill",
+                "bg-surface-raised hover:bg-fill",
                 selected && "ring-text",
               )}
               style={{ left: shown.end * pps }}
@@ -843,6 +871,108 @@ function SongWaveform({
         }),
       ]}
     />
+  );
+}
+
+/**
+ * A join's Transition as the Timeline draws it, its Seam: a band over the two Segments' overlap, the
+ * end of the `outgoing` one less the overlap to its end (`incoming`'s start, once the plan has it).
+ * A click picks the join, and it takes a Transition card dropped on it (`join`). With `grips` (an
+ * unlocked Video Track), a grip at each edge drags the length out or in from both edges at once
+ * (`seamDragged`), with a tooltip of it; the band stays centred where it was while it does, and
+ * `onLength` has it as the drag ends, one step of undo. No snapping. A finger's grips are wider.
+ */
+function Seam({
+  join,
+  number,
+  transition,
+  outgoing,
+  incoming,
+  pps,
+  selected,
+  grips,
+  onLength,
+}: {
+  join: { onClick: () => void; onDragOver: (event: DragEvent) => void; onDrop: (event: DragEvent) => void };
+  // Which Segment it follows, counted from 1.
+  number: number;
+  transition: Transition;
+  outgoing: PlayedSegment;
+  incoming: PlayedSegment;
+  pps: number;
+  selected: boolean;
+  grips: boolean;
+  onLength: (secs: number) => void;
+}) {
+  const before = outgoing.end - outgoing.start;
+  const after = incoming.end - incoming.start;
+  const overlap = transitionOverlap(transition.secs, before, after);
+  const drag = useRef<{ pointer: number; x: number; outward: 1 | -1; centre: number } | null>(null);
+  // While a grip is dragged: the length it gives, about the band's centre as it was grabbed.
+  const [live, setLive] = useState<{ secs: number; centre: number } | null>(null);
+  const centre = live?.centre ?? outgoing.end - overlap / 2;
+  const secs = live?.secs ?? overlap;
+  const stop = () => {
+    drag.current = null;
+    setLive(null);
+  };
+  const grip = (outward: 1 | -1) => ({
+    onPointerDown: (event: PointerEvent<HTMLSpanElement>) => {
+      if (event.button !== 0) return;
+      // Not the Timeline's scrub or rubber band.
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      drag.current = { pointer: event.pointerId, x: event.clientX, outward, centre };
+    },
+    onPointerMove: (event: PointerEvent<HTMLSpanElement>) => {
+      const gesture = drag.current;
+      if (gesture?.pointer !== event.pointerId) return;
+      event.stopPropagation();
+      const travel = (gesture.outward * (event.clientX - gesture.x)) / pps;
+      setLive({ secs: seamDragged(transition.secs, travel, before, after), centre: gesture.centre });
+    },
+    onPointerUp: (event: PointerEvent<HTMLSpanElement>) => {
+      if (drag.current?.pointer !== event.pointerId) return;
+      event.stopPropagation();
+      if (live && live.secs !== transition.secs) onLength(live.secs);
+      stop();
+    },
+    onPointerCancel: stop,
+  });
+  const name = `${TRANSITIONS[transition.kind].label}, ${secs.toFixed(2)} s`;
+  const edge = "absolute inset-y-0 w-4 -translate-x-1/2 cursor-ew-resize touch-none pointer-coarse:w-10";
+  const bar = "absolute inset-y-1 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-accent";
+  return (
+    <button
+      type="button"
+      {...join}
+      aria-pressed={selected}
+      aria-label={`Transition after Segment ${number}: ${name}`}
+      title={name}
+      className={cx(
+        "absolute inset-y-1 z-10 -translate-x-1/2 rounded-sm bg-accent/30 ring-1 ring-accent",
+        "focus-visible:outline-2 focus-visible:outline-focus",
+        selected && "ring-2 ring-text",
+      )}
+      style={{ left: centre * pps, width: Math.max(4, secs * pps) }}
+    >
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-text/50" />
+      {grips && (
+        <>
+          <span aria-hidden data-grip="start" className={cx(edge, "left-0")} {...grip(-1)}>
+            <span className={bar} />
+          </span>
+          <span aria-hidden data-grip="end" className={cx(edge, "left-full")} {...grip(1)}>
+            <span className={bar} />
+          </span>
+        </>
+      )}
+      {live && (
+        <span className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-black/75 px-1 py-0.5 text-[11px] leading-none font-medium whitespace-nowrap text-white tabular-nums">
+          {live.secs.toFixed(2)} s
+        </span>
+      )}
+    </button>
   );
 }
 

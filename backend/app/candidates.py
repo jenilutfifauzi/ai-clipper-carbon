@@ -1,7 +1,7 @@
 """Candidates: proposed clips awaiting review."""
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from typing import Annotated, Any, NamedTuple
 
@@ -9,7 +9,9 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
-from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
+# Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
+from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
+from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -566,8 +568,9 @@ class Overlay:
     `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
     `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
     and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
-    not from its Transform or `volume`. An image's volume Keyframes, Speed, pitch and Reverse are
-    refused with the Media Library at hand (app/api.py)."""
+    not from its Transform or `volume`. It comes on and goes off as a Text Layer does, its
+    animations stacked on its keyed values; they move its picture only, never its sound. An image's
+    volume Keyframes, Speed, pitch and Reverse are refused with the Media Library at hand (app/api.py)."""
 
     id: ItemId
     media: MediaId
@@ -587,6 +590,9 @@ class Overlay:
     border: Border | None = None
     shadow: Shadow | None = None
     keys: Keys = field(default_factory=dict)
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
     # A video's sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
     muted: bool = False
 
@@ -702,35 +708,41 @@ def _check_held(segment: Segment) -> None:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no fades")
 
 
-class TransitionKind(StrEnum):
-    """How one Segment gives way to the next (ffmpeg's xfade transitions of the same names)."""
-
-    FADE = "fade"
-    FADEBLACK = "fadeblack"
-    FADEWHITE = "fadewhite"
-    SLIDELEFT = "slideleft"
-    SLIDERIGHT = "slideright"
-    SLIDEUP = "slideup"
-    SLIDEDOWN = "slidedown"
-    WIPELEFT = "wipeleft"
-    ZOOMIN = "zoomin"
-    CIRCLEOPEN = "circleopen"
-
-
 @dataclass(frozen=True)
 class Transition:
     """A Transition from the Segment `after` into the one after it, lasting `secs`: the two overlap
-    by that long, so the Clip is that much shorter. Kept to half the shorter of the two by the planner."""
+    by that long, so the Clip is that much shorter. Kept to half the shorter of the two by the planner.
+    Its knobs are read by the kinds that have them (app/transitions.py): `strength` (0..1, unset for
+    the kind's own) and `colour` (Dip to colour's, black when unset). Either is kept on a kind that
+    doesn't read it, so changing back restores it."""
 
     after: ItemId
     kind: TransitionKind = TransitionKind.FADE
-    secs: Annotated[FiniteFloat, Field(ge=0.2, le=1.5)] = 0.5
+    secs: Annotated[FiniteFloat, Field(ge=TRANSITION_SECS[0], le=TRANSITION_SECS[1])] = TRANSITION_DEFAULT_SECS
+    sound: TransitionSound = TransitionSound.LINEAR
+    strength: Annotated[FiniteFloat, Field(ge=0, le=1)] | None = None
+    colour: Colour | None = None
 
 
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:
     """How long a Main Track of `segments` plays: their Timeline lengths, less their Transitions' overlaps."""
     by_join = {transition.after: transition.secs for transition in transitions}
     return track_length([segment_time(segment) for segment in segments], [by_join.get(segment.id) for segment in segments])
+
+
+def with_join_transition(
+    before: list[ItemId], after: list[ItemId], transitions: list[Transition], join: JoinTransition | None
+) -> list[Transition]:
+    """The Join Transition rule (GLOSSARY): `transitions`, as a change of the Main Track from Segment
+    ids `before` to `after` left them, then a copy of the Style Preset's Join Transition `join` on
+    each join (a pair of adjacent Segments) there after and not before that has no Transition, in Main
+    Track order. The editor's twin is editor/joinTransition.ts; both read tests/fixtures/join_transitions.json."""
+    if join is None:
+        return transitions
+    old = set(zip(before, before[1:]))
+    has = {transition.after for transition in transitions}
+    new = [first for first, second in zip(after, after[1:]) if (first, second) not in old and first not in has]
+    return [*transitions, *(Transition(first, **asdict(join)) for first in new)]
 
 
 # The id of a Clip's one Segment when it isn't cut.

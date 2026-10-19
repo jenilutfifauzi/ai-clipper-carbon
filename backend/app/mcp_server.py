@@ -146,6 +146,9 @@ Edits:
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
   (source_start, source_end). A Music Clip's speed, pitch and reverse are the same (secs * speed of
   its song from offset); the dry run's `sounds` give what it reads.
+  An Overlay comes on and goes off as a Text Layer does: animation_in and animation_out (none, fade,
+  pop, slide) over animation_ms (100..2000, 300 by default; each end at most half its secs). They
+  move its picture only: a video's sound keeps its volume and Keyframes. The dry run lists them.
 - A Music Clip without `media` plays the episode's sound, anywhere in the Clip: its offset is
   Source time, its read within the Source, and source_volume scales it (`sounds` lists it, source true).
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
@@ -235,8 +238,8 @@ Edits:
   ends snap to Words), and refuses a length or a Segment's range that would leave one past its item's
   end: send its keys too. The dry run lists them in Timeline time, with
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
-  volume's under `sounds`. A Text Layer's and a Shape's animations (fade, pop, slide) play on top of
-  its keyed values.
+  volume's under `sounds`. A Text Layer's, a Shape's and an Overlay's animations (fade, pop, slide)
+  play on top of its keyed values.
 - `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
   the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
   Muted ones (`segments`, `sounds`).
@@ -252,6 +255,28 @@ Edits:
   (the dry run's `segments`, a Transition's overlap included), and set the Segment's `muted`.
   Reattach: remove every Music Clip Detached from it, then clear its `muted`. A `detached_from` added
   or changed must name one of the Candidate's Segments; a saved one stays after its Segment is removed.
+- A Transition joins a Segment (`after`, its id) to the next: the two overlap for its secs
+  (0.1..3 s, 0.5 by default; half the shorter Segment at most), so the Clip is that much shorter.
+  Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dipcolour, dissolve,
+  blurdissolve), Slide (slideleft, slideright, slideup, slidedown push both pictures along;
+  coverleft, coverright, coverup, coverdown slide the next over a still one; whipleft, whipright
+  push them smeared), Wipe (wipeleft, wiperight, wipeup, wipedown, radial: a clock wipe), Shape
+  (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen), Zoom (zoomin, squeezeh,
+  squeezev, zoomblur, spin), Light (filmburn, lightleak),
+  Glitch (glitch, rgbsplit, pixelize, hblur, distance, hlslice). Its knobs: `strength` (0..1; unset, the kind's own) is the heat of filmburn,
+  the brightness of lightleak, the spread of rgbsplit, the blur of blurdissolve, whipleft and
+  whipright, the zoom and blur of zoomblur, the turns of spin (half a turn to two) and the tearing
+  of glitch. `colour` (#RRGGBB, black unset) is dipcolour's. A knob is kept on any kind, read only
+  by those. Its sound, for every kind (a dip never drops the sound out on its own): linear (the default; the two sides crossfade in
+  straight lines, dipping in the middle), equal_power (quarter sines, the level held through the
+  middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
+  it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in
+  the Clip, its sound and its knobs (null when unset).
+- A Style Preset's join_transition (none, or a Transition without `after`; built-in ones have none)
+  is copied onto every new join of its Candidates: when an edit changes the Segments without
+  stating `transitions`, each pair of adjacent Segments that wasn't adjacent before and has no
+  Transition gets it. A stated `transitions` list is taken as is, so state it to leave a new join a
+  cut. Removing a Transition, or changing or switching the Preset, touches no join.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -628,6 +653,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         use_for_new_titles: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
+        Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
         preset_id alone)."""
         if kind == "style":
@@ -895,14 +921,15 @@ def _plan_view(
     (`copied`), its fades), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
-    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`), a Manual
-    Scene's Keyframes past its end (`ignored`), every sound (a Segment's, a Music Clip's, an
-    Overlay's) with its span, fades, volume Keyframes, whether it is Muted, a ducked one's depth and
-    where it is turned down (the plan's `ducked`), the Segment a Detached one is from, what a sound
-    at a Speed or in Reverse reads (`_video_read`), and whether it is the Source's (`source`, a Music
-    Clip's), each Shape's and each Text Layer's
-    (with its lines) box and picture's URL (`picture_url`, by its name) as a picture layer's
-    (`_layer_view`), and the Words."""
+    (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
+    animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
+    (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
+    comes `after`, every sound (a Segment's, a Music Clip's, an Overlay's) with its span, fades,
+    volume Keyframes, whether it is Muted, a ducked one's depth and where it is turned down (the
+    plan's `ducked`), the Segment a Detached one is from, what a sound at a Speed or in Reverse
+    reads (`_video_read`), and whether it is the Source's (`source`, a Music Clip's), each Shape's
+    and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
+    picture layer's (`_layer_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -926,6 +953,10 @@ def _plan_view(
             })
             for segment in plan["segments"]
         ],
+        "transitions": [
+            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound", "strength", "colour")}
+            for event in plan["transitions"]
+        ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),
@@ -939,6 +970,7 @@ def _plan_view(
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
+                **_animation_view(event),
             }
             for event in plan["overlays"]
         ],
@@ -958,6 +990,18 @@ def _plan_view(
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _ended(segments: list[dict], transition: dict) -> dict:
+    """The Segment a Transition takes away: the one it ends, which started before it."""
+    return next(s for s in segments if s["start"] < transition["start"] and abs(s["end"] - transition["end"]) < _SAME_SECS)
+
+
+def _animation_view(event: dict) -> dict:
+    """How an Overlay comes on and goes off: each end's animation but none, and their length when it
+    has one; nothing unanimated."""
+    animated = _compact({key: event[key] if event[key] != "none" else None for key in ("animation_in", "animation_out")})
+    return animated | {"animation_ms": event["animation_ms"]} if animated else {}
 
 
 def _retimed(event: dict) -> bool:

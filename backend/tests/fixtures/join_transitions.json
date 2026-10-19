@@ -1,0 +1,93 @@
+{
+  "about": "The Join Transition rule (.scratch/transitions-expanded/spec.md): a join is a pair of adjacent Segment ids. Given the Main Track's Segment ids `before` and `after` a change, and the `transitions` as the change left them, every join present after and not before, with no Transition (none `after` its first Segment), gets a copy of the Style Preset's Join Transition (`join`, or none), `after` the join's first Segment. The `expected` Transitions are those given, in their order, then the copies in Main Track order. The backend's tests and the editor's read these cases.",
+  "join": { "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null },
+  "cases": [
+    {
+      "name": "a split of an uncut Clip",
+      "before": ["a"],
+      "after": ["a", "b"],
+      "transitions": [],
+      "expected": [{ "after": "a", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }]
+    },
+    {
+      "name": "a split next to a Transition keeps it",
+      "before": ["a", "b"],
+      "after": ["a", "b", "c"],
+      "transitions": [{ "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null }],
+      "expected": [
+        { "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null },
+        { "after": "b", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }
+      ]
+    },
+    {
+      "name": "an insert between two Segments with a Transition",
+      "before": ["a", "b"],
+      "after": ["a", "m", "b"],
+      "transitions": [{ "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null }],
+      "expected": [
+        { "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null },
+        { "after": "m", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }
+      ]
+    },
+    {
+      "name": "a paste keeps the Transition it brings",
+      "before": ["a", "b"],
+      "after": ["a", "b", "p", "q"],
+      "transitions": [{ "after": "p", "kind": "wipeleft", "secs": 0.3, "sound": "cut", "strength": null, "colour": null }],
+      "expected": [
+        { "after": "p", "kind": "wipeleft", "secs": 0.3, "sound": "cut", "strength": null, "colour": null },
+        { "after": "b", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }
+      ]
+    },
+    {
+      "name": "a Freeze frame, the Transition after the Segment moved to its tail",
+      "before": ["a", "b"],
+      "after": ["a", "h", "t", "b"],
+      "transitions": [{ "after": "t", "kind": "fadeblack", "secs": 1.0, "sound": "linear", "strength": null, "colour": null }],
+      "expected": [
+        { "after": "t", "kind": "fadeblack", "secs": 1.0, "sound": "linear", "strength": null, "colour": null },
+        { "after": "a", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null },
+        { "after": "h", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }
+      ]
+    },
+    {
+      "name": "a delete of a middle Segment",
+      "before": ["a", "b", "c"],
+      "after": ["a", "c"],
+      "transitions": [],
+      "expected": [{ "after": "a", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }]
+    },
+    {
+      "name": "a delete of a middle Segment after a Transition, which now leads to the next",
+      "before": ["a", "b", "c"],
+      "after": ["a", "c"],
+      "transitions": [{ "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null }],
+      "expected": [{ "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null }]
+    },
+    {
+      "name": "a reorder",
+      "before": ["a", "b", "c"],
+      "after": ["c", "a", "b"],
+      "transitions": [{ "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null }],
+      "expected": [
+        { "after": "a", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": null, "colour": null },
+        { "after": "c", "kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": null }
+      ]
+    },
+    {
+      "name": "a removed Transition stays removed",
+      "before": ["a", "b"],
+      "after": ["a", "b"],
+      "transitions": [],
+      "expected": []
+    },
+    {
+      "name": "a Preset with none",
+      "join": null,
+      "before": ["a", "b"],
+      "after": ["a", "c", "b"],
+      "transitions": [],
+      "expected": []
+    }
+  ]
+}

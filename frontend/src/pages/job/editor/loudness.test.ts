@@ -113,6 +113,18 @@ describe("a Segment's sound", () => {
     // Unfaded, the crossfade alone.
     expect(loudness(segmentSound({ ...faded, fade_out: 0 }, 1, { start: 1, end: 2 }), 1.5)).toBeCloseTo(0.5, 6);
   });
+
+  test("taken away along its Transition's sound, and brought in by `crossed`, times its fades", () => {
+    const faded = segment({ start: 0, end: 2, fade_out: 1 });
+    // Equal power: a quarter cosine over the overlap, times the fade out.
+    const taken = segmentSound(faded, 1, { start: 1, end: 2, sound: "equal_power" });
+    expect(loudness(taken, 1.5)).toBeCloseTo(Math.cos(Math.PI / 4) * 0.5, 6);
+    // A Cut: whole until the middle.
+    expect(loudness(segmentSound({ ...faded, fade_out: 0 }, 1, { start: 1, end: 2, sound: "cut" }), 1.4)).toBeCloseTo(1, 6);
+    // The incoming side's share multiplies the rest.
+    const brought = segmentSound(segment({ start: 0, end: 2, fade_in: 1 }), 1);
+    expect(loudness(brought, 0.5, (time) => time)).toBeCloseTo(0.5 * 0.5, 6);
+  });
 });
 
 describe("a keyed sound", () => {

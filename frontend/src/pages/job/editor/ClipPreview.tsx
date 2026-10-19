@@ -27,6 +27,7 @@ import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
+import { hookEnds, hookLook } from "./animation";
 import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from "./layerPicture";
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
@@ -40,9 +41,7 @@ import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import type { GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 
-// The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py):
-// how far a sliding hook moves; and Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
-const SLIDE_PX = 60;
+// The planner's and renderer's numbers the drawing repeats (backend/app/planner.py, renderer.py).
 // In a staggered entrance, each element of the hook comes on this long after the one before.
 const HOOK_STAGGER_SECS = 0.08;
 // The Quote Mark's corners, as a share of its width, and its marks on a badge 100 units wide: two
@@ -53,6 +52,7 @@ const QUOTE_DOTS = [
   [35, 58.8],
   [65, 58.8],
 ];
+// Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
 export const BLUR_SIGMA = 40;
 export const BLUR_BRIGHTNESS = 0.9;
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
@@ -114,6 +114,8 @@ export function ClipPreview({
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
+  // The Segments' picture, which a Transition's look styles as its incoming side.
+  const incoming = useRef<HTMLDivElement>(null);
   // Each deck's videos, its master then its follower; and the masters, whose sound PreviewMusic sets.
   const decks = useMemo(() => [0, 1].map(() => [createRef<HTMLVideoElement>(), createRef<HTMLVideoElement>()]), []);
   const masters = useMemo(() => decks.map(([master]) => master), [decks]);
@@ -217,22 +219,25 @@ export function ClipPreview({
     >
       {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
-        {decks.map((refs, deck) =>
-          refs.map((ref, slot) => (
-            <PanelView
-              key={`${deck}:${slot}`}
-              videoRef={ref}
-              src={src}
-              plan={drawn}
-              {...slotView(scene, slot)}
-              playback={playback}
-              muted={deck > 0 || slot > 0}
-              hidden={deck !== shownDeck}
-            />
-          )),
-        )}
-        <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
-        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} />
+        {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
+        <div ref={incoming} className="absolute inset-0">
+          {decks.map((refs, deck) =>
+            refs.map((ref, slot) => (
+              <PanelView
+                key={`${deck}:${slot}`}
+                videoRef={ref}
+                src={src}
+                plan={drawn}
+                {...slotView(scene, slot)}
+                playback={playback}
+                muted={deck > 0 || slot > 0}
+                hidden={deck !== shownDeck}
+              />
+            )),
+          )}
+          <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+        </div>
+        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
       </div>
       <PreviewOverlays
         plan={drawn}
@@ -1041,43 +1046,12 @@ function HighlightBox({
   );
 }
 
-// How long the hook's entrance and exit take (renderer.py's _hook_ends), and how long after each
-// other the `steps` + 1 elements of a staggered entrance come on (_stagger).
-// What comes on and goes off as the hook does: the hook, or a Text Layer, in its style.
-type Timed = { start: number; end: number };
-type Moves = Pick<HookStyle, "animation_in" | "animation_out" | "animation_ms">;
-
-function hookEnds(hook: Timed, style: Moves): [number, number] {
-  const most = (hook.end - hook.start) / 2;
-  const ms = style.animation_ms / 1000;
-  return [style.animation_in === "none" ? 0 : Math.min(ms, most), style.animation_out === "none" ? 0 : Math.min(ms, most)];
-}
-
+// How long after each other the `steps` + 1 elements of a staggered entrance come on (renderer.py's
+// _stagger), each entrance and exit taking hookEnds' time.
 function stagger(hook: HookEvent, style: HookStyle, steps: number): number {
   if (style.animation_in === "none" || !steps) return 0;
   const [on, off] = hookEnds(hook, style);
   return Math.max(0, Math.min(HOOK_STAGGER_SECS, (hook.end - hook.start - on - off) / steps));
-}
-
-// An element's look at `time`, coming on `delay` after the hook starts: its opacity, scale and how
-// far below its place it is, as the renderer animates it (_hook_phases, _hook_motion); null while
-// it is off screen.
-function hookLook(time: number, hook: Timed, style: Moves, delay: number): [number, number, number] | null {
-  const start = hook.start + delay;
-  if (time < start || time >= hook.end) return null;
-  const ms = style.animation_ms / 1000;
-  const moving = (a: string) => a === "pop" || a === "slide";
-  if (!moving(style.animation_in) && !moving(style.animation_out)) {
-    const on = style.animation_in === "fade" ? (time - start) / ms : 1;
-    const off = style.animation_out === "fade" ? (hook.end - time) / ms : 1;
-    return [Math.max(0, Math.min(1, on, off)), 1, 0];
-  }
-  const [on, off] = hookEnds(hook, style);
-  const animate = (animation: string, shown: number): [number, number, number] =>
-    animation === "pop" ? [shown, 0.7 + 0.3 * shown, 0] : animation === "slide" ? [shown, 1, SLIDE_PX * (1 - shown)] : [shown, 1, 0];
-  if (on && time < start + on) return animate(style.animation_in, (time - start) / on);
-  if (off && time >= hook.end - off) return animate(style.animation_out, (hook.end - time) / off);
-  return [1, 1, 0];
 }
 
 /**
