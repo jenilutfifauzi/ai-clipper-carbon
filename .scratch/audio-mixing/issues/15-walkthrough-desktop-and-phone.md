@@ -111,6 +111,6 @@
 - **Re-applying the phone viewport replays the sheet's opening animation.** Taps during it fall through to whatever is under them, so two stray taps toggled the Muted switch. That was the harness, not the app.
 
 **Suites:**
-- backend: SEE_BACKEND passed (the known `test_resilience.py::test_other_jobs_run_while_a_job_waits_for_quota` deselected);
+- backend: the feature's 17 test files (gain, muted, segment fades, keyed volume and Segments, sped and Source music, detach, ducking, item sound, music, mcp, planner, freeze frame, transitions, keyframes), 249 passed. A full run before that stopped at a flaky `test_resilience.py::test_gemini_busy_past_the_retries_…` (517 passed), which passed on its own (25 of 25 in `test_resilience.py`); a second full run exited 0. No backend code changed here;
 - `npm run typecheck && npm run build`: clean;
 - `npx vitest run`: 974 passed (67 files).
