@@ -3,6 +3,7 @@ to the app's MCP server, on the app with fake ports, its Worker running. The too
 app's real routes. One test posts to /mcp over HTTP."""
 
 import json
+import re
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -15,6 +16,7 @@ from app import uploads
 from app.config import load_settings
 from app.main import create_app
 from app.ports import Ports
+from app.transition_kinds import TransitionKind
 from fontfiles import RESTRICTED, font_file
 from test_jobs_api import URL
 
@@ -24,10 +26,20 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
-# Raised from 69_000 for Export Presets (export-settings/04): render_clips' `export_preset_id`; and
-# from 69_250 (export-settings/05) for the presets tools' kind "export" and save_preset's use_as_default.
-# Raised again for Save frame and Save audio (export-settings/07, 08): save_frame and export_audio.
-TOOLS_BUDGET_BYTES = 71_100
+# Raised from 69_000 for xfade's 21 further Transition kinds (transitions-expanded/02), named in
+# edit_candidate's and merge_candidate_items' schemas; their groups are in the instructions. And for
+# Overlay animations (transitions-expanded/10): an Overlay's animation_in, animation_out and
+# animation_ms in the same schemas. And for a Transition's sound (transitions-expanded/06): its three
+# values wherever a Transition is given; what they do is in the instructions (70_961 with all three).
+# And for a Transition's knobs (transitions-expanded/04): its strength and colour, and the four kinds
+# that read them, wherever a Transition is given (71_798). And for a Style Preset's Join Transition
+# (transitions-expanded/09): save_preset's join_transition, a Transition's kinds and knobs again (73_832).
+# Merged with audio-mixing, which adds a Segment's fades and `muted`, a Music Clip's speed, pitch,
+# reverse, `duck` and `detached_from`, and an Overlay's `muted`, but drops pydantic's titles from every
+# schema (`_untitled`): 66_741 with both features.
+# Then merged with Export Settings (export-settings/04, 05, 07, 08): render_clips' `export_preset_id`, the
+# presets tools' kind "export" and save_preset's use_as_default, save_frame and export_audio: 68_636 with all three.
+TOOLS_BUDGET_BYTES = 69_400
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -818,3 +830,32 @@ async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
 
     glossary = await mcp.read_resource("ai-clipper://glossary")
     assert "Candidate" in glossary.contents[0].text
+
+
+# transitions-expanded/02: every Transition kind, and the dry run's Transitions
+
+
+@pytest.mark.anyio
+async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transitions(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    # "apa kabar", then "halo semua".
+    segments = [{"id": "a", "start": 1.0, "end": 1.6}, {"id": "b", "start": 0.1, "end": 0.9}]
+    for kind in ("fadegrays", "dissolve", "coverleft", "coverright", "coverup", "coverdown", "wiperight", "wipeup", "wipedown",
+                 "radial", "circleclose", "circlecrop", "rectcrop", "vertopen", "horzopen", "squeezeh", "squeezev",
+                 "pixelize", "hblur", "distance", "hlslice"):
+        plan = await call(mcp, "edit_candidate", **ids, changes={"segments": segments, "transitions": [{"after": "a", "kind": kind, "secs": 0.2}]}, dry_run=True)
+        [event] = plan["transitions"]
+        assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear", "strength": None, "colour": None} and event["start"] > 0, event
+    edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
+    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None}]
+    assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])
+
+    # The instructions name each group with its kinds, and how long a Transition can be.
+    transitions = mcp.instructions[mcp.instructions.index("- A Transition") :]
+    assert "0.1..3 s" in transitions
+    for group, kinds in (("Basic", "fade, fadeblack"), ("Glitch", "glitch, rgbsplit, pixelize, hblur, distance, hlslice")):
+        assert f"{group} ({kinds}" in transitions
+    named = set(re.findall(r"[a-z]+", transitions[: transitions.index("\n- ")]))
+    assert set(TransitionKind) <= named

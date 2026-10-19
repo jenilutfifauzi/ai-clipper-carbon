@@ -8,10 +8,10 @@ A frame is drawn as the render draws it (app/renderer.py, `Renderer.frame`): the
 from the same inputs (`drawing_inputs`), Retimed copies made when needed.
 
 The sound is the saved Revision's mix as its Clip's would be (the Clip's sound or its Segments', Music
-Clips, Overlay sound, volumes, Keyframes, fades and Speed), normalized to an Export Preset's loudness.
-Nothing is transcribed or analysed, since neither changes the sound (the plan's Scenes stay
-unanalysed). A reversed Segment or Overlay's Retimed copy is made when it isn't there, as a render
-would.
+Clips, Overlay sound, volumes, Keyframes, fades, Mutes, ducking and Speed), normalized to an Export
+Preset's loudness. Nothing is transcribed or analysed (the plan's Scenes stay unanalysed): the
+speech that ducks its music is the Words already at hand, as a render without captions hears it. A
+reversed Segment or Overlay's Retimed copy is made when it isn't there, as a render would.
 """
 
 import math
@@ -28,8 +28,9 @@ from app.logos import LogoStore
 from app.media import MediaStore
 from app.planner import RenderPlan
 from app.renderer import AudioFormat, Renderer, shown_frame
-from app.rendering import candidate_plan, drawing_inputs, played_files
+from app.rendering import candidate_plan, drawing_inputs, music_words, played_files, words_at_hand
 from app.styles import PresetStore
+from app.transcript import Transcript, Word
 
 EXPORTS_DIR = "exports"
 
@@ -89,6 +90,7 @@ def save_frame(
 def save_audio(
     job: Job,
     job_dir: Path,
+    transcript: Transcript | None,
     candidate: Candidate,
     format: AudioFormat,
     export: ExportSettings,
@@ -96,11 +98,25 @@ def save_audio(
     presets: PresetStore,
     media: MediaStore,
 ) -> Path:
-    """Write the Candidate's sound alone at `export`'s loudness as its `audio_name`, and return its path."""
+    """Write the Candidate's sound alone at `export`'s loudness as its `audio_name`, and return its path.
+    Its speech, which ducks its music, is the Words at hand (`words_at_hand`, from `transcript`), as
+    a render without captions hears it."""
     assert job.source is not None
     source = job.source
     unanalysed: list[ClipAnalysis | None] = [None for _ in candidate.main_track()]
-    plan = candidate_plan(candidate, source.metadata, None, unanalysed, presets, settings.camera, media=media)
+    duration, language, model = source.metadata.duration, job.options.language, settings.whisper_model
+
+    def at_hand(start: float, end: float) -> list[Word]:
+        return words_at_hand(job_dir, transcript, start, end, duration, language, model)
+
+    words = [
+        [] if segment.media is not None or segment.hold is not None or segment.reverse else at_hand(segment.start, segment.end)
+        for segment in candidate.main_track()
+    ]
+    plan = candidate_plan(
+        candidate, source.metadata, words, unanalysed, presets, settings.camera, media=media,
+        captioned=False, music=music_words(candidate, at_hand),
+    )
     # Its picture isn't drawn: an Overlay's sound is among the plan's audio, so its picture needs no copy.
     plan, files = played_files(replace(plan, overlays=[]), job_dir, source, media, settings.ffmpeg_bin)
     return _written(

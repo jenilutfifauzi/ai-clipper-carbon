@@ -255,6 +255,18 @@ class CameraTuning:
 
 
 @dataclass(frozen=True)
+class DuckTuning:
+    """How a ducked Music Clip follows speech (docs/adr/0016, app/ducking.py). Not read from the
+    environment; the Render Plan carries them, so that the preview ducks as the render does."""
+
+    # It goes down over lead_secs before a span of speech, and comes back up over release_secs after it.
+    lead_secs: float = 0.25
+    release_secs: float = 0.5
+    # Spans of speech less than bridge_secs apart are one: it stays down through a short pause.
+    bridge_secs: float = 0.8
+
+
+@dataclass(frozen=True)
 class LlmChoice:
     """The LLM Selection runs on, as recorded with each Selection run and eval report."""
 

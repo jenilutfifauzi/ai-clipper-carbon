@@ -109,7 +109,8 @@ def test_a_music_clips_fade_and_a_reversed_video_segments_sound_are_heard_as_in_
             {"id": "back", "start": 0, "end": 2, "media": video["id"], "framing": COVER, "reverse": True},
             {"id": "e", "start": words["halo"]["start"], "end": words["kabar"]["end"]},
         ],
-        music=[{"id": "m1", "media": song["id"], "start": 0, "secs": 3, "fade_out": 1}],
+        # Not ducked, so that its fade is heard alone; ducked further down.
+        music=[{"id": "m1", "media": song["id"], "start": 0, "secs": 3, "fade_out": 1, "duck": None}],
     )
     length = preview(client, job, candidate)["plan"]["segments"][-1]["end"]
 
@@ -122,8 +123,35 @@ def test_a_music_clips_fade_and_a_reversed_video_segments_sound_are_heard_as_in_
     full = tone_level(settings, path, 880, 1.0, 0.25)
     assert tone_level(settings, path, 880, 2.5, 0.1) == pytest.approx(full / 2, rel=0.25)
     assert tone_level(settings, path, 880, 3.2, 0.25) < full / 20
+    # Ducked under the speech from 2.1 s (audio-mixing), as the Clip's would be: the Words at hand are
+    # its speech, though nothing is transcribed.
+    unducked = tone_level(settings, path, 880, 2.5, 0.1)
+    patch(client, job, candidate, music=[{"id": "m1", "media": song["id"], "start": 0, "secs": 3, "fade_out": 1, "duck": -12}])
+    ducked = Path(saved(client, job, candidate, format="wav", export_preset_id="archive")["path"])
+    assert tone_level(settings, ducked, 880, 2.5, 0.1) < unducked / 2
+    assert tone_level(settings, ducked, 880, 1.0, 0.25) == pytest.approx(full, rel=0.1)
     # Its full-size Retimed copy was made for it.
     assert [p.name for p in (settings.data_dir / "media" / f"{video['id']}.retimed").iterdir()] == ["reversed-full-0-2000.mp4"]
+
+
+def test_a_segments_fade_in_and_a_muted_segment_are_heard_as_in_the_clip(client, settings, video_source, quiet_source):
+    """audio-mixing's Segment fades and Mute, through the sound the Clip, its loudness pass and the
+    saved audio share: the Source's 440 Hz tone fades in over the first Segment's first second, and
+    the second Segment, Muted, is silent."""
+    video_source.video = quiet_source
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "kita")
+    candidate = patch(
+        client, job, candidate,
+        segments=[{"id": "a", "start": 0.5, "end": 3.5, "fade_in": 1}, {"id": "b", "start": 4.0, "end": 5.5, "muted": True}],
+    )
+
+    path = Path(saved(client, job, candidate, format="wav", export_preset_id="archive")["path"])
+    full = tone_level(settings, path, 440, 2.0, 0.25)
+    assert full > 0
+    assert tone_level(settings, path, 440, 0.0, 0.1) < full / 5
+    assert tone_level(settings, path, 440, 0.45, 0.1) == pytest.approx(full / 2, rel=0.25)
+    assert tone_level(settings, path, 440, 3.8, 0.25) < full / 20
 
 
 def test_a_bad_format_an_unknown_preset_or_candidate_is_refused(client):

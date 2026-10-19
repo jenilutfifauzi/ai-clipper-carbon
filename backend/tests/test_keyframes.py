@@ -130,7 +130,7 @@ def unkeyed_command() -> list[str]:
         Overlay("i", STILL, 0.5, 2.0, transform=Transform(x=300, y=400, scale=0.4, rotation=30, opacity=0.5)),
         Overlay("v", CLIP, 1.0, 1.5, transform=Transform(scale=0.3, flip_h=True)),
     ]
-    music = [MusicClip("m", SONG, 0.0, 3.0, volume=0.5, fade_in=0.5)]
+    music = [MusicClip("m", 0.0, 3.0, media=SONG, volume=0.5, fade_in=0.5)]
     plan = plan_render(2.0, 6.0, source, hook="Coba", overlays=overlays, music=music, media_info=items)
     files = {STILL: Path("/media/still.png"), CLIP: Path("/media/clip.mp4"), SONG: Path("/media/song.m4a")}
     renderer = Renderer(Path("/usr/bin/ffmpeg"), RenderTuning())

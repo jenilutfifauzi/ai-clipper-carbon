@@ -8,6 +8,9 @@ import { CHUNK_SECS, chunksAcross, peaksExtremes, peaksLevel } from "./timelineV
 const FADE_MS = 150;
 // Under a Waveform drawn as a band, so that it reads over the frames.
 const BAND_BACKDROP = "rgb(0 0 0 / 0.45)";
+// A Muted item's Waveform, drawn flat: this dimmed, a line this thick (CSS pixels).
+const MUTED_ALPHA = 0.4;
+const MUTED_LINE = 1;
 
 /**
  * An item's Waveform, as a layer of its canvas: a bar for each device-pixel column, from the lowest
@@ -16,6 +19,7 @@ const BAND_BACKDROP = "rgb(0 0 0 / 0.45)";
  * Its Peaks are the chunks at `url(start)` in `cache`; a stretch whose chunk isn't here yet is left
  * clear. `mediaStart` is the media's time at the item's left edge, played at `speed` (a Segment's
  * Speed), backwards in `reverse` (its Waveform mirrored), and `duration` the media's length.
+ * A `muted` item's is drawn flat and dimmed: a line along the middle, where its Peaks have arrived.
  */
 export function waveformLayer({
   cache,
@@ -27,6 +31,7 @@ export function waveformLayer({
   gain,
   color,
   band,
+  muted = false,
 }: {
   cache: MediaCache;
   url: (start: number) => string;
@@ -35,6 +40,7 @@ export function waveformLayer({
   gain: (time: number) => number;
   color: string;
   band?: number;
+  muted?: boolean;
 } & Pick<Retiming, "speed" | "reverse">): Layer {
   return ({ ctx, span, width, height, dpr, pps, now, want }) => {
     const tall = Math.min(band ?? height, height);
@@ -60,6 +66,12 @@ export function waveformLayer({
       if (band) {
         ctx.fillStyle = BAND_BACKDROP;
         ctx.fillRect(span.left + first * column, height - tall, (last - first) * column, tall);
+      }
+      if (muted) {
+        ctx.globalAlpha = shown * MUTED_ALPHA;
+        ctx.fillStyle = color;
+        ctx.fillRect(span.left + first * column, middle - MUTED_LINE / 2, (last - first) * column, MUTED_LINE);
+        continue;
       }
       ctx.beginPath();
       for (let i = first; i < last; i++) {

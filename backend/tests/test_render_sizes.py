@@ -19,8 +19,8 @@ from app.config import RenderTuning
 from app.encoding import ExportSettings
 from app.layer_pictures import make_pictures
 from app.planner import MAX_LAYER_PICTURE, Box, Join, MediaInfo, SegmentInput, plan_render
-from app.renderer import Renderer, picture_layouts
-from app.scaled_plan import scaled_plan
+from app.renderer import Renderer, overlay_at, picture_layouts
+from app.scaled_plan import drawn_scale, scaled_plan
 from app.styles import WatermarkKind, WatermarkPosition, WatermarkStyle
 from app.transcript import Word
 from app.video_source import SourceMetadata
@@ -300,3 +300,31 @@ def test_a_blur_scene_and_a_transition_render_at_720p_and_4k_at_their_size(setti
         capture_output=True, check=True,
     ).stdout
     assert len(poster) == width * height * 3
+
+
+def test_at_720p_an_overlays_slide_drops_two_thirds_as_far():
+    """transitions-expanded's Overlay animations, drawn by its frame process from the scaled plan:
+    half way out of a Slide it is 30 planner pixels below its place, 20 at 720p."""
+    plan = plan_render(
+        0.0, 5.0, SOURCE,
+        overlays=[TypeAdapter(Overlay).validate_python({"id": "o1", "media": STILL, "start": 1.0, "secs": 2.0, "animation_out": "slide", "animation_ms": 400})],
+        media_info={STILL: MediaInfo(200, 100, None, False)},
+    )
+    drawn = scaled_plan(plan, (720, 1280))
+    [event] = drawn.overlays
+    assert overlay_at(event, 2.8, drawn_scale(drawn)).centre[1] == pytest.approx(event.picture.centre[1] + 20)
+    assert overlay_at(plan.overlays[0], 2.8).centre[1] == pytest.approx(plan.overlays[0].picture.centre[1] + 30)
+
+
+@pytest.mark.parametrize("kind", [TransitionKind.ZOOMBLUR, TransitionKind.SPIN, TransitionKind.RGBSPLIT])
+def test_a_transition_with_its_own_side_chains_renders_at_720p_at_its_size(settings, plain_video, tmp_path, kind):
+    """transitions-expanded's recipes around xfade read the frame's size from the drawn plan."""
+    plan = plan_render(
+        1.0, 5.0, PLAIN,
+        main_track=[SegmentInput(1.0, 2.0), SegmentInput(4.0, 5.0, join=Join(kind, 0.4))],
+    )
+    video = rendered_at(settings, tmp_path, plain_video, plan, 720)
+    stream = next(s for s in probe(settings, video)["streams"] if s["codec_type"] == "video")
+    assert (stream["width"], stream["height"]) == (720, 1280)
+    for at in (0.3, 0.8, 1.3):
+        assert frame(settings, video, at).shape == (1280, 720, 3), at

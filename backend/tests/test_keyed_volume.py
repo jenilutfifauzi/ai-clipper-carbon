@@ -10,7 +10,7 @@ import pytest
 
 from app.candidates import EASE_IN, EASE_IN_OUT, Ease, Keyframe, MusicClip, Overlay
 from app.keyframes import linear_steps, value_at
-from app.planner import MediaInfo, audio_events, gain_at, overlay_events, overlay_sound
+from app.planner import MediaInfo, audio_events, overlay_events, overlay_sound
 from test_keyframes import clip_of, stills  # noqa: F401
 from test_media_library import make, upload
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -50,19 +50,13 @@ def test_an_eased_span_is_24_linear_steps_within_0_6_percent_of_its_change(ease)
 
 
 def test_a_music_clips_volume_keyframes_are_its_sound_events_gain_track_in_its_own_seconds():
-    clip = MusicClip("m", SONG, 3.0, 4.0, volume=0.5, fade_in=0.5, fade_out=1.0, keys={"volume": DIP})
+    clip = MusicClip("m", 3.0, 4.0, media=SONG, volume=0.5, fade_in=0.5, fade_out=1.0, keys={"volume": DIP})
     [event] = audio_events([clip], 10, SONGS)
     # Seconds from the event's start, as the Keyframes are from the Music Clip's.
     assert (event.id, event.start, event.gain) == ("m", 3.0, DIP)
-    [still] = audio_events([MusicClip("m", SONG, 3.0, 4.0, volume=0.5)], 10, SONGS)
+    [still] = audio_events([MusicClip("m", 3.0, 4.0, media=SONG, volume=0.5)], 10, SONGS)
     assert still.gain == []
-
-    # The track replaces the volume; its fades multiply it. In seconds into the Clip.
-    assert gain_at(event, 3.25) == pytest.approx(0.5)
-    assert gain_at(event, 4.0) == 1.0
-    assert gain_at(event, 4.5) == pytest.approx(value_at(DIP, 1.5, 0))
-    assert gain_at(event, 5.5) == 0.25 and gain_at(event, 6.5) == pytest.approx(0.125)
-    assert gain_at(still, 4.0) == 0.5 and gain_at(still, 2.0) == 0.0
+    # How loud the track is heard, through its fades: test_gain.py's shared cases ("keyed and faded").
 
 
 def test_an_overlay_videos_volume_keyframes_are_its_sounds_gain_track_and_not_its_motion():
@@ -123,7 +117,7 @@ async def test_the_agent_keys_a_songs_volume_by_property_and_dry_runs_it_in_time
     candidate = await manual(mcp, job, *HALO_KABAR)
     ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
     dip = {"volume": [{"at": 0.2, "value": 1}, {"at": 0.8, "value": 0.3, "ease": "ease_out"}]}
-    await call(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "media": item["id"], "start": 0.5, "secs": 1, "keys": dip}])
+    await call(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "media": item["id"], "start": 0.5, "secs": 1, "keys": dip, "duck": None}])
     # Merged by property, as an Overlay's are: a change of another field keeps them.
     merged = await call(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "fade_in": 0.1}])
     assert merged["music"][0]["keys"]["volume"][1]["ease"] == [0, 0, 0.58, 1]
@@ -133,12 +127,12 @@ async def test_the_agent_keys_a_songs_volume_by_property_and_dry_runs_it_in_time
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
     assert plan["sounds"] == [{
         "id": "m", "media": item["id"], "start": 0.5, "end": 1.5,
-        "keys": {"volume": [{"at": 0.7, "value": 1, "ease": "linear"}, {"at": 1.3, "value": 0.3, "ease": "ease_out"}]},
+        "keys": {"volume": [{"at": 0.7, "value": 1, "ease": "linear"}, {"at": 1.3, "value": 0.3, "ease": "ease_out"}]}, "fade_in": 0.1,
     }]
     merged = await call(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "keys": {"volume": []}}])
     assert merged["music"][0]["keys"] == {}
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
-    assert "sounds" not in plan
+    assert [sound.get("keys") for sound in plan["sounds"]] == [None]
 
 
 # Seam A: the real ffmpeg
@@ -164,7 +158,7 @@ def test_a_tone_keyed_from_1_to_a_quarter_is_as_loud_as_its_sampled_gain_with_it
     candidate = add(client, job, "Podcast", "ya")
     assert candidate["end"] - candidate["start"] > 2.2
     dip = [{"at": 1, "value": 1}, {"at": 2, "value": 0.25, "ease": "ease_in"}]
-    music = {"id": "m", "media": tone["id"], "start": 0.0, "secs": 2.2, "fade_in": 0.5, "keys": {"volume": dip}}
+    music = {"id": "m", "media": tone["id"], "start": 0.0, "secs": 2.2, "fade_in": 0.5, "keys": {"volume": dip}, "duck": None}
     candidate = patch(client, job, candidate, music=[music])
     video = clip_of(client, settings, job, candidate)
 

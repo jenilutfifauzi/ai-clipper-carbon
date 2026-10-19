@@ -34,6 +34,7 @@ import { sceneAt, SceneLayoutPicker, ScenesTrack } from "./editor/ScenesTrack";
 import { pictureSource } from "./editor/stagePicture";
 import { CaptionStylePanel } from "./editor/CaptionStylePanel";
 import { HookLook, HookMoreOptions, HookPosition } from "./editor/HookStylePanel";
+import { JoinTransitionPanel } from "./editor/JoinTransitionPanel";
 import { PresetBar } from "./editor/PresetBar";
 import { StyleFieldsSkeleton } from "./editor/StyleFields";
 import { Timeline, type Range } from "./editor/Timeline";
@@ -63,13 +64,14 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
-type Tab = "text" | "captions" | "hook" | "watermark" | "trim";
+type Tab = "text" | "captions" | "hook" | "watermark" | "transitions" | "trim";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "captions", label: "Captions" },
   { value: "hook", label: "Hook" },
   { value: "watermark", label: "Watermark" },
+  { value: "transitions", label: "Transitions" },
   { value: "trim", label: "Trim" },
 ];
 
@@ -502,6 +504,14 @@ export function CandidateEditor({
                   Watermark
                 </h4>
                 {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} /> : !style.error && <StyleFieldsSkeleton />}
+              </section>
+            )}
+            {tab === "transitions" && (
+              <section aria-labelledby="transitions-heading" className="flex flex-col gap-3">
+                <h4 id="transitions-heading" className="sr-only">
+                  Transitions
+                </h4>
+                {style.controls ? <JoinTransitionPanel style={style.controls} /> : !style.error && <StyleFieldsSkeleton />}
               </section>
             )}
             {tab === "trim" && (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type RenderPlan } from "../../../api";
+import { isAnimated, overlayLook, type Look } from "./animation";
 import { follow } from "./follow";
 import { PicturePanel } from "./PicturePanel";
 import { useShown, type Playback } from "./playback";
@@ -11,7 +12,10 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * playback at its Speed (muted: its sound, when turned up, plays with the music); in Reverse or at
  * a Speed a browser won't play, from a Retimed copy (retimedCopy.ts). The `selected` ones (picked in
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
- * outside their time too. A keyed one moves with the playback (PicturePanel).
+ * outside their time too. A keyed one moves with the playback (PicturePanel), and so does one coming
+ * on or going off as a picture layer does (its picture only: a video's sound is left to its volume).
+ * A selected one is shown whole while paused in its time, as a picked Text Layer is, so that it can
+ * be seen while it is edited on a frame its animation hasn't reached.
  */
 export function PreviewOverlays({ plan, playback, selected }: { plan: RenderPlan | null; playback: Playback; selected: string[] }) {
   if (!plan || !plan.overlays.length) return null;
@@ -23,6 +27,9 @@ export function PreviewOverlays({ plan, playback, selected }: { plan: RenderPlan
     </>
   );
 }
+
+// Neither faded, scaled nor moved by an animation.
+const WHOLE: Look = [1, 1, 0];
 
 /** One Overlay drawn as `picture`, shown while the Clip's time is in it. */
 function OverlayView({
@@ -43,7 +50,15 @@ function OverlayView({
   const shown = useShown(playback, (time) => time >= event.start && time < event.end);
 
   // By its times, not the event: one is made afresh while it is held on the stage.
-  const { start, end, offset, speed, pitch, reverse, media, image } = event;
+  const { start, end, offset, speed, pitch, reverse, media, image, animation_in, animation_out, animation_ms } = event;
+  const look = useMemo(() => {
+    const animated = { start, end, animation_in, animation_out, animation_ms };
+    if (!isAnimated(animated)) return undefined;
+    return (time: number): Look => {
+      if (selected && !playback.playing && start <= time && time < end) return WHOLE;
+      return overlayLook(animated, time) ?? WHOLE;
+    };
+  }, [animation_in, animation_out, animation_ms, start, end, selected, playback]);
   const range = useMemo(
     () => (image ? null : eventCopy({ start, end, offset, speed, pitch, reverse })),
     [image, start, end, offset, speed, pitch, reverse],
@@ -69,6 +84,7 @@ function OverlayView({
         playback={playback}
         hidden={!shown && !selected}
         faded={shown ? undefined : 0.25}
+        look={look}
         media={
           image ? (
             <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" />

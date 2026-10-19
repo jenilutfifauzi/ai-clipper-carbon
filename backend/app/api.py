@@ -1,15 +1,31 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
 import shutil
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
+from starlette.background import BackgroundTask
 
 from app import emoji, review
 from app.candidates import (
@@ -40,6 +56,7 @@ from app.events import candidate_events, job_events
 from app.export_files import SavedExport, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
+from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
@@ -61,6 +78,7 @@ from app.styles import (
     CaptionStyle,
     HookStyle,
     InvalidStyle,
+    JoinTransition,
     Name,
     PresetNotFound,
     PresetStore,
@@ -254,6 +272,23 @@ class CandidateUpdate(BaseModel):
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
     # is the Candidate's. Left out, the edit is saved over whatever is there.
     revision: Annotated[int, Field(ge=1)] | None = None
+    # The Music Clips (by id) sent without `duck`: a new song's then ducks by default (docs/adr/0016).
+    # Read from what was sent, so that an explicit null keeps it off.
+    _duck_unset: frozenset[str] = PrivateAttr(default=frozenset())
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _unset_ducks(cls, given: Any, handler: ModelWrapValidatorHandler["CandidateUpdate"]) -> "CandidateUpdate":
+        update = handler(given)
+        music = given.get("music") if isinstance(given, dict) else None
+        if isinstance(music, list):
+            update._duck_unset = frozenset(str(clip.get("id")) for clip in music if isinstance(clip, dict) and "duck" not in clip)
+        return update
+
+    @property
+    def change(self) -> CandidateChange:
+        """The edit, as `review.update` makes it."""
+        return CandidateChange(**{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset)
 
 
 class RestoreBody(BaseModel):
@@ -274,6 +309,8 @@ class PresetBody(BaseModel):
     caption: CaptionStyle = CaptionStyle()
     hook: HookStyle = HookStyle()
     watermark: WatermarkStyle = WatermarkStyle()
+    # What each new join of its Candidates gets; None for none.
+    join_transition: JoinTransition | None = None
 
 
 class TextPresetBody(BaseModel):
@@ -742,10 +779,10 @@ def update_candidate(
     if body.style_overrides is not None:
         _check_logo(logos, body.style_overrides.watermark.get("logo"))
     _check_media_of(library, body)
-    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields})
+    change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
-        candidates, candidate = review.update(candidates, candidate_id, change, episode)
+        candidates, candidate = review.update(candidates, candidate_id, change, episode, presets.join_transition)
         try:
             presets.styles(candidate.preset_id, candidate.style_overrides)
         except InvalidStyle as exc:
@@ -857,6 +894,60 @@ def _draft_plan(
 ) -> PreviewPlan:
     """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved, at `fps` (the
     Source's when None)."""
+    job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    try:
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, fps)
+    except InvalidEdit as exc:
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/sound/{kind}/{item_id}", response_class=FileResponse)
+def save_sound(
+    job_id: str,
+    candidate_id: str,
+    kind: SoundOf,
+    item_id: str,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    body: CandidateUpdate | None = None,
+) -> FileResponse:
+    """Save sound as WAV: the sound of the Candidate's Segment, Music Clip or Overlay `item_id`, or
+    of that item of `body` (a draft of edits, as the Preview Plan takes it), alone as it is heard in
+    the Clip, Muted or not (app/item_sound.py): `audio/wav`, 48 kHz stereo 16-bit PCM, to download
+    under a name made of the Candidate's and the item's. 404 for an item the draft hasn't; 422 for
+    a Freeze frame, an image or an item without sound, and for a draft that isn't a valid edit."""
+    job, _, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    folder = Path(tempfile.mkdtemp(prefix=".sound-", dir=store.job_dir(job_id)))
+    try:
+        name = save_item_sound(job, store.job_dir(job_id), candidate, kind, item_id, folder / "sound.wav", settings, presets, logos, library)
+    except NoItem as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(404, f"Candidate {candidate_id} has {exc}") from None
+    except NoSound as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return FileResponse(
+        folder / "sound.wav", media_type="audio/wav", filename=name, background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True),
+    )
+
+
+def _drafted(
+    job_id: str, candidate_id: str, body: CandidateUpdate | None, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore
+) -> tuple[Job, Transcript, Candidate]:
+    """The Job, its Transcript and the Candidate as `body`, a draft of its edits, would make it, applied
+    as an update would apply them but not saved. 404 for an unknown Job or Candidate; 409 for a Job
+    without Candidates; 422 for a draft that isn't a valid edit."""
     try:
         job = store.get(job_id)
     except JobNotFound:
@@ -869,17 +960,15 @@ def _draft_plan(
     if body is not None:
         _check_media_of(library, body)
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
-    change = CandidateChange(**{name: getattr(body, name) for name in CandidateUpdate.model_fields}) if body else CandidateChange()
+    change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
-        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, fps)
+        _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode, presets.join_transition)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
-    except InvalidStyle as exc:
-        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    return job, transcript, candidate
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/audio")
@@ -910,7 +999,7 @@ def save_candidate_audio(
         raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
     export = _export_preset(export_presets, body.export_preset_id).settings
     job_dir = store.job_dir(job_id)
-    path = save_audio(job, job_dir, candidate, body.format, export, settings, presets, library)
+    path = save_audio(job, job_dir, store.load_transcript(job_id), candidate, body.format, export, settings, presets, library)
     return saved_export(job_id, job_dir, path)
 
 
@@ -1226,7 +1315,7 @@ def list_presets(presets: Presets) -> list[StylePreset]:
 def create_preset(body: PresetBody, presets: Presets, logos: Logos) -> StylePreset:
     """Save a new Preset. 422 for a Watermark whose Logo isn't one of the Logos."""
     _check_logo(logos, body.watermark.logo)
-    return presets.create(body.name, body.caption, body.hook, body.watermark)
+    return presets.create(body.name, body.caption, body.hook, body.watermark, body.join_transition)
 
 
 @router.put("/presets/{preset_id}")
@@ -1235,7 +1324,7 @@ def update_preset(preset_id: str, body: PresetBody, presets: Presets, logos: Log
     built-in Preset; 422 for a Watermark whose Logo isn't one of the Logos."""
     _check_logo(logos, body.watermark.logo)
     try:
-        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark)
+        return presets.update(preset_id, body.name, body.caption, body.hook, body.watermark, body.join_transition)
     except PresetNotFound:
         raise HTTPException(404, f"No Preset {preset_id}") from None
     except BuiltinPreset:
@@ -1375,26 +1464,27 @@ def media_peaks(media_id: str, start: int, library: Media) -> FileResponse:
 
 @router.post("/media/{media_id}/retimed")
 def media_retimed(media_id: str, body: RetimedRequest, library: Media, settings: AppSettings, worker: JobWorker) -> RetimedCopy:
-    """The preview-size Retimed copy of a video's range from `start` to `end` seconds, as the editor
-    asks for it while it previews a reversed item, or one at a Speed a browser won't play, then polls
-    (app/retimed.py): any copy that serves it, or the one being made, or one queued now and made
-    outside the Worker, on every core unless the Worker is running a Job. 404 for an item that isn't
-    a video; 422 for a range outside it, or one played forwards at 1×."""
+    """The preview-size Retimed copy of a video's or a song's range from `start` to `end` seconds, as
+    the editor asks for it while it previews a reversed item, or one at a Speed a browser won't play,
+    then polls (app/retimed.py): any copy that serves it, or the one being made, or one queued now and
+    made outside the Worker, on every core unless the Worker is running a Job. 404 for an image; 422
+    for a range outside it, or one played forwards at 1×."""
     try:
         item = library.get(media_id)
         copies = library.retimed(media_id)
     except MediaNotFound:
-        raise HTTPException(404, f"No video {media_id}") from None
-    return _ask_retimed(copies, item.duration or 0.0, "the video", body, f"/api/media/{media_id}/retimed", settings, worker)
+        raise HTTPException(404, f"No video or song {media_id}") from None
+    what = "the song" if item.kind is MediaKind.AUDIO else "the video"
+    return _ask_retimed(copies, item.duration or 0.0, what, body, f"/api/media/{media_id}/retimed", settings, worker)
 
 
 @router.get("/media/{media_id}/retimed/{name}")
 def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse:
-    """A video's Retimed copy, by the name its `url` gives."""
+    """A video's or a song's Retimed copy, by the name its `url` gives."""
     try:
         copies = library.retimed(media_id)
     except MediaNotFound:
-        raise HTTPException(404, f"No video {media_id}") from None
+        raise HTTPException(404, f"No video or song {media_id}") from None
     file = copies.folder / name
     if Retime.named(name) is None or not file.is_file():
         raise HTTPException(404, f"No copy {name} of {media_id}")
@@ -1431,17 +1521,17 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
 
 
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
-    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos no other
-    Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
+    """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos and songs no
+    other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
     History plays from; and the Job's picture layers' pictures (app/layer_pictures.py) none of them
     shows, and the folder they were kept in before (OLD_PICTURES_DIR), whole."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
-    videos = {item.id: item.duration or 0.0 for item in library.all() if item.kind is MediaKind.VIDEO}
-    used = copies_used(states, videos)
+    timed = {item.id: item.duration or 0.0 for item in library.all() if item.kind is not MediaKind.IMAGE}
+    used = copies_used(states, timed)
     sweep(store.job_dir(job_id) / RETIMED_DIR, used.get(None, []))
-    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & videos.keys()):
+    for media_id in sorted(set().union(*(state.media_ids() for state in states)) & timed.keys()):
         if all(use.job_id == job_id for use in media_uses(store, media_id)):
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
     sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
@@ -1460,12 +1550,19 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
 
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
-    be a song or a video with sound, a Segment a video, within its length, and an Overlay within its
-    video's at its Speed, an image's having no Speed nor Reverse."""
+    be a song or a video with sound, within its length at its Speed, a Segment a video, within its
+    length, and an Overlay within its video's at its Speed, an image's having no Speed nor Reverse.
+    (Music of the Source is kept within it by `review.update`.)"""
     for clip in body.music or []:
+        if clip.media is None:
+            continue
         item = library.find(clip.media)
         if item is None or not item.has_audio:
             raise HTTPException(422, f"Music Clip {clip.id}: no song or video with sound {clip.media} in the Media Library")
+        if item.duration is not None and overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse).end > item.duration + 0.05:
+            at_speed = f" at {clip.speed:g}x" if clip.speed != 1 else ""
+            song = "song" if item.kind is MediaKind.AUDIO else "video"
+            raise HTTPException(422, f"Music Clip {clip.id} runs past the end of its {song} ({item.duration:g} s){at_speed}")
     for segment in body.segments or []:
         if segment.media is None:
             continue
