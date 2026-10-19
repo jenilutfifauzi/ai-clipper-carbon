@@ -537,6 +537,9 @@ class MusicClip:
     keys: Keys = field(default_factory=dict)
     # Switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
     muted: bool = False
+    # The Segment whose sound was Detached onto it (docs/adr/0016), which Reattach finds it by: it
+    # names one of the Candidate's when it is added or changed (app/review.py).
+    detached_from: ItemId | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.start, str):

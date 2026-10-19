@@ -240,6 +240,13 @@ Edits:
 - `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
   the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
   Muted ones (`segments`, `sounds`).
+- Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
+  J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
+  Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
+  reverse, volume, fades and volume keys (the same `at`), start and secs where it plays in the Clip
+  (the dry run's `segments`, a Transition's overlap included), and set the Segment's `muted`.
+  Reattach: remove every Music Clip Detached from it, then clear its `muted`. A `detached_from` added
+  or changed must name one of the Candidate's Segments; a saved one stays after its Segment is removed.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene

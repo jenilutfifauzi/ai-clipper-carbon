@@ -7,7 +7,7 @@ import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setFade, setVolume, type Detacher, type ItemActions, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -46,6 +46,7 @@ export function Inspector({
   copyOf,
   onHold,
   cropMode,
+  detaching,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -75,6 +76,8 @@ export function Inspector({
   onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
   cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
+  // Detach and Reattach of a Segment's sound (GLOSSARY.md).
+  detaching?: Detacher;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -90,6 +93,12 @@ export function Inspector({
     const outcome = keyed ? writeItemKey({ edits, pick, track }, item, "volume", volume, keyTime) : setVolume({ edits, pick }, item, volume);
     if (outcome?.notice) keying?.onNotice?.(outcome.notice);
     else if (outcome) onEdits(outcome.edits, keyedGroup(group, keyed, keyTime));
+  };
+
+  // A Detached sound's Segment, while it is there to Reattach it to.
+  const detachedOf = ({ detached_from }: MusicClip) => {
+    const index = edits.segments.findIndex((segment) => segment.id === detached_from);
+    return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
 
   const items = itemsOf(pick);
@@ -154,6 +163,8 @@ export function Inspector({
         onHold={(hold) => onHold(segment.id, hold)}
         onSourceVolume={(source_volume) => onEdits({ ...edits, source_volume }, "source-volume")}
         onCropMode={cropMode?.("segment", segment.id)}
+        onDetach={detaching?.canDetach(segment.id) ? () => detaching.detach(segment.id) : undefined}
+        onReattach={detaching?.canReattach(segment.id) ? () => detaching.reattach(segment.id) : undefined}
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         scene={
@@ -210,6 +221,7 @@ export function Inspector({
         }}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
+        detached={detachedOf(clip)}
       />
     );
   }

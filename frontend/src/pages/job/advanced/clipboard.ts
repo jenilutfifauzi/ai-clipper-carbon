@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, MusicClip, Transition, WordEdit } from "../../../api";
 import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
-import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
+import { idOf, pickedItems, remove, stillDetached, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
@@ -76,7 +76,8 @@ const wordAt = (words: { start: number; end: number }[], at: number) => words.fi
  * Into another Candidate of the Job, Segments of the Source bring the Word Edits and Layout Overrides
  * of their ranges, but where it has its own: a Word Edit of the same Word (by the Source's `words`)
  * or a Layout Override in that range. Into another Job, they are left out, with their Transitions,
- * and so are Music Clips of the Source's sound.
+ * and so are Music Clips of the Source's sound. Into another Candidate, a Music Clip is no longer
+ * Detached from a Segment (GLOSSARY.md, Detach).
  */
 export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: Place, words: { start: number; end: number }[] = []): Outcome {
   const { edits, played } = scene;
@@ -157,8 +158,12 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     if (start > from || end < from + item.secs - 1e-6) trimmed += 1;
     // A song or video goes on from where it is at its new start (an Overlay in Reverse, at its new end).
     const offset = "offset" in item ? { offset: keptOffset(item, start - from, end - from) } : {};
-    // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed).
-    const copy = rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from);
+    // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed). A Detached
+    // sound stays Detached from its Segment only in its own Candidate, while the Segment is there.
+    const copy = stillDetached(
+      rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from),
+      sameJob && to.candidate === clipboard.from.candidate ? next.segments : [],
+    );
     Object.assign(next, { [LISTS[kind]]: [...(next[LISTS[kind]] as Timed[]), copy] });
     pasted.push({ kind, id: copy.id });
   }

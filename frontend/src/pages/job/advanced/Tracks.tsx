@@ -26,6 +26,7 @@ import type { PlayedSegment, Playback } from "../editor/playback";
 import { offsetAt, overlayTime, rangeOf } from "../editor/segmentTime";
 import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
+import type { MenuEntry } from "./ItemMenu";
 import { DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
@@ -71,6 +72,8 @@ export interface TrackHandlers {
   onDropShape: (kind: ShapeKind, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
+  // What an item's context menu offers (Detach and Reattach audio, say).
+  menu?: (item: ItemRef) => MenuEntry[];
 }
 
 // A Waveform's colour on a Music Clip (its lane's), and on a media or Source Segment, where it takes
@@ -351,6 +354,7 @@ export function Tracks({
                 handlers.onSegment(segment.id, moved, group);
               }}
               onDelete={selected ? onDelete : undefined}
+              menu={handlers.menu?.({ kind: "segment", id: segment.id })}
             >
               {segment.media ? (
                 <MediaFilmstrip
@@ -551,6 +555,7 @@ export function Tracks({
                   )
                 }
                 onDelete={selected ? onDelete : undefined}
+                menu={handlers.menu?.({ kind: "music", id: clip.id })}
               >
                 {episode ? (
                   // The Source's Peaks, at the Clip's own sound too, as its Segments' are.

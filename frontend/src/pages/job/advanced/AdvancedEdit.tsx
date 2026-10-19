@@ -46,6 +46,7 @@ import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   changeMusic,
+  detacher,
   dragSegment,
   freezer,
   gestureSpeed,
@@ -124,9 +125,11 @@ import {
   stageIdsOf,
   stageItem,
   unlockedPick,
+  type ItemRef,
   type Pick,
   type PlacedKind,
 } from "./pick";
+import type { MenuEntry } from "./ItemMenu";
 import { addShape, resizeShape } from "./shapeStyle";
 import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
@@ -606,6 +609,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const actions = itemActions(scene, () => playback.time, apply, clip);
   const splits = splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
+  // Detach and Reattach (GLOSSARY.md), from a Segment's or a Music Clip's context menu and the inspector.
+  const detaching = detacher(scene, track, (media) => mediaById.get(media)?.has_audio === true, apply);
+  function itemMenu(item: ItemRef): MenuEntry[] {
+    const segment = item.kind === "segment" ? item.id : item.kind === "music" ? edits.music.find((clip) => clip.id === item.id)?.detached_from : null;
+    if (!segment) return [];
+    return [
+      ...(item.kind === "segment" && detaching.canDetach(segment) ? [{ label: "Detach audio", onSelect: () => detaching.detach(segment) }] : []),
+      ...(detaching.canReattach(segment) ? [{ label: "Reattach audio", onSelect: () => detaching.reattach(segment) }] : []),
+    ];
+  }
   // A Segment's, video Overlay's or Music Clip's Reverse turned on or off (the inspector's switch, R): one change.
   function setItemReverse(item: SpeedRef, reverse: boolean) {
     const outcome = setReverse(scene, item, reverse);
@@ -1027,6 +1040,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
+            menu: itemMenu,
           }}
         />
       )}
@@ -1059,6 +1073,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
+        detaching={detaching}
       />
     </KeyingContext.Provider>
   );
