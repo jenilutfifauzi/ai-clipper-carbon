@@ -9,6 +9,8 @@ gain that takes it to the settings' loudness target, −14 LUFS by default (loud
 mode). One pass would have to adjust the gain as it goes (loudnorm's dynamic mode), which can pump
 and lands less exactly on the target; the measurement only decodes the range's audio, which takes
 about a second for a 90 s Clip. Without a target, nothing is measured and the mix is left as it is.
+The same mix, measured and normalized the same way, is what "Save audio" writes alone
+(`Renderer.render_audio`).
 
 The Render Plan is in 1080×1920 output pixels; the Clip is the Export Settings' size, and the plan
 is drawn at it (app/scaled_plan.py, docs/adr/0021): every coordinate and size the filter graph is
@@ -113,7 +115,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import numpy as np
 
@@ -153,6 +155,10 @@ logger = logging.getLogger(__name__)
 HIGHLIGHT_PAD_X = 0.12
 HIGHLIGHT_PAD_Y = 0.08
 HIGHLIGHT_RADIUS = 0.12
+
+
+# The formats a Clip's sound is saved alone in (`Renderer.render_audio`).
+AudioFormat = Literal["wav", "m4a"]
 
 
 class RenderStopped(RuntimeError):
@@ -246,6 +252,32 @@ class Renderer:
             shutil.rmtree(fonts, ignore_errors=True)
         raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
+    def render_audio(
+        self, source: Path, plan: RenderPlan, audio: Path, kind: AudioFormat, lufs: float | None, files: dict[str, Path] | None = None
+    ) -> None:
+        """Write the Clip's sound alone to `audio`, mixed as the Clip's own is (the Clip's sound or
+        its Segments', its Music Clips and its Overlays' sound) and normalized to `lufs` (left as it is
+        without one): a 48 kHz 16-bit WAV, or AAC in an M4A. Nothing of the picture is decoded.
+        Written under a temporary name and then renamed, as a Clip's files are."""
+        tuning = self.tuning
+        files = files or {}
+        loudness = None if lufs is None else self._measure(source, plan, lufs, files)
+        sources, inputs, _, heard = _sound(plan, source, files, tuning.audio_rate)
+        part = audio.with_name(f".{audio.stem}.part{audio.suffix}")
+        encode = ["-c:a", "pcm_s16le", "-f", "wav"] if kind == "wav" else ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-f", "mp4"]
+        command = [
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", *sources, *inputs,
+            "-filter_complex", f"{heard}{_normalized(tuning, lufs, loudness)}[a]",
+            "-map", "[a]", "-map_metadata", "-1", *encode, str(part),
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, errors="replace")
+            if result.returncode:
+                raise RuntimeError(f"ffmpeg couldn't render the sound: {last_lines(result.stderr)}")
+            os.replace(part, audio)
+        finally:
+            part.unlink(missing_ok=True)
+
     def stop(self) -> None:
         """Kill the running encode, if any; renders from now on raise RenderStopped."""
         self._stopping.set()
@@ -258,17 +290,10 @@ class Renderer:
         `lufs`; None when it is silent, with nothing to normalize."""
         tuning = self.tuning
         measure = f"loudnorm=I={lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}:print_format=json"
-        sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
-        inputs, index = _music_inputs(plan, files or {}, first=len(sources) // _INPUT_ARGS)
-        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
-        if mix is None and not sounds:
-            audio = ["-map", "0:a:0", "-af", measure]
-        else:
-            heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
-            audio = ["-filter_complex", f"{heard}aresample={tuning.audio_rate},{measure}[measured]", "-map", "[measured]"]
+        sources, inputs, _, heard = _sound(plan, source, files or {}, tuning.audio_rate)
         command = [
-            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
-            *sources, *inputs, *audio, "-f", "null", "-",
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info", *sources, *inputs,
+            "-filter_complex", f"{heard}aresample={tuning.audio_rate},{measure}[measured]", "-map", "[measured]", "-f", "null", "-",
         ]
         result = subprocess.run(command, capture_output=True, text=True, errors="replace")
         output = result.stderr
@@ -303,14 +328,13 @@ class Renderer:
         their names), and `above` over them."""
         tuning = self.tuning
         feeds = feeds or {}
-        sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
+        # The music's inputs come after the Source's and its videos', and the logo's.
+        sources, inputs, songs, heard = _sound(plan, source, files or {}, tuning.audio_rate, between=0 if logo is None else 1)
         count = len(sources) // _INPUT_ARGS
-        # The music's first input: after the Source's and its videos', and the logo's.
         before_music = count + (1 if logo is not None else 0)
-        inputs, index = _music_inputs(plan, files or {}, first=before_music)
-        layers, layered = _overlay_inputs(plan, files or {}, before_music + len(index), feeds)
-        scene_inputs, drawn = _scene_inputs(plan, before_music + len(index) + len(layered), feeds)
-        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + len(index) + len(layered) + len(drawn), feeds)
+        layers, layered = _overlay_inputs(plan, files or {}, before_music + songs, feeds)
+        scene_inputs, drawn = _scene_inputs(plan, before_music + songs + len(layered), feeds)
+        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + len(layered) + len(drawn), feeds)
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
@@ -337,16 +361,7 @@ class Renderer:
             subtitles = above
         burned = "" if subtitles is None else f"{ass_filter(subtitles, fonts)},"
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
-        mix = _audio_mix(plan, index, tuning.audio_rate, sound)
-        heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
-        audio = f"{heard}aresample={tuning.audio_rate}[a]"
-        if loudness is not None:
-            audio = (
-                f"{heard}aresample={tuning.audio_rate},loudnorm=I={export.loudness}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
-                f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
-                f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
-                f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}[a]"
-            )
+        audio = f"{heard}{_normalized(tuning, export.loudness, loudness)}[a]"
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
             *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
@@ -473,6 +488,30 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     else:
         chains.append("".join(f"[a{i}]" for i in range(count)) + f"concat=n={count}:v=0:a=1[srcv]")
     return inputs, ";".join(chains) + ";", "[srcv]"
+
+
+def _sound(plan: RenderPlan, source: Path, files: dict[str, Path], rate: int, between: int = 0) -> tuple[list[str], list[str], int, str]:
+    """The Clip's sound as the encode and the measurement hear it: the input options of the Source
+    (`_source_inputs`), those of its songs (`_music_inputs`, after `between` other inputs), how many
+    songs, and the filters that mix them (`_audio_mix`), ending with the link the mix is heard from,
+    for the filters that follow."""
+    sources, sounds, sound = _source_inputs(plan, source, files, rate)
+    inputs, index = _music_inputs(plan, files, first=len(sources) // _INPUT_ARGS + between)
+    mix = _audio_mix(plan, index, rate, sound)
+    return sources, inputs, len(index), f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+
+
+def _normalized(tuning: RenderTuning, lufs: float | None, loudness: dict[str, str] | None) -> str:
+    """Filters that take the mix to `lufs` with the `loudness` measured of it (loudnorm's linear
+    second pass), at the audio rate; only resampled without either."""
+    if lufs is None or loudness is None:
+        return f"aresample={tuning.audio_rate}"
+    return (
+        f"aresample={tuning.audio_rate},loudnorm=I={lufs}:TP={tuning.true_peak_db}:LRA={tuning.loudness_range}"
+        f":measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
+        f":measured_LRA={loudness['input_lra']}:measured_thresh={loudness['input_thresh']}"
+        f":offset={loudness['target_offset']}:linear=true,aresample={tuning.audio_rate}"
+    )
 
 
 def speed_filters(speed: float, pitch: bool, rate: int) -> list[str]:

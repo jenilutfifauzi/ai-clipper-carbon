@@ -577,6 +577,16 @@ def build_mcp(app: FastAPI) -> MCPServer:
         poster on this Mac, and its Export Settings (these never make a Clip stale)."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
 
+    @tool()
+    async def export_audio(
+        job_id: str, candidate_id: str, format: Literal["wav", "m4a"] = "wav", export_preset_id: str | None = None
+    ) -> dict:
+        """Save a Candidate's sound alone (its saved Revision's mix) at an Export Preset's loudness
+        (else the default's). Not a Clip; not queued."""
+        body = {"format": format, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/audio", json=body)
+        return {"path": saved["path"]}
+
     # Styles, assets and the Channel Profile
 
     @tool(read_only=True)

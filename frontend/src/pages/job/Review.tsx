@@ -368,6 +368,7 @@ export function Review({
               onSave={(change) => save(active.id, change)}
               onAdd={add}
               onPrepare={onPrepare}
+              exportPresetId={exportPresets && pickedPreset(exportPresets, pickedExport)}
             />
           ) : (
             <p className="text-muted">Nothing to review yet.</p>

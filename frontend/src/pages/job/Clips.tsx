@@ -6,12 +6,13 @@ import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
 import { ScoreRing } from "../../components/ScoreRing";
 import { Skeleton } from "../../components/Skeleton";
-import { formatBytes, timeLeft } from "../../format";
+import { downloadName, formatBytes, timeLeft } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
 import { againPreset, settingsLine } from "./exportPresets";
 import { RenderButton } from "./RenderButton";
+import { SaveAudioButton } from "./SaveAudio";
 import { same } from "./editor/merge";
 import { overridden } from "./editor/useStyleDraft";
 
@@ -197,7 +198,7 @@ function ClipCard({
         {output && (
           <a
             href={mediaUrl(jobId, output.video, output.at)}
-            download={`${fileName(candidate?.title) || `clip-${clip.candidate_id}`}.mp4`}
+            download={downloadName(candidate?.title, clip.candidate_id, "mp4")}
             className={buttonClass("primary", "sm")}
           >
             <Download aria-hidden size={16} />
@@ -212,6 +213,10 @@ function ClipCard({
             picked={exportPresets && againPreset(exportPresets, clip)}
             onRender={onRender}
           />
+        )}
+        {/* The saved edit's sound alone, at its Clip's Preset's loudness. */}
+        {candidate && (
+          <SaveAudioButton jobId={jobId} candidate={candidate} exportPresetId={exportPresets && againPreset(exportPresets, clip)} />
         )}
       </div>
 
@@ -261,9 +266,4 @@ function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) 
     );
   }
   return null;
-}
-
-// A title as a file name: without the characters file systems refuse.
-function fileName(title: string | undefined): string {
-  return (title ?? "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
 }

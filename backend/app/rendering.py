@@ -270,6 +270,31 @@ def candidate_plan(
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
 
 
+def played_files(
+    plan: RenderPlan,
+    job_dir: Path,
+    source: Source,
+    media: MediaStore,
+    ffmpeg: Path,
+    progress: Callable[[int], Callable[[float], None]] = lambda count: lambda done: None,
+) -> tuple[RenderPlan, dict[str, Path]]:
+    """The plan as the renderer reads it and the files of the Media Library items it plays, by id: a
+    reversed Segment or Overlay reads its full-size Retimed copy (`read_from_copies`), made now if it
+    isn't there, with the progress `progress` gives for one of the plan's `count` copies."""
+    used = (
+        {event.media for event in plan.audio}
+        | {segment.media for segment in plan.segments if segment.media}
+        | {overlay.media for overlay in plan.overlays}
+    )
+    files = {media_id: media.file(media_id) for media_id in used}
+    count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
+        1 for event in plan.overlays + plan.audio if event.reverse
+    )
+    return read_from_copies(plan, files, lambda media_id, played: (
+        media.retimed(media_id) if media_id is not None else source_copies(job_dir, source)
+    ).make(ffmpeg, CopySize.FULL, Retime(played.start, played.end), progress(count)))
+
+
 class MediaFinder(Protocol):
     """Where the Media Library's items are looked up: the MediaStore."""
 
@@ -512,21 +537,9 @@ class Renders:
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
-            used = (
-                {event.media for event in plan.audio}
-                | {segment.media for segment in plan.segments if segment.media}
-                | {overlay.media for overlay in plan.overlays}
+            plan, files = played_files(
+                plan, job_dir, job.source, self.media, self.settings.ffmpeg_bin, lambda count: step((1 - shown / 100) / 2 / count)
             )
-            files = {media_id: self.media.file(media_id) for media_id in used}
-            # A reversed Segment or Overlay reads its full-size Retimed copy, made now if it isn't there.
-            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
-                1 for event in plan.overlays + plan.audio if event.reverse
-            )
-            plan, files = read_from_copies(plan, files, lambda media_id, played: (
-                self.media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
-            ).make(
-                self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
-            ))
             # Its picture layers' pictures at the export's size, made now if they aren't there (docs/adr/0010).
             pictures = make_pictures(self.settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)
             encoder, bitrate_fallback = self.renderer.render(
