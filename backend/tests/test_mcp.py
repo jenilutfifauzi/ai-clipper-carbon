@@ -34,7 +34,10 @@ KITA_SOAL = (1.6, 2.6)
 # And for a Transition's knobs (transitions-expanded/04): its strength and colour, and the four kinds
 # that read them, wherever a Transition is given (71_798). And for a Style Preset's Join Transition
 # (transitions-expanded/09): save_preset's join_transition, a Transition's kinds and knobs again (73_832).
-TOOLS_BUDGET_BYTES = 74_500
+# Merged with audio-mixing, which adds a Segment's fades and `muted`, a Music Clip's speed, pitch,
+# reverse, `duck` and `detached_from`, and an Overlay's `muted`, but drops pydantic's titles from every
+# schema (`_untitled`): 66_741 with both features.
+TOOLS_BUDGET_BYTES = 67_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

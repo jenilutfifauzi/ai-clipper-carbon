@@ -3,7 +3,7 @@ import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { TRANSITION_KINDS } from "../editor/transitions";
-import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
+import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, isPlaced, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
@@ -73,11 +73,13 @@ const KINDS: {
   music: {
     list: "music",
     aside: () => ({}),
+    // Each part plays its stretch of the song (keptOffset), at its Speed: in Reverse, the first the later part.
     cut: (item, at) => {
       const clip = item as MusicClip;
+      const into = at - clip.start;
       return {
-        first: { fade_in: Math.min(clip.fade_in, round(at - clip.start)), fade_out: 0 },
-        second: { offset: round(clip.offset + at - clip.start), fade_in: 0, fade_out: Math.min(clip.fade_out, round(clip.start + clip.secs - at)) },
+        first: { offset: keptOffset(clip, 0, into), fade_in: Math.min(clip.fade_in, round(into)), fade_out: 0 },
+        second: { offset: keptOffset(clip, into, clip.secs), fade_in: 0, fade_out: Math.min(clip.fade_out, round(clip.start + clip.secs - at)) },
       };
     },
   },
@@ -314,9 +316,10 @@ export function dragSegment(
   longest?: number,
 ): Outcome {
   const before = origin.edits.segments.find((segment) => segment.id === id);
-  // A video's Keyframes re-anchored to what its trim keeps (retimed), from the Segment as the drag began.
+  // A video's Keyframes re-anchored to what its trim keeps (retimed), and its fades fitted to it, from
+  // the Segment as the drag began.
   const segments = draggedSegments(origin.edits.segments, id, change, lengthOf, origin.shown, origin.planned, longest).map((segment) =>
-    segment.id === id && before ? retimed(before, segment, change.edge) : segment,
+    segment.id === id && before ? fadesFitted(retimed(before, segment, change.edge)) : segment,
   );
   const index = segments.findIndex((segment) => segment.id === id);
   const whole = origin.planned[index];
@@ -382,7 +385,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     const end = Math.max(...moved.map(({ item }) => item.start + item.secs));
     const room = end + (end - first) <= length + 1e-6;
     for (const { kind, item } of moved) {
-      const copy = { ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed;
+      const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed, next.segments);
       const list = KINDS[kind].list;
       Object.assign(next, { [list]: [...(next[list] as Timed[]), copy] });
       copies.push({ kind, id: copy.id });
@@ -431,12 +434,12 @@ export function split(scene: PickContext, at: number): Outcome | null {
     const [firstRange, secondRange] = segment.reverse
       ? [{ start: cut, end: rangeOf(shown).end }, { start: segment.start, end: cut }]
       : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
-    // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start.
-    const second = rekeyed<ClipSegment>({ ...segment, ...secondRange, id: idOf(scene) }, offsetAt(segment, cut), segmentLength(segment));
-    const first = rekeyed<ClipSegment>(
-      { ...segment, ...firstRange },
-      offsetAt(segment, segment.reverse ? firstRange.end : firstRange.start),
-      offsetAt(segment, cut),
+    // Keyframes, where a Segment has them, are re-anchored to each part, in seconds from its start;
+    // its fades are cut with it (cutFades).
+    const [first, second] = cutFades(
+      segment,
+      rekeyed<ClipSegment>({ ...segment, ...firstRange }, offsetAt(segment, segment.reverse ? firstRange.end : firstRange.start), offsetAt(segment, cut)),
+      rekeyed<ClipSegment>({ ...segment, ...secondRange, id: idOf(scene) }, offsetAt(segment, cut), segmentLength(segment)),
     );
     next.segments = next.segments.flatMap((other) => (other.id === segment.id ? [first, second] : [other]));
     tails.push({ kind: "segment", id: second.id });
@@ -447,7 +450,10 @@ export function split(scene: PickContext, at: number): Outcome | null {
     const { first, second } = KINDS[kind].cut(item, time);
     // Each part has the Keyframes of its own stretch (keyActions.ts' rekeyed).
     const head = rekeyed({ ...item, secs: round(time - item.start), ...first } as Timed, 0, time - item.start);
-    const tail = rekeyed({ ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed, time - item.start, item.secs);
+    const tail = stillDetached(
+      rekeyed({ ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed, time - item.start, item.secs),
+      next.segments,
+    );
     const list = KINDS[kind].list;
     Object.assign(next, { [list]: (next[list] as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
     tails.push({ kind, id: tail.id });
@@ -519,8 +525,11 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   const [headRange, tailRange] = segment.reverse
     ? [{ start: cut, end: segment.end }, { start: segment.start, end: cut }]
     : [{ start: shown.source_start, end: cut }, { start: cut, end: segment.end }];
-  const head = rekeyed<ClipSegment>({ ...segment, ...headRange }, into - (cutAt - shown.start), into);
-  const tail = rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length);
+  const [head, tail] = cutFades(
+    segment,
+    rekeyed<ClipSegment>({ ...segment, ...headRange }, into - (cutAt - shown.start), into),
+    rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length),
+  );
   const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
   if (segment.media) {
     held.media = segment.media;
@@ -670,47 +679,231 @@ export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (sh
 export const applyTextStyle = (scene: { edits: AdvancedEdits; pick: Pick }, style: TextStyle): Outcome => restyle(scene, (layer) => ({ ...layer, style }));
 
 /**
- * Music Clip or media Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2
- * (by its Volume Line or the inspector). A Source Segment has none to set here: the Clip's own sound
- * has one volume. Null for one, or for an item that isn't there.
+ * Music Clip or Segment `item`'s volume set to `volume`, rounded to 0.01 and kept within 0–2 (by its
+ * Volume Line or the inspector); a Source Segment's under the Clip's own sound. Null for a Freeze
+ * frame of the Source, which is silent, or for an item that isn't there.
  */
 export function setVolume(scene: { edits: AdvancedEdits; pick: Pick }, item: { kind: "music" | "segment"; id: string }, volume: number): Outcome | null {
   const { edits, pick } = scene;
   const level = Math.round(Math.min(Math.max(volume, 0), 2) * 100) / 100;
   const set = <T extends { id: string }>(items: T[]) => items.map((other) => (other.id === item.id ? { ...other, volume: level } : other));
   if (item.kind === "music") return edits.music.some((clip) => clip.id === item.id) ? { edits: { ...edits, music: set(edits.music) }, pick } : null;
-  return edits.segments.some((segment) => segment.id === item.id && segment.media) ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
+  const heard = edits.segments.some((segment) => segment.id === item.id && (segment.media || segment.hold == null));
+  return heard ? { edits: { ...edits, segments: set(edits.segments) }, pick } : null;
 }
 
-/** A Segment or a video Overlay, which has a Speed. */
-export type SpeedRef = { kind: "segment" | "overlay"; id: string };
+/**
+ * M on the Pick (GLOSSARY.md, Muted): its items with sound all Muted when any of them is heard, else
+ * all unmuted, keeping their volume, Keyframes and fades. Text Layers, Shapes, Freeze frames, images
+ * and videos without sound (`sounded` says whether a Media Library item has sound) are left alone, as
+ * are the hook, the captions and a join. Null when none with sound is picked.
+ */
+export function toggleMute(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Outcome | null {
+  const { edits, pick } = scene;
+  const chosen = new Set(pickedSounds(scene, sounded));
+  if (!chosen.size) return null;
+  const muted = [...chosen].some((item) => !item.muted);
+  const set = <T extends { muted?: boolean }>(items: T[]) => items.map((item) => (chosen.has(item) ? { ...item, muted } : item));
+  return { edits: { ...edits, segments: set(edits.segments), music: set(edits.music), overlays: set(edits.overlays) }, pick };
+}
+
+// The picked items with sound, which M Mutes or unmutes (toggleMute).
+function pickedSounds({ edits, pick }: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): { muted?: boolean }[] {
+  return [
+    ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id) && segment.hold == null && (!segment.media || sounded(segment.media))),
+    ...edits.music.filter((clip) => isPicked(pick, "music", clip.id)),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id) && sounded(overlay.media)),
+  ];
+}
+
+// The phone's toolbar Mute: `muted` once every picked item with sound is Muted, when it reads Unmute.
+export interface Muter {
+  muted: boolean;
+  toggle: () => void;
+}
 
 /**
- * Segment or video Overlay `item`'s Speed set to `speed` (speedOf), a trim at its end (ADR 0009): its
- * Keyframes scaled by the old Speed ÷ the new, so that they stay on the same frames. A Segment keeps
- * its range and plays it in its new Timeline length; the Main Track closes up or opens out after it,
- * and on the Magnetic timeline the layers follow as they follow a trim of its end. Refused, with a
- * notice, when a video's Segment would play under MEDIA_MIN_SECS or the Clip would last longer than
- * the `longest` clip. An Overlay keeps its start and shows as much of its video, its end kept within
- * the video (`video` seconds long). Null for a Freeze frame, or an item that isn't there.
+ * The phone's toolbar Mute of the Pick, by M's rule (toggleMute), its outcome applied (`apply`) as one
+ * change. Null when nothing with sound is picked: the button is then off.
+ */
+export function muter(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, apply: (outcome: Outcome) => void): Muter | null {
+  const sounds = pickedSounds(scene, sounded);
+  if (!sounds.length) return null;
+  return {
+    muted: sounds.every((item) => item.muted),
+    toggle: () => {
+      const outcome = toggleMute(scene, sounded);
+      if (outcome) apply(outcome);
+    },
+  };
+}
+
+/**
+ * Music Clip `id`'s Duck under speech (GLOSSARY.md, Ducking): off with null, else on at `duck` dB, a
+ * whole number from DUCK_MIN to DUCK_MAX. Null for a Music Clip of the Source, which is never Ducked,
+ * or one that isn't there.
+ */
+export function setDuck(scene: { edits: AdvancedEdits; pick: Pick }, id: string, duck: number | null): Outcome | null {
+  const { edits, pick } = scene;
+  if (!edits.music.some((clip) => clip.id === id && clip.media !== null)) return null;
+  const depth = duck === null ? null : Math.min(Math.max(Math.round(duck), DUCK_MIN), DUCK_MAX);
+  return { edits: { ...edits, music: edits.music.map((clip) => (clip.id === id ? { ...clip, duck: depth } : clip)) }, pick };
+}
+
+/**
+ * Whether Segment `id` can be Detached (GLOSSARY.md, Detach): it has a sound of its own to move off,
+ * which a Freeze frame, a Muted Segment and a video without sound (`sounded` says whether a Media
+ * Library item has sound) don't, and no Music Clip is Detached from it already.
+ */
+export function canDetach(edits: AdvancedEdits, id: string, sounded: (media: string) => boolean): boolean {
+  const segment = edits.segments.find((other) => other.id === id);
+  if (!segment || segment.hold != null || segment.muted || (segment.media && !sounded(segment.media))) return false;
+  return !edits.music.some((clip) => clip.detached_from === id);
+}
+
+/** Whether Reattach is offered for Segment `id`: while it is there and some Music Clip is Detached from it. */
+export const canReattach = (edits: AdvancedEdits, id: string) =>
+  edits.segments.some((segment) => segment.id === id) && edits.music.some((clip) => clip.detached_from === id);
+
+// Seconds to the thousandth, as a Segment's cut is: what Detach places a Music Clip by, so that it is
+// heard where its Segment was.
+const toThousandth = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+/**
+ * Detach (GLOSSARY.md, ADR 0016) on Segments `ids` that allow it (canDetach), as one change: each one's
+ * sound onto a new Music Clip of it (the Source's for a Segment of the episode, the video's for a
+ * video's), and the Segment Muted. The Music Clip is heard as the Segment was, as planned (`track`:
+ * snapped to Words, a Transition's overlap included): from where its sound starts on the Timeline, as
+ * long, its range, Speed, pitch, Reverse, volume, fades and volume Keyframes (the same `at`), with
+ * `detached_from`. It lands on the first Music lane free there. The new Music Clips are picked; null
+ * when none of the Segments allows it.
+ */
+export function detach(scene: PickContext, ids: string[], track: PlayedSegment[], sounded: (media: string) => boolean): Outcome | null {
+  const { edits } = scene;
+  const made: MusicClip[] = [];
+  edits.segments.forEach((segment, i) => {
+    const shown = track[i];
+    if (!shown || !ids.includes(segment.id) || !canDetach(edits, segment.id, sounded)) return;
+    const secs = toThousandth(shown.end - shown.start);
+    const clip: MusicClip = {
+      id: idOf(scene),
+      media: segment.media ?? null,
+      start: toThousandth(shown.start),
+      secs,
+      offset: toThousandth(rangeOf(shown).start),
+      volume: segment.volume ?? 1,
+      speed: segment.speed ?? 1,
+      pitch: segment.pitch ?? false,
+      reverse: segment.reverse ?? false,
+      ...fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, secs),
+      keys: segment.keys?.volume?.length ? { volume: segment.keys.volume } : {},
+      detached_from: segment.id,
+      // Speech isn't ducked: said so, so that the server's default for a new song doesn't apply (ADR 0016).
+      duck: null,
+    };
+    made.push(rekeyed(clip, 0, secs));
+  });
+  if (!made.length) return null;
+  const detached = new Set(made.map((clip) => clip.detached_from));
+  return {
+    edits: {
+      ...edits,
+      segments: edits.segments.map((segment) => (detached.has(segment.id) ? { ...segment, muted: true } : segment)),
+      music: [...edits.music, ...made],
+    },
+    pick: picked(...made.map((clip) => ({ kind: "music" as const, id: clip.id }))),
+  };
+}
+
+/**
+ * Reattach (GLOSSARY.md, Detach) of Segment `id`, as one change: every Music Clip Detached from it
+ * deleted, however it was moved, trimmed or split since, and the Segment unmuted. Nothing changed on
+ * them is copied back. The Segment is picked; null where it isn't offered (canReattach).
+ */
+export function reattach(scene: { edits: AdvancedEdits; pick: Pick }, id: string): Outcome | null {
+  const { edits } = scene;
+  if (!canReattach(edits, id)) return null;
+  return {
+    edits: {
+      ...edits,
+      segments: edits.segments.map((segment) => (segment.id === id ? { ...segment, muted: false } : segment)),
+      music: edits.music.filter((clip) => clip.detached_from !== id),
+    },
+    pick: picked({ kind: "segment", id }),
+  };
+}
+
+/** Detach and Reattach from an item's context menu and the inspector: see detach and reattach. */
+export interface Detacher {
+  canDetach: (id: string) => boolean;
+  canReattach: (id: string) => boolean;
+  // Segment `id`'s sound Detached, and that of the other picked Segments when it is picked with them.
+  detach: (id: string) => void;
+  reattach: (id: string) => void;
+}
+
+/** Detach and Reattach in `scene`, the Main Track as planned being `track`, each outcome applied (`apply`) as one change. */
+export function detacher(scene: PickContext, track: PlayedSegment[], sounded: (media: string) => boolean, apply: (outcome: Outcome) => void): Detacher {
+  const run = (outcome: Outcome | null) => outcome && apply(outcome);
+  return {
+    canDetach: (id) => canDetach(scene.edits, id, sounded),
+    canReattach: (id) => canReattach(scene.edits, id),
+    detach: (id) => {
+      const ids = isPicked(scene.pick, "segment", id) ? pickedItems(scene).segments.map((segment) => segment.id) : [id];
+      run(detach(scene, ids, track, sounded));
+    },
+    reattach: (id) => run(reattach(scene, id)),
+  };
+}
+
+/**
+ * `item`, a Music Clip new to the Candidate (a part of a split, a copy, a paste), still Detached from
+ * its Segment while `segments` have it, else no longer: the API takes a new `detached_from` only when
+ * it names a Segment of the Candidate. Any other item as it is.
+ */
+export function stillDetached<T extends object>(item: T, segments: ClipSegment[]): T {
+  const from = "detached_from" in item ? (item.detached_from as string | null | undefined) : undefined;
+  return from && !segments.some((segment) => segment.id === from) ? { ...item, detached_from: null } : item;
+}
+
+/** A Segment, a video Overlay or a Music Clip, which has a Speed. */
+export type SpeedRef = { kind: "segment" | "overlay" | "music"; id: string };
+
+/**
+ * Segment, video Overlay or Music Clip `item`'s Speed set to `speed` (speedOf), a trim at its end (ADR
+ * 0009, 0016): its Keyframes scaled by the old Speed ÷ the new, so that they stay on the same frames
+ * (or moments of its song). A Segment keeps its range and plays it in its new Timeline length; the
+ * Main Track closes up or opens out after it, and on the Magnetic timeline the layers follow as they
+ * follow a trim of its end. Refused, with a notice, when a video's Segment would play under
+ * MEDIA_MIN_SECS or the Clip would last longer than the `longest` clip. An Overlay or a Music Clip
+ * keeps its start and plays as much of its file, its end kept within the file (`video` seconds long,
+ * its video's or song's), a Music Clip's fades within it. Null for a Freeze frame, or an item that
+ * isn't there.
  */
 export function setSpeed(scene: PickContext, item: SpeedRef, value: number, limits: { longest?: number; video?: number } = {}): Outcome | null {
   const { edits, pick } = scene;
   const speed = speedOf(value);
+  const sped = <T extends Overlay | MusicClip>(timed: T): T => {
+    const by = (timed.speed ?? 1) / speed;
+    const room = limits.video === undefined ? Infinity : (limits.video - timed.offset) / speed;
+    const secs = round(Math.max(Math.min(timed.secs * by, room), ITEM_MIN_SECS));
+    return rekeyed({ ...timed, speed, secs, keys: scaledKeys(timed.keys, by) }, 0, secs);
+  };
   if (item.kind === "overlay") {
-    const overlay = edits.overlays.find((other) => other.id === item.id);
-    if (!overlay) return null;
-    const by = (overlay.speed ?? 1) / speed;
-    const room = limits.video === undefined ? Infinity : (limits.video - overlay.offset) / speed;
-    const secs = round(Math.max(Math.min(overlay.secs * by, room), ITEM_MIN_SECS));
-    const atSpeed = rekeyed({ ...overlay, speed, secs, keys: scaledKeys(overlay.keys, by) }, 0, secs);
-    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? atSpeed : other)) }, pick };
+    if (!edits.overlays.some((other) => other.id === item.id)) return null;
+    return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? sped(other) : other)) }, pick };
+  }
+  if (item.kind === "music") {
+    if (!edits.music.some((other) => other.id === item.id)) return null;
+    const fitted = (clip: MusicClip) => ({ ...clip, ...fadesWithin(clip, clip.secs) });
+    return { edits: { ...edits, music: edits.music.map((other) => (other.id === item.id ? fitted(sped(other)) : other)) }, pick };
   }
   const index = edits.segments.findIndex((other) => other.id === item.id);
   const segment = edits.segments[index];
   if (!segment || segment.hold != null) return null;
   const by = (segment.speed ?? 1) / speed;
-  const atSpeed = { ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) };
+  // Its fades fitted to its new length.
+  const atSpeed = fadesFitted({ ...segment, speed, ...(segment.keys && { keys: scaledKeys(segment.keys, by) }) });
   const [before, after] = [segmentLength(segment), segmentLength(atSpeed)];
   const refused = (notice: string): Outcome => ({ edits, pick, notice });
   if (segment.media && after < MEDIA_MIN_SECS) {
@@ -743,20 +936,21 @@ export function gestureSpeed() {
 }
 
 /**
- * The one picked Segment or video Overlay, which Reverse (R) turns on or off: null with nothing or
- * several picked, or for a Freeze frame (it holds one frame), an image Overlay (`video` says whether
- * a Media Library item is a video), a Text Layer or a Music Clip.
+ * The one picked Segment, video Overlay or Music Clip, which Reverse (R) turns on or off: null with
+ * nothing or several picked, or for a Freeze frame (it holds one frame), an image Overlay (`video`
+ * says whether a Media Library item is a video), a Text Layer or a Shape.
  */
 export function reversible(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpeedRef | null {
   const only = onlyItem(scene.pick);
-  const { segments, overlays } = scene.edits;
+  const { segments, overlays, music } = scene.edits;
   if (only?.kind === "segment" && segments.some((segment) => segment.id === only.id && segment.hold == null)) return { kind: "segment", id: only.id };
   if (only?.kind === "overlay" && overlays.some((overlay) => overlay.id === only.id && video(overlay.media))) return { kind: "overlay", id: only.id };
+  if (only?.kind === "music" && music.some((clip) => clip.id === only.id)) return { kind: "music", id: only.id };
   return null;
 }
 
 /**
- * The one picked Segment or video Overlay, whose Speed sheet the phone's toolbar opens: as
+ * The one picked Segment, video Overlay or Music Clip, whose Speed sheet the phone's toolbar opens: as
  * `reversible`, and a Freeze frame too (its sheet shows its Duration).
  */
 export function speedSheetItem(scene: { edits: AdvancedEdits; pick: Pick }, video: (media: string) => boolean): SpeedRef | null {
@@ -766,10 +960,11 @@ export function speedSheetItem(scene: { edits: AdvancedEdits; pick: Pick }, vide
 }
 
 /**
- * Segment or video Overlay `item` played backwards, or forwards again (`reverse`, ADR 0009), from a
- * Retimed copy. It keeps its range and its place and length on the Timeline. Its Keyframes are
- * mirrored (mirroredKeys), so that its motion stays on the same frames of its video, as a Speed
- * change scales them. Null for a Freeze frame, or an item that isn't there.
+ * Segment, video Overlay or Music Clip `item` played backwards, or forwards again (`reverse`, ADR
+ * 0009), from a Retimed copy. It keeps its range and its place and length on the Timeline. Its
+ * Keyframes are mirrored (mirroredKeys), so that its motion stays on the same frames of its video (a
+ * song's volume on the same moments of it), as a Speed change scales them. Null for a Freeze frame,
+ * or an item that isn't there.
  */
 export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: SpeedRef, reverse: boolean): Outcome | null {
   const { edits, pick } = scene;
@@ -779,16 +974,21 @@ export function setReverse(scene: { edits: AdvancedEdits; pick: Pick }, item: Sp
     if (!edits.overlays.some((other) => other.id === item.id)) return null;
     return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === item.id ? turned(other, other.secs) : other)) }, pick };
   }
+  if (item.kind === "music") {
+    if (!edits.music.some((other) => other.id === item.id)) return null;
+    return { edits: { ...edits, music: edits.music.map((other) => (other.id === item.id ? turned(other, other.secs) : other)) }, pick };
+  }
   if (!edits.segments.some((other) => other.id === item.id && other.hold == null)) return null;
   return { edits: { ...edits, segments: edits.segments.map((other) => (other.id === item.id ? turned(other, segmentLength(other)) : other)) }, pick };
 }
 
 /**
- * Music Clip `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle or the
- * inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins, so
- * that the two together are never longer than the Music Clip. Cut short by the Clip's end (`heard`
- * seconds of it are heard), both are set as they are heard, so that what is stored is what the
- * Timeline draws and the Clip plays. Null for one that isn't there.
+ * Music Clip or Segment `id`'s fade in or fade out (`fade`) set to `secs` (by its Fade Ramp's handle
+ * or the inspector), rounded to a hundredth: 0–10 s, and no further than where the other fade begins,
+ * so that the two together are never longer than it (a Segment, on the Timeline). Cut short by the
+ * Clip's end, or heard on under a Transition (`heard` seconds of it are heard), both are set as they
+ * are heard, so that what is stored is what the Timeline draws and the Clip plays. Null for a Freeze
+ * frame, which is silent, or an item that isn't there.
  */
 export function setFade(
   scene: { edits: AdvancedEdits; pick: Pick },
@@ -799,13 +999,32 @@ export function setFade(
 ): Outcome | null {
   const { edits, pick } = scene;
   const clip = edits.music.find((other) => other.id === id);
-  if (!clip) return null;
-  // Its fades as heard: shortened when the Clip's end cuts it short (`heard` seconds of it).
-  const fades = fadesWithin(clip, heard ?? clip.secs);
+  const segment = edits.segments.find((other) => other.id === id && other.hold == null);
+  const item = clip ?? segment;
+  if (!item) return null;
+  const length = heard ?? (clip ? clip.secs : segmentLength(item as ClipSegment));
+  // Its fades as heard: shortened when it is shorter than both (`length` seconds of it).
+  const fades = fadesWithin({ fade_in: item.fade_in ?? 0, fade_out: item.fade_out ?? 0 }, length);
   const other = fade === "fade_in" ? "fade_out" : "fade_in";
-  const most = Math.max(0, Math.min(FADE_MAX_SECS, (heard ?? clip.secs) - fades[other]));
-  const set = { ...clip, [other]: fades[other], [fade]: round(Math.min(Math.max(secs, 0), most)) };
-  return { edits: { ...edits, music: edits.music.map((each) => (each.id === id ? set : each)) }, pick };
+  const most = Math.max(0, Math.min(FADE_MAX_SECS, length - fades[other]));
+  const set = <T extends { id: string }>(items: T[]) =>
+    items.map((each) => (each.id === id ? { ...each, [other]: fades[other], [fade]: round(Math.min(Math.max(secs, 0), most)) } : each));
+  return { edits: clip ? { ...edits, music: set(edits.music) } : { ...edits, segments: set(edits.segments) }, pick };
+}
+
+// Segment `segment` with its fades within its Timeline length (fadesWithin), when it has any: trimmed or
+// sped up shorter than both, it has them shortened by the same share.
+function fadesFitted(segment: ClipSegment): ClipSegment {
+  if (!segment.fade_in && !segment.fade_out) return segment;
+  return { ...segment, ...fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, segmentLength(segment)) };
+}
+
+// The `head` and `tail` faded Segment `segment` is cut into (by Split or a Freeze frame), as a Music
+// Clip's are: the head keeps its fade in and the tail its fade out, each within its part, and no
+// fades at the cut.
+function cutFades(segment: ClipSegment, head: ClipSegment, tail: ClipSegment): [ClipSegment, ClipSegment] {
+  if (!segment.fade_in && !segment.fade_out) return [head, tail];
+  return [fadesFitted({ ...head, fade_out: 0 }), fadesFitted({ ...tail, fade_in: 0 })];
 }
 
 /**

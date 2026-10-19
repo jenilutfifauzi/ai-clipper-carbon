@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import type { ClipSegment, MediaItem, Overlay } from "../../../api";
+import type { ClipSegment, MediaItem, MusicClip, Overlay } from "../../../api";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
@@ -10,10 +10,11 @@ import type { AdvancedEdits } from "./edits";
 import { octaveOf, SPEED_CHIPS, SPEED_OCTAVES, SPEED_RANGE, speedAtOctave, speedLabel, speedOf } from "./speed";
 
 /**
- * A Segment's or a video Overlay's Speed section (docs/adr/0009): chips of the common Speeds, a
- * slider over its octaves (0.0625–16×) and the Speed typed in, each a change of `group`; for an item
- * with sound (`heard`), the switch "Change pitch with speed"; and the switch Reverse (R), with the
- * progress of the Retimed copy the preview plays it from (`copy`), while it is made.
+ * A Segment's, a video Overlay's or a Music Clip's Speed section (docs/adr/0009, 0016): chips of the
+ * common Speeds, a slider over its octaves (0.0625–16×) and the Speed typed in, each a change of
+ * `group`; for an item with sound (`heard`), the switch "Change pitch with speed"; and the switch
+ * Reverse (R), with the progress of the Retimed copy the preview plays it from (`copy`), while it is
+ * made.
  */
 export function SpeedFields({
   speed,
@@ -22,6 +23,7 @@ export function SpeedFields({
   heard,
   group,
   copy,
+  what,
   onSpeed,
   onPitch,
   onReverse,
@@ -33,6 +35,8 @@ export function SpeedFields({
   group: string;
   // The preview's copy of the item, as its plan plays it (retimedCopy.ts); null when it plays its own file.
   copy: RetimedAsk | null;
+  // What the copy is of, as its failure names it: a "video" or a "Segment" by default, by `copy`.
+  what?: string;
   onSpeed: (speed: number, group: string) => void;
   onPitch: (pitch: boolean) => void;
   onReverse: (reverse: boolean) => void;
@@ -85,7 +89,7 @@ export function SpeedFields({
       </Switch>
       {copy && made && !made.url && (
         <p aria-live="polite" className={cx("text-xs tabular-nums", made.error ? "text-danger" : "text-muted")}>
-          {copyProgress(copy.range, made, "media" in copy ? "video" : "Segment")}
+          {copyProgress(copy.range, made, what ?? ("media" in copy ? "video" : "Segment"))}
         </p>
       )}
     </Group>
@@ -106,6 +110,7 @@ export function SpeedPanel({
   onHold,
   onSegment,
   onOverlay,
+  onMusic,
 }: {
   item: SpeedRef;
   edits: AdvancedEdits;
@@ -116,9 +121,11 @@ export function SpeedPanel({
   onHold: (id: string, hold: number) => void;
   onSegment: (segment: ClipSegment, group: string) => void;
   onOverlay: (overlay: Overlay, group: string) => void;
+  onMusic: (clip: MusicClip, group: string) => void;
 }) {
   const segment = item.kind === "segment" ? edits.segments.find((other) => other.id === item.id) : undefined;
   const overlay = item.kind === "overlay" ? edits.overlays.find((other) => other.id === item.id) : undefined;
+  const clip = item.kind === "music" ? edits.music.find((other) => other.id === item.id) : undefined;
   if (segment?.hold != null) return <HoldFields key={segment.id} hold={segment.hold} onHold={(hold) => onHold(segment.id, hold)} />;
   const fields = segment
     ? {
@@ -126,11 +133,17 @@ export function SpeedPanel({
         heard: !segment.media || mediaById.get(segment.media)?.has_audio !== false,
         onPitch: (pitch: boolean) => onSegment({ ...segment, pitch }, `segment:${segment.id}:pitch`),
       }
-    : overlay && {
-        chosen: overlay,
-        heard: !!mediaById.get(overlay.media)?.has_audio,
-        onPitch: (pitch: boolean) => onOverlay({ ...overlay, pitch }, `overlay:${overlay.id}:pitch`),
-      };
+    : overlay
+      ? {
+          chosen: overlay,
+          heard: !!mediaById.get(overlay.media)?.has_audio,
+          onPitch: (pitch: boolean) => onOverlay({ ...overlay, pitch }, `overlay:${overlay.id}:pitch`),
+        }
+      : clip && {
+          chosen: clip,
+          heard: true,
+          onPitch: (pitch: boolean) => onMusic({ ...clip, pitch }, `music:${clip.id}:pitch`),
+        };
   if (!fields) return null;
   const { chosen, heard, onPitch } = fields;
   return (

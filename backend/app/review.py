@@ -7,8 +7,10 @@ from dataclasses import dataclass, replace
 from uuid import uuid4
 
 from app.candidates import (
+    DEFAULT_DUCK,
     Candidate,
     Framing,
+    Keys,
     Layout,
     LayoutOverride,
     MusicClip,
@@ -24,7 +26,8 @@ from app.candidates import (
     with_join_transition,
 )
 from app.config import SelectionTuning
-from app.segment_time import SegmentTime, segment_time
+from app.keyframes import rewindow
+from app.segment_time import SegmentTime, overlay_time, segment_time
 from app.selection import snap
 from app.styles import JoinTransition, StyleOverrides
 from app.transcript import Transcript
@@ -83,6 +86,9 @@ class CandidateChange:
     # The Revision the change was made from: StaleRevision unless it is the Candidate's. None: saved
     # over whatever is there.
     revision: int | None = None
+    # The Music Clips of `music` (by id) whose `duck` the edit didn't set: a new song's ducks by
+    # default (docs/adr/0016).
+    duck_unset: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -142,12 +148,20 @@ class Episode:
                 left, right = _touching_frame(segments, i - 1, first), _touching_frame(segments, i + 1, last)
                 keep_start, keep_end = (right, left) if segment.reverse else (left, right)
                 start, end = self.bounds(segment.start, segment.end, keep_start, keep_end)
-                snapped.append(replace(segment, start=start, end=end))
+                snapped.append(replace(segment, start=start, end=end, keys=_snapped_keys(segment, start, end)))
             elif segment_time(segment).length < MIN_MEDIA_SECS:
                 raise InvalidEdit(f"A video's Segment lasts {MIN_MEDIA_SECS:g} s at least")
             else:
                 snapped.append(segment)
         return snapped
+
+    def check_music(self, music: list[MusicClip]) -> None:
+        """InvalidEdit for a Music Clip of the Source whose read, `secs × speed` from its offset, runs
+        past the Source's end."""
+        for clip in music:
+            if clip.media is None and overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse).end > self.duration + 0.05:
+                at_speed = f" at {clip.speed:g}x" if clip.speed != 1 else ""
+                raise InvalidEdit(f"Music Clip {clip.id} runs past the end of the episode ({self.duration:g} s){at_speed}")
 
     def check_length(self, segments: list[Segment], transitions: list[Transition]) -> None:
         """InvalidEdit when the Main Track of `segments` plays longer than the longest clip."""
@@ -186,10 +200,13 @@ def update(
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
-        # filmed is a plain range (one at a Speed is kept as its Segment).
+        # filmed is a plain range (one at a Speed, faded, Muted, or at a volume or Keyframes of its own,
+        # is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
-        if len(segments) == 1 and segment_time(segments[0]) == SegmentTime(start, end):
+        [first, *more] = segments
+        as_filmed = segment_time(first) == SegmentTime(start, end)
+        if not more and as_filmed and first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted:
             segments = []
     elif change.transitions is not None:
         episode.check_length(old.main_track(), _joined(transitions, old.segments))
@@ -197,8 +214,11 @@ def update(
         _check_ids("Text Layer", [layer.id for layer in change.text_layers])
     if change.shapes is not None:
         _check_ids("Shape", [shape.id for shape in change.shapes])
+    music = old.music
     if change.music is not None:
         _check_ids("Music Clip", [clip.id for clip in change.music])
+        episode.check_music(change.music)
+        music = _ducked_by_default(change.music, old.music, change.duck_unset)
     if change.overlays is not None:
         _check_ids("Overlay", [overlay.id for overlay in change.overlays])
     if change.layout_overrides is not None:
@@ -227,7 +247,7 @@ def update(
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
         text_layers=_pick(change.text_layers, old.text_layers),
         shapes=_pick(change.shapes, old.shapes),
-        music=_pick(change.music, old.music),
+        music=music,
         source_volume=_pick(change.source_volume, old.source_volume),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
@@ -235,6 +255,8 @@ def update(
     )
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
+    if change.music is not None:
+        _check_detached(new.music, old.music, new.main_track())
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
     if replace(new, selected=old.selected) != old:
@@ -292,6 +314,20 @@ def _merged(edits: list[WordEdit]) -> list[WordEdit]:
     return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
 
 
+def _ducked_by_default(music: list[MusicClip], old: list[MusicClip], unset: frozenset[str]) -> list[MusicClip]:
+    """The Music Clips an edit gives, a song's (or a video's sound's) that is new to the Candidate
+    and whose `duck` the edit didn't set (`unset`, by id) ducked by DEFAULT_DUCK: Music Clips added
+    from now on duck, and stored ones don't (docs/adr/0016). A Detached sound (`detached_from`) is
+    speech, a video's too, and isn't ducked."""
+    had = {clip.id for clip in old}
+    return [
+        replace(clip, duck=DEFAULT_DUCK)
+        if clip.id in unset and clip.id not in had and clip.media is not None and clip.detached_from is None
+        else clip
+        for clip in music
+    ]
+
+
 def _joined(transitions: list[Transition], segments: list[Segment]) -> list[Transition]:
     """The Transitions that have a join to be at: after a Segment that isn't the last; of two at one
     join, the later. (A Segment deleted or moved to the end takes its Transition with it.)"""
@@ -319,10 +355,32 @@ def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
         raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
 
 
+def _check_detached(music: list[MusicClip], old: list[MusicClip], segments: list[Segment]) -> None:
+    """InvalidEdit for a Music Clip whose `detached_from` names no Segment of `segments` (the Main
+    Track after the change), but for one that carried it already (by its id in `old`), which keeps
+    it after its Segment is gone."""
+    ids = {segment.id for segment in segments}
+    carried = {(clip.id, clip.detached_from) for clip in old}
+    for clip in music:
+        if clip.detached_from is not None and clip.detached_from not in ids and (clip.id, clip.detached_from) not in carried:
+            raise InvalidEdit(f"Music Clip {clip.id} is Detached from Segment {clip.detached_from}, which the clip doesn't have")
+
+
 def _check_ids(kind: str, ids: list[str]) -> None:
     """InvalidEdit unless each of the items has its own id."""
     if len(set(ids)) != len(ids):
         raise InvalidEdit(f"Two of the {kind}s have the same id")
+
+
+def _snapped_keys(segment: Segment, start: float, end: float) -> Keys:
+    """Segment `segment`'s Keyframes once its range is snapped to `start`..`end`: re-anchored to where
+    its left edge now shows (`rewindow`), so that each stays on its moment of the Source."""
+    if not segment.keys:
+        return segment.keys
+    was = segment_time(segment)
+    now = SegmentTime(start, end, was.speed, was.reverse)
+    first = was.offset_at(now.source_at(0))
+    return {prop: rewindow(keys, first, first + now.length) for prop, keys in segment.keys.items()}
 
 
 def _touching_frame(segments: list[Segment], i: int, at: float) -> bool:

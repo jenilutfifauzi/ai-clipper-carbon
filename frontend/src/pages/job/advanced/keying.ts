@@ -14,7 +14,7 @@ import type { TrackKind } from "./trackState";
 
 /**
  * Keyframe edits on the items of the edits (ADR 0008): the pure Keyframe actions of
- * ./keyActions.ts done to an Overlay, a Text Layer, a Shape, a Music Clip, a video's Segment or a Manual Scene at
+ * ./keyActions.ts done to an Overlay, a Text Layer, a Shape, a Music Clip, a Segment or a Manual Scene at
  * the playhead, each one change of the edits, so one step of undo. A Keyframe is set at the playhead
  * minus the item's start on the Timeline (a Manual Scene's: the playhead's Source time minus its
  * Scene's start, which the plan gives as `keys_from`), and only with the playhead inside the item;
@@ -24,7 +24,7 @@ import type { TrackKind } from "./trackState";
  */
 
 /**
- * An item that can have Keyframes: an Overlay, a Text Layer, a Shape, a Music Clip, a video's
+ * An item that can have Keyframes: an Overlay, a Text Layer, a Shape, a Music Clip, a
  * Segment, or a Manual Scene of a Layout Override's (`index` its place among the plan's Scenes,
  * `sceneRef`: that Segment's showing of it).
  */
@@ -180,7 +180,7 @@ type RefOf<K extends KeyedRef["kind"]> = Extract<KeyedRef, { kind: K }>;
 interface Kind<R extends KeyedRef> {
   track: TrackKind;
   find: (edits: AdvancedEdits, ref: R, track?: PlayedSegment[], plan?: RenderPlan | null) => KeyedItem | null;
-  keyable: (media?: { kind: MediaItem["kind"]; has_audio: boolean }) => KeyProperty[];
+  keyable: (media?: { kind: MediaItem["kind"]; has_audio: boolean }, item?: KeyedItem) => KeyProperty[];
   write: (edits: AdvancedEdits, ref: R, keys: Keys, set: Constants, plan?: RenderPlan | null) => AdvancedEdits;
 }
 
@@ -227,25 +227,31 @@ const KINDS: { [K in KeyedRef["kind"]]: Kind<RefOf<K>> } = {
     track: "music",
     find: (edits, ref) => {
       const clip = edits.music.find((other) => other.id === ref.id);
-      return clip ? asKeyed({ start: clip.start, secs: clip.secs, keys: clip.keys, volume: clip.volume, media: clip.media }) : null;
+      return clip ? asKeyed({ start: clip.start, secs: clip.secs, keys: clip.keys, volume: clip.volume, media: clip.media ?? undefined }) : null;
     },
     keyable: () => ["volume"],
     write: (edits, ref, keys, set) => ({ ...edits, music: edits.music.map((clip) => (clip.id === ref.id ? { ...clip, keys, ...soundOf(set) } : clip)) }),
   },
-  // A video's Segment; one of the Source has no Keyframes.
+  // A video's Segment; one of the Source keys its sound only (its Layouts frame it), and a Freeze
+  // frame of it, which is silent, has none.
   segment: {
     track: "video",
     find: (edits, ref, track) => {
       const segment = edits.segments.find((other) => other.id === ref.id);
       const span = segmentSpan(edits.segments, ref.id, track);
-      if (!segment?.media || !segment.framing || !span) return null;
-      return asKeyed({ ...span, keys: segment.keys ?? {}, transform: segment.framing.transform, volume: segment.volume ?? 1, media: segment.media });
+      if (!segment || !span) return null;
+      const keys = segment.keys ?? {};
+      const volume = segment.volume ?? 1;
+      if (!segment.media) return segment.hold == null ? asKeyed({ ...span, keys, volume }) : null;
+      if (!segment.framing) return null;
+      return asKeyed({ ...span, keys, transform: segment.framing.transform, volume, media: segment.media });
     },
-    keyable: pictureRows,
+    keyable: (media, item) => (item && !item.transform ? ["volume"] : pictureRows(media)),
     write: (edits, ref, keys, set) => ({
       ...edits,
       segments: edits.segments.map((segment) => {
-        if (segment.id !== ref.id || !segment.framing) return segment;
+        if (segment.id !== ref.id) return segment;
+        if (!segment.framing) return { ...segment, keys, ...soundOf(set) };
         const framing = set.transform ? { ...segment.framing, transform: set.transform } : segment.framing;
         return { ...segment, keys, framing, ...soundOf(set) };
       }),
@@ -265,7 +271,7 @@ const kindOf = <R extends KeyedRef>(ref: R) => KINDS[ref.kind] as unknown as Kin
 
 /**
  * The item `ref` names, as keyed (a Segment from where `track` starts it, a Manual Scene as `plan`
- * places it); null when the edits don't have it, or for a Segment of the Source, which has no Keyframes.
+ * places it); null when the edits don't have it, or for a Freeze frame of the Source, which has no Keyframes.
  */
 export function keyedItem(edits: AdvancedEdits, ref: KeyedRef, track?: PlayedSegment[], plan?: RenderPlan | null): KeyedItem | null {
   return kindOf(ref).find(edits, ref, track, plan);
@@ -399,9 +405,9 @@ function scenesOf(edits: AdvancedEdits, plan: RenderPlan, id: string): number[] 
 // The shortcuts (K, [ and ]) work on the one item picked, as the ruler's diamonds do.
 
 /**
- * The item the Pick is when it is one of a kind that can have Keyframes, else null. (A Segment of
- * the Source can't: keyedItem has none for it.) A Segment of the Source picked with its Manual
- * Scene `scene` under the playhead (`manualSceneAt`) is that Manual Scene.
+ * The item the Pick is when it is one of a kind that can have Keyframes, else null. A Segment of the
+ * Source picked with its Manual Scene `scene` under the playhead (`manualSceneAt`) is that Manual
+ * Scene; elsewhere it is the Segment, which keys its volume.
  */
 export function pickedKeyed(pick: Pick, scene: number | null = null): KeyedRef | null {
   const item = onlyItem(pick);
@@ -466,16 +472,17 @@ export function heldTransform(transform: Transform, keys: Keys, span: KeySpan, t
 /**
  * What item `ref` can key, in the Keyframes pane's order: a picture's Transform fields (an Overlay's,
  * a video Segment's Framing's) and, for a video with sound (`media`, its Media Library item), its
- * volume; a Music Clip's volume; a Text Layer's, a Shape's and a Manual Scene's Transform fields only.
+ * volume; a Music Clip's and a Source Segment's (`item`, as keyed: without a Transform) volume; a
+ * Text Layer's, a Shape's and a Manual Scene's Transform fields only.
  */
-export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_audio: boolean }): KeyProperty[] {
-  return kindOf(ref).keyable(media);
+export function keyableOf(ref: KeyedRef, media?: { kind: MediaItem["kind"]; has_audio: boolean }, item?: KeyedItem): KeyProperty[] {
+  return kindOf(ref).keyable(media, item);
 }
 
 /** The rows of item `ref` of `edits` (keyableOf), its Media Library item looked up in `mediaById`. */
 export function keyRows(edits: AdvancedEdits, ref: KeyedRef, mediaById: Map<string, MediaItem>): KeyProperty[] {
-  const id = keyedItem(edits, ref)?.media;
-  return keyableOf(ref, id ? mediaById.get(id) : undefined);
+  const item = keyedItem(edits, ref);
+  return keyableOf(ref, item?.media ? mediaById.get(item.media) : undefined, item ?? undefined);
 }
 
 /**

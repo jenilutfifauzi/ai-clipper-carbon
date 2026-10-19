@@ -144,10 +144,13 @@ Edits:
   A video Overlay's `speed` and `pitch` are as a Segment's (below), but it keeps its start and
   secs: it shows secs * speed of its video from its offset, within the video; with `reverse`, that
   backwards, as a Segment's (below). An image has none. The dry run gives what of its video it shows
-  (source_start, source_end).
+  (source_start, source_end). A Music Clip's speed, pitch and reverse are the same (secs * speed of
+  its song from offset); the dry run's `sounds` give what it reads.
   An Overlay comes on and goes off as a Text Layer does: animation_in and animation_out (none, fade,
   pop, slide) over animation_ms (100..2000, 300 by default; each end at most half its secs). They
   move its picture only: a video's sound keeps its volume and Keyframes. The dry run lists them.
+- A Music Clip without `media` plays the episode's sound, anywhere in the Clip: its offset is
+  Source time, its read within the Source, and source_volume scales it (`sounds` lists it, source true).
 - A Text Layer is placed by its transform as an Overlay is: x, y its centre (on the frame; the text
   may go past its edges), scale (times its size: 2 draws it twice as large, its lines as they
   are), rotation and opacity. Its look is its style, a Text Style: font (a font id), size (as the
@@ -204,6 +207,11 @@ Edits:
   is the one at `end`. It plays from a reversed copy of its range, which the render makes if the
   owner's preview hasn't (the dry run's `copy`). One of the episode has no captions; its Scenes and
   Layout Overrides are the forward ones, mirrored.
+- A Segment's sound (the episode's or a video's) fades in over `fade_in` seconds from its start and
+  out over `fade_out` to its end, linearly, 0..10 each (0 by default), as a Music Clip's: together
+  longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
+  a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
+  lists them under `segments`.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -215,9 +223,10 @@ Edits:
   output pixels, or null for none; merge_candidate_items changes only the fields given.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
-  Overlay's and a video Segment's `volume` (0..2) can be keyed too: the fades multiply it. A Segment
-  of the episode, another Layout and the Candidate's own framing have none. `at` is seconds from the
-  item's start (a Segment's: where it starts in the Clip, its `start` in the video; a Manual
+  Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
+  source_volume an episode Segment's. A Segment of the episode has no picture Keyframes; another
+  Layout and the Candidate's own framing have none. `at` is seconds from the
+  item's start (a Segment's: where it starts in the Clip, its `start`; a Manual
   override's: its Scene's start on the Source's timeline, so every Segment showing that Scene moves
   alike; the dry run lists those past the Scene's end as `ignored`), value in the field's own units (rotation -3600..3600, to
   turn several times). A keyed property's transform field is unused. The value holds before the
@@ -225,11 +234,27 @@ Edits:
   default), ease_in, ease_out, ease_in_out, or a cubic-bezier [x1, y1, x2, y2] (x 0..1; y may
   overshoot). At most 100 per property, 1/30 s apart at least. merge_candidate_items replaces the
   lists of the properties given ([] clears one) and keeps the others. Moving an item moves its
-  Keyframes; the server never re-times them, and refuses a length or a Segment's range that would
-  leave one past its item's end: send its keys too. The dry run lists them in Timeline time, with
+  Keyframes; the server never re-times them (but an episode Segment's, kept on their moments as its
+  ends snap to Words), and refuses a length or a Segment's range that would leave one past its item's
+  end: send its keys too. The dry run lists them in Timeline time, with
   the picture's bounds at each (an Overlay's, a Text Layer's or Shape's box or a Scene's); a keyed
   volume's under `sounds`. A Text Layer's, a Shape's and an Overlay's animations (fade, pop, slide)
   play on top of its keyed values.
+- `muted` true silences a Segment's, a Music Clip's or a video Overlay's sound in the preview and
+  the render, keeping its volume, Keyframes and fades: false brings them back. The dry run marks
+  Muted ones (`segments`, `sounds`).
+- A Music Clip of a song or a video's sound with `duck` (dB, -30..-1; null: off) is turned down that
+  far while speech is heard: the Words of the episode's Segments and Music Clips without media
+  that aren't Muted, captions on or not. Down over 0.25 s before speech, through pauses under 0.8 s,
+  up over 0.5 s after. One added without `duck` gets -12 (not a Detached one), so give null to keep
+  it off; one without media has none. The dry run's `sounds` list every sound's span, fades, Muted and `ducked` stretches.
+- Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
+  J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
+  Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
+  reverse, volume, fades and volume keys (the same `at`), start and secs where it plays in the Clip
+  (the dry run's `segments`, a Transition's overlap included), and set the Segment's `muted`.
+  Reattach: remove every Music Clip Detached from it, then clear its `muted`. A `detached_from` added
+  or changed must name one of the Candidate's Segments; a saved one stays after its Segment is removed.
 - A Transition joins a Segment (`after`, its id) to the next: the two overlap for its secs
   (0.1..3 s, 0.5 by default; half the shorter Segment at most), so the Clip is that much shorter.
   Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dipcolour, dissolve,
@@ -482,6 +507,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         dry_run, nothing is saved: the Preview Plan of the changes comes back instead, its events in
         Timeline time, and its Words with the `at` a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
+        # A Music Clip given without `duck` is sent without it, so that a new song's ducks by default.
+        for clip in body.get("music") or []:
+            if clip["id"] in changes._duck_unset:
+                del clip["duck"]
         if dry_run:
             return _plan_view(
                 await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),
@@ -713,7 +742,23 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """AI Clipper's domain words: Job, Candidate, Clip, Segment, Timeline time and the rest."""
         return GLOSSARY.read_text()
 
+    for registered in mcp._tool_manager.list_tools():
+        registered.parameters = _untitled(registered.parameters)
     return mcp
+
+
+def _untitled(schema: Any) -> Any:
+    """A tool's JSON schema without pydantic's titles, which only repeat each field's name: they
+    would take the tools past their budget. A property named title stays, and so do defaults."""
+    if isinstance(schema, list):
+        return [_untitled(value) for value in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        key: value if key == "default" else _untitled(value)
+        for key, value in schema.items()
+        if not (key == "title" and isinstance(value, str))
+    }
 
 
 class TextPresetGiven(BaseModel):
@@ -873,14 +918,17 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`)), each Scene's Layout and the Framing
+    (`copied`), its fades), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
-    (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it comes `after`, the keyed
-    sounds' volume Keyframes (a video Segment's, a Music Clip's, an Overlay's), each Shape's and
-    each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
+    (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
+    comes `after`, every sound (a Segment's, a Music Clip's, an Overlay's) with its span, fades,
+    volume Keyframes, whether it is Muted, a ducked one's depth and where it is turned down (the
+    plan's `ducked`), the Segment a Detached one is from, what a sound at a Speed or in Reverse
+    reads (`_video_read`), and whether it is the Source's (`source`, a Music Clip's), each Shape's
+    and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
     picture layer's (`_layer_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
@@ -899,7 +947,8 @@ def _plan_view(
             _compact({
                 **_times(segment, "id", "start", "end", "source_start", "source_end"), "media": segment["media"], "hold": segment.get("hold"),
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
-                "reverse": segment["reverse"] or None,
+                "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
+                "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
             })
             for segment in plan["segments"]
@@ -926,9 +975,18 @@ def _plan_view(
             for event in plan["overlays"]
         ],
         **_compact({"sounds": [
-            {"id": event["id"], "media": event["media"], **_times(event, "start", "end"), "keys": _keys_view({"volume": event["gain"]}, event["start"])}
+            {
+                "id": event["id"], "media": event["media"], **({"source": True} if event.get("source") else {}),
+                **_times(event, "start", "end"),
+                **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
+                **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
+                **({"duck": event["duck"], "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]]} if event.get("duck") is not None else {}),
+                **({"detached_from": event["detached_from"]} if event.get("detached_from") else {}),
+                **(_video_read(event, copied) if _retimed(event) else {}),
+            }
+            # A silent video's Segment and a Freeze frame have no sound.
             for event in plan["segments"] + plan["audio"]
-            if event["gain"]
+            if not event.get("silent") and event.get("hold") is None
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
     }
@@ -946,9 +1004,14 @@ def _animation_view(event: dict) -> dict:
     return animated | {"animation_ms": event["animation_ms"]} if animated else {}
 
 
+def _retimed(event: dict) -> bool:
+    """Whether a plan's sound event (a Music Clip's or an Overlay's) plays at a Speed or in Reverse."""
+    return "offset" in event and (event["speed"] != 1 or event["reverse"])
+
+
 def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
-    """What of its video an Overlay shows: seconds into it, its Speed and pitch when not the default,
-    and in Reverse whether its copy is made (`copied`)."""
+    """What of its video an Overlay shows, or of its song a sound plays: seconds into it, its Speed
+    and pitch when not the default, and in Reverse whether its copy is made (`copied`)."""
     read = {"media": event["media"], "source_start": event["offset"], "source_end": event["offset"] + (event["end"] - event["start"]) * event["speed"]}
     return _compact({
         "source_start": round(read["source_start"], 2), "source_end": round(read["source_end"], 2),

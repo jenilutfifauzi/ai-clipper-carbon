@@ -43,7 +43,7 @@ from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, Ren
 from app.renderer import Renderer, RenderStopped
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
-from app.segment_time import segment_time
+from app.segment_time import overlay_time, segment_time
 from app.storage import write_atomic
 from app.styles import PRESETS_FILE, PresetStore
 from app.transcript import Transcript
@@ -178,6 +178,29 @@ def transcript_words(transcript: Transcript, start: float, end: float, duration:
     ]
 
 
+def words_at_hand(
+    job_dir: Path, transcript: Transcript | None, start: float, end: float, duration: float, language: str, model: str
+) -> list[Word]:
+    """The Words of the Source from `start` to `end` (of `duration`) and CAPTION_MARGIN_SECS either
+    side, in seconds into that range, without transcribing: the Clip's own when saved for it
+    (`saved_words`), or else the Transcript's (`transcript_words`; none without one)."""
+    saved = saved_words(job_dir, start, end, language, model)
+    if saved is not None:
+        return saved
+    return transcript_words(transcript, start, end, duration) if transcript is not None else []
+
+
+def music_words(candidate: Candidate, words_of: Callable[[float, float], list[Word]]) -> dict[str, list[Word]]:
+    """The Words of each of the Candidate's Music Clips of the Source that is heard forwards, by its
+    id: those of its read (`words_of` a range of the Source), in seconds from its offset. They are
+    speech, which ducks the music (docs/adr/0016)."""
+    return {
+        clip.id: words_of(clip.offset, overlay_time(clip.offset, clip.secs, clip.speed).end)
+        for clip in candidate.music
+        if clip.media is None and not clip.muted and not clip.reverse
+    }
+
+
 def candidate_plan(
     candidate: Candidate,
     source: SourceMetadata,
@@ -187,6 +210,8 @@ def candidate_plan(
     camera: CameraTuning,
     logos: LogoStore | None = None,
     media: "MediaFinder | None" = None,
+    captioned: bool = True,
+    music: dict[str, list[Word]] | None = None,
 ) -> RenderPlan:
     """The Render Plan of the Candidate as it is: each of its Segments (`candidate.main_track()`) captioned
     with its `words` (None: no captions) and framed by its `analyses` (None: unanalysed, or a Source
@@ -195,7 +220,9 @@ def candidate_plan(
     songs of its music and the videos of its Segments from `media` (a video that isn't there is left
     out, and so is a Transition into or out of it). A video's Segment has no captions. Its Word Edits
     and Layout Overrides, on the Source's timeline, apply in every Segment that shows their time
-    (docs/adr/0002-segments-and-timeline-time.md).
+    (docs/adr/0002-segments-and-timeline-time.md). Not `captioned`, its `words` are heard but not
+    captioned: they and its Music Clips of the Source's (`music`, `music_words`) are speech, which
+    ducks its music (docs/adr/0016).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
@@ -212,6 +239,8 @@ def candidate_plan(
         source_volume=candidate.source_volume,
         overlays=candidate.overlays,
         media_info=_info(media, candidate.media_ids()),
+        captioned=captioned,
+        music_words=music,
     )
     if not candidate.segments:
         [analysis] = analyses
@@ -242,6 +271,7 @@ def candidate_plan(
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else [], join=join, keys=segment.keys, id=segment.id,
                 speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
+                fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted,
             ))
             continue
         # Its Scenes, faces and Layout Overrides are of its analysed range (a Freeze frame's is wider).
@@ -253,6 +283,7 @@ def candidate_plan(
             layout_overrides=[replace(o, at=round(o.at - start, 3)) for o in candidate.layout_overrides if start <= o.at <= end],
             words=None if words is None else words[i],
             volume=segment.volume,
+            keys=segment.keys,
             word_edits=[
                 replace(edit, at=round(edit.at - segment.start, 3))
                 for edit in candidate.word_edits
@@ -261,6 +292,7 @@ def candidate_plan(
             join=join,
             id=segment.id,
             speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
+            fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted,
             analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
@@ -490,15 +522,26 @@ class Renders:
 
         began = time.monotonic()
         try:
-            words = self._all_words(job, candidate, step(1 / 3)) if job.options.captions else None
+            # Without captions, the Words at hand are still heard: they duck the music (docs/adr/0016).
+            transcript, duration = self.store.load_transcript(job.id), job.source.metadata.duration
+            language, model = job.options.language, self.settings.whisper_model
+
+            def at_hand(start: float, end: float) -> list[Word]:
+                return words_at_hand(job_dir, transcript, start, end, duration, language, model)
+
+            words = self._all_words(job, candidate, step(1 / 3)) if job.options.captions else [
+                [] if segment.media is not None or segment.hold is not None or segment.reverse else at_hand(segment.start, segment.end)
+                for segment in candidate.main_track()
+            ]
             analyses = self._all_analyses(job, candidate, step(1 / 3))
             plan = candidate_plan(
-                candidate, job.source.metadata, words, analyses, self.presets, self.settings.camera, self.logos, self.media
+                candidate, job.source.metadata, words, analyses, self.presets, self.settings.camera, self.logos, self.media,
+                captioned=job.options.captions, music=music_words(candidate, at_hand),
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
             logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
             used = (
-                {event.media for event in plan.audio}
+                {event.media for event in plan.audio if event.media}
                 | {segment.media for segment in plan.segments if segment.media}
                 | {overlay.media for overlay in plan.overlays}
             )

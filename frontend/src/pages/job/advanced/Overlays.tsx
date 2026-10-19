@@ -9,7 +9,7 @@ import { Group } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
 import { tooManyKeys, writeKey } from "./keyActions";
-import { KeyedVolume, useKeyNotice, useTouch } from "./KeyCluster";
+import { KeyedVolume, MutedSwitch, useKeyNotice, useTouch } from "./KeyCluster";
 import { keyedGroup, resetOverlay } from "./keying";
 import { SpeedFields } from "./SpeedFields";
 import { MotionFields } from "./TextLayers";
@@ -21,11 +21,13 @@ const STILL_SECS = 3;
 
 /**
  * An Overlay of `item` at `at` (the playhead, or where it was dropped): placed as `overlayPlacement`
- * says (half the frame wide, in its upper middle); a video as long as it is (and fits).
+ * says (half the frame wide, in its upper middle); a video as long as it is (and fits), its sound at
+ * full volume and Muted, so that unmuting it gives its sound at once.
  */
 export function newOverlay(item: MediaItem, at: number, duration: number): Overlay {
   const length = item.duration ?? STILL_SECS;
   const start = Math.max(0, Math.min(at, duration - Math.min(length, duration)));
+  const sound = item.kind === "video" ? { volume: 1, muted: true } : { volume: 0 };
   return {
     id: newId(),
     media: item.id,
@@ -34,7 +36,7 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     offset: 0,
     transform: overlayPlacement(mediaSize(item)),
     crop: NO_CROP,
-    volume: 0,
+    ...sound,
     radius: 0,
     border: null,
     shadow: null,
@@ -153,16 +155,19 @@ export function OverlayFields({
       {video && (
         <Group title="Sound">
           {item?.has_audio ? (
-            <KeyedVolume
-              item={{ kind: "overlay", id: overlay.id }}
-              span={overlay}
-              keys={overlay.keys.volume ?? []}
-              volume={overlay.volume}
-              label="Its sound"
-              format={(v) => (v ? percent(v) : "Muted")}
-              playback={playback}
-              onChange={setVolume}
-            />
+            <>
+              <KeyedVolume
+                item={{ kind: "overlay", id: overlay.id }}
+                span={overlay}
+                keys={overlay.keys.volume ?? []}
+                volume={overlay.volume}
+                label="Its sound"
+                format={(v) => (overlay.muted ? `Muted · ${percent(v)}` : percent(v))}
+                playback={playback}
+                onChange={setVolume}
+              />
+              <MutedSwitch muted={overlay.muted ?? false} onChange={(muted) => onChange({ ...overlay, muted }, `overlay:${overlay.id}:muted`)} />
+            </>
           ) : (
             <p className="text-sm text-muted">This video has no sound.</p>
           )}

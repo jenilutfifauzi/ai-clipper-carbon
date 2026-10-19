@@ -6,7 +6,7 @@ import type { Share } from "./loudness";
 const CUT_SECS = 0.02;
 
 // A Transition's span in seconds into the Clip, and its sound (linear when left out).
-type Crossing = { start: number; end: number; sound?: TransitionSound };
+export type Crossing = { start: number; end: number; sound?: TransitionSound };
 
 /**
  * How loud each side of `transition` is heard `time` seconds into the Clip, as shares of its own

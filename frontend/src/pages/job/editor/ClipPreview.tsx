@@ -300,7 +300,7 @@ export function ClipPreview({
           onClose={() => setEditing(null)}
         />
       )}
-      <PreviewMusic plan={plan} playback={playback} masters={masters} />
+      <PreviewMusic plan={plan} playback={playback} masters={masters} src={src} jobId={jobId} />
     </div>
   );
   if (fit) {

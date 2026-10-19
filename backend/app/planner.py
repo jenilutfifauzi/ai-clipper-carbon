@@ -96,6 +96,8 @@ Keyframes counted from its Scene's start on the Source's timeline in every Segme
 (`_keyed_manual`). A Transition overlaps
 the Segments either side of a join by its length (at most half the shorter of them), so the Clip
 is that much shorter; each side's captions end or start at its middle. Its ends are cuts: no Scene crosses one, and a caption line breaks at one.
+Each Segment's sound is faded in from its start and out to its end (a Transition's overlap
+included), its fades fitted to its length as a Music Clip's are (`fades_within`).
 Everything else is planned over the whole Clip, in seconds into it.
 """
 
@@ -137,7 +139,8 @@ from app.candidates import (
     Transform,
     WordEdit,
 )
-from app.config import CameraTuning
+from app.config import CameraTuning, DuckTuning
+from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
 from app.fonts import DEFAULT_FONT, FALLBACK_FACE, on_change, registry
 from app.keyframes import value_at
@@ -305,6 +308,11 @@ class SegmentInput:
     analysed: tuple[float, float] | None = None
     # Whether its sound's pitch follows its Speed.
     pitch: bool = False
+    # Its sound's fades as set, in seconds (the plan fits them to its length).
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+    # Its sound switched silent (docs/adr/0016).
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -487,14 +495,20 @@ class WatermarkEvent:
 
 @dataclass(frozen=True)
 class AudioEvent:
-    """A Music Clip (or an Overlay video's sound) as heard: the Media Library item `media` from
-    `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`, faded in over
-    `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
+    """A Music Clip (or an Overlay video's sound) as heard: the Media Library item `media` (None: the
+    Source) from `offset` seconds into it, from `start` to `end` seconds into the Clip, at `volume`,
+    faded in over `fade_in` and out over `fade_out`. A keyed one's `gain` is its volume Keyframes (docs/adr/0008)
     in seconds from its start, which set its volume in place of `volume`; its fades multiply them
-    (`gain_at`). `id` is its item's. An Overlay's plays at its `speed` (docs/adr/0009), its pitch
-    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`."""
+    (`gain_at`). `id` is its item's. It plays at its `speed` (docs/adr/0009, 0016), its pitch
+    following it with `pitch`: (end − start) × speed of its item, backwards when `reverse`. A
+    `muted` one (docs/adr/0016) keeps its volume and Keyframes but isn't heard. With `source` it is
+    the Source's sound, which the Clip's own volume scales too (and stays so once `media` names the
+    Retimed copy it is read from). A ducked one (a Music Clip's with `duck`, docs/adr/0016) is turned
+    down by that many dB under the spans of `speech` that reach it (app/ducking.py), in seconds into
+    the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included, within it
+    (`ducked_stretches`). A Music Clip's Detached from a Segment names it (`detached_from`)."""
 
-    media: str
+    media: str | None
     start: float
     end: float
     offset: float
@@ -506,6 +520,12 @@ class AudioEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+    muted: bool = False
+    source: bool = False
+    duck: float | None = None
+    speech: list[Span] = field(default_factory=list)
+    ducked: list[Span] = field(default_factory=list)
+    detached_from: str | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -518,9 +538,9 @@ class SegmentPlan:
     """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
     `source_end`, at `speed`, forwards or in `reverse`, or its frame at `source_start` held for
     `hold` (docs/adr/0009), from `start` to `end` seconds into the Clip; a video's own sound at
-    `volume`, or none when it is `silent`. A keyed one's `gain` is its volume Keyframes
-    (docs/adr/0008), in seconds from its start, which set its volume in place of `volume`. `id` is
-    its Segment's."""
+    `volume`, or none when it is `silent`, faded in over `fade_in` and out over `fade_out`. A keyed
+    one's `gain` is its volume Keyframes (docs/adr/0008), in seconds from its start, which set its
+    volume in place of `volume`. `id` is its Segment's."""
 
     start: float
     end: float
@@ -541,6 +561,12 @@ class SegmentPlan:
     # The renderer's (app/retimed.py's `read_from_copies`): a Segment of the Source read from this
     # file of the render's, its Retimed copy, in place of the Source.
     read_from: str | None = None
+    # Fitted to its length (`fades_within`), from `start` and to `end`: under a Transition, they and
+    # its crossfade multiply.
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+    # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
+    muted: bool = False
 
     @property
     def time(self) -> SegmentTime:
@@ -849,6 +875,8 @@ class RenderPlan:
     transitions: list[TransitionEvent] = field(default_factory=list)
     # The Shapes that show, in drawing order, under the Text Layers.
     shapes: list[ShapeEvent] = field(default_factory=list)
+    # How its ducked sounds follow speech (docs/adr/0016): the render's and the preview's ramps.
+    ducking: DuckTuning = DuckTuning()
 
     @property
     def duration(self) -> float:
@@ -894,6 +922,9 @@ def plan_render(
     media_info: dict[str, MediaInfo] | None = None,
     framing: Framing | None = None,
     shapes: list[Shape] | None = None,
+    captioned: bool = True,
+    music_words: dict[str, list[Word]] | None = None,
+    ducking: DuckTuning = DuckTuning(),
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -909,7 +940,7 @@ def plan_render(
     Watermark is in `watermark_style`, its Logo `logo_size` pixels (None: no Logo, which shows none).
     `text_layers` and `shapes` (their times in seconds into the Clip) are drawn as `text_event` and
     `shape_event` place them, and `music` is heard as `audio_events` places it, given what
-    `media_info` says of its songs.
+    `media_info` says of its songs (and `source` of the Source, for its Music Clips of the Source).
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
     their items (whose videos' sound, when turned up, joins the music).
@@ -917,7 +948,11 @@ def plan_render(
     With `main_track` (each Segment's SegmentInput), the Clip is cut into those Segments, back to back (`start` and `end` being the hull
     of what they show) but for their Transitions, each framed and captioned from its own (ignoring
     `scenes`, `faces`, `layout_overrides`, `words` and `word_edits`); the other times are all in
-    seconds into the Clip."""
+    seconds into the Clip.
+
+    The Words (the Clip's, or each Segment's) are speech, which ducks the music (`_ducked`, by
+    `ducking`), with those of its Music Clips of the Source (`music_words`, by id); not `captioned`,
+    they are heard and not captioned."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     segments: list[SegmentPlan] = []
@@ -953,20 +988,27 @@ def plan_render(
             if given.media is not None:
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
+            fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold, given.pitch,
+                    fade_in=fade_in, fade_out=fade_out, muted=given.muted,
                 )
             )
             at, before = round(at + length, 3), length
         duration = at
         words, word_edits = _segment_words(main_track, segments, cuts, duration)
+        # Speech is the Source's, not a Muted Segment's (docs/adr/0016).
+        unheard = [given if given.media is None and not given.muted else replace(given, words=None) for given in main_track]
+        heard = _segment_words(unheard, segments, cuts, duration)[0] or []
         plans = _keyed_manual(_frozen(plans, stills, showings, source), showings, rate)
     else:
         duration = round(SegmentTime(start, end).length, 3)
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
         plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
+        heard = heard_words(words or [], 0.0, duration)
+    audio = audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {})
     return RenderPlan(
         start=start,
         end=end,
@@ -974,19 +1016,20 @@ def plan_render(
         source_height=source.height,
         fps=source.fps,
         scenes=plans,
-        captions=_captions(words or [], plans, duration, caption_style, word_edits or [], cuts),
+        captions=_captions((words or []) if captioned else [], plans, duration, caption_style, word_edits or [], cuts),
         hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
         watermark=watermark(watermark_style, logo_size),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
-        audio=audio_events(music or [], duration, media_info or {}) + overlay_sound(overlays or [], duration, media_info or {}),
+        audio=_ducked(audio, heard, music_words or {}, ducking),
         source_volume=source_volume,
         segments=segments,
         overlays=overlay_events(overlays or [], duration, media_info or {}),
         transitions=transitions,
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
+        ducking=ducking,
     )
 
 
@@ -1012,6 +1055,24 @@ def _segment_words(
                 words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
         edits += [replace(edit, at=round(time.offset_of(edit.at) + segment.start, 3)) for edit in given.word_edits]
     return words, sorted(edits, key=lambda edit: edit.at)
+
+
+def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, list[Word]], ducking: DuckTuning) -> list[AudioEvent]:
+    """The sounds, each ducked one with the spans of speech that reach it and where it is turned down
+    (app/ducking.py): `words`, the Source Segments' as heard, and the Words of each Music Clip of the
+    Source heard forwards and not Muted (`music_words`, by its id, in seconds from its offset), where it plays."""
+    if all(event.duck is None for event in audio):
+        return audio
+    said = list(words)
+    for event in audio:
+        if event.source and not event.muted and not event.reverse:
+            said += heard_words(music_words.get(event.id, []), event.start, event.end, event.speed)
+    spans = speech_spans(said, ducking)
+    return [
+        replace(event, speech=touching(spans, event.start, event.end, ducking), ducked=ducked_stretches(spans, event.start, event.end, ducking))
+        if event.duck is not None else event
+        for event in audio
+    ]
 
 
 def _framed(
@@ -1388,43 +1449,78 @@ def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
     return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
 
 
-def audio_events(music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"]) -> list[AudioEvent]:
-    """The Music Clips as heard in a Clip lasting `duration`, each cut where the Clip or its song
-    (whose length is in `items`) ends, its fades, when together they are longer than what is left,
-    both shortened by the same share to fit. This is the rule; the Timeline draws the fades by a copy
-    of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts), tested on the same worked
-    examples. One whose song is gone, or that would start at or after either end, isn't heard."""
+def fades_within(fade_in: float, fade_out: float, secs: float) -> tuple[float, float]:
+    """A sound's fades in a sound `secs` long: as set, or when together they are longer, both
+    shortened by the same share to fit. This is the rule, a Music Clip's and a Segment's; the
+    Timeline draws the fades by a copy of it (fadesWithin in frontend/src/pages/job/advanced/edits.ts),
+    tested on the same cases (tests/fixtures/gain_vectors.json)."""
+    share = min(1.0, secs / ((fade_in + fade_out) or 1.0))
+    return round(fade_in * share, 3), round(fade_out * share, 3)
+
+
+def audio_events(
+    music: list[MusicClip], duration: float, items: dict[str, "MediaInfo"], source: float = math.inf
+) -> list[AudioEvent]:
+    """The Music Clips as heard in a Clip lasting `duration`, each at its Speed, forwards or in
+    Reverse, and cut where the Clip or its song (whose length is in `items`; the Source's, `source`)
+    ends, as an Overlay's sound is (`overlay_time`: in Reverse, a cut at the Clip's end leaves out
+    the start of its part, so its `offset` begins later); its fades fitted to what is left
+    (`fades_within`). One whose song is gone, or that would start at or after either end, isn't heard."""
     events = []
     for clip in music:
-        item = items.get(clip.media)
-        length = item.duration if item is not None else None
+        item = items.get(clip.media) if clip.media is not None else None
+        length = source if clip.media is None else (item.duration if item is not None else None)
         start = round(clip.start, 3)
         if length is None or start >= duration or clip.offset >= length:
             continue
-        end = round(min(start + clip.secs, duration, start + length - clip.offset), 3)
-        share = min(1.0, (end - start) / ((clip.fade_in + clip.fade_out) or 1.0))
+        time = overlay_time(clip.offset, clip.secs, clip.speed, clip.reverse, length, duration - start)
+        end = round(start + time.length, 3)
+        fade_in, fade_out = fades_within(clip.fade_in, clip.fade_out, end - start)
         events.append(
             AudioEvent(
-                clip.media, start, end, round(clip.offset, 3), clip.volume, round(clip.fade_in * share, 3),
-                round(clip.fade_out * share, 3), clip.keys.get(KeyProperty.VOLUME, []), clip.id,
+                clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
+                clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
+                clip.media is None, clip.duck, detached_from=clip.detached_from,
             )
         )
     return events
 
 
-def gain_at(event: AudioEvent, time: float) -> float:
-    """How loud `event` is heard `time` seconds into the Clip: its volume, or its Keyframes sampled
-    there (app/keyframes.py), through its fades' linear ramps; silent outside it. The same rule as
-    the preview's (loudness in frontend/src/pages/job/editor/PreviewMusic.tsx)."""
+def gain_at(
+    event: AudioEvent | SegmentPlan,
+    time: float,
+    ducking: DuckTuning = DuckTuning(),
+    source_volume: float = 1.0,
+    crossfade: TransitionEvent | None = None,
+) -> float:
+    """How loud `event` (a Music Clip's or an Overlay's sound, or a Segment's) is heard `time` seconds
+    into the Clip: its volume, or its Keyframes sampled there (app/keyframes.py), the Source's times
+    the Clip's own volume (`source_volume`, `own_volume`), through its fades' linear ramps, and a
+    ducked one's duck under its speech (`duck_at`, by its plan's `ducking`); silent outside it, and
+    Muted. A Segment taken away by the Transition into the next (`crossfade`) falls from 1 to 0 over
+    it too, as the render's acrossfade does (its default curves are straight lines). The same rule as
+    the preview's (loudness in frontend/src/pages/job/editor/loudness.ts): both are tested on the
+    cases in tests/fixtures/gain_vectors.json, so that they can't drift (ADR 0001)."""
     into = time - event.start
-    if into < 0 or time > event.end:
+    if into < 0 or time > event.end or event.muted:
         return 0.0
     share = 1.0
     if event.fade_in > 0:
         share = min(share, into / event.fade_in)
     if event.fade_out > 0:
         share = min(share, (event.end - time) / event.fade_out)
-    return value_at(event.gain, into, event.volume) * min(max(share, 0.0), 1.0)
+    taken = (crossfade.end - time) / (crossfade.end - crossfade.start) if crossfade and time > crossfade.start else 1.0
+    ducked = duck_at(event.speech, event.duck, time, ducking) if isinstance(event, AudioEvent) and event.duck is not None else 1.0
+    level = value_at(event.gain, into, event.volume) * own_volume(event, source_volume)
+    return level * min(max(share, 0.0), 1.0) * min(max(taken, 0.0), 1.0) * ducked
+
+
+def own_volume(event: AudioEvent | SegmentPlan, source_volume: float) -> float:
+    """What the Clip's own volume (`source_volume`) scales `event` by: all of it for the Source's
+    sound (a Source Segment's, a Music Clip of the Source's), after its volume or Keyframes; 1 for
+    any other."""
+    source = event.source if isinstance(event, AudioEvent) else event.media is None
+    return source_volume if source else 1.0
 
 
 def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[OverlayEvent]:
@@ -1434,7 +1530,7 @@ def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, Me
 
 def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[AudioEvent]:
     """The sound of the Overlays' videos that are turned up, or keyed, heard as Music Clips are, while
-    they show."""
+    they show (a Muted one's too, which isn't heard)."""
     sounds = []
     for overlay in overlays:
         event = _overlay_event(overlay, duration, items)
@@ -1443,7 +1539,8 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
             continue
         sounds.append(
             AudioEvent(
-                overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse
+                overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse,
+                overlay.muted,
             )
         )
     return sounds

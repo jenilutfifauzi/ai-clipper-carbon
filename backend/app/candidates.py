@@ -80,9 +80,15 @@ class WordEdit:
 MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
 Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
+# How long a sound's linear fade in or out lasts, in seconds.
+Fade = Annotated[FiniteFloat, Field(ge=0, le=10)]
 # A Speed (docs/adr/0009): how many seconds of its range an item plays in one on the Timeline.
 MIN_SPEED, MAX_SPEED = 0.0625, 16.0
 Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
+# How far a Music Clip is turned down while speech is heard (Ducking, docs/adr/0016), in dB; and how
+# far a song's added from now on is, unless the edit says (app/review.py).
+Duck = Annotated[FiniteFloat, Field(ge=-30, le=-1)]
+DEFAULT_DUCK = -12.0
 
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
@@ -514,22 +520,43 @@ class Shadow:
 
 @dataclass(frozen=True)
 class MusicClip:
-    """A song (or a video's sound) from the Media Library under the Clip: `secs` of it from `offset`
-    seconds into the file, heard from `start`, in Timeline time, at `volume`, faded in and out over
-    `fade_in` and `fade_out` seconds. Its `keys` shape its volume over its length (docs/adr/0008):
-    with volume Keyframes, they set it, not `volume`, and the fades multiply them."""
+    """A song (or a video's sound) from the Media Library under the Clip, or without `media` the
+    Source's sound, heard from `start` for `secs` in Timeline time: secs * speed of it from `offset`
+    seconds in, at `volume` (its volume `keys` in place of it), faded in and out, ducked under speech
+    by `duck` dB (docs/adr/0008, 0016)."""
+    # Its read is kept within its file with the Media Library at hand (app/api.py), or within the
+    # Source (app/review.py), and its fades multiply its keys. The Source's is also at the Clip's
+    # own volume (`source_volume`), as a Segment of it is; `offset` is then a time on its timeline.
 
     id: ItemId
-    media: MediaId
+    media: MediaId | None = field(default=None, kw_only=True)
     start: TimelineStart
     secs: TimelineSecs
     offset: FileOffset = 0.0
     volume: Volume = 1.0
-    fade_in: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
-    fade_out: Annotated[FiniteFloat, Field(ge=0, le=10)] = 0.0
+    # Its pitch kept unless `pitch`; backwards, from a Retimed copy, with `reverse`, `offset` then
+    # being where it ends in the file.
+    speed: Speed = 1.0
+    pitch: bool = False
+    reverse: bool = False
+    fade_in: Fade = 0.0
+    fade_out: Fade = 0.0
     keys: Keys = field(default_factory=dict)
+    # Switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
+    muted: bool = False
+    # Turned down by this many dB while speech is heard (docs/adr/0016); None: not ducked. The
+    # Source's sound is speech itself, and is never ducked.
+    duck: Duck | None = None
+    # The Segment whose sound was Detached onto it (docs/adr/0016), which Reattach finds it by: it
+    # names one of the Candidate's when it is added or changed (app/review.py).
+    detached_from: ItemId | None = None
 
     def __post_init__(self) -> None:
+        if isinstance(self.start, str):
+            # `media` is given by name (it may be left out): MusicClip(id, start, secs, media=...).
+            raise TypeError(f"Music Clip {self.id} was given its media in place of its start")
+        if self.media is None and self.duck is not None:
+            raise ValueError(f"Music Clip {self.id} plays the episode's sound, which is never ducked: it has no duck")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
 
 
@@ -566,6 +593,8 @@ class Overlay:
     animation_in: Animation = Animation.NONE
     animation_out: Animation = Animation.NONE
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
+    # A video's sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
+    muted: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
@@ -629,7 +658,8 @@ class Segment:
     to `end` on its timeline, snapped to Words as a Clip's edges are; or, with `media`, a video from
     the Media Library from `start` to `end` seconds into it, placed by its `framing` (which only it
     has: the Source is framed by its Layouts), its own sound at `volume`. A Clip's Segments play in
-    order, back to back. `id` names it in the editor. A video's Segment may have `keys` (docs/adr/0008).
+    order, back to back. `id` names it in the editor. It may have `keys` (docs/adr/0008): a video's
+    Segment for its Framing and sound, a Segment of the Source for its sound only.
     With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent."""
 
     id: ItemId
@@ -645,14 +675,20 @@ class Segment:
     reverse: bool = False
     # They move its Framing's centre, scale, rotation and opacity, and shape its sound's volume,
     # over its length, each `at` in seconds from its start (where it starts on the Timeline, which
-    # is `start` seconds into its video). A Segment of the Source has none: its Layouts frame it.
+    # is `start` seconds into its video). A Segment of the Source has only volume ones: its Layouts frame it.
     keys: Keys = field(default_factory=dict)
     # A Freeze frame's (docs/adr/0009): how long it holds the frame at `start`, silent; `end` is `start`.
     hold: TimelineSecs | None = None
+    # Its sound faded in from its start on the Timeline and out to its end (a Transition's overlap
+    # included), linearly, as a Music Clip's; the planner fits them to its length. A Freeze frame has none.
+    fade_in: Fade = 0.0
+    fade_out: Fade = 0.0
+    # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
+    muted: bool = False
 
     def __post_init__(self) -> None:
-        if self.media is None and any(self.keys.values()):
-            raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
+        if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
+            raise ValueError(f"Segment {self.id} shows the episode, whose Layouts frame it: it has no {framed} Keyframes, only volume ones")
         if self.hold is not None:
             _check_held(self)
         length = segment_time(self).length
@@ -661,13 +697,15 @@ class Segment:
 
 def _check_held(segment: Segment) -> None:
     """ValueError unless a Freeze frame's other fields are a held frame's: its `end` at its `start`,
-    at 1x, forwards, and no volume Keyframes (it is silent)."""
+    at 1x, forwards, and no volume Keyframes nor fades (it is silent)."""
     if segment.end != segment.start:
         raise ValueError(f"Segment {segment.id} holds the frame at its start for {segment.hold:g} s: its end must equal its start")
     if segment.speed != 1 or segment.pitch or segment.reverse:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold): it has no Speed, pitch or Reverse")
     if KeyProperty.VOLUME in segment.keys:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no volume Keyframes")
+    if segment.fade_in or segment.fade_out:
+        raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no fades")
 
 
 @dataclass(frozen=True)
@@ -788,7 +826,7 @@ class Candidate:
     def media_ids(self) -> set[str]:
         """The Media Library items it uses."""
         return (
-            {clip.media for clip in self.music}
+            {clip.media for clip in self.music if clip.media}
             | {segment.media for segment in self.segments if segment.media}
             | {overlay.media for overlay in self.overlays}
         )

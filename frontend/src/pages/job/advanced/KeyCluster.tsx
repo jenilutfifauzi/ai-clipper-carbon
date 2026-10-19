@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Diamond } from "lucide-react";
 import { createContext, useContext, useRef } from "react";
 import type { Keyframe, KeyProperty } from "../../../api";
 import { Slider } from "../../../components/Slider";
+import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
 import { valueAt } from "../editor/keyframes";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -126,7 +127,7 @@ function Cluster({ keying, item, property, label }: { keying: Keying; item: Keye
 }
 
 /**
- * A keyable volume's slider (a Music Clip's, an Overlay video's or a video Segment's sound, `item`
+ * A keyable volume's slider (a Music Clip's, an Overlay video's or a Segment's sound, `item`
  * playing over `span`): its value at the playhead (at the item's nearer end outside it), from its
  * Keyframes `keys` or its constant `volume`, with its ‹ ◆ ›; off outside the item once it is keyed.
  * `onChange` gets the playhead in the item's own seconds there (null outside it), where a keyed
@@ -165,5 +166,22 @@ export function KeyedVolume({
       after={<KeyCluster item={item} property="volume" label={label} />}
       disabled={!!keys.length && at === null}
     />
+  );
+}
+
+/**
+ * The Muted switch beside a sound's volume (a Segment's, a Music Clip's or a video Overlay's): what M
+ * does to the Pick, for this one item. Muted, it keeps its volume, Keyframes and fades.
+ */
+export function MutedSwitch({ muted, onChange }: { muted: boolean; onChange: (muted: boolean) => void }) {
+  return (
+    <Switch checked={muted} onChange={onChange}>
+      <span className="flex flex-1 items-center justify-between gap-2 text-sm font-medium">
+        Muted
+        <kbd aria-hidden className="raised min-w-6 rounded-md px-1.5 py-0.5 text-center font-sans text-xs text-muted in-data-sheet:hidden">
+          M
+        </kbd>
+      </span>
+    </Switch>
   );
 }

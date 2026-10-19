@@ -1,26 +1,27 @@
 import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, type AudioEvent, type RenderPlan } from "../../../api";
 import { follow, MAX_DRIFT_SECS } from "./follow";
-import { CURVE_RATE, loudness, loudnessCurve, type Share } from "./loudness";
-import type { Playback } from "./playback";
-import { eventCopy, eventPlay, useRetimedCopies } from "./retimedCopy";
+import { changing, CURVE_RATE, eventSound, loudness, loudnessCurve, segmentSound, type Heard, type Share } from "./loudness";
+import { masterBus } from "./masterBus";
+import { onOwnVideos, type Playback, type PlayedSegment } from "./playback";
+import { eventPlay, soundAsk, useRetimedCopies } from "./retimedCopy";
 import { broughtIn } from "./transitionSound";
 
 let context: AudioContext | null = null;
 
-// The page's AudioContext, made on first need. A browser starts it suspended until a click or a key
-// press, so it is resumed on every one.
+// The page's AudioContext, made on first need. A browser starts it suspended until a click, a tap or a
+// key press, so it is resumed on every one: a mouse's pointerdown, or a touch's pointerup (a touch
+// grants user activation only as it lifts, so a phone's first tap on Play would leave it silent).
 function audioContext(): AudioContext | null {
   if (context || typeof AudioContext === "undefined") return context;
   context = new AudioContext();
   const resume = () => void context?.resume();
-  window.addEventListener("pointerdown", resume, true);
-  window.addEventListener("keydown", resume, true);
+  for (const type of ["pointerdown", "pointerup", "keydown"]) window.addEventListener(type, resume, true);
   return context;
 }
 
-// What each element of the page plays through, once it does: a media element can be routed through
-// Web Audio only once.
+// What each element of the page plays through, once it does, into the master bus: a media element can
+// be routed through Web Audio only once.
 const gains = new WeakMap<HTMLMediaElement, GainNode>();
 
 function gainOf(element: HTMLMediaElement): GainNode | null {
@@ -29,7 +30,7 @@ function gainOf(element: HTMLMediaElement): GainNode | null {
   const audio = audioContext();
   if (!audio) return null;
   const gain = audio.createGain();
-  audio.createMediaElementSource(element).connect(gain).connect(audio.destination);
+  audio.createMediaElementSource(element).connect(gain).connect(masterBus(audio).input);
   gains.set(element, gain);
   return gain;
 }
@@ -46,24 +47,24 @@ export function setVolume(element: HTMLMediaElement, volume: number) {
 
 // The curve each gain node follows, while it does: of `event`, scheduled when the Clip's time was
 // `from` and the AudioContext's `at`, at the playback's `rate`.
-const curves = new WeakMap<GainNode, { event: AudioEvent; from: number; at: number; rate: number }>();
+const curves = new WeakMap<GainNode, { event: Heard; from: number; at: number; rate: number }>();
 
 function unschedule(gain: GainNode) {
   if (curves.delete(gain)) gain.gain.cancelScheduledValues(0);
 }
 
 /**
- * Sets how loud a keyed sound's `element` plays at the playback's time: while playing, through Web
+ * Sets how loud a keyed or faded sound's `element` plays at the playback's time: while playing, through Web
  * Audio, as a curve sampled from the playhead to its end (loudnessCurve), set on play, on every seek
  * (when the time is further than MAX_DRIFT_SECS from where the curve has got to), at a new rate and
- * for a new `event` (another object); otherwise its loudness there. A Music Clip's, an Overlay
- * video's, and a video Segment's (PreviewSegments.tsx, as an event of its own, `crossed` by its
- * Transitions).
+ * for a new `event` (another object); otherwise its loudness there. A Muted one follows no curve: it
+ * is held at 0. A Music Clip's, an Overlay video's, and a Segment's (`segmentSound`): on the decks'
+ * masters, or on its own videos (PreviewSegments.tsx), `crossed` by the Transition bringing it in.
  */
-export function followCurve(element: HTMLMediaElement, playback: Playback, event: AudioEvent, crossed?: Share) {
+export function followCurve(element: HTMLMediaElement, playback: Playback, event: Heard, crossed?: Share) {
   const time = playback.shownTime;
   const gain = gainOf(element);
-  if (!gain || !context || context.state !== "running" || !playback.playing) {
+  if (!gain || !context || context.state !== "running" || !playback.playing || event.muted) {
     setVolume(element, loudness(event, time, crossed));
     return;
   }
@@ -80,53 +81,74 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * The plan's music, heard in step with the preview's playback: an <audio> per Music Clip (and Overlay
  * video's sound, at its Speed and pitch), playing its part of its song while the Clip's time is in it, at its volume (a keyed one's Keyframes, as a
  * curve) through its fades. An Overlay's sound in Reverse or at a Speed a browser won't play is its Retimed copy's
- * (retimedCopy.ts), silent until the copy is made. The Clip's own sound (each deck's master video, heard while its deck is
- * live) is set to the plan's `source_volume`, times the Segment's own volume, and within a
- * Transition its share as the side brought in (transitionSound.ts). Nothing is routed through Web
- * Audio until the plan has music, another volume or a Transition.
+ * (retimedCopy.ts), silent until the copy is made. A Music Clip of the Source plays the Source's `src` (the decks'
+ * proxy) or its Retimed copy (of Job `jobId`), at the plan's `source_volume` too (`eventSound`). The Clip's own sound
+ * (each deck's master video, heard while its deck is live) is set to the plan's `source_volume`, times the Segment's
+ * own volume (a keyed one's Keyframes, as a curve), through its fades, and within a Transition its share as the side
+ * brought in (transitionSound.ts), or held at 0 while it is Muted, as a Muted
+ * Music Clip or Overlay sound is (`loudness`). A ducked Music Clip follows its curve, its duck included. Every element is heard through Web Audio and its master bus
+ * (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
   plan,
   playback,
   masters,
+  src,
+  jobId,
 }: {
   plan: RenderPlan | null;
   playback: Playback;
   masters: React.RefObject<HTMLVideoElement | null>[];
+  src: string;
+  jobId: string;
 }) {
   const players = useRef(new Map<string, HTMLAudioElement>());
   const events = useMemo(() => plan?.audio ?? [], [plan]);
   const transitions = useMemo(() => plan?.transitions ?? [], [plan]);
+  // A Segment's share as the side a Transition brings in.
+  const brought = useMemo<Share>(() => (time) => broughtIn(transitions, time), [transitions]);
   const sourceVolume = plan?.source_volume ?? 1;
-  const copies = useRetimedCopies(
-    events.map((event) => {
-      const range = eventCopy(event);
-      return range && { media: event.media, range };
-    }),
-  );
-  const played = events.map((event, i) => eventPlay(event, mediaItemUrl(event.media), copies[i]));
+  // As heard: a Music Clip of the Source's at the Clip's own sound too.
+  // A ducked one with the plan's ramps.
+  const ducking = plan?.ducking;
+  const sounds = useMemo(() => events.map((event) => eventSound(event, sourceVolume, ducking)), [events, sourceVolume, ducking]);
+  // The Segments' sounds as planned (their fades fitted, each to its end past a Transition's start),
+  // which the decks' masters play while the plan has the Segments the playback plays.
+  const planned = useMemo(() => plan?.segments.map((segment) => segmentSound(segment, plan.source_volume)) ?? [], [plan]);
+  const copies = useRetimedCopies(events.map((event) => soundAsk(event, jobId)));
+  const played = events.map((event, i) => eventPlay(event, event.media ? mediaItemUrl(event.media) : src, copies[i]));
   // Followed on each tick as they are now, and at once when a copy comes.
   const plays = useRef(played);
   plays.current = played;
   const sources = played.map((play) => play.src).join(" ");
 
   useEffect(() => {
+    // Otherwise each Source Segment's sound as drafted (keyed, unfaded), made once while it is shown,
+    // so that its curve isn't set again.
+    const drafted = new WeakMap<PlayedSegment, Heard>();
+    const soundOf = (shown: PlayedSegment) => drafted.get(shown) ?? drafted.set(shown, segmentSound(shown, sourceVolume)).get(shown)!;
     const sync = () => {
-      // A skim's snippet is heard at the skimmed Segment's volume; within a Transition, as the side it brings in.
-      const shown = playback.segments[playback.shownSegmentIndex];
-      const volume = sourceVolume * (shown.media ? 1 : (shown.volume ?? 1)) * broughtIn(transitions, playback.shownTime);
-      for (const { current: video } of masters) if (video && (volume !== 1 || gains.has(video))) setVolume(video, volume);
-      events.forEach((event, i) => {
-        const element = players.current.get(key(event, i));
+      // A skim's snippet is heard at the skimmed Segment's volume, and through its fades; a Muted one's
+      // not at all; within a Transition, as the side it brings in.
+      const index = playback.shownSegmentIndex;
+      const shown = playback.segments[index];
+      const sound = onOwnVideos(shown) ? null : planned.length === playback.segments.length ? planned[index] : soundOf(shown);
+      const volume = shown.muted ? 0 : sourceVolume * (shown.media ? 1 : (shown.volume ?? 1)) * brought(playback.shownTime);
+      for (const { current: video } of masters) {
+        if (video && sound && changing(sound)) followCurve(video, playback, sound, brought);
+        else if (video) setVolume(video, volume);
+      }
+      sounds.forEach((sound, i) => {
+        const element = players.current.get(key(sound, i));
         if (element && follow(element, playback, plays.current[i].span)) {
-          if (event.gain.length) followCurve(element, playback, event);
-          else setVolume(element, loudness(event, playback.shownTime));
+          if (changing(sound)) followCurve(element, playback, sound);
+          else setVolume(element, loudness(sound, playback.shownTime));
         }
       });
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, events, transitions, masters, sourceVolume, sources]);
+  }, [playback, sounds, masters, sourceVolume, planned, sources, brought]);
 
   return (
     <>
@@ -146,4 +168,4 @@ export function PreviewMusic({
   );
 }
 
-const key = (event: AudioEvent, i: number) => `${i}:${event.media}`;
+const key = (event: AudioEvent, i: number) => `${i}:${event.media ?? "source"}`;
