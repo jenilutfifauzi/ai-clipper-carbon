@@ -43,6 +43,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
@@ -133,6 +134,7 @@ import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
+import { Downloads } from "./Downloads";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
@@ -422,13 +424,26 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     onDeleted: () => end("deleted"),
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
-  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // Counted up to plan again while a media Segment's Media Words are being transcribed.
+  const [replan, setReplan] = useState(0);
+  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), `${job.status} ${replan}`);
+  useReplanWhilePending(preview?.words_status, setReplan);
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
   const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
   useEffect(() => {
     if (pick !== pickState) setPickState(pick);
   }, [pick, pickState]);
+  // The clip as saved, prepared when this editor opens and when a video is added to its Main Track
+  // (placed or pasted): its Source Segments transcribed and analysed, and its videos' Media Words
+  // transcribed, in the render queue, so that its preview shows their own captions.
+  const savedVideos = [...new Set(candidate.segments.flatMap((segment) => (segment.media ? [segment.media] : [])))].sort().join(" ");
+  useEffect(() => {
+    api.prepareCandidate(job.id, candidate.id).then(
+      () => setReplan((n) => n + 1),
+      () => {},
+    );
+  }, [job.id, candidate.id, savedVideos]);
   // The plan as the player draws it, the hidden Tracks left out.
   const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
   const playback = useMemo(() => new Playback(), []);
@@ -990,6 +1005,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           edits={edits}
           pick={pick}
           played={played}
+          pending={pendingSpans(played, edits.segments, preview?.words_status)}
           playback={playback}
           mediaById={mediaById}
           mediaCache={mediaCache}
@@ -1138,6 +1154,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         actions={
           <>
             {layoutControls}
+            {job.options.captions && (
+              <Downloads jobId={job.id} candidateId={initial.id} title={candidate.title} saving={saving > 0} />
+            )}
             <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
           </>
         }

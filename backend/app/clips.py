@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
+from app.caption_files import CaptionFormat
 from app.candidates import Framing, Layout, LayoutOverride, MusicClip, Overlay, Segment, Shape, TextLayer, Transition, WordEdit
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
@@ -65,6 +66,10 @@ class RenderedClip:
     # The Candidate's Revision it was rendered from: stale once the Candidate's differs (ADR 0003).
     # None in a Clip rendered before Revisions, which is compared by the fields above.
     revision: int | None = None
+    # Its caption files (app/caption_files.py), relative to the Job's directory, beside the MP4; None
+    # for a Job with captions off, and in a Clip rendered before caption files.
+    srt: str | None = None
+    vtt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,3 +88,8 @@ def clip_files(candidate_id: str) -> tuple[str, str, str]:
     """A Candidate's Clip files, relative to the Job's directory: the MP4, the poster and the Render Plan."""
     stem = f"{CLIPS_DIR}/{candidate_id}"
     return f"{stem}.mp4", f"{stem}.jpg", f"{stem}.plan.json"
+
+
+def caption_paths(candidate_id: str) -> dict[CaptionFormat, str]:
+    """A Candidate's Clip's caption files, relative to the Job's directory, beside its MP4."""
+    return {format: f"{CLIPS_DIR}/{candidate_id}.{format}" for format in CaptionFormat}

@@ -834,11 +834,18 @@ export interface PreviewWord extends Word {
   at: number;
 }
 
+// Where a Segment's caption Words come from: "clip", transcribed for a Source Segment's range;
+// "transcript", the episode's until it is; "media", a video's Media Words; "pending", while they are
+// transcribed; "none" (a Freeze frame, Reverse, a silent video, or captions off).
+export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "none";
+
 export interface PreviewPlan {
   plan: RenderPlan;
   words: PreviewWord[];
   // "clip": transcribed for the Clip; "transcript": the episode's, until it is.
   words_source: "clip" | "transcript";
+  // Each Segment's, by its id.
+  words_status: Record<string, WordsStatus>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
 }
@@ -1081,9 +1088,17 @@ export interface RenderedClip {
   transitions: Transition[];
   // The Candidate's Revision it was rendered from; null in a Clip rendered before Revisions.
   revision: number | null;
+  // Its caption files, beside the MP4; null for a Job with captions off, and in a Clip rendered
+  // before caption files.
+  srt: string | null;
+  vtt: string | null;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
+
+// A caption file's format (backend/app/caption_files.py): one subtitle cue per Cue, in the Words'
+// own case, with the Word Edits.
+export type CaptionFormat = "srt" | "vtt";
 
 export interface Clip {
   candidate_id: string;
@@ -1131,6 +1146,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await send(path, init);
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+// The API's answer to a request, or an ApiError with its reason for refusing it.
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`/api${path}`, {
     ...init,
     headers: {
@@ -1143,7 +1164,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const [message, detail] = await errorMessage(response);
     throw new ApiError(response.status, message, detail);
   }
-  return (response.status === 204 ? undefined : await response.json()) as T;
+  return response;
 }
 
 // The Candidate as it is now, when a save was refused for being made from an older Revision.
@@ -1225,6 +1246,10 @@ export const api = {
     }),
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
+  // The Candidate's captions as an SRT or VTT file, from its saved state, without a render. Rejects
+  // (409) for a Job with captions off, and while a captioned Segment's Words are still being transcribed.
+  captionFile: (jobId: string, id: string, format: CaptionFormat) =>
+    send(`/jobs/${jobId}/candidates/${id}/captions/${format}`).then((response) => response.text()),
   listPresets: () => request<StylePreset[]>("/presets"),
   createPreset: (preset: NewPreset) => request<StylePreset>("/presets", { method: "POST", body: JSON.stringify(preset) }),
   updatePreset: (id: string, preset: NewPreset) =>

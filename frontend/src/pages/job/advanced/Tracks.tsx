@@ -99,6 +99,7 @@ export function Tracks({
   edits,
   pick,
   played,
+  pending = [],
   playback,
   mediaById,
   mediaCache,
@@ -116,6 +117,8 @@ export function Tracks({
   pick: Pick;
   // The Main Track as it plays: snapped to Words once the plan has it, cut short at Transitions.
   played: PlayedSegment[];
+  // Where the Segments whose captions are on their way play (their Media Words being transcribed).
+  pending?: { id: string; start: number; end: number }[];
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
   mediaById: Map<string, MediaItem>;
@@ -376,6 +379,7 @@ export function Tracks({
               </span>
               <RetimingBadge retiming={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
+              {pending.some((span) => span.id === segment.id) && <TranscribingBadge />}
             </TimelineItem>
           );
         })}
@@ -436,6 +440,19 @@ export function Tracks({
         dimmed={dimmed("captions")}
         locked={locked("captions")}
       >
+        {/* Over a Segment whose captions are on their way. */}
+        {pending.map((span) => (
+          <div
+            key={span.id}
+            title="Transcribing this video for its captions"
+            className="pointer-events-none absolute inset-y-1 rounded ring-1 ring-border"
+            style={{
+              left: span.start * pps,
+              width: Math.max(2, (span.end - span.start) * pps - 1),
+              backgroundImage: "repeating-linear-gradient(135deg, var(--color-fill) 0 4px, transparent 4px 8px)",
+            }}
+          />
+        ))}
         {plan &&
           shownCues(plan).map(({ cue, shown }) => {
             const selected = pick?.kind === "cue" && sameCue(pick.key, cue.key);
@@ -585,6 +602,15 @@ function RetimingBadge({ retiming: { speed = 1, reverse } }: { retiming: Retimin
   return (
     <span aria-hidden className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white tabular-nums">
       {[reverse && "◀", speed !== 1 && speedLabel(speed)].filter(Boolean).join(" ")}
+    </span>
+  );
+}
+
+/** A media Segment's badge while its Media Words are being transcribed. */
+function TranscribingBadge() {
+  return (
+    <span role="status" className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white">
+      Transcribing…
     </span>
   );
 }
