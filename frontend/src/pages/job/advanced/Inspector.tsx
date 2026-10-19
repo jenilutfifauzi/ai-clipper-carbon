@@ -21,6 +21,7 @@ import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, sameCue, type ItemKind, type Pick } from "./pick";
 import { cueOf, resetCueTiming } from "./cueEdits";
+import { CuePlaceFields } from "./CuePlaceFields";
 import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
@@ -339,6 +340,7 @@ function CueFields({
         <RotateCcw aria-hidden size={16} />
         Reset timing
       </Button>
+      <CuePlaceFields cueKey={cueKey} edits={edits} plan={plan} onEdits={onEdits} />
     </div>
   );
 }

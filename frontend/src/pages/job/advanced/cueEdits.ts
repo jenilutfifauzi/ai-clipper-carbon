@@ -85,11 +85,14 @@ export function cueEditOf(edits: CueEdit[], plan: RenderPlan, key: CueKey): CueE
 // Seconds of a Cue Edit, to the millisecond, as far as it may go.
 const secs = (value: number) => Math.round(Math.min(Math.max(value, -CUE_SHIFT_MAX_SECS), CUE_SHIFT_MAX_SECS) * 1000) / 1000;
 
+// Whether a Cue Edit retimes its Cue, or places or sizes it (cuePlace.ts).
+const timed = (edit: CueEdit) => edit.shift !== 0 || edit.start_delta !== 0 || edit.end_delta !== 0;
+export const placed = (edit: CueEdit) => edit.x != null || edit.y != null || edit.scale != null;
 // A Cue Edit that changes nothing of its Cue: what is left once its fields are reset.
-const empty = (edit: CueEdit) => edit.shift === 0 && edit.start_delta === 0 && edit.end_delta === 0;
+export const empty = (edit: CueEdit) => !timed(edit) && !placed(edit);
 
 /** `edits` with the Cue Edit `before` (or, when it is null, none) changed to `after` (or dropped, when it is null). */
-function withCueEdit(edits: AdvancedEdits, before: CueEdit | null, after: CueEdit | null): AdvancedEdits {
+export function withCueEdit(edits: AdvancedEdits, before: CueEdit | null, after: CueEdit | null): AdvancedEdits {
   const kept = edits.cue_edits.filter((edit) => edit !== before);
   return { ...edits, cue_edits: after ? [...kept, after].sort((a, b) => (a.media ?? "").localeCompare(b.media ?? "") || a.at - b.at) : kept };
 }
@@ -146,7 +149,7 @@ export function resetCueTiming(scene: CueScene, key: CueKey): Outcome | null {
   const { edits, plan } = scene;
   if (scene.locked?.includes("captions") || !plan) return null;
   const current = cueEditOf(edits.cue_edits, plan, key);
-  if (!current || empty(current)) return null;
-  const reset = { ...current, shift: 0, start_delta: 0, end_delta: 0 };
+  if (!current || !timed(current)) return null;
+  const reset ={ ...current, shift: 0, start_delta: 0, end_delta: 0 };
   return { edits: withCueEdit(edits, current, empty(reset) ? null : reset), pick: { kind: "cue", key } };
 }

@@ -39,6 +39,8 @@ from app.api import (
     no_old_text_layers,
 )
 from app.candidates import (
+    CUE_MAX_SCALE,
+    CUE_MIN_SCALE,
     KICKER_MAX_CHARS,
     SWITCHED_THICKNESS,
     Ease,
@@ -197,7 +199,10 @@ Edits:
   `shift` moves the Cue and its highlight; `start_delta` and `end_delta` move only its start or its
   end (negative: earlier). All are -10..10 seconds of Source time, so a Segment at 2x halves them.
   The Cue is kept in its Segment, after the Cue before ends and before the Cue after starts, and
-  0.2 s long at least. One whose Word the Clip doesn't show does nothing and is kept: the dry run
+  0.2 s long at least. Its `x` and `y` (output pixels, as the caption style's custom position)
+  centre that Cue alone, kept in the frame, and `scale` ({CUE_MIN_SCALE}..{CUE_MAX_SCALE}) times the
+  caption style's size sizes it (a line too wide is still set smaller); null keeps the style's. The
+  dry run gives each Cue's `centre` and `size`. One whose Word the Clip doesn't show does nothing and is kept: the dry run
   lists it under `unused_cue_edits`, and a Cue it applies to says `edited`.
   merge_candidate_items changes only the fields given; remove_candidate_items takes its `at`.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
@@ -926,11 +931,15 @@ def _cue_view(cue: dict) -> dict:
     """A Cue as an agent reads it: when it shows, its lines as shown, its lines as written (`plain`:
     the Words' own case and punctuation, with the Word Edits), its key (the middle of its first
     Word on its timeline, which a Cue Edit names), whether a Cue Edit applies (`edited`, only
-    when one does) and whether it could be merged into the Cue before (`joinable`)."""
+    when one does), whether it could be merged into the Cue before (`joinable`), and where its
+    lines are centred (output pixels) at what font size."""
+    area = cue["area"]
     return {
         **_times(cue, "start", "end"),
         "lines": [" ".join(word["text"] for word in line) for line in cue["lines"]],
         "plain": cue["plain"],
+        "centre": [round(area["x"] + area["width"] / 2), round(area["y"] + area["height"] / 2)],
+        "size": cue["size"],
         "key": _compact({"at": round(cue["key"]["at"], 3), "media": cue["key"]["media"]}),
         **({"edited": True} if cue["edited"] else {}),
         "joinable": cue["joinable"],

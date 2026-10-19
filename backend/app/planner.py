@@ -2363,7 +2363,9 @@ def _captions(
     and `end_delta`, then kept in its Segment (between the cuts either side of it), not before the
     Cue before ends nor after the Cue after starts (where that is moved later, else its first Word;
     the earlier of two Cues keeps its place), and CAPTION_MIN_SECS long at least; its Words'
-    highlight moves with it, kept in it, the first from when it comes up. Also returned: the places
+    highlight moves with it, kept in it, the first from when it comes up. Its `x` and `y` place it as
+    the style's custom position and x would (at its own height, it stays put at a Layout change),
+    and its `scale` multiplies the style's size before a line too wide is set smaller. Also returned: the places
     of the Cue Edits whose Word is shown."""
     cuts = cuts or []
     retimes = cue_edits or []
@@ -2452,7 +2454,9 @@ def _captions(
         starts[0] = start
         timed = iter(zip(starts, [*starts[1:], end]))
         highlights = [[(word, *next(timed)) for word in line] for line in lines]
-        edges = [start, *(at for at in moves if start < at < end), end]
+        # Placed at its own height, it stays there at a Layout change.
+        placed = edit is not None and edit.y is not None
+        edges = [start, *(at for at in moves if start < at < end and not placed), end]
         # Each part of the line between Layout changes, where it is shown: one too short joins the next
         # (the last, the one before it), taking the next one's place.
         parts = [[a, b, area_at(a)] for a, b in zip(edges, edges[1:])]
@@ -2467,15 +2471,19 @@ def _captions(
             del parts[short]
         joined = [*cues[i - 1], replace(cue[0], breaks_before=False), *cue[1:]] if i > 0 else []
         joinable = i > 0 and not parted(cues[i - 1], cue[0]) and _fits(joined, style)
+        x = edit.x if edit is not None and edit.x is not None else style.x
+        scale = edit.scale if edit is not None and edit.scale is not None else 1.0
         for a, b, area in parts:
-            size = _caption_size(widest, area, style)
+            if placed:
+                area = _custom_caption_area(edit.y)
+            size = _caption_size(widest, area, style, scale)
             events.append(Cue(
                 start=round(a, 3),
                 end=round(b, 3),
                 lines=[[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
                         for word, on, off in line] for line in highlights],
                 plain=[" ".join(word.plain for word in line) for line in lines],
-                area=_caption_placed(widest, _caption_box(area, len(lines), size), size, style),
+                area=_caption_placed(widest, _caption_box(area, len(lines), size), size, style, x),
                 size=size,
                 key=cue[0].key,
                 edited=edit is not None,
@@ -2546,13 +2554,14 @@ def _caption_length(text: str, style: CaptionStyle) -> float:
     return len(text) * metrics.width(text, style.size, style.tracking) / metrics.width(text, style.size)
 
 
-def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle) -> Box:
-    """`area` moved to have its middle at the style's x, or as near as keeps the line set in it at
-    `size` (with its outline and tracking) in the frame. Without an x, it stays centred."""
-    if style.x is None:
+def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: float | None) -> Box:
+    """`area` moved to have its middle at `x` (the style's, or a Cue Edit's), or as near as keeps the
+    line set in it at `size` (with its outline and tracking) in the frame. Without an x, it stays
+    centred."""
+    if x is None:
         return area
     half = (font_metrics(style.font).width(text, size, style.tracking) + 2 * style.outline) / 2
-    centre = min(max(style.x, half), OUTPUT_WIDTH - half)
+    centre = min(max(x, half), OUTPUT_WIDTH - half)
     return _shifted(area, round(centre - area.width / 2) - area.x)
 
 
@@ -2568,19 +2577,26 @@ def _caption_area(style: CaptionStyle, layout: SceneLayout) -> Box:
         case CaptionPosition.BOTTOM:
             return LOWER_CAPTIONS
         case CaptionPosition.CUSTOM:
-            half = LOWER_CAPTIONS.height // 2
-            centre = min(max(style.y, SAFE_AREA.y + half), SAFE_AREA.y + SAFE_AREA.height - half)
-            return replace(LOWER_CAPTIONS, y=centre - half)
+            return _custom_caption_area(style.y)
 
 
-def _caption_size(text: str, area: Box, style: CaptionStyle) -> float:
-    """The font size for a caption line: the style's, or smaller if the line (with its outline and
-    tracking) would be wider than its area at that size. Its tracking stays as wide at any size."""
+def _custom_caption_area(y: float) -> Box:
+    """Where a caption line centred at height `y` goes, kept inside the safe area."""
+    half = LOWER_CAPTIONS.height // 2
+    centre = min(max(round(y), SAFE_AREA.y + half), SAFE_AREA.y + SAFE_AREA.height - half)
+    return replace(LOWER_CAPTIONS, y=centre - half)
+
+
+def _caption_size(text: str, area: Box, style: CaptionStyle, scale: float = 1.0) -> float:
+    """The font size for a caption line: the style's (times `scale`, a Cue Edit's), or smaller if the
+    line (with its outline and tracking) would be wider than its area at that size. Its tracking
+    stays as wide at any size."""
     outline, tracking = style.outline, style.tracking * (len(text) - 1)
-    width = font_metrics(style.font).width(text, style.size) + tracking + 2 * outline
+    wanted = round(style.size * scale, 1)
+    width = font_metrics(style.font).width(text, wanted) + tracking + 2 * outline
     if width <= area.width:
-        return style.size
-    size = math.floor(style.size * (area.width - 2 * outline - tracking) / (width - 2 * outline - tracking) * 10) / 10
+        return wanted
+    size = math.floor(wanted * (area.width - 2 * outline - tracking) / (width - 2 * outline - tracking) * 10) / 10
     return max(size, MIN_SIZE)
 
 

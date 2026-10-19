@@ -9,7 +9,7 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
-from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
+from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, Height, HookShape, Padding, StyleOverrides, Tracking, Width
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -85,6 +85,9 @@ Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
 # The furthest a Cue Edit moves its Cue, or either of its edges, in seconds of its timeline.
 CUE_SHIFT_MAX_SECS = 10.0
 CueShift = Annotated[FiniteFloat, Field(ge=-CUE_SHIFT_MAX_SECS, le=CUE_SHIFT_MAX_SECS)]
+# The least and the most a Cue Edit scales its Cue, over the Caption Style's size.
+CUE_MIN_SCALE, CUE_MAX_SCALE = 0.25, 4.0
+CueScale = Annotated[FiniteFloat, Field(ge=CUE_MIN_SCALE, le=CUE_MAX_SCALE)]
 
 
 # docs/adr/0020-media-words-and-cue-edits.md; matched to its Word by app/planner.py's match_edits.
@@ -93,14 +96,19 @@ class CueEdit:
     """A change to one Cue, keyed as a Word Edit: `at`, any time in its first Word on the Source's
     timeline (with `media`, that item's). That Word starts a Cue. `shift` moves the Cue and its
     highlight, `start_delta` and `end_delta` one edge (negative: earlier), in seconds of that
-    timeline (so scaled by Speed); kept between its neighbours and in its Segment. While its Word
-    isn't shown it does nothing, and is kept."""
+    timeline (so scaled by Speed); kept between its neighbours and in its Segment. `x` and `y`
+    (output pixels, as the Caption Style's custom position) place it, kept in the frame, and `scale`
+    multiplies the Caption Style's size for it (before a line too wide is set smaller); None keeps
+    the style's. While its Word isn't shown it does nothing, and is kept."""
 
     at: FiniteFloat
     media: MediaId | None = None
     shift: CueShift = 0.0
     start_delta: CueShift = 0.0
     end_delta: CueShift = 0.0
+    x: Width | None = None
+    y: Height | None = None
+    scale: CueScale | None = None
 
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
