@@ -32,8 +32,9 @@ KITA_SOAL = (1.6, 2.6)
 # animation_ms in the same schemas. And for a Transition's sound (transitions-expanded/06): its three
 # values wherever a Transition is given; what they do is in the instructions (70_961 with all three).
 # And for a Transition's knobs (transitions-expanded/04): its strength and colour, and the four kinds
-# that read them, wherever a Transition is given (71_798).
-TOOLS_BUDGET_BYTES = 72_000
+# that read them, wherever a Transition is given (71_798). And for a Style Preset's Join Transition
+# (transitions-expanded/09): save_preset's join_transition, a Transition's kinds and knobs again (73_832).
+TOOLS_BUDGET_BYTES = 74_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

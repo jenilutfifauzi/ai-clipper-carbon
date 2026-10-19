@@ -247,6 +247,11 @@ Edits:
   middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
   it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in
   the Clip, its sound and the knobs set.
+- A Style Preset's join_transition (none, or a Transition without `after`; built-in ones have none)
+  is copied onto every new join of its Candidates: when an edit changes the Segments without
+  stating `transitions`, each pair of adjacent Segments that wasn't adjacent before and has no
+  Transition gets it. A stated `transitions` list is taken as is, so state it to leave a new join a
+  cut. Removing a Transition, or changing or switching the Preset, touches no join.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -619,6 +624,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         use_for_new_titles: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
+        Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
         preset_id alone)."""
         if kind == "style":

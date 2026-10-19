@@ -20,7 +20,7 @@ const SECTIONS = TRANSITION_GROUPS.map((group) => ({ group, kinds: TRANSITION_KI
 );
 
 // How a Transition's sound crosses (TransitionSound in backend/app/candidates.py).
-const SOUNDS = [
+export const SOUNDS = [
   { value: "linear", label: "Linear" },
   { value: "equal_power", label: "Equal power" },
   { value: "cut", label: "Cut" },

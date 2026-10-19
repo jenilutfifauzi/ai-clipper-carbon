@@ -9,6 +9,7 @@ import {
   type CandidateChange,
   type ClipSegment,
   type JobDetail,
+  type JoinTransition,
   type KeyProperty,
   type SavedBy,
   type MediaItem,
@@ -202,6 +203,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [saveError, setSaveError] = useState<string | null>(null);
   const fonts = useFonts();
   const textPresets = useTextPresets();
+  // The Join Transition of the Candidate's Style Preset, which each new join an action makes gets
+  // (none until the Presets are loaded, and for a deleted Preset: Default has none).
+  const [join, setJoin] = useState<JoinTransition | null>(null);
+  useEffect(() => {
+    let current = true;
+    api.listPresets().then(
+      (presets) => current && setJoin(presets.find((preset) => preset.id === candidate.preset_id)?.join_transition ?? null),
+      () => {},
+    );
+    return () => void (current = false);
+  }, [candidate.preset_id]);
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
@@ -601,7 +613,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
-  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked };
+  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join };
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
   const clipboard = useClipboard();
