@@ -977,6 +977,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           plan={preview?.plan ?? null}
           edits={edits}
           pick={pick}
+          track={track}
           played={played}
           playback={playback}
           mediaById={mediaById}
@@ -1006,6 +1007,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onJoin: (after) => {
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");
+            },
+            onTransition: (transition) => {
+              if (!refused("video")) updateTransition(transition);
             },
             onDropTransition: setTransition,
             onDropMedia: dropMedia,
