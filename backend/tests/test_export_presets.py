@@ -6,8 +6,13 @@ Through the API with the real ffmpeg, as the Clips page and the Render button us
 """
 
 import json
+from dataclasses import replace
+
+from fastapi.testclient import TestClient
 
 from app.export_presets import EXPORT_PRESETS_FILE
+from app.main import create_app
+from app.ports import Ports
 from conftest import wait_for
 from test_jobs_api import create_job
 from test_render import add, probe, render_video, rendered, reviewed  # noqa: F401 (a fixture)
@@ -173,3 +178,103 @@ def test_a_clip_rendered_before_presets_reads_and_renders_again_with_the_default
     [clip] = rendered(client, job)["clips"]
     assert size_of(settings, job, clip) == (1080, 1920)
     assert clip["output"]["export_preset_id"] == "shorts"
+
+
+# The Export Presets sheet (.scratch/export-settings/issues/05): the owner's Presets made, changed and
+# deleted, the default chosen, and sizes estimated.
+
+SHORTS = {"codec": "h264", "resolution": 1080, "fps": None, "quality": "recommended", "bitrate": None, "loudness": -14}
+
+
+def made(client, name: str, **settings) -> dict:
+    response = client.post(URL, json={"name": name, "settings": SHORTS | settings})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_an_owners_preset_is_made_changed_and_deleted_and_survives_a_restart(settings, video_source, transcriber, llm, client):
+    preset = made(client, "Review copy", resolution=720, codec="hevc")
+
+    assert (preset["name"], preset["builtin"], preset["settings"]["resolution"]) == ("Review copy", False, 720)
+    assert preset["id"] not in BUILT_IN
+    # Listed after the built-in ones.
+    assert listed(client)["presets"][-1] == preset
+
+    changed = client.put(f"{URL}/{preset['id']}", json={"name": "Review", "settings": SHORTS | {"fps": 60}})
+    assert changed.status_code == 200, changed.text
+    assert changed.json() == preset | {"name": "Review", "settings": SHORTS | {"fps": 60}}
+    # Another app on the same data directory reads them as they were left.
+    with TestClient(create_app(settings, Ports(video_source, transcriber, llm))) as restarted:
+        assert listed(restarted)["presets"][-1] == changed.json()
+
+    assert client.delete(f"{URL}/{preset['id']}").status_code == 204
+    assert preset["id"] not in {p["id"] for p in listed(client)["presets"]}
+    assert client.delete(f"{URL}/{preset['id']}").status_code == 404
+    assert client.put(f"{URL}/{preset['id']}", json={"name": "x", "settings": SHORTS}).status_code == 404
+
+
+def test_a_builtin_preset_cant_be_changed_or_deleted_and_a_duplicate_of_it_can(client):
+    presets = {preset["id"]: preset for preset in listed(client)["presets"]}
+
+    response = client.put(f"{URL}/archive", json={"name": "Archive", "settings": SHORTS})
+    assert response.status_code == 409 and "built in" in response.json()["detail"]
+    response = client.delete(f"{URL}/archive")
+    assert response.status_code == 409 and "built in" in response.json()["detail"]
+    assert {preset["id"]: preset for preset in listed(client)["presets"]}["archive"] == presets["archive"]
+
+    # Duplicating one is making a Preset of its settings, which can then be changed.
+    copy = made(client, "Archive copy", **presets["archive"]["settings"])
+    assert client.put(f"{URL}/{copy['id']}", json={"name": "Archive copy", "settings": SHORTS}).status_code == 200
+
+
+def test_any_preset_can_be_made_the_default_and_deleting_it_makes_shorts_the_default_again(client):
+    preset = made(client, "Mine", resolution=720)
+
+    response = client.put(f"{URL}/default", json={"preset_id": "small"})
+    assert response.status_code == 200, response.text
+    assert listed(client)["default"] == "small"
+    assert client.put(f"{URL}/default", json={"preset_id": preset["id"]}).status_code == 200
+    assert listed(client)["default"] == preset["id"]
+    assert client.put(f"{URL}/default", json={"preset_id": "nope"}).status_code == 404
+
+    client.delete(f"{URL}/{preset['id']}")
+    assert listed(client)["default"] == "shorts"
+
+
+def test_settings_off_the_lists_are_refused(client):
+    for wrong in ({"codec": "prores"}, {"resolution": 900}, {"fps": 48}, {"bitrate": {"mode": "cbr", "kbps": 50}},
+                  {"bitrate": {"mode": "vbr", "kbps": 300_000}}, {"loudness": -20}):
+        response = client.post(URL, json={"name": "Wrong", "settings": SHORTS | wrong})
+        assert response.status_code == 422, wrong
+    assert client.post(URL, json={"name": "", "settings": SHORTS}).status_code == 422
+    assert client.post(URL, json={"name": "Extra", "settings": SHORTS, "id": "mine"}).status_code == 422
+    assert all(preset["builtin"] for preset in listed(client)["presets"])
+
+
+def estimate(client, secs: float, source_fps: float, **settings) -> int:
+    response = client.post(f"{URL}/estimate", json={"settings": SHORTS | settings, "secs": secs, "fps": source_fps})
+    assert response.status_code == 200, response.text
+    return response.json()["bytes"]
+
+
+def test_the_estimate_is_the_target_bitrate_and_the_sound_over_the_duration(client):
+    # Recommended at 1080p and 30 fps: 8 Mb/s, and 192 kb/s of sound; a minute is 61.44 MB.
+    assert estimate(client, 60, 30) == 61_440_000
+    # A rate under 30 counts as 30; above it, the bitrate follows it.
+    assert estimate(client, 60, 24) == 61_440_000
+    assert estimate(client, 60, 60) == (16_000 + 192) * 1000 * 60 // 8
+    # A frame rate of the settings' own is the one the Clip is made at, whatever the Source's.
+    assert estimate(client, 60, 30, fps=60) == estimate(client, 60, 60)
+    # HEVC High at 1440p: 16 Mb/s x (1440x2560)/(1080x1920) x 0.6 = 17.067 Mb/s.
+    assert estimate(client, 10, 30, codec="hevc", resolution=1440, quality="high") == round((17_067 + 192) * 1000 * 10 / 8)
+    # A bitrate of the settings' own replaces the tier.
+    assert estimate(client, 8, 30, bitrate={"mode": "cbr", "kbps": 6000}) == (6000 + 192) * 1000
+    assert client.post(f"{URL}/estimate", json={"settings": SHORTS | {"codec": "prores"}, "secs": 1, "fps": 30}).status_code == 422
+    assert client.post(f"{URL}/estimate", json={"settings": SHORTS, "secs": -1, "fps": 30}).status_code == 422
+
+
+def test_a_codec_without_an_encoder_in_ffmpeg_is_not_available(settings, video_source, transcriber, llm):
+    lacking = replace(settings, render=replace(settings.render, av1_encoders=("libnoav1",)))
+    with TestClient(create_app(lacking, Ports(video_source, transcriber, llm))) as client:
+        assert "av1" not in listed(client)["available"]
+        assert "h264" in listed(client)["available"]

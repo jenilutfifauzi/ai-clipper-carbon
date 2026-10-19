@@ -1,7 +1,23 @@
-import type { Clip, ExportPresetList, ExportSettings, RenderedClip } from "../../api";
+import { mainTrackOf, type Candidate, type Clip, type ExportPresetList, type ExportSettings, type RenderedClip, type SourceMetadata } from "../../api";
+import { trackLength } from "./editor/segmentTime";
 
-const CODECS: Record<ExportSettings["codec"], string> = { h264: "H.264", hevc: "HEVC", av1: "AV1" };
-const QUALITIES: Record<ExportSettings["quality"], string> = { high: "High", recommended: "Recommended", smallest: "Smallest" };
+export const CODECS: Record<ExportSettings["codec"], string> = { h264: "H.264", hevc: "HEVC", av1: "AV1" };
+export const QUALITIES: Record<ExportSettings["quality"], string> = { high: "High", recommended: "Recommended", smallest: "Smallest" };
+
+/**
+ * The Source's effective height, which a resolution above is "Larger than the Source": its short
+ * side, as the resolution is the frame's (the "1080" of a 1080p video, landscape or portrait).
+ */
+export const sourceHeight = (metadata: Pick<SourceMetadata, "width" | "height">) => Math.min(metadata.width, metadata.height);
+
+/** How long the Clips of `candidates` last in all: their Main Tracks, less their Transitions' overlaps. */
+export function batchSecs(candidates: Pick<Candidate, "start" | "end" | "segments" | "transitions">[]): number {
+  return candidates.reduce((sum, candidate) => {
+    const segments = mainTrackOf(candidate);
+    const joins = segments.map((segment) => candidate.transitions.find((transition) => transition.after === segment.id)?.secs ?? null);
+    return sum + trackLength(segments, joins);
+  }, 0);
+}
 
 /** The Export Preset the Render button renders with: the one picked this session while it exists, else the default. */
 export function pickedPreset(list: ExportPresetList, picked: string | null): string {

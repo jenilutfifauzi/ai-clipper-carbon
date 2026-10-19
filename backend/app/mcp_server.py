@@ -30,6 +30,7 @@ from app.api import (
     PICTURES_ROUTE,
     SHAPES_MAX,
     CandidateUpdate,
+    ExportPresetBody,
     PresetBody,
     TextPresetBody,
     TextPresetChange,
@@ -579,10 +580,34 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     # Styles, assets and the Channel Profile
 
+    async def save_export_preset(given: BaseModel | None, preset_id: str | None, use_as_default: bool) -> dict:
+        """An Export Preset made, or the owner's `preset_id` changed in the fields given; then made the
+        default when asked."""
+        saved = None
+        if given is not None:
+            body = _validated(NamedPresetGiven, given)
+            if preset_id is None:
+                saved = await api("POST", "/export-presets", json=_validated(ExportPresetBody, NamedPresetGiven(**body)))
+            else:
+                listed = (await api("GET", "/export-presets"))["presets"]
+                current = next((preset for preset in listed if preset["id"] == preset_id), None)
+                if current is None:
+                    raise ToolError(f"No Export Preset {preset_id}")
+                body = {"name": current["name"], **body, "settings": current["settings"] | body.get("settings", {})}
+                saved = await api("PUT", f"/export-presets/{preset_id}", json=_validated(ExportPresetBody, NamedPresetGiven(**body)))
+        elif not (preset_id and use_as_default):
+            raise ToolError("Give the preset to save, or a preset_id with use_as_default")
+        if use_as_default:
+            return await api("PUT", "/export-presets/default", json={"preset_id": saved["id"] if saved else preset_id})
+        return saved
+
     @tool(read_only=True)
-    async def list_presets(kind: Literal["style", "text"] = "style", include_styles: bool = False) -> dict:
+    async def list_presets(kind: Literal["style", "text", "export"] = "style", include_styles: bool = False) -> dict:
         """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
-        then the owner's. With include_styles, their styles (a Style Override replaces their fields)."""
+        then the owner's. With include_styles, their styles (a Style Override replaces their fields).
+        Export Presets: with their settings, the `default` and the codecs `available`."""
+        if kind == "export":
+            return await api("GET", "/export-presets")
         if kind == "text":
             presets = await api("GET", "/text-presets")
             keys = ("id", "name", "category", "builtin", "default", *(("sample", "style") if include_styles else ()))
@@ -594,14 +619,17 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool()
     async def save_preset(
-        preset: PresetBody | TextPresetGiven | None = None,
+        preset: PresetBody | NamedPresetGiven | None = None,
         preset_id: str | None = None,
-        kind: Literal["style", "text"] = "style",
+        kind: Literal["style", "text", "export"] = "style",
         use_for_new_titles: bool = False,
+        use_as_default: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
-        preset_id alone)."""
+        preset_id alone). An Export Preset is {name, settings}; use_as_default: renders use it (likewise)."""
+        if kind == "export":
+            return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":
             body = _validated(PresetBody, preset)
             if preset_id is None:
@@ -620,10 +648,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return saved
 
     @tool(destructive=True)
-    async def delete_preset(preset_id: str, kind: Literal["style", "text"] = "style") -> dict:
+    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export"] = "style") -> dict:
         """Delete one of the owner's Presets. Candidates using a Style Preset render in Default; Text
-        Layers keep their look."""
-        await api("DELETE", f"/{'text-presets' if kind == 'text' else 'presets'}/{preset_id}")
+        Layers keep their look; Clips of an Export Preset render again with the default."""
+        await api("DELETE", f"/{ {'text': 'text-presets', 'export': 'export-presets'}.get(kind, 'presets')}/{preset_id}")
         return {"deleted": preset_id}
 
     @tool(read_only=True)
@@ -691,13 +719,15 @@ def build_mcp(app: FastAPI) -> MCPServer:
     return mcp
 
 
-class TextPresetGiven(BaseModel):
-    """A Text Preset: a name and a Text Style, as a Text Layer's."""
+class NamedPresetGiven(BaseModel):
+    """A Text Preset: a name and a Text Style, as a Text Layer's; or an Export Preset: a name and
+    Export Settings."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
     style: dict[str, Any] | None = None
+    settings: dict[str, Any] | None = None
 
 
 class StaleCandidate(ToolError):
@@ -789,7 +819,8 @@ def _candidate_view(candidate: dict) -> dict:
 
 
 def _clip_view(job_dir: Path, clip: dict) -> dict:
-    view = {"candidate_id": clip["candidate_id"], "status": clip["status"], "error": clip.get("error")}
+    # A queued Clip's Preset is the one asked for; a rendered one's what it was made with.
+    view = {"candidate_id": clip["candidate_id"], "status": clip["status"], "error": clip.get("error"), "export_preset_id": clip.get("export_preset_id")}
     if output := clip.get("output"):
         view |= {
             "video_path": str(job_dir / output["video"]),

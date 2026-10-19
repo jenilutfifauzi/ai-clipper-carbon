@@ -35,9 +35,9 @@ from app.clips import Clip
 from app.config import Settings
 from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
 from app.editor import PreviewPlan, preview_plan
-from app.encoding import Codec
+from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
-from app.export_presets import ExportPreset, ExportPresetNotFound, ExportPresetStore
+from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
@@ -320,6 +320,34 @@ class ExportPresetList:
     presets: list[ExportPreset]
     default: str
     available: list[Codec]
+
+
+class ExportPresetBody(BaseModel):
+    """An Export Preset as the owner saves it: a name and Export Settings, each of them on its list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name
+    settings: ExportSettings
+
+
+class ExportPresetChoice(BaseModel):
+    """The Export Preset a render uses when none is asked for."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    preset_id: str
+
+
+class ExportEstimate(BaseModel):
+    """A batch of Clips `secs` long in all, made as `settings` say; at the Source's frame rate `fps`
+    when they keep it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    settings: ExportSettings
+    secs: Annotated[float, Field(ge=0, le=86_400)]
+    fps: Annotated[float, Field(gt=0, le=240)]
 
 
 class ManualCandidate(BaseModel):
@@ -1043,6 +1071,53 @@ def list_export_presets(export_presets: ExportPresets, settings: AppSettings) ->
     codecs that can be encoded here (a Preset of another codec fails to render)."""
     available = available_codecs(settings.ffmpeg_bin, settings.render)
     return ExportPresetList(export_presets.all(), export_presets.default().id, [codec for codec in Codec if codec in available])
+
+
+@router.post("/export-presets", status_code=201)
+def create_export_preset(body: ExportPresetBody, export_presets: ExportPresets) -> ExportPreset:
+    """Save Export Settings as a new Export Preset of the owner's (a built-in one duplicated, say)."""
+    return export_presets.create(body.name, body.settings)
+
+
+@router.post("/export-presets/estimate")
+def estimate_export(body: ExportEstimate) -> dict[str, int]:
+    """The bytes Clips `secs` long in all come to as `settings` say: what the encoders aim for, video
+    and sound (app/encoding.py). The sheet's MB per minute and the Render menu's total both ask here."""
+    return {"bytes": estimated_bytes(body.settings, body.settings.fps or body.fps, body.secs)}
+
+
+@router.put("/export-presets/default")
+def use_export_preset_as_default(body: ExportPresetChoice, export_presets: ExportPresets) -> ExportPreset:
+    """Make an Export Preset, built-in or the owner's, the one a render uses when none is asked for.
+    404 for an unknown one."""
+    try:
+        return export_presets.use_as_default(body.preset_id)
+    except ExportPresetNotFound:
+        raise HTTPException(404, f"No Export Preset {body.preset_id}") from None
+
+
+@router.put("/export-presets/{preset_id}")
+def change_export_preset(preset_id: str, body: ExportPresetBody, export_presets: ExportPresets) -> ExportPreset:
+    """Give one of the owner's Export Presets another name and settings. Its Clips keep theirs and
+    never go stale; rendered again, they use these. 409 for a built-in Preset."""
+    try:
+        return export_presets.change(preset_id, body.name, body.settings)
+    except ExportPresetNotFound:
+        raise HTTPException(404, f"No Export Preset {preset_id}") from None
+    except BuiltinExportPreset:
+        raise HTTPException(409, f"Export Preset {preset_id} is built in: duplicate it instead") from None
+
+
+@router.delete("/export-presets/{preset_id}", status_code=204)
+def delete_export_preset(preset_id: str, export_presets: ExportPresets) -> None:
+    """Delete one of the owner's Export Presets; its Clips render again with the default, and when it
+    was the default, "Shorts / TikTok / Reels" is again. 409 for a built-in Preset."""
+    try:
+        export_presets.delete(preset_id)
+    except ExportPresetNotFound:
+        raise HTTPException(404, f"No Export Preset {preset_id}") from None
+    except BuiltinExportPreset:
+        raise HTTPException(409, f"Export Preset {preset_id} is built in and can't be deleted") from None
 
 
 @router.get("/presets")

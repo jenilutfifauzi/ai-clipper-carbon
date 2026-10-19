@@ -21,7 +21,7 @@ import { ChangeNotice, type Notice } from "./editor/ChangeNotice";
 import { collidedParts, fieldsOf, mergeEdits, type Collision } from "./editor/merge";
 import { entryToRestore } from "./editor/RevisionHistory";
 import { changedText, useCandidateEvents } from "./editor/useCandidateEvents";
-import { pickedPreset } from "./exportPresets";
+import { batchSecs, pickedPreset } from "./exportPresets";
 import { RenderButton } from "./RenderButton";
 
 /**
@@ -38,6 +38,7 @@ export function Review({
   onPickExport,
   onRender,
   onPrepare,
+  onManageExport,
 }: {
   job: JobDetail;
   clips: Clip[];
@@ -50,6 +51,8 @@ export function Review({
   onRender: (candidateIds?: string[], exportPresetId?: string) => Promise<void>;
   // Queues a Candidate's transcription and analysis, for its preview.
   onPrepare: (candidateId: string) => Promise<void>;
+  // Opens the Export Presets sheet.
+  onManageExport: () => void;
 }) {
   const [candidates, setCandidates] = useState<Candidate[]>(job.candidates ?? []);
   const [params, setParams] = useSearchParams();
@@ -81,6 +84,8 @@ export function Review({
   const index = Math.max(0, candidates.findIndex((candidate) => candidate.id === wanted));
   const active = candidates[index] ?? null;
   const selected = candidates.filter((candidate) => candidate.selected).length;
+  // A Clip that keeps the Source's frame rate is sized at it.
+  const sourceFps = job.source?.metadata.fps ?? 30;
 
   // A Candidate saved elsewhere is taken at once, unless a save of it here is still unanswered: that
   // save then meets the newer Revision.
@@ -316,6 +321,8 @@ export function Review({
                   void render(undefined, exportPresetId);
                 }}
                 disabled={selected === 0 || queueing}
+                batch={{ secs: batchSecs(candidates.filter((candidate) => candidate.selected)), fps: sourceFps }}
+                onManage={onManageExport}
               />
             </div>
           </div>
@@ -380,7 +387,9 @@ export function Review({
         candidates={candidates}
         progress={progress}
         exportPresets={exportPresets}
+        sourceFps={sourceFps}
         onRender={(candidateIds, exportPresetId) => render(candidateIds, exportPresetId)}
+        onManageExport={onManageExport}
       />
       <ChangeNotice notice={notice} onClose={closeNotice} />
     </div>

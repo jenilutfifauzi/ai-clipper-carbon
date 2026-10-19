@@ -10,7 +10,7 @@ import { formatBytes, timeLeft } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
-import { againPreset, settingsLine } from "./exportPresets";
+import { againPreset, batchSecs, settingsLine } from "./exportPresets";
 import { RenderButton } from "./RenderButton";
 import { same } from "./editor/merge";
 import { overridden } from "./editor/useStyleDraft";
@@ -29,14 +29,20 @@ export function Clips({
   candidates,
   progress,
   exportPresets,
+  sourceFps,
   onRender,
+  onManageExport,
 }: {
   jobId: string;
   clips: Clip[];
   candidates: Candidate[];
   progress: JobProgress;
   exportPresets: ExportPresetList | null;
+  // The Source's frame rate, for the size of a Clip that keeps it.
+  sourceFps: number;
   onRender: (candidateIds: string[], exportPresetId?: string) => Promise<void>;
+  // Opens the Export Presets sheet.
+  onManageExport: () => void;
 }) {
   const [presets, setPresets] = useState<StylePreset[] | null>(null);
   useEffect(() => {
@@ -67,6 +73,8 @@ export function Clips({
               candidate={candidates[index] ?? null}
               presets={presets}
               exportPresets={exportPresets}
+              sourceFps={sourceFps}
+              onManageExport={onManageExport}
               index={index}
               percent={clip.status === "rendering" ? progress.progress : null}
               onRender={(exportPresetId) => onRender([clip.candidate_id], exportPresetId)}
@@ -126,6 +134,8 @@ function ClipCard({
   candidate,
   presets,
   exportPresets,
+  sourceFps,
+  onManageExport,
   index,
   percent,
   onRender,
@@ -136,6 +146,8 @@ function ClipCard({
   candidate: Candidate | null;
   presets: StylePreset[] | null;
   exportPresets: ExportPresetList | null;
+  sourceFps: number;
+  onManageExport: () => void;
   index: number;
   percent: number | null;
   onRender: (exportPresetId?: string) => void;
@@ -211,6 +223,8 @@ function ClipCard({
             presets={exportPresets}
             picked={exportPresets && againPreset(exportPresets, clip)}
             onRender={onRender}
+            batch={{ secs: batchSecs([candidate]), fps: sourceFps }}
+            onManage={onManageExport}
           />
         )}
       </div>

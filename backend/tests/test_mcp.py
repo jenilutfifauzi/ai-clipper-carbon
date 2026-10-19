@@ -24,8 +24,9 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
-# Raised from 69_000 for Export Presets (export-settings/04): render_clips' `export_preset_id`.
-TOOLS_BUDGET_BYTES = 69_250
+# Raised from 69_000 for Export Presets (export-settings/04): render_clips' `export_preset_id`; and
+# from 69_250 (export-settings/05) for the presets tools' kind "export" and save_preset's use_as_default.
+TOOLS_BUDGET_BYTES = 69_700
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -289,6 +290,36 @@ async def test_a_render_takes_an_export_preset_which_its_clip_records(mcp):
     assert clip["status"] == "done", clip
     assert clip["export_preset_id"] == "small"
     assert (clip["export"]["resolution"], clip["export"]["codec"], clip["export"]["quality"]) == (720, "h264", "smallest")
+
+
+@pytest.mark.anyio
+async def test_export_presets_are_listed_saved_made_the_default_and_deleted_but_not_builtin_ones(mcp):
+    listed = await call(mcp, "list_presets", kind="export")
+    presets = {preset["id"]: preset for preset in listed["presets"]}
+    assert listed["default"] == "shorts" and "h264" in listed["available"]
+    assert presets["small"]["builtin"] and presets["small"]["settings"]["resolution"] == 720
+
+    settings = presets["shorts"]["settings"] | {"resolution": 720, "codec": "hevc"}
+    saved = await call(mcp, "save_preset", kind="export", preset={"name": "Review", "settings": settings}, use_as_default=True)
+    assert (saved["name"], saved["builtin"], saved["settings"]) == ("Review", False, settings)
+    assert (await call(mcp, "list_presets", kind="export"))["default"] == saved["id"]
+    # Given a preset_id, the fields given change and the rest stay.
+    renamed = await call(mcp, "save_preset", kind="export", preset_id=saved["id"], preset={"name": "Review 2", "settings": {"fps": 60}})
+    assert (renamed["name"], renamed["settings"]) == ("Review 2", settings | {"fps": 60})
+
+    # render_clips without an id renders with the default.
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    [queued] = (await call(mcp, "render_clips", job_id=job["id"], candidate_ids=[candidate["id"]]))["clips"]
+    assert queued["export_preset_id"] == saved["id"]
+
+    assert "built in" in await fails(mcp, "save_preset", kind="export", preset_id="small", preset={"name": "x"})
+    assert "built in" in await fails(mcp, "delete_preset", kind="export", preset_id="small")
+    assert "codec" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"codec": "prores"}})
+    assert "resolution" in await fails(mcp, "save_preset", kind="export", preset_id=saved["id"], preset={"settings": {"resolution": 900}})
+    assert "kbps" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"bitrate": {"mode": "cbr", "kbps": 1}}})
+    assert await call(mcp, "delete_preset", kind="export", preset_id=saved["id"]) == {"deleted": saved["id"]}
+    assert (await call(mcp, "list_presets", kind="export"))["default"] == "shorts"
 
 
 # 06: Style Presets, assets and the Channel Profile

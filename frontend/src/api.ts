@@ -1217,6 +1217,20 @@ export const api = {
       body: JSON.stringify({ candidate_ids: candidateIds, export_preset_id: exportPresetId }),
     }),
   listExportPresets: () => request<ExportPresetList>("/export-presets"),
+  // The owner's Export Presets: a built-in one is refused (409) a change or a delete.
+  createExportPreset: (name: string, settings: ExportSettings) =>
+    request<ExportPreset>("/export-presets", { method: "POST", body: JSON.stringify({ name, settings }) }),
+  changeExportPreset: (id: string, name: string, settings: ExportSettings) =>
+    request<ExportPreset>(`/export-presets/${id}`, { method: "PUT", body: JSON.stringify({ name, settings }) }),
+  deleteExportPreset: (id: string) => request<void>(`/export-presets/${id}`, { method: "DELETE" }),
+  useExportPresetAsDefault: (id: string) =>
+    request<ExportPreset>("/export-presets/default", { method: "PUT", body: JSON.stringify({ preset_id: id }) }),
+  // The bytes Clips `secs` long in all come to as `settings` say, at the Source's frame rate `fps`
+  // when they keep it: the formula is the backend's alone.
+  estimateExport: (settings: ExportSettings, secs: number, fps: number) =>
+    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
+      (answer) => answer.bytes,
+    ),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   listFonts: () => request<FontInfo[]>("/fonts"),
   importFont: (file: File) => {

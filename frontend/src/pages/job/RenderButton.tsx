@@ -1,7 +1,8 @@
-import { Check, ChevronDown, Clapperboard } from "lucide-react";
+import { Check, ChevronDown, Clapperboard, SlidersHorizontal } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import type { ExportPresetList } from "../../api";
+import { api, type ExportPresetList } from "../../api";
 import { Button, buttonClass } from "../../components/Button";
+import { formatBytes } from "../../format";
 
 // The menu's distance from its button, and from the window's edges.
 const GAP_PX = 4;
@@ -9,8 +10,9 @@ const EDGE_PX = 8;
 
 /**
  * A Render button split in two: the main part renders with the Export Preset `picked`, and its menu
- * lists the Presets (the default marked), where choosing one renders with it. Without the Presets
- * (still loading, or failed to), it renders with the default and has no menu.
+ * lists the Presets (the default marked), where choosing one renders with it. The menu says how big
+ * the `batch` comes to with the picked Preset, and ends with "Export Presets…" (`onManage`). Without
+ * the Presets (still loading, or failed to), it renders with the default and has no menu.
  */
 export function RenderButton({
   label,
@@ -19,6 +21,8 @@ export function RenderButton({
   onRender,
   variant = "secondary",
   disabled,
+  batch,
+  onManage,
 }: {
   label: string;
   presets: ExportPresetList | null;
@@ -26,12 +30,26 @@ export function RenderButton({
   onRender: (exportPresetId?: string) => void;
   variant?: "primary" | "secondary";
   disabled?: boolean;
+  // The Clips it renders: how long they last in all, and the Source's frame rate.
+  batch?: { secs: number; fps: number } | null;
+  onManage?: () => void;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const id = useId();
-  const name = presets?.presets.find((preset) => preset.id === picked)?.name;
+  const chosen = presets?.presets.find((preset) => preset.id === picked);
+  const name = chosen?.name;
+  // The batch's estimated size with the picked Preset, asked for while the menu is open.
+  const [total, setTotal] = useState<number | null>(null);
+  const settings = chosen && JSON.stringify(chosen.settings);
+  useEffect(() => {
+    setTotal(null);
+    if (!open || !settings || !batch || batch.secs <= 0) return;
+    let current = true;
+    api.estimateExport(JSON.parse(settings), batch.secs, batch.fps).then((bytes) => current && setTotal(bytes), () => {});
+    return () => void (current = false);
+  }, [open, settings, batch?.secs, batch?.fps]);
 
   // The menu is a popover in the top layer, so that a scrolling panel doesn't clip it; light dismiss and Escape close it.
   useEffect(() => {
@@ -94,6 +112,11 @@ export function RenderButton({
             {...{ popover: "auto" }}
             className="glass fixed inset-auto m-0 min-w-56 flex-col rounded-[10px] bg-bg/90! p-1 text-text [&:popover-open]:flex"
           >
+            {total !== null && (
+              <p className="px-2 pt-1 pb-1.5 text-xs text-muted tabular-nums">
+                About {formatBytes(total)} with {name}
+              </p>
+            )}
             {presets.presets.map((preset) => (
               <button
                 key={preset.id}
@@ -108,6 +131,20 @@ export function RenderButton({
                 {preset.id === presets.default && <span className="shrink-0 text-xs text-muted">Default</span>}
               </button>
             ))}
+            {onManage && (
+              <>
+                <hr className="my-1 border-border" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => (hide(), onManage())}
+                  className="flex min-h-9 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-fill"
+                >
+                  <SlidersHorizontal aria-hidden size={14} className="shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">Export Presets…</span>
+                </button>
+              </>
+            )}
           </div>
         </>
       )}

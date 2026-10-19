@@ -10,6 +10,8 @@ import { useJobEvents } from "../hooks/useJobEvents";
 import { stageIndex } from "../stages";
 import { BackLink, JobSkeleton } from "./job/JobSkeleton";
 import { ErrorNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
+import { ExportPresetsSheet } from "./job/ExportPresetsSheet";
+import { pickedPreset, sourceHeight } from "./job/exportPresets";
 import { Review } from "./job/Review";
 
 export function JobPage() {
@@ -36,6 +38,8 @@ function JobView({ jobId }: { jobId: string }) {
   // default until another is.
   const [exportPresets, setExportPresets] = useState<ExportPresetList | null>(null);
   const [pickedExport, setPickedExport] = useState<string | null>(null);
+  // Whether the Export Presets sheet is open, from a Render button's menu.
+  const [managingExport, setManagingExport] = useState(false);
   useEffect(() => void api.listExportPresets().then(setExportPresets, () => {}), []);
 
   const load = useCallback(
@@ -175,6 +179,17 @@ function JobView({ jobId }: { jobId: string }) {
           onPickExport={setPickedExport}
           onRender={render}
           onPrepare={prepare}
+          onManageExport={() => setManagingExport(true)}
+        />
+      )}
+      {exportPresets && (
+        <ExportPresetsSheet
+          open={managingExport}
+          list={exportPresets}
+          initial={pickedPreset(exportPresets, pickedExport)}
+          sourceHeight={job.source ? sourceHeight(job.source.metadata) : null}
+          onClose={() => setManagingExport(false)}
+          onChange={setExportPresets}
         />
       )}
     </div>
