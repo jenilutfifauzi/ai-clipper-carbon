@@ -1548,3 +1548,39 @@ def test_a_media_segments_cue_edits_are_on_its_items_timeline():
     # The Source's Cue Edit at that time doesn't touch it.
     source_edit = CueEdit(at=3.2, shift=0.3)
     assert plan(source_edit).unused_cue_edits == [source_edit]
+
+
+# A `join` Cue Edit (captions-advanced ticket 09).
+
+
+def test_a_join_keeps_two_cues_parted_by_a_pause_together_but_not_past_the_line_limits():
+    # "halo, semua." and "apa kabar" are parted by a sentence's end and a pause of a second.
+    join = CueEdit(at=103.1, join=True)
+    apart = retimed(TALK, [], caption_style=SENTENCE).captions
+    assert rows(apart) == [["HALO SEMUA"], ["APA KABAR"]]
+    assert [(cue.joinable, cue.needs_join) for cue in apart] == [(False, False), (True, True)]
+    joined = retimed(TALK, [join], caption_style=SENTENCE)
+    assert rows(joined.captions) == [["HALO SEMUA APA KABAR"]]
+    assert spans(joined.captions) == [(1.0, 3.9)] and not joined.captions[0].edited and joined.unused_cue_edits == []
+    # The longest Cue counts again from the joined Word, for its Words and how long it shows.
+    short = replace(SENTENCE, max_secs=1.5)
+    assert rows(retimed(TALK, [], caption_style=short).captions) == [["HALO SEMUA"], ["APA KABAR"]]
+    assert spans(retimed(TALK, [join], caption_style=short).captions) == [(1.0, 3.9)]
+    # Past max_chars times max_lines they stay two, not joinable, and the join moves nothing. (It
+    # keeps only its own Word with the Cue before: at 16 characters "HALO SEMUA APA" would fit.)
+    narrow = replace(SENTENCE, max_lines=1, max_chars=12)
+    kept = retimed(TALK, [join], caption_style=narrow).captions
+    assert rows(kept) == [["HALO SEMUA"], ["APA KABAR"]] and spans(kept) == spans(retimed(TALK, [], caption_style=narrow).captions)
+    assert [cue.joinable for cue in kept] == [False, False] and not kept[1].edited
+    # In two lines of 10 characters it fits again: joinable agrees.
+    two = replace(SENTENCE, max_lines=2, max_chars=10)
+    assert [cue.joinable for cue in retimed(TALK, [], caption_style=two).captions] == [False, True]
+    assert rows(retimed(TALK, [join], caption_style=two).captions) == [["HALO SEMUA", "APA KABAR"]]
+
+
+def test_a_cue_parted_only_by_a_cue_edit_needs_no_join():
+    words = said("satu dua tiga empat lima enam")
+    empat = words[3]
+    split = retimed(words, [CueEdit(at=100 + (empat.start + empat.end) / 2)], 8, caption_style=SENTENCE).captions
+    assert rows(split) == [["SATU DUA TIGA"], ["EMPAT LIMA ENAM"]]
+    assert [(cue.joinable, cue.needs_join) for cue in split] == [(False, False), (True, False)]

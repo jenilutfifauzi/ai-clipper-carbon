@@ -25,8 +25,8 @@ KITA_SOAL = (1.6, 2.6)
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
-# merge_candidate_items.
-TOOLS_BUDGET_BYTES = 71_500
+# merge_candidate_items. Raised from 71_500 for a Cue Edit's join (captions-advanced/09).
+TOOLS_BUDGET_BYTES = 71_700
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -250,6 +250,18 @@ async def test_cue_edits_are_set_merged_field_by_field_and_removed_by_their_key(
     removed = await call(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[f"{media}:{first}", second])
     assert [(e["at"], e["media"]) for e in removed["cue_edits"]] == [(first, None)]
     assert "no cue_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[second])
+
+    # A join keeps the second Cue with the first, where the line limits allow; with a field set too, refused.
+    semua = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["words"][1]
+    # "halo semua." and "apa kabar", parted by the sentence's end.
+    wide = {"style_overrides": {"caption": {"max_lines": 2, "max_chars": 24, "max_secs": 5}}, "cue_edits": [],
+            "word_edits": [{"at": semua["at"], "text": "semua."}]}
+    apart = (await call(mcp, "edit_candidate", **ids, changes=wide, dry_run=True))["captions"]
+    assert [cue["plain"] for cue in apart] == [["halo semua."], ["apa kabar"]]
+    assert (apart[1]["joinable"], apart[1]["needs_join"]) == (True, True)
+    joined = await call(mcp, "edit_candidate", **ids, changes={**wide, "cue_edits": [{"at": apart[1]["key"]["at"], "join": True}]}, dry_run=True)
+    assert [cue["plain"] for cue in joined["captions"]] == [["halo semua. apa kabar"]]
+    assert "join" in await fails(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "join": True}])
 
 
 @pytest.mark.anyio

@@ -1112,8 +1112,8 @@ def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_sour
     candidate = patch(client, job, candidate, cue_edits=edits)
     assert candidate["edited"] is True
     assert candidate["cue_edits"] == [
-        {"at": first["key"]["at"] + 0.01, "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": -0.2},
-        {"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": -9.0, "end_delta": 0.0},
+        {"at": first["key"]["at"] + 0.01, "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": -0.2, "join": False},
+        {"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": -9.0, "end_delta": 0.0, "join": False},
     ]
     shown = preview(client, job, candidate)["plan"]
     after = shown["captions"]
@@ -1136,8 +1136,12 @@ def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_sour
     for bad in (
         [{"at": 1.0, "shift": 10.5}], [{"at": 1.0, "start_delta": -11}], [{"at": 1.0, "end_delta": "inf"}],
         [{"at": 1.0, "media": "nope"}], [{"shift": 1.0}], [{"at": 1.0}] * 501,
+        # A join sets nothing else.
+        [{"at": 1.0, "join": True, "shift": 0.5}], [{"at": 1.0, "join": True, "end_delta": -0.1}],
     ):
         assert client.patch(url, json={"cue_edits": bad}).status_code == 422
+    joined = patch(client, job, candidate, cue_edits=[{"at": second["key"]["at"], "join": True}])
+    assert joined["cue_edits"] == [{"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0, "join": True}]
 
 
 def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_source, face_then_two):

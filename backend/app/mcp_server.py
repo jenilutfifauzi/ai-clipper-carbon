@@ -199,6 +199,11 @@ Edits:
   The Cue is kept in its Segment, after the Cue before ends and before the Cue after starts, and
   0.2 s long at least. One whose Word the Clip doesn't show does nothing and is kept: the dry run
   lists it under `unused_cue_edits`, and a Cue it applies to says `edited`.
+  Instead, a Cue Edit with `join` (and no other field) keeps its Word in the Cue before, where only
+  a pause, a sentence's end or max_secs would part them; the line limits still do. To merge a Cue
+  into the one before: remove its own Cue Edit and its first Word's break_before, and add a join
+  when the dry run's Cue says `needs_join`; only a `joinable` Cue fits. To split a Cue, add a Cue
+  Edit with no field at the Word that should start the new one.
   merge_candidate_items changes only the fields given; remove_candidate_items takes its `at`.
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
@@ -926,7 +931,8 @@ def _cue_view(cue: dict) -> dict:
     """A Cue as an agent reads it: when it shows, its lines as shown, its lines as written (`plain`:
     the Words' own case and punctuation, with the Word Edits), its key (the middle of its first
     Word on its timeline, which a Cue Edit names), whether a Cue Edit applies (`edited`, only
-    when one does) and whether it could be merged into the Cue before (`joinable`)."""
+    when one does), whether it could be merged into the Cue before (`joinable`) and whether that
+    would take a `join` Cue Edit (`needs_join`, only when it would)."""
     return {
         **_times(cue, "start", "end"),
         "lines": [" ".join(word["text"] for word in line) for line in cue["lines"]],
@@ -934,6 +940,7 @@ def _cue_view(cue: dict) -> dict:
         "key": _compact({"at": round(cue["key"]["at"], 3), "media": cue["key"]["media"]}),
         **({"edited": True} if cue["edited"] else {}),
         "joinable": cue["joinable"],
+        **({"needs_join": True} if cue["needs_join"] else {}),
     }
 
 

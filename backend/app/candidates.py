@@ -1,7 +1,7 @@
 """Candidates: proposed clips awaiting review."""
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from typing import Annotated, Any, NamedTuple
 
@@ -94,13 +94,22 @@ class CueEdit:
     timeline (with `media`, that item's). That Word starts a Cue. `shift` moves the Cue and its
     highlight, `start_delta` and `end_delta` one edge (negative: earlier), in seconds of that
     timeline (so scaled by Speed); kept between its neighbours and in its Segment. While its Word
-    isn't shown it does nothing, and is kept."""
+    isn't shown it does nothing, and is kept. With `join`, instead of starting a Cue, its Word's Cue
+    is kept with the one before where only a pause, a sentence's end or the longest-Cue limit would
+    part them (the line limits still do); it is refused with any other field set."""
 
     at: FiniteFloat
     media: MediaId | None = None
     shift: CueShift = 0.0
     start_delta: CueShift = 0.0
     end_delta: CueShift = 0.0
+    join: bool = False
+
+    def __post_init__(self) -> None:
+        if self.join:
+            others = [f.name for f in fields(self) if f.name not in ("at", "media", "join") and getattr(self, f.name) != f.default]
+            if others:
+                raise ValueError(f"A Cue Edit with join sets nothing else: it has {', '.join(others)}")
 
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
