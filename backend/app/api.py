@@ -16,6 +16,7 @@ from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
     Candidate,
+    CueEdit,
     Framing,
     KeyProperty,
     Layout,
@@ -42,12 +43,12 @@ from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobSt
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
-from app.media_words import MediaWordsStore
+from app.media_words import MediaWordsStatus, MediaWordsStore
 from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
-from app.rendering import NothingToRender, ranked_clips, source_copies
+from app.rendering import NothingToRender, media_language, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -66,7 +67,7 @@ from app.styles import (
     StylePreset,
     WatermarkStyle,
 )
-from app.transcript import Transcript
+from app.transcript import Language, Transcript, Word
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
 from app.worker import Worker
 
@@ -84,6 +85,7 @@ MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png", ".sr
 SUBTITLE_TYPES = {".srt": "application/x-subrip", ".vtt": "text/vtt"}
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
+CUE_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
 # The most Text Layers, Shapes, Music Clips and Segments a Candidate holds.
@@ -231,6 +233,8 @@ class CandidateUpdate(BaseModel):
     style_overrides: StyleOverrides | None = None
     # Replaces the Candidate's Word Edits as a whole.
     word_edits: Annotated[list[WordEdit], Field(max_length=WORD_EDITS_MAX)] | None = None
+    # Replaces the Candidate's Cue Edits as a whole.
+    cue_edits: Annotated[list[CueEdit], Field(max_length=CUE_EDITS_MAX)] | None = None
     # Seconds into the Clip; the planner keeps them in it.
     hook_start: Annotated[float, Field(ge=0, le=MAX_CLIP_SECS)] | None = None
     hook_secs: Annotated[float, Field(ge=0.5, le=30)] | None = None
@@ -254,6 +258,26 @@ class CandidateUpdate(BaseModel):
     # The Revision this edit was made from: refused (409, with the Candidate as it is now) unless it
     # is the Candidate's. Left out, the edit is saved over whatever is there.
     revision: Annotated[int, Field(ge=1)] | None = None
+
+
+class MediaWordsRequest(BaseModel):
+    """A Retry of a video's Media Words, or with `again`, "Transcribe again"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    again: bool = False
+
+
+class MediaWordsView(BaseModel):
+    """A video's Media Words for a Job: in its language (its own, else the Job's), their status
+    (ready, pending, failed or none), the error of a failure, and the Words when ready, in seconds
+    into the video."""
+
+    media_id: str
+    language: str
+    status: MediaWordsStatus
+    error: str | None = None
+    words: list[Word] | None = None
 
 
 class RestoreBody(BaseModel):
@@ -830,6 +854,45 @@ def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobW
         raise HTTPException(409, f"{exc}: Candidates can be prepared once it is in review") from None
 
 
+def _media_words_view(store: JobStore, library: MediaStore, media_words: MediaWordsStore, job_id: str, media_id: str) -> MediaWordsView:
+    try:
+        job = store.get(job_id)
+        item = library.get(media_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except MediaNotFound:
+        raise HTTPException(404, f"No media {media_id}") from None
+    if item.kind is not MediaKind.VIDEO or not item.has_audio:
+        raise HTTPException(422, f"{item.name} isn't a video with sound: it has no Media Words")
+    language = media_language(job, item)
+    status = media_words.status(media_id, language)
+    words = media_words.saved(media_id, language) if status is MediaWordsStatus.READY else None
+    return MediaWordsView(media_id=media_id, language=language, status=status, error=media_words.error(media_id, language), words=words)
+
+
+@router.get("/jobs/{job_id}/media/{media_id}/words")
+def media_words_of(job_id: str, media_id: str, store: Store, library: Media, media_words: MediaWordsDep) -> MediaWordsView:
+    """A video's Media Words for the Job (`MediaWordsView`). 422 for an item that isn't a video with sound."""
+    return _media_words_view(store, library, media_words, job_id, media_id)
+
+
+@router.post("/jobs/{job_id}/media/{media_id}/words", status_code=202)
+def transcribe_media_words(
+    job_id: str, media_id: str, store: Store, library: Media, media_words: MediaWordsDep, worker: JobWorker,
+    body: MediaWordsRequest | None = None,
+) -> MediaWordsView:
+    """Retry a video's Media Words for the Job: a remembered failure is forgotten and the video
+    transcribed again in its language, in the render queue (the Job is `rendering` meanwhile).
+    Nothing is queued when they are ready, unless `again` ("Transcribe again"), which replaces them.
+    409 unless the Job is in review or rendering with its captions on."""
+    view = _media_words_view(store, library, media_words, job_id, media_id)
+    try:
+        worker.transcribe_media(job_id, media_id, body.again if body else False)
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: its videos' Media Words can't be transcribed") from None
+    return _media_words_view(store, library, media_words, job_id, view.media_id)
+
+
 @router.post("/jobs/{job_id}/candidates", status_code=201)
 def add_candidate(job_id: str, body: ManualCandidate, store: Store, settings: AppSettings, edit: EditBy) -> Candidate:
     """Add a manual Candidate for a transcript range, snapped to Words, after the AI's Candidates."""
@@ -1136,6 +1199,15 @@ def delete_logo(logo_id: str, logos: Logos) -> None:
         raise HTTPException(404, f"No Logo {logo_id}") from None
 
 
+class MediaChange(BaseModel):
+    """A change to a Media Library item."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The language its Media Words are transcribed in, in every Job; null: each Job's.
+    language: Language | None
+
+
 class MediaUse(BaseModel):
     """A Candidate that uses a Media Library item."""
 
@@ -1159,6 +1231,18 @@ def upload_media(file: UploadFile, library: Media) -> MediaItem:
         return library.add(file.file, file.filename or "Media")
     except BadMedia as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+@router.patch("/media/{media_id}")
+def change_media(media_id: str, body: MediaChange, library: Media) -> MediaItem:
+    """Set a video's language (null: each Job's). Its Media Words in that language are transcribed by
+    the next preparation or render of a Candidate showing it; those of other languages are kept."""
+    try:
+        if library.get(media_id).kind is not MediaKind.VIDEO:
+            raise HTTPException(422, "Only a video has a language")
+        return library.set_language(media_id, body.language)
+    except MediaNotFound:
+        raise HTTPException(404, f"No media {media_id}") from None
 
 
 @router.get("/media/{media_id}")

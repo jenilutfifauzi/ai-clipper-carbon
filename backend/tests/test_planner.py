@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 from pydantic import TypeAdapter
 
-from app.candidates import Layout, LayoutOverride, WordEdit
+from app.candidates import CueEdit, Layout, LayoutOverride, WordEdit
 from app.config import CameraTuning
 from app.styles import CaptionPosition, CaptionStyle, Highlight, HookAlign, HookPosition, HookShape, HookStyle
 from app.planner import (
@@ -1435,3 +1435,116 @@ def test_a_cue_is_joinable_when_both_fit_the_cues_lines():
     at = lambda n: WordEdit(at=words[n].start + 0.01, break_before=True)  # noqa: E731
     assert [cue.joinable for cue in edited(words, [at(2)], 8, caption_style=SENTENCE)] == [False, True]
     assert [cue.joinable for cue in edited(words, [at(1), at(3)], 8, caption_style=SENTENCE)] == [False, False]
+
+
+# Cue Edits (captions-advanced ticket 07). Their times are on the Source's timeline.
+
+
+def retimed(words: list[Word], cue_edits: list[CueEdit], secs: float = 5, **options) -> RenderPlan:
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, cue_edits=cue_edits, **options)
+
+
+def spans(cues: list[Cue]) -> list[tuple[float, float]]:
+    return [(cue.start, cue.end) for cue in cues]
+
+
+def highlights(cue: Cue) -> list[tuple[str, float, float]]:
+    return [(word.text, word.start, word.end) for word in cue.words]
+
+
+TALK = [Word("halo,", 1.0, 1.4), Word("semua.", 1.4, 2.0), Word("apa", 3.0, 3.2), Word("kabar", 3.2, 3.6)]
+
+
+def test_a_cue_edits_shift_moves_its_cue_and_highlight_and_its_deltas_move_only_its_edges():
+    assert spans(retimed(TALK, []).captions) == [(1.0, 2.3), (3.0, 3.9)]
+    moved = retimed(TALK, [CueEdit(at=103.1, shift=0.5)]).captions
+    assert spans(moved) == [(1.0, 2.3), (3.5, 4.4)]
+    assert highlights(moved[1]) == [("APA", 3.5, 3.7), ("KABAR", 3.7, 4.4)]
+    assert [cue.edited for cue in moved] == [False, True]
+    # Earlier at its start and later at its end: the Words are said when they were, the first
+    # highlighted from when the Cue comes up.
+    widened = retimed(TALK, [CueEdit(at=103.1, start_delta=-0.4, end_delta=0.5)]).captions
+    assert spans(widened) == [(1.0, 2.3), (2.6, 4.4)]
+    assert highlights(widened[1]) == [("APA", 2.6, 3.2), ("KABAR", 3.2, 4.4)]
+    # Any time within its first Word names it.
+    assert spans(retimed(TALK, [CueEdit(at=103.0, shift=0.5)]).captions) == spans(moved)
+
+
+def test_a_retimed_cue_is_clamped_by_its_neighbours_and_the_clip():
+    # Not before the Cue before ends: its start is cut there.
+    assert spans(retimed(TALK, [CueEdit(at=103.1, shift=-1.0)]).captions) == [(1.0, 2.3), (2.3, 2.9)]
+    # Not after the Cue after starts.
+    assert spans(retimed(TALK, [CueEdit(at=101.2, end_delta=2.0)]).captions) == [(1.0, 3.0), (3.0, 3.9)]
+    # Kept in the Clip, and shown CAPTION_MIN_SECS at least.
+    assert spans(retimed(TALK, [CueEdit(at=103.1, shift=10.0)]).captions) == [(1.0, 2.3), (4.8, 5.0)]
+    assert spans(retimed(TALK, [CueEdit(at=101.2, start_delta=-5.0)]).captions)[0] == (0.0, 2.3)
+    assert spans(retimed(TALK, [CueEdit(at=101.2, start_delta=2.0, end_delta=-2.0)]).captions)[0] == (2.8, 3.0)
+    # Of two edited Cues that reach for each other, the earlier keeps its place; one moved later
+    # leaves the earlier room up to it.
+    both = [CueEdit(at=101.2, end_delta=-0.3), CueEdit(at=103.1, start_delta=-9.0)]
+    assert spans(retimed(TALK, both).captions) == [(1.0, 2.0), (2.0, 3.9)]
+    later = [CueEdit(at=101.2, end_delta=2.0), CueEdit(at=103.1, shift=0.5)]
+    assert spans(retimed(TALK, later).captions) == [(1.0, 3.5), (3.5, 4.4)]
+
+
+def test_cue_edits_are_divided_by_their_segments_speed_and_kept_in_their_segment():
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
+
+    def cues(*edits: CueEdit) -> list[Cue]:
+        return plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped], cue_edits=list(edits)).captions
+
+    assert spans(cues()) == [(0.2, 0.9), (2.5, 3.0), (3.3, 3.8)]
+    # 0.4 s of the Source is 0.2 s at 2x.
+    assert spans(cues(CueEdit(at=51.2, shift=0.4))) == [(0.2, 0.9), (2.7, 3.2), (3.3, 3.8)]
+    assert spans(cues(CueEdit(at=51.2, start_delta=-0.4))) == [(0.2, 0.9), (2.3, 3.0), (3.3, 3.8)]
+    # Not out of its Segment, at either end.
+    assert spans(cues(CueEdit(at=51.2, start_delta=-2.0)))[1] == (2.0, 3.0)
+    assert spans(cues(CueEdit(at=52.8, end_delta=4.0)))[2] == (3.3, 4.0)
+
+
+def test_a_cue_edits_word_starts_a_cue_whatever_the_line_limits():
+    words = said("satu dua tiga empat lima enam")
+    empat = words[3]
+    edit = CueEdit(at=100 + (empat.start + empat.end) / 2)
+    assert rows(styled(words, 8, SENTENCE)) == [["SATU DUA TIGA", "EMPAT LIMA ENAM"]]
+    assert rows(retimed(words, [edit], 8, caption_style=SENTENCE).captions) == [["SATU DUA TIGA"], ["EMPAT LIMA ENAM"]]
+    # Longer lines, or one short line a Cue: EMPAT still starts one, keyed by it.
+    for style in (replace(SENTENCE, max_chars=40), CaptionStyle(), CaptionStyle(max_chars=8)):
+        cues = retimed(words, [edit], 8, caption_style=style).captions
+        [started] = [cue for cue in cues if cue.edited]
+        assert started.words[0].text == "EMPAT" and started.key.at == edit.at
+
+
+def test_a_cue_edit_whose_word_isnt_shown_is_unused_and_applies_again_once_it_is():
+    edit = CueEdit(at=103.1, shift=0.5)
+    # Trimmed out of the Clip's range: unused, and nothing moves.
+    trimmed = retimed(TALK, [edit], 2.5)
+    assert (spans(trimmed.captions), trimmed.unused_cue_edits) == ([(1.0, 2.3)], [edit])
+    # The range restored: it applies again.
+    restored = retimed(TALK, [edit])
+    assert (spans(restored.captions)[1], restored.unused_cue_edits) == ((3.5, 4.4), [])
+    # So in a Segment of its range; a Word removed by a Word Edit isn't shown either.
+    part = lambda end: SegmentInput(100.0, end, words=[w for w in TALK if w.end <= end - 100])  # noqa: E731
+    plan = lambda end, **options: plan_render(100, end, source(1920, 1080, fps=FPS), main_track=[part(end)], cue_edits=[edit], **options)  # noqa: E731
+    assert plan(102.5).unused_cue_edits == [edit]
+    assert plan(105).unused_cue_edits == []
+    removed = SegmentInput(100.0, 105, words=TALK, word_edits=[WordEdit(at=3.1, text="")])
+    assert plan_render(100, 105, source(1920, 1080, fps=FPS), main_track=[removed], cue_edits=[edit]).unused_cue_edits == [edit]
+    # A Cue Edit of a Media Library item doesn't apply on the Source's timeline.
+    elsewhere = CueEdit(at=103.1, media="ab" * 16, shift=0.5)
+    assert retimed(TALK, [elsewhere]).unused_cue_edits == [elsewhere]
+
+
+def test_a_media_segments_cue_edits_are_on_its_items_timeline():
+    media = "ab" * 16
+    # A video's Segment from 0.5 s into it, saying "halo semua. apa" (in seconds into the Segment).
+    talking = SegmentInput(0.5, 4.0, media=media, width=720, height=1280, words=[Word("halo", 0.5, 0.9), Word("apa", 2.5, 2.9)])
+    plan = lambda *edits: plan_render(0, 10, source(1920, 1080, fps=FPS), main_track=[talking], cue_edits=list(edits))  # noqa: E731
+    assert [(cue.start, cue.key.at, cue.key.media) for cue in plan().captions] == [(0.5, 1.2, media), (2.5, 3.2, media)]
+    # Keyed at its Word's middle on the item's timeline: 3.2 s into the video.
+    moved = plan(CueEdit(at=3.2, media=media, shift=0.3))
+    assert [(cue.start, cue.edited) for cue in moved.captions] == [(0.5, False), (2.8, True)]
+    # The Source's Cue Edit at that time doesn't touch it.
+    source_edit = CueEdit(at=3.2, shift=0.3)
+    assert plan(source_edit).unused_cue_edits == [source_edit]

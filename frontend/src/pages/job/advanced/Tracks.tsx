@@ -1,11 +1,12 @@
 import { Eye, EyeOff, Lock, LockOpen, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
   jobPeaksUrl,
   mediaFilmstripUrl,
   mediaPeaksUrl,
   mediaThumbnailUrl,
+  type CueKey,
   type MediaItem,
   type MusicClip,
   type Overlay,
@@ -33,7 +34,8 @@ import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
-import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
+import { clicked, isPicked, itemsOf, keyOf, picked, sameCue, type ItemRef, type Pick } from "./pick";
+import { CUE_MIN_SECS, cueEditOf, shownCues, type CueDragStart } from "./cueEdits";
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
@@ -64,6 +66,8 @@ export interface TrackHandlers {
   // `heard`: the seconds of the Music Clip heard, where the Clip's end cuts it short.
   onFade: (id: string, fade: "fade_in" | "fade_out", secs: number, heard: number, group: string) => void;
   onJoin: (after: string) => void;
+  // A picked Cue's edge or body dragged to `range`, from where the drag began.
+  onCue: (key: CueKey, range: { start: number; end: number; edge: "move" | "start" | "end" }, group: string, from: CueDragStart) => void;
   onDropTransition: (after: string, kind: TransitionKind) => void;
   // A Media Library item (its id), a Text Preset (its id) or a Stickers tile (its Shape Kind) dropped at `time`.
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
@@ -96,6 +100,8 @@ export function Tracks({
   pick,
   played,
   pending = [],
+  failed = new Set(),
+  captioned = true,
   playback,
   mediaById,
   mediaCache,
@@ -115,6 +121,10 @@ export function Tracks({
   played: PlayedSegment[];
   // Where the Segments whose captions are on their way play (their Media Words being transcribed).
   pending?: { id: string; start: number; end: number }[];
+  // The Segments whose video's transcription failed, by id.
+  failed?: Set<string>;
+  // Whether the Job is captioned: the Captions Track says so when it isn't.
+  captioned?: boolean;
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
   mediaById: Map<string, MediaItem>;
@@ -135,6 +145,8 @@ export function Tracks({
   const { onSelect, onDelete } = handlers;
   // A Shape, Music Clip or Overlay trimmed: its Keyframes re-anchored from where they were as the drag began.
   const [retime] = useState(gestureRetime);
+  // A picked Cue's drag: where it began, which each of its steps goes on from.
+  const cueDrag = useRef<(CueDragStart & { group: string }) | null>(null);
   // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
   const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
   // A picked item of several dragged or trimmed (or a Segment moved): picked alone.
@@ -374,6 +386,7 @@ export function Tracks({
               <RetimingBadge retiming={segment} />
               {held && <HoldBadge hold={segment.hold!} />}
               {pending.some((span) => span.id === segment.id) && <TranscribingBadge />}
+              {failed.has(segment.id) && <FailedBadge />}
             </TimelineItem>
           );
         })}
@@ -428,7 +441,15 @@ export function Tracks({
           );
         })}
       </TrackRow>
-      <TrackRow label={label("captions")} height="h-8" dimmed={dimmed("captions")} locked={locked("captions")}>
+      <TrackRow
+        label={<TrackLabel kind="captions" tracks={tracks} onTrack={onTrack} onPick={() => onSelect({ kind: "captions" })} picked={pick?.kind === "captions"} />}
+        height="h-8"
+        dimmed={dimmed("captions")}
+        locked={locked("captions")}
+      >
+        {!captioned && (
+          <span className="pointer-events-none absolute inset-y-1 left-2 flex items-center text-[11px] text-muted">Captions are off for this Job</span>
+        )}
         {/* Over a Segment whose captions are on their way. */}
         {pending.map((span) => (
           <div
@@ -442,26 +463,46 @@ export function Tracks({
             }}
           />
         ))}
-        {plan?.captions.map((event, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => {
-              // Just inside the line, which a frame's rounding of its start can miss.
-              playback.seek(event.start + Math.min(CAPTION_SEEK_IN, (event.end - event.start) / 2));
-              onSelect({ kind: "captions" });
-            }}
-            title={cueText(event)}
-            aria-pressed={pick?.kind === "captions"}
-            className={cx(
-              "absolute inset-y-1 overflow-hidden rounded bg-fill px-1 text-left text-[11px] leading-5 text-ellipsis whitespace-nowrap text-muted ring-1 ring-border hover:text-text",
-              pick?.kind === "captions" && "text-text ring-text",
-            )}
-            style={{ left: event.start * pps, width: Math.max(2, (event.end - event.start) * pps - 1) }}
-          >
-            {cueText(event)}
-          </button>
-        ))}
+        {plan &&
+          shownCues(plan).map(({ cue, shown }) => {
+            const selected = pick?.kind === "cue" && sameCue(pick.key, cue.key);
+            const text = cueText(cue);
+            return (
+              <TimelineItem
+                key={`${cue.key.media ?? ""}@${cue.key.at}`}
+                geometry={geometry}
+                start={shown.start}
+                end={shown.end}
+                min={shown.low}
+                max={shown.high}
+                minSecs={CUE_MIN_SECS}
+                trimMin={shown.low}
+                trimMax={shown.high}
+                tone="neutral"
+                selected={selected || pick?.kind === "captions"}
+                label={`Caption "${text}", from ${shown.start.toFixed(2)} s to ${shown.end.toFixed(2)} s${shown.edited ? ", retimed" : ""}`}
+                onSelect={() => {
+                  // Just inside the Cue, which a frame's rounding of its start can miss.
+                  playback.seek(shown.start + Math.min(CAPTION_SEEK_IN, (shown.end - shown.start) / 2));
+                  onSelect({ kind: "cue", key: cue.key });
+                }}
+                // Only a picked Cue is retimed: its edges write its Cue Edit's deltas, its body its shift.
+                onChange={
+                  selected
+                    ? (range, group) => {
+                        if (cueDrag.current?.group !== group) {
+                          cueDrag.current = { group, edit: cueEditOf(edits.cue_edits, plan, cue.key), start: shown.start, end: shown.end };
+                        }
+                        handlers.onCue(cue.key, range, group, cueDrag.current);
+                      }
+                    : undefined
+                }
+              >
+                {shown.edited && <span aria-hidden title="Retimed" className="size-1.5 shrink-0 rounded-full bg-accent" />}
+                <span className="truncate text-[11px] font-medium">{text}</span>
+              </TimelineItem>
+            );
+          })}
       </TrackRow>
       <TrackRow label={label("hook")} dimmed={dimmed("hook")} locked={locked("hook")}>
         {plan?.hook && (
@@ -580,6 +621,19 @@ function TranscribingBadge() {
   return (
     <span role="status" className="relative shrink-0 self-start rounded bg-black/70 px-1 pt-0.5 text-[11px] font-semibold text-white">
       Transcribing…
+    </span>
+  );
+}
+
+/** A media Segment's badge when its Media Words failed to be transcribed: its inspector offers Retry. */
+function FailedBadge() {
+  return (
+    <span
+      role="status"
+      title="Transcribing this video for its captions failed: pick it to retry"
+      className="relative shrink-0 self-start rounded bg-danger px-1 pt-0.5 text-[11px] font-semibold text-white"
+    >
+      Captions failed
     </span>
   );
 }
@@ -918,15 +972,45 @@ function FadeRamps({
  * A Track's label: its name, and on a desktop (`onTrack`) its buttons to hide and mute it in the
  * preview, which leave the rendered Clip as it is, and to lock it against edits by hand.
  */
-function TrackLabel({ kind, tracks, onTrack }: { kind: TrackKind; tracks: TrackState; onTrack?: (control: TrackControl, kind: TrackKind) => void }) {
+function TrackLabel({
+  kind,
+  tracks,
+  onTrack,
+  onPick,
+  picked = false,
+}: {
+  kind: TrackKind;
+  tracks: TrackState;
+  onTrack?: (control: TrackControl, kind: TrackKind) => void;
+  // A label that picks what its Track holds (the Captions Track's: the captions), and whether it is picked.
+  onPick?: () => void;
+  picked?: boolean;
+}) {
   const { label, hide, mute } = TRACKS[kind];
-  if (!onTrack) return label;
   const hidden = tracks.hidden.includes(kind);
   const muted = tracks.muted.includes(kind);
   const locked = tracks.locked.includes(kind);
+  const name =
+    onPick && !locked ? (
+      <button
+        type="button"
+        onClick={onPick}
+        aria-pressed={picked}
+        title={`Pick all the ${label.toLowerCase()}`}
+        className={cx(
+          "truncate rounded px-1 -mx-1 text-left hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus",
+          picked && "text-text",
+        )}
+      >
+        {label}
+      </button>
+    ) : (
+      <span className="truncate">{label}</span>
+    );
+  if (!onTrack) return name;
   return (
     <span className="flex w-full items-center justify-between gap-1">
-      <span className="truncate">{label}</span>
+      {name}
       <span className="flex shrink-0">
         {hide && (
           <TrackButton

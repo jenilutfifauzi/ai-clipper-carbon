@@ -125,6 +125,21 @@ export interface WordEdit {
   media?: string | null;
 }
 
+// The owner's change to one Cue (GLOSSARY: Cue Edit), keyed as a Word Edit is: a time in its first
+// Word on the Source's timeline (with `media`, on that Media Library item's). That Word starts a Cue.
+// `shift` moves the Cue and its highlight, `start_delta` and `end_delta` one edge (negative: earlier),
+// in seconds of that timeline (so they scale with Speed), each within ±CUE_SHIFT_MAX_SECS.
+export interface CueEdit {
+  at: number;
+  media: string | null;
+  shift: number;
+  start_delta: number;
+  end_delta: number;
+}
+
+// The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
+export const CUE_SHIFT_MAX_SECS = 10;
+
 export type Highlight = "colour" | "box" | "none";
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";
 export type HookPosition = "top" | "middle" | "bottom" | "custom";
@@ -268,6 +283,18 @@ export interface MediaItem {
   height: number | null;
   has_audio: boolean;
   created: string;
+  // A video's Media Words are transcribed in this language in every Job; null: each Job's.
+  language?: string | null;
+}
+
+// A video's Media Words for a Job (backend/app/api.py's MediaWordsView): in its language (its own,
+// else the Job's), their status, the error of a failure, and the Words when ready.
+export interface MediaWords {
+  media_id: string;
+  language: string;
+  status: "ready" | "pending" | "failed" | "none";
+  error: string | null;
+  words: Word[] | null;
 }
 
 // A Candidate that uses a Media Library item, as a refused delete names it.
@@ -810,6 +837,8 @@ export interface RenderPlan {
   transitions: TransitionEvent[];
   // The Shapes that show, in drawing order, under the Text Layers.
   shapes: ShapeEvent[];
+  // The Cue Edits whose Word isn't shown, which do nothing (and are kept).
+  unused_cue_edits: CueEdit[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
@@ -823,8 +852,9 @@ export interface PreviewWord extends Word {
 
 // Where a Segment's caption Words come from: "clip", transcribed for a Source Segment's range;
 // "transcript", the episode's until it is; "media", a video's Media Words; "pending", while they are
-// transcribed; "none" (a Freeze frame, Reverse, a silent video, or captions off).
-export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "none";
+// transcribed; "failed", when that failed (until a Retry); "off", a video's with its Captions switch
+// off; "none" (a Freeze frame, Reverse, a silent video, or the Job's captions off).
+export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "failed" | "off" | "none";
 
 export interface PreviewPlan {
   plan: RenderPlan;
@@ -833,6 +863,8 @@ export interface PreviewPlan {
   words_source: "clip" | "transcript";
   // Each Segment's, by its id.
   words_status: Record<string, WordsStatus>;
+  // Why a "failed" Segment's video failed to be transcribed, by the Segment's id.
+  words_errors: Record<string, string>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
 }
@@ -893,6 +925,8 @@ export interface ClipSegment extends Retiming {
   framing?: Framing | null;
   volume?: number;
   keys?: Keys;
+  // A video's Captions switch: false leaves it uncaptioned; empty means on. The Source's have none.
+  captions?: boolean | null;
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
@@ -939,6 +973,7 @@ export interface Candidate {
   preset_id: string;
   style_overrides: StyleOverrides;
   word_edits: WordEdit[];
+  cue_edits: CueEdit[];
   // When the hook comes on, in seconds into the Clip, and how long it stays.
   hook_start: number;
   hook_secs: number;
@@ -980,6 +1015,8 @@ export interface CandidateChange {
   style_overrides?: StyleOverrides;
   // Replaces the Candidate's Word Edits as a whole.
   word_edits?: WordEdit[];
+  // Replaces the Candidate's Cue Edits as a whole.
+  cue_edits?: CueEdit[];
   hook_start?: number;
   hook_secs?: number;
   // Replaces the Candidate's Layout Overrides as a whole.
@@ -1257,6 +1294,15 @@ export const api = {
   },
   deleteLogo: (id: string) => request<void>(`/logos/${id}`, { method: "DELETE" }),
   listMedia: () => request<MediaItem[]>("/media"),
+  // A video's language for its Media Words, in every Job (null: each Job's).
+  setMediaLanguage: (id: string, language: string | null) =>
+    request<MediaItem>(`/media/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ language }) }),
+  // Retry a video's Media Words for the Job, or with `again`, transcribe them again.
+  transcribeMediaWords: (jobId: string, mediaId: string, again = false) =>
+    request<MediaWords>(`/jobs/${encodeURIComponent(jobId)}/media/${encodeURIComponent(mediaId)}/words`, {
+      method: "POST",
+      body: JSON.stringify({ again }),
+    }),
   // Asks for the preview Retimed copy of a video's range (made in the background), and how it is coming along: poll it until it has a `url`.
   retimedCopy: (mediaId: string, range: RetimedRange, signal?: AbortSignal) =>
     request<RetimedCopy>(`/media/${encodeURIComponent(mediaId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),

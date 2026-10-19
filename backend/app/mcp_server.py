@@ -52,6 +52,7 @@ from app.candidates import (
     ShapeStyle,
     TextLayer,
     TextStyle,
+    CueEdit,
     Transition,
     WordEdit,
     ease_name,
@@ -86,11 +87,12 @@ EDIT_SOURCE = {"X-Edit-Source": "agent"}
 ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
 # The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
 # and remove_candidate_items change item by item: each list's item, and the field that identifies
-# one within its Candidate (or the fields: a Word Edit's time and its timeline, None for the Source's).
+# one within its Candidate (or the fields: a Word Edit's or Cue Edit's time and its timeline, None
+# for the Source's).
 ITEMS: dict[str, tuple[type, str | tuple[str, ...]]] = {
     "text_layers": (TextLayer, "id"), "shapes": (Shape, "id"), "music": (MusicClip, "id"), "overlays": (Overlay, "id"),
     "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, ("at", "media")),
-    "layout_overrides": (LayoutOverride, "at"),
+    "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, ("at", "media")),
 }
 
 INSTRUCTIONS = f"""\
@@ -192,10 +194,23 @@ Edits:
   and ends at a pause of pause_secs or a sentence's end. A Word Edit's break_before starts a line,
   and a Cue when the Cue has all its lines. The editor's Phrase is 1 line, 16 characters, no word
   limit, 1.4 s, 0.5 s pause; its Sentence 2 lines, 24 characters, no word limit, 5 s, 0.7 s pause.
+- A Cue Edit (cue_edits) changes one Cue. It is keyed by `at`, any time within the Cue's first
+  Word in Source time (the dry run gives each Cue's `key`), and that Word then always starts a Cue.
+  `shift` moves the Cue and its highlight; `start_delta` and `end_delta` move only its start or its
+  end (negative: earlier). All are -10..10 seconds of Source time, so a Segment at 2x halves them.
+  The Cue is kept in its Segment, after the Cue before ends and before the Cue after starts, and
+  0.2 s long at least. One whose Word the Clip doesn't show does nothing and is kept: the dry run
+  lists it under `unused_cue_edits`, and a Cue it applies to says `edited`.
+  merge_candidate_items changes only the fields given; remove_candidate_items takes its `at`
+  ({{at, media}} for a video's).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
+- A Segment of a video with sound is captioned from its video's Media Words (the whole video
+  transcribed once, in the video's own language if set, else the Job's), unless its `captions` (its
+  Captions switch) is false: then it has no captions and its video isn't transcribed for it. null
+  means on. A Segment of the episode has no `captions`.
 - A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
   lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
   into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
@@ -492,12 +507,13 @@ def build_mcp(app: FastAPI) -> MCPServer:
         transitions: list[_PATCHES["transitions"]] | None = None,  # type: ignore[valid-type]
         word_edits: list[_PATCHES["word_edits"]] | None = None,  # type: ignore[valid-type]
         layout_overrides: list[_PATCHES["layout_overrides"]] | None = None,  # type: ignore[valid-type]
+        cue_edits: list[_PATCHES["cue_edits"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
         framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
-        one the Candidate has (id; a Transition's `after`; a Word Edit's `at` and `media`; a Layout
-        Override's `at`)
+        one the Candidate has (id; a Transition's `after`; a Word Edit's or Cue Edit's `at` and
+        `media`; a Layout Override's `at`)
         changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
@@ -535,8 +551,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         keys: list[str | float | TimelineKey],
     ) -> dict:
         """Remove some of a Candidate's items of one kind, by key: ids; a Transition's `after`; a
-        Word Edit's `at` ({at, media} for a video's) or a Layout Override's `at`; for style_overrides,
-        "section.field" (such as "caption.size"), which then falls back to the Style Preset's."""
+        Word Edit's or Cue Edit's `at` ({at, media} for a video's) or a Layout Override's `at`; for
+        style_overrides, "section.field" (such as "caption.size"), which then falls back to the Style
+        Preset's."""
 
         def removed(current: dict) -> dict:
             if kind == "style_overrides":
@@ -889,6 +906,7 @@ def _plan_view(
             for segment in plan["segments"]
         ],
         "captions": [_cue_view(cue) for cue in plan["captions"]],
+        **_compact({"unused_cue_edits": [_cue_edit_view(edit) for edit in plan["unused_cue_edits"]]}),
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
@@ -915,14 +933,22 @@ def _plan_view(
 
 def _cue_view(cue: dict) -> dict:
     """A Cue as an agent reads it: when it shows, its lines as shown, its lines as written (`plain`:
-    the Words' own case and punctuation, with the Word Edits) and its key (the middle of its first
-    Word on its timeline, which a Cue Edit names)."""
+    the Words' own case and punctuation, with the Word Edits), its key (the middle of its first
+    Word on its timeline, which a Cue Edit names), whether a Cue Edit applies (`edited`, only
+    when one does) and whether it could be merged into the Cue before (`joinable`)."""
     return {
         **_times(cue, "start", "end"),
         "lines": [" ".join(word["text"] for word in line) for line in cue["lines"]],
         "plain": cue["plain"],
         "key": _compact({"at": round(cue["key"]["at"], 3), "media": cue["key"]["media"]}),
+        **({"edited": True} if cue["edited"] else {}),
+        "joinable": cue["joinable"],
     }
+
+
+def _cue_edit_view(edit: dict) -> dict:
+    """A Cue Edit with only the fields it sets."""
+    return {name: value for name, value in edit.items() if name == "at" or value not in (None, 0, 0.0)}
 
 
 def _video_read(event: dict, copied: Callable[[dict], bool]) -> dict:
@@ -951,7 +977,7 @@ def _same(a: Any, b: Any) -> bool:
 
 
 class TimelineKey(BaseModel):
-    # A Word Edit's key: `at`, on the Source's timeline, or with `media` on that video's.
+    # A Word Edit's or Cue Edit's key: `at`, on the Source's timeline, or with `media` on that video's.
     model_config = ConfigDict(extra="forbid")
     at: float
     media: str | None = None
@@ -983,7 +1009,7 @@ def _merge(items: list[dict], patches: list[dict], key: str | tuple[str, ...]) -
         else:
             merged[at] = _merged_fields(merged[at], patch)
     if "at" in ((key,) if isinstance(key, str) else key):
-        merged.sort(key=lambda item: item["at"])
+        merged.sort(key=lambda item: (item.get("media") or "", item["at"]))
     return merged
 
 
