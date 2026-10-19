@@ -1,15 +1,18 @@
-import { AlertCircle, Clapperboard, Download, Hourglass, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { api, mediaUrl, type Candidate, type Clip, type JobProgress, type RenderedClip, type StylePreset } from "../../api";
-import { Button, buttonClass } from "../../components/Button";
+import { AlertCircle, Download, Hourglass, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { api, mediaUrl, type Candidate, type Clip, type ExportPresetList, type JobProgress, type RenderedClip, type StylePreset } from "../../api";
+import { buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
 import { ScoreRing } from "../../components/ScoreRing";
 import { Skeleton } from "../../components/Skeleton";
-import { formatBytes } from "../../format";
+import { downloadName, formatBytes, timeLeft } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
+import { againPreset, batchSecs, settingsLine } from "./exportPresets";
+import { RenderButton } from "./RenderButton";
+import { SaveAudioButton } from "./SaveAudio";
 import { same } from "./editor/merge";
 import { overridden } from "./editor/useStyleDraft";
 
@@ -18,21 +21,29 @@ const BATCH = 6;
 
 /**
  * The rendered Clips, in their Candidates' order (by score): each with its player, the AI's
- * reasoning, its posting copy and a download. A Clip still rendering, or whose Candidate has changed
- * since it was rendered, says so.
+ * reasoning, what it was made with, its posting copy and a download. A Clip still rendering, or
+ * whose Candidate has changed since it was rendered, says so (its Export Settings never count).
  */
 export function Clips({
   jobId,
   clips,
   candidates,
   progress,
+  exportPresets,
+  sourceFps,
   onRender,
+  onManageExport,
 }: {
   jobId: string;
   clips: Clip[];
   candidates: Candidate[];
   progress: JobProgress;
-  onRender: (candidateIds: string[]) => Promise<void>;
+  exportPresets: ExportPresetList | null;
+  // The Source's frame rate, for the size of a Clip that keeps it.
+  sourceFps: number;
+  onRender: (candidateIds: string[], exportPresetId?: string) => Promise<void>;
+  // Opens the Export Presets sheet.
+  onManageExport: () => void;
 }) {
   const [presets, setPresets] = useState<StylePreset[] | null>(null);
   useEffect(() => {
@@ -62,9 +73,12 @@ export function Clips({
               clip={clip}
               candidate={candidates[index] ?? null}
               presets={presets}
+              exportPresets={exportPresets}
+              sourceFps={sourceFps}
+              onManageExport={onManageExport}
               index={index}
               percent={clip.status === "rendering" ? progress.progress : null}
-              onRender={() => onRender([clip.candidate_id])}
+              onRender={(exportPresetId) => onRender([clip.candidate_id], exportPresetId)}
             />
           );
         })}
@@ -120,6 +134,9 @@ function ClipCard({
   clip,
   candidate,
   presets,
+  exportPresets,
+  sourceFps,
+  onManageExport,
   index,
   percent,
   onRender,
@@ -129,9 +146,12 @@ function ClipCard({
   // Null once Selection has replaced it.
   candidate: Candidate | null;
   presets: StylePreset[] | null;
+  exportPresets: ExportPresetList | null;
+  sourceFps: number;
+  onManageExport: () => void;
   index: number;
   percent: number | null;
-  onRender: () => void;
+  onRender: (exportPresetId?: string) => void;
 }) {
   const output = clip.output;
   const name = candidate ? candidateName(candidate, index) : "Clip of a Candidate no longer listed";
@@ -172,6 +192,12 @@ function ClipCard({
             {output.duration.toFixed(1)} s · {formatBytes(output.size_bytes)}
           </p>
         )}
+        {output && (
+          <p className="text-sm text-muted tabular-nums">
+            {settingsLine(output, exportPresets)}
+            {output.bitrate_fallback && <span className="text-accent-text"> · CBR fell back to VBR</span>}
+          </p>
+        )}
         <RenderState clip={clip} percent={percent} />
         {changed && !busy && (
           <p className="text-sm text-accent-text">Changed since this render: render it again to update it.</p>
@@ -184,18 +210,27 @@ function ClipCard({
         {output && (
           <a
             href={mediaUrl(jobId, output.video, output.at)}
-            download={`${fileName(candidate?.title) || `clip-${clip.candidate_id}`}.mp4`}
+            download={downloadName(candidate?.title, clip.candidate_id, "mp4")}
             className={buttonClass("primary", "sm")}
           >
             <Download aria-hidden size={16} />
             Download
           </a>
         )}
-        {candidate && !busy && (output === null || changed || clip.status === "error") && (
-          <Button onClick={onRender} size="sm">
-            <Clapperboard aria-hidden size={16} />
-            {output ? "Render again" : "Try again"}
-          </Button>
+        {/* Rendered again with its Preset as it is now; another can be picked from its menu. */}
+        {candidate && !busy && (
+          <RenderButton
+            label={output ? "Render again" : "Try again"}
+            presets={exportPresets}
+            picked={exportPresets && againPreset(exportPresets, clip)}
+            onRender={onRender}
+            batch={{ secs: batchSecs([candidate]), fps: sourceFps }}
+            onManage={onManageExport}
+          />
+        )}
+        {/* The saved edit's sound alone, at its Clip's Preset's loudness. */}
+        {candidate && (
+          <SaveAudioButton jobId={jobId} candidate={candidate} exportPresetId={exportPresets && againPreset(exportPresets, clip)} />
         )}
       </div>
 
@@ -212,6 +247,11 @@ function ClipCard({
 }
 
 function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) {
+  // Worked out as progress comes in, not on every render in between.
+  const left = useMemo(
+    () => (clip.started_at ? timeLeft(clip.started_at, percent, Date.now()) : null),
+    [clip.started_at, percent],
+  );
   if (clip.status === "queued") {
     return (
       <p className="flex items-center gap-1.5 text-sm text-muted">
@@ -225,6 +265,7 @@ function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) 
       <p className="flex items-center gap-1.5 text-sm text-accent-text">
         <Loader2 aria-hidden size={14} className="motion-safe:animate-spin" />
         Rendering{percent !== null && <span className="tabular-nums">{Math.round(percent)}%</span>}
+        {left && <span className="tabular-nums text-muted">· {left}</span>}
       </p>
     );
   }
@@ -239,9 +280,4 @@ function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) 
     );
   }
   return null;
-}
-
-// A title as a file name: without the characters file systems refuse.
-function fileName(title: string | undefined): string {
-  return (title ?? "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
 }

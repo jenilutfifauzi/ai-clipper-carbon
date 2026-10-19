@@ -897,6 +897,16 @@ export interface PreviewWord extends Word {
   at: number;
 }
 
+/**
+ * A saved Export file (a frame or a sound): its path on this Mac, its name, and the URL it downloads
+ * from, with its time, since a file saved again keeps its name.
+ */
+export interface SavedExport {
+  path: string;
+  name: string;
+  url: string;
+}
+
 export interface PreviewPlan {
   plan: RenderPlan;
   words: PreviewWord[];
@@ -1108,6 +1118,42 @@ export interface CandidateEvent {
   parts: string[];
 }
 
+export type Codec = "h264" | "hevc" | "av1";
+
+// How a Clip is encoded (backend/app/encoding.py). The frame is 9:16, `resolution` its short side.
+export interface ExportSettings {
+  codec: Codec;
+  resolution: 720 | 1080 | 1440 | 2160;
+  // null for the Source's.
+  fps: number | null;
+  quality: "high" | "recommended" | "smallest";
+  // A bitrate of their own, in place of the quality tier.
+  bitrate: { mode: "vbr" | "cbr"; kbps: number } | null;
+  // The loudness target in LUFS; null for none.
+  loudness: -14 | -16 | null;
+}
+
+// Named, global Export Settings that a render uses for its whole batch.
+export interface ExportPreset {
+  id: string;
+  name: string;
+  builtin: boolean;
+  order: number;
+  settings: ExportSettings;
+}
+
+export interface ExportPresetList {
+  // The built-in ones first.
+  presets: ExportPreset[];
+  // The one a render uses when none is asked for.
+  default: string;
+  // The codecs this Mac's ffmpeg can encode.
+  available: Codec[];
+}
+
+// The formats a Candidate's sound is saved alone in: a 48 kHz 16-bit WAV, or AAC in an M4A.
+export type AudioFormat = "wav" | "m4a";
+
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
   start: number;
@@ -1149,6 +1195,12 @@ export interface RenderedClip {
   transitions: Transition[];
   // The Candidate's Revision it was rendered from; null in a Clip rendered before Revisions.
   revision: number | null;
+  // The Export Preset it was asked for (perhaps deleted since) and the Export Settings it was made
+  // with, for display only; null in a Clip rendered before Export Presets (1080p H.264).
+  export_preset_id: string | null;
+  export: ExportSettings | null;
+  // CBR was asked for and the encoder did VBR.
+  bitrate_fallback: boolean;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -1161,6 +1213,10 @@ export interface Clip {
   // The latest finished render; kept while it is rendered again, and when that fails.
   output: RenderedClip | null;
   error: string | null;
+  // When the worker started rendering it; null unless it is rendering.
+  started_at: string | null;
+  // The Export Preset its latest request asked for; null in a Clip asked for before Export Presets.
+  export_preset_id: string | null;
 }
 
 export interface JobDetail extends Job {
@@ -1271,11 +1327,33 @@ export const api = {
     }),
   addCandidate: (jobId: string, range: { start: number; end: number }) =>
     request<Candidate>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(range) }),
-  // Queues Clips of the given Candidates, or of the selected ones; answers with the Job's Clips.
-  render: (jobId: string, candidateIds?: string[]) =>
+  // Queues Clips of the given Candidates, or of the selected ones, with an Export Preset (the
+  // default without one); answers with the Job's Clips.
+  render: (jobId: string, candidateIds?: string[], exportPresetId?: string) =>
     request<Clip[]>(`/jobs/${jobId}/render`, {
       method: "POST",
-      body: candidateIds ? JSON.stringify({ candidate_ids: candidateIds }) : undefined,
+      body: JSON.stringify({ candidate_ids: candidateIds, export_preset_id: exportPresetId }),
+    }),
+  listExportPresets: () => request<ExportPresetList>("/export-presets"),
+  // The owner's Export Presets: a built-in one is refused (409) a change or a delete.
+  createExportPreset: (name: string, settings: ExportSettings) =>
+    request<ExportPreset>("/export-presets", { method: "POST", body: JSON.stringify({ name, settings }) }),
+  changeExportPreset: (id: string, name: string, settings: ExportSettings) =>
+    request<ExportPreset>(`/export-presets/${id}`, { method: "PUT", body: JSON.stringify({ name, settings }) }),
+  deleteExportPreset: (id: string) => request<void>(`/export-presets/${id}`, { method: "DELETE" }),
+  useExportPresetAsDefault: (id: string) =>
+    request<ExportPreset>("/export-presets/default", { method: "PUT", body: JSON.stringify({ preset_id: id }) }),
+  // The bytes Clips `secs` long in all come to as `settings` say, at the Source's frame rate `fps`
+  // when they keep it: the formula is the backend's alone.
+  estimateExport: (settings: ExportSettings, secs: number, fps: number) =>
+    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
+      (answer) => answer.bytes,
+    ),
+  // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).
+  saveAudio: (jobId: string, candidateId: string, format: AudioFormat, exportPresetId?: string) =>
+    request<SavedExport>(`/jobs/${jobId}/candidates/${candidateId}/audio`, {
+      method: "POST",
+      body: JSON.stringify({ format, export_preset_id: exportPresetId }),
     }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   listFonts: () => request<FontInfo[]>("/fonts"),
@@ -1291,6 +1369,10 @@ export const api = {
       body: draft ? JSON.stringify(draft) : undefined,
       signal,
     }),
+  // The frame at `at` (Timeline time) as the render draws it, of the Candidate or of an unsaved
+  // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
+  saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
+    request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
   // Save sound as WAV: the sound of the Candidate's item of `kind`, alone as heard in the Clip, from an
   // unsaved draft of its edits; the WAV, and the Content-Disposition that names the file.
   saveSound: async (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange) => {

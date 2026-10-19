@@ -72,10 +72,12 @@ def preview_plan(
     presets: PresetStore,
     logos: LogoStore | None = None,
     media: MediaStore | None = None,
+    fps: float | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan, `job_dir` being its Job's directory. Each of its Segments is
     planned from what is saved for its range: its Words are the Clip's own only when every Segment's
-    are, and it is analysed only when every Segment is."""
+    are, and it is analysed only when every Segment is. It is planned at the Source's frame rate, or
+    at `fps` (a saved frame's, at its Export Preset's)."""
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
@@ -103,7 +105,7 @@ def preview_plan(
     language, model = job.options.language, settings.whisper_model
     music = music_words(candidate, lambda start, end: words_at_hand(job_dir, transcript, start, end, source.duration, language, model))
     plan = candidate_plan(
-        candidate, source, words, analyses, presets, settings.camera, logos, media, captioned=job.options.captions, music=music
+        candidate, source, words, analyses, presets, settings.camera, logos, media, fps, captioned=job.options.captions, music=music
     )
     # Its picture layers' pictures, which the preview shows (docs/adr/0010): made now if they aren't there.
     make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)

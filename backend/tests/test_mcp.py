@@ -37,7 +37,9 @@ KITA_SOAL = (1.6, 2.6)
 # Merged with audio-mixing, which adds a Segment's fades and `muted`, a Music Clip's speed, pitch,
 # reverse, `duck` and `detached_from`, and an Overlay's `muted`, but drops pydantic's titles from every
 # schema (`_untitled`): 66_741 with both features.
-TOOLS_BUDGET_BYTES = 67_500
+# Then merged with Export Settings (export-settings/04, 05, 07, 08): render_clips' `export_preset_id`, the
+# presets tools' kind "export" and save_preset's use_as_default, save_frame and export_audio: 68_636 with all three.
+TOOLS_BUDGET_BYTES = 69_400
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -286,6 +288,66 @@ async def test_selected_candidates_render_into_clips_with_their_paths(mcp):
     assert clip["duration"] == pytest.approx(candidate["end"] - candidate["start"], abs=0.05)
     # Rendered from this Revision: a Clip is stale once its Candidate's is another.
     assert clip["revision"] == candidate["revision"]
+
+
+@pytest.mark.anyio
+async def test_a_render_takes_an_export_preset_which_its_clip_records(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    assert "No Export Preset nope" in await fails(mcp, "render_clips", job_id=job["id"], export_preset_id="nope")
+
+    await call(mcp, "render_clips", job_id=job["id"], candidate_ids=[candidate["id"]], export_preset_id="small")
+    waited = await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=60)
+    assert waited["reached"] and waited["job"]["status"] == "review"
+    [clip] = (await call(mcp, "list_clips", job_id=job["id"]))["clips"]
+    assert clip["status"] == "done", clip
+    assert clip["export_preset_id"] == "small"
+    assert (clip["export"]["resolution"], clip["export"]["codec"], clip["export"]["quality"]) == (720, "h264", "smallest")
+
+
+@pytest.mark.anyio
+async def test_export_presets_are_listed_saved_made_the_default_and_deleted_but_not_builtin_ones(mcp):
+    listed = await call(mcp, "list_presets", kind="export")
+    presets = {preset["id"]: preset for preset in listed["presets"]}
+    assert listed["default"] == "shorts" and "h264" in listed["available"]
+    assert presets["small"]["builtin"] and presets["small"]["settings"]["resolution"] == 720
+
+    settings = presets["shorts"]["settings"] | {"resolution": 720, "codec": "hevc"}
+    saved = await call(mcp, "save_preset", kind="export", preset={"name": "Review", "settings": settings}, use_as_default=True)
+    assert (saved["name"], saved["builtin"], saved["settings"]) == ("Review", False, settings)
+    assert (await call(mcp, "list_presets", kind="export"))["default"] == saved["id"]
+    # Given a preset_id, the fields given change and the rest stay.
+    renamed = await call(mcp, "save_preset", kind="export", preset_id=saved["id"], preset={"name": "Review 2", "settings": {"fps": 60}})
+    assert (renamed["name"], renamed["settings"]) == ("Review 2", settings | {"fps": 60})
+
+    # render_clips without an id renders with the default.
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    [queued] = (await call(mcp, "render_clips", job_id=job["id"], candidate_ids=[candidate["id"]]))["clips"]
+    assert queued["export_preset_id"] == saved["id"]
+
+    assert "built in" in await fails(mcp, "save_preset", kind="export", preset_id="small", preset={"name": "x"})
+    assert "built in" in await fails(mcp, "delete_preset", kind="export", preset_id="small")
+    assert "codec" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"codec": "prores"}})
+    assert "resolution" in await fails(mcp, "save_preset", kind="export", preset_id=saved["id"], preset={"settings": {"resolution": 900}})
+    assert "kbps" in await fails(mcp, "save_preset", kind="export", preset={"name": "Bad", "settings": settings | {"bitrate": {"mode": "cbr", "kbps": 1}}})
+    assert await call(mcp, "delete_preset", kind="export", preset_id=saved["id"]) == {"deleted": saved["id"]}
+    assert (await call(mcp, "list_presets", kind="export"))["default"] == "shorts"
+
+
+@pytest.mark.anyio
+async def test_save_frame_gives_the_path_of_a_png_on_this_mac_of_the_saved_revision(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+
+    saved = await call(mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="small")
+    path = Path(saved["path"])
+    assert path.is_absolute() and path.is_file() and path.suffix == ".png"
+    assert path.name == f"{candidate['id']}-00.00.12.png"
+    assert (await call(mcp, "get_job", job_id=job["id"]))["status"] == "review"
+    assert "No Export Preset nope" in await fails(
+        mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="nope",
+    )
 
 
 # 06: Style Presets, assets and the Channel Profile

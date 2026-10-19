@@ -35,12 +35,14 @@ from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.candidates import Candidate, Framing, Layout, Segment
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
+from app.encoding import ExportSettings
+from app.export_presets import EXPORT_PRESETS_FILE, ExportPresetStore
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
 from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
-from app.renderer import Renderer, RenderStopped
+from app.renderer import Renderer, RenderStopped, picture_layouts
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
 from app.segment_time import overlay_time, segment_time
@@ -210,10 +212,12 @@ def candidate_plan(
     camera: CameraTuning,
     logos: LogoStore | None = None,
     media: "MediaFinder | None" = None,
+    fps: float | None = None,
     captioned: bool = True,
     music: dict[str, list[Word]] | None = None,
 ) -> RenderPlan:
-    """The Render Plan of the Candidate as it is: each of its Segments (`candidate.main_track()`) captioned
+    """The Render Plan of the Candidate as it is, at `fps` (the export's frame rate; None, as the
+    preview always plans: the Source's): each of its Segments (`candidate.main_track()`) captioned
     with its `words` (None: no captions) and framed by its `analyses` (None: unanalysed, or a Source
     passed through), both in seconds into the Segment (a Freeze frame's analysis into its
     `analysed_range`); its Watermark's Logo from `logos`, and the
@@ -239,6 +243,7 @@ def candidate_plan(
         source_volume=candidate.source_volume,
         overlays=candidate.overlays,
         media_info=_info(media, candidate.media_ids()),
+        fps=fps,
         captioned=captioned,
         music_words=music,
     )
@@ -298,6 +303,31 @@ def candidate_plan(
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
 
 
+def played_files(
+    plan: RenderPlan,
+    job_dir: Path,
+    source: Source,
+    media: MediaStore,
+    ffmpeg: Path,
+    progress: Callable[[int], Callable[[float], None]] = lambda count: lambda done: None,
+) -> tuple[RenderPlan, dict[str, Path]]:
+    """The plan as the renderer reads it and the files of the Media Library items it plays, by id: a
+    reversed Segment or Overlay reads its full-size Retimed copy (`read_from_copies`), made now if it
+    isn't there, with the progress `progress` gives for one of the plan's `count` copies."""
+    used = (
+        {event.media for event in plan.audio if event.media}
+        | {segment.media for segment in plan.segments if segment.media}
+        | {overlay.media for overlay in plan.overlays}
+    )
+    files = {media_id: media.file(media_id) for media_id in used}
+    count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
+        1 for event in plan.overlays + plan.audio if event.reverse
+    )
+    return read_from_copies(plan, files, lambda media_id, played: (
+        media.retimed(media_id) if media_id is not None else source_copies(job_dir, source)
+    ).make(ffmpeg, CopySize.FULL, Retime(played.start, played.end), progress(count)))
+
+
 class MediaFinder(Protocol):
     """Where the Media Library's items are looked up: the MediaStore."""
 
@@ -318,11 +348,34 @@ class NothingToRender(ValueError):
     pass
 
 
+def drawing_inputs(
+    plan: RenderPlan,
+    export: ExportSettings,
+    job_dir: Path,
+    source: Source,
+    settings: Settings,
+    media: MediaStore,
+    logos: LogoStore,
+    progress: Callable[[int], Callable[[float], None]] = lambda copies: lambda done: None,
+) -> tuple[RenderPlan, Path | None, dict[str, Path], dict[str, Path]]:
+    """What the renderer draws `plan` (of the Job in `job_dir`, of `source`) as `export` says from:
+    the plan reading its reversed Segments and Overlays from their full-size Retimed copies, made
+    now if they aren't there (`progress(copies)` gives each copy's progress); its Logo's file; the
+    file of each Media Library item it plays, by id; and its picture layers' pictures at the export's
+    size, made now if they aren't there (docs/adr/0010), by name. A render and a saved frame both
+    draw from these."""
+    logo = logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
+    plan, files = played_files(plan, job_dir, source, media, settings.ffmpeg_bin, progress)
+    pictures = make_pictures(settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)
+    return plan, logo, files, pictures
+
+
 class Renders:
     def __init__(self, store: JobStore, settings: Settings, transcriber: Transcriber) -> None:
         self.store = store
         self.settings = settings
         self.presets = PresetStore(settings.data_dir / PRESETS_FILE)
+        self.export_presets = ExportPresetStore(settings.data_dir / EXPORT_PRESETS_FILE)
         self.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
         self.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
@@ -332,11 +385,13 @@ class Renders:
         self._stopping = threading.Event()
         self._transcribing = False
 
-    def request(self, job_id: str, candidate_ids: list[str] | None = None) -> bool:
-        """Queue the Candidates' Clips: those of `candidate_ids`, or of the selected Candidates. A Clip
-        already queued keeps its place; one being rendered is rendered again after. Returns whether
-        the Job has just started rendering, so that it needs running. Raises JobConflict unless the
-        Job is in review or rendering, CandidateNotFound and NothingToRender."""
+    def request(self, job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> bool:
+        """Queue the Candidates' Clips: those of `candidate_ids`, or of the selected Candidates, with
+        the Export Preset `export_preset_id` (the default when None). A Clip already queued keeps its
+        place, with the latest Preset; one being rendered is rendered again after. Returns whether the
+        Job has just started rendering, so that it needs running. Raises JobConflict unless the Job is
+        in review or rendering, CandidateNotFound, ExportPresetNotFound and NothingToRender."""
+        preset = self.export_presets.default() if export_preset_id is None else self.export_presets.get(export_preset_id)
 
         def queue(job: Job, clips: list[Clip]) -> tuple[list[Clip], dict, bool]:
             candidates = self.store.load_candidates(job_id) or []
@@ -351,11 +406,13 @@ class Renders:
             for id in ids:
                 old = by_id.get(id)
                 if old is None:
-                    by_id[id] = Clip(id, ClipStatus.QUEUED, now)
+                    by_id[id] = Clip(id, ClipStatus.QUEUED, now, export_preset_id=preset.id)
                 elif old.status is ClipStatus.RENDERING:
-                    by_id[id] = replace(old, requested_at=now)
-                elif old.status is not ClipStatus.QUEUED:
-                    by_id[id] = replace(old, status=ClipStatus.QUEUED, requested_at=now, error=None)
+                    by_id[id] = replace(old, requested_at=now, export_preset_id=preset.id)
+                elif old.status is ClipStatus.QUEUED:
+                    by_id[id] = replace(old, export_preset_id=preset.id)
+                else:
+                    by_id[id] = replace(old, status=ClipStatus.QUEUED, requested_at=now, error=None, export_preset_id=preset.id)
             starting = job.status is JobStatus.REVIEW
             changes = {"status": JobStatus.RENDERING, "stage": JobStatus.RENDERING} if starting else {}
             return list(by_id.values()), changes, starting
@@ -430,7 +487,8 @@ class Renders:
 
         def requeue(_: Job, clips: list[Clip]) -> tuple[list[Clip], dict, None]:
             return [
-                replace(clip, status=ClipStatus.QUEUED) if clip.status is ClipStatus.RENDERING else clip for clip in clips
+                replace(clip, status=ClipStatus.QUEUED, started_at=None) if clip.status is ClipStatus.RENDERING else clip
+                for clip in clips
             ], {}, None
 
         self.store.change_clips(job_id, requeue, expect={JobStatus.RENDERING})
@@ -460,7 +518,7 @@ class Renders:
                 if (candidate := candidates.get(clip.candidate_id)) is None:
                     clips = _put(clips, replace(clip, status=ClipStatus.ERROR, error="Its Candidate no longer exists"))
                     continue
-                started = replace(clip, status=ClipStatus.RENDERING, error=None)
+                started = replace(clip, status=ClipStatus.RENDERING, error=None, started_at=datetime.now(UTC))
                 name = candidate.title or f"clip {candidate.id}"
                 message = f"Rendering clip {count + 1} of {count + len(queued)}: {name}"
                 return _put(clips, started), {"progress": 0.0, "message": message}, (job, started, candidate)
@@ -534,31 +592,20 @@ class Renders:
                 for segment in candidate.main_track()
             ]
             analyses = self._all_analyses(job, candidate, step(1 / 3))
+            # The Export Preset asked for as it is now (the default once it is deleted), planned at
+            # its frame rate (docs/adr/0021).
+            preset = self.export_presets.get_or_default(clip.export_preset_id)
+            export = preset.settings
             plan = candidate_plan(
                 candidate, job.source.metadata, words, analyses, self.presets, self.settings.camera, self.logos, self.media,
-                captioned=job.options.captions, music=music_words(candidate, at_hand),
+                export.fps, captioned=job.options.captions, music=music_words(candidate, at_hand),
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
-            logo = self.logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
-            used = (
-                {event.media for event in plan.audio if event.media}
-                | {segment.media for segment in plan.segments if segment.media}
-                | {overlay.media for overlay in plan.overlays}
+            plan, logo, files, pictures = drawing_inputs(
+                plan, export, job_dir, job.source, self.settings, self.media, self.logos, lambda copies: step((1 - shown / 100) / 2 / copies),
             )
-            files = {media_id: self.media.file(media_id) for media_id in used}
-            # A reversed Segment or Overlay reads its full-size Retimed copy, made now if it isn't there.
-            reversed_count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
-                1 for event in plan.overlays + plan.audio if event.reverse
-            )
-            plan, files = read_from_copies(plan, files, lambda media_id, played: (
-                self.media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
-            ).make(
-                self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
-            ))
-            # Its picture layers' pictures, made now if they aren't there (docs/adr/0010).
-            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
-            encoder = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures
+            encoder, bitrate_fallback = self.renderer.render(
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures, export,
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:
@@ -601,6 +648,9 @@ class Renders:
                 overlays=candidate.overlays,
                 transitions=candidate.transitions,
                 revision=candidate.revision,
+                export_preset_id=preset.id,
+                export=export,
+                bitrate_fallback=bitrate_fallback,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",
@@ -611,7 +661,10 @@ class Renders:
         def finish(_: Job, clips: list[Clip]) -> tuple[list[Clip], dict, Clip]:
             now = next(c for c in clips if c.candidate_id == clip.candidate_id)
             again = now.requested_at > clip.requested_at
-            ended = replace(outcome, status=ClipStatus.QUEUED if again else outcome.status, requested_at=now.requested_at)
+            ended = replace(
+                outcome, status=ClipStatus.QUEUED if again else outcome.status, requested_at=now.requested_at, started_at=None,
+                export_preset_id=now.export_preset_id,
+            )
             return _put(clips, ended), {}, ended
 
         return self.store.change_clips(job.id, finish)

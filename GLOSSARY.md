@@ -9,7 +9,7 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Transcript / Words:** the episode's normalized text with per-Word timing.
 - **Window:** a Transcript slice scored by the AI.
 - **Candidate:** a proposed clip under review: a range of the Source (or, once cut in the Advanced Edit, its Segments), its hook text, Layout, style and edits.
-- **Clip:** a rendered output of a Candidate.
+- **Clip:** a rendered output of a Candidate: one per Candidate, replaced by each render, which records the Export Settings it was made with.
 - **Channel Profile / Brief:** standing and per-Job steering for Selection.
 - **Reference Set:** past clips used for evaluation and few-shot examples.
 
@@ -23,6 +23,9 @@ Use these terms in code, UI copy, tickets and commit messages.
 - **Background:** what shows behind a Framing's picture where it doesn't cover the frame: the picture itself, blurred, or a colour.
 - **Scene:** a shot between two cuts.
 - **Render Plan:** the planner's output for one Clip (Scenes with their panels, caption events, and the hook event). It is everything the renderer draws.
+- **Export Settings:** how a Clip is encoded: its codec (H.264, HEVC or AV1), resolution (720p to 4K), frame rate (the Source's, or one chosen), quality (High, Recommended or Smallest, or a bitrate of its own) and loudness target (or none). The Render Plan stays in 1080×1920 output pixels whatever the resolution, and the render draws it at that size; only the frame rate changes the plan. Changing them never makes a Clip stale.
+- **Export Preset:** a named, global set of Export Settings that a render uses for its whole batch (the default Preset when none is chosen). A Clip remembers its Preset, and rendering it again uses that Preset as it is now (the default once it is deleted). Built-in Presets can't be changed or deleted; the owner saves, renames and deletes their own, and picks the default. Not a Style Preset. See docs/adr/0021-export-presets-and-a-plan-drawn-at-any-size.md.
+- **Export file:** a frame (PNG) or the sound alone (WAV or M4A) saved from a Candidate on request, kept in its Job. Not a Clip: it is never stale and never in the render queue.
 - **Hook:** the opening overlay: the Candidate's hook text (with any Emphasis) and its Kicker, drawn as its Hook Style says.
 
 ## Clip editor

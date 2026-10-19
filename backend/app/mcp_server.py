@@ -30,6 +30,7 @@ from app.api import (
     PICTURES_ROUTE,
     SHAPES_MAX,
     CandidateUpdate,
+    ExportPresetBody,
     PresetBody,
     TextPresetBody,
     TextPresetChange,
@@ -618,24 +619,67 @@ def build_mcp(app: FastAPI) -> MCPServer:
     # Render
 
     @tool()
-    async def render_clips(job_id: str, candidate_ids: list[str] | None = None) -> dict:
+    async def render_clips(job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> dict:
         """Render Clips of the selected Candidates, or of `candidate_ids`, one at a time, replacing
-        Clips rendered before. The Job is rendering until they are done: wait_for_job, then list_clips."""
-        body = None if candidate_ids is None else {"candidate_ids": candidate_ids}
+        Clips rendered before, with an Export Preset (else the default; Export Settings never make a
+        Clip stale). The Job is rendering until they are done: wait_for_job, then list_clips."""
+        body = {"candidate_ids": candidate_ids, "export_preset_id": export_preset_id}
         return {"clips": clips(job_id, await api("POST", f"/jobs/{job_id}/render", json=body))}
 
     @tool(read_only=True)
     async def list_clips(job_id: str) -> dict:
         """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path) and
-        poster on this Mac."""
+        poster on this Mac, and its Export Settings (these never make a Clip stale)."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
+
+    @tool()
+    async def save_frame(job_id: str, candidate_id: str, at: float, export_preset_id: str | None = None) -> dict:
+        """Save the Candidate's frame at `at` (Timeline seconds) as a PNG, as its render would draw it,
+        at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued."""
+        body = {"at": at, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
+        return {"path": saved["path"]}
+
+    @tool()
+    async def export_audio(
+        job_id: str, candidate_id: str, format: Literal["wav", "m4a"] = "wav", export_preset_id: str | None = None
+    ) -> dict:
+        """Save a Candidate's sound alone (its saved Revision's mix) at an Export Preset's loudness
+        (else the default's). Not a Clip; not queued."""
+        body = {"format": format, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/audio", json=body)
+        return {"path": saved["path"]}
 
     # Styles, assets and the Channel Profile
 
+    async def save_export_preset(given: BaseModel | None, preset_id: str | None, use_as_default: bool) -> dict:
+        """An Export Preset made, or the owner's `preset_id` changed in the fields given; then made the
+        default when asked."""
+        saved = None
+        if given is not None:
+            body = _validated(NamedPresetGiven, given)
+            if preset_id is None:
+                saved = await api("POST", "/export-presets", json=_validated(ExportPresetBody, NamedPresetGiven(**body)))
+            else:
+                listed = (await api("GET", "/export-presets"))["presets"]
+                current = next((preset for preset in listed if preset["id"] == preset_id), None)
+                if current is None:
+                    raise ToolError(f"No Export Preset {preset_id}")
+                body = {"name": current["name"], **body, "settings": current["settings"] | body.get("settings", {})}
+                saved = await api("PUT", f"/export-presets/{preset_id}", json=_validated(ExportPresetBody, NamedPresetGiven(**body)))
+        elif not (preset_id and use_as_default):
+            raise ToolError("Give the preset to save, or a preset_id with use_as_default")
+        if use_as_default:
+            return await api("PUT", "/export-presets/default", json={"preset_id": saved["id"] if saved else preset_id})
+        return saved
+
     @tool(read_only=True)
-    async def list_presets(kind: Literal["style", "text"] = "style", include_styles: bool = False) -> dict:
+    async def list_presets(kind: Literal["style", "text", "export"] = "style", include_styles: bool = False) -> dict:
         """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
-        then the owner's. With include_styles, their styles (a Style Override replaces their fields)."""
+        then the owner's. With include_styles, their styles (a Style Override replaces their fields).
+        Export Presets: with their settings, the `default` and the codecs `available`."""
+        if kind == "export":
+            return await api("GET", "/export-presets")
         if kind == "text":
             presets = await api("GET", "/text-presets")
             keys = ("id", "name", "category", "builtin", "default", *(("sample", "style") if include_styles else ()))
@@ -647,15 +691,18 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool()
     async def save_preset(
-        preset: PresetBody | TextPresetGiven | None = None,
+        preset: PresetBody | NamedPresetGiven | None = None,
         preset_id: str | None = None,
-        kind: Literal["style", "text"] = "style",
+        kind: Literal["style", "text", "export"] = "style",
         use_for_new_titles: bool = False,
+        use_as_default: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
         Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
-        preset_id alone)."""
+        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise)."""
+        if kind == "export":
+            return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":
             body = _validated(PresetBody, preset)
             if preset_id is None:
@@ -674,10 +721,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return saved
 
     @tool(destructive=True)
-    async def delete_preset(preset_id: str, kind: Literal["style", "text"] = "style") -> dict:
+    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export"] = "style") -> dict:
         """Delete one of the owner's Presets. Candidates using a Style Preset render in Default; Text
-        Layers keep their look."""
-        await api("DELETE", f"/{'text-presets' if kind == 'text' else 'presets'}/{preset_id}")
+        Layers keep their look; Clips of an Export Preset render again with the default."""
+        await api("DELETE", f"/{ {'text': 'text-presets', 'export': 'export-presets'}.get(kind, 'presets')}/{preset_id}")
         return {"deleted": preset_id}
 
     @tool(read_only=True)
@@ -761,13 +808,15 @@ def _untitled(schema: Any) -> Any:
     }
 
 
-class TextPresetGiven(BaseModel):
-    """A Text Preset: a name and a Text Style, as a Text Layer's."""
+class NamedPresetGiven(BaseModel):
+    """A Text Preset: a name and a Text Style, as a Text Layer's; or an Export Preset: a name and
+    Export Settings."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
     style: dict[str, Any] | None = None
+    settings: dict[str, Any] | None = None
 
 
 class StaleCandidate(ToolError):
@@ -859,7 +908,8 @@ def _candidate_view(candidate: dict) -> dict:
 
 
 def _clip_view(job_dir: Path, clip: dict) -> dict:
-    view = {"candidate_id": clip["candidate_id"], "status": clip["status"], "error": clip.get("error")}
+    # A queued Clip's Preset is the one asked for; a rendered one's what it was made with.
+    view = {"candidate_id": clip["candidate_id"], "status": clip["status"], "error": clip.get("error"), "export_preset_id": clip.get("export_preset_id")}
     if output := clip.get("output"):
         view |= {
             "video_path": str(job_dir / output["video"]),
@@ -868,6 +918,8 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
             "size_bytes": output["size_bytes"],
             "rendered_at": output["at"],
             "revision": output.get("revision"),
+            "export_preset_id": output.get("export_preset_id"),
+            "export": output.get("export"),
         }
     return _compact(view)
 

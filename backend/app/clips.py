@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from app.candidates import Framing, Layout, LayoutOverride, MusicClip, Overlay, Segment, Shape, TextLayer, Transition, WordEdit
+from app.encoding import ExportSettings
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
 CLIPS_DIR = "clips"
@@ -65,6 +66,13 @@ class RenderedClip:
     # The Candidate's Revision it was rendered from: stale once the Candidate's differs (ADR 0003).
     # None in a Clip rendered before Revisions, which is compared by the fields above.
     revision: int | None = None
+    # The Export Preset it was asked for (which may have been deleted since) and a copy of the Export
+    # Settings it was made with, only for display: they never make it stale (docs/adr/0021). None in
+    # a Clip rendered before Export Presets, which was 1080p H.264 by its `encoder`.
+    export_preset_id: str | None = None
+    export: ExportSettings | None = None
+    # Whether CBR was asked for and the encoder did VBR.
+    bitrate_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,12 @@ class Clip:
     output: RenderedClip | None = None
     # Why the latest render failed.
     error: str | None = None
+    # When the worker started rendering it; None unless it is rendering.
+    started_at: datetime | None = None
+    # The Export Preset its latest request asked for, rendered with as it is when the render starts
+    # (the default once it is deleted); None in a Clip asked for before Export Presets, which is
+    # rendered with the default.
+    export_preset_id: str | None = None
 
 
 def clip_files(candidate_id: str) -> tuple[str, str, str]:

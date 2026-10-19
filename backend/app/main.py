@@ -31,7 +31,8 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
     store = JobStore(settings.data_dir / "jobs", media.sizes)
     ports = ports or real_ports(settings)
-    worker = Worker(store, Pipeline(store, ports, settings), Renders(store, settings, ports.transcriber))
+    renders = Renders(store, settings, ports.transcriber)
+    worker = Worker(store, Pipeline(store, ports, settings), renders)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -48,6 +49,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.state.text_presets = TextPresetStore(settings.data_dir / TEXT_PRESETS_FILE)
+    app.state.export_presets = renders.export_presets
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media
     app.state.faces = fonts.use(settings.data_dir / fonts.IMPORTED_DIR)

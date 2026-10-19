@@ -15,6 +15,8 @@ MODELS_DIR = BACKEND_DIR / "models"
 FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
 # The built-in Text Presets, a data file each (app/text_presets.py).
 TEXT_PRESETS_DIR = BACKEND_DIR / "assets" / "text-presets"
+# The built-in Export Presets, a data file each (app/export_presets.py).
+EXPORT_PRESETS_DIR = BACKEND_DIR / "assets" / "export-presets"
 # Noto Color Emoji's images, which Text Layers draw emoji from (app/emoji.py).
 EMOJI_DIR = BACKEND_DIR / "assets" / "emoji"
 # MediaPipe's full-range BlazeFace, which also finds the smaller and turned faces of wide shots (the
@@ -162,26 +164,21 @@ class QuotaTuning:
 
 @dataclass(frozen=True)
 class RenderTuning:
-    """How Clips are encoded. Not read from the environment; tests change the encoders."""
+    """How Clips are encoded, beyond what their Export Settings choose (app/encoding.py). Not read
+    from the environment; tests change the encoders."""
 
-    # Tried in order: an encode that fails (VideoToolbox can be unavailable, say over SSH or in a VM)
-    # is run again with the next.
+    # Each codec's encoders, tried in order: an encode that fails (VideoToolbox can be unavailable, say
+    # over SSH or in a VM) is run again with the next. `encoders` are H.264's.
     encoders: tuple[str, ...] = ("h264_videotoolbox", "libx264")
-    # VideoToolbox's average bitrate: the platforms' recommendation for 1080p up to 30 fps (YouTube
-    # asks for 8 Mb/s), with more for higher frame rates.
-    bitrate: str = "8M"
-    high_fps_bitrate: str = "12M"
-    # libx264's constant quality, with a cap so that a busy scene can't balloon the file.
-    x264_crf: int = 20
-    x264_preset: str = "fast"
-    x264_maxrate: str = "12M"
+    hevc_encoders: tuple[str, ...] = ("hevc_videotoolbox", "libx265")
+    # No Mac encodes AV1 in hardware.
+    av1_encoders: tuple[str, ...] = ("libsvtav1",)
     # A keyframe at least this often, so that players seek quickly.
     keyframe_secs: float = 2
-    # EBU R128 loudness, as the platforms normalize to: integrated, true peak, loudness range.
-    loudness_lufs: float = -14
+    # EBU R128 loudness, as the platforms normalize to, past the integrated loudness that Export
+    # Settings choose: true peak and loudness range.
     true_peak_db: float = -1.5
     loudness_range: float = 11
-    audio_bitrate: str = "192k"
     audio_rate: int = 48_000
     # The poster is the Clip's frame at this time (or its middle, for a shorter Clip).
     poster_secs: float = 1
@@ -191,6 +188,10 @@ class RenderTuning:
     blur_shrink: int = 4
     blur_sigma: float = 10
     blur_brightness: float = -0.1
+
+    def codec_encoders(self, codec: str) -> tuple[str, ...]:
+        """The encoders of `codec` (an Export Settings' codec), in the order they are tried."""
+        return {"h264": self.encoders, "hevc": self.hevc_encoders, "av1": self.av1_encoders}[codec]
 
 
 @dataclass(frozen=True)
