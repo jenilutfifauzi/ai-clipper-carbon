@@ -1,7 +1,7 @@
 import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
-import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
+import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, isPlaced, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
@@ -644,6 +644,18 @@ export function toggleMute(scene: { edits: AdvancedEdits; pick: Pick }, sounded:
   const muted = [...chosen].some((item) => !item.muted);
   const set = <T extends { muted?: boolean }>(items: T[]) => items.map((item) => (chosen.has(item) ? { ...item, muted } : item));
   return { edits: { ...edits, segments: set(edits.segments), music: set(edits.music), overlays: set(edits.overlays) }, pick };
+}
+
+/**
+ * Music Clip `id`'s Duck under speech (GLOSSARY.md, Ducking): off with null, else on at `duck` dB, a
+ * whole number from DUCK_MIN to DUCK_MAX. Null for a Music Clip of the Source, which is never Ducked,
+ * or one that isn't there.
+ */
+export function setDuck(scene: { edits: AdvancedEdits; pick: Pick }, id: string, duck: number | null): Outcome | null {
+  const { edits, pick } = scene;
+  if (!edits.music.some((clip) => clip.id === id && clip.media !== null)) return null;
+  const depth = duck === null ? null : Math.min(Math.max(Math.round(duck), DUCK_MIN), DUCK_MAX);
+  return { edits: { ...edits, music: edits.music.map((clip) => (clip.id === id ? { ...clip, duck: depth } : clip)) }, pick };
 }
 
 /**

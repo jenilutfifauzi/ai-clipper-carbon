@@ -37,7 +37,20 @@ import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
 import { speedLabel } from "./speed";
-import { gainAt, segmentHeard, sourceGain, sourceHeard, underSourceVolume, volumeDragged, volumeHeight, volumeLine, type Heard } from "./timelineView";
+import {
+  duckedStretches,
+  gainAt,
+  musicDuck,
+  segmentHeard,
+  sourceGain,
+  sourceHeard,
+  underSourceVolume,
+  underVolumeLine,
+  volumeDragged,
+  volumeHeight,
+  volumeLine,
+  type Heard,
+} from "./timelineView";
 import { musicName } from "./Music";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
@@ -519,6 +532,9 @@ export function Tracks({
             // Its fades over what is heard of it, as the planner has them.
             const fades = fadesWithin(clip, end - clip.start);
             const heard: Heard = { volume: clip.volume, secs: end - clip.start, ...fades, keys: clip.keys.volume };
+            // Its Waveform's gain, ducked under the plan's speech (the Volume Line's stays as dragged).
+            const duck = musicDuck(clip, plan?.audio.find((event) => event.id === clip.id), plan?.ducking);
+            const ducked: Heard = duck ? { ...heard, duck } : heard;
             const muted = !!clip.muted;
             const name = musicName(clip, song);
             return (
@@ -577,7 +593,7 @@ export function Tracks({
                       geometry={geometry}
                       cache={mediaCache}
                       clip={clip}
-                      heard={heard}
+                      heard={ducked}
                       length={song.duration}
                       peaks={(start) => mediaPeaksUrl(song.id, start)}
                       muted={muted}
@@ -586,6 +602,7 @@ export function Tracks({
                 )}
                 {!muted && (
                   <>
+                    <DuckedShade heard={ducked} />
                     <VolumeLine
                       volume={clip.volume}
                       keyed={clip.keys.volume?.length ? { heard, start: clip.start, playback } : undefined}
@@ -827,6 +844,24 @@ function SongWaveform({
         }),
       ]}
     />
+  );
+}
+
+/**
+ * A ducked Music Clip's ducked stretches (duckedStretches, ramps included), shaded under its Volume
+ * Line (GLOSSARY.md, Volume Line), as `heard` over the secs it is heard for.
+ */
+function DuckedShade({ heard }: { heard: Heard }) {
+  const { secs } = heard;
+  const stretches = duckedStretches(heard);
+  if (!stretches.length) return null;
+  return (
+    <svg aria-hidden className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 1 1" preserveAspectRatio="none">
+      {stretches.map((stretch) => {
+        const line = underVolumeLine(heard, stretch).map(({ time, height }) => `${time / secs},${1 - height}`);
+        return <polygon key={stretch[0]} points={`${stretch[0] / secs},1 ${line.join(" ")} ${stretch[1] / secs},1`} fill="oklch(0.88 0.16 90 / 0.28)" />;
+      })}
+    </svg>
   );
 }
 

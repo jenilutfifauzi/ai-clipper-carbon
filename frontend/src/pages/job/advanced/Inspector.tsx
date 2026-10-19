@@ -7,7 +7,7 @@ import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setFade, setVolume, type Detacher, type ItemActions, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -217,6 +217,10 @@ export function Inspector({
         onVolume={volumeOf({ kind: "music", id: clip.id })}
         onFade={(fade, secs, group) => {
           const outcome = setFade({ edits, pick }, clip.id, fade, secs);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
+        onDuck={(duck, group) => {
+          const outcome = setDuck({ edits, pick }, clip.id, duck);
           if (outcome) onEdits(outcome.edits, group);
         }}
         onDuplicate={actions.duplicate}

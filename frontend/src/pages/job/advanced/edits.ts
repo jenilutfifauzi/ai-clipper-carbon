@@ -84,6 +84,12 @@ export function changedItems(old: AdvancedEdits, next: AdvancedEdits): Set<strin
 // The shortest a Text Layer, a Shape, a Music Clip or an Overlay lasts (TimelineSecs in backend/app/candidates.py).
 export const ITEM_MIN_SECS = 0.1;
 
+// How far a Music Clip ducks under speech, in dB (GLOSSARY.md, Ducking; MusicClip.duck in
+// backend/app/candidates.py): the editor's new ones at DEFAULT_DUCK, set from DUCK_MIN to DUCK_MAX.
+export const DEFAULT_DUCK = -12;
+export const DUCK_MIN = -30;
+export const DUCK_MAX = -1;
+
 // Times in the editor, to the hundredth of a second.
 export const round = (seconds: number) => Math.round(seconds * 100) / 100;
 
