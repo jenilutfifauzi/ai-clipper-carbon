@@ -184,7 +184,10 @@ The captions stay planned from Words, with a per-Word highlight, from the Captio
   - its area and size;
   - its `key` (`at` as its first Word's middle on its timeline, and `media`);
   - whether a Cue Edit applies;
-  - `joinable`: whether merging it into the previous Cue fits the limits.
+  - `joinable`: whether merging it into the previous Cue fits the limits;
+  - where a Cue Edit keeps it (`low`, `high`), its Segment's `speed`, its Words' keys (`word_ats`) and the `at` of the Cue Edit matched to each (`cue_edit_ats`), so that the Advanced Edit retimes, splits and merges it without repeating the planner's rules (ADR 0001). The plan gives the minimum length as `cue_min_secs`.
+
+  A `join` cancels only the one break before its Word: `max_secs` still counts from the Cue's first Word, so a merge that would pass it leaves the rest of the next Cue as its own Cue, and the Cue is shown to the joined Word's end. A retimed Cue is never dropped: one short of room takes it from the Cue before (never past that Cue's own minimum), and where its Segment leaves less than the minimum, it fills its room.
 
   Cue Edits whose Word isn't shown are listed in the plan as unused, and kept.
 

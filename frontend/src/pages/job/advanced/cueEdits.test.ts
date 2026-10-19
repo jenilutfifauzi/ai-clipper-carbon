@@ -20,6 +20,11 @@ const cue = (start: number, end: number, at: number, changes: Partial<Cue> = {})
   edited: false,
   joinable: false,
   needs_join: false,
+  low: 0,
+  high: 5,
+  speed: 1,
+  word_ats: [at],
+  cue_edit_ats: [null],
   ...changes,
 });
 
@@ -39,7 +44,7 @@ const segmentPlan = (id: string, start: number, end: number, source_start: numbe
 
 // A plan of `captions` over a Clip of `segments` (one range of 5 s when there are none).
 const plan = (captions: Cue[], segments: SegmentPlan[] = [], end = 105): RenderPlan =>
-  ({ start: 100, end, captions, segments, transitions: [], unused_cue_edits: [] }) as unknown as RenderPlan;
+  ({ start: 100, end, captions, segments, transitions: [], unused_cue_edits: [], cue_min_secs: 0.2 }) as unknown as RenderPlan;
 
 const segment = (id: string, start: number, end: number, changes: Partial<ClipSegment> = {}): ClipSegment => ({ id, start, end, ...changes });
 
@@ -69,8 +74,9 @@ function edits(changes: Partial<AdvancedEdits> = {}): AdvancedEdits {
 
 const edit = (at: number, changes: Partial<CueEdit> = {}): CueEdit => ({ at, media: null, shift: 0, start_delta: 0, end_delta: 0, join: false, ...changes });
 
-// "halo semua" from 1.0 to 2.3 s, "apa kabar" from 3.0 to 3.9 s, of a Clip from 100 s lasting 5 s.
-const TALK = [cue(1.0, 2.3, 101.2), cue(3.0, 3.9, 103.1)];
+// "halo semua" from 1.0 to 2.3 s, "apa kabar" from 3.0 to 3.9 s, of a Clip from 100 s lasting 5 s,
+// each with the bounds the planner gives it.
+const TALK = [cue(1.0, 2.3, 101.2, { high: 3.0 }), cue(3.0, 3.9, 103.1, { low: 2.3 })];
 const FIRST: CueKey = { at: 101.2, media: null };
 const SECOND: CueKey = { at: 103.1, media: null };
 
@@ -81,13 +87,17 @@ const scene = (state: AdvancedEdits, captions = TALK, segments: SegmentPlan[] = 
 });
 
 describe("a picked Cue on the Captions Track", () => {
-  test("is shown from its start to its end, between the Cue before's end and the Cue after's start", () => {
-    expect(cueOf(plan(TALK), SECOND)).toMatchObject({ start: 3.0, end: 3.9, low: 2.3, high: 5, speed: 1 });
+  test("is shown from its start to its end, kept where the plan says a Cue Edit keeps it", () => {
+    expect(cueOf(plan(TALK), SECOND)).toMatchObject({ start: 3.0, end: 3.9, low: 2.3, high: 5, speed: 1, minSecs: 0.2 });
     expect(cueOf(plan(TALK), FIRST)).toMatchObject({ low: 0, high: 3.0 });
     // Moved at a Layout change it is two entries keyed alike: one Cue.
-    const moved = [cue(1.0, 1.5, 101.2), cue(1.5, 2.3, 101.2), TALK[1]];
+    const moved = [cue(1.0, 1.5, 101.2, { high: 3.0 }), cue(1.5, 2.3, 101.2, { high: 3.0 }), TALK[1]];
     expect(cueOf(plan(moved), FIRST)).toMatchObject({ start: 1.0, end: 2.3, low: 0, high: 3.0 });
     expect(cueOf(plan(TALK), { at: 9, media: null })).toBeNull();
+    // The bounds are the plan's, not the neighbours' shown times: the next Cue, shown earlier by its
+    // Cue Edit, still leaves this one room up to its first Word.
+    const earlier = [TALK[0], cue(2.6, 3.9, 103.1, { low: 2.3, edited: true })];
+    expect(cueOf(plan(earlier), FIRST)).toMatchObject({ high: 3.0 });
   });
 
   test("dragged by its body, it writes its Cue Edit's shift, kept between its neighbours", () => {
@@ -124,28 +134,27 @@ describe("a picked Cue on the Captions Track", () => {
 
   test("on a 2x Segment, writes its Cue Edit in seconds of the Source: twice what it moved on the Timeline", () => {
     const sped = [segmentPlan("s1", 0, 2, 50, { speed: 2 })];
-    const cues = [cue(0.5, 1.0, 51.2), cue(1.3, 1.8, 52.8)];
+    const cues = [cue(0.5, 1.0, 51.2, { high: 1.3, speed: 2 }), cue(1.3, 1.8, 52.8, { low: 1.0, high: 2, speed: 2 })];
     const at = { at: 51.2, media: null };
     expect(cueOf(plan(cues, sped), at)).toMatchObject({ speed: 2, low: 0, high: 1.3 });
     const moved = retimeCue(scene(edits(), cues, sped), at, { start: 0.7, end: 1.2, edge: "move" }, null)!;
     expect(moved.edits.cue_edits).toEqual([edit(51.2, { shift: 0.4 })]);
   });
 
-  test("is kept in its Segment: between the cuts either side of it, a Transition's at its middle", () => {
-    const two = [segmentPlan("s1", 0, 2, 10), segmentPlan("s2", 1.6, 4, 50)];
-    const cues = [cue(0.2, 0.9, 10.4), cue(2.5, 3.0, 51.2)];
-    expect(cueOf(plan(cues, two), { at: 51.2, media: null })).toMatchObject({ low: 1.8, high: 4 });
-    expect(cueOf(plan(cues, two), { at: 10.4, media: null })).toMatchObject({ low: 0, high: 1.8 });
-  });
-
-  test("names the Cue Edit already on it, written at any time in its first Word", () => {
-    const own = edit(103.0, { shift: 0.3 });
-    expect(cueEditOf([edit(101.2), own], plan(TALK), SECOND)).toBe(own);
-    expect(cueEditOf([edit(101.2)], plan(TALK), SECOND)).toBeNull();
+  test("names the Cue Edit the plan matched to it, written at any time in its first Word", () => {
+    // Early in a long first Word, further from its key than a Word Edit's reach.
+    const own = edit(102.65, { shift: 0.3 });
+    const long = [TALK[0], cue(3.3, 4.2, 103.1, { low: 2.3, edited: true, cue_edit_ats: [102.65] })];
+    expect(cueEditOf([edit(101.2), own], plan(long), SECOND)).toBe(own);
+    // One the plan didn't match to it isn't its own.
+    expect(cueEditOf([edit(101.2), edit(103.0)], plan(TALK), SECOND)).toBeNull();
     // An item's Cue Edit isn't the Source's.
-    expect(cueEditOf([{ ...own, media: "ab".repeat(16) }], plan(TALK), SECOND)).toBeNull();
-    const moved = retimeCue(scene(edits({ cue_edits: [own] })), SECOND, { start: 3.5, end: 4.4, edge: "move" }, null)!;
-    expect(moved.edits.cue_edits).toEqual([edit(103.0, { shift: 0.8 })]);
+    expect(cueEditOf([{ ...own, media: "ab".repeat(16) }], plan(long), SECOND)).toBeNull();
+    const moved = retimeCue(scene(edits({ cue_edits: [own] }), long), SECOND, { start: 3.8, end: 4.7, edge: "move" }, null)!;
+    expect(moved.edits.cue_edits).toEqual([edit(102.65, { shift: 0.8 })]);
+    // Until it is planned again, a Cue Edit written at its key (as a drag writes it) is its own.
+    const written = edit(103.1, { shift: 0.2 });
+    expect(cueEditOf([written], plan(TALK), SECOND)).toBe(written);
   });
 
   test("Reset timing clears its timing, dropping its Cue Edit when nothing is left of it", () => {

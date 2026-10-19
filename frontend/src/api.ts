@@ -419,6 +419,15 @@ export interface Cue {
   joinable: boolean;
   // A pause, a sentence's end or the longest-Cue limit parts it from the Cue before: merging takes a join.
   needs_join: boolean;
+  // Where a Cue Edit keeps it (seconds into the Clip: its Segment, the Cue before's end, what the Cue
+  // after leaves it), and its Segment's Speed, which a Cue Edit's seconds are divided by.
+  low: number;
+  high: number;
+  speed: number;
+  // Each of its Words' middle on its timeline (the first's is `key.at`), and the `at`, as sent, of
+  // the Cue Edit matched to each: the first's starts it, another's is a join keeping it in.
+  word_ats: number[];
+  cue_edit_ats: (number | null)[];
 }
 
 export interface HookEvent {
@@ -852,6 +861,8 @@ export interface RenderPlan {
   shapes: ShapeEvent[];
   // The Cue Edits whose Word isn't shown, which do nothing (and are kept).
   unused_cue_edits: CueEdit[];
+  // The shortest a Cue Edit leaves its Cue shown, where it has room.
+  cue_min_secs: number;
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its

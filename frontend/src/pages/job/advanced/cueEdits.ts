@@ -8,28 +8,23 @@ import type { TrackKind } from "./trackState";
 
 // A picked Cue retimed on the Captions Track, split, merged with the next or emptied: its Cue Edit
 // (GLOSSARY.md) and Word Edits written as the planner applies them (_captions in
-// backend/app/planner.py, which is the rule), so that what is dropped is what is planned.
-
-// The shortest a retimed Cue is shown (CAPTION_MIN_SECS in backend/app/planner.py).
-export const CUE_MIN_SECS = 0.2;
-// How far from a Cue's key a Cue Edit names it, when written at another time in its first Word
-// (WORD_EDIT_REACH_SECS in backend/app/planner.py).
-const REACH_SECS = 0.25;
+// backend/app/planner.py, which is the rule), so that what is dropped is what is planned. Which
+// Cue Edits a Cue has, its Words' keys and where it may be retimed to are read from the plan's Cue,
+// never worked out here (docs/adr/0001-backend-plans-frontend-draws.md).
 
 /** What the Cue actions are done in: the edits, the plan of them (and its Words), and the locked Tracks. */
 export interface CueScene {
   edits: AdvancedEdits;
   plan: RenderPlan | null;
-  // The Preview Plan's Words, which Split, Merge and Delete find a Cue's Words among.
+  // The Preview Plan's Words, which Merge, Delete and the chips find a Cue's Words among.
   words?: PreviewWord[];
   locked?: TrackKind[];
 }
 
 /**
  * A Cue as the Captions Track shows it: from `start` to `end` (seconds into the Clip; its entries
- * either side of a Layout change taken as one), at its Segment's `speed`, and where it may be retimed
- * to, from `low` to `high`: its Segment (between the cuts either side of it, a Transition's at its
- * middle), after the Cue before ends and before the Cue after starts.
+ * either side of a Layout change taken as one), at its Segment's `speed`, where the planner keeps it
+ * retimed, from `low` to `high`, and `minSecs` long at least where it has room (all the plan's).
  */
 export interface ShownCue {
   start: number;
@@ -37,28 +32,17 @@ export interface ShownCue {
   speed: number;
   low: number;
   high: number;
+  minSecs: number;
   edited: boolean;
 }
 
 /** The Cue of `plan` keyed `key`, as the Captions Track shows it; null when there is none. */
 export function cueOf(plan: RenderPlan, key: CueKey): ShownCue | null {
-  const cues = plan.captions;
-  const first = cues.findIndex((cue) => sameCue(cue.key, key));
-  if (first < 0) return null;
-  let last = first;
-  while (last + 1 < cues.length && sameCue(cues[last + 1].key, key)) last += 1;
-  const { start } = cues[first];
-  const { end } = cues[last];
-  const duration = plan.segments.length ? plan.segments[plan.segments.length - 1].end : plan.end - plan.start;
-  // The cuts: where a Segment ends and the next starts, or the middle of their Transition's overlap.
-  const cuts = plan.segments.slice(1).map((next, i) => (Math.min(next.start, plan.segments[i].end) + plan.segments[i].end) / 2);
-  const edges = [0, ...cuts, duration];
-  const after = edges.findIndex((edge, i) => i > 0 && start < edge);
-  const part = after < 0 ? edges.length - 2 : after - 1;
-  const speed = plan.segments[part]?.speed ?? 1;
-  const low = Math.max(edges[part], first > 0 ? cues[first - 1].end : 0);
-  const high = Math.min(edges[part + 1] ?? duration, last + 1 < cues.length ? cues[last + 1].start : duration);
-  return { start, end, speed, low, high, edited: cues[first].edited };
+  const entries = plan.captions.filter((cue) => sameCue(cue.key, key));
+  if (!entries.length) return null;
+  const [first] = entries;
+  const { speed, low, high, edited } = first;
+  return { start: first.start, end: entries[entries.length - 1].end, speed, low, high, minSecs: plan.cue_min_secs, edited };
 }
 
 /** Each Cue of `plan` once (its first entry, of those either side of a Layout change), as the Captions Track shows it. */
@@ -70,20 +54,21 @@ export function shownCues(plan: RenderPlan): { cue: Cue; shown: ShownCue }[] {
   });
 }
 
+// The Cue Edit of `edits` at `at` on `media`'s timeline (of two, the later, as the planner takes it).
+function editAt(edits: CueEdit[], media: string | null, at: number | null | undefined): CueEdit | null {
+  if (at == null) return null;
+  return edits.findLast((edit) => (edit.media ?? null) === media && edit.at === at) ?? null;
+}
+
 /**
- * The Cue Edit of `edits` on the Cue keyed `key`, if it has one: on its timeline, the one nearest
- * its key of those whose nearest Cue it is (one written at another time in its first Word).
+ * The Cue Edit of `edits` on the Cue keyed `key`, if it has one: the one the plan matched to its
+ * first Word (`cue_edit_ats`), which may be written at any time in it; or, while the plan names
+ * none, one written at its key, as a drag writes it before it is planned again.
  */
 export function cueEditOf(edits: CueEdit[], plan: RenderPlan, key: CueKey): CueEdit | null {
-  const keys = plan.captions.map((cue) => cue.key).filter((other) => (other.media ?? null) === (key.media ?? null));
-  let found: CueEdit | null = null;
-  for (const edit of edits) {
-    if ((edit.media ?? null) !== (key.media ?? null)) continue;
-    const distance = Math.abs(edit.at - key.at);
-    if (distance >= REACH_SECS || keys.some((other) => Math.abs(edit.at - other.at) < distance)) continue;
-    if (!found || distance < Math.abs(found.at - key.at)) found = edit;
-  }
-  return found;
+  const media = key.media ?? null;
+  const cue = plan.captions.find((other) => sameCue(other.key, key));
+  return editAt(edits, media, cue?.cue_edit_ats[0]) ?? editAt(edits, media, key.at);
 }
 
 // Seconds of a Cue Edit, to the millisecond, as far as it may go.
@@ -116,7 +101,7 @@ export interface CueDragStart {
  * The picked Cue keyed `key` dragged by its body (`move`) or an edge to `range` (seconds into the
  * Clip), from where it was as the drag began (`from`; null: where the plan shows it now): its Cue
  * Edit's `shift`, `start_delta` or `end_delta` goes on from then by as far as it moved, kept as the
- * planner keeps it (between `low` and `high`, CUE_MIN_SECS long at least), times its Segment's Speed.
+ * planner keeps it (between `low` and `high`, `minSecs` long at least), times its Segment's Speed.
  * Null while the Captions Track is locked or the plan has no such Cue.
  */
 export function retimeCue(
@@ -133,17 +118,17 @@ export function retimeCue(
   const origin = from ?? { edit: current, start: shown.start, end: shown.end };
   // A join that didn't take (its Cue doesn't fit the one before) starts its Cue: retimed, it is a start.
   const begun = origin.edit ? { ...origin.edit, join: false } : bare(key.at, key.media ?? null);
-  const { low, high, speed } = shown;
+  const { low, high, speed, minSecs } = shown;
   let next: CueEdit;
   if (range.edge === "move") {
     const length = origin.end - origin.start;
     const start = Math.max(low, Math.min(range.start, high - length));
     next = { ...begun, shift: secs(begun.shift + (start - origin.start) * speed) };
   } else if (range.edge === "start") {
-    const start = Math.max(low, Math.min(range.start, origin.end - CUE_MIN_SECS));
+    const start = Math.max(low, Math.min(range.start, origin.end - minSecs));
     next = { ...begun, start_delta: secs(begun.start_delta + (start - origin.start) * speed) };
   } else {
-    const end = Math.min(high, Math.max(range.end, origin.start + CUE_MIN_SECS));
+    const end = Math.min(high, Math.max(range.end, origin.start + minSecs));
     next = { ...begun, end_delta: secs(begun.end_delta + (end - origin.end) * speed) };
   }
   return { edits: withCueEdit(edits, current, next), pick: { kind: "cue", key } };
@@ -184,58 +169,51 @@ export function resetCueTiming(scene: CueScene, key: CueKey): Outcome | null {
 }
 
 /**
- * The Cue keyed `key`: its first entry in the plan, the entry the playhead `time` is in (of those
- * either side of a Layout change; else the first), and the Preview Plan's Words it shows, in order,
- * on its timeline (none when they can't be found). Null when the plan has no such Cue.
+ * The Preview Plan's Words the Cue keyed `key` shows, in order, on its timeline (none when they
+ * can't be found). Null when the plan has no such Cue.
  */
-function cueParts(scene: CueScene, key: CueKey, time?: number): { entry: Cue; words: PreviewWord[] } | null {
-  const entries = scene.plan?.captions.filter((cue) => sameCue(cue.key, key)) ?? [];
-  if (!entries.length) return null;
-  const entry = (time !== undefined && entries.find((cue) => cue.start <= time && time < cue.end)) || entries[0];
+function cueParts(scene: CueScene, key: CueKey): { words: PreviewWord[] } | null {
+  const entry = scene.plan?.captions.find((cue) => sameCue(cue.key, key));
+  if (!entry) return null;
   const own = (scene.words ?? []).filter((word) => (word.media ?? null) === (key.media ?? null));
-  return { entry, words: lineWords(entries[0], own) };
+  return { words: lineWords(entry, own) };
 }
 
 /**
- * The Word Split at the playhead (`time`) starts a Cue at, in the Cue keyed `key` while it is shown:
- * the first after its first highlighted from after `time`. Null when there is none.
+ * Where Split at the playhead (`time`) starts a Cue, in the Cue keyed `key` while it is shown: at
+ * the first of its Words after its first highlighted from after `time`, by its key (`word_ats`), and
+ * the `at` of the Cue Edit the plan matched to that Word (`cue_edit_ats`: inside a Cue, a join).
+ * Null when there is none.
  */
-export function splitWord(scene: CueScene, key: CueKey, time: number): PreviewWord | null {
-  const shown = scene.plan && cueOf(scene.plan, key);
-  const parts = cueParts(scene, key, time);
-  if (!shown || !parts || time < shown.start || time >= shown.end) return null;
+export function splitPoint(scene: CueScene, key: CueKey, time: number): { at: number; edit: number | null } | null {
+  const entries = scene.plan?.captions.filter((cue) => sameCue(cue.key, key)) ?? [];
+  const entry = entries.find((cue) => cue.start <= time && time < cue.end);
+  if (!entry) return null;
   // Highlights are kept within their entry: in the one shown at `time`, one starts after it exactly when its Word does.
-  const index = cueWords(parts.entry).findIndex((word, i) => i > 0 && word.start > time);
-  return index > 0 ? (parts.words[index] ?? null) : null;
+  const index = cueWords(entry).findIndex((word, i) => i > 0 && word.start > time);
+  const at = index > 0 ? entry.word_ats[index] : undefined;
+  return at === undefined ? null : { at, edit: entry.cue_edit_ats[index] ?? null };
 }
 
 /**
  * Split (Cmd/Ctrl+B) on the picked Cue keyed `key` at the playhead (`time`): a Cue Edit at the first
- * of its Words after it (splitWord), which then starts a Cue; this one stays picked (the new one isn't in
+ * of its Words after it (splitPoint), which then starts a Cue; this one stays picked (the new one isn't in
  * the plan until it is planned again, and would drop out of the Pick). A join on that Word gives way
  * to it. Null when there is no such Word, or while the Captions Track is locked.
  */
 export function splitCue(scene: CueScene, key: CueKey, time: number): Outcome | null {
   const { edits, plan } = scene;
   if (scene.locked?.includes("captions") || !plan) return null;
-  const word = splitWord(scene, key, time);
-  if (!word) return null;
+  const point = splitPoint(scene, key, time);
+  if (!point) return null;
   const media = key.media ?? null;
-  const words = cueParts(scene, key)!.words;
-  // Inside a Cue only a join can be on a Word: one within reach of it, nearer it than the Cue's other Words.
-  const there = edits.cue_edits.find(
-    (edit) =>
-      (edit.media ?? null) === media &&
-      Math.abs(edit.at - word.at) < REACH_SECS &&
-      words.every((other) => Math.abs(edit.at - word.at) <= Math.abs(edit.at - other.at)),
-  );
-  return { edits: withCueEdit(edits, there ?? null, bare(word.at, media)), pick: { kind: "cue", key } };
+  return { edits: withCueEdit(edits, editAt(edits.cue_edits, media, point.edit), bare(point.at, media)), pick: { kind: "cue", key } };
 }
 
 /** Split at the playhead (`now`) on the picked Cue keyed `key`, from the Timeline's bar, the phone's toolbar and Cmd/Ctrl+B. */
 export function cueSplitter(scene: CueScene, key: CueKey, now: () => number, apply: (outcome: Outcome) => void): Splitter {
   return {
-    canSplit: (time) => !scene.locked?.includes("captions") && !!splitWord(scene, key, time),
+    canSplit: (time) => !scene.locked?.includes("captions") && !!splitPoint(scene, key, time),
     split: () => {
       const outcome = splitCue(scene, key, now());
       if (outcome) apply(outcome);

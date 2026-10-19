@@ -17,6 +17,11 @@ const cue = (lines: string[][]): Cue => ({
   edited: false,
   joinable: false,
   needs_join: false,
+  low: 0,
+  high: 2,
+  speed: 1,
+  word_ats: lines.flat().map((_, i) => 12.15 + i * 0.3),
+  cue_edit_ats: lines.flat().map(() => null),
 });
 
 describe("a Cue", () => {

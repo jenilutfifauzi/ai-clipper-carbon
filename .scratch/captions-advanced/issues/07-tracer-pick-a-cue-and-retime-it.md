@@ -123,3 +123,25 @@
 - The inspector shows start and end as read-only values, not fields that write the deltas (the spec's inspector list; this ticket asked only for Reset timing).
 - Zoom to fit doesn't fit a picked Cue (it fits the whole Clip, as with nothing picked).
 - For ticket 09: Reset timing drops a Cue Edit once its timing is cleared, which would also drop a Split-only Cue Edit (all zeros). 09 should keep a Cue Edit that only starts a Cue, or Split should mark it.
+
+**2026-10-19, agent (review fixes):** Cue bounds and matched Cue Edits now come from the plan (ADR 0001), and a clamped Cue keeps the minimum.
+
+- **The frontend no longer repeats planner rules.** `cueEdits.ts` dropped its copies of `CAPTION_MIN_SECS` and `WORD_EDIT_REACH_SECS`, the cut and neighbour arithmetic in `cueOf`, and the distance matching in `cueEditOf`. They had drifted: a Cue Edit written early in a Word longer than 0.5 s applied in the plan, but the UI couldn't find it. The bounds also differed, because the UI capped at the next Cue's shown start and the planner at its first Word's start.
+- **New on each planned `Cue`** (`app/planner.py`, `api.ts`):
+  - `low`, `high`: where a Cue Edit keeps it;
+  - `speed`: its Segment's;
+  - `word_ats`: each Word's middle on its timeline;
+  - `cue_edit_ats`: the `at`, as sent, of the Cue Edit matched to each Word.
+- **New on `RenderPlan`:** `cue_min_secs` (CAPTION_MIN_SECS).
+- **How the frontend reads them:**
+  - `cueOf` reads `low`, `high` and `speed`, and gains `minSecs`, which the Track and the time fields use.
+  - `cueEditOf` is the Cue Edit at `cue_edit_ats[0]`. Until the plan catches up, it falls back to one written exactly at the Cue's key, which is what a drag writes.
+- **Clamping** (`_captions`): a retimed Cue is never dropped.
+  - What the Cue before may not pass (`reaches`) is now worked out from the last Cue back. A Cue moved later leaves itself CAPTION_MIN_SECS before what follows.
+  - A Cue whose Words start closer than that to what follows starts earlier, and the Cue before gives way, though never into its own first CAPTION_MIN_SECS.
+  - Where its Segment leaves less room than that, the Cue fills the room it has.
+  - Unedited Cues and roomy edits plan as before.
+- **Tests:**
+  - `test_planner.py`: `test_a_retimed_cue_short_of_room_keeps_the_minimum_and_isnt_dropped` and `test_each_cue_says_where_a_cue_edit_keeps_it_and_which_cue_edits_it_has`.
+  - `cueEdits.test.ts` reads the bounds and the Cue Edit from the plan. The segment-cut case moved to the planner test.
+- The dry run and MCP views are unchanged: no field changed shape.

@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 from pydantic import TypeAdapter
 
-from app.candidates import CueEdit, Layout, LayoutOverride, WordEdit
+from app.candidates import CueEdit, Layout, LayoutOverride, TransitionKind, WordEdit
 from app.config import CameraTuning
 from app.styles import CaptionPosition, CaptionStyle, Highlight, HookAlign, HookPosition, HookShape, HookStyle
 from app.planner import (
@@ -26,6 +26,7 @@ from app.planner import (
     Face,
     FrameFaces,
     HookEvent,
+    Join,
     RenderPlan,
     Scene,
     SceneLayout,
@@ -1487,6 +1488,53 @@ def test_a_retimed_cue_is_clamped_by_its_neighbours_and_the_clip():
     assert spans(retimed(TALK, later).captions) == [(1.0, 3.5), (3.5, 4.4)]
 
 
+def test_a_retimed_cue_short_of_room_keeps_the_minimum_and_isnt_dropped():
+    # Moved past the Clip's end while the Cue before reaches for it: it keeps CAPTION_MIN_SECS
+    # before the end, and the Cue before stops there.
+    reaching = [CueEdit(at=101.2, end_delta=5.0), CueEdit(at=103.1, shift=10.0)]
+    assert spans(retimed(TALK, reaching).captions) == [(1.0, 4.8), (4.8, 5.0)]
+    # Spoken right before the next Cue, with the Cue before shown up to it: the Cue before gives
+    # way, so it is shown CAPTION_MIN_SECS.
+    quick = [Word("satu", 1.0, 1.9), Word("dua", 2.0, 2.05), Word("tiga", 2.1, 2.5)]
+    one = CaptionStyle(max_words=1)
+    assert spans(retimed(quick, [], caption_style=one).captions) == [(1.0, 2.0), (2.0, 2.1), (2.1, 2.8)]
+    placed = retimed(quick, [CueEdit(at=102.025, x=300)], caption_style=one).captions
+    assert spans(placed) == [(1.0, 1.9), (1.9, 2.1), (2.1, 2.8)]
+    # With no more room than its Segment (shorter than the minimum), it fills it.
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    tiny = SegmentInput(50.0, 50.15, words=[Word("dua", 0.0, 0.15)])
+    cues = plan_render(10, 50.15, source(1920, 1080, fps=FPS), main_track=[first, tiny], cue_edits=[CueEdit(at=50.07, shift=0.5)]).captions
+    assert spans(cues) == [(0.2, 0.9), (2.0, 2.15)]
+
+
+def test_each_cue_says_where_a_cue_edit_keeps_it_and_which_cue_edits_it_has():
+    # Bounds: its Segment (here the Clip), the Cue before's end and the Cue after's start.
+    plain = retimed(TALK, []).captions
+    assert [(cue.low, cue.high, cue.speed) for cue in plain] == [(0.0, 3.0, 1.0), (2.3, 5.0, 1.0)]
+    assert [cue.word_ats for cue in plain] == [[101.2, 101.7], [103.1, 103.4]]
+    assert [cue.cue_edit_ats for cue in plain] == [[None, None], [None, None]]
+    # A Cue moved later leaves the one before room up to it; its own bounds are what it was kept in.
+    later = retimed(TALK, [CueEdit(at=101.2, end_delta=2.0), CueEdit(at=103.1, shift=0.5)]).captions
+    assert [(cue.low, cue.high) for cue in later] == [(0.0, 3.5), (3.5, 5.0)]
+    # A Cue Edit is named by its `at` as given: early in a long first Word, past WORD_EDIT_REACH_SECS
+    # of the Word's middle, it still applies, and the Cue says it is its own.
+    long = [Word("halooo", 1.0, 1.8), Word("apa", 3.0, 3.2)]
+    early = retimed(long, [CueEdit(at=101.05, shift=0.2)]).captions
+    assert early[0].edited and early[0].cue_edit_ats == [101.05]
+    # A join that took is named on its Word; one that didn't, on the Cue it starts.
+    join = CueEdit(at=103.15, join=True)
+    assert retimed(TALK, [join], caption_style=SENTENCE).captions[0].cue_edit_ats == [None, None, 103.15, None]
+    kept = retimed(TALK, [join], caption_style=replace(SENTENCE, max_lines=1, max_chars=12)).captions
+    assert kept[1].cue_edit_ats == [103.15, None] and not kept[1].edited
+    # In Segments: each between its cuts (a Transition's at its middle), at its Speed, keyed on
+    # its timeline.
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0, join=Join(TransitionKind.FADE, 0.4))
+    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped]).captions
+    assert [(cue.low, cue.high, cue.speed) for cue in cues] == [(0.0, 1.8, 1.0), (1.8, 2.9, 2.0), (2.6, 3.6, 2.0)]
+    assert [cue.word_ats for cue in cues] == [[10.4], [51.2], [52.8]]
+
+
 def test_cue_edits_are_divided_by_their_segments_speed_and_kept_in_their_segment():
     first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
     sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
@@ -1597,10 +1645,19 @@ def test_a_join_keeps_two_cues_parted_by_a_pause_together_but_not_past_the_line_
     joined = retimed(TALK, [join], caption_style=SENTENCE)
     assert rows(joined.captions) == [["HALO SEMUA APA KABAR"]]
     assert spans(joined.captions) == [(1.0, 3.9)] and not joined.captions[0].edited and joined.unused_cue_edits == []
-    # The longest Cue counts again from the joined Word, for its Words and how long it shows.
+    # A join cancels only the break before its own Word: the longest Cue still counts from the
+    # Cue's first Word, so the Words after it break off where max_secs would part them. The joined
+    # Word is shown to its end, but the Cue lingers no longer.
     short = replace(SENTENCE, max_secs=1.5)
     assert rows(retimed(TALK, [], caption_style=short).captions) == [["HALO SEMUA"], ["APA KABAR"]]
-    assert spans(retimed(TALK, [join], caption_style=short).captions) == [(1.0, 3.9)]
+    once = retimed(TALK, [join], caption_style=short).captions
+    assert rows(once) == [["HALO SEMUA APA"], ["KABAR"]]
+    assert spans(once) == [(1.0, 3.2), (3.2, 3.9)]
+    assert highlights(once[0]) == [("HALO", 1.0, 1.4), ("SEMUA", 1.4, 3.0), ("APA", 3.0, 3.2)]
+    # What is left still fits and needs a join of its own; merged again, it is one Cue.
+    assert (once[1].joinable, once[1].needs_join) == (True, True)
+    twice = retimed(TALK, [join, CueEdit(at=103.4, join=True)], caption_style=short).captions
+    assert rows(twice) == [["HALO SEMUA APA KABAR"]] and spans(twice) == [(1.0, 3.6)]
     # Past max_chars times max_lines they stay two, not joinable, and the join moves nothing. (It
     # keeps only its own Word with the Cue before: at 16 characters "HALO SEMUA APA" would fit.)
     narrow = replace(SENTENCE, max_lines=1, max_chars=12)

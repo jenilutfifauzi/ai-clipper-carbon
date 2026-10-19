@@ -217,7 +217,8 @@ Edits:
   dry run gives each Cue's `centre` and `size`. One whose Word the Clip doesn't show does nothing and is kept: the dry run
   lists it under `unused_cue_edits`, and a Cue it applies to says `edited`.
   Instead, a Cue Edit with `join` (and no other field) keeps its Word in the Cue before, where only
-  a pause, a sentence's end or max_secs would part them; the line limits still do. To merge a Cue
+  a pause, a sentence's end or max_secs would part them; the line limits still do. It keeps only
+  its Word: the Words after it still break at max_secs from the Cue's first. To merge a Cue
   into the one before: remove its own Cue Edit and its first Word's break_before, and add a join
   when the dry run's Cue says `needs_join`; only a `joinable` Cue fits. To split a Cue, add a Cue
   Edit with no field at the Word that should start the new one.

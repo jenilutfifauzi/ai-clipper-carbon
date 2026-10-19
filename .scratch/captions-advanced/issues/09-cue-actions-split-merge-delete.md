@@ -68,3 +68,23 @@ On a phone, these come in the bottom sheet.
   - Desktop 1440×900: picked "IYA MENURUT SAYA"; the inspector showed chips, Starts 11.30 s and Ends 12.24 s. Cmd+B saved `{at: 21.86}` and the Track showed "IYA" and a dotted "MENURUT SAYA". Merge with next on "IYA" saved `[]`. Delete key on "KESUKSESAN" saved one empty Word Edit, and one Undo restored it.
   - Phone 390×844: picking a Cue and tapping Edit opened the bottom sheet with the same panel. Retyping the chip "kadang" saved `kadang-kadang`. 20 arrow steps on Starts saved `start_delta: 0.24`. A first try saved 0.04, because the slider read the lagging plan; it is fixed by holding the set value.
   - Not seen in the browser: a Merge that adds a join (this Job's Cues, under Phrase, Sentence and 3 lines, had no joinable pair parted by a pause). The planner and vitest cover it. No Clip was rendered.
+
+**2026-10-19, agent (review fixes):** A join keeps `max_secs`, and Split takes its Word from the plan.
+
+- **A join cancels only the break before its own Word** (spec: "The characters, Words and lines per Cue still part them"; `max_secs` is per Cue). The planner no longer restarts the longest-Cue clock at the joined Word, so the per-Cue `clocks` are gone.
+  - The Words after a joined Word break off where `max_secs`, counted from the Cue's first Word, would part them.
+  - The Cue is shown to the joined Word's end, but lingers no longer. Before, a merged Cue could show for nearly 2 × `max_secs`.
+- **Merge (decision).**
+  - Merge still adds a join only when `needs_join`. `needs_join` now means: a pause, a sentence's end or `max_secs` (from the Cue before's first Word to this Cue's first Word) parts it. That is exactly the break a join cancels.
+  - Where the merged Cue would pass `max_secs`, the rest of the next Cue breaks off as its own Cue. That rest is again `joinable` (and `needs_join`), so a second Merge takes it in. A Merge never makes a Cue longer than `max_secs` except by the joined Word itself.
+  - `joinable` is unchanged: the line limits and no cut or Layout change between them.
+  - The ticket-09 test that encoded the restarted clock now asserts this: "HALO SEMUA APA" / "KABAR" at `max_secs` 1.5, then one Cue after a second join.
+- **Split reads the plan.** `splitWord` became `splitPoint`.
+  - It picks the Word by its highlight in the entry shown at the playhead, and takes that Word's key from the plan's `word_ats`.
+  - It replaces the join the plan matched to that Word (`cue_edit_ats`). It no longer measures distance within WORD_EDIT_REACH_SECS.
+  - It no longer needs the Preview Plan's Words, so it works while they can't be listed. Delete and the chips still need them.
+- `mergeCue` finds the next Cue's own Cue Edit through `cueEditOf` (`cue_edit_ats`).
+- **Tests:**
+  - test_planner: the join test above.
+  - `cueActions.test.tsx`: Split replaces a join the plan matched beyond the old reach, and splits with no Preview Words.
+- The MCP instructions now say that a join keeps only its Word.

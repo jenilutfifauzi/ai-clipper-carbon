@@ -48,16 +48,24 @@ const cue = (start: number, end: number, at: number, said: [string, number][], c
   edited: false,
   joinable: false,
   needs_join: false,
+  low: 0,
+  high: 5,
+  speed: 1,
+  word_ats: said.map((_, i) => Math.round((at + i * 0.5) * 1000) / 1000),
+  cue_edit_ats: said.map(() => null),
   ...changes,
 });
 
 const FIRST: CueKey = { at: 101.2, media: null };
 const SECOND: CueKey = { at: 103.1, media: null };
 // The second is parted from the first by a sentence's end and a pause, but would fit with it.
-const first = cue(1.0, 2.3, 101.2, [["HALO", 1.0], ["SEMUA", 1.4]]);
-const second = (changes: Partial<Cue> = {}) => cue(3.0, 3.9, 103.1, [["APA", 3.0], ["KABAR", 3.2]], { joinable: true, needs_join: true, ...changes });
+// Each with its Words' keys (101.2 and 101.7, 103.1 and 103.4) and bounds, as the planner gives them.
+const first = cue(1.0, 2.3, 101.2, [["HALO", 1.0], ["SEMUA", 1.4]], { high: 3.0 });
+const second = (changes: Partial<Cue> = {}) =>
+  cue(3.0, 3.9, 103.1, [["APA", 3.0], ["KABAR", 3.2]], { low: 2.3, word_ats: [103.1, 103.4], joinable: true, needs_join: true, ...changes });
 
-const plan = (captions: Cue[]): RenderPlan => ({ start: 100, end: 105, captions, segments: [], transitions: [], unused_cue_edits: [] }) as unknown as RenderPlan;
+const plan = (captions: Cue[]): RenderPlan =>
+  ({ start: 100, end: 105, captions, segments: [], transitions: [], unused_cue_edits: [], cue_min_secs: 0.2 }) as unknown as RenderPlan;
 
 function edits(changes: Partial<AdvancedEdits> = {}): AdvancedEdits {
   return {
@@ -107,9 +115,15 @@ describe("Split on a picked Cue", () => {
     }
   });
 
-  test("puts a start in place of a join on that Word", () => {
-    const joined = scene(edits({ cue_edits: [edit(101.75, { join: true })] }));
-    expect(splitCue(joined, FIRST, 1.2)!.edits.cue_edits).toEqual([edit(101.7)]);
+  test("puts a start in place of the join the plan matched to that Word", () => {
+    // Early in "semua", further from its key than a Word Edit's reach.
+    const join = edit(101.42, { join: true });
+    const joined = { ...first, cue_edit_ats: [null, 101.42] };
+    expect(splitCue(scene(edits({ cue_edits: [join] }), [joined, second()]), FIRST, 1.2)!.edits.cue_edits).toEqual([edit(101.7)]);
+  });
+
+  test("takes the Word from the plan, even while the Preview Plan's Words can't be listed", () => {
+    expect(splitCue(scene(edits(), [first, second()], []), FIRST, 1.2)!.edits.cue_edits).toEqual([edit(101.7)]);
   });
 });
 
@@ -124,7 +138,7 @@ describe("Merge with next on a picked Cue", () => {
     const broken = { at: 103.1, text: null, break_before: true };
     const state = edits({ cue_edits: [edit(101.2, { end_delta: 0.1 }), edit(103.12, { shift: 0.2 })], word_edits: [broken] });
     const words = [HALO, SEMUA, word("apa", 3.0, 3.2, broken), KABAR];
-    const merged = mergeCue(scene(state, [first, second({ needs_join: false, edited: true })], words), FIRST)!;
+    const merged = mergeCue(scene(state, [first, second({ needs_join: false, edited: true, cue_edit_ats: [103.12, null] })], words), FIRST)!;
     expect(merged.edits.cue_edits).toEqual([edit(101.2, { end_delta: 0.1 })]);
     expect(merged.edits.word_edits).toEqual([]);
   });

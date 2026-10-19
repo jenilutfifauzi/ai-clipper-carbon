@@ -35,7 +35,7 @@ import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
 import { clicked, isPicked, itemsOf, keyOf, picked, sameCue, type ItemRef, type Pick } from "./pick";
-import { CUE_MIN_SECS, cueEditOf, shownCues, type CueDragStart } from "./cueEdits";
+import { cueEditOf, shownCues, type CueDragStart } from "./cueEdits";
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
 import { HOOK_MIN_SECS } from "./ripple";
@@ -475,7 +475,7 @@ export function Tracks({
                 end={shown.end}
                 min={shown.low}
                 max={shown.high}
-                minSecs={CUE_MIN_SECS}
+                minSecs={shown.minSecs}
                 trimMin={shown.low}
                 trimMax={shown.high}
                 tone="neutral"

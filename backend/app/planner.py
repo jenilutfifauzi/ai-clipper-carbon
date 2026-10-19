@@ -444,8 +444,12 @@ class Cue:
     case, nor with its stripping), for subtitle files. `edited`: a Cue Edit applies to it;
     `joinable`: merged into the Cue before, it would still fit the line limits; `needs_join`: a
     pause, a sentence's end or the longest-Cue limit parts it from the Cue before, so merging it
-    takes a `join` Cue Edit. A Cue moved at a Layout change is one of these in each place, keyed
-    alike."""
+    takes a `join` Cue Edit. A Cue Edit of it is kept from `low` to `high` (seconds into the Clip:
+    its Segment, the Cue before's end and what the Cue after leaves it), its times divided by its
+    Segment's `speed`. `word_ats` is each of its Words' middle on its timeline (as `key.at` is its
+    first's), and `cue_edit_ats` the `at`, as given, of the Cue Edit matched to each: the first's
+    starts it, another's is a join keeping it in. A Cue moved at a Layout change is one of these in
+    each place, keyed alike."""
 
     start: float
     end: float
@@ -457,6 +461,11 @@ class Cue:
     edited: bool = False
     joinable: bool = False
     needs_join: bool = False
+    low: float = 0.0
+    high: float = 0.0
+    speed: float = 1.0
+    word_ats: list[float] = field(default_factory=list)
+    cue_edit_ats: list[float | None] = field(default_factory=list)
 
     @property
     def words(self) -> list[CaptionWord]:
@@ -868,6 +877,8 @@ class RenderPlan:
     shapes: list[ShapeEvent] = field(default_factory=list)
     # The Cue Edits given whose Word isn't shown, which do nothing (and are kept).
     unused_cue_edits: list[CueEdit] = field(default_factory=list)
+    # The shortest a Cue Edit leaves its Cue shown, where it has room (CAPTION_MIN_SECS).
+    cue_min_secs: float = CAPTION_MIN_SECS
 
     @property
     def duration(self) -> float:
@@ -995,7 +1006,10 @@ def plan_render(
         retimes = [(i, replace(edit, at=round(edit.at - start, 3))) for i, edit in enumerate(cue_edits or []) if edit.media is None]
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
         plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
-    captions, used = _captions(words or [], plans, duration, caption_style, word_edits or [], cuts, keys, retimes)
+    captions, used = _captions(
+        words or [], plans, duration, caption_style, word_edits or [], cuts, keys, retimes,
+        [segment.speed for segment in segments], [edit.at for edit in cue_edits or []],
+    )
     return RenderPlan(
         start=start,
         end=end,
@@ -2355,6 +2369,8 @@ def _captions(
     cuts: list[float] | None = None,
     at: list[CueKey] | None = None,
     cue_edits: list[tuple[int, CueEdit]] | None = None,
+    speeds: list[float] | None = None,
+    given_ats: list[float] | None = None,
 ) -> tuple[list[Cue], set[int]]:
     """The Cues of `words` over the Clip, which lasts `duration` and is laid out in `scenes`, in
     `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's text
@@ -2376,24 +2392,33 @@ def _captions(
     goes at the change. At each of `cuts` (where a Segment ends and the next starts), a Cue ends and
     the next starts. A Cue is joinable when it and the one before, in one Scene's place and not
     parted by a cut, would fit one Cue's lines (`_fits`, the break before its first Word lifted). It
-    needs a join when a pause, the sentence's end or max_secs (to its last Word) parts it from the one
-    before.
+    needs a join when a pause, the sentence's end or max_secs (to its first Word: only that break is
+    what a join cancels) parts it from the one before.
 
     `cue_edits` (in seconds into the Clip, their times already divided by their Segment's Speed, each
     with its place among those given) are matched to the Words as Word Edits are. A Cue Edit's Word
     always starts a Cue. Once planned, its Cue is moved by its `shift`, its edges by `start_delta`
     and `end_delta`, then kept in its Segment (between the cuts either side of it), not before the
     Cue before ends nor after the Cue after starts (where that is moved later, else its first Word;
-    the earlier of two Cues keeps its place), and CAPTION_MIN_SECS long at least; its Words'
+    the earlier of two Cues keeps its place), and CAPTION_MIN_SECS long at least: a Cue moved later
+    leaves itself that before what follows, and one spoken closer than that to what follows starts
+    earlier, the Cue before giving way (but for its own first CAPTION_MIN_SECS). Where its Segment
+    leaves less, it fills its room; it is never dropped. Its Words'
     highlight moves with it, kept in it, the first from when it comes up. Its `x` and `y` place it as
     the style's custom position and x would (at its own height, it stays put at a Layout change),
     and its `scale` multiplies the style's size before a line too wide is set smaller. A `join` Cue
-    Edit's Word instead goes on in the Cue before, despite a pause, a sentence's end or max_secs
-    (counted again from the joined Word, also for how long the Cue shows), when it fits its lines
-    and isn't parted by a cut or a Layout change; else it starts a Cue unmoved and in the style's
-    place. Also returned: the places of the Cue Edits whose Word is shown."""
+    Edit's Word instead goes on in the Cue before, despite a pause, a sentence's end or max_secs,
+    when it fits its lines and isn't parted by a cut or a Layout change; else it starts a Cue
+    unmoved and in the style's place. It cancels only that break: max_secs still counts from the
+    Cue's first Word, so the Words after the joined one break off where it would part them, and the
+    Cue shows to the joined Word's end but lingers no longer. Each Cue carries its bounds, its
+    Segment's Speed (of `speeds`, one per Segment; without them, 1), its Words' keys and the `at` of
+    each one's Cue Edit (as given, of `given_ats` by its place; without them, as in `cue_edits`).
+    Also returned: the places of the Cue Edits whose Word is shown."""
     cuts = cuts or []
     retimes = cue_edits or []
+    # Each Cue Edit's `at` as it was given, by its place, which names it on the Cue it applies to.
+    named = given_ats if given_ats is not None else {i: edit.at for i, edit in retimes}
     keys = at if at is not None else [CueKey(round((word.start + word.end) / 2, 3)) for word in words]
     spoken = []
     heard = sorted(zip(words, keys), key=lambda pair: pair[0].start)
@@ -2422,61 +2447,76 @@ def _captions(
         # A Cue can't go on past a cut, nor into a Scene whose captions go elsewhere.
         return area_at(word.start) != area_at(before[0].start) or any(before[0].start < cut <= word.start for cut in cuts)
 
-    def held(cue: list[_Spoken], clock: float, word: _Spoken) -> bool:
-        # What a `join` cancels: a pause, a sentence's end, or the longest Cue since `clock`.
-        return word.end - clock > style.max_secs or word.start - cue[-1].end >= style.pause_secs or cue[-1].ends_sentence
+    def held(cue: list[_Spoken], word: _Spoken) -> bool:
+        # What a `join` cancels: a pause, a sentence's end, or the longest Cue (from its first Word).
+        return word.end - cue[0].start > style.max_secs or word.start - cue[-1].end >= style.pause_secs or cue[-1].ends_sentence
 
     cues: list[list[_Spoken]] = []
-    # When each Cue's longest-Cue limit counts from: its first Word's start, or its last joined Word's.
-    clocks: list[float] = []
     for word in spoken:
         cue = cues[-1] if cues else None
         join = word.cue_edit is not None and word.cue_edit.join
         if cue is not None and join and _fits([*cue, word], style) and not parted(cue, word):
             cue.append(word)
-            clocks[-1] = word.start
         elif (
             cue is None
             or word.cue_edit is not None
             or not _fits([*cue, word], style)
-            or held(cue, clocks[-1], word)
+            or held(cue, word)
             or parted(cue, word)
         ):
             cues.append([word])
-            clocks.append(word.start)
         else:
             cue.append(word)
 
     bounds = [0.0, *cuts, duration]
 
-    def segment_of(cue: list[_Spoken]) -> tuple[float, float]:
-        # Its Segment's span on the Timeline: between the cuts either side of its first Word.
-        return next((low, high) for low, high in zip(bounds, bounds[1:]) if cue[0].start < high or high == bounds[-1])
+    def segment_index(cue: list[_Spoken]) -> int:
+        # Its Segment's: between the cuts either side of its first Word.
+        return next(i for i, high in enumerate(bounds[1:]) if cue[0].start < high or i == len(bounds) - 2)
 
-    def next_start(cue: list[_Spoken]) -> float:
-        # What the Cue before may not pass: its first Word's start, or later where its Cue Edit moves
-        # its start later in its Segment. (Moved earlier, it gives way to the Cue before.)
-        edit = cue[0].cue_edit
+    def segment_of(cue: list[_Spoken]) -> tuple[float, float]:
+        # Its Segment's span on the Timeline.
+        i = segment_index(cue)
+        return bounds[i], bounds[i + 1]
+
+    # What the Cue before each may not pass, from the last Cue back: its first Word's start; for an
+    # edited one, later where its Cue Edit moves its start later (moved earlier, it gives way to the
+    # Cue before), but leaving it CAPTION_MIN_SECS before what it may not pass in turn; and where its
+    # Words start closer to that than CAPTION_MIN_SECS, earlier, so that it is still shown that long
+    # (but not into the Cue before's first CAPTION_MIN_SECS, nor out of its Segment).
+    reaches = [0.0] * len(cues)
+    for i in reversed(range(len(cues))):
+        first, edit = cues[i][0].start, cues[i][0].cue_edit
         if edit is None or edit.join:
-            return cue[0].start
-        _, high = segment_of(cue)
-        return max(cue[0].start, min(cue[0].start + edit.shift + edit.start_delta, high))
+            reaches[i] = first
+            continue
+        low, high = segment_of(cues[i])
+        top = (min(high, reaches[i + 1]) if i + 1 < len(cues) else high) - CAPTION_MIN_SECS
+        if first <= top:
+            reaches[i] = min(max(first + edit.shift + edit.start_delta, first), top)
+        else:
+            reaches[i] = min(first, max(top, low, cues[i - 1][0].start + CAPTION_MIN_SECS if i else low))
 
     metrics = font_metrics(style.font)
     events = []
     shown_end = 0.0
     for i, cue in enumerate(cues):
         start = cue[0].start
-        end = min(cue[-1].end + CAPTION_LINGER_SECS, clocks[i] + style.max_secs, duration)
+        # Shown max_secs at most, but to the end of a Word a join kept in it past that.
+        longest = max([cue[0].start + style.max_secs, *(word.end for word in cue[1:] if word.cue_edit is not None)])
+        end = min(cue[-1].end + CAPTION_LINGER_SECS, longest, duration)
         if i + 1 < len(cues):
-            end = min(end, cues[i + 1][0].start)
+            end = min(end, reaches[i + 1])
         end = min([end, *(at for at in [*moves, *cuts] if cue[-1].end <= at < end)])
         edit, shift = cue[0].cue_edit, 0.0
         if edit is not None and edit.join:
             edit = None
+        # Where a Cue Edit keeps it: in its Segment, after the Cue before ends, before the Cue after
+        # (reaches). Its room is never empty; it is CAPTION_MIN_SECS long but where its Segment, or
+        # the Cue before's first CAPTION_MIN_SECS, leaves it less, which it then fills.
+        part = segment_of(cue)
+        low, high = max(part[0], shown_end), min(part[1], reaches[i + 1]) if i + 1 < len(cues) else part[1]
         if edit is not None:
-            low, high = segment_of(cue)
-            low, high = max(low, shown_end), min(high, next_start(cues[i + 1])) if i + 1 < len(cues) else high
             shift = edit.shift
             start = min(max(start + shift + edit.start_delta, low), high - CAPTION_MIN_SECS)
             end = min(max(end + shift + edit.end_delta, start + CAPTION_MIN_SECS), high)
@@ -2508,7 +2548,7 @@ def _captions(
             del parts[short]
         joined = [*cues[i - 1], replace(cue[0], breaks_before=False), *cue[1:]] if i > 0 else []
         joinable = i > 0 and not parted(cues[i - 1], cue[0]) and _fits(joined, style)
-        needs_join = i > 0 and held(cues[i - 1], clocks[i - 1], replace(cue[0], end=cue[-1].end))
+        needs_join = i > 0 and held(cues[i - 1], cue[0])
         x = edit.x if edit is not None and edit.x is not None else style.x
         scale = edit.scale if edit is not None and edit.scale is not None else 1.0
         for a, b, area in parts:
@@ -2527,6 +2567,11 @@ def _captions(
                 edited=edit is not None,
                 joinable=joinable,
                 needs_join=needs_join,
+                low=round(low, 3),
+                high=round(high, 3),
+                speed=speeds[segment_index(cue)] if speeds else 1.0,
+                word_ats=[word.key.at for word in cue],
+                cue_edit_ats=[named[word.cue_edit_index] if word.cue_edit is not None else None for word in cue],
             ))
     return events, {word.cue_edit_index for word in spoken if word.cue_edit is not None}
 

@@ -19,6 +19,11 @@ const cue = (start: number, end: number, at: number): Cue => ({
   edited: false,
   joinable: false,
   needs_join: false,
+  low: 0,
+  high: 5,
+  speed: 1,
+  word_ats: [at],
+  cue_edit_ats: [null],
 });
 
 // "halo semua" from 1.0 to 2.3 s and "apa kabar" from 3.0 to 3.9 s of a Clip from 100 s, captioned at size 110.
@@ -29,6 +34,7 @@ const PLAN = {
   segments: [],
   transitions: [],
   unused_cue_edits: [],
+  cue_min_secs: 0.2,
   caption_style: { size: 110 },
 } as unknown as RenderPlan;
 const SECOND: CueKey = { at: 103.1, media: null };

@@ -9,7 +9,6 @@ import { usePlayback, type Playback } from "../editor/playback";
 import { Group } from "../editor/StyleFields";
 import type { Outcome } from "./actions";
 import {
-  CUE_MIN_SECS,
   cueEditOf,
   cueOf,
   cueTimeGesture,
@@ -19,7 +18,7 @@ import {
   resetCueTiming,
   retypeCue,
   splitCue,
-  splitWord,
+  splitPoint,
   wordsOfCue,
   type CueScene,
   type ShownCue,
@@ -57,7 +56,7 @@ export function CueFields({
   const [retime] = useState(cueTimeGesture);
   // The value last set in a field, shown while its Cue Edit is the one it wrote: the plan of it comes later.
   const [held, setHeld] = useState<{ edge: "start" | "end"; time: number; made: CueEdit | null } | null>(null);
-  const splittable = usePlayback(playback, (time) => !!splitWord(scene, cueKey, time));
+  const splittable = usePlayback(playback, (time) => !!splitPoint(scene, cueKey, time));
   const cue = plan?.captions.find((other) => sameCue(other.key, cueKey));
   const shown = plan && cueOf(plan, cueKey);
   const reset = resetCueTiming(scene, cueKey);
@@ -155,7 +154,7 @@ export function CueActionButtons({
 
 /**
  * A shown Cue's start and end as fields: each kept as the planner keeps it (from `low`, to `high`,
- * CUE_MIN_SECS long at least), and set by `onTime` (which writes that edge's delta).
+ * `minSecs` long at least), and set by `onTime` (which writes that edge's delta).
  */
 export function CueTimeFields({
   shown,
@@ -173,7 +172,7 @@ export function CueTimeFields({
         label="Starts"
         value={shown.start}
         min={Math.min(shown.low, shown.start)}
-        max={Math.max(shown.start, shown.end - CUE_MIN_SECS)}
+        max={Math.max(shown.start, shown.end - shown.minSecs)}
         step={0.01}
         format={seconds}
         disabled={disabled}
@@ -182,7 +181,7 @@ export function CueTimeFields({
       <Slider
         label="Ends"
         value={shown.end}
-        min={Math.min(shown.end, shown.start + CUE_MIN_SECS)}
+        min={Math.min(shown.end, shown.start + shown.minSecs)}
         max={Math.max(shown.end, shown.high)}
         step={0.01}
         format={seconds}
