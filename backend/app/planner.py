@@ -1020,6 +1020,12 @@ def plan_render(
     )
 
 
+def edit_shown(edit: "TimelineKeyed", media: str | None, start: float, end: float) -> bool:
+    """Whether a Word Edit or Cue Edit can apply in a Segment showing `start`-`end` of the timeline
+    `media` (None: the Source's): it is of that timeline, within WORD_EDIT_REACH_SECS of the range."""
+    return edit.media == media and start - WORD_EDIT_REACH_SECS <= edit.at <= end + WORD_EDIT_REACH_SECS
+
+
 def _segment_cue_edits(
     main_track: list[SegmentInput], segments: list[SegmentPlan], cue_edits: list[CueEdit]
 ) -> list[tuple[int, CueEdit]]:
@@ -1033,7 +1039,7 @@ def _segment_cue_edits(
             continue
         time = given.time
         for i, edit in enumerate(cue_edits):
-            if edit.media == given.media and given.start - WORD_EDIT_REACH_SECS <= edit.at <= given.end + WORD_EDIT_REACH_SECS:
+            if edit_shown(edit, given.media, given.start, given.end):
                 shown.append((i, replace(
                     edit,
                     at=round(time.offset_of(edit.at - given.start) + segment.start, 3),
@@ -2304,22 +2310,32 @@ class _Spoken:
     cue_edit_index: int = -1
 
 
-class _Keyed(Protocol):
+class TimelineKeyed(Protocol):
+    """What is keyed to a Word as a Word Edit is: a time, on the Source's timeline or (with `media`)
+    on that Media Library item's (docs/adr/0020)."""
+
     @property
     def at(self) -> float: ...
 
+    @property
+    def media(self) -> str | None: ...
 
-_Edit = TypeVar("_Edit", bound=_Keyed)
+
+Keyed = TypeVar("Keyed", bound=TimelineKeyed)
 
 
-def match_edits(words: list[Word], edits: list[_Edit]) -> list[_Edit | None]:
-    """Each Word's Word Edit (or Cue Edit), or None: the Words and the edits' times on the same
-    timeline. An edit applies to the Word whose span holds its time, else to the nearest Word within
-    WORD_EDIT_REACH_SECS; of two edits of one Word, the later in `edits`."""
-    matched: list[_Edit | None] = [None] * len(words)
+def match_edits(words: list[Word], edits: list[Keyed], timelines: list[str | None] | None = None) -> list[Keyed | None]:
+    """Each Word's Word Edit or Cue Edit (anything keyed as one), or None: the Words and
+    the edits' times on the same clock. An edit applies to the Word whose span holds its time, else
+    to the nearest Word within WORD_EDIT_REACH_SECS; of two edits of one Word, the later in `edits`.
+    With `timelines` (each Word's: None for the Source's, else its Media Library item's), an edit
+    applies only to a Word of its own timeline, its `media`; without them, to any Word."""
+    matched: list[Keyed | None] = [None] * len(words)
     for edit in edits:
         best, distance = None, WORD_EDIT_REACH_SECS
         for i, word in enumerate(words):
+            if timelines is not None and timelines[i] != edit.media:
+                continue
             gap = max(word.start - edit.at, edit.at - word.end, 0.0)
             if gap < distance:
                 best, distance = i, gap
@@ -2382,9 +2398,10 @@ def _captions(
     spoken = []
     heard = sorted(zip(words, keys), key=lambda pair: pair[0].start)
     ordered = [word for word, _ in heard]
-    retimed = match_edits(ordered, [edit for _, edit in retimes])
+    timelines = [key.media for _, key in heard]
+    retimed = match_edits(ordered, [edit for _, edit in retimes], timelines)
     places = {id(edit): i for i, edit in retimes}
-    for (word, key), edit, retime in zip(heard, match_edits(ordered, edits), retimed):
+    for (word, key), edit, retime in zip(heard, match_edits(ordered, edits, timelines), retimed):
         given = edit.text if edit is not None and edit.text is not None else word.text
         text, ends_sentence = _caption_text(given, style.uppercase)
         if text and 0 <= (word.start + word.end) / 2 < duration:

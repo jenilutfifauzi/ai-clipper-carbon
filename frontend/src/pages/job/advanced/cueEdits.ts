@@ -183,9 +183,6 @@ export function resetCueTiming(scene: CueScene, key: CueKey): Outcome | null {
   return { edits: withCueEdit(edits, current, afterReset(plan, key, reset)), pick: { kind: "cue", key } };
 }
 
-// A Media Library item's Words say which item (ticket 06); the Source's say none.
-const mediaOf = (word: PreviewWord) => (word as PreviewWord & { media?: string | null }).media ?? null;
-
 /**
  * The Cue keyed `key`: its first entry in the plan, the entry the playhead `time` is in (of those
  * either side of a Layout change; else the first), and the Preview Plan's Words it shows, in order,
@@ -195,7 +192,7 @@ function cueParts(scene: CueScene, key: CueKey, time?: number): { entry: Cue; wo
   const entries = scene.plan?.captions.filter((cue) => sameCue(cue.key, key)) ?? [];
   if (!entries.length) return null;
   const entry = (time !== undefined && entries.find((cue) => cue.start <= time && time < cue.end)) || entries[0];
-  const own = (scene.words ?? []).filter((word) => mediaOf(word) === (key.media ?? null));
+  const own = (scene.words ?? []).filter((word) => (word.media ?? null) === (key.media ?? null));
   return { entry, words: lineWords(entries[0], own) };
 }
 

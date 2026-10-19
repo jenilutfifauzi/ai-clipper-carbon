@@ -25,10 +25,11 @@ KITA_SOAL = (1.6, 2.6)
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
-# merge_candidate_items; and the Captions switch (captions-advanced/05): `segments[].captions` in each
-# editing tool's Segment schema. Raised from 72_000 for a Cue Edit's `x`, `y` and `scale`
-# (captions-advanced/08), and its join (captions-advanced/09).
-TOOLS_BUDGET_BYTES = 73_200
+# merge_candidate_items; the Captions switch (captions-advanced/05): `segments[].captions` in each
+# editing tool's Segment schema; Word Edits of Media Words (captions-advanced/06): `word_edits[].media`
+# and remove_candidate_items' {at, media} keys; a Cue Edit's `x`, `y` and `scale` (captions-advanced/08);
+# and its join (captions-advanced/09).
+TOOLS_BUDGET_BYTES = 73_700
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -248,8 +249,8 @@ async def test_cue_edits_are_set_merged_field_by_field_and_removed_by_their_key(
     assert [(e["at"], e["media"], e["shift"], e["start_delta"], e["end_delta"]) for e in merged["cue_edits"]] == [
         (first, None, 0.1, 0.0, -0.1), (second, None, 0.0, -0.2, 0.0), (first, media, 0.3, 0.0, 0.0),
     ]
-    # Removed by `at`, or "media:at" for an item's.
-    removed = await call(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[f"{media}:{first}", second])
+    # Removed by `at`, or {at, media} for an item's.
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[{"at": first, "media": media}, second])
     assert [(e["at"], e["media"]) for e in removed["cue_edits"]] == [(first, None)]
     assert "no cue_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[second])
 
@@ -576,6 +577,28 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
 
     message = await fails(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "media": "0" * 32, "start": 0, "secs": 1}])
     assert f"no song or video with sound {"0" * 32}" in message
+
+
+@pytest.mark.anyio
+async def test_word_edits_of_media_words_are_keyed_by_their_item_and_time(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    video = "a" * 32
+    keyed = lambda saved: [(edit["at"], edit["media"], edit["text"]) for edit in saved["word_edits"]]  # noqa: E731
+
+    # 0.5 s of the Source and 0.5 s of the video: two edits.
+    saved = await call(mcp, "edit_candidate", **ids, changes={"word_edits": [{"at": 0.5, "text": "Semua"}, {"at": 0.5, "text": "dunia", "media": video}]})
+    assert keyed(saved) == [(0.5, None, "Semua"), (0.5, video, "dunia")]
+    merged = await call(mcp, "merge_candidate_items", **ids, word_edits=[{"at": 0.5, "media": video, "text": "Dunia"}, {"at": 0.9, "media": video, "text": "kawan"}])
+    assert keyed(merged) == [(0.5, None, "Semua"), (0.5, video, "Dunia"), (0.9, video, "kawan")]
+
+    # A number names a Source Word Edit; {at, media} one of a video's.
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[{"at": 0.5, "media": video}])
+    assert keyed(removed) == [(0.5, None, "Semua"), (0.9, video, "kawan")]
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.5])
+    assert keyed(removed) == [(0.9, video, "kawan")]
+    assert "no word_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.9])
 
 
 @pytest.mark.anyio

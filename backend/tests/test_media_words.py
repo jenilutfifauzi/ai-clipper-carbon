@@ -217,3 +217,71 @@ def test_deleting_an_unused_item_deletes_its_media_words(client, settings, trans
     patch(client, job, candidate, segments=[candidate["segments"][1]])
     assert client.delete(f"/api/media/{red['id']}").status_code == 204
     assert not folder.exists()
+
+
+# Seam B: Word Edits on Media Words (ticket 06).
+
+
+def media_plan(tmp_path, word_edits: list[WordEdit], words: list[list[Word]] | None = None):
+    """The plan of a Candidate showing the intro's 0-2 s twice, around the Source's 0-2 s, each
+    Segment heard saying a Word from 0.5 to 0.9 s into it (unless `words` say otherwise)."""
+    candidate = replace(
+        manual_candidate("c1", 0, 2),
+        segments=[
+            Segment("a", 0, 2, media=INTRO, framing=Framing()),
+            Segment("e", 0, 2),
+            Segment("b", 0, 2, media=INTRO, framing=Framing()),
+        ],
+        word_edits=word_edits,
+    )
+    heard = words or [[Word("halo", 0.5, 0.9)], [Word("kawan", 0.5, 0.9)], [Word("halo", 0.5, 0.9)]]
+    return candidate_plan(candidate, SOURCE, heard, [None] * 3, PresetStore(tmp_path / "presets.json"), CameraTuning(), media=Library())
+
+
+def test_a_media_word_edit_changes_the_word_in_every_segment_showing_that_time_and_no_source_word(tmp_path):
+    planned = media_plan(tmp_path, [WordEdit(at=0.7, text="dunia", media=INTRO)])
+    assert [cue.text for cue in planned.captions] == ["DUNIA", "KAWAN", "DUNIA"]
+
+
+def test_a_source_word_edit_doesnt_touch_a_media_word_at_the_same_time(tmp_path):
+    planned = media_plan(tmp_path, [WordEdit(at=0.7, text="teman")])
+    assert [cue.text for cue in planned.captions] == ["HALO", "TEMAN", "HALO"]
+
+
+def test_a_removed_media_word_leaves_its_cue_and_an_emptied_cue_leaves_none(tmp_path):
+    words = [[Word("halo", 0.5, 0.9), Word("semua", 0.9, 1.3)], [Word("kawan", 0.5, 0.9)], [Word("halo", 0.5, 0.9)]]
+    planned = media_plan(tmp_path, [WordEdit(at=0.7, text="", media=INTRO)], words)
+    assert [(cue.text, cue.key.media) for cue in planned.captions] == [("SEMUA", INTRO), ("KAWAN", None)]
+
+
+# Seam A: Word Edits on Media Words through the API.
+
+
+def test_the_api_keeps_word_edits_at_one_time_of_two_timelines_and_the_preview_lists_media_words(client, transcriber, clips):
+    red = upload(client, clips["red"], "red.mp4").json()
+    transcriber.heard[red["id"]] = SAID
+    job = reviewed(client)
+    candidate = talking_candidate(client, job, red["id"])
+    prepare(client, job, candidate)
+    rendered(client, job)
+
+    # The preview lists the video's Words too, keyed on its timeline.
+    words = preview(client, job, candidate)["words"]
+    halo = words[0]
+    assert (halo["text"], halo["start"], halo["at"], halo["media"], halo["edit"]) == ("halo", 0.5, 0.7, red["id"], None)
+    assert all(word["media"] is None for word in words[2:])
+
+    # 0.7 s on the video's timeline and on the Source's: two edits, each of its own Word.
+    edits = [{"at": 0.7, "text": "dunia", "media": red["id"]}, {"at": 0.7, "text": "teman"}, {"at": 0.7, "text": "DUNIA", "media": red["id"]}]
+    candidate = patch(client, job, candidate, word_edits=edits)
+    assert candidate["word_edits"] == [
+        {"at": 0.7, "text": "teman", "break_before": False, "media": None},
+        {"at": 0.7, "text": "DUNIA", "break_before": False, "media": red["id"]},
+    ]
+    shown = preview(client, job, candidate)
+    # The video's "halo" takes the video's edit; the episode's (at 0 to 0.43 s of the Source) the Source's.
+    assert [word["edit"] for word in shown["words"]] == [candidate["word_edits"][1], None, candidate["word_edits"][0]]
+    assert [cue_text(cue) for cue in shown["plan"]["captions"]][:2] == ["DUNIA SEMUA", "TEMAN"]
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    assert client.patch(url, json={"word_edits": [{"at": 0.7, "text": "x", "media": "not-an-id"}]}).status_code == 422

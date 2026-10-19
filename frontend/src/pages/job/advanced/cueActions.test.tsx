@@ -151,6 +151,13 @@ describe("Delete on a picked Cue", () => {
     const video = { ...first, key: { at: 1.2, media: "ab".repeat(16) } };
     expect(wordsOfCue(scene(edits(), [video]), video.key)).toEqual([]);
     expect(deleteCue(scene(edits(), [video]), video.key)).toBeNull();
+    // Its own Words (keyed on the item's timeline) are emptied by Word Edits with its `media`.
+    const media = "ab".repeat(16);
+    const own = [{ ...HALO, at: 1.2, media }, { ...SEMUA, at: 1.7, media }];
+    expect(deleteCue(scene(edits(), [video], [...WORDS, ...own]), video.key)!.edits.word_edits).toEqual([
+      { at: 1.2, text: "", break_before: false, media },
+      { at: 1.7, text: "", break_before: false, media },
+    ]);
   });
 });
 

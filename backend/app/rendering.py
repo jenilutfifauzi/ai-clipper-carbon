@@ -39,7 +39,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
-from app.candidates import Candidate, Framing, Layout, Segment
+from app.candidates import Candidate, Framing, Layout, Segment, WordEdit
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
@@ -48,7 +48,7 @@ from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
-from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
+from app.planner import Join, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
 from app.renderer import Renderer, RenderStopped
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
@@ -227,10 +227,10 @@ def candidate_plan(
     `analysed_range`); its Watermark's Logo from `logos`, and the
     songs of its music and the videos of its Segments from `media` (a video that isn't there is left
     out, and so is a Transition into or out of it). A video's Segment is captioned with its item's
-    Media Words in `words` (`media_segment_words`; [] for none). Its Word Edits and Layout
-    Overrides, on the Source's timeline, apply in every Source Segment that shows their time; its
-    Cue Edits, on the Source's or an item's, in every Segment that shows theirs
-    (docs/adr/0002-segments-and-timeline-time.md).
+    Media Words in `words` (`media_segment_words`; [] for none). Its Layout Overrides, on the Source's
+    timeline, apply in every Source Segment that shows their time
+    (docs/adr/0002-segments-and-timeline-time.md); its Word Edits and Cue Edits in every Segment that
+    shows their time of their timeline, the Source's or an item's (`edit_shown`, docs/adr/0020).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
@@ -255,7 +255,7 @@ def candidate_plan(
             candidate.start, candidate.end, source,
             scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
             words=None if words is None else words[0],
-            word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
+            word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits if edit.media is None],
             layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
             **common,
         )
@@ -276,7 +276,8 @@ def candidate_plan(
             inputs.append(SegmentInput(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
-                words=None if words is None else words[i], join=join, keys=segment.keys, id=segment.id,
+                words=None if words is None else words[i], word_edits=shown_edits(candidate.word_edits, segment),
+                join=join, keys=segment.keys, id=segment.id,
                 speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
             ))
             continue
@@ -289,17 +290,23 @@ def candidate_plan(
             layout_overrides=[replace(o, at=round(o.at - start, 3)) for o in candidate.layout_overrides if start <= o.at <= end],
             words=None if words is None else words[i],
             volume=segment.volume,
-            word_edits=[
-                replace(edit, at=round(edit.at - segment.start, 3))
-                for edit in candidate.word_edits
-                if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
-            ],
+            word_edits=shown_edits(candidate.word_edits, segment),
             join=join,
             id=segment.id,
             speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
             analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
+
+
+def shown_edits(edits: list[WordEdit], segment: Segment) -> list[WordEdit]:
+    """The Word Edits that can apply in `segment`, in seconds into its range: those of its own timeline
+    (the Source's, or its item's) within WORD_EDIT_REACH_SECS of its range (`edit_shown`)."""
+    return [
+        replace(edit, at=round(edit.at - segment.start, 3))
+        for edit in edits
+        if edit_shown(edit, segment.media, segment.start, segment.end)
+    ]
 
 
 class MediaFinder(Protocol):

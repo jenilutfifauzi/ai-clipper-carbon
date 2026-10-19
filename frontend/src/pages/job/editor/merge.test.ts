@@ -174,6 +174,17 @@ describe("keys", () => {
       collisions: [],
     });
   });
+
+  test("a Word Edit of a video's Words merges by its video and time, apart from the Source's at the same time", () => {
+    const base = { word_edits: [{ at: 0.7, text: "halo", break_before: false }] };
+    const mine = { word_edits: [{ at: 0.7, text: "Halo", break_before: false }] };
+    const theirs = { word_edits: [{ at: 0.7, text: "halo", break_before: false }, { at: 0.7, text: "dunia", break_before: false, media: "intro" }] };
+
+    expect(mergeEdits(base, mine, theirs)).toEqual({
+      merged: { word_edits: [{ at: 0.7, text: "Halo", break_before: false }, { at: 0.7, text: "dunia", break_before: false, media: "intro" }] },
+      collisions: [],
+    });
+  });
 });
 
 describe("Style Overrides", () => {

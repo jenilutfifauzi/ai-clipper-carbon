@@ -61,21 +61,26 @@ class Layout(StrEnum):
     MANUAL = "manual"
 
 
+# A Media Library item's id (app/media.py).
+MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+
+
 @dataclass(frozen=True)
 class WordEdit:
     """The owner's correction of one caption Word: the Word whose span holds `at` (seconds on the
-    Source's timeline), or failing that the nearest within WORD_EDIT_REACH_SECS (app/planner.py).
-    `text` replaces the Word's text (None keeps it; empty removes the Word), and `break_before`
-    starts a caption line at it. Keyed by time, not by the Word's place, since a Clip's Words are
-    transcribed again when its range changes."""
+    Source's timeline, or with `media` on that Media Library item's, of its Media Words), or failing
+    that the nearest within WORD_EDIT_REACH_SECS (app/planner.py), on that timeline only. It applies
+    in every Segment showing that time (docs/adr/0020). `text` replaces the Word's text (None keeps
+    it; empty removes the Word), and `break_before` starts a caption line at it. Keyed by time, not
+    by the Word's place, since a Clip's Words are transcribed again when its range changes; and by
+    `(media, at)`, two edits at one time of different timelines being apart."""
 
     at: FiniteFloat
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=WORD_EDIT_MAX_CHARS)] | None = None
     break_before: bool = False
+    media: MediaId | None = None
 
 
-# A Media Library item's id (app/media.py).
-MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
 Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
 # A Speed (docs/adr/0009): how many seconds of its range an item plays in one on the Timeline.

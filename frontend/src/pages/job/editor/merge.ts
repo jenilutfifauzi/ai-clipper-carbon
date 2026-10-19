@@ -23,23 +23,22 @@ export interface Merged<T> {
 
 type Item = Record<string, unknown>;
 
-// A Cue Edit's key: its timeline (its item, or the Source's) and its time, to the millisecond.
-const onTimeline = (item: Item) => `${item.media ?? ""}@${Math.round(Number(item.at) * 1000) / 1000}`;
-
-// Each list's items by this key: the MCP merge tool's keys.
-const KEYS: Record<string, string | ((item: Item) => string)> = {
+// Each list's items by this key (or these fields): the MCP merge tool's keys. A Word Edit's and a
+// Cue Edit's is its time on its timeline, the Source's or (with `media`) a Media Library item's
+// (ADR 0020), the time to the millisecond.
+const KEYS = {
   segments: "id",
   text_layers: "id",
   shapes: "id",
   music: "id",
   overlays: "id",
   transitions: "after",
-  word_edits: "at",
+  word_edits: ["at", "media"],
   layout_overrides: "at",
-  cue_edits: onTimeline,
-} satisfies Partial<Record<keyof Edits, unknown>>;
+  cue_edits: ["at", "media"],
+} as const satisfies Partial<Record<keyof Edits, string | readonly string[]>>;
 
-type ListField = "segments" | "text_layers" | "shapes" | "music" | "overlays" | "transitions" | "word_edits" | "layout_overrides" | "cue_edits";
+type ListField = keyof typeof KEYS;
 
 export function mergeEdits<T extends Edits>(base: T, mine: T, theirs: T): Merged<T> {
   const [b, m, t] = [fields(base), fields(mine), fields(theirs)];
@@ -121,12 +120,17 @@ export function collidedParts(collisions: Collision[]): string {
   return [...new Set(collisions.map((collision) => PART_OF[collision.field]))].join(", ");
 }
 
+// One field of an item's key: a timed item's `at` to the millisecond (as the backend de-duplicates).
+const keyPart = (item: Item, name: string) =>
+  name === "at" && typeof item.at === "number" ? String(Math.round(item.at * 1000) / 1000) : String(item[name] ?? "");
+
 // Edits seen as plain JSON fields.
 const fields = (edits: Edits) => edits as Record<string, unknown>;
 
 function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[], collisions: Collision[]): Item[] {
   const key = KEYS[field];
-  const keyOf = (item: Item) => (typeof key === "function" ? key(item) : String(item[key]));
+  const fields: readonly string[] = typeof key === "string" ? [key] : key;
+  const keyOf = (item: Item) => fields.map((name) => keyPart(item, name)).join("@");
   const byKey = (items: Item[]) => new Map(items.map((item) => [keyOf(item), item]));
   const [b, m, t] = [byKey(base), byKey(mine), byKey(theirs)];
   const kept = new Map<string, Item>();

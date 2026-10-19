@@ -89,14 +89,13 @@ EDIT_SOURCE = {"X-Edit-Source": "agent"}
 ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
 # The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
 # and remove_candidate_items change item by item: each list's item, and the field that identifies
-# one within its Candidate.
-ITEMS: dict[str, tuple[type, str]] = {
+# one within its Candidate (or the fields: a Word Edit's or Cue Edit's time and its timeline, None
+# for the Source's).
+ITEMS: dict[str, tuple[type, str | tuple[str, ...]]] = {
     "text_layers": (TextLayer, "id"), "shapes": (Shape, "id"), "music": (MusicClip, "id"), "overlays": (Overlay, "id"),
-    "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, "at"),
-    "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, "at"),
+    "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, ("at", "media")),
+    "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, ("at", "media")),
 }
-# The lists whose items are keyed by `media` as well: an item's own, apart from the Source's.
-ON_MEDIA = frozenset({"cue_edits"})
 
 INSTRUCTIONS = f"""\
 AI Clipper turns a long video (a podcast episode) into vertical short Clips. Words are those of
@@ -117,7 +116,10 @@ Workflow:
 
 Times:
 - A Candidate's start and end, Segments, the Transcript and Words are Source time: seconds into the
-  Source video. A Word Edit's `at` is a Word's start in Source time (dry run lists them).
+  Source video. A Word Edit's `at` is any time within its Word in Source time (the editor uses
+  the Word's middle; dry run lists them). With `media` (a video's id), it is a time on that video's
+  own timeline, of its Media Words, and applies in every Segment showing that time of it; a Source
+  Word Edit never touches a video's Words, nor the other way round.
 - Text Layers, Shapes, Music Clips, Overlays, hook_start and the Preview Plan's events are
   Timeline time: seconds into the Clip, from 0.
 
@@ -209,7 +211,8 @@ Edits:
   into the one before: remove its own Cue Edit and its first Word's break_before, and add a join
   when the dry run's Cue says `needs_join`; only a `joinable` Cue fits. To split a Cue, add a Cue
   Edit with no field at the Word that should start the new one.
-  merge_candidate_items changes only the fields given; remove_candidate_items takes its `at`.
+  merge_candidate_items changes only the fields given; remove_candidate_items takes its `at`
+  ({{at, media}} for a video's).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
@@ -485,7 +488,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         merge_candidate_items). With changes.revision (the `revision` you read), an edit made after
         someone else's is refused with the Candidate as it is now, instead of saved over it. With
         dry_run, nothing is saved: the Preview Plan of the changes comes back instead, its events in
-        Timeline time, and its Words with the `at` a Word Edit names."""
+        Timeline time, and its Words with the `at` (and `media`) a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         if dry_run:
             return _plan_view(
@@ -519,8 +522,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
-        one the Candidate has (id; a Transition's `after`; a Word Edit's or Layout Override's `at`; a
-        Cue Edit's `at` and `media`) changes only the fields given; another is added (Segments at the end of the Main Track), and
+        one the Candidate has (id; a Transition's `after`; a Word Edit's or Cue Edit's `at` and
+        `media`; a Layout Override's `at`)
+        changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
         field by field. The Candidate is saved once, through the same checks as edit_candidate."""
@@ -536,7 +540,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
                         dumped = [patch if any(_same(item["id"], patch["id"]) for item in current[kind]) else new_title(patch) for patch in dumped]
                     if kind == "shapes":
                         dumped = [_switched_stroke(current[kind], patch) for patch in dumped]
-                    body[kind] = _merge(current[kind], dumped, _KEYS[kind], kind in ON_MEDIA)
+                    body[kind] = _merge(current[kind], dumped, _KEYS[kind])
             if style_overrides is not None:
                 new = _dump(StyleOverrides, style_overrides)
                 body["style_overrides"] = {
@@ -554,12 +558,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
         job_id: str,
         candidate_id: str,
         kind: Literal[*ITEMS, "style_overrides"],  # type: ignore[valid-type]
-        keys: list[str | float],
+        keys: list[str | float | TimelineKey],
     ) -> dict:
         """Remove some of a Candidate's items of one kind, by key: ids; a Transition's `after`; a
-        Word Edit's or Layout Override's `at`; a Cue Edit's `at`, or "media:at" for one of a Media
-        Library item's; for style_overrides, "section.field" (such as "caption.size"), which then
-        falls back to the Style Preset's."""
+        Word Edit's or Cue Edit's `at` ({at, media} for a video's) or a Layout Override's `at`; for
+        style_overrides, "section.field" (such as "caption.size"), which then falls back to the Style
+        Preset's."""
 
         def removed(current: dict) -> dict:
             if kind == "style_overrides":
@@ -571,11 +575,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
                 return {"style_overrides": overrides}
             key = _KEYS[kind]
             items = current[kind]
-            wanted = [_keyed(kind, key, given) for given in keys]
-            for given, patch in zip(keys, wanted):
-                if not any(_matches(item, patch, key, kind in ON_MEDIA) for item in items):
-                    raise ToolError(f"Candidate {candidate_id} has no {kind} item with {key} {given}")
-            return {kind: [item for item in items if not any(_matches(item, patch, key, kind in ON_MEDIA) for patch in wanted)]}
+            wanted_items = [_key_item(key, wanted) for wanted in keys]
+            for wanted, given in zip(wanted_items, keys):
+                if not any(_same_key(item, wanted, key) for item in items):
+                    shown = given.model_dump(exclude_none=True) if isinstance(given, TimelineKey) else given
+                    raise ToolError(f"Candidate {candidate_id} has no {kind} item with {_key_name(key)} {shown}")
+            return {kind: [item for item in items if not any(_same_key(item, wanted, key) for wanted in wanted_items)]}
 
         return await save_from_current(job_id, candidate_id, removed)
 
@@ -932,7 +937,7 @@ def _plan_view(
             for event in plan["segments"] + plan["audio"]
             if event["gain"]
         ]}),
-        "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
+        "words": [_compact({**_times(word, "text", "start", "end", "at"), "media": word["media"], "edit": word["edit"]}) for word in preview["words"]],
     }
 
 
@@ -980,38 +985,46 @@ _SAME_SECS = 0.01
 
 
 def _same(a: Any, b: Any) -> bool:
+    if a is None or b is None:
+        return a is b
     if isinstance(a, int | float) and isinstance(b, int | float):
         return abs(a - b) < _SAME_SECS
     return str(a) == str(b)
 
 
-def _matches(item: dict, patch: dict, key: str, on_media: bool = False) -> bool:
-    """Whether `patch` names `item`: by its key, and (`on_media`) its `media` too."""
-    return _same(item[key], patch[key]) and (not on_media or item.get("media") == patch.get("media"))
+class TimelineKey(BaseModel):
+    # A Word Edit's or Cue Edit's key: `at`, on the Source's timeline, or with `media` on that video's.
+    model_config = ConfigDict(extra="forbid")
+    at: float
+    media: str | None = None
 
 
-def _keyed(kind: str, key: str, given: str | float) -> dict:
-    """The item a remove_candidate_items key names: "media:at" for an item's of a list ON_MEDIA."""
-    if kind in ON_MEDIA and isinstance(given, str) and ":" in given:
-        media, _, at = given.partition(":")
-        try:
-            return {key: float(at), "media": media}
-        except ValueError:
-            raise ToolError(f"{given} is not \"media:at\"") from None
-    return {key: given}
+def _same_key(item: dict, other: dict, key: str | tuple[str, ...]) -> bool:
+    """Whether `item` and `other` (an item or a patch, a field it lacks being None) have one key."""
+    return all(_same(item.get(name), other.get(name)) for name in ((key,) if isinstance(key, str) else key))
 
 
-def _merge(items: list[dict], patches: list[dict], key: str, on_media: bool = False) -> list[dict]:
-    """`items` with each patch merged into the item with its key (and, `on_media`, its `media`), or
-    added after them."""
+def _key_item(key: str | tuple[str, ...], wanted: str | float | TimelineKey) -> dict:
+    """A key `remove_candidate_items` is given, as the fields of the item it names."""
+    if isinstance(wanted, TimelineKey):
+        return wanted.model_dump()
+    return {key if isinstance(key, str) else key[0]: wanted}
+
+
+def _key_name(key: str | tuple[str, ...]) -> str:
+    return key if isinstance(key, str) else "/".join(key)
+
+
+def _merge(items: list[dict], patches: list[dict], key: str | tuple[str, ...]) -> list[dict]:
+    """`items` with each patch merged into the item with its key, or added after them."""
     merged = list(items)
     for patch in patches:
-        at = next((i for i, item in enumerate(merged) if _matches(item, patch, key, on_media)), None)
+        at = next((i for i, item in enumerate(merged) if _same_key(item, patch, key)), None)
         if at is None:
             merged.append(patch)
         else:
             merged[at] = _merged_fields(merged[at], patch)
-    if key == "at":
+    if "at" in ((key,) if isinstance(key, str) else key):
         merged.sort(key=lambda item: (item.get("media") or "", item["at"]))
     return merged
 
@@ -1024,8 +1037,9 @@ def _merged_fields(item: dict, patch: dict) -> dict:
     }
 
 
-def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
-    """A model of `kind` whose fields are all optional but its key: the fields of an item to change.
+def _patch_model(kind: type, key: str | tuple[str, ...] | None = None) -> type[BaseModel]:
+    """A model of `kind` whose fields are all optional but its key (the first of its key's fields):
+    the fields of an item to change.
     A field that is itself a dataclass, or one or None (an Overlay's `transform`, or its `border`, a
     Segment's `framing`), is such a patch too, merged into the item's value field by field
     (`_merge`); null turns one that may be None off."""
@@ -1037,7 +1051,8 @@ def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
             hint = next((arg for arg in get_args(hint) if dataclasses.is_dataclass(arg)), hint)
         if dataclasses.is_dataclass(hint):
             hint = _patch_model(hint)
-        fields[field.name] = (hint, ...) if field.name == key else (hint | None, None)
+        required = key if isinstance(key, str | None) else key[0]
+        fields[field.name] = (hint, ...) if field.name == required else (hint | None, None)
     return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
 
 

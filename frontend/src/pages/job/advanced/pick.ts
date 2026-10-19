@@ -3,6 +3,7 @@ import type { PickedOnStage } from "../editor/ClipPreview";
 import { cueKeyOf, cueStageId } from "../editor/cues";
 import type { AdvancedEdits } from "./edits";
 import type { TrackKind } from "./trackState";
+import { sameKey } from "../editor/wordEdits";
 
 // The Pick (GLOSSARY.md): what is picked on the Advanced Edit's Timeline or preview, which its actions
 // and inspector act on. Kept in the editor only: never saved, never undone.
@@ -37,8 +38,8 @@ export type Pick =
   | { kind: "join"; after: string }
   | null;
 
-/** Whether two Cue keys name one Cue: on one timeline, at one time (to the millisecond). */
-export const sameCue = (a: CueKey, b: CueKey) => (a.media ?? null) === (b.media ?? null) && Math.abs(a.at - b.at) < 5e-4;
+/** Whether two Cue keys name one Cue: on one timeline, at one time (to the millisecond; `sameKey`). */
+export const sameCue = (a: CueKey, b: CueKey) => sameKey(a, b);
 
 /** `pick` without its Cue once `plan` (when there is one) has no Cue of its key: after an edit, an undo or a change from elsewhere. */
 export function prunedCue(pick: Pick, plan: RenderPlan | null): Pick {

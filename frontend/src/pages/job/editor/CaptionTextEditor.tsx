@@ -4,7 +4,7 @@ import type { PreviewPlan, PreviewWord, WordEdit } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
-import { editKey, withWordEdit, WORD_EDIT_MAX_CHARS } from "./wordEdits";
+import { editKey, sameKey, withWordEdit, WORD_EDIT_MAX_CHARS } from "./wordEdits";
 
 /**
  * The captions' Words, as the plan breaks them into lines, for correcting: click a Word to hear it
@@ -63,7 +63,7 @@ export function CaptionTextEditor({
           <Button
             size="xs"
             variant="ghost"
-            onClick={() => onChange(only ? edits.filter((edit) => !words.some((word) => word.edit?.at === edit.at)) : [])}
+            onClick={() => onChange(only ? edits.filter((edit) => !words.some((word) => word.edit && sameKey(word.edit, edit))) : [])}
           >
             <RotateCcw aria-hidden size={14} />
             Restore all {editedCount}
@@ -106,7 +106,7 @@ export function CaptionTextEditor({
       </Fold>
       {open !== null && words[open] && (
         <WordForm
-          key={editKey(words[open])}
+          key={`${words[open].media ?? ""}@${editKey(words[open])}`}
           word={words[open]}
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}
@@ -245,7 +245,7 @@ function WordForm({
     >
       <div className="flex flex-col gap-1">
         <label htmlFor={`${id}-text`} className="text-sm font-medium">
-          Word at {formatPrecise(word.at)}, heard as “{word.text}”
+          Word at {formatPrecise(word.at)}{word.media ? " of the video" : ""}, heard as “{word.text}”
         </label>
         <input
           ref={input}
