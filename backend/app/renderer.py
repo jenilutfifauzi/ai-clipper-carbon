@@ -111,6 +111,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple
 
@@ -313,8 +314,9 @@ class Renderer:
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
-        if any(feed is not None for _, _, feed in layered + written):
-            # At n / fps exactly, the times the Overlays' frame processes draw their frames at.
+        if any(feed is not None for _, _, feed in layered + written) or _resampled(plan):
+            # At n / fps exactly, the times the Overlays' frame processes draw their frames at; and
+            # at another rate than the Source's, the Clip's frames.
             frame += f";[frame]fps={_rate(plan)}[timed]"
             joined = "[timed]"
         for i, (event, number, feed) in enumerate(layered):
@@ -528,28 +530,35 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
         first += segment.scenes
         given = f"[{i}:v]"
         if segment.hold is not None:
-            given += _held(segment.hold)
+            given += _held(segment.hold, _rate(plan) if _resampled(plan) else None)
         elif segment.speed != 1:
             # Its frames moved onto the Timeline, then dropped or repeated to the Clip's frame rate:
             # each frame is the last of the video's at or before its time, as a Retimed copy's (a
             # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
             rate = _rate(plan)
-            given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / float(rate):.6g}/TB,fps={rate}:round=up,"
+            given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
         chains.append(_scenes(plan, tuning, scenes, given, f"[g{i}]", f"g{i}s", segment.start, keyed))
     count = len(plan.segments)
-    if not plan.transitions:
+    if not plan.transitions and not _resampled(plan):
         chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
         return ";".join(chains)
+    if not plan.transitions:
+        # At another rate than the Source's, each Segment is brought to it first, so that the cuts
+        # are on the Clip's frames.
+        chains += [f"[g{i}]fps={_rate(plan)},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
+        chains.append("".join(f"[n{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")
+        return ";".join(chains)
     # xfade takes pictures of one frame rate and time base.
-    rate = plan.fps if plan.fps > 0 else 30
-    chains += [f"[g{i}]fps={rate:g},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
+    chains += [f"[g{i}]fps={_rate(plan)},settb=AVTB,format=yuv420p[n{i}]" for i in range(count)]
     chains.append(_joins(plan, [f"[n{i}]" for i in range(count)], "v", "[frame]"))
     return ";".join(chains)
 
 
-def _held(hold: float) -> str:
-    """Filters that make a Freeze frame's picture of its input: the first frame, held `hold` seconds."""
-    return f"trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={hold:.3f},trim=duration={hold:.3f},"
+def _held(hold: float, rate: str | None = None) -> str:
+    """Filters that make a Freeze frame's picture of its input: the first frame, held `hold` seconds
+    (in frames of `rate`, when given, else of its input's)."""
+    timed = "" if rate is None else f"fps={rate},"
+    return f"trim=end_frame=1,setpts=PTS-STARTPTS,{timed}tpad=stop_mode=clone:stop_duration={hold:.3f},trim=duration={hold:.3f},"
 
 
 def _scenes(
@@ -888,9 +897,26 @@ def _piped(plan: RenderPlan, feed: FrameFeed) -> list[str]:
     ]
 
 
+# The NTSC rates, as the Export Settings name them, and as they are: so many thousand frames in 1001 s.
+_NTSC_RATES = {23.976: "24000/1001", 29.97: "30000/1001", 59.94: "60000/1001"}
+
+
 def _rate(plan: RenderPlan) -> str:
-    """The Clip's frame rate, as the frame processes and the frames they are laid over keep it."""
-    return f"{plan.fps if plan.fps > 0 else 30:.6g}"
+    """The Clip's frame rate, as the frame processes and the frames they are laid over keep it: an
+    NTSC one exactly."""
+    fps = plan.fps if plan.fps > 0 else 30
+    return _NTSC_RATES.get(fps, f"{fps:.6g}")
+
+
+def _rate_value(plan: RenderPlan) -> float:
+    """The Clip's frame rate in frames a second, exactly as `_rate` gives it to ffmpeg."""
+    return float(Fraction(_rate(plan)))
+
+
+def _resampled(plan: RenderPlan) -> bool:
+    """Whether the Clip is planned at another frame rate than its Source's (docs/adr/0021): its
+    Segments, and then its frames, are brought to it, the Source's frames repeated or dropped."""
+    return plan.fps != plan.source_fps
 
 
 # A keyed picture of the plan: ("overlay", its place among the Overlays), ("scene", its Scene's
@@ -953,7 +979,7 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
     of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`)
     and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
     as the Scene's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
-    rate = float(_rate(plan))
+    rate = _rate_value(plan)
     frame, drawn = (plan.width, plan.height), drawn_scale(plan)
     scenes = _keyed_scenes(plan)
     layers = plan.picture_layers

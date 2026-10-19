@@ -807,7 +807,10 @@ class RenderPlan:
     end: float
     source_width: int
     source_height: int
+    # The frame rate the Clip is planned and encoded at: the Source's own (`source_fps`, 0 when it
+    # isn't known), or the export's, above which the Source's frames repeat (docs/adr/0021).
     fps: float
+    source_fps: float
     # Back to back, covering the Clip from 0 to its duration.
     scenes: list[ScenePlan]
     captions: list[CaptionEvent] = field(default_factory=list)
@@ -877,6 +880,7 @@ def plan_render(
     media_info: dict[str, MediaInfo] | None = None,
     framing: Framing | None = None,
     shapes: list[Shape] | None = None,
+    fps: float | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -900,21 +904,35 @@ def plan_render(
     With `main_track` (each Segment's SegmentInput), the Clip is cut into those Segments, back to back (`start` and `end` being the hull
     of what they show) but for their Transitions, each framed and captioned from its own (ignoring
     `scenes`, `faces`, `layout_overrides`, `words` and `word_edits`); the other times are all in
-    seconds into the Clip."""
+    seconds into the Clip.
+
+    The Clip is planned at `fps` frames a second, the export's frame rate (docs/adr/0021), or at the
+    Source's own without one: the rate it is encoded at, and the frames its keyed pictures are drawn
+    at and checked on. At another rate than the Source's, its Freeze frames and Transitions last whole
+    frames of it. The Preview Plan is always made at the Source's."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     segments: list[SegmentPlan] = []
     transitions: list[TransitionEvent] = []
     cuts: list[float] = []
+    fps = source.fps if fps is None else fps
     # The frames a keyed picture is drawn at, as the renderer draws them.
-    rate = source.fps if source.fps > 0 else 30.0
+    rate = fps if fps > 0 else 30.0
+    # At another rate than the Source's, a Freeze frame or a Transition lasts whole frames of it (at
+    # least one), as the renderer holds and joins the Segments brought to it; at the Source's, the
+    # Source's frames are joined as they come, as the Candidate says.
+    resampled = fps != source.fps
+
+    def whole_frames(secs: float) -> float:
+        return round(max(1, round(secs * rate)) / rate, 3) if resampled else secs
     if main_track:
         plans, at, showings, stills, before = [], 0.0, [], [], 0.0
         for i, given in enumerate(main_track):
-            length = round(given.time.length, 3)
+            hold = None if given.hold is None else whole_frames(given.hold)
+            length = round(given.time.length if hold is None else hold, 3)
             if i and given.join is not None:
                 # Overlapping the one before by the Transition's length, half the shorter at most.
-                overlap = transition_overlap(given.join.secs, before, length)
+                overlap = whole_frames(transition_overlap(given.join.secs, before, length))
                 at = round(at - overlap, 3)
                 transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3)))
                 cuts.append(round(at + overlap / 2, 3))
@@ -939,7 +957,7 @@ def plan_render(
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
-                    given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, given.hold, given.pitch,
+                    given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
                 )
             )
             at, before = round(at + length, 3), length
@@ -955,7 +973,8 @@ def plan_render(
         end=end,
         source_width=source.width,
         source_height=source.height,
-        fps=source.fps,
+        fps=fps,
+        source_fps=source.fps,
         scenes=plans,
         captions=_captions(words or [], plans, duration, caption_style, word_edits or [], cuts),
         hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
