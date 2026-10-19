@@ -146,6 +146,7 @@ from app.line_breaks import broken_lines
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
 from app.styles import (
+    Animation,
     CaptionPosition,
     CaptionStyle,
     HookAlign,
@@ -601,7 +602,7 @@ class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
-    the Clip. `id` is the Overlay's."""
+    the Clip, coming on and going off by its Overlay's animations. `id` is the Overlay's."""
 
     media: str
     picture: Picture
@@ -613,6 +614,9 @@ class OverlayEvent:
     speed: float = 1.0
     pitch: bool = False
     reverse: bool = False
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: int = 300
 
     @property
     def time(self) -> SegmentTime:
@@ -1454,7 +1458,8 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
     return OverlayEvent(
-        overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse
+        overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
+        overlay.animation_in, overlay.animation_out, overlay.animation_ms,
     )
 
 

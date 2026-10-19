@@ -539,8 +539,9 @@ class Overlay:
     `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
     `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
     and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
-    not from its Transform or `volume`. An image's volume Keyframes, Speed, pitch and Reverse are
-    refused with the Media Library at hand (app/api.py)."""
+    not from its Transform or `volume`. It comes on and goes off as a Text Layer does, its
+    animations stacked on its keyed values; they move its picture only, never its sound. An image's
+    volume Keyframes, Speed, pitch and Reverse are refused with the Media Library at hand (app/api.py)."""
 
     id: ItemId
     media: MediaId
@@ -560,6 +561,9 @@ class Overlay:
     border: Border | None = None
     shadow: Shadow | None = None
     keys: Keys = field(default_factory=dict)
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))

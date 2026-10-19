@@ -27,8 +27,10 @@ KITA_SOAL = (1.6, 2.6)
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for xfade's 21 further Transition kinds (transitions-expanded/02), named in
-# edit_candidate's and merge_candidate_items' schemas; their groups are in the instructions.
-TOOLS_BUDGET_BYTES = 70_000
+# edit_candidate's and merge_candidate_items' schemas; their groups are in the instructions. And for
+# Overlay animations (transitions-expanded/10): an Overlay's animation_in, animation_out and
+# animation_ms in the same schemas.
+TOOLS_BUDGET_BYTES = 70_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

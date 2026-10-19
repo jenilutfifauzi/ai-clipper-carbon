@@ -663,8 +663,8 @@ export type Keys = Partial<Record<KeyProperty, Keyframe[]>>;
 // side (0 to 0.5), with a Border and a Shadow or none. Its `keys` move its centre, scale, rotation
 // and opacity over its length, replacing those fields of its Transform, and a video's volume.
 // A video's shows `secs` × speed of it from `offset` (docs/adr/0009); in Reverse its left edge shows
-// `offset + secs × speed`, its right edge `offset`.
-export interface Overlay extends Omit<Retiming, "hold"> {
+// `offset + secs × speed`, its right edge `offset`. It comes on and goes off as a Text Layer does.
+export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   id: string;
   media: string;
   start: number;
@@ -677,6 +677,14 @@ export interface Overlay extends Omit<Retiming, "hold"> {
   border: Border | null;
   shadow: Shadow | null;
   keys: Keys;
+}
+
+// How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
+// Left out, they are none, none and 300 ms.
+export interface OverlayAnimation {
+  animation_in?: Animation;
+  animation_out?: Animation;
+  animation_ms?: number;
 }
 
 // A picture as drawn (backend/app/planner.py): the pixels in `crop` of its item (`item_size`
@@ -704,9 +712,10 @@ export interface Picture {
   unscaled?: [number, number] | null;
 }
 
-// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`; `image` for a still. A video's
-// shows (end − start) × speed of it from `offset` (docs/adr/0009).
-export interface OverlayEvent extends Omit<Retiming, "hold"> {
+// An Overlay (`id`) as drawn: its `picture`, from `start` to `end`, coming on and going off by its
+// animations; `image` for a still. A video's shows (end − start) × speed of it from `offset`
+// (docs/adr/0009).
+export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   id: string;
   media: string;
   picture: Picture;

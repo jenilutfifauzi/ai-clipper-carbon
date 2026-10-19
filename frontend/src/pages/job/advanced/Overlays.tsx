@@ -12,6 +12,7 @@ import { tooManyKeys, writeKey } from "./keyActions";
 import { KeyedVolume, useKeyNotice, useTouch } from "./KeyCluster";
 import { keyedGroup, resetOverlay } from "./keying";
 import { SpeedFields } from "./SpeedFields";
+import { MotionFields } from "./TextLayers";
 import { TimingFields } from "./TimingFields";
 import { TransformFields, useKeyedTransform } from "./TransformFields";
 
@@ -148,6 +149,7 @@ export function OverlayFields({
       </p>
       <OverlayTransform overlay={overlay} item={item} playback={playback} onChange={onChange} onCropMode={onCropMode} />
       <DecorationFields overlay={overlay} onChange={onChange} />
+      <MotionFields item={overlay} kind="overlay" onChange={onChange} />
       {video && (
         <Group title="Sound">
           {item?.has_audio ? (
