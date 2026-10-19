@@ -1,6 +1,7 @@
-import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform } from "../../../api";
+import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
+import { TRANSITION_KINDS } from "../editor/transitions";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
@@ -227,6 +228,36 @@ export function cardTarget(pick: Pick, segments: { id: string }[], played: { end
     if (away < distance) [nearest, distance] = [segment.id, away];
   }
   return nearest;
+}
+
+/** A kind picked uniformly from all of them but those to `avoid`, by `random` (in [0, 1)). */
+export function randomKind(avoid: readonly TransitionKind[], random: () => number = Math.random): TransitionKind {
+  const open = TRANSITION_KINDS.filter((kind) => !avoid.includes(kind));
+  return open[Math.min(Math.floor(random() * open.length), open.length - 1)];
+}
+
+/**
+ * Randomise all joins: each join of `segments`, in order, gets a kind picked at random, never the
+ * kind of the join before; each keeps `model`'s (the picked join's) length, knobs and sound.
+ */
+export function randomisedTransitions(model: Transition, segments: { id: string }[], random: () => number = Math.random): Transition[] {
+  const transitions: Transition[] = [];
+  for (const segment of segments.slice(0, -1)) {
+    const before = transitions.at(-1);
+    transitions.push({ ...model, after: segment.id, kind: randomKind(before ? [before.kind] : [], random) });
+  }
+  return transitions;
+}
+
+/** Apply to all joins: `model` (the picked join's whole Transition) on every join of `segments`, each with its own `after`. */
+export const appliedToAll = (model: Transition, segments: { id: string }[]): Transition[] =>
+  segments.slice(0, -1).map((segment) => ({ ...model, after: segment.id }));
+
+/** The Random card's kind for the join after Segment `after`: one picked at random, unlike the kinds of the joins either side. */
+export function randomCardKind(transitions: Transition[], segments: { id: string }[], after: string, random: () => number = Math.random): TransitionKind {
+  const at = segments.findIndex((segment) => segment.id === after);
+  const neighbours = [segments[at - 1], segments[at + 1]].flatMap((segment) => transitions.find((transition) => transition.after === segment?.id)?.kind ?? []);
+  return randomKind(neighbours, random);
 }
 
 /** Where a Segment dropped at `time` goes on the Main Track: after each Segment whose middle is before it. */

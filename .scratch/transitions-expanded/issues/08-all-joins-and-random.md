@@ -18,10 +18,19 @@
 
 **Blocked by:** 03, 04, 06.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Apply to all gives every join the picked join's kind, `secs`, `strength`, `colour` and `sound`, in one undo step.
-- [ ] Randomise all never gives two neighbouring joins the same kind (vitest with a seeded random over many joins). Every kind is reachable.
-- [ ] Remove from all leaves no Transition, in one undo step.
-- [ ] The Random card sets a kind unlike its neighbours' on its target join.
-- [ ] On a locked Video Track the three actions and the Random card are disabled.
+- [x] Apply to all gives every join the picked join's kind, `secs`, `strength`, `colour` and `sound`, in one undo step.
+- [x] Randomise all never gives two neighbouring joins the same kind (vitest with a seeded random over many joins). Every kind is reachable.
+- [x] Remove from all leaves no Transition, in one undo step.
+- [x] The Random card sets a kind unlike its neighbours' on its target join.
+- [x] On a locked Video Track the three actions and the Random card are disabled.
+
+## Comments
+
+**2026-10-19, agent:** Built.
+- **Rules** (`advanced/actions.ts`, pure, each taking an injectable `random` that defaults to `Math.random`): `randomKind(avoid, random)` picks uniformly from `TRANSITION_KINDS` less `avoid`; `randomisedTransitions(model, segments, random)` gives each join in order such a kind, avoiding the one before, with `model`'s (the picked join's) `secs`, knobs and sound; `appliedToAll(model, segments)` is `model` on every join with its own `after`; `randomCardKind(transitions, segments, after, random)` avoids the kinds of the joins either side of `after`. Every join stores a concrete kind.
+- **Panel** (`advanced/Transitions.tsx`): new optional props `any`, `locked`, `onRandom`, `onApplyAll`, `onRandomiseAll`, `onRemoveAll`. The Random card (a dice tile shaped like the kind cards, `data-random`) comes before the sections, disabled when `cuts` is false or `locked`. Below the picked join's fields, a block shown while any join has a Transition: Apply to all joins and Randomise all joins (only with a picked Transition), and Remove from all; all three disabled when `locked`.
+- **AdvancedEdit**: `setAllTransitions` writes every join's Transitions with one `change` (one `history.set`, no group, so one undo step), refused with the lock notice on a locked Video Track. The Random card targets `cardTarget`'s join and goes through `setTransition` (which keeps length, knobs and sound, picks the join, and refuses a lock). Lengths are left to the render's clamp.
+
+Checked: vitest `advanced/allJoins.test.ts` (new; seeded mulberry32: 2000 joins never repeat a neighbour, keep the model's fields and reach all kinds; Apply to all; the Random card avoids both neighbours, or the one at the last join, and reaches every other kind), `transitionPanel.test.tsx` (the three buttons and their actions, Remove from all alone without a picked Transition and hidden with none, disabled when locked; the Random card's click and its disabling), plus `transitionCards.test.tsx`, `Transitions.test.tsx`, `actions.test.ts`, `editor/transitions.test.ts`: 160 passed; `tsc` clean. Full suites not run (as asked); not looked at in a browser.

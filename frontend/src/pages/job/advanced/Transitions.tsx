@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Copy, Dices, Shuffle, Trash2 } from "lucide-react";
 import type { Transition, TransitionKind, TransitionSound } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
@@ -30,16 +30,24 @@ const SOUNDS = [
  * The Transitions: a card per kind, by group under a sticky heading, put by a click on the selected
  * join or else the one nearest the playhead (or dragged onto any join on the timeline); and, when
  * the join has one, its length, its strength and colour where its kind reads them, its sound and a
- * way to remove it.
+ * way to remove it. A Random card puts a kind picked at random the same way; and while any join has
+ * one, actions on every join (from the picked join's: Apply to all, Randomise all; and Remove from
+ * all), which a locked Video Track disables with the Random card.
  */
 export function TransitionPanel({
   transition,
   joined,
   cuts = true,
   kinds = true,
+  any = false,
+  locked = false,
   onPick,
   onChange,
   onRemove,
+  onRandom,
+  onApplyAll,
+  onRandomiseAll,
+  onRemoveAll,
 }: {
   // The selected join's, if it has one.
   transition: Transition | null;
@@ -53,6 +61,15 @@ export function TransitionPanel({
   onPick: (kind: TransitionKind) => void;
   onChange: (transition: Transition, group?: string) => void;
   onRemove: () => void;
+  // Whether any join of the Clip has a Transition.
+  any?: boolean;
+  // Whether the Video Track is locked, which disables the Random card and the actions on every join.
+  locked?: boolean;
+  // The Random card clicked: a random kind for the join a card's click goes to.
+  onRandom?: () => void;
+  onApplyAll?: () => void;
+  onRandomiseAll?: () => void;
+  onRemoveAll?: () => void;
 }) {
   // The picked join's kind: the knobs it reads, each with its own value.
   const own = transition ? TRANSITIONS[transition.kind] : null;
@@ -70,6 +87,25 @@ export function TransitionPanel({
           )}
           {/* Pixelize's filters, for its card. */}
           <TransitionFilters />
+          {onRandom && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                data-random
+                disabled={!cuts || locked}
+                onClick={onRandom}
+                className={cx(
+                  "raised flex flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
+                  "focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50",
+                )}
+              >
+                <div aria-hidden className="grid aspect-video w-full place-items-center rounded-md bg-fill text-muted">
+                  <Dices size={24} />
+                </div>
+                <span className="truncate px-0.5">Random</span>
+              </button>
+            </div>
+          )}
           {SECTIONS.map(({ group, kinds }) => (
             <section key={group} aria-labelledby={`transitions-${group}`} className="flex flex-col gap-2">
               {/* Over the kinds while they scroll by, in the Asset Panel or the phone's sheet. */}
@@ -125,6 +161,26 @@ export function TransitionPanel({
           <Button variant="ghost" onClick={onRemove} className="self-start">
             <Trash2 aria-hidden size={16} />
             Remove transition
+          </Button>
+        </div>
+      )}
+      {any && onRemoveAll && (
+        <div className="flex flex-col items-start gap-2 border-t border-border pt-4">
+          {transition && onApplyAll && (
+            <Button variant="ghost" disabled={locked} onClick={onApplyAll}>
+              <Copy aria-hidden size={16} />
+              Apply to all joins
+            </Button>
+          )}
+          {transition && onRandomiseAll && (
+            <Button variant="ghost" disabled={locked} onClick={onRandomiseAll}>
+              <Shuffle aria-hidden size={16} />
+              Randomise all joins
+            </Button>
+          )}
+          <Button variant="ghost" disabled={locked} onClick={onRemoveAll}>
+            <Trash2 aria-hidden size={16} />
+            Remove from all
           </Button>
         </div>
       )}
