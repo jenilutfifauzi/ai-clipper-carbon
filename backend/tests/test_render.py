@@ -1092,6 +1092,54 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
         assert client.patch(url, json={"word_edits": bad}).status_code == 422
 
 
+def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    render(client, job)
+    rendered(client, job)
+    before = preview(client, job, candidate)["plan"]["captions"]
+    first, second = before[0], before[1]
+    assert first["end"] - first["start"] > 0.5 and not first["edited"]
+    # The first Cue goes 0.2 s sooner, the second comes up when the first goes; keyed by any time in
+    # their first Words. Two of one Cue: the later.
+    edits = [
+        {"at": first["key"]["at"] + 0.01, "end_delta": -0.3},
+        {"at": second["key"]["at"], "start_delta": -9.0},
+        {"at": first["key"]["at"] + 0.01, "end_delta": -0.2},
+    ]
+    candidate = patch(client, job, candidate, cue_edits=edits)
+    assert candidate["edited"] is True
+    assert candidate["cue_edits"] == [
+        {"at": first["key"]["at"] + 0.01, "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": -0.2},
+        {"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": -9.0, "end_delta": 0.0},
+    ]
+    shown = preview(client, job, candidate)["plan"]
+    after = shown["captions"]
+    assert [cue["edited"] for cue in after[:2]] == [True, True] and shown["unused_cue_edits"] == []
+    assert (after[0]["start"], after[0]["end"]) == (first["start"], pytest.approx(first["end"] - 0.2, abs=1e-3))
+    assert after[1]["start"] == after[0]["end"]
+    assert [cue_text(cue) for cue in after] == [cue_text(cue) for cue in before]
+
+    # The render is planned as the preview was.
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text()) == shown
+
+    # One whose Word the Clip doesn't show is unused, and kept.
+    away = patch(client, job, candidate, cue_edits=[*candidate["cue_edits"], {"at": 1.0, "shift": 1.0}])
+    assert [edit["at"] for edit in preview(client, job, away)["plan"]["unused_cue_edits"]] == [1.0]
+    assert [edit["at"] for edit in away["cue_edits"]] == [1.0, first["key"]["at"] + 0.01, second["key"]["at"]]
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    for bad in (
+        [{"at": 1.0, "shift": 10.5}], [{"at": 1.0, "start_delta": -11}], [{"at": 1.0, "end_delta": "inf"}],
+        [{"at": 1.0, "media": "nope"}], [{"shift": 1.0}], [{"at": 1.0}] * 501,
+    ):
+        assert client.patch(url, json={"cue_edits": bad}).status_code == 422
+
+
 def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_source, face_then_two):
     video_source.video = face_then_two
     job = reviewed(client)

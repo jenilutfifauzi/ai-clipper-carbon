@@ -82,6 +82,26 @@ Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
 MIN_SPEED, MAX_SPEED = 0.0625, 16.0
 Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
 
+# The furthest a Cue Edit moves its Cue, or either of its edges, in seconds of its timeline.
+CUE_SHIFT_MAX_SECS = 10.0
+CueShift = Annotated[FiniteFloat, Field(ge=-CUE_SHIFT_MAX_SECS, le=CUE_SHIFT_MAX_SECS)]
+
+
+# docs/adr/0020-media-words-and-cue-edits.md; matched to its Word by app/planner.py's match_edits.
+@dataclass(frozen=True)
+class CueEdit:
+    """A change to one Cue, keyed as a Word Edit: `at`, any time in its first Word on the Source's
+    timeline (with `media`, that item's). That Word starts a Cue. `shift` moves the Cue and its
+    highlight, `start_delta` and `end_delta` one edge (negative: earlier), in seconds of that
+    timeline (so scaled by Speed); kept between its neighbours and in its Segment. While its Word
+    isn't shown it does nothing, and is kept."""
+
+    at: FiniteFloat
+    media: MediaId | None = None
+    shift: CueShift = 0.0
+    start_delta: CueShift = 0.0
+    end_delta: CueShift = 0.0
+
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
 MIN_SCALE = 0.05
@@ -733,6 +753,8 @@ class Candidate:
     style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
     # Corrections of its caption Words.
     word_edits: list[WordEdit] = field(default_factory=list)
+    # Changes to single Cues, by the time of their first Word; none in a Candidate saved before them.
+    cue_edits: list[CueEdit] = field(default_factory=list)
     # When the hook comes on, in seconds into the Clip, and how long it stays (both kept in the Clip).
     hook_start: float = 0.0
     hook_secs: float = 3.0

@@ -24,7 +24,9 @@ KITA_SOAL = (1.6, 2.6)
 # The tool list is sent to the agent's context with every conversation: keep it within this. Raised
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
-TOOLS_BUDGET_BYTES = 69_000
+# Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
+# merge_candidate_items.
+TOOLS_BUDGET_BYTES = 71_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -218,6 +220,36 @@ async def test_a_dry_run_lists_each_cue_with_its_times_lines_plain_text_and_key(
         "Semua!" if word is semua else word["text"] for word in words
     )
     assert all(cue["key"]["at"] in [word["at"] for word in words] for cue in plan["captions"])
+
+
+@pytest.mark.anyio
+async def test_cue_edits_are_set_merged_field_by_field_and_removed_by_their_key(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    before = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"]
+    first, second = before[0]["key"]["at"], before[1]["key"]["at"]
+    assert before[0].get("edited") is None and before[0]["joinable"] is False
+
+    # Retimed in a dry run: the Cue moves and says it is edited; one the Clip doesn't show is unused.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": second, "shift": 0.2}, {"at": 900.0, "shift": 1}]}, dry_run=True)
+    assert plan["captions"][1]["edited"] is True and plan["captions"][1]["start"] > before[1]["start"]
+    assert plan["unused_cue_edits"] == [{"at": 900.0, "shift": 1.0}]
+    assert "shift" in await fails(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": second, "shift": 11}]})
+
+    # Merged by key, field by field: an item's own Cue Edits are told apart by `media`.
+    await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "end_delta": -0.1}])
+    media = "ab" * 16
+    merged = await call(mcp, "merge_candidate_items", **ids, cue_edits=[
+        {"at": first, "shift": 0.1}, {"at": second, "start_delta": -0.2}, {"at": first, "media": media, "shift": 0.3},
+    ])
+    assert [(e["at"], e["media"], e["shift"], e["start_delta"], e["end_delta"]) for e in merged["cue_edits"]] == [
+        (first, None, 0.1, 0.0, -0.1), (second, None, 0.0, -0.2, 0.0), (first, media, 0.3, 0.0, 0.0),
+    ]
+    # Removed by `at`, or "media:at" for an item's.
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[f"{media}:{first}", second])
+    assert [(e["at"], e["media"]) for e in removed["cue_edits"]] == [(first, None)]
+    assert "no cue_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[second])
 
 
 @pytest.mark.anyio

@@ -121,6 +121,25 @@ async def test_merges_made_at_the_same_time_keep_both(mcp):
     assert sorted(layer["id"] for layer in layers) == ["first", "second", "third"]
 
 
+@pytest.mark.anyio
+async def test_cue_edits_merged_at_the_same_time_keep_both_and_are_a_part_of_their_own(mcp, client):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    first, second = [cue["key"]["at"] for cue in (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"][:2]]
+
+    async def retime(at: float) -> None:
+        await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": at, "shift": 0.1}])
+
+    async with anyio.create_task_group() as group:
+        for at in (first, second):
+            group.start_soon(retime, at)
+    edits = (await call(mcp, "get_candidate", **ids))["cue_edits"]
+    assert [(edit["at"], edit["shift"]) for edit in edits] == [(first, 0.1), (second, 0.1)]
+    [newest, *_] = (await call(mcp, "list_candidate_revisions", **ids))["revisions"]
+    assert newest["parts"] == ["Cue Edits"]
+
+
 # Revision History (edit-sync 04)
 
 

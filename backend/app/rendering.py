@@ -193,8 +193,8 @@ def candidate_plan(
     passed through), both in seconds into the Segment (a Freeze frame's analysis into its
     `analysed_range`); its Watermark's Logo from `logos`, and the
     songs of its music and the videos of its Segments from `media` (a video that isn't there is left
-    out, and so is a Transition into or out of it). A video's Segment has no captions. Its Word Edits
-    and Layout Overrides, on the Source's timeline, apply in every Segment that shows their time
+    out, and so is a Transition into or out of it). A video's Segment has no captions. Its Word Edits,
+    Cue Edits and Layout Overrides, on the Source's timeline, apply in every Segment that shows their time
     (docs/adr/0002-segments-and-timeline-time.md).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
@@ -212,6 +212,7 @@ def candidate_plan(
         source_volume=candidate.source_volume,
         overlays=candidate.overlays,
         media_info=_info(media, candidate.media_ids()),
+        cue_edits=candidate.cue_edits,
     )
     if not candidate.segments:
         [analysis] = analyses

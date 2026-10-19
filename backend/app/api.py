@@ -16,6 +16,7 @@ from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
     Candidate,
+    CueEdit,
     Framing,
     KeyProperty,
     Layout,
@@ -80,6 +81,7 @@ EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
+CUE_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
 # The most Text Layers, Shapes, Music Clips and Segments a Candidate holds.
@@ -222,6 +224,8 @@ class CandidateUpdate(BaseModel):
     style_overrides: StyleOverrides | None = None
     # Replaces the Candidate's Word Edits as a whole.
     word_edits: Annotated[list[WordEdit], Field(max_length=WORD_EDITS_MAX)] | None = None
+    # Replaces the Candidate's Cue Edits as a whole.
+    cue_edits: Annotated[list[CueEdit], Field(max_length=CUE_EDITS_MAX)] | None = None
     # Seconds into the Clip; the planner keeps them in it.
     hook_start: Annotated[float, Field(ge=0, le=MAX_CLIP_SECS)] | None = None
     hook_secs: Annotated[float, Field(ge=0.5, le=30)] | None = None
