@@ -1,6 +1,7 @@
 """The frame process (docs/adr/0008-keyframes-for-pictures-and-sound.md): a keyed picture drawn for
-every output frame of its span with OpenCV, into a transparent 1080×1920 RGBA frame, and written raw
-to a pipe that ffmpeg reads as one of its inputs and lays over the Clip at 0, 0 (app/renderer.py).
+every output frame of its span with OpenCV, into a transparent RGBA frame of the Clip's size, and
+written raw to a pipe that ffmpeg reads as one of its inputs and lays over the Clip at 0, 0
+(app/renderer.py).
 
 For each frame, at its time n / fps of the Clip (`frame_numbers`), the picture's tracks are sampled
 by the rule the preview samples them by (`picture_at`, app/keyframes.py), and `PictureFrames.draw`:
@@ -61,11 +62,12 @@ def shadow_room(shadow: Shadow) -> int:
 
 
 class PictureFrames:
-    """The frames of one keyed `picture`, each drawn into one reused frame of the output's size, of
-    an item whose pixels are `image` (RGBA, its whole size), or of a video's frames, each cropped
-    and flipped already (and maybe scaled), `show`n before it is drawn. The picture at a time is
-    `sampled` from it: by its motion (`picture_at`) unless another rule is given (a Text Layer's
-    animations, app/renderer.py's `text_at`)."""
+    """The frames of one keyed `picture`, each drawn into one reused frame of the Clip's size `frame`
+    (the plan's own by default; the renderer gives the size it draws the plan at), of an item whose
+    pixels are `image` (RGBA, its whole size), or of a video's frames, each cropped and flipped
+    already (and maybe scaled), `show`n before it is drawn. The picture at a time is `sampled` from
+    it: by its motion (`picture_at`) unless another rule is given (a picture layer's animations,
+    app/renderer.py's `layer_at`)."""
 
     def __init__(
         self,

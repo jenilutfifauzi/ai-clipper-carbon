@@ -10,6 +10,14 @@ mode). One pass would have to adjust the gain as it goes (loudnorm's dynamic mod
 and lands less exactly on the target; the measurement only decodes the range's audio, which takes
 about a second for a 90 s Clip. Without a target, nothing is measured and the mix is left as it is.
 
+The Render Plan is in 1080×1920 output pixels; the Clip is the Export Settings' size, and the plan
+is drawn at it (app/scaled_plan.py, docs/adr/0021): every coordinate and size the filter graph is
+given comes from the plan scaled to that size, the keyed pictures' frames are that size, and the
+picture layers' pictures are rasterised at it (`picture_layouts` names them; they are made before
+the render). The ASS script for the captions, the hook and a text Watermark is written from the plan
+in its own pixels, and libass scales it to the frame (its PlayRes), drawing the text sharp at any
+size. The poster is a frame of the Clip, at its size.
+
 The decoded video is split into one branch per Scene, each trimmed to its Scene and drawn there:
 every panel is a crop of the frame, moved at its change points by commands that ffmpeg sends it
 as the frames go by, scaled into the panel's area (and blurred for Blur's background), and the
@@ -110,19 +118,19 @@ import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.config import FONTS_DIR, RenderTuning
-from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args
+from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
 from app.planner import (
-    FRAME,
     HOOK_LEADING,
     HOOK_PAD_Y,
     Box,
     CaptionEvent,
     HookEvent,
     Panel,
+    PictureLayout,
     RenderPlan,
     ScenePlan,
     PictureLayer,
@@ -134,6 +142,7 @@ from app.planner import (
     picture_at,
 )
 from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.scaled_plan import drawn_scale, scaled_plan
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -178,12 +187,12 @@ class Renderer:
     ) -> Encoded:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
         (JPEG), encoded as `export` says, and return what made them: the first of its codec's encoders
-        (RenderTuning.codec_encoders) that succeeds. Only `export`'s codec, quality, bitrate and
-        loudness are applied: the Clip is the plan's size, at the plan's frame rate. `progress` is
-        called with the share of the Clip encoded so far, from 0 to 1. `logo` is the PNG of the plan's
-        Logo Watermark, which isn't drawn without it; `files` has the file of each Media Library item
-        the plan plays (songs and videos), by its id; `pictures` the picture of each of its picture
-        layers (app/layer_pictures.py), by its name.
+        (RenderTuning.codec_encoders) that succeeds. The Clip is `export`'s size, the plan drawn at it
+        (`scaled_plan`), at the plan's frame rate. `progress` is called with the share of the Clip
+        encoded so far, from 0 to 1. `logo` is the PNG of the plan's Logo Watermark, which isn't drawn
+        without it; `files` has the file of each Media Library item the plan plays (songs and videos),
+        by its id; `pictures` the picture of each of its picture layers at that size
+        (app/layer_pictures.py, of `picture_layouts`), by its name.
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
@@ -191,7 +200,10 @@ class Renderer:
         _check(plan)
         files = files or {}
         pictures = pictures or {}
-        if missing := [event.layer.id for event in plan.picture_layers if event.image not in pictures]:
+        # The plan at the output's size, which the graph and the frame processes draw; the ASS script
+        # is written from the plan in its own pixels, which libass scales to the frame.
+        drawn = scaled_plan(plan, output_size(export))
+        if missing := [event.layer.id for event in drawn.picture_layers if event.image not in pictures]:
             raise RuntimeError(f"The pictures of picture layers {', '.join(missing)} weren't made")
         loudness = None if export.loudness is None else self._measure(source, plan, export.loudness, files)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
@@ -206,7 +218,7 @@ class Renderer:
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
-        keyed = _keyed_items(plan, files, source, pictures)
+        keyed = _keyed_items(drawn, files, source, pictures)
         failures = []
         try:
             if scripts:
@@ -215,9 +227,9 @@ class Renderer:
                 path.write_text(_ass(script), encoding="utf-8")
             subtitles, over = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
             for encoder in self.tuning.codec_encoders(export.codec):
-                feeds = _feeds(plan, keyed, self.ffmpeg)
+                feeds = _feeds(drawn, keyed, self.ffmpeg)
                 command = self._command(
-                    source, plan, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over, export
+                    source, drawn, loudness, encoder, *parts, subtitles, logo, files, feeds, fonts, pictures, over, export
                 )
                 stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                 if stderr is None and parts[1].is_file():
@@ -281,12 +293,13 @@ class Renderer:
         above: Path | None = None,
         export: ExportSettings = ExportSettings(),
     ) -> list[str]:
-        """The encode's command: `encoder` encodes as `export` says, and the sound is normalized to its
-        loudness target from the `loudness` measured (left as it is without one). `feeds` are the frame
-        processes of the plan's keyed pictures (its Overlays', its keyed Scenes' and its animated
-        picture layers', by their places among them); a keyed one without is drawn still, at its
-        constants. `fonts` holds the Faces the `subtitles` set text in, burned under the picture layers
-        (drawn from `pictures`, by their names), and `above` over them."""
+        """The encode's command: `plan` (drawn at the Clip's size, its width x height) is encoded by
+        `encoder` as `export` says, and the sound is normalized to its loudness target from the
+        `loudness` measured (left as it is without one). `feeds` are the frame processes of the plan's
+        keyed pictures (its Overlays', its keyed Scenes' and its animated picture layers', by their
+        places among them); a keyed one without is drawn still, at its constants. `fonts` holds the
+        Faces the `subtitles` set text in, burned under the picture layers (drawn from `pictures`, by
+        their names), and `above` over them."""
         tuning = self.tuning
         feeds = feeds or {}
         sources, sounds, sound = _source_inputs(plan, source, files or {}, tuning.audio_rate)
@@ -383,6 +396,13 @@ class Renderer:
                 process.wait()
             for feed in feeds:
                 feed.close()
+
+
+def picture_layouts(plan: RenderPlan, export: ExportSettings) -> list[PictureLayout]:
+    """The layouts of the pictures a render of `plan` as `export` says draws, rasterised at its size
+    (docs/adr/0010, 0021): what to make (app/layer_pictures.py) before the render, which takes them
+    by their names."""
+    return [event.layout for event in scaled_plan(plan, output_size(export)).picture_layers]
 
 
 def available_codecs(ffmpeg: Path, tuning: RenderTuning) -> frozenset[Codec]:
@@ -602,7 +622,7 @@ def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out
     Picture on the frame over it. A picture that covers the frame hides its Background, which is
     then not blurred."""
     assert scene.picture is not None
-    picture = on_frame(scene.picture)
+    picture = on_frame(scene.picture, (plan.width, plan.height))
     covers = picture.opacity >= 1 and not picture.rotation % 360 and picture.bounds == Box(0, 0, plan.width, plan.height)
     chains = [f"{given}split=2[{name}b][{name}f]"]
     if scene.panels and not covers:
@@ -652,8 +672,10 @@ def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: 
     area = panel.area
     drawn = f"{moving}crop@{name}=w={panel.crop_width}:h={panel.crop_height}:x={first.x}:y={first.y},"
     if panel.blur:
-        # Blurred small and scaled up: cheaper than blurring the full size, and as smooth.
-        small_width, small_height = (max(2, round(side / tuning.blur_shrink / 2) * 2) for side in (area.width, area.height))
+        # Blurred small and scaled up: cheaper than blurring the full size, and as smooth. Shrunk by
+        # the plan's scale too, so that the blur is the same at every output size.
+        shrink = tuning.blur_shrink * drawn_scale(plan)
+        small_width, small_height = (max(2, round(side / shrink / 2) * 2) for side in (area.width, area.height))
         drawn += (
             f"scale={small_width}:{small_height},gblur=sigma={tuning.blur_sigma},"
             f"eq=brightness={tuning.blur_brightness},scale={area.width}:{area.height}"
@@ -799,17 +821,18 @@ def _picture_layer(event: PictureLayer, below: str, out: str, index: int, number
     return _picture(picture, f"[{index}:v]", below, out, name, padded, f"{shows}:eof_action=repeat")
 
 
-def layer_at(event: PictureLayer, time: float) -> Picture:
+def layer_at(event: PictureLayer, time: float, drawn: float = 1.0) -> Picture:
     """A picture layer's picture as drawn at `time` seconds into the Clip: as its Keyframes have it
     then (`picture_at`), and on top of that faded, scaled about its centre and moved down as its
-    animations have it (`layer_animation`): its keyed opacity and scale multiplied, its drop added."""
+    animations have it (`layer_animation`): its keyed opacity and scale multiplied, its drop added,
+    `drawn` times as far for a plan drawn at another size (`drawn_scale`)."""
     opacity, scale, below = layer_animation(event, time)
     picture = picture_at(event.picture, time)
     if (opacity, scale, below) == (1.0, 1.0, 0.0):
         return picture
     x, y = picture.centre
     return replace(
-        picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below), opacity=picture.opacity * opacity
+        picture, width=picture.width * scale, height=picture.height * scale, centre=(x, y + below * drawn), opacity=picture.opacity * opacity
     )
 
 
@@ -857,10 +880,11 @@ def _scene_inputs(plan: RenderPlan, first: int, feeds: "Feeds") -> tuple[list[st
 
 
 def _piped(plan: RenderPlan, feed: FrameFeed) -> list[str]:
-    """The input options that read a frame process's frames from its pipe, at the Clip's frame rate."""
-    width, height = FRAME
+    """The input options that read a frame process's frames (of the Clip's size) from its pipe, at
+    the Clip's frame rate."""
     return [
-        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{width}x{height}", "-framerate", _rate(plan), "-i", f"pipe:{feed.fd}",
+        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{plan.width}x{plan.height}", "-framerate", _rate(plan),
+        "-i", f"pipe:{feed.fd}",
     ]
 
 
@@ -925,11 +949,12 @@ def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]
 
 
 def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
-    """A frame process for each keyed picture whose item is in `items`, over its span: an image's
-    pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`) and drawn. A Scene's are
-    drawn in seconds into the Scene, its frame n at n / fps from its start, as the Scene's own frames
-    are once brought to the Clip's frame rate (`_keyed_scene`)."""
+    """A frame process for each keyed picture whose item is in `items`, over its span, drawing frames
+    of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`)
+    and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
+    as the Scene's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
     rate = float(_rate(plan))
+    frame, drawn = (plan.width, plan.height), drawn_scale(plan)
     scenes = _keyed_scenes(plan)
     layers = plan.picture_layers
     feeds = {}
@@ -940,20 +965,21 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             picture = _later(scene.picture, -scene.start)
             length = scene.end - scene.start
             video = VideoDecode(ffmpeg, item, picture, 0.0, length, scenes[i][1], rate)
-            feeds[(kind, i)] = FrameFeed(PictureFrames(picture), 0.0, length, rate, video)
+            feeds[(kind, i)] = FrameFeed(PictureFrames(picture, frame=frame), 0.0, length, rate, video)
             continue
         if kind == "layer":
             layer = layers[i]
             assert isinstance(item, np.ndarray)
-            frames = PictureFrames(layer.picture, item, sampled=lambda time, layer=layer: layer_at(layer, time))
+            frames = PictureFrames(layer.picture, item, frame, lambda time, layer=layer: layer_at(layer, time, drawn))
             feeds[(kind, i)] = FrameFeed(frames, layer.start, layer.end, rate)
             continue
         event = plan.overlays[i]
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
-            frames, video = PictureFrames(event.picture), VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
+            frames = PictureFrames(event.picture, frame=frame)
+            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
         else:
-            frames, video = PictureFrames(event.picture, item), None
+            frames, video = PictureFrames(event.picture, item, frame), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
     return feeds
 

@@ -41,7 +41,7 @@ from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
 from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
-from app.renderer import Renderer, RenderStopped
+from app.renderer import Renderer, RenderStopped, picture_layouts
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
 from app.segment_time import segment_time
@@ -514,12 +514,12 @@ class Renders:
             ).make(
                 self.settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end), step((1 - shown / 100) / 2 / reversed_count),
             ))
-            # Its picture layers' pictures, made now if they aren't there (docs/adr/0010).
-            pictures = make_pictures(self.settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), job_dir / PICTURES_DIR)
             # Every Clip is rendered with the default Export Settings until Export Presets choose others.
+            export = ExportSettings()
+            # Its picture layers' pictures at the export's size, made now if they aren't there (docs/adr/0010).
+            pictures = make_pictures(self.settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)
             encoder, _ = self.renderer.render(
-                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures,
-                ExportSettings(),
+                job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures, export,
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
         except RenderStopped:

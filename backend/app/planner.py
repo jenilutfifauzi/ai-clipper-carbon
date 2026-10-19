@@ -1534,16 +1534,16 @@ def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(
     )
 
 
-def on_frame(picture: Picture) -> Picture:
-    """The part of an unturned `picture` that is on the frame, as a Picture of its own: what it
-    draws there, without scaling what is off it (a picture zoomed in or covering the frame is
-    larger than the frame). A turned picture is given back whole, and so is a keyed one, whose part
-    on the frame changes as it moves."""
+def on_frame(picture: Picture, frame: tuple[int, int] = FRAME) -> Picture:
+    """The part of an unturned `picture` that is on the `frame` (width, height; the plan's, or the
+    size it is drawn at), as a Picture of its own: what it draws there, without scaling what is off
+    it (a picture zoomed in or covering the frame is larger than the frame). A turned picture is
+    given back whole, and so is a keyed one, whose part on the frame changes as it moves."""
     if picture.rotation % 360 or picture.motion:
         return picture
     x, y = picture.centre
     left, top = x - picture.width / 2, y - picture.height / 2
-    shown = (max(left, 0.0), max(top, 0.0), min(left + picture.width, OUTPUT_WIDTH), min(top + picture.height, OUTPUT_HEIGHT))
+    shown = (max(left, 0.0), max(top, 0.0), min(left + picture.width, frame[0]), min(top + picture.height, frame[1]))
     if shown[2] <= shown[0] or shown[3] <= shown[1]:
         return picture
     crop = picture.crop
