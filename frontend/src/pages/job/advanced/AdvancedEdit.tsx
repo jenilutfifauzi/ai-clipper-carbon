@@ -38,7 +38,7 @@ import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
 import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
-import { placedOverrides } from "../editor/placing";
+import { placedOverrides, type Place } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
@@ -101,6 +101,7 @@ import { commandsOf, type Commands } from "./commands";
 import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { retimeCue } from "./cueEdits";
+import { placedCaptions } from "./cuePlace";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
@@ -496,6 +497,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (!tracks.locked.includes(track)) return false;
     setNotice({ id: Date.now(), text: `The ${TRACKS[track].label} Track is locked.` });
     return true;
+  }
+  // The captions, or a Cue, put where its Grips on the preview leave it: one `group` a gesture.
+  function placeCaptions(target: Pick, place: Place, group: string) {
+    const outcome = placedCaptions({ edits, plan: preview?.plan ?? null, locked: tracks.locked }, target, place);
+    if (outcome) history.set(outcome.edits, group);
+    else refused("captions");
   }
   function toggleTrack(control: TrackControl, kind: TrackKind) {
     setTracks((old) => toggledTrack(old, control, kind));
@@ -927,7 +934,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           select("id" in item ? clicked(pick, item, toggle || picking) : item);
         },
         onPlace: (id, place, group) =>
-          change({ style_overrides: placedOverrides(edits.style_overrides, id === "hook" ? "hook" : "caption", place) }, group),
+          id === "hook"
+            ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
+            : placeCaptions({ kind: "captions" }, place, group),
+        // A Cue moved or scaled on its own: its Cue Edit.
+        cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
         retype: {
           textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
           onText: (id, text) => {

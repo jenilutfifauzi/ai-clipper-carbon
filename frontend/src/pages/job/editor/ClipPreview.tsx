@@ -1,10 +1,13 @@
 import { Pause, Play, Repeat, SkipForward } from "lucide-react";
 import { createRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
+  CUE_MAX_SCALE,
+  CUE_MIN_SCALE,
   logoUrl,
   type Box,
   type CaptionStyle,
   type Cue,
+  type CueKey,
   type DropShadow,
   type Crop,
   type FontInfo,
@@ -37,7 +40,7 @@ import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
-import { cueLineMiddle, cueWordAt, cueWords } from "./cues";
+import { cueLineMiddle, cueStageId, cueWordAt, cueWords } from "./cues";
 import type { GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 
@@ -553,7 +556,7 @@ function useWatermarkDrag(
  * click picks (with Shift, Cmd or Ctrl, `toggle`), where a move or resize puts one, and what
  * retyping one saves.
  */
-export type StageId = "hook" | "captions" | `text:${string}` | `shape:${string}` | `overlay:${string}` | `picture:${number}`;
+export type StageId = "hook" | "captions" | `cue:${string}` | `text:${string}` | `shape:${string}` | `overlay:${string}` | `picture:${number}`;
 
 // What is picked on the stage by its id: all but the picture behind, which says itself (PictureTarget).
 export type PickedOnStage = Exclude<StageId, `picture:${number}`>;
@@ -582,6 +585,9 @@ export interface StageControls {
   // Moved to (x, y) in output pixels: the middle of a caption line, the middle and the top of the
   // hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
   onPlace: (id: "hook" | "captions", place: Place, group: string) => void;
+  // With it, each Cue is picked, moved and resized on its own ("cue:<media>@<at>": cueStageId),
+  // unless the captions are picked: where a move or resize (from its size as shown) puts it.
+  cues?: { onPlace: (key: CueKey, place: Place, group: string) => void };
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
   // The Text Layers (their Track unlocked), pictures with corners and a rotate handle: each one's
@@ -646,7 +652,31 @@ function stageItems(
   const items: StageItem[] = [];
   const middle = (area: Box) => ({ x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) });
   const captionFont = fontById.get(plan.caption_style.font);
-  if (plan.captions.length && captionFont && !controls.fixed?.includes("captions")) {
+  const cues = controls.cues;
+  if (plan.captions.length && captionFont && !controls.fixed?.includes("captions") && cues && !controls.selected.includes("captions")) {
+    // Each Cue on its own: its entries either side of a Layout change are one.
+    const style = plan.caption_style;
+    const ids = plan.captions.map((event) => cueStageId(event.key));
+    plan.captions.forEach((event, line) => {
+      if (line > 0 && ids[line - 1] === ids[line]) return;
+      // Resized from its size as shown, which a line too wide for its area holds back as it grows.
+      const set = event.size;
+      items.push({
+        id: ids[line],
+        label: `Caption: ${event.plain.join(" ")}`,
+        shows: plan.captions.flatMap((other, i) => (ids[i] === ids[line] ? [{ start: other.start, end: other.end, area: captionGrab(other, captionFont, style) }] : [])),
+        size: { now: set, min: Math.min(set, style.size * CUE_MIN_SCALE), max: Math.max(set, style.size * CUE_MAX_SCALE) },
+        centreY: CAPTION_CENTRES,
+        onPlace: (area, size, group) => cues.onPlace(event.key, { ...middle(area), size }, group),
+        onEdit:
+          edit &&
+          (() => {
+            const shown = plan.captions.findIndex((other, i) => ids[i] === ids[line] && other.start <= now() && now() < other.end);
+            edit({ kind: "captions", line: shown === -1 ? line : shown });
+          }),
+      });
+    });
+  } else if (plan.captions.length && captionFont && !controls.fixed?.includes("captions")) {
     const style = plan.caption_style;
     items.push({
       id: "captions",
@@ -933,7 +963,7 @@ function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: Font
   const [event, word] = key.split(":").map(Number);
   const line = plan.captions[event];
   return (
-    <g transform={edit.transform("captions", line.area)}>
+    <g transform={edit.transform(cueStageId(line.key), line.area) ?? edit.transform("captions", line.area)}>
       <CaptionLines event={line} active={word} plan={plan} font={font} />
     </g>
   );

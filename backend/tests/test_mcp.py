@@ -26,9 +26,9 @@ KITA_SOAL = (1.6, 2.6)
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
 # merge_candidate_items; the Captions switch (captions-advanced/05): `segments[].captions` in each
-# editing tool's Segment schema; and Word Edits of Media Words (captions-advanced/06):
-# `word_edits[].media` and remove_candidate_items' {at, media} keys.
-TOOLS_BUDGET_BYTES = 72_500
+# editing tool's Segment schema; Word Edits of Media Words (captions-advanced/06): `word_edits[].media`
+# and remove_candidate_items' {at, media} keys; and a Cue Edit's `x`, `y` and `scale` (captions-advanced/08).
+TOOLS_BUDGET_BYTES = 73_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -252,6 +252,31 @@ async def test_cue_edits_are_set_merged_field_by_field_and_removed_by_their_key(
     removed = await call(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[{"at": first, "media": media}, second])
     assert [(e["at"], e["media"]) for e in removed["cue_edits"]] == [(first, None)]
     assert "no cue_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[second])
+
+
+@pytest.mark.anyio
+async def test_a_cue_edit_places_and_scales_its_cue_and_a_merge_changes_one_of_those_fields(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    before = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"]
+    first = before[0]["key"]["at"]
+    assert before[0]["size"] == before[1]["size"] and before[0]["centre"] == before[1]["centre"]
+
+    # In a dry run, the first Cue goes up, centred at 700 px down, bigger (up to half as big again, as
+    # its line fits the frame); the second stays.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": first, "y": 700, "scale": 1.5}]}, dry_run=True)
+    placed, after = plan["captions"][:2]
+    assert placed["centre"] == [540, 700] and placed["edited"] is True
+    assert before[0]["size"] < placed["size"] <= 1.5 * before[0]["size"]
+    assert (after["centre"], after["size"]) == (before[1]["centre"], before[1]["size"])
+    assert "scale" in await fails(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": first, "scale": 5}]})
+
+    # Merged field by field: the x joins the place and scale, then a null clears the scale alone.
+    await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "y": 700, "scale": 1.5}])
+    await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "x": 300}])
+    merged = await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "scale": None}])
+    assert [(e["x"], e["y"], e["scale"]) for e in merged["cue_edits"]] == [(300, 700, None)]
 
 
 @pytest.mark.anyio

@@ -1548,3 +1548,38 @@ def test_a_media_segments_cue_edits_are_on_its_items_timeline():
     # The Source's Cue Edit at that time doesn't touch it.
     source_edit = CueEdit(at=3.2, shift=0.3)
     assert plan(source_edit).unused_cue_edits == [source_edit]
+
+
+# A Cue's own place and size (captions-advanced ticket 08).
+
+
+def test_a_cue_edits_place_moves_only_its_cue_and_keeps_it_in_the_frame():
+    plain = retimed(TALK, []).captions
+    assert {cue.area for cue in plain} == {LOWER_CAPTIONS}
+    # Centred on (300, 700), as a custom position puts captions; the Cue before stays put.
+    placed = retimed(TALK, [CueEdit(at=103.1, x=300, y=700)]).captions
+    assert placed[0].area == LOWER_CAPTIONS
+    assert placed[1].area == Box(300 - 410, 600, 820, 200)
+    assert placed[1].edited
+    # Only a height: the style's x (centred); only an x: the style's height.
+    assert retimed(TALK, [CueEdit(at=103.1, y=700)]).captions[1].area == Box(130, 600, 820, 200)
+    assert retimed(TALK, [CueEdit(at=103.1, x=600)]).captions[1].area == replace(LOWER_CAPTIONS, x=600 - 410)
+    # Off the frame, it is kept in the safe area's height and with its line in the frame's width.
+    [_, far] = retimed(TALK, [CueEdit(at=103.1, x=1080, y=1920)]).captions
+    assert far.area.y == SAFE_AREA.y + SAFE_AREA.height - 200
+    half = font_metrics().width("APA KABAR", far.size) / 2 + CaptionStyle().outline
+    assert far.area.x + far.area.width / 2 == round(1080 - half)
+
+
+def test_a_cue_edits_scale_multiplies_the_styles_size_and_follows_it():
+    edit = [CueEdit(at=103.1, scale=1.5)]
+    cues = retimed(TALK, edit).captions
+    assert [cue.size for cue in cues] == [110, 165]
+    # The style's size changed: the Cue stays 1.5 times as big.
+    bigger = retimed(TALK, edit, caption_style=CaptionStyle(size=120)).captions
+    assert [cue.size for cue in bigger] == [120, 180]
+    # Then a line too wide for its area is still set smaller.
+    long = [Word("halo", 1.0, 1.4), Word("W" * 14, 3.0, 3.6)]
+    [_, wide] = retimed(long, edit, caption_style=CaptionStyle(max_chars=30)).captions
+    assert wide.size < 165
+    assert wide.size == retimed(long, [], caption_style=CaptionStyle(max_chars=30)).captions[1].size
