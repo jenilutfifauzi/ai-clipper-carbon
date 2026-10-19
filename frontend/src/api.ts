@@ -280,6 +280,9 @@ export interface StylePreset {
   watermark: WatermarkStyle;
   // Built-in Presets can't be changed or deleted.
   builtin: boolean;
+  // What each new join of its Candidates gets (pages/job/editor/joinTransition.ts); null for none, as
+  // on the built-in ones. Copied, never linked.
+  join_transition: JoinTransition | null;
 }
 
 // A Text Preset (GLOSSARY): a named Text Style a new Text Layer copies, never linked to it.
@@ -784,6 +787,9 @@ export interface Transition extends TransitionKnobs {
   sound?: TransitionSound;
 }
 
+// A Style Preset's Join Transition (GLOSSARY): a Transition without the Segment it follows.
+export type JoinTransition = Omit<Transition, "after">;
+
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
 export interface TransitionEvent extends TransitionKnobs {
   kind: TransitionKind;
@@ -863,6 +869,7 @@ export interface NewPreset {
   caption?: Partial<CaptionStyle>;
   hook?: Partial<HookStyle>;
   watermark?: Partial<WatermarkStyle>;
+  join_transition?: JoinTransition | null;
 }
 
 // A Face (GLOSSARY): a bundled or imported font file of one weight and slant, with what its font says

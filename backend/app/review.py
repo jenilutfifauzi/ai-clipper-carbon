@@ -2,6 +2,7 @@
 work when Selection runs again."""
 
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
@@ -20,11 +21,12 @@ from app.candidates import (
     WordEdit,
     manual_candidate,
     timeline_length,
+    with_join_transition,
 )
 from app.config import SelectionTuning
 from app.segment_time import SegmentTime, segment_time
 from app.selection import snap
-from app.styles import StyleOverrides
+from app.styles import JoinTransition, StyleOverrides
 from app.transcript import Transcript
 
 # The longest clip an edit or a manual Candidate may make, unless the Job's range allows longer:
@@ -155,10 +157,16 @@ class Episode:
 
 
 def update(
-    candidates: list[Candidate], candidate_id: str, change: CandidateChange, episode: Episode
+    candidates: list[Candidate],
+    candidate_id: str,
+    change: CandidateChange,
+    episode: Episode,
+    join_transition: Callable[[str], JoinTransition | None] = lambda preset_id: None,
 ) -> tuple[list[Candidate], Candidate]:
     """The Candidates with one of them changed, and that one. Changing its bounds, hook text, layout or
-    style marks it edited."""
+    style marks it edited. Changed Segments give each new join the Join Transition of its Preset
+    (`join_transition`, by the Preset's id), unless the change states its Transitions, which are then
+    taken as they are."""
     i = _index(candidates, candidate_id)
     old = candidates[i]
     if change.revision is not None and change.revision != old.revision:
@@ -172,6 +180,9 @@ def update(
     if change.segments is not None:
         _check_ids("Segment", [segment.id for segment in change.segments])
         segments = episode.segments(change.segments)
+        if change.transitions is None:
+            before, after = [segment.id for segment in old.main_track()], [segment.id for segment in segments]
+            transitions = with_join_transition(before, after, transitions, join_transition(_pick(change.preset_id, old.preset_id)))
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was

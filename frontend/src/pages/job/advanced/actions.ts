@@ -1,4 +1,5 @@
-import type { ClipSegment, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform } from "../../../api";
+import type { ClipSegment, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform } from "../../../api";
+import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
@@ -13,8 +14,9 @@ import type { TrackKind } from "./trackState";
  * What the actions on a Pick are done in (not a Scene of the plan): the edits and the Pick, the Main Track as it plays, the
  * Clip's length, `gap` (which moves a time on the Source's timeline into the silence between Words
  * nearest it), `ids` (new items' ids), `magnetic`, whether the layers follow the Main Track (the
- * Magnetic timeline), and the `locked` Tracks, whose items aren't picked, split or pasted (but
- * follow the Main Track all the same).
+ * Magnetic timeline), the `locked` Tracks, whose items aren't picked, split or pasted (but
+ * follow the Main Track all the same), and `join`, the Join Transition of the Candidate's Style
+ * Preset, which each new join an action makes gets (withJoins).
  */
 export interface PickContext {
   edits: AdvancedEdits;
@@ -25,6 +27,7 @@ export interface PickContext {
   ids?: () => string;
   magnetic?: boolean;
   locked?: TrackKind[];
+  join?: JoinTransition | null;
 }
 
 /** An action's result: the edits after it (one change, so one step of undo), what is picked then, and what to tell. */
@@ -95,6 +98,18 @@ const KINDS: {
 export const idOf = (scene: PickContext) => (scene.ids ?? newId)();
 
 /**
+ * An action's `outcome` with a copy of the scene's Join Transition on each join of its Main Track
+ * that wasn't one in `from` (the scene's edits; a drag's, where it began) and has no Transition
+ * (editor/joinTransition.ts), in the same change. Every action that changes the Main Track ends here.
+ */
+export function withJoins<T extends Outcome | null>(scene: PickContext, outcome: T, from: AdvancedEdits = scene.edits): T {
+  if (!outcome || !scene.join) return outcome;
+  const ids = (segments: ClipSegment[]) => segments.map((segment) => segment.id);
+  const transitions = withJoinTransition(ids(from.segments), ids(outcome.edits.segments), outcome.edits.transitions, scene.join);
+  return transitions === outcome.edits.transitions ? outcome : { ...outcome, edits: { ...outcome.edits, transitions } };
+}
+
+/**
  * The picked items removed. The Main Track is never left empty: with every Segment picked, the first
  * stays, picked, and the owner is told. On the Magnetic timeline (or `rippled`), the layers and the
  * hook follow the Main Track: each removed Segment's stretch as played is cut out of it.
@@ -119,9 +134,9 @@ export function remove(scene: PickContext, rippled = scene.magnetic ?? false): O
     if (itemsOf(pick).length === 1 && edits.segments.length === 1) return { edits, pick: pickFirst, notice: stays };
     next.segments = [first];
     const after = rippledAfter(scene, next, rippled);
-    return { edits: after.edits, pick: pickFirst, notice: [stays, after.notice].filter(Boolean).join(" ") };
+    return withJoins(scene, { edits: after.edits, pick: pickFirst, notice: [stays, after.notice].filter(Boolean).join(" ") });
   }
-  return { ...rippledAfter(scene, next, rippled), pick: null };
+  return withJoins(scene, { ...rippledAfter(scene, next, rippled), pick: null });
 }
 
 // `next`, with the Segments of the context's edits that it no longer has cut out of the Main Track
@@ -237,10 +252,10 @@ export function insertSegment(scene: PickContext, segment: ClipSegment, place: n
   const { segments } = scene.edits;
   const next = { ...scene.edits, segments: [...segments.slice(0, place), segment, ...segments.slice(place)] };
   const at = scene.played[place]?.start ?? scene.duration;
-  return {
+  return withJoins(scene, {
     edits: rippledIf(next, [{ kind: "inserted", at, secs: segmentLength(segment) }], scene.magnetic ?? false).edits,
     pick: picked({ kind: "segment", id: segment.id }),
-  };
+  });
 }
 
 /**
@@ -256,7 +271,8 @@ export interface SegmentDrag {
 /**
  * Segment `id` dragged since `origin`: moved to another place, or its start or end trimmed (within its
  * file's `lengthOf`, and the `longest` clip). See draggedSegments. Trimmed on the Magnetic timeline,
- * the layers move with the edge from where they were when the drag began; moved, they stay.
+ * the layers move with the edge from where they were when the drag began; moved, they stay. The
+ * joins new since it began get the Join Transition.
  */
 export function dragSegment(
   scene: PickContext,
@@ -273,7 +289,8 @@ export function dragSegment(
   );
   const index = segments.findIndex((segment) => segment.id === id);
   const whole = origin.planned[index];
-  if (change.edge === "move" || !whole || !scene.magnetic) return { edits: { ...scene.edits, segments }, pick: scene.pick };
+  const moved = { ...scene.edits, segments, transitions: origin.edits.transitions };
+  if (change.edge === "move" || !whole || !scene.magnetic) return withJoins(scene, { edits: moved, pick: scene.pick }, origin.edits);
   // Longer (or shorter) by `by` at the trimmed edge, as planned.
   const by = segmentLength(segments[index]) - segmentLength(rangeOf(whole));
   const at = change.edge === "end" ? whole.end + Math.min(by, 0) : whole.start;
@@ -283,7 +300,7 @@ export function dragSegment(
     Math.abs(by) > 1e-6,
     origin.shown.at(-1)?.end,
   );
-  return { edits: { ...scene.edits, segments, ...layersOf(edits) }, pick: scene.pick, ...(notice ? { notice } : {}) };
+  return withJoins(scene, { edits: { ...moved, ...layersOf(edits) }, pick: scene.pick, ...(notice ? { notice } : {}) }, origin.edits);
 }
 
 /** Every Segment, Text Layer, Shape, Music Clip and Overlay picked (not the hook, the captions or a join). */
@@ -340,7 +357,7 @@ export function duplicate(scene: PickContext): Outcome | null {
       copies.push({ kind, id: copy.id });
     }
   }
-  return { edits: next, pick: picked(...copies) };
+  return withJoins(scene, { edits: next, pick: picked(...copies) });
 }
 
 // Whether the playhead at `time` is inside picked item `ref`, so that it can be split there. A Freeze
@@ -404,7 +421,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
     Object.assign(next, { [list]: (next[list] as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
     tails.push({ kind, id: tail.id });
   }
-  return tails.length ? { edits: next, pick: picked(...tails) } : null;
+  return tails.length ? withJoins(scene, { edits: next, pick: picked(...tails) }) : null;
 }
 
 // Every Segment, Text Layer, Shape, Music Clip and Overlay the playhead at `time` is inside, but on locked Tracks.
@@ -484,10 +501,10 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
     segments: edits.segments.flatMap((other) => (other.id === segment.id ? [head, held, tail] : [other])),
     transitions: edits.transitions.map((transition) => (transition.after === segment.id ? { ...transition, after: tail.id } : transition)),
   };
-  return {
+  return withJoins(scene, {
     edits: rippledIf(next, [{ kind: "inserted", at: cutAt, secs: FREEZE_SECS }], scene.magnetic ?? false).edits,
     pick: picked({ kind: "segment", id: held.id }),
-  };
+  });
 }
 
 // A video's Transform as it is shown `at` seconds into its Segment, its Keyframes sampled into

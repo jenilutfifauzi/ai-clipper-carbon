@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ClipSegment, LayoutOverride, Transition, WordEdit } from "../../../api";
 import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
-import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
+import { idOf, pickedItems, remove, withJoins, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
@@ -164,7 +164,7 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     told.push(`${listed([...refused].map(([kind, n]) => counted(n, kind)))} left out: their Tracks are locked.`);
   }
   const notice = told.join(" ");
-  return { edits: next, pick: picked(...pasted), ...(notice ? { notice } : {}) };
+  return withJoins(scene, { edits: next, pick: picked(...pasted), ...(notice ? { notice } : {}) });
 }
 
 let current: Clipboard | null = null;

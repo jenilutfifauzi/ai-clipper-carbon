@@ -1,7 +1,7 @@
 """Candidates: proposed clips awaiting review."""
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from typing import Annotated, Any, NamedTuple
 
@@ -9,7 +9,9 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
-from app.styles import DEFAULT_PRESET, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
+# Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
+from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
+from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -668,61 +670,6 @@ def _check_held(segment: Segment) -> None:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no volume Keyframes")
 
 
-class TransitionKind(StrEnum):
-    """How one Segment gives way to the next: its stored id, rendered by its recipe (app/transitions.py).
-    By the Transitions tab's groups: Basic, Slide, Wipe, Shape, Zoom, Light and Glitch."""
-
-    FADE = "fade"
-    FADEBLACK = "fadeblack"
-    FADEWHITE = "fadewhite"
-    FADEGRAYS = "fadegrays"
-    DIPCOLOUR = "dipcolour"
-    DISSOLVE = "dissolve"
-    SLIDELEFT = "slideleft"
-    SLIDERIGHT = "slideright"
-    SLIDEUP = "slideup"
-    SLIDEDOWN = "slidedown"
-    COVERLEFT = "coverleft"
-    COVERRIGHT = "coverright"
-    COVERUP = "coverup"
-    COVERDOWN = "coverdown"
-    WIPELEFT = "wipeleft"
-    WIPERIGHT = "wiperight"
-    WIPEUP = "wipeup"
-    WIPEDOWN = "wipedown"
-    RADIAL = "radial"
-    CIRCLEOPEN = "circleopen"
-    CIRCLECLOSE = "circleclose"
-    CIRCLECROP = "circlecrop"
-    RECTCROP = "rectcrop"
-    VERTOPEN = "vertopen"
-    HORZOPEN = "horzopen"
-    ZOOMIN = "zoomin"
-    SQUEEZEH = "squeezeh"
-    SQUEEZEV = "squeezev"
-    FILMBURN = "filmburn"
-    LIGHTLEAK = "lightleak"
-    RGBSPLIT = "rgbsplit"
-    PIXELIZE = "pixelize"
-    HBLUR = "hblur"
-    DISTANCE = "distance"
-    HLSLICE = "hlslice"
-
-
-# How long a Transition can be, and a new one's length.
-TRANSITION_SECS = (0.1, 3.0)
-TRANSITION_DEFAULT_SECS = 0.5
-
-
-class TransitionSound(StrEnum):
-    """How a Transition's sound crosses, whatever its kind: in straight lines, along quarter sines, or
-    switched at its middle."""
-
-    LINEAR = "linear"
-    EQUAL_POWER = "equal_power"
-    CUT = "cut"
-
-
 @dataclass(frozen=True)
 class Transition:
     """A Transition from the Segment `after` into the one after it, lasting `secs`: the two overlap
@@ -743,6 +690,21 @@ def timeline_length(segments: list["Segment"], transitions: list[Transition]) ->
     """How long a Main Track of `segments` plays: their Timeline lengths, less their Transitions' overlaps."""
     by_join = {transition.after: transition.secs for transition in transitions}
     return track_length([segment_time(segment) for segment in segments], [by_join.get(segment.id) for segment in segments])
+
+
+def with_join_transition(
+    before: list[ItemId], after: list[ItemId], transitions: list[Transition], join: JoinTransition | None
+) -> list[Transition]:
+    """The Join Transition rule (GLOSSARY): `transitions`, as a change of the Main Track from Segment
+    ids `before` to `after` left them, then a copy of the Style Preset's Join Transition `join` on
+    each join (a pair of adjacent Segments) there after and not before that has no Transition, in Main
+    Track order. The editor's twin is editor/joinTransition.ts; both read tests/fixtures/join_transitions.json."""
+    if join is None:
+        return transitions
+    old = set(zip(before, before[1:]))
+    has = {transition.after for transition in transitions}
+    new = [first for first, second in zip(after, after[1:]) if (first, second) not in old and first not in has]
+    return [*transitions, *(Transition(first, **asdict(join)) for first in new)]
 
 
 # The id of a Clip's one Segment when it isn't cut.
