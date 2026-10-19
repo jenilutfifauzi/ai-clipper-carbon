@@ -3,6 +3,7 @@
 import { isValidElement, type JSXElementConstructor, type ReactElement, type ReactNode } from "react";
 import { describe, expect, test, vi } from "vitest";
 import type { Transition } from "../../../api";
+import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
@@ -69,5 +70,56 @@ describe("the join inspector's knobs", () => {
     expect(onChange).toHaveBeenLastCalledWith({ ...transition, colour: "#3366FF" }, "transition:s1:colour");
     sliders(panel({ ...transition, kind: "rgbsplit" }, onChange))[1].props.onChange(0.9);
     expect(onChange).toHaveBeenLastCalledWith({ ...transition, kind: "rgbsplit", strength: 0.9 }, "transition:s1:strength");
+  });
+});
+
+// .scratch/transitions-expanded/issues/08: the actions on every join, and the Random card.
+type Clicked = { children?: ReactNode; disabled?: boolean; onClick?: () => void };
+const text = (node: ReactNode): string =>
+  Array.isArray(node) ? node.map(text).join("") : isValidElement<{ children?: ReactNode }>(node) ? text(node.props.children) : typeof node === "string" ? node : "";
+const buttons = (node: ReactNode) => found<Clicked>(node, Button).map((button) => ({ label: text(button.props.children), ...button.props }));
+const randomCard = (node: ReactNode) => found<Clicked & { "data-random"?: boolean }>(node, "button" as never).find((button) => button.props["data-random"]);
+
+const allActions = { onApplyAll: () => {}, onRandomiseAll: () => {}, onRemoveAll: () => {}, onRandom: () => {} };
+const joinPanel = (props: Partial<Parameters<typeof TransitionPanel>[0]> = {}) =>
+  TransitionPanel({ transition: { after: "s0", kind: "fade", secs: 0.5 }, joined: true, kinds: false, any: true, onPick: () => {}, onChange: () => {}, onRemove: () => {}, ...allActions, ...props });
+
+describe("the join inspector's actions on every join", () => {
+  test("with a Transition picked: Apply to all, Randomise all and Remove from all, each calling its action", () => {
+    const onApplyAll = vi.fn();
+    const onRandomiseAll = vi.fn();
+    const onRemoveAll = vi.fn();
+    const shown = buttons(joinPanel({ onApplyAll, onRandomiseAll, onRemoveAll }));
+    expect(shown.map((button) => button.label)).toEqual(["Remove transition", "Apply to all joins", "Randomise all joins", "Remove from all"]);
+    for (const button of shown.slice(1)) button.onClick?.();
+    expect([onApplyAll, onRandomiseAll, onRemoveAll].map((action) => action.mock.calls.length)).toEqual([1, 1, 1]);
+  });
+
+  test("Remove from all shows while any join has a Transition, the picked one or not", () => {
+    expect(buttons(joinPanel({ transition: null })).map((button) => button.label)).toEqual(["Remove from all"]);
+    expect(buttons(joinPanel({ transition: null, any: false }))).toEqual([]);
+  });
+
+  test("on a locked Video Track, the three are disabled", () => {
+    expect(buttons(joinPanel({ locked: true })).map((button) => button.disabled ?? false)).toEqual([false, true, true, true]);
+    expect(buttons(joinPanel()).map((button) => button.disabled ?? false)).toEqual([false, false, false, false]);
+  });
+});
+
+describe("the Random card", () => {
+  const tab = (props: Partial<Parameters<typeof TransitionPanel>[0]> = {}) => joinPanel({ transition: null, joined: false, kinds: true, cuts: true, ...props });
+
+  test("applies a random kind on a click", () => {
+    const onRandom = vi.fn();
+    const card = randomCard(tab({ onRandom }));
+    expect(text(card?.props.children)).toContain("Random");
+    expect(card?.props.disabled).toBe(false);
+    card?.props.onClick?.();
+    expect(onRandom).toHaveBeenCalledOnce();
+  });
+
+  test("is disabled in a Clip with no cut, and on a locked Video Track", () => {
+    expect(randomCard(tab({ cuts: false }))?.props.disabled).toBe(true);
+    expect(randomCard(tab({ locked: true }))?.props.disabled).toBe(true);
   });
 });

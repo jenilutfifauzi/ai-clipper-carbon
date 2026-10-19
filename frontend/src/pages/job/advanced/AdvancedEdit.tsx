@@ -45,6 +45,7 @@ import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCand
 import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
+  appliedToAll,
   cardTarget,
   changeMusic,
   dragSegment,
@@ -58,6 +59,8 @@ import {
   pickAll,
   placeAfter,
   placeDropped,
+  randomCardKind,
+  randomisedTransitions,
   reversible,
   setFade,
   setHold,
@@ -540,19 +543,34 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ transitions: edits.transitions.map((old) => (old.after === transition.after ? transition : old)) }, group);
   }
   const joinedAfter = pick?.kind === "join" ? pick.after : null;
+  const joinedTransition = edits.transitions.find((transition) => transition.after === joinedAfter) ?? null;
+  // Every join's Transitions at once (one step of undo), refused on a locked Video Track.
+  function setAllTransitions(transitions: Transition[]) {
+    if (!refused("video")) change({ transitions });
+  }
   const transitionPanel = (kinds: boolean) => (
     <TransitionPanel
       kinds={kinds}
       joined={joinedAfter !== null}
       cuts={edits.segments.length > 1}
-      transition={edits.transitions.find((transition) => transition.after === joinedAfter) ?? null}
+      any={edits.transitions.length > 0}
+      locked={tracks.locked.includes("video")}
+      transition={joinedTransition}
       // The picked join's, else the one nearest the playhead's, which becomes the Pick.
       onPick={(kind) => {
         const after = cardTarget(pick, edits.segments, played, playback.time);
         if (after) setTransition(after, kind);
       }}
+      // The same join, a kind unlike its neighbours'.
+      onRandom={() => {
+        const after = cardTarget(pick, edits.segments, played, playback.time);
+        if (after) setTransition(after, randomCardKind(edits.transitions, edits.segments, after));
+      }}
       onChange={updateTransition}
       onRemove={() => change({ transitions: edits.transitions.filter((transition) => transition.after !== joinedAfter) })}
+      onApplyAll={() => joinedTransition && setAllTransitions(appliedToAll(joinedTransition, edits.segments))}
+      onRandomiseAll={() => joinedTransition && setAllTransitions(randomisedTransitions(joinedTransition, edits.segments))}
+      onRemoveAll={() => setAllTransitions([])}
     />
   );
   const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
