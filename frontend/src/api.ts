@@ -731,6 +731,7 @@ export type TransitionKind =
   | "fadeblack"
   | "fadewhite"
   | "fadegrays"
+  | "dipcolour"
   | "dissolve"
   | "slideleft"
   | "slideright"
@@ -754,6 +755,9 @@ export type TransitionKind =
   | "zoomin"
   | "squeezeh"
   | "squeezev"
+  | "filmburn"
+  | "lightleak"
+  | "rgbsplit"
   | "pixelize"
   | "hblur"
   | "distance"
@@ -763,9 +767,17 @@ export type TransitionKind =
 // switched at its middle (pages/job/editor/transitionSound.ts).
 export type TransitionSound = "linear" | "equal_power" | "cut";
 
+// A Transition's knobs, read by the kinds that have them (pages/job/editor/transitions.ts): its
+// strength (0 to 1; unset, its kind's own) and Dip to colour's colour (#RRGGBB; unset, black). Kept
+// on a kind that doesn't read them. Always sent; one made by hand may leave them out.
+export interface TransitionKnobs {
+  strength?: number | null;
+  colour?: string | null;
+}
+
 // A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.1 to 3).
 // Its sound is always sent; one made by hand may leave it out (linear).
-export interface Transition {
+export interface Transition extends TransitionKnobs {
   after: string;
   kind: TransitionKind;
   secs: number;
@@ -773,7 +785,7 @@ export interface Transition {
 }
 
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
-export interface TransitionEvent {
+export interface TransitionEvent extends TransitionKnobs {
   kind: TransitionKind;
   start: number;
   end: number;

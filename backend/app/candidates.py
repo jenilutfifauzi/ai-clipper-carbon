@@ -670,12 +670,13 @@ def _check_held(segment: Segment) -> None:
 
 class TransitionKind(StrEnum):
     """How one Segment gives way to the next: its stored id, rendered by its recipe (app/transitions.py).
-    By the Transitions tab's groups: Basic, Slide, Wipe, Shape, Zoom, Light (none yet) and Glitch."""
+    By the Transitions tab's groups: Basic, Slide, Wipe, Shape, Zoom, Light and Glitch."""
 
     FADE = "fade"
     FADEBLACK = "fadeblack"
     FADEWHITE = "fadewhite"
     FADEGRAYS = "fadegrays"
+    DIPCOLOUR = "dipcolour"
     DISSOLVE = "dissolve"
     SLIDELEFT = "slideleft"
     SLIDERIGHT = "slideright"
@@ -699,6 +700,9 @@ class TransitionKind(StrEnum):
     ZOOMIN = "zoomin"
     SQUEEZEH = "squeezeh"
     SQUEEZEV = "squeezev"
+    FILMBURN = "filmburn"
+    LIGHTLEAK = "lightleak"
+    RGBSPLIT = "rgbsplit"
     PIXELIZE = "pixelize"
     HBLUR = "hblur"
     DISTANCE = "distance"
@@ -722,12 +726,17 @@ class TransitionSound(StrEnum):
 @dataclass(frozen=True)
 class Transition:
     """A Transition from the Segment `after` into the one after it, lasting `secs`: the two overlap
-    by that long, so the Clip is that much shorter. Kept to half the shorter of the two by the planner."""
+    by that long, so the Clip is that much shorter. Kept to half the shorter of the two by the planner.
+    Its knobs are read by the kinds that have them (app/transitions.py): `strength` (0..1, unset for
+    the kind's own) and `colour` (Dip to colour's, black when unset). Either is kept on a kind that
+    doesn't read it, so changing back restores it."""
 
     after: ItemId
     kind: TransitionKind = TransitionKind.FADE
     secs: Annotated[FiniteFloat, Field(ge=TRANSITION_SECS[0], le=TRANSITION_SECS[1])] = TRANSITION_DEFAULT_SECS
     sound: TransitionSound = TransitionSound.LINEAR
+    strength: Annotated[FiniteFloat, Field(ge=0, le=1)] | None = None
+    colour: Colour | None = None
 
 
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:

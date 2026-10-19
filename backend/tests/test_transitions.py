@@ -5,6 +5,7 @@ Seam B on the planner, then Seam A through the API and the real ffmpeg.
 
 import json
 import subprocess
+import time
 from collections.abc import Callable
 
 import numpy as np
@@ -22,6 +23,7 @@ from test_render import add, full_frame, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
 from test_render import from_render_video, render_video  # noqa: F401
 from test_review import patch
+from app.config import load_settings
 from test_segments import luma, ramp_video, ranges  # noqa: F401
 
 SOURCE = SourceMetadata(duration=600, fps=30.0, width=1920, height=1080, codec="h264")
@@ -108,7 +110,7 @@ def test_a_transitions_sound_is_saved_drawn_and_stored_ones_read_as_linear(clien
     old = [{"after": "s0", "kind": "fadeblack", "secs": 0.5}]
     path.write_text(json.dumps([c | {"transitions": old} if c["id"] == candidate["id"] else c for c in stored]))
     [read] = [c for c in client.get(f"/api/jobs/{job['id']}").json()["candidates"] if c["id"] == candidate["id"]]
-    assert read["transitions"] == [{"after": "s0", "kind": "fadeblack", "secs": 0.5, "sound": "linear"}]
+    assert read["transitions"] == [{"after": "s0", "kind": "fadeblack", "secs": 0.5, "sound": "linear", "strength": None, "colour": None}]
     assert [e["sound"] for e in preview(client, job, read)["plan"]["transitions"]] == ["linear"]
 
 
@@ -208,7 +210,7 @@ async def test_the_agent_sets_a_transitions_sound_and_the_dry_run_shows_it(mcp):
     pieces = [{"id": "a", "start": HALO_KABAR[0], "end": HALO_KABAR[1]}, {"id": "b", "start": KITA_SOAL[0], "end": KITA_SOAL[1]}]
     await call(mcp, "edit_candidate", **ids, changes={"segments": pieces, "transitions": [{"after": "a", "kind": "fadewhite"}]})
     merged = await call(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "sound": "equal_power"}])
-    assert merged["transitions"] == [{"after": "a", "kind": "fadewhite", "secs": 0.5, "sound": "equal_power"}]
+    assert merged["transitions"] == [{"after": "a", "kind": "fadewhite", "secs": 0.5, "sound": "equal_power", "strength": None, "colour": None}]
     plan = await call(mcp, "edit_candidate", **ids, changes={"transitions": [{"after": "a", "kind": "fade", "sound": "cut"}]}, dry_run=True)
     [crossing] = plan["transitions"]
     assert (crossing["kind"], crossing["sound"]) == ("fade", "cut")
@@ -289,3 +291,151 @@ def test_a_transitions_sound_crosses_linearly_by_equal_power_or_cut_at_its_middl
     assert lo > 0.85 and hi < 0.05
     lo, hi, _ = shares("cut", 1.55, 1.65)
     assert lo < 0.05 and hi > 0.85
+
+
+# .scratch/transitions-expanded/issues/04: strength and colour, and the looks that read them.
+
+
+def test_a_transitions_strength_and_colour_are_drawn_with_it_and_unset_by_default():
+    planned = plan_render(
+        10, 32, SOURCE,
+        main_track=[
+            SegmentInput(10, 12),
+            SegmentInput(20, 23, join=Join(TransitionKind.DIPCOLOUR, 0.5, colour="#FF8800")),
+            SegmentInput(30, 32, join=Join(TransitionKind.FILMBURN, 0.4, TransitionSound.CUT, strength=0.25)),
+        ],
+    )
+    assert planned.transitions == [
+        TransitionEvent(TransitionKind.DIPCOLOUR, 1.5, 2.0, colour="#FF8800"),
+        TransitionEvent(TransitionKind.FILMBURN, 4.1, 4.5, TransitionSound.CUT, strength=0.25),
+    ]
+    assert (planned.transitions[0].strength, planned.transitions[1].colour) == (None, None)
+
+
+def test_a_transitions_knobs_are_saved_kept_on_any_kind_and_unset_on_stored_ones(client, settings):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    pieces = ranges(job, ("Podcast", "ya"), ("halo", "semua"), ("kita", "soal"))
+    candidate = patch(client, job, candidate, segments=pieces, transitions=[
+        {"after": "s0", "kind": "dipcolour", "colour": "#3366FF"}, {"after": "s1", "kind": "rgbsplit", "strength": 0.8},
+    ])
+    assert [(t["strength"], t["colour"]) for t in candidate["transitions"]] == [(None, "#3366FF"), (0.8, None)]
+    events = preview(client, job, candidate)["plan"]["transitions"]
+    assert [(e["kind"], e["strength"], e["colour"]) for e in events] == [("dipcolour", None, "#3366FF"), ("rgbsplit", 0.8, None)]
+    # A knob on a kind that doesn't read it is kept, so changing back restores it.
+    switched = patch(client, job, candidate, transitions=[
+        {"after": "s0", "kind": "fade", "colour": "#3366FF", "strength": 0.3}, {"after": "s1", "kind": "wipeleft", "strength": 0.8},
+    ])
+    assert [(t["kind"], t["strength"], t["colour"]) for t in switched["transitions"]] == [("fade", 0.3, "#3366FF"), ("wipeleft", 0.8, None)]
+    for bad, field in (({"strength": 1.5}, "strength"), ({"strength": -0.1}, "strength"), ({"colour": "orange"}, "colour")):
+        response = client.patch(f"/api/jobs/{job['id']}/candidates/{candidate['id']}", json={"transitions": [{"after": "s0"} | bad]})
+        assert response.status_code == 422 and field in response.text, bad
+    # Saved before a Transition had knobs.
+    path = settings.data_dir / "jobs" / job["id"] / "candidates.json"
+    stored = json.loads(path.read_text())
+    old = [{"after": "s0", "kind": "fade", "secs": 0.5, "sound": "linear"}]
+    path.write_text(json.dumps([c | {"transitions": old} if c["id"] == candidate["id"] else c for c in stored]))
+    [read] = [c for c in client.get(f"/api/jobs/{job['id']}").json()["candidates"] if c["id"] == candidate["id"]]
+    assert read["transitions"] == [{"after": "s0", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": None, "colour": None}]
+
+
+@pytest.fixture(scope="session")
+def striped_video(tmp_path_factory):
+    """8 s of upright stripes, bright ones that brighten with time (their luma 25 a second) between
+    dark ones, with a tone: edges for an RGB split to part."""
+    path = tmp_path_factory.mktemp("striped") / "striped.mp4"
+    subprocess.run([
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=black:size=640x360:rate=25:duration=8,format=yuv420p,geq=lum='if(lt(mod(X,64),32),min(250,T*25),20)':cb=128:cr=128",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path),
+    ], check=True)
+    return path
+
+
+def joined(client, job: dict, kind: str, **knobs) -> dict:
+    """A Candidate of two moments of the Source ("Podcast" to "ya", then the darker "kita" to
+    "soal") joined by a 0.5 s Transition of `kind`."""
+    candidate = add(client, job, "halo", "ya")
+    return patch(
+        client, job, candidate, layout="blur",
+        segments=ranges(job, ("Podcast", "ya"), ("kita", "soal")),
+        transitions=[{"after": "s0", "kind": kind, "secs": 0.5, **knobs}],
+    )
+
+
+def test_the_new_looks_render_their_middles_by_their_knobs_in_a_shorter_clip(client, settings, video_source, striped_video):
+    video_source.video = striped_video
+    job = reviewed(client)
+    looks = {
+        "dipcolour": joined(client, job, "dipcolour", colour="#3366FF"),
+        **{kind: joined(client, job, kind) for kind in ("filmburn", "lightleak", "rgbsplit")},
+        **{(kind, strength): joined(client, job, kind, strength=strength) for kind in ("filmburn", "lightleak", "rgbsplit") for strength in (0, 1)},
+    }
+    render(client, job)
+    clips = {clip["candidate_id"]: clip for clip in rendered(client, job, timeout=180)["clips"]}
+    frames = {}
+    for look, candidate in looks.items():
+        planned = preview(client, job, candidate)["plan"]
+        [event] = planned["transitions"]
+        clip = clips[candidate["id"]]
+        assert clip["status"] == "done", (look, clip["error"])
+        assert clip["output"]["duration"] == pytest.approx(planned["segments"][1]["end"], abs=0.1)
+        video = settings.data_dir / "jobs" / job["id"] / clip["output"]["video"]
+        frames[look] = [full_frame(settings, video, at) for at in (event["start"] - 0.2, (event["start"] + event["end"]) / 2, event["end"] + 0.2)]
+    for kind in ("dipcolour", "filmburn", "lightleak", "rgbsplit"):
+        before, middle, after = (luma(frame) for frame in frames[kind])
+        assert abs(middle - before) > 8 and abs(middle - after) > 8, (kind, before, middle, after)
+    # Dip to colour's middle is the colour alone.
+    assert np.abs(frames["dipcolour"][1].mean(axis=(0, 1)) - [0x33, 0x66, 0xFF]).max() < 12
+    # A film burn and a light leak brighten the middle above either side.
+    for kind in ("filmburn", "lightleak"):
+        before, middle, after = (luma(frame) for frame in frames[kind])
+        assert middle > max(before, after) + 10, (kind, before, middle, after)
+    # Their strength shows: none and all of it give unlike middles.
+    for kind in ("filmburn", "lightleak", "rgbsplit"):
+        weakest, strongest = frames[(kind, 0)][1], frames[(kind, 1)][1]
+        assert np.abs(strongest - weakest).mean() > 6, kind
+
+
+# How much longer than a fade join a 0.5 s join of any kind may take to render.
+RENDER_BUDGET_SECS = 3.0
+
+
+def test_a_join_of_each_new_look_renders_within_its_budget_of_a_fade(client, settings, video_source, striped_video):
+    video_source.video = striped_video
+    job = reviewed(client)
+    took: dict[str, float] = {}
+    # The fade both first and last, its quicker render kept: the first render of a session is slower.
+    for kind in ("fade", "dipcolour", "filmburn", "lightleak", "rgbsplit", "fade"):
+        candidate = joined(client, job, kind)
+        began = time.monotonic()
+        render(client, job, [candidate["id"]])
+        [clip] = [clip for clip in rendered(client, job, timeout=60)["clips"] if clip["candidate_id"] == candidate["id"]]
+        took[kind] = min(took.get(kind, float("inf")), time.monotonic() - began)
+        assert clip["status"] == "done", (kind, clip["error"])
+    assert all(secs < took["fade"] + RENDER_BUDGET_SECS for secs in took.values()), took
+
+
+@pytest.mark.anyio
+async def test_the_agent_sets_a_transitions_knobs_alone_and_the_dry_run_shows_them(mcp):
+    job = await reviewed_by_mcp(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    pieces = [{"id": "a", "start": HALO_KABAR[0], "end": HALO_KABAR[1]}, {"id": "b", "start": KITA_SOAL[0], "end": KITA_SOAL[1]}]
+    await call(mcp, "edit_candidate", **ids, changes={"segments": pieces, "transitions": [{"after": "a", "kind": "dipcolour", "sound": "cut"}]})
+    merged = await call(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "colour": "#ff8800"}])
+    assert merged["transitions"] == [{"after": "a", "kind": "dipcolour", "secs": 0.5, "sound": "cut", "strength": None, "colour": "#FF8800"}]
+    merged = await call(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "strength": 0.4}])
+    assert (merged["transitions"][0]["strength"], merged["transitions"][0]["colour"]) == (0.4, "#FF8800")
+    plan = await call(mcp, "edit_candidate", **ids, changes={"transitions": [{"after": "a", "kind": "filmburn", "strength": 0.9}]}, dry_run=True)
+    [crossing] = plan["transitions"]
+    assert (crossing["kind"], crossing["strength"]) == ("filmburn", 0.9) and "colour" not in crossing
+    plan = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert plan["transitions"][0]["colour"] == "#FF8800"
+    # The instructions say which kinds read which knob.
+    told = mcp.instructions[mcp.instructions.index("- A Transition") :]
+    told = told[: told.index("\n- ")]
+    assert "Light (filmburn, lightleak)" in told
+    strength, colour = told[told.index("`strength`") : told.index("`colour`")], told[told.index("`colour`") : told.index("Its sound")]
+    assert all(kind in strength for kind in ("filmburn", "lightleak", "rgbsplit")) and "dipcolour" in colour

@@ -31,7 +31,9 @@ KITA_SOAL = (1.6, 2.6)
 # Overlay animations (transitions-expanded/10): an Overlay's animation_in, animation_out and
 # animation_ms in the same schemas. And for a Transition's sound (transitions-expanded/06): its three
 # values wherever a Transition is given; what they do is in the instructions (70_961 with all three).
-TOOLS_BUDGET_BYTES = 71_000
+# And for a Transition's knobs (transitions-expanded/04): its strength and colour, and the four kinds
+# that read them, wherever a Transition is given (71_798).
+TOOLS_BUDGET_BYTES = 72_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -781,13 +783,13 @@ async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transiti
         [event] = plan["transitions"]
         assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear"} and event["start"] > 0, event
     edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
-    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear"}]
+    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None}]
     assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])
 
     # The instructions name each group with its kinds, and how long a Transition can be.
     transitions = mcp.instructions[mcp.instructions.index("- A Transition") :]
     assert "0.1..3 s" in transitions
-    for group, kinds in (("Basic", "fade, fadeblack"), ("Glitch", "pixelize, hblur, distance, hlslice")):
+    for group, kinds in (("Basic", "fade, fadeblack"), ("Glitch", "rgbsplit, pixelize, hblur, distance, hlslice")):
         assert f"{group} ({kinds}" in transitions
     named = set(re.findall(r"[a-z]+", transitions[: transitions.index("\n- ")]))
     assert set(TransitionKind) <= named

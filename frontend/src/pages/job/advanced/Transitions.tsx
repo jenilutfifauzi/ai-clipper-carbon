@@ -1,6 +1,7 @@
 import { Trash2 } from "lucide-react";
 import type { Transition, TransitionKind, TransitionSound } from "../../../api";
 import { Button } from "../../../components/Button";
+import { ColorField } from "../../../components/ColorField";
 import { Hint } from "../../../components/InfoTip";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
@@ -12,7 +13,7 @@ import { DRAG_TRANSITION } from "./drag";
 export const TRANSITION_BOUNDS = { min: 0.1, max: 3 };
 export const TRANSITION_SECS = 0.5;
 
-// The Transitions tab's sections: each group with its kinds, those with none yet (Light) left out.
+// The Transitions tab's sections: each group with its kinds, any with none yet left out.
 const SECTIONS = TRANSITION_GROUPS.map((group) => ({ group, kinds: TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].group === group) })).filter(
   ({ kinds }) => kinds.length,
 );
@@ -27,7 +28,7 @@ const SOUNDS = [
 /**
  * The Transitions: a card per kind, by group under a sticky heading, put on the selected join by a
  * click (or dragged onto any join on the timeline); and, when the join has one, its length, its
- * sound and a way to remove it.
+ * strength and colour where its kind reads them, its sound and a way to remove it.
  */
 export function TransitionPanel({
   transition,
@@ -47,6 +48,8 @@ export function TransitionPanel({
   onChange: (transition: Transition, group?: string) => void;
   onRemove: () => void;
 }) {
+  // The picked join's kind: the knobs it reads, each with its own value.
+  const own = transition ? TRANSITIONS[transition.kind] : null;
   return (
     <div className="flex flex-col gap-4">
       {!kinds && !transition && <Hint>Pick a transition in the Transitions tab.</Hint>}
@@ -104,6 +107,24 @@ export function TransitionPanel({
             format={(v) => `${v.toFixed(2)} s`}
             onChange={(secs) => onChange({ ...transition, secs }, `transition:${transition.after}`)}
           />
+          {own?.strength !== undefined && (
+            <Slider
+              label="Strength"
+              value={transition.strength ?? own.strength}
+              min={0}
+              max={1}
+              step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(strength) => onChange({ ...transition, strength }, `transition:${transition.after}:strength`)}
+            />
+          )}
+          {own?.colour !== undefined && (
+            <ColorField
+              label="Colour"
+              value={transition.colour ?? own.colour}
+              onChange={(colour) => onChange({ ...transition, colour }, `transition:${transition.after}:colour`)}
+            />
+          )}
           <Segmented
             legend="Sound"
             options={SOUNDS}

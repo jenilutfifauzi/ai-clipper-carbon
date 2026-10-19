@@ -1,7 +1,7 @@
-// .scratch/transitions-expanded/issues/01 and 02: the preview's catalogue of Transition kinds, each
-// with its label, group and look.
+// .scratch/transitions-expanded/issues/01, 02 and 04: the preview's catalogue of Transition kinds, each
+// with its label, group and look, by the knobs it reads.
 import { describe, expect, test } from "vitest";
-import { showLook, TRANSITION_GROUPS, TRANSITION_KINDS, TRANSITIONS, type LayerLook } from "./transitions";
+import { rgbsplitFilter, showLook, TRANSITION_GROUPS, TRANSITION_KINDS, TRANSITIONS, type LayerLook } from "./transitions";
 
 // A layer as the preview styles it.
 const layer = () => ({ style: {} as CSSStyleDeclaration });
@@ -70,13 +70,13 @@ describe("the Transition catalogue", () => {
   test("lists every kind by group, in the Transitions tab's order", () => {
     const listed = TRANSITION_GROUPS.map((group) => [group, TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].group === group).map((kind) => TRANSITIONS[kind].label)]);
     expect(listed).toEqual([
-      ["Basic", ["Fade", "Dip to black", "Dip to white", "Dip through grey", "Dissolve"]],
+      ["Basic", ["Fade", "Dip to black", "Dip to white", "Dip through grey", "Dip to colour", "Dissolve"]],
       ["Slide", ["Push left", "Push right", "Push up", "Push down", "Cover left", "Cover right", "Cover up", "Cover down"]],
       ["Wipe", ["Wipe left", "Wipe right", "Wipe up", "Wipe down", "Clock wipe"]],
       ["Shape", ["Circle open", "Circle close", "Iris", "Box", "Doors vertical", "Doors horizontal"]],
       ["Zoom", ["Zoom in", "Squeeze across", "Squeeze down"]],
-      ["Light", []],
-      ["Glitch", ["Pixelize", "Blur", "Distance", "Slices"]],
+      ["Light", ["Film burn", "Light leak"]],
+      ["Glitch", ["RGB split", "Pixelize", "Blur", "Distance", "Slices"]],
     ]);
     // In the tab's order, group by group.
     expect(TRANSITION_KINDS).toEqual(listed.flatMap(([, labels]) => labels).map((label) => TRANSITION_KINDS.find((kind) => TRANSITIONS[kind].label === label)));
@@ -120,5 +120,51 @@ describe("the Transition catalogue", () => {
     expect(veil.style).toMatchObject({ background: "#000", opacity: "0.5" });
     showLook(TRANSITIONS.fade.look(0.25).veil, veil);
     expect(veil.style).toMatchObject({ background: "", opacity: "" });
+  });
+
+  test("only Film burn, Light leak and RGB split read a strength, with their own defaults, and only Dip to colour a colour", () => {
+    expect(TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].strength !== undefined).map((kind) => [kind, TRANSITIONS[kind].strength])).toEqual([
+      ["filmburn", 0.6],
+      ["lightleak", 0.7],
+      ["rgbsplit", 0.5],
+    ]);
+    expect(TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].colour !== undefined)).toEqual(["dipcolour"]);
+  });
+
+  test("Dip to colour dips through its colour, black when unset", () => {
+    expect(TRANSITIONS.dipcolour.look(0.5, { colour: "#3366FF" }).veil).toEqual({ background: "#3366FF", opacity: 1 });
+    expect(TRANSITIONS.dipcolour.look(0.25, { colour: null }).veil).toEqual({ background: "#000000", opacity: 0.5 });
+    expect(TRANSITIONS.dipcolour.look(0.75).outgoing.opacity).toBe(0);
+  });
+
+  test.each(["filmburn", "lightleak"] as const)("%s blends a warm layer over both, as strong as the strength, brightest halfway", (kind) => {
+    const { look } = TRANSITIONS[kind];
+    const middle = look(0.5, { strength: 0.8 }).veil;
+    expect(middle).toMatchObject({ mixBlendMode: "screen", opacity: 0.8 });
+    expect(middle.background).toMatch(/gradient\(/);
+    expect(look(0.25, { strength: 0.8 }).veil.opacity).toBeCloseTo(0.4);
+    expect(unveiled(look(0.5, { strength: 0 }).veil)).toBe(true);
+    // Unset, its kind's own.
+    expect(look(0.5).veil.opacity).toBe(TRANSITIONS[kind].strength);
+    // A Light leak's band moves across as it goes.
+    if (kind === "lightleak") expect(look(0.25).veil.background).not.toBe(look(0.75).veil.background);
+  });
+
+  test("RGB split parts both pictures by the strength, in tenths, and not at all at none", () => {
+    expect(TRANSITIONS.rgbsplit.look(0.5, { strength: 1 })).toMatchObject({
+      outgoing: { opacity: 0.5, filter: `url(#${rgbsplitFilter(10)})` },
+      incoming: { filter: `url(#${rgbsplitFilter(10)})` },
+    });
+    expect(TRANSITIONS.rgbsplit.look(0.2, { strength: 0.33 }).incoming.filter).toBe(`url(#${rgbsplitFilter(3)})`);
+    expect(TRANSITIONS.rgbsplit.look(0.5).incoming.filter).toBe(`url(#${rgbsplitFilter(5)})`);
+    expect(TRANSITIONS.rgbsplit.look(0.5, { strength: 0 }).incoming.filter).toBeUndefined();
+  });
+
+  test("a look's blend is cleared with it", () => {
+    const veil = layer();
+    showLook(TRANSITIONS.filmburn.look(0.5).veil, veil);
+    expect(veil.style.mixBlendMode).toBe("screen");
+    showLook(TRANSITIONS.fade.look(0.5).veil, veil);
+    expect(veil.style.mixBlendMode).toBe("");
   });
 });

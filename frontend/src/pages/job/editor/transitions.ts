@@ -1,4 +1,4 @@
-import type { TransitionKind } from "../../../api";
+import type { TransitionKind, TransitionKnobs } from "../../../api";
 
 // The styles a look sets on one layer; those it leaves out are the layer's own.
 export interface LayerLook {
@@ -8,6 +8,7 @@ export interface LayerLook {
   maskImage?: string;
   filter?: string;
   background?: string;
+  mixBlendMode?: "screen";
 }
 
 // A Transition `progress` of the way through, as the preview draws it: the outgoing Segment (the
@@ -28,7 +29,14 @@ export const TRANSITION_GROUPS: TransitionGroup[] = ["Basic", "Slide", "Wipe", "
 export const PIXELIZE_BLOCKS = [4, 8, 12, 16, 20, 24];
 export const pixelizeFilter = (level: number) => `transition-pixelize-${level}`;
 
-type Look = (progress: number) => TransitionLook;
+// RGB split's SVG filters (TransitionFilters.tsx draws them): one per tenth of strength, each
+// moving the red picture left and the blue right by that much of a 27th of the picture's width, as
+// the render does.
+export const RGBSPLIT_LEVELS = 10;
+export const rgbsplitFilter = (level: number) => `transition-rgbsplit-${level}`;
+
+// A look reads the Transition's knobs (backend/app/transitions.py): those a kind doesn't read are ignored.
+type Look = (progress: number, knobs?: TransitionKnobs) => TransitionLook;
 type Side = "top" | "right" | "bottom" | "left";
 
 const layers = (outgoing: LayerLook, incoming: LayerLook = {}, veil: LayerLook = {}): TransitionLook => ({ outgoing, incoming, veil });
@@ -109,16 +117,59 @@ const through =
   (p) =>
     layers({ opacity: 1 - p, filter: filter(peak(p)) }, { filter: filter(peak(p)) });
 
+// A strength-reading kind's look and its own strength (STRENGTHS in backend/app/transitions.py),
+// which `look` is drawn with while the Transition's is unset.
+const strong = (own: number, look: (p: number, strength: number) => TransitionLook) => ({
+  look: (p: number, knobs?: TransitionKnobs) => look(p, knobs?.strength ?? own),
+  strength: own,
+});
+
+// Film burn: a warm flash blended over both as they crossfade, as hot as the strength, brightest halfway.
+const burn = (p: number, strength: number) =>
+  layers(
+    { opacity: 1 - p },
+    {},
+    {
+      background: "radial-gradient(circle at 30% 70%, #fff3d6, #ffb060 35%, #c04000 70%, #400000)",
+      mixBlendMode: "screen",
+      opacity: strength * peak(p),
+    },
+  );
+
+// Light leak: a warm band across the diagonal, swept from the top left to the bottom right and
+// brightest halfway, blended over both as they crossfade.
+function leak(p: number, strength: number) {
+  const at = -30 + 160 * p;
+  return layers(
+    { opacity: 1 - p },
+    {},
+    {
+      background: `linear-gradient(135deg, transparent ${at - 40}%, #ffd696 ${at}%, transparent ${at + 40}%)`,
+      mixBlendMode: "screen",
+      opacity: strength * peak(p),
+    },
+  );
+}
+
+// RGB split: a crossfade with both pictures' red and blue parted by the strength throughout.
+function split(p: number, strength: number) {
+  const level = Math.round(strength * RGBSPLIT_LEVELS);
+  const filter = p > 0 && p < 1 && level ? `url(#${rgbsplitFilter(level)})` : undefined;
+  return layers({ opacity: 1 - p, filter }, { filter });
+}
+
 /**
  * Every Transition kind (docs/adr/0012-transitions-are-recipes-around-one-xfade.md): its name, its
  * section of the Transitions tab, and its look, near what its recipe renders (backend/app/transitions.py)
- * with exact timing. In the Transitions tab's order.
+ * with exact timing, and the knobs it reads: `strength`, its own when the Transition's is unset,
+ * and `colour`, its own likewise. In the Transitions tab's order.
  */
-export const TRANSITIONS: Record<TransitionKind, { label: string; group: TransitionGroup; look: Look }> = {
+export const TRANSITIONS: Record<TransitionKind, { label: string; group: TransitionGroup; look: Look; strength?: number; colour?: string }> = {
   fade: { label: "Fade", group: "Basic", look: (p) => layers({ opacity: 1 - p }) },
   fadeblack: { label: "Dip to black", group: "Basic", look: dip("#000") },
   fadewhite: { label: "Dip to white", group: "Basic", look: dip("#fff") },
   fadegrays: { label: "Dip through grey", group: "Basic", look: grays },
+  dipcolour: { label: "Dip to colour", group: "Basic", look: (p, knobs) => dip(knobs?.colour ?? "#000000")(p), colour: "#000000" },
   // Clear where a noise is below the progress: at the ends, all or none of it.
   dissolve: { label: "Dissolve", group: "Basic", look: (p) => layers(p <= 0 ? {} : p >= 1 ? { opacity: 0 } : { maskImage: noise(p) }) },
   slideleft: { label: "Push left", group: "Slide", look: push("right") },
@@ -149,6 +200,9 @@ export const TRANSITIONS: Record<TransitionKind, { label: string; group: Transit
   // The outgoing picture squeezed into a line across the middle (or down it), the incoming one still behind.
   squeezeh: { label: "Squeeze across", group: "Zoom", look: (p) => layers({ transform: `scaleY(${1 - p})` }) },
   squeezev: { label: "Squeeze down", group: "Zoom", look: (p) => layers({ transform: `scaleX(${1 - p})` }) },
+  filmburn: { label: "Film burn", group: "Light", ...strong(0.6, burn) },
+  lightleak: { label: "Light leak", group: "Light", ...strong(0.7, leak) },
+  rgbsplit: { label: "RGB split", group: "Glitch", ...strong(0.5, split) },
   pixelize: {
     label: "Pixelize",
     group: "Glitch",
@@ -178,4 +232,5 @@ export function showLook(look: LayerLook, layer: { style: CSSStyleDeclaration })
   style.maskImage = look.maskImage ?? "";
   style.filter = look.filter ?? "";
   style.background = look.background ?? "";
+  style.mixBlendMode = look.mixBlendMode ?? "";
 }

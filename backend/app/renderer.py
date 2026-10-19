@@ -135,7 +135,7 @@ from app.planner import (
     picture_at,
 )
 from app.candidates import Keyframe, Shadow, Shape, TextLayer, TransitionSound
-from app.transitions import RECIPES
+from app.transitions import RECIPES, Side
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
@@ -469,7 +469,7 @@ def _joins(plan: RenderPlan, links: list[str], kind: str, out: str) -> str:
         if transition is None:
             chains.append(f"{joined}{links[i]}concat=n=2:v={int(kind == 'v')}:a={int(kind == 'a')}{label}")
         elif kind == "v":
-            chains += _crossed(transition, joined, links[i], label, f"x{i}")
+            chains += _crossed(plan, transition, joined, links[i], label, f"x{i}")
         else:
             chains += _sounds_crossed(transition, joined, links[i], label, f"x{i}")
         joined = label
@@ -497,16 +497,18 @@ def _sounds_crossed(transition: TransitionEvent, outgoing: str, incoming: str, o
     return [f"{outgoing}{incoming}acrossfade=d={length:.3f}{curves}{out}"]
 
 
-def _crossed(transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:
+def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incoming: str, out: str, name: str) -> list[str]:
     """Filters that join the pictures `outgoing` (in seconds into the Clip) and `incoming` (from 0 at
     its start) into `out` by `transition`'s recipe: each side through its chain, if it has one, named
     after `name`; then the recipe's xfade."""
     recipe, chains = RECIPES[transition.kind], []
     if recipe.outgoing is not None:
-        chains.append(f"{outgoing}{recipe.outgoing(transition, transition.start)}[{name}o]")
+        side = Side(transition.start, False, plan.width, plan.height, f"{name}o")
+        chains.append(f"{outgoing}{recipe.outgoing(transition, side)}[{name}o]")
         outgoing = f"[{name}o]"
     if recipe.incoming is not None:
-        chains.append(f"{incoming}{recipe.incoming(transition, 0.0)}[{name}i]")
+        side = Side(0.0, True, plan.width, plan.height, f"{name}i")
+        chains.append(f"{incoming}{recipe.incoming(transition, side)}[{name}i]")
         incoming = f"[{name}i]"
     length = transition.end - transition.start
     chains.append(f"{outgoing}{incoming}xfade=transition={recipe.transition}:duration={length:.3f}:offset={transition.start:.3f}{out}")

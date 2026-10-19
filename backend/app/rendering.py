@@ -224,7 +224,7 @@ def candidate_plan(
             **common,
         )
     # Each Transition goes into the Segment after the one it follows.
-    joins = {transition.after: Join(transition.kind, transition.secs, transition.sound) for transition in candidate.transitions}
+    joins = {transition.after: Join(transition.kind, transition.secs, transition.sound, transition.strength, transition.colour) for transition in candidate.transitions}
     # The Segment just planned before this one: None after one left out, so that no Transition
     # meant for a join with it lands on another.
     inputs, before = [], None

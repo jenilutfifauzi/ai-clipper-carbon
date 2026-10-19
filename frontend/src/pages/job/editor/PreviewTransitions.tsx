@@ -99,7 +99,8 @@ function Ghost({
       const time = playback.shownTime;
       const inside = time >= transition.start && time < transition.end;
       const share = (time - transition.start) / (transition.end - transition.start);
-      const look = inside ? TRANSITIONS[transition.kind].look(Math.min(1, Math.max(0, share))) : UNSTYLED;
+      // By its knobs, which the event carries.
+      const look = inside ? TRANSITIONS[transition.kind].look(Math.min(1, Math.max(0, share)), transition) : UNSTYLED;
       if (layer.current) {
         layer.current.style.visibility = inside ? "visible" : "hidden";
         showLook(look.outgoing, layer.current);

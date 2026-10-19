@@ -232,16 +232,19 @@ Edits:
   play on top of its keyed values.
 - A Transition joins a Segment (`after`, its id) to the next: the two overlap for its secs
   (0.1..3 s, 0.5 by default; half the shorter Segment at most), so the Clip is that much shorter.
-  Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dissolve), Slide (slideleft,
-  slideright, slideup, slidedown push both pictures along; coverleft, coverright, coverup, coverdown
-  slide the next over a still one), Wipe (wipeleft, wiperight, wipeup, wipedown, radial: a clock
-  wipe), Shape (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen), Zoom (zoomin,
-  squeezeh, squeezev), Glitch (pixelize, hblur, distance, hlslice). Its sound, for every kind (a
+  Its kind, by group: Basic (fade, fadeblack, fadewhite, fadegrays, dipcolour, dissolve), Slide
+  (slideleft, slideright, slideup, slidedown push both pictures along; coverleft, coverright,
+  coverup, coverdown slide the next over a still one), Wipe (wipeleft, wiperight, wipeup, wipedown,
+  radial: a clock wipe), Shape (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen),
+  Zoom (zoomin, squeezeh, squeezev), Light (filmburn, lightleak),
+  Glitch (rgbsplit, pixelize, hblur, distance, hlslice). Its knobs: `strength` (0..1; unset, the kind's own) is the heat of filmburn,
+  the brightness of lightleak and the spread of rgbsplit. `colour` (#RRGGBB, black unset) is
+  dipcolour's. A knob is kept on any kind, read only by those. Its sound, for every kind (a
   dip never drops the sound out on its own): linear (the default; the two sides crossfade in
   straight lines, dipping in the middle), equal_power (quarter sines, the level held through the
   middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
   it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in
-  the Clip and its sound.
+  the Clip, its sound and the knobs set.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -867,7 +870,7 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
-    (`ignored`), each Transition's kind, span, sound and the Segment it comes `after`, the keyed
+    (`ignored`), each Transition's kind, span, sound, knobs set and the Segment it comes `after`, the keyed
     sounds' volume Keyframes (a video Segment's, a Music Clip's, an Overlay's), each Shape's and
     each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
     picture layer's (`_layer_view`), and the Words."""
@@ -894,7 +897,8 @@ def _plan_view(
             for segment in plan["segments"]
         ],
         "transitions": [
-            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound")} for event in plan["transitions"]
+            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound"), **_compact(_times(event, "strength", "colour"))}
+            for event in plan["transitions"]
         ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {
