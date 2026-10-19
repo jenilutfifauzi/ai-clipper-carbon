@@ -37,7 +37,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.candidates import Candidate, Framing, Layout, Segment
-from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
+from app.caption_files import CaptionFormat, caption_file
+from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.jobs import Job, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
@@ -572,6 +573,10 @@ class Renders:
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
+            # Its caption files, beside the MP4: the plan's Cues as subtitles (docs/adr/0020).
+            subtitles = caption_paths(candidate.id) if job.options.captions else {}
+            for format, file in subtitles.items():
+                write_atomic(job_dir / file, caption_file(plan.captions, format).encode())
         except RenderStopped:
             raise
         except Exception as exc:
@@ -612,6 +617,8 @@ class Renders:
                 overlays=candidate.overlays,
                 transitions=candidate.transitions,
                 revision=candidate.revision,
+                srt=subtitles.get(CaptionFormat.SRT),
+                vtt=subtitles.get(CaptionFormat.VTT),
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

@@ -84,6 +84,15 @@ class PreviewPlan:
     analysed: bool
 
 
+def captions_pending(preview: PreviewPlan) -> bool:
+    """Whether a captioned Segment's Words are still being transcribed, so that the Preview Plan's
+    Cues aren't yet all the Clip's: a caption file made of them (app/caption_files.py) would be
+    missing those. Nothing is pending yet: a Source Segment falls back to the Transcript's Words
+    (`words_source`). Media Words (docs/adr/0020, captions-advanced ticket 04) give each Segment a
+    Words status, `pending` among them; this is where it is read."""
+    return False
+
+
 def preview_plan(
     job: Job,
     job_dir: Path,
