@@ -973,6 +973,9 @@ export interface Candidate {
 export const mainTrackOf = (candidate: Pick<Candidate, "start" | "end" | "segments">): ClipSegment[] =>
   candidate.segments.length ? candidate.segments : [{ id: "main", start: candidate.start, end: candidate.end }];
 
+// The items whose sound can be saved as a WAV.
+export type SoundKind = "segment" | "music" | "overlay";
+
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
 export interface CandidateChange {
   start?: number;
@@ -1221,6 +1224,20 @@ export const api = {
       body: draft ? JSON.stringify(draft) : undefined,
       signal,
     }),
+  // Save sound as WAV: the sound of the Candidate's item of `kind`, alone as heard in the Clip, from an
+  // unsaved draft of its edits; the WAV, and the Content-Disposition that names the file.
+  saveSound: async (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange) => {
+    const response = await fetch(`/api/jobs/${jobId}/candidates/${id}/sound/${kind}/${encodeURIComponent(item)}`, {
+      method: "POST",
+      body: JSON.stringify(draft),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      const [message, detail] = await errorMessage(response);
+      throw new ApiError(response.status, message, detail);
+    }
+    return { wav: await response.blob(), disposition: response.headers.get("Content-Disposition") };
+  },
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
   listPresets: () => request<StylePreset[]>("/presets"),

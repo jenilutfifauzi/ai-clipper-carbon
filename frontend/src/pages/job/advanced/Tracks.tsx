@@ -71,6 +71,8 @@ export interface TrackHandlers {
   onDropShape: (kind: ShapeKind, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
+  // A Segment's, Music Clip's or Overlay's context menu asked for, at that point of the window (a desktop's).
+  onItemMenu?: (item: ItemRef, at: { x: number; y: number }) => void;
 }
 
 // A Waveform's colour on a Music Clip (its lane's), and on a media or Source Segment, where it takes
@@ -134,6 +136,8 @@ export function Tracks({
   const [retime] = useState(gestureRetime);
   // An item clicked: picked alone, or added to the Pick or taken out of it (always, in picking mode).
   const choose = (item: ItemRef) => (toggle: boolean) => onSelect(clicked(pick, item, toggle || picking));
+  // An item's context menu, where there is one.
+  const menu = (item: ItemRef) => handlers.onItemMenu && ((at: { x: number; y: number }) => handlers.onItemMenu?.(item, at));
   // A picked item of several dragged or trimmed (or a Segment moved): picked alone.
   const alone = (item: ItemRef) => {
     if (itemsOf(pick).length > 1) onSelect(picked(item));
@@ -282,6 +286,7 @@ export function Tracks({
                 label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}${overlay.muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "overlay", id: overlay.id })}
                 onSelect={choose({ kind: "overlay", id: overlay.id })}
+                onMenu={menu({ kind: "overlay", id: overlay.id })}
                 onChange={({ start, end, edge }, group) =>
                   layerChanged({ kind: "overlay", id: overlay.id }, overlay.start, { start, edge }, group, () =>
                     handlers.onOverlay(
@@ -346,6 +351,7 @@ export function Tracks({
               label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${retimingName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}${muted ? ", Muted" : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
+              onMenu={menu({ kind: "segment", id: segment.id })}
               onChange={(moved, group) => {
                 alone({ kind: "segment", id: segment.id });
                 handlers.onSegment(segment.id, moved, group);
@@ -531,6 +537,7 @@ export function Tracks({
                 label={`${episode ? name : `Music ${song?.name ?? ""}`}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}${muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}
+                onMenu={menu({ kind: "music", id: clip.id })}
                 onChange={({ start, end, edge }, group) =>
                   layerChanged({ kind: "music", id: clip.id }, clip.start, { start, edge }, group, () =>
                     handlers.onMusic(
