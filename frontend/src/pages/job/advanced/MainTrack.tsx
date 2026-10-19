@@ -1,4 +1,4 @@
-import { Clapperboard, Copy, Film, Plus, Scissors, Trash2, X } from "lucide-react";
+import { Clapperboard, Copy, Film, Link2, Plus, Scissors, Trash2, Unlink2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { ClipSegment, Framing, MediaItem, Transcript } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -123,6 +123,8 @@ export function SegmentFields({
   onHold,
   onChange,
   onCropMode,
+  onDetach,
+  onReattach,
   scene,
   playback,
   span,
@@ -152,6 +154,10 @@ export function SegmentFields({
   onChange: (segment: ClipSegment, group: string) => void;
   // A video's Segment's Crop mode on the stage, when it can be opened there.
   onCropMode?: () => void;
+  // Its sound Detached onto a Music Clip, or the Music Clips Detached from it deleted (GLOSSARY.md,
+  // Detach), each where it is offered.
+  onDetach?: () => void;
+  onReattach?: () => void;
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
   playback: Playback;
@@ -184,7 +190,12 @@ export function SegmentFields({
       onReverse={onReverse}
     />
   );
-  const muteSwitch = <MutedSwitch muted={segment.muted ?? false} onChange={(muted) => onChange({ ...segment, muted }, `segment:${segment.id}:muted`)} />;
+  const muteSwitch = (
+    <>
+      <MutedSwitch muted={segment.muted ?? false} onChange={(muted) => onChange({ ...segment, muted }, `segment:${segment.id}:muted`)} />
+      <DetachButton onDetach={onDetach} onReattach={onReattach} />
+    </>
+  );
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -271,6 +282,28 @@ export function SegmentFields({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Detach audio, or Reattach audio once its sound is Detached (GLOSSARY.md, Detach): whichever is
+ * offered, if either is.
+ */
+function DetachButton({ onDetach, onReattach }: { onDetach?: () => void; onReattach?: () => void }) {
+  if (onReattach) {
+    return (
+      <Button size="sm" className="self-start" onClick={onReattach} title="Delete the Music Clips its sound was Detached onto, and unmute it">
+        <Link2 aria-hidden size={16} />
+        Reattach audio
+      </Button>
+    );
+  }
+  if (!onDetach) return null;
+  return (
+    <Button size="sm" className="self-start" onClick={onDetach} title="Move its sound onto a Music Clip that slides on its own (a J-cut or an L-cut), and Mute it">
+      <Unlink2 aria-hidden size={16} />
+      Detach audio
+    </Button>
   );
 }
 

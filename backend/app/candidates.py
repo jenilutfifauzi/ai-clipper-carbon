@@ -545,6 +545,9 @@ class MusicClip:
     # Turned down by this many dB while speech is heard (docs/adr/0016); None: not ducked. The
     # Source's sound is speech itself, and is never ducked.
     duck: Duck | None = None
+    # The Segment whose sound was Detached onto it (docs/adr/0016), which Reattach finds it by: it
+    # names one of the Candidate's when it is added or changed (app/review.py).
+    detached_from: ItemId | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.start, str):

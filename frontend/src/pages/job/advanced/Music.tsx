@@ -1,4 +1,4 @@
-import { Copy, Music as MusicIcon, Trash2 } from "lucide-react";
+import { Copy, Link2, Music as MusicIcon, Trash2 } from "lucide-react";
 import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
 import { formatPrecise } from "../../../format";
@@ -44,6 +44,7 @@ export function MusicFields({
   onReverse,
   onDuplicate,
   onDelete,
+  detached,
 }: {
   clip: MusicClip;
   // Its song; undefined while the library loads, and for the Source's sound.
@@ -64,6 +65,8 @@ export function MusicFields({
   onReverse: (reverse: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  // A Detached sound's Segment (its `index` on the Main Track), while it is there to Reattach it to.
+  detached?: { index: number; onReattach: () => void };
 }) {
   const episode = clip.media === null;
   const length = episode ? sourceLength : (item?.duration ?? clip.offset + clip.secs);
@@ -86,6 +89,15 @@ export function MusicFields({
           </Button>
         </div>
       </div>
+      {detached && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted">Detached from Segment {detached.index + 1}</p>
+          <Button size="sm" onClick={detached.onReattach} title="Delete every Music Clip Detached from that Segment, and unmute it">
+            <Link2 aria-hidden size={16} />
+            Reattach
+          </Button>
+        </div>
+      )}
       <Group title="Sound">
         <KeyedVolume
           item={{ kind: "music", id: clip.id }}

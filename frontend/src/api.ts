@@ -563,6 +563,8 @@ export interface MusicClip extends Omit<Retiming, "hold"> {
   keys: Keys;
   muted?: boolean;
   duck?: number | null;
+  // The Segment whose sound was Detached onto it (ADR 0016), which Reattach finds it by.
+  detached_from?: string | null;
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch

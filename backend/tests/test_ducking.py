@@ -160,6 +160,24 @@ def test_a_new_song_ducks_at_minus_12_unless_the_edit_says_and_a_stored_one_stay
         assert response.status_code == 422 and message in response.text, (music, response.text)
 
 
+def test_a_detached_videos_sound_added_without_a_duck_isnt_ducked(client, tmp_path):
+    """A Detached sound is speech, a video's as well as the episode's: the new song's default skips it."""
+    clip = make(
+        tmp_path / "talk.mp4", "-f", "lavfi", "-i", "color=c=green:size=320x180:rate=30:duration=2",
+        "-f", "lavfi", "-i", "sine=frequency=1500:duration=2", "-c:v", "libx264", "-c:a", "aac", "-shortest",
+    )
+    video = upload(client, clip, "talk.mp4").json()
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "kabar")
+    segments = [
+        {"id": "e", "start": candidate["start"], "end": candidate["end"]},
+        {"id": "v", "media": video["id"], "start": 0, "end": 2, "framing": {}, "muted": True},
+    ]
+    detached = {"id": "d", "media": video["id"], "start": 1.0, "secs": 2.0, "detached_from": "v"}
+    saved = patch(client, job, candidate, segments=segments, music=[detached, {**detached, "id": "n", "detached_from": None}])
+    assert [clip["duck"] for clip in saved["music"]] == [None, -12]
+
+
 def test_with_captions_off_the_transcripts_words_duck_the_song(client, tone):
     song_id = upload(client, tone, "tone.wav").json()["id"]
     job = wait_for(client, create_job(client, captions=False)["id"], "review", "error")

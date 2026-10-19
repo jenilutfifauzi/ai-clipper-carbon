@@ -243,8 +243,15 @@ Edits:
 - A Music Clip of a song or a video's sound with `duck` (dB, -30..-1; null: off) is turned down that
   far while speech is heard: the Words of the episode's Segments and Music Clips without media
   that aren't Muted, captions on or not. Down over 0.25 s before speech, through pauses under 0.8 s,
-  up over 0.5 s after. One added without `duck` gets -12, so give null to keep it off; one without
-  media has none. The dry run's `sounds` list every sound's span, fades, Muted and `ducked` stretches.
+  up over 0.5 s after. One added without `duck` gets -12 (not a Detached one), so give null to keep
+  it off; one without media has none. The dry run's `sounds` list every sound's span, fades, Muted and `ducked` stretches.
+- Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
+  J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
+  Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
+  reverse, volume, fades and volume keys (the same `at`), start and secs where it plays in the Clip
+  (the dry run's `segments`, a Transition's overlap included), and set the Segment's `muted`.
+  Reattach: remove every Music Clip Detached from it, then clear its `muted`. A `detached_from` added
+  or changed must name one of the Candidate's Segments; a saved one stays after its Segment is removed.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene

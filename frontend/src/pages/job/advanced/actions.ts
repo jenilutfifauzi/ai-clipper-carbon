@@ -321,7 +321,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     const end = Math.max(...moved.map(({ item }) => item.start + item.secs));
     const room = end + (end - first) <= length + 1e-6;
     for (const { kind, item } of moved) {
-      const copy = { ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed;
+      const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed, next.segments);
       const list = KINDS[kind].list;
       Object.assign(next, { [list]: [...(next[list] as Timed[]), copy] });
       copies.push({ kind, id: copy.id });
@@ -386,7 +386,10 @@ export function split(scene: PickContext, at: number): Outcome | null {
     const { first, second } = KINDS[kind].cut(item, time);
     // Each part has the Keyframes of its own stretch (keyActions.ts' rekeyed).
     const head = rekeyed({ ...item, secs: round(time - item.start), ...first } as Timed, 0, time - item.start);
-    const tail = rekeyed({ ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed, time - item.start, item.secs);
+    const tail = stillDetached(
+      rekeyed({ ...item, id: idOf(scene), start: time, secs: round(item.start + item.secs - time), ...second } as Timed, time - item.start, item.secs),
+      next.segments,
+    );
     const list = KINDS[kind].list;
     Object.assign(next, { [list]: (next[list] as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
     tails.push({ kind, id: tail.id });
@@ -641,6 +644,122 @@ export function toggleMute(scene: { edits: AdvancedEdits; pick: Pick }, sounded:
   const muted = [...chosen].some((item) => !item.muted);
   const set = <T extends { muted?: boolean }>(items: T[]) => items.map((item) => (chosen.has(item) ? { ...item, muted } : item));
   return { edits: { ...edits, segments: set(edits.segments), music: set(edits.music), overlays: set(edits.overlays) }, pick };
+}
+
+/**
+ * Whether Segment `id` can be Detached (GLOSSARY.md, Detach): it has a sound of its own to move off,
+ * which a Freeze frame, a Muted Segment and a video without sound (`sounded` says whether a Media
+ * Library item has sound) don't, and no Music Clip is Detached from it already.
+ */
+export function canDetach(edits: AdvancedEdits, id: string, sounded: (media: string) => boolean): boolean {
+  const segment = edits.segments.find((other) => other.id === id);
+  if (!segment || segment.hold != null || segment.muted || (segment.media && !sounded(segment.media))) return false;
+  return !edits.music.some((clip) => clip.detached_from === id);
+}
+
+/** Whether Reattach is offered for Segment `id`: while it is there and some Music Clip is Detached from it. */
+export const canReattach = (edits: AdvancedEdits, id: string) =>
+  edits.segments.some((segment) => segment.id === id) && edits.music.some((clip) => clip.detached_from === id);
+
+// Seconds to the thousandth, as a Segment's cut is: what Detach places a Music Clip by, so that it is
+// heard where its Segment was.
+const toThousandth = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+/**
+ * Detach (GLOSSARY.md, ADR 0016) on Segments `ids` that allow it (canDetach), as one change: each one's
+ * sound onto a new Music Clip of it (the Source's for a Segment of the episode, the video's for a
+ * video's), and the Segment Muted. The Music Clip is heard as the Segment was, as planned (`track`:
+ * snapped to Words, a Transition's overlap included): from where its sound starts on the Timeline, as
+ * long, its range, Speed, pitch, Reverse, volume, fades and volume Keyframes (the same `at`), with
+ * `detached_from`. It lands on the first Music lane free there. The new Music Clips are picked; null
+ * when none of the Segments allows it.
+ */
+export function detach(scene: PickContext, ids: string[], track: PlayedSegment[], sounded: (media: string) => boolean): Outcome | null {
+  const { edits } = scene;
+  const made: MusicClip[] = [];
+  edits.segments.forEach((segment, i) => {
+    const shown = track[i];
+    if (!shown || !ids.includes(segment.id) || !canDetach(edits, segment.id, sounded)) return;
+    const secs = toThousandth(shown.end - shown.start);
+    const clip: MusicClip = {
+      id: idOf(scene),
+      media: segment.media ?? null,
+      start: toThousandth(shown.start),
+      secs,
+      offset: toThousandth(rangeOf(shown).start),
+      volume: segment.volume ?? 1,
+      speed: segment.speed ?? 1,
+      pitch: segment.pitch ?? false,
+      reverse: segment.reverse ?? false,
+      ...fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, secs),
+      keys: segment.keys?.volume?.length ? { volume: segment.keys.volume } : {},
+      detached_from: segment.id,
+      // Speech isn't ducked: said so, so that the server's default for a new song doesn't apply (ADR 0016).
+      duck: null,
+    };
+    made.push(rekeyed(clip, 0, secs));
+  });
+  if (!made.length) return null;
+  const detached = new Set(made.map((clip) => clip.detached_from));
+  return {
+    edits: {
+      ...edits,
+      segments: edits.segments.map((segment) => (detached.has(segment.id) ? { ...segment, muted: true } : segment)),
+      music: [...edits.music, ...made],
+    },
+    pick: picked(...made.map((clip) => ({ kind: "music" as const, id: clip.id }))),
+  };
+}
+
+/**
+ * Reattach (GLOSSARY.md, Detach) of Segment `id`, as one change: every Music Clip Detached from it
+ * deleted, however it was moved, trimmed or split since, and the Segment unmuted. Nothing changed on
+ * them is copied back. The Segment is picked; null where it isn't offered (canReattach).
+ */
+export function reattach(scene: { edits: AdvancedEdits; pick: Pick }, id: string): Outcome | null {
+  const { edits } = scene;
+  if (!canReattach(edits, id)) return null;
+  return {
+    edits: {
+      ...edits,
+      segments: edits.segments.map((segment) => (segment.id === id ? { ...segment, muted: false } : segment)),
+      music: edits.music.filter((clip) => clip.detached_from !== id),
+    },
+    pick: picked({ kind: "segment", id }),
+  };
+}
+
+/** Detach and Reattach from an item's context menu and the inspector: see detach and reattach. */
+export interface Detacher {
+  canDetach: (id: string) => boolean;
+  canReattach: (id: string) => boolean;
+  // Segment `id`'s sound Detached, and that of the other picked Segments when it is picked with them.
+  detach: (id: string) => void;
+  reattach: (id: string) => void;
+}
+
+/** Detach and Reattach in `scene`, the Main Track as planned being `track`, each outcome applied (`apply`) as one change. */
+export function detacher(scene: PickContext, track: PlayedSegment[], sounded: (media: string) => boolean, apply: (outcome: Outcome) => void): Detacher {
+  const run = (outcome: Outcome | null) => outcome && apply(outcome);
+  return {
+    canDetach: (id) => canDetach(scene.edits, id, sounded),
+    canReattach: (id) => canReattach(scene.edits, id),
+    detach: (id) => {
+      const ids = isPicked(scene.pick, "segment", id) ? pickedItems(scene).segments.map((segment) => segment.id) : [id];
+      run(detach(scene, ids, track, sounded));
+    },
+    reattach: (id) => run(reattach(scene, id)),
+  };
+}
+
+/**
+ * `item`, a Music Clip new to the Candidate (a part of a split, a copy, a paste), still Detached from
+ * its Segment while `segments` have it, else no longer: the API takes a new `detached_from` only when
+ * it names a Segment of the Candidate. Any other item as it is.
+ */
+export function stillDetached<T extends object>(item: T, segments: ClipSegment[]): T {
+  const from = "detached_from" in item ? (item.detached_from as string | null | undefined) : undefined;
+  return from && !segments.some((segment) => segment.id === from) ? { ...item, detached_from: null } : item;
 }
 
 /** A Segment, a video Overlay or a Music Clip, which has a Speed. */

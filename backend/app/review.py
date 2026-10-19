@@ -244,6 +244,8 @@ def update(
     )
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
+    if change.music is not None:
+        _check_detached(new.music, old.music, new.main_track())
     edited = _look(new) != _look(old)
     new = replace(new, edited=old.edited or edited)
     if replace(new, selected=old.selected) != old:
@@ -304,10 +306,13 @@ def _merged(edits: list[WordEdit]) -> list[WordEdit]:
 def _ducked_by_default(music: list[MusicClip], old: list[MusicClip], unset: frozenset[str]) -> list[MusicClip]:
     """The Music Clips an edit gives, a song's (or a video's sound's) that is new to the Candidate
     and whose `duck` the edit didn't set (`unset`, by id) ducked by DEFAULT_DUCK: Music Clips added
-    from now on duck, and stored ones don't (docs/adr/0016)."""
+    from now on duck, and stored ones don't (docs/adr/0016). A Detached sound (`detached_from`) is
+    speech, a video's too, and isn't ducked."""
     had = {clip.id for clip in old}
     return [
-        replace(clip, duck=DEFAULT_DUCK) if clip.id in unset and clip.id not in had and clip.media is not None else clip
+        replace(clip, duck=DEFAULT_DUCK)
+        if clip.id in unset and clip.id not in had and clip.media is not None and clip.detached_from is None
+        else clip
         for clip in music
     ]
 
@@ -337,6 +342,17 @@ def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
         raise InvalidEdit(f"{what} needs its framing: the transform, crop and background it frames the episode by")
     if layout is not Layout.MANUAL and framing is not None:
         raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
+
+
+def _check_detached(music: list[MusicClip], old: list[MusicClip], segments: list[Segment]) -> None:
+    """InvalidEdit for a Music Clip whose `detached_from` names no Segment of `segments` (the Main
+    Track after the change), but for one that carried it already (by its id in `old`), which keeps
+    it after its Segment is gone."""
+    ids = {segment.id for segment in segments}
+    carried = {(clip.id, clip.detached_from) for clip in old}
+    for clip in music:
+        if clip.detached_from is not None and clip.detached_from not in ids and (clip.id, clip.detached_from) not in carried:
+            raise InvalidEdit(f"Music Clip {clip.id} is Detached from Segment {clip.detached_from}, which the clip doesn't have")
 
 
 def _check_ids(kind: str, ids: list[str]) -> None:

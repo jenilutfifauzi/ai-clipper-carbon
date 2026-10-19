@@ -46,6 +46,7 @@ import { usePreviewPlan } from "../editor/usePreviewPlan";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   changeMusic,
+  detacher,
   dragSegment,
   freezer,
   gestureSpeed,
@@ -100,7 +101,7 @@ import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
-import { ItemMenu } from "./ItemMenu";
+import { ItemMenu, type MenuEntry } from "./ItemMenu";
 import { attachmentName, download, itemSound, type ItemSound } from "./itemSound";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
@@ -627,6 +628,16 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const actions = itemActions(scene, () => playback.time, apply, clip);
   const splits = splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
+  // Detach and Reattach (GLOSSARY.md), from a Segment's or a Music Clip's context menu and the inspector.
+  const detaching = detacher(scene, track, (media) => mediaById.get(media)?.has_audio === true, apply);
+  function detachEntries(item: ItemRef): MenuEntry[] {
+    const segment = item.kind === "segment" ? item.id : item.kind === "music" ? edits.music.find((clip) => clip.id === item.id)?.detached_from : null;
+    if (!segment) return [];
+    return [
+      ...(item.kind === "segment" && detaching.canDetach(segment) ? [{ label: "Detach audio", onSelect: () => detaching.detach(segment) }] : []),
+      ...(detaching.canReattach(segment) ? [{ label: "Reattach audio", onSelect: () => detaching.reattach(segment) }] : []),
+    ];
+  }
   // A Segment's, video Overlay's or Music Clip's Reverse turned on or off (the inspector's switch, R): one change.
   function setItemReverse(item: SpeedRef, reverse: boolean) {
     const outcome = setReverse(scene, item, reverse);
@@ -1081,6 +1092,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
+        detaching={detaching}
       />
     </KeyingContext.Provider>
   );
@@ -1172,7 +1184,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
       </ConfirmDialog>
       <ChangeNotice notice={notice} onClose={closeNotice} />
-      {itemMenu && <SoundMenu opened={itemMenu} sound={itemSound(itemMenu.item, edits, mediaById)} saving={savingSound} onSave={saveSound} onClose={setItemMenu} />}
+      {itemMenu && <SoundMenu opened={itemMenu} sound={itemSound(itemMenu.item, edits, mediaById)} detaching={detachEntries(itemMenu.item)} saving={savingSound} onSave={saveSound} onClose={setItemMenu} />}
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
@@ -1432,18 +1444,21 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 }
 
 /**
- * A Segment's, Music Clip's or Overlay's context menu: Save sound as WAV, off while another is being
- * made or when the item has no sound to save. It closes itself, unless another has opened since.
+ * A Segment's, Music Clip's or Overlay's context menu: Detach or Reattach audio where offered
+ * (`detaching`), then Save sound as WAV, off while another is being made or when the item has no
+ * sound to save. It closes itself, unless another has opened since.
  */
 function SoundMenu({
   opened,
   sound,
+  detaching,
   saving,
   onSave,
   onClose,
 }: {
   opened: { item: ItemRef; at: { x: number; y: number } };
   sound: ItemSound | null;
+  detaching: MenuEntry[];
   saving: boolean;
   onSave: (sound: ItemSound) => void;
   onClose: (close: (now: typeof opened | null) => typeof opened | null) => void;
@@ -1455,7 +1470,7 @@ function SoundMenu({
       key={`${opened.item.kind}:${opened.item.id}:${opened.at.x}:${opened.at.y}`}
       label={sound.name}
       at={opened.at}
-      entries={[{ label: "Save sound as WAV", onSelect: () => onSave(sound), disabled: sound.silent ?? (saving ? "A WAV is being made" : null) }]}
+      entries={[...detaching, { label: "Save sound as WAV", onSelect: () => onSave(sound), disabled: sound.silent ?? (saving ? "A WAV is being made" : null) }]}
       onClose={close}
     />
   );
