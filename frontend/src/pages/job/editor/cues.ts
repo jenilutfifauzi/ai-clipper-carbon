@@ -1,4 +1,5 @@
 import type { Cue, CueKey, Word } from "../../../api";
+import { keyText } from "./timelineKey";
 
 /** A Cue's Words, line after line. */
 export function cueWords(cue: Cue): Word[] {
@@ -27,8 +28,8 @@ export function cueLineMiddle(cue: Cue, row: number): number {
   return cue.area.y + cue.area.height / 2 + (row - (cue.lines.length - 1) / 2) * cue.size;
 }
 
-/** A Cue on the preview's stage, by its key: "cue:<media>@<at>" (no media: the Source's). */
-export const cueStageId = (key: CueKey): `cue:${string}` => `cue:${key.media ?? ""}@${key.at.toFixed(3)}`;
+/** A Cue on the preview's stage, by its key: "cue:<media>@<at>" (no media: the Source's; keyText). */
+export const cueStageId = (key: CueKey): `cue:${string}` => `cue:${keyText(key)}`;
 
 /** The key of the Cue a stage id names (cueStageId). */
 export function cueKeyOf(id: `cue:${string}`): CueKey {

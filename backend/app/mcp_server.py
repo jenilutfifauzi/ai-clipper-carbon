@@ -65,12 +65,12 @@ from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
-from app.planner import Box, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
+from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
-from app.styles import StyleOverrides
+from app.styles import LINE_LIMITS, StyleOverrides
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
 GLOSSARY = REPO_ROOT / "GLOSSARY.md"
@@ -99,6 +99,18 @@ ITEMS: dict[str, tuple[type, str | tuple[str, ...]]] = {
     "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, ("at", "media")),
     "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, ("at", "media")),
 }
+
+
+
+def _line_limits(name: str) -> str:
+    """The editor's Phrase or Sentence (styles.py's LINE_LIMITS), as the instructions name it."""
+    limits = LINE_LIMITS[name]
+    lines, words = limits["max_lines"], limits["max_words"]
+    return (
+        f"{lines} line{'' if lines == 1 else 's'}, {limits['max_chars']} characters, "
+        f"{'no word limit' if words is None else f'{words} words'}, {limits['max_secs']:g} s, {limits['pause_secs']:g} s pause"
+    )
+
 
 INSTRUCTIONS = f"""\
 AI Clipper turns a long video (a podcast episode) into vertical short Clips. Words are those of
@@ -199,8 +211,8 @@ Edits:
 - The captions are shown in Cues of up to the caption style's max_lines lines (1..3), each line of
   at most max_chars characters and max_words Words, its lines balanced; a Cue lasts at most max_secs
   and ends at a pause of pause_secs or a sentence's end. A Word Edit's break_before starts a line,
-  and a Cue when the Cue has all its lines. The editor's Phrase is 1 line, 16 characters, no word
-  limit, 1.4 s, 0.5 s pause; its Sentence 2 lines, 24 characters, no word limit, 5 s, 0.7 s pause.
+  and a Cue when the Cue has all its lines. The editor's Phrase is {_line_limits("phrase")};
+  its Sentence {_line_limits("sentence")}.
 - The dry run's `captions` are the Cues: start and end (Timeline time), `lines` as shown, `plain`
   (the Words as written, with the Word Edits), `key` (the {{at, media}} a Cue Edit of it names),
   `edited` when a Cue Edit applies, `joinable` (whether it fits merged into the Cue before),
@@ -578,7 +590,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         job_id: str,
         candidate_id: str,
         kind: Literal[*ITEMS, "style_overrides"],  # type: ignore[valid-type]
-        keys: list[str | float | TimelineKey],
+        keys: list[str | float | CueKey],
     ) -> dict:
         """Remove some of a Candidate's items of one kind, by key: ids; a Transition's `after`; a
         Word Edit's or Cue Edit's `at` ({at, media} for a video's) or a Layout Override's `at`; for
@@ -598,7 +610,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
             wanted_items = [_key_item(key, wanted) for wanted in keys]
             for wanted, given in zip(wanted_items, keys):
                 if not any(_same_key(item, wanted, key) for item in items):
-                    shown = given.model_dump(exclude_none=True) if isinstance(given, TimelineKey) else given
+                    shown = _key_shown(given)
                     raise ToolError(f"Candidate {candidate_id} has no {kind} item with {_key_name(key)} {shown}")
             return {kind: [item for item in items if not any(_same_key(item, wanted, key) for wanted in wanted_items)]}
 
@@ -1050,23 +1062,24 @@ def _same(a: Any, b: Any) -> bool:
     return str(a) == str(b)
 
 
-class TimelineKey(BaseModel):
-    # A Word Edit's or Cue Edit's key: `at`, on the Source's timeline, or with `media` on that video's.
-    model_config = ConfigDict(extra="forbid")
-    at: float
-    media: str | None = None
-
-
 def _same_key(item: dict, other: dict, key: str | tuple[str, ...]) -> bool:
     """Whether `item` and `other` (an item or a patch, a field it lacks being None) have one key."""
     return all(_same(item.get(name), other.get(name)) for name in ((key,) if isinstance(key, str) else key))
 
 
-def _key_item(key: str | tuple[str, ...], wanted: str | float | TimelineKey) -> dict:
-    """A key `remove_candidate_items` is given, as the fields of the item it names."""
-    if isinstance(wanted, TimelineKey):
-        return wanted.model_dump()
+def _key_item(key: str | tuple[str, ...], wanted: str | float | CueKey) -> dict:
+    """A key `remove_candidate_items` is given (a Word Edit's or Cue Edit's {at, media} is a CueKey),
+    as the fields of the item it names."""
+    if isinstance(wanted, CueKey):
+        return dataclasses.asdict(wanted)
     return {key if isinstance(key, str) else key[0]: wanted}
+
+
+def _key_shown(wanted: str | float | CueKey) -> object:
+    """A key `remove_candidate_items` is given, as a refusal names it."""
+    if isinstance(wanted, CueKey):
+        return {name: value for name, value in dataclasses.asdict(wanted).items() if value is not None}
+    return wanted
 
 
 def _key_name(key: str | tuple[str, ...]) -> str:
@@ -1083,6 +1096,7 @@ def _merge(items: list[dict], patches: list[dict], key: str | tuple[str, ...]) -
         else:
             merged[at] = _merged_fields(merged[at], patch)
     if "at" in ((key,) if isinstance(key, str) else key):
+        # In the order the backend saves them (review.py's _timeline_key).
         merged.sort(key=lambda item: (item.get("media") or "", item["at"]))
     return merged
 

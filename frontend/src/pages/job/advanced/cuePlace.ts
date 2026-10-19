@@ -2,7 +2,8 @@ import { CUE_MAX_SCALE, CUE_MIN_SCALE, type CueEdit, type CueKey } from "../../.
 import { FRAME } from "../editor/picture";
 import { placedOverrides, type Place } from "../editor/placing";
 import type { Outcome } from "./actions";
-import { afterReset, cueEditOf, cueOf, placed, withCueEdit, type CueScene } from "./cueEdits";
+import { timelineOf } from "../editor/timelineKey";
+import { afterReset, bare, captionsLocked, cueEditOf, cueOf, editablePlan, placed, withCueEdit, type CueScene } from "./cueEdits";
 import type { Pick } from "./pick";
 
 // A picked Cue moved and scaled on its own on the preview: its Cue Edit's `x`, `y` and `scale`
@@ -20,7 +21,7 @@ const scaled = (value: number) => Math.round(Math.min(Math.max(value, CUE_MIN_SC
  */
 export function placedCaptions(scene: CueScene, pick: Pick, place: Place): Outcome | null {
   const { edits, plan } = scene;
-  if (scene.locked?.includes("captions")) return null;
+  if (captionsLocked(scene)) return null;
   if (pick?.kind === "captions") return { edits: { ...edits, style_overrides: placedOverrides(edits.style_overrides, "caption", place) }, pick };
   if (pick?.kind !== "cue" || !plan) return null;
   const size = place.size === null ? {} : { scale: place.size / plan.caption_style.size };
@@ -33,11 +34,12 @@ export function placedCaptions(scene: CueScene, pick: Pick, place: Place): Outco
  * Track is locked or the plan has no such Cue.
  */
 export function placeCue(scene: CueScene, key: CueKey, fields: { x?: number; y?: number; scale?: number }): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan || !cueOf(plan, key)) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan || !cueOf(plan, key)) return null;
   const current = cueEditOf(edits.cue_edits, plan, key);
   // A join that didn't take starts its Cue: placed, it is a start.
-  const next: CueEdit = { ...(current ?? { at: key.at, media: key.media ?? null, shift: 0, start_delta: 0, end_delta: 0 }), join: false };
+  const next: CueEdit = { ...(current ?? bare(key.at, timelineOf(key))), join: false };
   if (fields.x !== undefined) next.x = Math.round(Math.min(Math.max(fields.x, 0), FRAME.width));
   if (fields.y !== undefined) next.y = Math.round(Math.min(Math.max(fields.y, 0), FRAME.height));
   if (fields.scale !== undefined) next.scale = scaled(fields.scale);
@@ -50,8 +52,9 @@ export function placeCue(scene: CueScene, key: CueKey, fields: { x?: number; y?:
  * Track is locked.
  */
 export function resetCuePosition(scene: CueScene, key: CueKey): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan) return null;
   const current = cueEditOf(edits.cue_edits, plan, key);
   if (!current || !placed(current)) return null;
   const reset = { ...current, x: null, y: null, scale: null };

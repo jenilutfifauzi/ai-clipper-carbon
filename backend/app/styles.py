@@ -247,6 +247,16 @@ class CaptionStyle(_ReadsOldShadow):
     pause_secs: Annotated[float, Field(ge=0.1, le=5)] = 0.5
 
 
+# Phrase (one short line: CaptionStyle's defaults) and Sentence (up to two lines, to a sentence's
+# end): line limits the editor's Caption Style panel fills in one click, and the MCP's instructions
+# name. Not stored: a style is one when its values are. The frontend's editor/lineLimits.ts holds
+# them too, both checked against tests/fixtures/line_limits.json.
+LINE_LIMITS: dict[str, dict[str, int | float | None]] = {
+    "phrase": {"max_lines": 1, "max_chars": 16, "max_words": None, "max_secs": 1.4, "pause_secs": 0.5},
+    "sentence": {"max_lines": 2, "max_chars": 24, "max_words": None, "max_secs": 5, "pause_secs": 0.7},
+}
+
+
 @dataclass(frozen=True)
 class HookStyle(_ReadsOldShadow):
     shape: HookShape = HookShape.BLOCK

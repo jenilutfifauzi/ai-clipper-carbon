@@ -1,5 +1,6 @@
 import type { Cue, PreviewWord, WordEdit } from "../../../api";
 import { cueWords } from "./cues";
+import { byKey, sameKey } from "./timelineKey";
 
 // The longest a Word Edit's text can be (candidates.py's WORD_EDIT_MAX_CHARS).
 export const WORD_EDIT_MAX_CHARS = 40;
@@ -8,10 +9,6 @@ export const WORD_EDIT_MAX_CHARS = 40;
 // by the Word's time on its timeline (the Source's, or with `media` its Media Library item's, ADR
 // 0020), which a cut Clip may show twice.
 export const editKey = (word: PreviewWord) => word.edit?.at ?? word.at;
-
-/** Whether `a` and `b` (Word Edits, or anything keyed as one) are keyed alike: one time of one timeline. */
-export const sameKey = (a: { at: number; media?: string | null }, b: { at: number; media?: string | null }) =>
-  Math.round(a.at * 1000) === Math.round(b.at * 1000) && (a.media ?? null) === (b.media ?? null);
 
 /** `edits` with `word`'s changed by `change`: an edit back to the Word as it is goes. */
 export function withWordEdit(edits: WordEdit[], word: PreviewWord, change: Partial<Pick<WordEdit, "text" | "break_before">>): WordEdit[] {
@@ -25,7 +22,7 @@ export function withWordEdit(edits: WordEdit[], word: PreviewWord, change: Parti
   };
   if (next.text === word.text) next.text = null;
   const others = edits.filter((edit) => !sameKey(edit, key));
-  return next.text === null && !next.break_before ? others : [...others, next].sort((a, b) => a.at - b.at);
+  return next.text === null && !next.break_before ? others : [...others, next].sort(byKey);
 }
 
 /**
@@ -34,17 +31,17 @@ export function withWordEdit(edits: WordEdit[], word: PreviewWord, change: Parti
  * Cue's, in a Clip cut into Segments, so they only choose between runs that read the same; with
  * none, each Word said at the middle of one of the Cue's. Empty when the Cue's Words can't be found.
  */
-export function lineWords(line: Cue, words: PreviewWord[]): PreviewWord[] {
+export function cueWordsOf(cue: Cue, words: PreviewWord[]): PreviewWord[] {
   const shown = words.filter((word) => word.edit?.text !== "");
-  const wanted = cueWords(line).map((word) => plain(word.text));
+  const wanted = cueWords(cue).map((word) => plain(word.text));
   let best: { at: number; off: number } | null = null;
   for (let at = 0; at + wanted.length <= shown.length; at++) {
     if (!wanted.every((text, i) => plain(shown[at + i].edit?.text ?? shown[at + i].text) === text)) continue;
-    const off = Math.abs(shown[at].start - line.start);
+    const off = Math.abs(shown[at].start - cue.start);
     if (!best || off < best.off) best = { at, off };
   }
   if (best) return shown.slice(best.at, best.at + wanted.length);
-  const said = cueWords(line).map((word) => {
+  const said = cueWords(cue).map((word) => {
     const middle = (word.start + word.end) / 2;
     return shown.find((w) => w.start <= middle && middle < w.end);
   });

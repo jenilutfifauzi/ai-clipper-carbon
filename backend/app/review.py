@@ -278,18 +278,24 @@ def _look(candidate: Candidate) -> tuple:
     )
 
 
+def _timeline_key(edit: WordEdit | CueEdit) -> tuple[str, float]:
+    """A Word Edit's or Cue Edit's key, its time to the millisecond on its timeline (the Source's, or
+    a Media Library item's), in the order they are kept: the Source's first, then each item's, each
+    in time order (as the frontend's timelineKey.ts byKey and the MCP's merge keep them)."""
+    return edit.media or "", round(edit.at, 3)
+
+
 def _merged(edits: list[WordEdit]) -> list[WordEdit]:
-    """The edits in time order, leaving out those that change nothing; of two at the same time of one
-    timeline (the Source's, or a Media Library item's), the later."""
-    by_key = {(edit.media, round(edit.at, 3)): edit for edit in edits}
-    ordered = sorted(by_key.items(), key=lambda pair: (pair[0][1], pair[0][0] or ""))
-    return [edit for _, edit in ordered if edit.text is not None or edit.break_before]
+    """The edits by their key (`_timeline_key`), leaving out those that change nothing; of two at the
+    same time of one timeline, the later."""
+    by_key = {_timeline_key(edit): edit for edit in edits}
+    return [edit for _, edit in sorted(by_key.items()) if edit.text is not None or edit.break_before]
 
 
 def _keyed(edits: list[CueEdit]) -> list[CueEdit]:
-    """The Cue Edits by their key, the Source's first and then each item's, in time order; of two at
-    the same time on one timeline, the later. One that changes nothing still starts its Cue."""
-    by_key = {(edit.media or "", round(edit.at, 3)): edit for edit in edits}
+    """The Cue Edits by their key (`_timeline_key`); of two at the same time on one timeline, the
+    later. One that changes nothing still starts its Cue."""
+    by_key = {_timeline_key(edit): edit for edit in edits}
     return [edit for _, edit in sorted(by_key.items())]
 
 

@@ -26,6 +26,7 @@ import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
 import type { PlayedSegment, Playback } from "../editor/playback";
 import { offsetAt, overlayTime, rangeOf } from "../editor/segmentTime";
+import { keyText, sameKey } from "../editor/timelineKey";
 import { gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
 import { DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
@@ -34,7 +35,7 @@ import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
-import { clicked, isPicked, itemsOf, keyOf, picked, sameCue, type ItemRef, type Pick } from "./pick";
+import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
 import { cueEditOf, shownCues, type CueDragStart } from "./cueEdits";
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
@@ -465,11 +466,11 @@ export function Tracks({
         ))}
         {plan &&
           shownCues(plan).map(({ cue, shown }) => {
-            const selected = pick?.kind === "cue" && sameCue(pick.key, cue.key);
+            const selected = pick?.kind === "cue" && sameKey(pick.key, cue.key);
             const text = cueText(cue);
             return (
               <TimelineItem
-                key={`${cue.key.media ?? ""}@${cue.key.at}`}
+                key={keyText(cue.key)}
                 geometry={geometry}
                 start={shown.start}
                 end={shown.end}

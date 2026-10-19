@@ -3,7 +3,7 @@ import { CUE_MAX_SCALE, CUE_MIN_SCALE, type CueKey, type RenderPlan } from "../.
 import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { FRAME } from "../editor/picture";
-import { sameCue } from "./pick";
+import { keyText, sameKey } from "../editor/timelineKey";
 import { cueEditOf } from "./cueEdits";
 import { placeCue, resetCuePosition } from "./cuePlace";
 import type { AdvancedEdits } from "./edits";
@@ -24,13 +24,13 @@ export function CuePlaceFields({
   plan: RenderPlan | null;
   onEdits: (edits: AdvancedEdits, group?: string) => void;
 }) {
-  const cue = plan?.captions.find((other) => sameCue(other.key, cueKey));
+  const cue = plan?.captions.find((other) => sameKey(other.key, cueKey));
   if (!plan || !cue) return null;
   const edit = cueEditOf(edits.cue_edits, plan, cueKey);
   const scene = { edits, plan };
   const set = (field: "x" | "y" | "scale") => (value: number) => {
     const outcome = placeCue(scene, cueKey, { [field]: value });
-    if (outcome) onEdits(outcome.edits, `cue-place:${field}:${cueKey.media ?? ""}@${cueKey.at}`);
+    if (outcome) onEdits(outcome.edits, `cue-place:${field}:${keyText(cueKey)}`);
   };
   const reset = resetCuePosition(scene, cueKey);
   return (

@@ -6,6 +6,8 @@ export type LineLimits = Pick<CaptionStyle, "max_lines" | "max_chars" | "max_wor
 /**
  * Phrase (one short line, today's defaults) and Sentence (up to two lines, to a sentence's end): line
  * limits the Caption Style panel fills in one click. Not stored: a style is one when its values are.
+ * The backend's (styles.py's LINE_LIMITS, which the MCP's instructions name): lineLimits.test.ts
+ * checks them against backend/tests/fixtures/line_limits.json, as the backend's tests do.
  */
 export const LINE_LIMITS = {
   phrase: { max_lines: 1, max_chars: 16, max_words: null, max_secs: 1.4, pause_secs: 0.5 },

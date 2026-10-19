@@ -299,7 +299,8 @@ export interface MediaItem {
 }
 
 // A video's Media Words for a Job (backend/app/api.py's MediaWordsView): in its language (its own,
-// else the Job's), their status, the error of a failure, and the Words when ready.
+// else the Job's), their status, the error of a failure, and the Words when ready. (Their status is
+// the item's, not a Segment's WordsStatus: a Segment of the video is "media" while they are "ready".)
 export interface MediaWords {
   media_id: string;
   language: string;
@@ -877,7 +878,8 @@ export interface PreviewWord extends Word {
 // Where a Segment's caption Words come from: "clip", transcribed for a Source Segment's range;
 // "transcript", the episode's until it is; "media", a video's Media Words; "pending", while they are
 // transcribed; "failed", when that failed (until a Retry); "off", a video's with its Captions switch
-// off; "none" (a Freeze frame, Reverse, a silent video, or the Job's captions off).
+// off; "none" (a Freeze frame, Reverse, a silent video, or the Job's captions off). A Segment's, not
+// its video's MediaWords status ("ready" there is "media" here).
 export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "failed" | "off" | "none";
 
 export interface PreviewPlan {

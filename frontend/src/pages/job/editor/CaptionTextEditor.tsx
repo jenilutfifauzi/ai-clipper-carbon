@@ -4,7 +4,8 @@ import type { PreviewPlan, PreviewWord, WordEdit } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
-import { editKey, sameKey, withWordEdit, WORD_EDIT_MAX_CHARS } from "./wordEdits";
+import { keyText, sameKey } from "./timelineKey";
+import { editKey, withWordEdit, WORD_EDIT_MAX_CHARS } from "./wordEdits";
 
 /**
  * The captions' Words, as the plan breaks them into lines, for correcting: click a Word to hear it
@@ -106,7 +107,7 @@ export function CaptionTextEditor({
       </Fold>
       {open !== null && words[open] && (
         <WordForm
-          key={`${words[open].media ?? ""}@${editKey(words[open])}`}
+          key={keyText({ at: editKey(words[open]), media: words[open].media })}
           word={words[open]}
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}

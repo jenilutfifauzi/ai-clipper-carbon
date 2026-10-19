@@ -115,11 +115,17 @@ def media_language(job: Job, item: MediaItem) -> str:
     return item.language or job.options.language
 
 
+def has_media_words(item: MediaItem) -> bool:
+    """Whether the item can have Media Words: a video with sound."""
+    return item.kind is MediaKind.VIDEO and item.has_audio
+
+
 def captioned_media(segment: Segment, item: MediaItem | None) -> bool:
-    """Whether the media Segment is captioned from its item's Media Words: a video with sound, played
-    forwards, not held as a Freeze frame, and its Captions switch not off."""
+    """Whether the media Segment is captioned from its item's Media Words: its item's a video with
+    sound (`has_media_words`), played forwards, not held as a Freeze frame, and its Captions switch
+    not off."""
     return (
-        segment.media is not None and item is not None and item.kind is MediaKind.VIDEO and item.has_audio
+        segment.media is not None and item is not None and has_media_words(item)
         and segment.hold is None and not segment.reverse and segment.captions is not False
     )
 
@@ -434,10 +440,11 @@ class Renders:
             if not job.options.captions:
                 raise JobConflict(f"Job {job_id}'s captions are off")
             item = self.media.get(media_id)
-            if item.kind is not MediaKind.VIDEO or not item.has_audio:
+            if not has_media_words(item):
                 raise MediaNotFound(media_id)
-            self.media_words.retry(item.id, media_language(job, item), again)
-            if self.media_words.status(item.id, media_language(job, item)) is not MediaWordsStatus.PENDING:
+            language = media_language(job, item)
+            self.media_words.retry(item.id, language, again)
+            if self.media_words.status(item.id, language) is not MediaWordsStatus.PENDING:
                 return clips, {}, False
             changes: dict = {"transcribing": list(dict.fromkeys([*job.transcribing, media_id]))}
             starting = job.status is JobStatus.REVIEW

@@ -110,7 +110,7 @@ from enum import StrEnum
 from functools import cache
 from typing import Protocol, TypeVar
 
-from pydantic import computed_field
+from pydantic import ConfigDict, computed_field
 
 from app.candidates import (
     KEY_RANGES,
@@ -428,6 +428,10 @@ class CaptionWord:
 class CueKey:
     """What a Cue is known by (and a Cue Edit keys it by): the middle of its first Word on that Word's
     timeline, `at` seconds into the Source (or, with `media`, into that Media Library item)."""
+
+    # A Word Edit's or Cue Edit's key is one too, as the MCP's remove_candidate_items takes it: a
+    # tool's argument, which takes no other field.
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
     at: float
     media: str | None = None

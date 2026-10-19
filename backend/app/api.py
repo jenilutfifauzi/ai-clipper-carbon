@@ -48,7 +48,7 @@ from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
-from app.rendering import NothingToRender, media_language, ranked_clips, source_copies
+from app.rendering import NothingToRender, has_media_words, media_language, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -862,7 +862,7 @@ def _media_words_view(store: JobStore, library: MediaStore, media_words: MediaWo
         raise HTTPException(404, f"No Job {job_id}") from None
     except MediaNotFound:
         raise HTTPException(404, f"No media {media_id}") from None
-    if item.kind is not MediaKind.VIDEO or not item.has_audio:
+    if not has_media_words(item):
         raise HTTPException(422, f"{item.name} isn't a video with sound: it has no Media Words")
     language = media_language(job, item)
     status = media_words.status(media_id, language)

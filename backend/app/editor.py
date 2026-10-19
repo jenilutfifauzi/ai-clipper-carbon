@@ -44,7 +44,9 @@ class WordsSource(StrEnum):
 
 
 class WordsStatus(StrEnum):
-    """Where a Segment's caption Words come from in a Preview Plan."""
+    """Where a Segment's caption Words come from in a Preview Plan. (Not MediaWordsStatus, in
+    app/media_words.py: that is what is saved of an item's Media Words; a video's Segment is `media`
+    while they are `ready`.)"""
 
     # A Source Segment's own, transcribed for its range.
     CLIP = "clip"

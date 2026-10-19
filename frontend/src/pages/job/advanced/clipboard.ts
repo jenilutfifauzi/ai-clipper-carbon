@@ -6,7 +6,7 @@ import { idOf, pickedItems, remove, type Outcome, type PickContext, type Timed, 
 import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
-import { sameKey } from "../editor/wordEdits";
+import { byKey, sameKey, segmentHolds, type TimelineKey } from "../editor/timelineKey";
 
 // The Clipboard (GLOSSARY.md): the Advanced Edit's copied items, kept in memory while the browser tab
 // is open, keeping their order and their times relative to one another.
@@ -47,16 +47,15 @@ export function copy(scene: PickContext, from: Place): Clipboard | null {
     const index = edits.segments.findIndex((segment) => segment.id === transition.after);
     return copied.has(transition.after) && copied.has(edits.segments[index + 1]?.id);
   });
-  const shows = (at: number, media: string | null = null) =>
-    segments.some((segment) => (segment.media ?? null) === media && segment.start <= at && at <= segment.end);
+  const shows = (key: TimelineKey) => segments.some((segment) => segmentHolds(segment, key));
   return {
     from,
     segments: segments.map((segment) => ({ segment, at: round((played[edits.segments.indexOf(segment)]?.start ?? 0) - start) })),
     transitions,
     layers: layers.map(({ kind, item }) => ({ kind, item, at: round(item.start - start) })),
-    word_edits: edits.word_edits.filter((edit) => shows(edit.at, edit.media ?? null)),
-    layout_overrides: edits.layout_overrides.filter((override) => shows(override.at)),
-    cue_edits: edits.cue_edits.filter((edit) => shows(edit.at, edit.media ?? null)),
+    word_edits: edits.word_edits.filter(shows),
+    layout_overrides: edits.layout_overrides.filter(shows),
+    cue_edits: edits.cue_edits.filter(shows),
   };
 }
 
@@ -139,11 +138,11 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     copied.filter(
       (edit) =>
         (edit.media || into) &&
-        kept.some(({ segment }) => (segment.media ?? null) === (edit.media ?? null) && segment.start <= edit.at && edit.at <= segment.end) &&
+        kept.some(({ segment }) => segmentHolds(segment, edit)) &&
         !own.some((mine) => (edit.media ? sameKey(mine, edit) : !mine.media && sameWord(mine.at, edit.at))),
     );
   const wordEdits = brought(clipboard.word_edits, edits.word_edits);
-  if (wordEdits.length) next.word_edits = [...edits.word_edits, ...wordEdits].sort((a, b) => a.at - b.at);
+  if (wordEdits.length) next.word_edits = [...edits.word_edits, ...wordEdits].sort(byKey);
   const cueEdits = brought(clipboard.cue_edits ?? [], edits.cue_edits);
   if (cueEdits.length) next.cue_edits = [...edits.cue_edits, ...cueEdits];
   if (into && segments.length) {

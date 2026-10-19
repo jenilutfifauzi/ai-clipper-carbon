@@ -232,6 +232,6 @@ describe("merging another editor's Cue Edits", () => {
     const base = { cue_edits: [edit(103.1)] };
     const { merged, collisions } = mergeEdits(base, { cue_edits: [edit(103.1, { shift: 0.2 })] }, { cue_edits: [edit(103.1, { shift: -0.2 })] });
     expect(merged.cue_edits).toEqual([edit(103.1, { shift: 0.2 })]);
-    expect(collisions).toEqual([{ field: "cue_edits", item: "103.1@" }]);
+    expect(collisions).toEqual([{ field: "cue_edits", item: "@103.100" }]);
   });
 });

@@ -656,23 +656,23 @@ function stageItems(
   if (plan.captions.length && captionFont && !controls.fixed?.includes("captions") && cues && !controls.selected.includes("captions")) {
     // Each Cue on its own: its entries either side of a Layout change are one.
     const style = plan.caption_style;
-    const ids = plan.captions.map((event) => cueStageId(event.key));
-    plan.captions.forEach((event, line) => {
-      if (line > 0 && ids[line - 1] === ids[line]) return;
+    const ids = plan.captions.map((cue) => cueStageId(cue.key));
+    plan.captions.forEach((cue, index) => {
+      if (index > 0 && ids[index - 1] === ids[index]) return;
       // Resized from its size as shown, which a line too wide for its area holds back as it grows.
-      const set = event.size;
+      const set = cue.size;
       items.push({
-        id: ids[line],
-        label: `Caption: ${event.plain.join(" ")}`,
-        shows: plan.captions.flatMap((other, i) => (ids[i] === ids[line] ? [{ start: other.start, end: other.end, area: captionGrab(other, captionFont, style) }] : [])),
+        id: ids[index],
+        label: `Caption: ${cue.plain.join(" ")}`,
+        shows: plan.captions.flatMap((other, i) => (ids[i] === ids[index] ? [{ start: other.start, end: other.end, area: captionGrab(other, captionFont, style) }] : [])),
         size: { now: set, min: Math.min(set, style.size * CUE_MIN_SCALE), max: Math.max(set, style.size * CUE_MAX_SCALE) },
         centreY: CAPTION_CENTRES,
-        onPlace: (area, size, group) => cues.onPlace(event.key, { ...middle(area), size }, group),
+        onPlace: (area, size, group) => cues.onPlace(cue.key, { ...middle(area), size }, group),
         onEdit:
           edit &&
           (() => {
-            const shown = plan.captions.findIndex((other, i) => ids[i] === ids[line] && other.start <= now() && now() < other.end);
-            edit({ kind: "captions", line: shown === -1 ? line : shown });
+            const shown = plan.captions.findIndex((other, i) => ids[i] === ids[index] && other.start <= now() && now() < other.end);
+            edit({ kind: "captions", line: shown === -1 ? index : shown });
           }),
       });
     });
@@ -681,14 +681,14 @@ function stageItems(
     items.push({
       id: "captions",
       label: "Captions (every line moves together)",
-      shows: plan.captions.map((event) => ({ start: event.start, end: event.end, area: captionGrab(event, captionFont, style) })),
+      shows: plan.captions.map((cue) => ({ start: cue.start, end: cue.end, area: captionGrab(cue, captionFont, style) })),
       size: { now: style.size, ...CAPTION_SIZES },
       centreY: CAPTION_CENTRES,
       onPlace: (area, size, group) => controls.onPlace("captions", { ...middle(area), size }, group),
       onEdit:
         edit &&
         (() => {
-          const line = plan.captions.findIndex((event) => event.start <= now() && now() < event.end);
+          const line = plan.captions.findIndex((cue) => cue.start <= now() && now() < cue.end);
           if (line !== -1) edit({ kind: "captions", line });
         }),
     });
@@ -715,16 +715,16 @@ function stageItems(
 }
 
 // What can be grabbed of a Cue: its lines' letters (and outline and tracking) as set, padded, around its middle.
-function captionGrab(event: Cue, font: FontInfo, style: CaptionStyle): Box {
-  let width = event.area.width;
+function captionGrab(cue: Cue, font: FontInfo, style: CaptionStyle): Box {
+  let width = cue.area.width;
   if (measure) {
-    measure.font = `${cssFontSize(font, event.size)}px "${fontFamily(font.id)}"`;
-    const lines = event.lines.map((line) => line.map((word) => word.text).join(" "));
+    measure.font = `${cssFontSize(font, cue.size)}px "${fontFamily(font.id)}"`;
+    const lines = cue.lines.map((line) => line.map((word) => word.text).join(" "));
     const letters = Math.max(...lines.map((line) => trackedWidth(line, (text) => measure.measureText(text).width, style.tracking)));
-    width = Math.min(letters + 2 * style.outline + 2 * CAPTION_GRAB_PAD, event.area.width);
+    width = Math.min(letters + 2 * style.outline + 2 * CAPTION_GRAB_PAD, cue.area.width);
   }
-  const height = event.lines.length * event.size + 2 * CAPTION_GRAB_PAD;
-  const { x, y } = { x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 };
+  const height = cue.lines.length * cue.size + 2 * CAPTION_GRAB_PAD;
+  const { x, y } = { x: cue.area.x + cue.area.width / 2, y: cue.area.y + cue.area.height / 2 };
   return { x: Math.round(x - width / 2), y: Math.round(y - height / 2), width: Math.round(width), height: Math.round(height) };
 }
 
@@ -954,38 +954,38 @@ function SlotVideo({
  */
 function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback; edit: StageEdit }) {
   const key = useShown(playback, (time) => {
-    const event = plan.captions.findIndex((caption) => caption.start <= time && time < caption.end);
-    if (event === -1) return "";
-    const word = cueWords(plan.captions[event]).findIndex((w) => w.start <= time && time < w.end);
-    return `${event}:${word}`;
+    const index = plan.captions.findIndex((cue) => cue.start <= time && time < cue.end);
+    if (index === -1) return "";
+    const word = cueWords(plan.captions[index]).findIndex((w) => w.start <= time && time < w.end);
+    return `${index}:${word}`;
   });
   if (!key || !font) return null;
-  const [event, word] = key.split(":").map(Number);
-  const line = plan.captions[event];
+  const [index, word] = key.split(":").map(Number);
+  const cue = plan.captions[index];
   return (
-    <g transform={edit.transform(cueStageId(line.key), line.area) ?? edit.transform("captions", line.area)}>
-      <CaptionLines event={line} active={word} plan={plan} font={font} />
+    <g transform={edit.transform(cueStageId(cue.key), cue.area) ?? edit.transform("captions", cue.area)}>
+      <CaptionLines cue={cue} active={word} plan={plan} font={font} />
     </g>
   );
 }
 
 /** A Cue's lines, one under another, its Word `active` (counted across them) highlighted. */
-function CaptionLines({ event, active, plan, font }: { event: Cue; active: number; plan: RenderPlan; font: FontInfo }) {
-  const [row, index] = cueWordAt(event, active);
-  return event.lines.map((_, i) => (
-    <CaptionLine key={i} event={event} row={i} active={i === row ? index : -1} plan={plan} font={font} />
+function CaptionLines({ cue, active, plan, font }: { cue: Cue; active: number; plan: RenderPlan; font: FontInfo }) {
+  const [row, index] = cueWordAt(cue, active);
+  return cue.lines.map((_, i) => (
+    <CaptionLine key={i} cue={cue} row={i} active={i === row ? index : -1} plan={plan} font={font} />
   ));
 }
 
-function CaptionLine({ event, row, active, plan, font }: { event: Cue; row: number; active: number; plan: RenderPlan; font: FontInfo }) {
+function CaptionLine({ cue, row, active, plan, font }: { cue: Cue; row: number; active: number; plan: RenderPlan; font: FontInfo }) {
   const style = plan.caption_style;
-  const { area, size } = event;
+  const { area, size } = cue;
   const centreX = area.x + area.width / 2;
   // libass centres each line's ascent-plus-descent box, which is the font size, on its middle.
-  const baseline = cueLineMiddle(event, row) - size / 2 + (font.ascent / font.units) * size;
+  const baseline = cueLineMiddle(cue, row) - size / 2 + (font.ascent / font.units) * size;
   const fontSize = cssFontSize(font, size);
   const family = fontFamily(font.id);
-  const words = event.lines[row].map((word) => word.text);
+  const words = cue.lines[row].map((word) => word.text);
   const tspans = (colours: boolean) =>
     words.map((text, i) => (
       <tspan key={i} fill={colours && i === active && style.highlight === "colour" ? style.active_colour : undefined}>

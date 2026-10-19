@@ -1,4 +1,5 @@
 import type { Candidate, CandidateChange } from "../../../api";
+import { keyText, type TimelineKey } from "./timelineKey";
 
 /**
  * Merging an editor's unsaved edits onto a newer Revision of its Candidate (ADR 0003), three ways:
@@ -120,18 +121,17 @@ export function collidedParts(collisions: Collision[]): string {
   return [...new Set(collisions.map((collision) => PART_OF[collision.field]))].join(", ");
 }
 
-// One field of an item's key: a timed item's `at` to the millisecond (as the backend de-duplicates).
-const keyPart = (item: Item, name: string) =>
-  name === "at" && typeof item.at === "number" ? String(Math.round(item.at * 1000) / 1000) : String(item[name] ?? "");
+// An item's key: a timed item's (keyed by `at`, and `media` when it has one) its time on its
+// timeline to the millisecond, as the backend de-duplicates (keyText); another's its key field's.
+const keyOf = (item: Item, key: string | readonly string[]) =>
+  key === "at" || typeof key !== "string" ? keyText(item as unknown as TimelineKey) : String(item[key] ?? "");
 
 // Edits seen as plain JSON fields.
 const fields = (edits: Edits) => edits as Record<string, unknown>;
 
 function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[], collisions: Collision[]): Item[] {
   const key = KEYS[field];
-  const fields: readonly string[] = typeof key === "string" ? [key] : key;
-  const keyOf = (item: Item) => fields.map((name) => keyPart(item, name)).join("@");
-  const byKey = (items: Item[]) => new Map(items.map((item) => [keyOf(item), item]));
+  const byKey = (items: Item[]) => new Map(items.map((item) => [keyOf(item, key), item]));
   const [b, m, t] = [byKey(base), byKey(mine), byKey(theirs)];
   const kept = new Map<string, Item>();
   for (const id of new Set([...b.keys(), ...m.keys(), ...t.keys()])) {
@@ -140,7 +140,7 @@ function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[],
     if (result.value) kept.set(id, result.value);
   }
   const order = ordered(
-    [base, mine, theirs].map((items) => items.map(keyOf)) as [string[], string[], string[]],
+    [base, mine, theirs].map((items) => items.map((item) => keyOf(item, key))) as [string[], string[], string[]],
     kept,
   );
   return order.map((id) => kept.get(id)!);

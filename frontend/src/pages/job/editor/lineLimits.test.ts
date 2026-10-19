@@ -2,6 +2,7 @@
 // panel's Lines field and its Phrase and Sentence buttons, which fill the line limits and mark the
 // one the current values match.
 import { isValidElement, type ReactElement, type ReactNode } from "react";
+import shared from "../../../../../backend/tests/fixtures/line_limits.json";
 import { describe, expect, test } from "vitest";
 import type { CaptionStyle, HookStyle, StylePreset, WatermarkStyle } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -53,6 +54,10 @@ function panel(space: ReturnType<typeof editor>) {
 }
 
 describe("Phrase and Sentence", () => {
+  test("are the backend's (styles.py's LINE_LIMITS, which its tests check against the same file)", () => {
+    expect(LINE_LIMITS).toEqual(shared);
+  });
+
   test("a style is the one whose line limits it has, or neither", () => {
     expect(lineLimitsOf(caption)).toBe("phrase");
     expect(lineLimitsOf({ ...caption, ...LINE_LIMITS.sentence })).toBe("sentence");

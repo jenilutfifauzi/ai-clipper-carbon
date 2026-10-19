@@ -336,3 +336,7 @@ def test_the_api_keeps_word_edits_at_one_time_of_two_timelines_and_the_preview_l
 
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
     assert client.patch(url, json={"word_edits": [{"at": 0.7, "text": "x", "media": "not-an-id"}]}).status_code == 422
+
+    # Kept in the Cue Edits' order: the Source's first, then each video's, each in time order.
+    ordered = patch(client, job, candidate, word_edits=[{"at": 0.2, "text": "x", "media": red["id"]}, {"at": 0.7, "text": "teman"}])
+    assert [(edit["media"], edit["at"]) for edit in ordered["word_edits"]] == [(None, 0.7), (red["id"], 0.2)]

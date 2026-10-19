@@ -1,9 +1,9 @@
 import { CUE_SHIFT_MAX_SECS, type Cue, type CueEdit, type CueKey, type PreviewWord, type RenderPlan } from "../../../api";
 import { cueWords } from "../editor/cues";
-import { lineWords, withWordEdit } from "../editor/wordEdits";
+import { byKey, sameKey, sameTimeline, timelineOf } from "../editor/timelineKey";
+import { cueWordsOf, withWordEdit } from "../editor/wordEdits";
 import type { Outcome, Splitter } from "./actions";
 import type { AdvancedEdits } from "./edits";
-import { sameCue } from "./pick";
 import type { TrackKind } from "./trackState";
 
 // A picked Cue retimed on the Captions Track, split, merged with the next or emptied: its Cue Edit
@@ -38,7 +38,7 @@ export interface ShownCue {
 
 /** The Cue of `plan` keyed `key`, as the Captions Track shows it; null when there is none. */
 export function cueOf(plan: RenderPlan, key: CueKey): ShownCue | null {
-  const entries = plan.captions.filter((cue) => sameCue(cue.key, key));
+  const entries = plan.captions.filter((cue) => sameKey(cue.key, key));
   if (!entries.length) return null;
   const [first] = entries;
   const { speed, low, high, edited } = first;
@@ -48,7 +48,7 @@ export function cueOf(plan: RenderPlan, key: CueKey): ShownCue | null {
 /** Each Cue of `plan` once (its first entry, of those either side of a Layout change), as the Captions Track shows it. */
 export function shownCues(plan: RenderPlan): { cue: Cue; shown: ShownCue }[] {
   return plan.captions.flatMap((cue, i) => {
-    if (i > 0 && sameCue(plan.captions[i - 1].key, cue.key)) return [];
+    if (i > 0 && sameKey(plan.captions[i - 1].key, cue.key)) return [];
     const shown = cueOf(plan, cue.key);
     return shown ? [{ cue, shown }] : [];
   });
@@ -57,7 +57,7 @@ export function shownCues(plan: RenderPlan): { cue: Cue; shown: ShownCue }[] {
 // The Cue Edit of `edits` at `at` on `media`'s timeline (of two, the later, as the planner takes it).
 function editAt(edits: CueEdit[], media: string | null, at: number | null | undefined): CueEdit | null {
   if (at == null) return null;
-  return edits.findLast((edit) => (edit.media ?? null) === media && edit.at === at) ?? null;
+  return edits.findLast((edit) => sameKey(edit, { at, media })) ?? null;
 }
 
 /**
@@ -66,8 +66,8 @@ function editAt(edits: CueEdit[], media: string | null, at: number | null | unde
  * none, one written at its key, as a drag writes it before it is planned again.
  */
 export function cueEditOf(edits: CueEdit[], plan: RenderPlan, key: CueKey): CueEdit | null {
-  const media = key.media ?? null;
-  const cue = plan.captions.find((other) => sameCue(other.key, key));
+  const media = timelineOf(key);
+  const cue = plan.captions.find((other) => sameKey(other.key, key));
   return editAt(edits, media, cue?.cue_edit_ats[0]) ?? editAt(edits, media, key.at);
 }
 
@@ -80,14 +80,22 @@ export const placed = (edit: CueEdit) => edit.x != null || edit.y != null || edi
 // A Cue Edit that changes nothing of its Cue but where it starts one.
 export const empty = (edit: CueEdit) => !timed(edit) && !placed(edit);
 
-// A Cue Edit at `at` on `media`'s timeline (the Source's when null) that only starts a Cue there, or
-// with `join` keeps it with the one before.
-const bare = (at: number, media: string | null, join = false): CueEdit => ({ at, media, shift: 0, start_delta: 0, end_delta: 0, join });
+/**
+ * A Cue Edit at `at` on `media`'s timeline (the Source's when null) that only starts a Cue there, or
+ * with `join` keeps it with the one before.
+ */
+export const bare = (at: number, media: string | null, join = false): CueEdit => ({ at, media, shift: 0, start_delta: 0, end_delta: 0, join });
+
+/** Whether the Cue actions are refused: while the Captions Track is locked. */
+export const captionsLocked = (scene: CueScene) => !!scene.locked?.includes("captions");
+
+/** The plan the Cue actions edit the Cues of: none while the Captions Track is locked (captionsLocked). */
+export const editablePlan = (scene: CueScene): RenderPlan | null => (captionsLocked(scene) ? null : scene.plan);
 
 /** `edits` with the Cue Edit `before` (or, when it is null, none) changed to `after` (or dropped, when it is null). */
 export function withCueEdit(edits: AdvancedEdits, before: CueEdit | null, after: CueEdit | null): AdvancedEdits {
   const kept = edits.cue_edits.filter((edit) => edit !== before);
-  return { ...edits, cue_edits: after ? [...kept, after].sort((a, b) => (a.media ?? "").localeCompare(b.media ?? "") || a.at - b.at) : kept };
+  return { ...edits, cue_edits: after ? [...kept, after].sort(byKey) : kept };
 }
 
 /** Where a drag of a picked Cue began: its Cue Edit then, and where it was shown. */
@@ -110,14 +118,15 @@ export function retimeCue(
   range: { start: number; end: number; edge: "move" | "start" | "end" },
   from: CueDragStart | null,
 ): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan) return null;
   const shown = cueOf(plan, key);
   if (!shown) return null;
   const current = cueEditOf(edits.cue_edits, plan, key);
   const origin = from ?? { edit: current, start: shown.start, end: shown.end };
   // A join that didn't take (its Cue doesn't fit the one before) starts its Cue: retimed, it is a start.
-  const begun = origin.edit ? { ...origin.edit, join: false } : bare(key.at, key.media ?? null);
+  const begun = origin.edit ? { ...origin.edit, join: false } : bare(key.at, timelineOf(key));
   const { low, high, speed, minSecs } = shown;
   let next: CueEdit;
   if (range.edge === "move") {
@@ -141,7 +150,7 @@ export function retimeCue(
  * all the same, which changes nothing.
  */
 function startsByItsEdit(plan: RenderPlan, key: CueKey): boolean {
-  const cue = plan.captions.find((other) => sameCue(other.key, key));
+  const cue = plan.captions.find((other) => sameKey(other.key, key));
   return !!cue && cue.joinable && !cue.needs_join;
 }
 
@@ -160,8 +169,9 @@ export function afterReset(plan: RenderPlan, key: CueKey, reset: CueEdit): CueEd
  * while the Captions Track is locked.
  */
 export function resetCueTiming(scene: CueScene, key: CueKey): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan) return null;
   const current = cueEditOf(edits.cue_edits, plan, key);
   if (!current || !timed(current)) return null;
   const reset = { ...current, shift: 0, start_delta: 0, end_delta: 0 };
@@ -173,10 +183,10 @@ export function resetCueTiming(scene: CueScene, key: CueKey): Outcome | null {
  * can't be found). Null when the plan has no such Cue.
  */
 function cueParts(scene: CueScene, key: CueKey): { words: PreviewWord[] } | null {
-  const entry = scene.plan?.captions.find((cue) => sameCue(cue.key, key));
+  const entry = scene.plan?.captions.find((cue) => sameKey(cue.key, key));
   if (!entry) return null;
-  const own = (scene.words ?? []).filter((word) => (word.media ?? null) === (key.media ?? null));
-  return { words: lineWords(entry, own) };
+  const own = (scene.words ?? []).filter((word) => sameTimeline(word, key));
+  return { words: cueWordsOf(entry, own) };
 }
 
 /**
@@ -186,7 +196,7 @@ function cueParts(scene: CueScene, key: CueKey): { words: PreviewWord[] } | null
  * Null when there is none.
  */
 export function splitPoint(scene: CueScene, key: CueKey, time: number): { at: number; edit: number | null } | null {
-  const entries = scene.plan?.captions.filter((cue) => sameCue(cue.key, key)) ?? [];
+  const entries = scene.plan?.captions.filter((cue) => sameKey(cue.key, key)) ?? [];
   const entry = entries.find((cue) => cue.start <= time && time < cue.end);
   if (!entry) return null;
   // Highlights are kept within their entry: in the one shown at `time`, one starts after it exactly when its Word does.
@@ -202,18 +212,19 @@ export function splitPoint(scene: CueScene, key: CueKey, time: number): { at: nu
  * to it. Null when there is no such Word, or while the Captions Track is locked.
  */
 export function splitCue(scene: CueScene, key: CueKey, time: number): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan) return null;
   const point = splitPoint(scene, key, time);
   if (!point) return null;
-  const media = key.media ?? null;
+  const media = timelineOf(key);
   return { edits: withCueEdit(edits, editAt(edits.cue_edits, media, point.edit), bare(point.at, media)), pick: { kind: "cue", key } };
 }
 
 /** Split at the playhead (`now`) on the picked Cue keyed `key`, from the Timeline's bar, the phone's toolbar and Cmd/Ctrl+B. */
 export function cueSplitter(scene: CueScene, key: CueKey, now: () => number, apply: (outcome: Outcome) => void): Splitter {
   return {
-    canSplit: (time) => !scene.locked?.includes("captions") && !!splitPoint(scene, key, time),
+    canSplit: (time) => !captionsLocked(scene) && !!splitPoint(scene, key, time),
     split: () => {
       const outcome = splitCue(scene, key, now());
       if (outcome) apply(outcome);
@@ -223,7 +234,7 @@ export function cueSplitter(scene: CueScene, key: CueKey, now: () => number, app
 
 /** The Cue shown after the one keyed `key`, if there is one. */
 export function nextCue(plan: RenderPlan, key: CueKey): Cue | null {
-  const last = plan.captions.findLastIndex((cue) => sameCue(cue.key, key));
+  const last = plan.captions.findLastIndex((cue) => sameKey(cue.key, key));
   return last < 0 ? null : (plan.captions[last + 1] ?? null);
 }
 
@@ -234,11 +245,12 @@ export function nextCue(plan: RenderPlan, key: CueKey): Cue | null {
  * doesn't fit (isn't `joinable`), or while the Captions Track is locked.
  */
 export function mergeCue(scene: CueScene, key: CueKey): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan) return null;
   const next = nextCue(plan, key);
   if (!next?.joinable) return null;
-  const join = next.needs_join ? bare(next.key.at, next.key.media ?? null, true) : null;
+  const join = next.needs_join ? bare(next.key.at, timelineOf(next.key), true) : null;
   let merged = withCueEdit(edits, cueEditOf(edits.cue_edits, plan, next.key), join);
   const first = cueParts(scene, next.key)?.words[0];
   if (first?.edit?.break_before) merged = { ...merged, word_edits: withWordEdit(merged.word_edits, first, { break_before: false }) };
@@ -251,8 +263,9 @@ export function mergeCue(scene: CueScene, key: CueKey): Outcome | null {
  * the Captions Track is locked.
  */
 export function deleteCue(scene: CueScene, key: CueKey): Outcome | null {
-  const { edits, plan } = scene;
-  if (scene.locked?.includes("captions") || !plan) return null;
+  const { edits } = scene;
+  const plan = editablePlan(scene);
+  if (!plan) return null;
   const words = cueParts(scene, key)?.words ?? [];
   if (!words.length) return null;
   return { edits: { ...edits, word_edits: words.reduce((next, word) => withWordEdit(next, word, { text: "" }), edits.word_edits) }, pick: null };
@@ -268,7 +281,7 @@ export function wordsOfCue(scene: CueScene, key: CueKey): PreviewWord[] {
  * Candidate's Word Edits become `wordEdits`, the Cue still picked. Null while the Captions Track is locked.
  */
 export function retypeCue(scene: CueScene, key: CueKey, wordEdits: AdvancedEdits["word_edits"]): Outcome | null {
-  if (scene.locked?.includes("captions")) return null;
+  if (captionsLocked(scene)) return null;
   return { edits: { ...scene.edits, word_edits: wordEdits }, pick: { kind: "cue", key } };
 }
 
@@ -284,7 +297,7 @@ export function cueTimeGesture() {
     const shown = scene.plan && cueOf(scene.plan, key);
     if (!shown || !scene.plan) return null;
     const current = cueEditOf(scene.edits.cue_edits, scene.plan, key);
-    const going = last && last.edge === edge && sameCue(last.key, key) && last.made === current;
+    const going = last && last.edge === edge && sameKey(last.key, key) && last.made === current;
     const origin = going ? last!.origin : { edit: current, start: shown.start, end: shown.end };
     const outcome = retimeCue(scene, key, { start: time, end: time, edge }, origin);
     if (outcome) last = { edge, key, made: cueEditOf(outcome.edits.cue_edits, scene.plan, key), origin };

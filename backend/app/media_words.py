@@ -28,7 +28,8 @@ from app.transcript import Word
 
 
 class MediaWordsStatus(StrEnum):
-    """What a store has of an item's Media Words in a language."""
+    """What a store has of an item's Media Words in a language. (Not a Segment's WordsStatus, in
+    app/editor.py: that says where a Segment's caption Words come from, `media` once these are `ready`.)"""
 
     # Saved.
     READY = "ready"

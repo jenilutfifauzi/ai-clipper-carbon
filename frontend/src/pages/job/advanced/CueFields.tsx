@@ -24,8 +24,8 @@ import {
   type ShownCue,
 } from "./cueEdits";
 import { CuePlaceFields } from "./CuePlaceFields";
+import { sameKey } from "../editor/timelineKey";
 import type { AdvancedEdits } from "./edits";
-import { sameCue } from "./pick";
 import type { TrackKind } from "./trackState";
 
 /**
@@ -57,7 +57,7 @@ export function CueFields({
   // The value last set in a field, shown while its Cue Edit is the one it wrote: the plan of it comes later.
   const [held, setHeld] = useState<{ edge: "start" | "end"; time: number; made: CueEdit | null } | null>(null);
   const splittable = usePlayback(playback, (time) => !!splitPoint(scene, cueKey, time));
-  const cue = plan?.captions.find((other) => sameCue(other.key, cueKey));
+  const cue = plan?.captions.find((other) => sameKey(other.key, cueKey));
   const shown = plan && cueOf(plan, cueKey);
   const reset = resetCueTiming(scene, cueKey);
   const merged = mergeCue(scene, cueKey);
