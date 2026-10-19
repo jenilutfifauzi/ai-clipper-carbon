@@ -710,6 +710,15 @@ TRANSITION_SECS = (0.1, 3.0)
 TRANSITION_DEFAULT_SECS = 0.5
 
 
+class TransitionSound(StrEnum):
+    """How a Transition's sound crosses, whatever its kind: in straight lines, along quarter sines, or
+    switched at its middle."""
+
+    LINEAR = "linear"
+    EQUAL_POWER = "equal_power"
+    CUT = "cut"
+
+
 @dataclass(frozen=True)
 class Transition:
     """A Transition from the Segment `after` into the one after it, lasting `secs`: the two overlap
@@ -718,6 +727,7 @@ class Transition:
     after: ItemId
     kind: TransitionKind = TransitionKind.FADE
     secs: Annotated[FiniteFloat, Field(ge=TRANSITION_SECS[0], le=TRANSITION_SECS[1])] = TRANSITION_DEFAULT_SECS
+    sound: TransitionSound = TransitionSound.LINEAR
 
 
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:

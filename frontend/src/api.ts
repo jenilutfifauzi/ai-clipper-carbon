@@ -759,11 +759,17 @@ export type TransitionKind =
   | "distance"
   | "hlslice";
 
+// How a Transition's sound crosses, whatever its kind: in straight lines, along quarter sines, or
+// switched at its middle (pages/job/editor/transitionSound.ts).
+export type TransitionSound = "linear" | "equal_power" | "cut";
+
 // A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.1 to 3).
+// Its sound is always sent; one made by hand may leave it out (linear).
 export interface Transition {
   after: string;
   kind: TransitionKind;
   secs: number;
+  sound?: TransitionSound;
 }
 
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
@@ -771,6 +777,7 @@ export interface TransitionEvent {
   kind: TransitionKind;
   start: number;
   end: number;
+  sound?: TransitionSound;
 }
 
 // A Segment of a Clip cut into several, as played: the Source from `source_start` to `source_end`,

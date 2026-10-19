@@ -29,8 +29,9 @@ KITA_SOAL = (1.6, 2.6)
 # Raised from 69_000 for xfade's 21 further Transition kinds (transitions-expanded/02), named in
 # edit_candidate's and merge_candidate_items' schemas; their groups are in the instructions. And for
 # Overlay animations (transitions-expanded/10): an Overlay's animation_in, animation_out and
-# animation_ms in the same schemas.
-TOOLS_BUDGET_BYTES = 70_500
+# animation_ms in the same schemas. And for a Transition's sound (transitions-expanded/06): its three
+# values wherever a Transition is given; what they do is in the instructions (70_961 with all three).
+TOOLS_BUDGET_BYTES = 71_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -778,9 +779,9 @@ async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transiti
                  "pixelize", "hblur", "distance", "hlslice"):
         plan = await call(mcp, "edit_candidate", **ids, changes={"segments": segments, "transitions": [{"after": "a", "kind": kind, "secs": 0.2}]}, dry_run=True)
         [event] = plan["transitions"]
-        assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2)} and event["start"] > 0, event
+        assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear"} and event["start"] > 0, event
     edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
-    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3}]
+    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear"}]
     assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])
 
     # The instructions name each group with its kinds, and how long a Transition can be.

@@ -236,8 +236,12 @@ Edits:
   slideright, slideup, slidedown push both pictures along; coverleft, coverright, coverup, coverdown
   slide the next over a still one), Wipe (wipeleft, wiperight, wipeup, wipedown, radial: a clock
   wipe), Shape (circleopen, circleclose, circlecrop, rectcrop, vertopen, horzopen), Zoom (zoomin,
-  squeezeh, squeezev), Glitch (pixelize, hblur, distance, hlslice). The dry run lists each
-  (`transitions`) with the Segment it comes after, its kind and its span in the Clip.
+  squeezeh, squeezev), Glitch (pixelize, hblur, distance, hlslice). Its sound, for every kind (a
+  dip never drops the sound out on its own): linear (the default; the two sides crossfade in
+  straight lines, dipping in the middle), equal_power (quarter sines, the level held through the
+  middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
+  it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in
+  the Clip and its sound.
 - A Freeze frame is a Segment with `hold` (seconds, 0.1 or more): it shows the frame at its `start`
   (in the episode or its video) for that long, silent while the Music Clips play on, its `end` equal
   to its `start`; no speed, pitch or reverse. One of the episode is framed by the Layout of the Scene
@@ -863,10 +867,10 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
-    (`ignored`), each Transition's span and the Segment it comes `after`, the keyed sounds' volume
-    Keyframes (a video Segment's, a Music Clip's, an Overlay's), each Shape's and each Text Layer's
-    (with its lines) box and picture's URL (`picture_url`, by its name) as a picture layer's
-    (`_layer_view`), and the Words."""
+    (`ignored`), each Transition's kind, span, sound and the Segment it comes `after`, the keyed
+    sounds' volume Keyframes (a video Segment's, a Music Clip's, an Overlay's), each Shape's and
+    each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
+    picture layer's (`_layer_view`), and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -890,7 +894,7 @@ def _plan_view(
             for segment in plan["segments"]
         ],
         "transitions": [
-            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end")} for event in plan["transitions"]
+            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound")} for event in plan["transitions"]
         ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
         "hook": hook and {

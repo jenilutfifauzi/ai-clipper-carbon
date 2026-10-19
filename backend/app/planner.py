@@ -136,6 +136,7 @@ from app.candidates import (
     TextStyle,
     Transform,
     TransitionKind,
+    TransitionSound,
     WordEdit,
 )
 from app.config import CameraTuning
@@ -259,10 +260,12 @@ class Face:
 
 @dataclass(frozen=True)
 class Join:
-    """A Transition into a Segment from the one before: its kind, and how long the two overlap."""
+    """A Transition into a Segment from the one before: its kind, how long the two overlap, and how
+    its sound crosses."""
 
     kind: TransitionKind
     secs: float
+    sound: TransitionSound = TransitionSound.LINEAR
 
 
 @dataclass(frozen=True)
@@ -547,11 +550,12 @@ class SegmentPlan:
 @dataclass(frozen=True)
 class TransitionEvent:
     """A Transition as drawn: from `start` to `end` seconds into the Clip, the Segment before gives way
-    to the next one as `kind` says."""
+    to the next one as `kind` says, their sounds crossing as `sound` says."""
 
     kind: TransitionKind
     start: float
     end: float
+    sound: TransitionSound = TransitionSound.LINEAR
 
 
 @dataclass(frozen=True)
@@ -920,7 +924,7 @@ def plan_render(
                 # Overlapping the one before by the Transition's length, half the shorter at most.
                 overlap = transition_overlap(given.join.secs, before, length)
                 at = round(at - overlap, 3)
-                transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3)))
+                transitions.append(TransitionEvent(given.join.kind, at, round(at + overlap, 3), given.join.sound))
                 cuts.append(round(at + overlap / 2, 3))
             elif i:
                 cuts.append(at)
