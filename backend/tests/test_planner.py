@@ -1534,3 +1534,17 @@ def test_a_cue_edit_whose_word_isnt_shown_is_unused_and_applies_again_once_it_is
     # A Cue Edit of a Media Library item doesn't apply on the Source's timeline.
     elsewhere = CueEdit(at=103.1, media="ab" * 16, shift=0.5)
     assert retimed(TALK, [elsewhere]).unused_cue_edits == [elsewhere]
+
+
+def test_a_media_segments_cue_edits_are_on_its_items_timeline():
+    media = "ab" * 16
+    # A video's Segment from 0.5 s into it, saying "halo semua. apa" (in seconds into the Segment).
+    talking = SegmentInput(0.5, 4.0, media=media, width=720, height=1280, words=[Word("halo", 0.5, 0.9), Word("apa", 2.5, 2.9)])
+    plan = lambda *edits: plan_render(0, 10, source(1920, 1080, fps=FPS), main_track=[talking], cue_edits=list(edits))  # noqa: E731
+    assert [(cue.start, cue.key.at, cue.key.media) for cue in plan().captions] == [(0.5, 1.2, media), (2.5, 3.2, media)]
+    # Keyed at its Word's middle on the item's timeline: 3.2 s into the video.
+    moved = plan(CueEdit(at=3.2, media=media, shift=0.3))
+    assert [(cue.start, cue.edited) for cue in moved.captions] == [(0.5, False), (2.8, True)]
+    # The Source's Cue Edit at that time doesn't touch it.
+    source_edit = CueEdit(at=3.2, shift=0.3)
+    assert plan(source_edit).unused_cue_edits == [source_edit]
