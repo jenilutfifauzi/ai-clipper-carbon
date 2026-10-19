@@ -38,7 +38,7 @@ function edits(segments: ClipSegment[] = [episode, video()]): AdvancedEdits {
     hook_kicker: "",
     preset_id: "default",
     style_overrides: { caption: {}, hook: {}, watermark: {} },
-    word_edits: [],
+    word_edits: [], cue_edits: [],
     layout: "auto",
     framing: null,
     layout_overrides: [],

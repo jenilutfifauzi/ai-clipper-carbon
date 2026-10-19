@@ -1,3 +1,4 @@
+import type { CueKey, RenderPlan } from "../../../api";
 import type { PickedOnStage } from "../editor/ClipPreview";
 import type { AdvancedEdits } from "./edits";
 import type { TrackKind } from "./trackState";
@@ -24,10 +25,25 @@ export interface ItemRef {
 }
 
 /**
- * One or more Segments, Text Layers, Shapes, Music Clips and Overlays, mixed; or the hook, the captions or
- * the join after a Segment (for its Transition), alone; or nothing.
+ * One or more Segments, Text Layers, Shapes, Music Clips and Overlays, mixed; or the hook, the captions,
+ * one Cue (by its key) or the join after a Segment (for its Transition), alone; or nothing.
  */
-export type Pick = { kind: "items"; items: ItemRef[] } | { kind: "hook" } | { kind: "captions" } | { kind: "join"; after: string } | null;
+export type Pick =
+  | { kind: "items"; items: ItemRef[] }
+  | { kind: "hook" }
+  | { kind: "captions" }
+  | { kind: "cue"; key: CueKey }
+  | { kind: "join"; after: string }
+  | null;
+
+/** Whether two Cue keys name one Cue: on one timeline, at one time (to the millisecond). */
+export const sameCue = (a: CueKey, b: CueKey) => (a.media ?? null) === (b.media ?? null) && Math.abs(a.at - b.at) < 5e-4;
+
+/** `pick` without its Cue once `plan` (when there is one) has no Cue of its key: after an edit, an undo or a change from elsewhere. */
+export function prunedCue(pick: Pick, plan: RenderPlan | null): Pick {
+  if (pick?.kind !== "cue" || !plan) return pick;
+  return plan.captions.some((cue) => sameCue(cue.key, pick.key)) ? pick : null;
+}
 
 /** The Pick of `items`: nothing when there are none. */
 export const picked = (...items: ItemRef[]): Pick => (items.length ? { kind: "items", items } : null);
@@ -65,10 +81,11 @@ export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0,
 /** The Track each kind of item is on. */
 export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay" };
 
-/** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track. */
+/** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track, a Cue on the Captions Track. */
 export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {
   if (!locked.length || pick === null) return pick;
   if (pick.kind === "join") return locked.includes("video") ? null : pick;
+  if (pick.kind === "cue") return locked.includes("captions") ? null : pick;
   if (pick.kind !== "items") return locked.includes(pick.kind) ? null : pick;
   const kept = pick.items.filter((item) => !locked.includes(TRACK_OF[item.kind]));
   return kept.length === pick.items.length ? pick : picked(...kept);

@@ -123,6 +123,21 @@ export interface WordEdit {
   break_before: boolean;
 }
 
+// The owner's change to one Cue (GLOSSARY: Cue Edit), keyed as a Word Edit is: a time in its first
+// Word on the Source's timeline (with `media`, on that Media Library item's). That Word starts a Cue.
+// `shift` moves the Cue and its highlight, `start_delta` and `end_delta` one edge (negative: earlier),
+// in seconds of that timeline (so they scale with Speed), each within ±CUE_SHIFT_MAX_SECS.
+export interface CueEdit {
+  at: number;
+  media: string | null;
+  shift: number;
+  start_delta: number;
+  end_delta: number;
+}
+
+// The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
+export const CUE_SHIFT_MAX_SECS = 10;
+
 export type Highlight = "colour" | "box" | "none";
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";
 export type HookPosition = "top" | "middle" | "bottom" | "custom";
@@ -808,6 +823,8 @@ export interface RenderPlan {
   transitions: TransitionEvent[];
   // The Shapes that show, in drawing order, under the Text Layers.
   shapes: ShapeEvent[];
+  // The Cue Edits whose Word isn't shown, which do nothing (and are kept).
+  unused_cue_edits: CueEdit[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
@@ -928,6 +945,7 @@ export interface Candidate {
   preset_id: string;
   style_overrides: StyleOverrides;
   word_edits: WordEdit[];
+  cue_edits: CueEdit[];
   // When the hook comes on, in seconds into the Clip, and how long it stays.
   hook_start: number;
   hook_secs: number;
@@ -969,6 +987,8 @@ export interface CandidateChange {
   style_overrides?: StyleOverrides;
   // Replaces the Candidate's Word Edits as a whole.
   word_edits?: WordEdit[];
+  // Replaces the Candidate's Cue Edits as a whole.
+  cue_edits?: CueEdit[];
   hook_start?: number;
   hook_secs?: number;
   // Replaces the Candidate's Layout Overrides as a whole.

@@ -99,6 +99,7 @@ import {
 import { commandsOf, type Commands } from "./commands";
 import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
+import { retimeCue } from "./cueEdits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
@@ -118,6 +119,7 @@ import {
   isPlaced,
   itemsOf,
   picked,
+  prunedCue,
   prunedPick,
   samePick,
   stageIdsOf,
@@ -327,12 +329,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   const history = useEditHistory<AdvancedEdits>(editsOf(initial), save);
   const edits = history.value;
-  // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
-  // some of it away, and nothing on a locked Track is picked.
-  const pick = unlockedPick(prunedPick(pickState, edits), tracks.locked);
-  useEffect(() => {
-    if (pick !== pickState) setPickState(pick);
-  }, [pick, pickState]);
 
   // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once; the edits
   // waiting here are merged onto it and saved from it, mine winning where both changed the same item.
@@ -427,6 +423,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
+  // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
+  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
+  useEffect(() => {
+    if (pick !== pickState) setPickState(pick);
+  }, [pick, pickState]);
   // The plan as the player draws it, the hidden Tracks left out.
   const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
   const playback = useMemo(() => new Playback(), []);
@@ -1016,6 +1018,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onJoin: (after) => {
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");
+            },
+            onCue: (key, range, group, from) => {
+              const outcome = retimeCue({ edits, plan: preview?.plan ?? null, locked: tracks.locked }, key, range, from);
+              if (outcome) history.set(outcome.edits, group);
+              else refused("captions");
             },
             onDropTransition: setTransition,
             onDropMedia: dropMedia,

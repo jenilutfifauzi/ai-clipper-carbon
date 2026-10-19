@@ -21,8 +21,13 @@ export interface Merged<T> {
   collisions: Collision[];
 }
 
+type Item = Record<string, unknown>;
+
+// A Cue Edit's key: its timeline (its item, or the Source's) and its time, to the millisecond.
+const onTimeline = (item: Item) => `${item.media ?? ""}@${Math.round(Number(item.at) * 1000) / 1000}`;
+
 // Each list's items by this key: the MCP merge tool's keys.
-const KEYS = {
+const KEYS: Record<string, string | ((item: Item) => string)> = {
   segments: "id",
   text_layers: "id",
   shapes: "id",
@@ -31,10 +36,10 @@ const KEYS = {
   transitions: "after",
   word_edits: "at",
   layout_overrides: "at",
-} as const;
+  cue_edits: onTimeline,
+} satisfies Partial<Record<keyof Edits, unknown>>;
 
-type ListField = keyof typeof KEYS;
-type Item = Record<string, unknown>;
+type ListField = "segments" | "text_layers" | "shapes" | "music" | "overlays" | "transitions" | "word_edits" | "layout_overrides" | "cue_edits";
 
 export function mergeEdits<T extends Edits>(base: T, mine: T, theirs: T): Merged<T> {
   const [b, m, t] = [fields(base), fields(mine), fields(theirs)];
@@ -104,6 +109,7 @@ const PART_OF: Record<Collision["field"], string> = {
   preset_id: "Style",
   style_overrides: "Style",
   word_edits: "Word Edits",
+  cue_edits: "Cue Edits",
   layout: "Layout",
   framing: "Layout",
   layout_overrides: "Layout Overrides",
@@ -120,7 +126,8 @@ const fields = (edits: Edits) => edits as Record<string, unknown>;
 
 function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[], collisions: Collision[]): Item[] {
   const key = KEYS[field];
-  const byKey = (items: Item[]) => new Map(items.map((item) => [String(item[key]), item]));
+  const keyOf = (item: Item) => (typeof key === "function" ? key(item) : String(item[key]));
+  const byKey = (items: Item[]) => new Map(items.map((item) => [keyOf(item), item]));
   const [b, m, t] = [byKey(base), byKey(mine), byKey(theirs)];
   const kept = new Map<string, Item>();
   for (const id of new Set([...b.keys(), ...m.keys(), ...t.keys()])) {
@@ -129,7 +136,7 @@ function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[],
     if (result.value) kept.set(id, result.value);
   }
   const order = ordered(
-    [base, mine, theirs].map((items) => items.map((item) => String(item[key]))) as [string[], string[], string[]],
+    [base, mine, theirs].map((items) => items.map(keyOf)) as [string[], string[], string[]],
     kept,
   );
   return order.map((id) => kept.get(id)!);
