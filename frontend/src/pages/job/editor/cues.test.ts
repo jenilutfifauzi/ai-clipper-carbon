@@ -38,7 +38,11 @@ describe("a Cue", () => {
   test("sets its lines one font size apart about its area's middle, as libass does", () => {
     // One line: on the area's middle, as a caption line is today.
     expect(cueLineMiddle(cue([["HALO"]]), 0)).toBe(1396);
+    // Two: 110 px apart, as backend/tests/test_render.py measures a burned two-line Cue (its rows of
+    // capitals start 110 px apart, about the area's middle, in three fonts).
     const two = cue([["HALO"], ["SEMUA"]]);
     expect([cueLineMiddle(two, 0), cueLineMiddle(two, 1)]).toEqual([1396 - 55, 1396 + 55]);
+    const three = cue([["HALO"], ["SEMUA"], ["APA"]]);
+    expect([0, 1, 2].map((row) => cueLineMiddle(three, row))).toEqual([1396 - 110, 1396, 1396 + 110]);
   });
 });

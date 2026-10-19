@@ -1,4 +1,6 @@
+import { Check } from "lucide-react";
 import type { FontInfo, StyleValue } from "../../../api";
+import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { MoreOptions } from "../../../components/MoreOptions";
 import { Segmented } from "../../../components/Segmented";
@@ -7,6 +9,7 @@ import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
 import { FacePicker } from "./FacePicker";
+import { LINE_LIMITS, lineLimitsOf } from "./lineLimits";
 import { ShadowFields } from "./ShadowFields";
 import { highlightShape } from "./styleShape";
 import { countChanged, Group, StyleMarker } from "./StyleFields";
@@ -24,6 +27,17 @@ const POSITIONS = [
   { value: "middle", label: "Middle" },
   { value: "bottom", label: "Bottom" },
   { value: "custom", label: "Custom" },
+] as const;
+
+const LINES = [
+  { value: "1", label: "1" },
+  { value: "2", label: "2" },
+  { value: "3", label: "3" },
+] as const;
+
+const NAMED_LIMITS = [
+  { name: "phrase", label: "Phrase", hint: "one short line" },
+  { name: "sentence", label: "Sentence", hint: "up to two lines, to a sentence's end" },
 ] as const;
 
 const MAX_WORDS = [
@@ -47,8 +61,9 @@ const MORE = [
 ] as const;
 
 /**
- * The Caption Style: the controls used most, then More options (outline, shadow, the highlight box,
- * tracking and line breaks).
+ * The Caption Style: the controls used most (with the lines a Cue holds, and Phrase and Sentence,
+ * which fill the line limits), then More options (outline, shadow, the highlight box, tracking and
+ * line breaks).
  * Each control shows the resolved value, with a reset button when it overrides the Preset.
  * Shared by the clip editor (two fields to a row on a wide screen) and the Advanced Edit's narrow
  * `inspector` (one to a row).
@@ -74,6 +89,7 @@ export function CaptionStylePanel({
   const px = (v: number) => `${Math.round(v)} px`;
   const grid = cx("grid grid-cols-1 gap-x-4 gap-y-3", !inspector && "sm:grid-cols-2");
   const fullRow = inspector ? undefined : "sm:col-span-2";
+  const limits = lineLimitsOf(caption);
 
   return (
     <div className="flex flex-col gap-5">
@@ -110,6 +126,33 @@ export function CaptionStylePanel({
           <Slider label="Line's centre across" value={caption.x ?? 540} min={0} max={1080} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
         </>
       )}
+      <div className="flex flex-col gap-3">
+        <div role="group" aria-label="Line limits" className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Line limits</span>
+          <div className="flex flex-wrap gap-2">
+            {NAMED_LIMITS.map(({ name, label, hint }) => (
+              <Button
+                key={name}
+                size="sm"
+                aria-pressed={limits === name}
+                title={`${label}: ${hint}`}
+                onClick={() => style.setMany("caption", LINE_LIMITS[name])}
+              >
+                {limits === name && <Check aria-hidden size={14} />}
+                {label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <Segmented
+          legend="Lines"
+          options={LINES}
+          value={String(caption.max_lines) as (typeof LINES)[number]["value"]}
+          onChange={(v) => set("max_lines", Number(v))}
+          marker={marker("max_lines", "lines")}
+          className="max-w-48"
+        />
+      </div>
       <Switch checked={caption.uppercase} onChange={(v) => set("uppercase", v)}>
         <span className="flex items-center gap-1.5 text-sm">
           UPPERCASE {marker("uppercase", "uppercase")}
@@ -146,16 +189,16 @@ export function CaptionStylePanel({
               marker={marker("tracking", "tracking")}
               className={fullRow}
             />
-            <Slider label="Most characters" value={caption.max_chars} min={4} max={60} onChange={(v) => set("max_chars", v)} marker={marker("max_chars", "most characters")} />
+            <Slider label="Most characters a line" value={caption.max_chars} min={4} max={60} onChange={(v) => set("max_chars", v)} marker={marker("max_chars", "most characters")} />
             <Select
-              label="Most words"
+              label="Most words a line"
               value={caption.max_words === null ? "" : String(caption.max_words)}
               options={MAX_WORDS}
               onChange={(v) => set("max_words", v === "" ? null : Number(v))}
               marker={marker("max_words", "most words")}
             />
             <Slider
-              label="Longest on screen"
+              label="Longest caption on screen"
               value={caption.max_secs}
               min={0.3}
               max={5}
@@ -165,7 +208,7 @@ export function CaptionStylePanel({
               marker={marker("max_secs", "longest on screen")}
             />
             <Slider
-              label="New line after a pause of"
+              label="New caption after a pause of"
               value={caption.pause_secs}
               min={0.1}
               max={2}
