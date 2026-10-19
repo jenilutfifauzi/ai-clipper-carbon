@@ -1,8 +1,10 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
 import shutil
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
@@ -10,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, StringConstraints, TypeAdapter, ValidationError
+from starlette.background import BackgroundTask
 
 from app import emoji, review
 from app.candidates import (
@@ -37,6 +40,7 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
+from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
@@ -744,6 +748,60 @@ def candidate_preview_plan(
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
     edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
     edit; 409 for a Job without Candidates."""
+    job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    try:
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
+    except InvalidEdit as exc:
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/sound/{kind}/{item_id}", response_class=FileResponse)
+def save_sound(
+    job_id: str,
+    candidate_id: str,
+    kind: SoundOf,
+    item_id: str,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    body: CandidateUpdate | None = None,
+) -> FileResponse:
+    """Save sound as WAV: the sound of the Candidate's Segment, Music Clip or Overlay `item_id`, or
+    of that item of `body` (a draft of edits, as the Preview Plan takes it), alone as it is heard in
+    the Clip, Muted or not (app/item_sound.py): `audio/wav`, 48 kHz stereo 16-bit PCM, to download
+    under a name made of the Candidate's and the item's. 404 for an item the draft hasn't; 422 for
+    a Freeze frame, an image or an item without sound, and for a draft that isn't a valid edit."""
+    job, _, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    folder = Path(tempfile.mkdtemp(prefix=".sound-", dir=store.job_dir(job_id)))
+    try:
+        name = save_item_sound(job, store.job_dir(job_id), candidate, kind, item_id, folder / "sound.wav", settings, presets, logos, library)
+    except NoItem as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(404, f"Candidate {candidate_id} has {exc}") from None
+    except NoSound as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(422, str(exc)) from None
+    except InvalidStyle as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return FileResponse(
+        folder / "sound.wav", media_type="audio/wav", filename=name, background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True),
+    )
+
+
+def _drafted(
+    job_id: str, candidate_id: str, body: CandidateUpdate | None, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore
+) -> tuple[Job, Transcript, Candidate]:
+    """The Job, its Transcript and the Candidate as `body`, a draft of its edits, would make it, applied
+    as an update would apply them but not saved. 404 for an unknown Job or Candidate; 409 for a Job
+    without Candidates; 422 for a draft that isn't a valid edit."""
     try:
         job = store.get(job_id)
     except JobNotFound:
@@ -760,13 +818,11 @@ def candidate_preview_plan(
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
         _, candidate = review.update(candidates, candidate_id, replace(change, revision=None), episode)
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library)
     except CandidateNotFound as exc:
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
-    except InvalidStyle as exc:
-        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    return job, transcript, candidate
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)

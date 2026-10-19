@@ -8,6 +8,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
   type Ref,
@@ -743,6 +744,7 @@ export function TimelineItem({
   onSelect,
   onChange,
   onDelete,
+  onMenu,
   children,
 }: {
   geometry: TimeGeometry;
@@ -771,6 +773,8 @@ export function TimelineItem({
   onSelect: (toggle: boolean) => void;
   onChange?: (range: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
   onDelete?: (rippled: boolean) => void;
+  // Its context menu asked for (a right-click, or the keyboard's menu key), at that point of the window.
+  onMenu?: (at: { x: number; y: number }) => void;
   children: ReactNode;
 }) {
   const element = useRef<HTMLDivElement>(null);
@@ -895,6 +899,15 @@ export function TimelineItem({
       stop();
     },
     onPointerCancel: stop,
+    onContextMenu: (event: MouseEvent<HTMLDivElement>) => {
+      if (!onMenu) return;
+      event.preventDefault();
+      // Picked alone first, unless it is in the Pick, as a right-click picks in a file list.
+      if (!selected) onSelect(false);
+      // The keyboard's menu key gives no point (0, 0): the item's corner instead.
+      const box = event.currentTarget.getBoundingClientRect();
+      onMenu(event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : { x: box.left, y: box.bottom });
+    },
     onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
       if ((event.key === "Delete" || event.key === "Backspace") && onDelete) {
         event.preventDefault();

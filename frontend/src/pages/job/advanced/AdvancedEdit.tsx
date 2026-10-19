@@ -100,6 +100,8 @@ import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
+import { ItemMenu } from "./ItemMenu";
+import { attachmentName, download, itemSound, type ItemSound } from "./itemSound";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
 import { SheetEase } from "./KeyEase";
 import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, sceneRef, toggleItemKey, writeItemKey, writeItemTransform, type KeyedRef } from "./keying";
@@ -124,6 +126,7 @@ import {
   stageIdsOf,
   stageItem,
   unlockedPick,
+  type ItemRef,
   type Pick,
   type PlacedKind,
 } from "./pick";
@@ -428,6 +431,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // A Timeline item's context menu (a desktop's), where it was asked for.
+  const [itemMenu, setItemMenu] = useState<{ item: ItemRef; at: { x: number; y: number } } | null>(null);
+  // Save sound as WAV: the item alone as heard, from the draft (the unsaved edits too, but not the
+  // Track mutes, a listening aid), made by the backend while a notice says so, then downloaded.
+  const [savingSound, setSavingSound] = useState(false);
+  async function saveSound(sound: ItemSound) {
+    setSavingSound(true);
+    setNotice({ id: Date.now(), text: `Making a WAV of ${sound.name}…`, busy: true });
+    try {
+      const { wav, disposition } = await api.saveSound(job.id, candidate.id, sound.kind, sound.id, draft);
+      download(wav, attachmentName(disposition) ?? `${sound.name}.wav`);
+      setNotice({ id: Date.now(), text: `Saved a WAV of ${sound.name}` });
+    } catch (reason) {
+      setNotice({ id: Date.now(), text: `Couldn't save a WAV of ${sound.name}: ${(reason as Error).message}` });
+    } finally {
+      setSavingSound(false);
+    }
+  }
   // The plan as the player draws it, the hidden Tracks left out.
   const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
   const playback = useMemo(() => new Playback(), []);
@@ -1027,6 +1048,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
+            onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
           }}
         />
       )}
@@ -1150,6 +1172,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
       </ConfirmDialog>
       <ChangeNotice notice={notice} onClose={closeNotice} />
+      {itemMenu && <SoundMenu opened={itemMenu} sound={itemSound(itemMenu.item, edits, mediaById)} saving={savingSound} onSave={saveSound} onClose={setItemMenu} />}
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
@@ -1405,6 +1428,36 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         </Sheet>
       )}
     </div>
+  );
+}
+
+/**
+ * A Segment's, Music Clip's or Overlay's context menu: Save sound as WAV, off while another is being
+ * made or when the item has no sound to save. It closes itself, unless another has opened since.
+ */
+function SoundMenu({
+  opened,
+  sound,
+  saving,
+  onSave,
+  onClose,
+}: {
+  opened: { item: ItemRef; at: { x: number; y: number } };
+  sound: ItemSound | null;
+  saving: boolean;
+  onSave: (sound: ItemSound) => void;
+  onClose: (close: (now: typeof opened | null) => typeof opened | null) => void;
+}) {
+  const close = useCallback(() => onClose((now) => (now === opened ? null : now)), [onClose, opened]);
+  if (!sound) return null;
+  return (
+    <ItemMenu
+      key={`${opened.item.kind}:${opened.item.id}:${opened.at.x}:${opened.at.y}`}
+      label={sound.name}
+      at={opened.at}
+      entries={[{ label: "Save sound as WAV", onSelect: () => onSave(sound), disabled: sound.silent ?? (saving ? "A WAV is being made" : null) }]}
+      onClose={close}
+    />
   );
 }
 

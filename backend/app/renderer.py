@@ -220,6 +220,34 @@ class Renderer:
             shutil.rmtree(fonts, ignore_errors=True)
         raise RuntimeError(f"ffmpeg couldn't render the Clip ({'; '.join(failures)})")
 
+    def save_sound(self, source: Path, plan: RenderPlan, wav: Path, files: dict[str, Path] | None = None) -> None:
+        """Write the sound of `plan`'s one item to `wav`, 16-bit PCM at the Clip's sample rate in
+        stereo: its one Segment (or its range) heard as the Clip's own sound is (`_source_inputs`,
+        then `_audio_mix` without music); or its one sound of `audio`, mixed as the Clip's music is
+        (`_music_inputs`, `_audio_mix`) over silence as long as it, in place of the Clip's own sound.
+        Nothing is normalized. Read from the Source, or from its video or song in `files`."""
+        rate = self.tuning.audio_rate
+        if plan.audio:
+            [event] = plan.audio
+            inputs, reads = _music_inputs(plan, files or {}, 0, source)
+            bed = f"anullsrc=r={rate}:cl=stereo,atrim=duration={event.end - event.start:.3f}[bed];"
+            heard = f"{bed}{_audio_mix(plan, reads, rate, '[bed]')};[mix]"
+        else:
+            inputs, sounds, sound = _source_inputs(plan, source, files or {}, rate)
+            mix = _audio_mix(plan, {}, rate, sound)
+            heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+        part = wav.with_name(f".{wav.stem}.part{wav.suffix}")
+        command = [
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y",
+            *inputs, "-filter_complex", f"{heard}aresample={rate}[a]", "-map", "[a]",
+            "-map_metadata", "-1", "-c:a", "pcm_s16le", "-ar", str(rate), "-ac", "2", "-f", "wav", str(part),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, errors="replace")
+        if result.returncode:
+            part.unlink(missing_ok=True)
+            raise RuntimeError(f"ffmpeg couldn't make the sound: {last_lines(result.stderr)}")
+        os.replace(part, wav)
+
     def stop(self) -> None:
         """Kill the running encode, if any; renders from now on raise RenderStopped."""
         self._stopping.set()
