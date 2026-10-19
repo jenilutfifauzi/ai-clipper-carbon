@@ -26,8 +26,8 @@ KITA_SOAL = (1.6, 2.6)
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for Export Presets (export-settings/04): render_clips' `export_preset_id`; and
 # from 69_250 (export-settings/05) for the presets tools' kind "export" and save_preset's use_as_default.
-# Raised again for Save frame (export-settings/07): save_frame.
-TOOLS_BUDGET_BYTES = 70_400
+# Raised again for Save frame and Save audio (export-settings/07, 08): save_frame and export_audio.
+TOOLS_BUDGET_BYTES = 71_100
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

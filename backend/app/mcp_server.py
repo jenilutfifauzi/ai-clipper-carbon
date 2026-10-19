@@ -586,6 +586,16 @@ def build_mcp(app: FastAPI) -> MCPServer:
         saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
         return {"path": str(app.state.store.job_dir(job_id).resolve() / saved["file"])}
 
+    @tool()
+    async def export_audio(
+        job_id: str, candidate_id: str, format: Literal["wav", "m4a"] = "wav", export_preset_id: str | None = None
+    ) -> dict:
+        """Save a Candidate's sound alone (its saved Revision's mix) at an Export Preset's loudness
+        (else the default's). Not a Clip; not queued."""
+        body = {"format": format, "export_preset_id": export_preset_id}
+        saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/audio", json=body)
+        return {"path": saved["path"]}
+
     # Styles, assets and the Channel Profile
 
     async def save_export_preset(given: BaseModel | None, preset_id: str | None, use_as_default: bool) -> dict:

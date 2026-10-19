@@ -48,8 +48,9 @@ from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
-from app.renderer import available_codecs
+from app.renderer import AudioFormat, available_codecs
 from app.rendering import NothingToRender, ranked_clips, source_copies
+from app.saved_audio import save_audio
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -81,7 +82,7 @@ media = APIRouter(prefix="/media")
 EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
 # What /media serves from a Job's directory: its video (or preview proxy), and its Clips and their
 # posters. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
-MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
+MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".wav", ".jpg", ".png"})
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
@@ -451,6 +452,24 @@ class SavedFrame(BaseModel):
     """A saved frame (an Export file): its path in the Job's directory, and its URL."""
 
     file: str
+    url: str
+
+
+class SaveAudioRequest(BaseModel):
+    """The format a Candidate's sound is saved alone in, and the Export Preset whose loudness it
+    takes; the default when left out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: AudioFormat = "wav"
+    export_preset_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SavedAudio:
+    """A Candidate's saved sound: its path on this Mac and its URL, served from the Job's directory."""
+
+    path: str
     url: str
 
 
@@ -880,6 +899,42 @@ def _draft_plan(
         raise HTTPException(422, str(exc)) from None
     except InvalidStyle as exc:
         raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/audio")
+def save_candidate_audio(
+    job_id: str,
+    candidate_id: str,
+    body: SaveAudioRequest,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    export_presets: ExportPresets,
+    library: Media,
+) -> SavedAudio:
+    """Save the Candidate's sound alone (app/saved_audio.py), as its saved Revision's Clip would mix
+    it, at `export_preset_id`'s loudness (the default Preset's when left out): a 48 kHz 16-bit WAV or
+    an AAC M4A, written to the Job's exports/ as <candidate>.wav or .m4a, overwriting it. At once,
+    outside the render queue: the Job's status doesn't change. 422 for an unknown Export Preset; 409
+    for a Job without Candidates."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    candidates = store.load_candidates(job_id)
+    if job.source is None or candidates is None:
+        raise HTTPException(409, f"Job {job_id} has no Candidates yet")
+    candidate = next((c for c in candidates if c.id == candidate_id), None)
+    if candidate is None:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+    try:
+        preset = export_presets.default() if body.export_preset_id is None else export_presets.get(body.export_preset_id)
+    except ExportPresetNotFound as exc:
+        raise HTTPException(422, f"No Export Preset {exc}") from None
+    job_dir = store.job_dir(job_id)
+    path = save_audio(job, job_dir, candidate, body.format, preset.settings, settings, presets, library)
+    url = f"/media/{job_id}/{path.relative_to(job_dir).as_posix()}?v={path.stat().st_mtime_ns}"
+    return SavedAudio(str(path), url)
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)

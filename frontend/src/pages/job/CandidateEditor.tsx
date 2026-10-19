@@ -47,6 +47,7 @@ import { useStyleDraft } from "./editor/useStyleDraft";
 import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
+import { SaveAudioButton } from "./SaveAudio";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
 
 type Mode = "start" | "end" | "new";
@@ -114,6 +115,7 @@ export function CandidateEditor({
   onSave,
   onAdd,
   onPrepare,
+  exportPresetId,
 }: {
   job: JobDetail;
   transcript: Transcript;
@@ -128,6 +130,8 @@ export function CandidateEditor({
   onAdd: (range: { start: number; end: number }) => Promise<boolean>;
   // Queues the Candidate's transcription and analysis, for the preview.
   onPrepare: (candidateId: string) => Promise<void>;
+  // The Export Preset picked on the Render button, whose loudness "Save audio" takes (null: the default).
+  exportPresetId?: string | null;
 }) {
   const [mode, setMode] = useState<Mode>("start");
   const [view, setView] = useState<"clip" | "source">("clip");
@@ -304,6 +308,7 @@ export function CandidateEditor({
               onRestore={onRestore}
               size="sm"
             />
+            <SaveAudioButton jobId={job.id} candidate={candidate} exportPresetId={exportPresetId} />
             <Switch checked={candidate.selected} onChange={(selected) => void onSave({ selected })}>
               <span className="text-sm">Render this clip</span>
             </Switch>

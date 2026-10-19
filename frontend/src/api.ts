@@ -1042,6 +1042,15 @@ export interface ExportPresetList {
   available: Codec[];
 }
 
+// The formats a Candidate's sound is saved alone in: a 48 kHz 16-bit WAV, or AAC in an M4A.
+export type AudioFormat = "wav" | "m4a";
+
+// A saved sound, an Export file: its path on this Mac and the URL it downloads from.
+export interface SavedAudio {
+  path: string;
+  url: string;
+}
+
 // A finished render: the Candidate as it was rendered, and its files (relative to the Job's directory).
 export interface RenderedClip {
   start: number;
@@ -1237,6 +1246,12 @@ export const api = {
     request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
       (answer) => answer.bytes,
     ),
+  // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).
+  saveAudio: (jobId: string, candidateId: string, format: AudioFormat, exportPresetId?: string) =>
+    request<SavedAudio>(`/jobs/${jobId}/candidates/${candidateId}/audio`, {
+      method: "POST",
+      body: JSON.stringify({ format, export_preset_id: exportPresetId }),
+    }),
   listClips: (jobId: string) => request<Clip[]>(`/jobs/${jobId}/clips`),
   listFonts: () => request<FontInfo[]>("/fonts"),
   importFont: (file: File) => {
