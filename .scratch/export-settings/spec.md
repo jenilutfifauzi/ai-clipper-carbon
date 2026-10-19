@@ -105,7 +105,7 @@ Concat's export sheet does all of the encoding part. Concat keeps no presets, th
   - The owner's Presets and the default's id are kept in one JSON file in the data directory, written atomically.
   - The default falls back to "Shorts / TikTok / Reels" when the chosen one is deleted.
 - **RenderedClip gains:**
-  - `export_preset_id`, the Preset asked for, which may have been deleted since.
+  - `export_preset_id`, the Preset it was rendered with (the default, when the one asked for was deleted before the render).
   - `export`, a copy of the Export Settings used, for display.
   - `bitrate_fallback`, true when CBR was asked for but the encoder did VBR.
   - Clips rendered before have none of these. They show "1080p · H.264" from the recorded encoder.
