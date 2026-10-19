@@ -6,47 +6,164 @@ export interface LayerLook {
   transform?: string;
   clipPath?: string;
   maskImage?: string;
+  filter?: string;
   background?: string;
 }
 
 // A Transition `progress` of the way through, as the preview draws it: the outgoing Segment (the
 // ghost), the incoming Segment's picture (the Segments' picture layer only, never the Overlays,
-// captions, Picture layers, hook or Watermark over it), and a veil over both.
+// captions, Picture layers, hook or Watermark over it) under it, and a veil over both.
 export interface TransitionLook {
   outgoing: LayerLook;
   incoming: LayerLook;
   veil: LayerLook;
 }
 
-// The Transitions tab's sections.
+// The Transitions tab's sections, in its order.
 export type TransitionGroup = "Basic" | "Slide" | "Wipe" | "Shape" | "Zoom" | "Light" | "Glitch";
+export const TRANSITION_GROUPS: TransitionGroup[] = ["Basic", "Slide", "Wipe", "Shape", "Zoom", "Light", "Glitch"];
 
-const shown = (outgoing: LayerLook, veil: LayerLook = {}): TransitionLook => ({ outgoing, incoming: {}, veil });
+// Pixelize's SVG filters (TransitionFilters.tsx draws them): the size of each one's blocks, in the
+// preview's pixels, from the finest, and the id of the one at a level.
+export const PIXELIZE_BLOCKS = [4, 8, 12, 16, 20, 24];
+export const pixelizeFilter = (level: number) => `transition-pixelize-${level}`;
+
+type Look = (progress: number) => TransitionLook;
+type Side = "top" | "right" | "bottom" | "left";
+
+const layers = (outgoing: LayerLook, incoming: LayerLook = {}, veil: LayerLook = {}): TransitionLook => ({ outgoing, incoming, veil });
+
+// How far into the middle a Transition is: 0 at either end, 1 halfway.
+const peak = (p: number) => 2 * Math.min(p, 1 - p);
+
+// A clip-path that cuts `share` of a picture away from its `side`.
+function cut(side: Side, share: number) {
+  const inset = { top: 0, right: 0, bottom: 0, left: 0, [side]: 100 * share };
+  return `inset(${inset.top}% ${inset.right}% ${inset.bottom}% ${inset.left}%)`;
+}
+
+// A transform that moves a picture `share` of its size off its `side`.
+const away = { top: ["Y", -1], right: ["X", 1], bottom: ["Y", 1], left: ["X", -1] } as const;
+const off = (side: Side, share: number) => `translate${away[side][0]}(${away[side][1] * 100 * share}%)`;
+const opposite = { top: "bottom", right: "left", bottom: "top", left: "right" } as const;
 
 // Into the colour over the first half, out of it over the second.
 const dip = (background: string) => (p: number) =>
-  shown({ opacity: p < 0.5 ? 1 : 0 }, { background, opacity: p < 0.5 ? 2 * p : 2 * (1 - p) });
+  layers({ opacity: p < 0.5 ? 1 : 0 }, {}, { background, opacity: p < 0.5 ? 2 * p : 2 * (1 - p) });
+
+// xfade's slides push the incoming picture in from `from` as the outgoing one leaves the other way: both move.
+const push =
+  (from: Side): Look =>
+  (p) =>
+    layers({ transform: off(opposite[from], p) }, { transform: off(from, 1 - p) });
+
+// The incoming picture slides in from `from` over the outgoing one, which stays where it is (drawn
+// under it as the outgoing one, cut away where the incoming one has come).
+const cover =
+  (from: Side): Look =>
+  (p) =>
+    layers({ clipPath: cut(from, p) }, { transform: off(from, 1 - p) });
+
+// The incoming picture uncovered from `from`.
+const wipe =
+  (from: Side): Look =>
+  (p) =>
+    layers({ clipPath: cut(from, p) });
+
+// The incoming picture through a slit across the middle along `to`, widening to both edges.
+const doors =
+  (to: "right" | "bottom"): Look =>
+  (p) =>
+    layers({
+      maskImage: `linear-gradient(to ${to}, black ${50 - 50 * p}%, transparent ${50 - 50 * p}%, transparent ${50 + 50 * p}%, black ${50 + 50 * p}%)`,
+    });
+
+// Through black: the outgoing picture closing to nothing in the middle by its first half, the
+// incoming one opening from there by its second, each inside `shape` of a share of its size.
+const crop =
+  (shape: (share: number) => string): Look =>
+  (p) =>
+    p < 0.5 ? layers({ clipPath: shape(1 - 2 * p) }, { opacity: 0 }) : layers({ opacity: 0 }, { clipPath: shape(2 * p - 1) });
+
+// A circle of `share` of the way to the picture's corners (71% of its diagonal over √2), at its middle.
+const circle = (share: number) => `circle(${71 * share}% at 50% 50%)`;
+
+// A mask of noise, opaque but where it is below `share`: more of it clear as `share` grows.
+function noise(share: number) {
+  const threshold = 0.3 + 0.4 * share;
+  const svg =
+    "<svg xmlns='http://www.w3.org/2000/svg' width='192' height='192'><filter id='n' x='0' y='0' width='1' height='1' color-interpolation-filters='sRGB'>" +
+    "<feTurbulence type='fractalNoise' baseFrequency='0.7' seed='7' stitchTiles='stitch'/>" +
+    `<feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 40 0 0 0 ${-40 * threshold}'/></filter>` +
+    "<rect width='100%' height='100%' filter='url(#n)'/></svg>";
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+// Into a grey picture and out of it: both turn grey towards the middle as one gives way to the other.
+const grays: Look = (p) =>
+  layers({ opacity: 1 - p, filter: `grayscale(${Math.min(1, 2 * p)})` }, { filter: `grayscale(${Math.min(1, 2 - 2 * p)})` });
+
+// A crossfade through `filter` of both pictures, strongest halfway.
+const through =
+  (filter: (amount: number) => string | undefined): Look =>
+  (p) =>
+    layers({ opacity: 1 - p, filter: filter(peak(p)) }, { filter: filter(peak(p)) });
 
 /**
  * Every Transition kind (docs/adr/0012-transitions-are-recipes-around-one-xfade.md): its name, its
  * section of the Transitions tab, and its look, near what its recipe renders (backend/app/transitions.py)
  * with exact timing. In the Transitions tab's order.
  */
-export const TRANSITIONS: Record<TransitionKind, { label: string; group: TransitionGroup; look: (progress: number) => TransitionLook }> = {
-  fade: { label: "Fade", group: "Basic", look: (p) => shown({ opacity: 1 - p }) },
+export const TRANSITIONS: Record<TransitionKind, { label: string; group: TransitionGroup; look: Look }> = {
+  fade: { label: "Fade", group: "Basic", look: (p) => layers({ opacity: 1 - p }) },
   fadeblack: { label: "Dip to black", group: "Basic", look: dip("#000") },
   fadewhite: { label: "Dip to white", group: "Basic", look: dip("#fff") },
-  // xfade's slides push the incoming picture in as the outgoing one goes.
-  slideleft: { label: "Push left", group: "Slide", look: (p) => shown({ transform: `translateX(${-100 * p}%)` }) },
-  slideright: { label: "Push right", group: "Slide", look: (p) => shown({ transform: `translateX(${100 * p}%)` }) },
-  slideup: { label: "Push up", group: "Slide", look: (p) => shown({ transform: `translateY(${-100 * p}%)` }) },
-  slidedown: { label: "Push down", group: "Slide", look: (p) => shown({ transform: `translateY(${100 * p}%)` }) },
-  wipeleft: { label: "Wipe", group: "Wipe", look: (p) => shown({ clipPath: `inset(0 ${100 * p}% 0 0)` }) },
-  zoomin: { label: "Zoom in", group: "Zoom", look: (p) => shown({ transform: `scale(${1 + p})`, opacity: 1 - p }) },
+  fadegrays: { label: "Dip through grey", group: "Basic", look: grays },
+  // Clear where a noise is below the progress: at the ends, all or none of it.
+  dissolve: { label: "Dissolve", group: "Basic", look: (p) => layers(p <= 0 ? {} : p >= 1 ? { opacity: 0 } : { maskImage: noise(p) }) },
+  slideleft: { label: "Push left", group: "Slide", look: push("right") },
+  slideright: { label: "Push right", group: "Slide", look: push("left") },
+  slideup: { label: "Push up", group: "Slide", look: push("bottom") },
+  slidedown: { label: "Push down", group: "Slide", look: push("top") },
+  coverleft: { label: "Cover left", group: "Slide", look: cover("right") },
+  coverright: { label: "Cover right", group: "Slide", look: cover("left") },
+  coverup: { label: "Cover up", group: "Slide", look: cover("bottom") },
+  coverdown: { label: "Cover down", group: "Slide", look: cover("top") },
+  wipeleft: { label: "Wipe left", group: "Wipe", look: wipe("right") },
+  wiperight: { label: "Wipe right", group: "Wipe", look: wipe("left") },
+  wipeup: { label: "Wipe up", group: "Wipe", look: wipe("bottom") },
+  wipedown: { label: "Wipe down", group: "Wipe", look: wipe("top") },
+  // Clockwise from twelve.
+  radial: { label: "Clock wipe", group: "Wipe", look: (p) => layers({ maskImage: `conic-gradient(transparent ${360 * p}deg, black ${360 * p}deg)` }) },
   circleopen: {
     label: "Circle open",
     group: "Shape",
-    look: (p) => shown({ maskImage: `radial-gradient(circle at center, transparent ${80 * p}%, black ${80 * p}%)` }),
+    look: (p) => layers({ maskImage: `radial-gradient(circle at center, transparent ${100 * p}%, black ${100 * p}%)` }),
+  },
+  circleclose: { label: "Circle close", group: "Shape", look: (p) => layers({ clipPath: circle(1 - p) }) },
+  circlecrop: { label: "Iris", group: "Shape", look: crop(circle) },
+  rectcrop: { label: "Box", group: "Shape", look: crop((share) => `inset(${50 - 50 * share}%)`) },
+  vertopen: { label: "Doors vertical", group: "Shape", look: doors("right") },
+  horzopen: { label: "Doors horizontal", group: "Shape", look: doors("bottom") },
+  zoomin: { label: "Zoom in", group: "Zoom", look: (p) => layers({ transform: `scale(${1 + p})`, opacity: 1 - p }) },
+  // The outgoing picture squeezed into a line across the middle (or down it), the incoming one still behind.
+  squeezeh: { label: "Squeeze across", group: "Zoom", look: (p) => layers({ transform: `scaleY(${1 - p})` }) },
+  squeezev: { label: "Squeeze down", group: "Zoom", look: (p) => layers({ transform: `scaleX(${1 - p})` }) },
+  pixelize: {
+    label: "Pixelize",
+    group: "Glitch",
+    look: through((amount) => {
+      const level = Math.ceil(amount * PIXELIZE_BLOCKS.length);
+      return level ? `url(#${pixelizeFilter(level - 1)})` : undefined;
+    }),
+  },
+  hblur: { label: "Blur", group: "Glitch", look: through((amount) => `blur(${8 * amount}px)`) },
+  distance: { label: "Distance", group: "Glitch", look: (p) => layers({ opacity: 1 - p }) },
+  // Ten slices across, each keeping less of the outgoing picture from its left.
+  hlslice: {
+    label: "Slices",
+    group: "Glitch",
+    look: (p) => layers({ maskImage: `repeating-linear-gradient(to right, black 0%, black ${10 - 10 * p}%, transparent ${10 - 10 * p}%, transparent 10%)` }),
   },
 };
 
@@ -59,5 +176,6 @@ export function showLook(look: LayerLook, layer: { style: CSSStyleDeclaration })
   style.transform = look.transform ?? "";
   style.clipPath = look.clipPath ?? "";
   style.maskImage = look.maskImage ?? "";
+  style.filter = look.filter ?? "";
   style.background = look.background ?? "";
 }

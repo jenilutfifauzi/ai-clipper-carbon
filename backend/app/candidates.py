@@ -665,18 +665,45 @@ def _check_held(segment: Segment) -> None:
 
 
 class TransitionKind(StrEnum):
-    """How one Segment gives way to the next: its stored id, rendered by its recipe (app/transitions.py)."""
+    """How one Segment gives way to the next: its stored id, rendered by its recipe (app/transitions.py).
+    By the Transitions tab's groups: Basic, Slide, Wipe, Shape, Zoom, Light (none yet) and Glitch."""
 
     FADE = "fade"
     FADEBLACK = "fadeblack"
     FADEWHITE = "fadewhite"
+    FADEGRAYS = "fadegrays"
+    DISSOLVE = "dissolve"
     SLIDELEFT = "slideleft"
     SLIDERIGHT = "slideright"
     SLIDEUP = "slideup"
     SLIDEDOWN = "slidedown"
+    COVERLEFT = "coverleft"
+    COVERRIGHT = "coverright"
+    COVERUP = "coverup"
+    COVERDOWN = "coverdown"
     WIPELEFT = "wipeleft"
-    ZOOMIN = "zoomin"
+    WIPERIGHT = "wiperight"
+    WIPEUP = "wipeup"
+    WIPEDOWN = "wipedown"
+    RADIAL = "radial"
     CIRCLEOPEN = "circleopen"
+    CIRCLECLOSE = "circleclose"
+    CIRCLECROP = "circlecrop"
+    RECTCROP = "rectcrop"
+    VERTOPEN = "vertopen"
+    HORZOPEN = "horzopen"
+    ZOOMIN = "zoomin"
+    SQUEEZEH = "squeezeh"
+    SQUEEZEV = "squeezev"
+    PIXELIZE = "pixelize"
+    HBLUR = "hblur"
+    DISTANCE = "distance"
+    HLSLICE = "hlslice"
+
+
+# How long a Transition can be, and a new one's length.
+TRANSITION_SECS = (0.1, 3.0)
+TRANSITION_DEFAULT_SECS = 0.5
 
 
 @dataclass(frozen=True)
@@ -686,7 +713,7 @@ class Transition:
 
     after: ItemId
     kind: TransitionKind = TransitionKind.FADE
-    secs: Annotated[FiniteFloat, Field(ge=0.2, le=1.5)] = 0.5
+    secs: Annotated[FiniteFloat, Field(ge=TRANSITION_SECS[0], le=TRANSITION_SECS[1])] = TRANSITION_DEFAULT_SECS
 
 
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:

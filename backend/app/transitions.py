@@ -45,15 +45,16 @@ class Recipe:
         return self.xfade if self.xfade is not None else f"custom:expr='{self.expr}'"
 
 
-RECIPES: dict[TransitionKind, Recipe] = {
-    TransitionKind.FADE: Recipe(xfade="fade"),
-    TransitionKind.FADEBLACK: Recipe(xfade="fadeblack"),
-    TransitionKind.FADEWHITE: Recipe(xfade="fadewhite"),
-    TransitionKind.SLIDELEFT: Recipe(xfade="slideleft"),
-    TransitionKind.SLIDERIGHT: Recipe(xfade="slideright"),
-    TransitionKind.SLIDEUP: Recipe(xfade="slideup"),
-    TransitionKind.SLIDEDOWN: Recipe(xfade="slidedown"),
-    TransitionKind.WIPELEFT: Recipe(xfade="wipeleft"),
-    TransitionKind.ZOOMIN: Recipe(xfade="zoomin"),
-    TransitionKind.CIRCLEOPEN: Recipe(xfade="circleopen"),
-}
+# xfade's own transitions, each a kind of the same name with nothing around it.
+BUILT_INS = [
+    TransitionKind.FADE, TransitionKind.FADEBLACK, TransitionKind.FADEWHITE, TransitionKind.FADEGRAYS, TransitionKind.DISSOLVE,
+    TransitionKind.SLIDELEFT, TransitionKind.SLIDERIGHT, TransitionKind.SLIDEUP, TransitionKind.SLIDEDOWN,
+    TransitionKind.COVERLEFT, TransitionKind.COVERRIGHT, TransitionKind.COVERUP, TransitionKind.COVERDOWN,
+    TransitionKind.WIPELEFT, TransitionKind.WIPERIGHT, TransitionKind.WIPEUP, TransitionKind.WIPEDOWN, TransitionKind.RADIAL,
+    TransitionKind.CIRCLEOPEN, TransitionKind.CIRCLECLOSE, TransitionKind.CIRCLECROP, TransitionKind.RECTCROP,
+    TransitionKind.VERTOPEN, TransitionKind.HORZOPEN,
+    TransitionKind.ZOOMIN, TransitionKind.SQUEEZEH, TransitionKind.SQUEEZEV,
+    TransitionKind.PIXELIZE, TransitionKind.HBLUR, TransitionKind.DISTANCE, TransitionKind.HLSLICE,
+]
+
+RECIPES: dict[TransitionKind, Recipe] = {kind: Recipe(xfade=kind.value) for kind in BUILT_INS}

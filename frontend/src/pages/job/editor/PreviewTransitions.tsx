@@ -7,6 +7,7 @@ import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
 import { setVolume } from "./PreviewMusic";
 import { MediaSegment, CopiedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
+import { TransitionFilters } from "./TransitionFilters";
 import { showLook, TRANSITIONS, type TransitionLook } from "./transitions";
 
 // The Segment a Transition takes away is made ready this long before the Transition starts.
@@ -140,6 +141,7 @@ function Ghost({
 
   return (
     <>
+      <TransitionFilters />
       <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
         {segment.media ? (
           <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />

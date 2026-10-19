@@ -721,15 +721,36 @@ export type TransitionKind =
   | "fade"
   | "fadeblack"
   | "fadewhite"
+  | "fadegrays"
+  | "dissolve"
   | "slideleft"
   | "slideright"
   | "slideup"
   | "slidedown"
+  | "coverleft"
+  | "coverright"
+  | "coverup"
+  | "coverdown"
   | "wipeleft"
+  | "wiperight"
+  | "wipeup"
+  | "wipedown"
+  | "radial"
+  | "circleopen"
+  | "circleclose"
+  | "circlecrop"
+  | "rectcrop"
+  | "vertopen"
+  | "horzopen"
   | "zoomin"
-  | "circleopen";
+  | "squeezeh"
+  | "squeezev"
+  | "pixelize"
+  | "hblur"
+  | "distance"
+  | "hlslice";
 
-// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.2 to 1.5).
+// A Transition from the Segment `after` into the next, the two overlapping by `secs` (0.1 to 3).
 export interface Transition {
   after: string;
   kind: TransitionKind;
