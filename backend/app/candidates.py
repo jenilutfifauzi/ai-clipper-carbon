@@ -671,10 +671,15 @@ class Segment:
     keys: Keys = field(default_factory=dict)
     # A Freeze frame's (docs/adr/0009): how long it holds the frame at `start`, silent; `end` is `start`.
     hold: TimelineSecs | None = None
+    # A video's Captions switch (docs/adr/0020): False leaves it uncaptioned and its item untranscribed;
+    # empty means on. A Segment of the Source has none: it is captioned whenever its Job is.
+    captions: bool | None = None
 
     def __post_init__(self) -> None:
         if self.media is None and any(self.keys.values()):
             raise ValueError(f"Segment {self.id} shows the episode, which has no Keyframes: only a video's Segment can be keyed")
+        if self.media is None and self.captions is not None:
+            raise ValueError(f"Segment {self.id} shows the episode, which has no Captions switch: only a video's Segment has one")
         if self.hold is not None:
             _check_held(self)
         length = segment_time(self).length

@@ -25,8 +25,10 @@ KITA_SOAL = (1.6, 2.6)
 # from 68_500 for Shapes (shapes/08): merge_candidate_items' `shapes` and the Shape Kinds named in
 # their one-line schema; the rest of what an agent needs about Shapes is in the server's instructions.
 # Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
-# merge_candidate_items. Raised from 71_500 for a Cue Edit's `x`, `y` and `scale` (captions-advanced/08).
-TOOLS_BUDGET_BYTES = 72_500
+# merge_candidate_items; and the Captions switch (captions-advanced/05): `segments[].captions` in each
+# editing tool's Segment schema. Raised from 72_000 for a Cue Edit's `x`, `y` and `scale`
+# (captions-advanced/08).
+TOOLS_BUDGET_BYTES = 73_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -685,6 +687,28 @@ async def test_a_video_segments_framing_is_merged_field_by_field(mcp, tmp_path):
         "media", {"x": 388, "y": 690, "width": 304, "height": 540}, 90, 1,
     )
     assert video["crop"] == {"x": 0, "y": 0, "width": 320, "height": 180}
+
+
+@pytest.mark.anyio
+async def test_a_video_segments_captions_switch_is_set_by_merge_and_edit_and_refused_on_the_episodes(mcp, tmp_path):
+    video = make(tmp_path / "broll.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-c:v", "libx264")
+    item = await call(mcp, "add_asset", kind="media", path=str(video))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    episode = {"id": "e", "start": candidate["start"], "end": candidate["end"]}
+    await call(mcp, "merge_candidate_items", **ids, segments=[
+        episode, {"id": "v", "media": item["id"], "start": 0, "end": 1, "framing": {"transform": {"scale": 0.5}}},
+    ])
+
+    # Off by merge, keeping the rest of the Segment; on again (null) by edit_candidate.
+    merged = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "captions": False}])
+    assert (merged["segments"][1]["captions"], merged["segments"][1]["framing"]["transform"]["scale"]) == (False, 0.5)
+    edited = await call(mcp, "edit_candidate", **ids, changes={"segments": [
+        episode, {"id": "v", "media": item["id"], "start": 0, "end": 1, "framing": {}, "captions": None},
+    ]})
+    assert edited["segments"][1]["captions"] is None
+    assert "Captions switch" in await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "captions": False}])
 
 
 @pytest.mark.anyio

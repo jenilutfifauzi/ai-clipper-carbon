@@ -122,6 +122,7 @@ export function SegmentFields({
   onChange,
   onCropMode,
   scene,
+  captions,
   playback,
   span,
   copy,
@@ -150,6 +151,8 @@ export function SegmentFields({
   onCropMode?: () => void;
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
+  // A video's Segment's captions: its Captions switch, its video's language and its Words status.
+  captions?: ReactNode;
   playback: Playback;
   // Where it plays on the Timeline (keying.ts' segmentSpan), which a video's Keyframes are set in.
   span: KeySpan | null;
@@ -220,6 +223,7 @@ export function SegmentFields({
               onChange={(volume) => onVolume(volume, `segment:${segment.id}:volume`)}
             />
           )}
+          {!held && !segment.reverse && item?.has_audio !== false && captions}
         </>
       ) : (
         <>

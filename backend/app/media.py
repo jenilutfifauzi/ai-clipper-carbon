@@ -16,7 +16,7 @@ A Candidate refers to an item by its id; an item in use can't be deleted (the AP
 import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -38,6 +38,7 @@ from app.derived import (
 from app.library import Index, shrink
 from app.renderer import last_lines
 from app.retimed import Copies, CopySize
+from app.transcript import Language
 
 # In DATA_DIR, with its index.
 MEDIA_DIR = "media"
@@ -92,6 +93,9 @@ class MediaItem:
     height: int | None
     has_audio: bool
     created: datetime
+    # A video's Media Words are transcribed in this language in every Job (docs/adr/0020); empty
+    # means each Job's own.
+    language: Language | None = None
 
 
 _ITEMS = TypeAdapter(list[MediaItem])
@@ -205,6 +209,14 @@ class MediaStore:
         finally:
             raw.unlink(missing_ok=True)
         self._index.add(item)
+        return item
+
+    def set_language(self, media_id: str, language: str | None) -> MediaItem:
+        """Set the language the item's Media Words are transcribed in (None: each Job's). Its Media Words
+        in other languages are kept."""
+        item = self._index.change(media_id, lambda item: replace(item, language=language))
+        if item is None:
+            raise MediaNotFound(media_id)
         return item
 
     def delete(self, media_id: str) -> None:

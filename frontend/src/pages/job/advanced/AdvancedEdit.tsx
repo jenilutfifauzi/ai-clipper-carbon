@@ -43,7 +43,7 @@ import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/pl
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
+import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, type RetimedAsk } from "../editor/retimedCopy";
 import {
@@ -110,6 +110,7 @@ import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, 
 import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
+import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
@@ -436,9 +437,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (pick !== pickState) setPickState(pick);
   }, [pick, pickState]);
   // The clip as saved, prepared when this editor opens and when a video is added to its Main Track
-  // (placed or pasted): its Source Segments transcribed and analysed, and its videos' Media Words
-  // transcribed, in the render queue, so that its preview shows their own captions.
-  const savedVideos = [...new Set(candidate.segments.flatMap((segment) => (segment.media ? [segment.media] : [])))].sort().join(" ");
+  // (placed or pasted) or has its Captions switch turned on: its Source Segments transcribed and
+  // analysed, and its captioned videos' Media Words transcribed, in the render queue, so that its
+  // preview shows their own captions.
+  const savedVideos = [
+    ...new Set(candidate.segments.flatMap((segment) => (segment.media && segment.captions !== false ? [segment.media] : []))),
+  ]
+    .sort()
+    .join(" ");
   useEffect(() => {
     api.prepareCandidate(job.id, candidate.id).then(
       () => setReplan((n) => n + 1),
@@ -581,6 +587,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
+  // A video's language set for every Job (null: each Job's): its Media Words in it are then
+  // transcribed for this clip, as saved, and the plan asked for again.
+  const setMediaLanguage = (item: MediaItem, language: string | null) =>
+    library.setLanguage(item, language).then(() =>
+      api.prepareCandidate(job.id, candidate.id).then(
+        () => setReplan((n) => n + 1),
+        () => setReplan((n) => n + 1),
+      ),
+    );
   // A notice told once while the change that makes it keeps coming (a drag), not at every step.
   const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
   // A Segment's or video Overlay's Speed set from the inspector: one change of `group`, its ripple included.
@@ -1017,6 +1032,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           pick={pick}
           played={played}
           pending={pendingSpans(played, edits.segments, preview?.words_status)}
+          failed={failedSegments(preview?.words_status)}
+          captioned={job.options.captions}
           playback={playback}
           mediaById={mediaById}
           mediaCache={mediaCache}
@@ -1092,6 +1109,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
+        captionsOf={(segment, item) => (
+          <MediaCaptionFields
+            segment={segment}
+            item={item}
+            job={job.options}
+            status={preview?.words_status[segment.id]}
+            error={preview?.words_errors?.[segment.id]}
+            onChange={updateSegment}
+            onLanguage={(language) => setMediaLanguage(item, language)}
+            onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
+          />
+        )}
       />
     </KeyingContext.Provider>
   );
@@ -1109,6 +1138,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onAddSource={(range) => addSegment({ id: newId(), ...range })}
       onAddVideo={(item) => addSegment(newMediaSegment(item, newId()))}
       onAddOverlay={(item) => addOverlay(item)}
+      languages={{ job: job.options.language, set: setMediaLanguage }}
     />
   );
   // The desktop Workspace's top controls: collapse the Asset Panel (A) or the Inspector (P), each lit
