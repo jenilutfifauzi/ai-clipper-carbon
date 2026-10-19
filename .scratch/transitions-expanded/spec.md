@@ -75,7 +75,7 @@ A join without one stays a diamond.
 
 **The preview moves both pictures.**
 - For the overlap, the outgoing Segment (the ghost) and the incoming Segment's picture are both styled with CSS: transforms, clip-paths and masks, filters, a warm gradient layer blended over them, and SVG filters.
-- A push, a cover and a spin move both, as they render.
+- Each moves as it renders, following xfade: a push, a whip pan and a spin move both pictures; a cover slides the incoming one over a still outgoing one; a squeeze moves only the outgoing one.
 - Timing is exact and the look is near.
 - The sound follows the Transition's sound on both sides.
 
@@ -119,7 +119,7 @@ The agent reaches all of it through the MCP tools.
 28. As the owner, I want "Randomise all joins", so that a Clip gets varied Transitions with no two neighbours alike.
 29. As the owner, I want each of those to be one step of undo, so that I can try them freely.
 30. As the owner, I want a locked Video Track to refuse Seam drags and the "all" actions, so that a lock protects the Main Track's timing.
-31. As the owner, I want the preview's Push, Cover and Spin to move both pictures, so that what I see matches the render.
+31. As the owner, I want the preview's Push, Cover and Spin to move the pictures as the render does, so that what I see matches the render.
 32. As the owner, I want every kind imitated in the preview with exact timing, so that I can judge pacing before rendering.
 33. As the owner, I want the preview's sound across a join to follow the Transition's sound setting, so that I hear what the render will give.
 34. As the owner, I want to give a Style Preset a Join Transition, so that my house crossfade is applied without thinking.
@@ -195,7 +195,7 @@ The agent reaches all of it through the MCP tools.
 ### Preview
 
 - **Look functions.** A frontend table `Record<TransitionKind, { label, group, look }>` makes the type checker demand every kind. `look(progress, strength, colour)` returns the styles of the outgoing layer, the incoming layer and an optional veil or gradient layer.
-- **The incoming side is styled too:** during an overlap, the preview's Segment picture layer is styled, never the Overlays, captions, Picture layers, hook or Watermark above it. Push, Cover, Whip pan, Spin and Squeeze move both sides.
+- **The incoming side is styled too:** during an overlap, the preview's Segment picture layer is styled, never the Overlays, captions, Picture layers, hook or Watermark above it. Push, Whip pan and Spin move both sides; Cover moves only the incoming one, over a still outgoing one; Squeeze moves only the outgoing one, as xfade does.
 - **CSS means.**
   - Wipes, doors, box and circles use `clip-path`.
   - Clock wipe uses a `conic-gradient` mask.

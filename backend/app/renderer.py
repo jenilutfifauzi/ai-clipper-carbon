@@ -134,7 +134,8 @@ from app.planner import (
     on_frame,
     picture_at,
 )
-from app.candidates import Keyframe, Shadow, Shape, TextLayer, TransitionSound
+from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.transition_kinds import TransitionSound
 from app.transitions import RECIPES, Side
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
@@ -485,7 +486,7 @@ def _sounds_crossed(transition: TransitionEvent, outgoing: str, incoming: str, o
     start) into `out` by `transition`'s sound: acrossfade's straight lines (its default `tri`), its
     quarter sines (`qsin`), or, for a Cut, each side switched off or on by a short afade at the
     overlap's middle (named after `name`), then summed as they are (`nofade`)."""
-    length = transition.end - transition.start
+    length = transition.length
     if transition.sound == TransitionSound.CUT:
         middle = length / 2 - _CUT_SECS / 2
         return [
@@ -510,8 +511,8 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
         side = Side(0.0, True, plan.width, plan.height, f"{name}i")
         chains.append(f"{incoming}{recipe.incoming(transition, side)}[{name}i]")
         incoming = f"[{name}i]"
-    length = transition.end - transition.start
-    chains.append(f"{outgoing}{incoming}xfade=transition={recipe.transition}:duration={length:.3f}:offset={transition.start:.3f}{out}")
+    length = transition.length
+    chains.append(f"{outgoing}{incoming}xfade=transition={recipe.xfade}:duration={length:.3f}:offset={transition.start:.3f}{out}")
     return chains
 
 

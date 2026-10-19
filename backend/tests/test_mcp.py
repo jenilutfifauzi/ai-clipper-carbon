@@ -13,10 +13,10 @@ from fastapi.testclient import TestClient
 from mcp import Client
 
 from app import uploads
-from app.candidates import TransitionKind
 from app.config import load_settings
 from app.main import create_app
 from app.ports import Ports
+from app.transition_kinds import TransitionKind
 from fontfiles import RESTRICTED, font_file
 from test_jobs_api import URL
 
@@ -782,7 +782,7 @@ async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transiti
                  "pixelize", "hblur", "distance", "hlslice"):
         plan = await call(mcp, "edit_candidate", **ids, changes={"segments": segments, "transitions": [{"after": "a", "kind": kind, "secs": 0.2}]}, dry_run=True)
         [event] = plan["transitions"]
-        assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear"} and event["start"] > 0, event
+        assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear", "strength": None, "colour": None} and event["start"] > 0, event
     edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
     assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None}]
     assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])

@@ -276,6 +276,12 @@ export const TRANSITIONS: Record<TransitionKind, { label: string; group: Transit
 
 export const TRANSITION_KINDS = Object.keys(TRANSITIONS) as TransitionKind[];
 
+// Each group with its kinds, in order, any with none yet left out: the Transitions tab's sections and
+// the Join Transition's choices.
+export const KINDS_BY_GROUP = TRANSITION_GROUPS.map((group) => ({ group, kinds: TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].group === group) })).filter(
+  ({ kinds }) => kinds.length,
+);
+
 // Shows `look` on `layer`, clearing what an earlier look set there and this one doesn't.
 export function showLook(look: LayerLook, layer: { style: CSSStyleDeclaration }) {
   const style = layer.style;

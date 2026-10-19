@@ -137,7 +137,7 @@ import { heardDraft, shownPlan, toggledTrack, TRACKS, type TrackControl, type Tr
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
-import { TRANSITION_SECS, TransitionPanel } from "./Transitions";
+import { TRANSITION_DEFAULT_SECS, TransitionPanel } from "./Transitions";
 import { useEditHistory } from "./useEditHistory";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
@@ -547,7 +547,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function setTransition(after: string, kind: TransitionKind) {
     if (refused("video")) return;
     const old = edits.transitions.find((transition) => transition.after === after);
-    const next = { ...old, after, kind, secs: old?.secs ?? TRANSITION_SECS };
+    const next = { ...old, after, kind, secs: old?.secs ?? TRANSITION_DEFAULT_SECS };
     change({ transitions: [...edits.transitions.filter((transition) => transition.after !== after), next] });
     select({ kind: "join", after });
   }

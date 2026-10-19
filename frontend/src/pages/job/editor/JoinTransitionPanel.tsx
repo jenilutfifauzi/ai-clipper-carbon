@@ -1,12 +1,10 @@
 import { ChevronDown } from "lucide-react";
 import { useId } from "react";
-import type { TransitionKind, TransitionSound } from "../../../api";
-import { ColorField } from "../../../components/ColorField";
+import type { TransitionKind } from "../../../api";
 import { Hint } from "../../../components/InfoTip";
-import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
-import { SOUNDS, TRANSITION_BOUNDS, TRANSITION_SECS } from "../advanced/Transitions";
-import { TRANSITION_GROUPS, TRANSITION_KINDS, TRANSITIONS } from "./transitions";
+import { TRANSITION_BOUNDS, TRANSITION_DEFAULT_SECS, TransitionKnobFields } from "../advanced/Transitions";
+import { KINDS_BY_GROUP, TRANSITIONS } from "./transitions";
 import type { StyleControls } from "./useStyleDraft";
 
 /**
@@ -17,8 +15,6 @@ import type { StyleControls } from "./useStyleDraft";
 export function JoinTransitionPanel({ style }: { style: StyleControls }) {
   const { join, setJoin } = style;
   const builtin = style.preset.builtin;
-  // Its kind's knobs, each with its own value.
-  const own = join ? TRANSITIONS[join.kind] : null;
   return (
     <div className="flex flex-col gap-4">
       {builtin ? (
@@ -31,7 +27,7 @@ export function JoinTransitionPanel({ style }: { style: StyleControls }) {
       <JoinKind
         value={join?.kind ?? "none"}
         disabled={builtin}
-        onChange={(kind) => setJoin(kind === "none" ? null : { ...(join ?? { secs: TRANSITION_SECS, sound: "linear" }), kind })}
+        onChange={(kind) => setJoin(kind === "none" ? null : { ...(join ?? { secs: TRANSITION_DEFAULT_SECS, sound: "linear" }), kind })}
       />
       {join && !builtin && (
         <>
@@ -44,19 +40,7 @@ export function JoinTransitionPanel({ style }: { style: StyleControls }) {
             format={(v) => `${v.toFixed(2)} s`}
             onChange={(secs) => setJoin({ ...join, secs })}
           />
-          {own?.strength !== undefined && (
-            <Slider
-              label="Strength"
-              value={join.strength ?? own.strength}
-              min={0}
-              max={1}
-              step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(strength) => setJoin({ ...join, strength })}
-            />
-          )}
-          {own?.colour !== undefined && <ColorField label="Colour" value={join.colour ?? own.colour} onChange={(colour) => setJoin({ ...join, colour })} />}
-          <Segmented legend="Sound" options={SOUNDS} value={join.sound ?? "linear"} onChange={(sound: TransitionSound) => setJoin({ ...join, sound })} />
+          <TransitionKnobFields transition={join} onChange={(next) => setJoin(next)} />
         </>
       )}
     </div>
@@ -88,9 +72,9 @@ export function JoinKind({
           className="min-h-11 w-full cursor-pointer appearance-none truncate rounded-control border border-border bg-fill py-2 pr-9 pl-3 text-base disabled:cursor-not-allowed disabled:opacity-60"
         >
           <option value="none">None</option>
-          {TRANSITION_GROUPS.map((group) => (
+          {KINDS_BY_GROUP.map(({ group, kinds }) => (
             <optgroup key={group} label={group}>
-              {TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].group === group).map((kind) => (
+              {kinds.map((kind) => (
                 <option key={kind} value={kind}>
                   {TRANSITIONS[kind].label}
                 </option>

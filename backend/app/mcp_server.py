@@ -246,7 +246,7 @@ Edits:
   straight lines, dipping in the middle), equal_power (quarter sines, the level held through the
   middle) or cut (the first side's sound alone until the middle of the overlap, the second's after
   it). The dry run lists each (`transitions`) with the Segment it comes after, its kind, its span in
-  the Clip, its sound and the knobs set.
+  the Clip, its sound and its knobs (null when unset).
 - A Style Preset's join_transition (none, or a Transition without `after`; built-in ones have none)
   is copied onto every new join of its Candidates: when an edit changes the Segments without
   stating `transitions`, each pair of adjacent Segments that wasn't adjacent before and has no
@@ -878,7 +878,7 @@ def _plan_view(
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
-    (`ignored`), each Transition's kind, span, sound, knobs set and the Segment it comes `after`, the keyed
+    (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it comes `after`, the keyed
     sounds' volume Keyframes (a video Segment's, a Music Clip's, an Overlay's), each Shape's and
     each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
     picture layer's (`_layer_view`), and the Words."""
@@ -905,7 +905,7 @@ def _plan_view(
             for segment in plan["segments"]
         ],
         "transitions": [
-            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound"), **_compact(_times(event, "strength", "colour"))}
+            {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound", "strength", "colour")}
             for event in plan["transitions"]
         ],
         "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],

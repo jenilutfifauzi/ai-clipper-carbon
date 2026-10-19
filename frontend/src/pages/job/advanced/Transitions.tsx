@@ -1,25 +1,21 @@
 import { Copy, Dices, Shuffle, Trash2 } from "lucide-react";
-import type { Transition, TransitionKind, TransitionSound } from "../../../api";
+import type { JoinTransition, Transition, TransitionKind, TransitionSound } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Hint } from "../../../components/InfoTip";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
-import { TRANSITION_GROUPS, TRANSITION_KINDS, TRANSITIONS } from "../editor/transitions";
+import { KINDS_BY_GROUP, TRANSITIONS } from "../editor/transitions";
 import { TransitionFilters } from "../editor/TransitionFilters";
 import { TransitionCard } from "./TransitionCard";
 
-// How long a Transition can be (TRANSITION_SECS in backend/app/candidates.py), and a new one's length.
+// How long a Transition can be, and a new one's length (TRANSITION_SECS and TRANSITION_DEFAULT_SECS in
+// backend/app/transition_kinds.py).
 export const TRANSITION_BOUNDS = { min: 0.1, max: 3 };
-export const TRANSITION_SECS = 0.5;
+export const TRANSITION_DEFAULT_SECS = 0.5;
 
-// The Transitions tab's sections: each group with its kinds, any with none yet left out.
-const SECTIONS = TRANSITION_GROUPS.map((group) => ({ group, kinds: TRANSITION_KINDS.filter((kind) => TRANSITIONS[kind].group === group) })).filter(
-  ({ kinds }) => kinds.length,
-);
-
-// How a Transition's sound crosses (TransitionSound in backend/app/candidates.py).
+// How a Transition's sound crosses (TransitionSound in backend/app/transition_kinds.py).
 export const SOUNDS = [
   { value: "linear", label: "Linear" },
   { value: "equal_power", label: "Equal power" },
@@ -71,8 +67,6 @@ export function TransitionPanel({
   onRandomiseAll?: () => void;
   onRemoveAll?: () => void;
 }) {
-  // The picked join's kind: the knobs it reads, each with its own value.
-  const own = transition ? TRANSITIONS[transition.kind] : null;
   return (
     <div className="flex flex-col gap-4">
       {!kinds && !transition && <Hint>Pick a transition in the Transitions tab.</Hint>}
@@ -106,7 +100,7 @@ export function TransitionPanel({
               </button>
             </div>
           )}
-          {SECTIONS.map(({ group, kinds }) => (
+          {KINDS_BY_GROUP.map(({ group, kinds }) => (
             <section key={group} aria-labelledby={`transitions-${group}`} className="flex flex-col gap-2">
               {/* Over the kinds while they scroll by, in the Asset Panel or the phone's sheet. */}
               <h3 id={`transitions-${group}`} className="sticky top-0 z-10 bg-surface/90 py-1 text-xs font-semibold tracking-wide text-muted uppercase backdrop-blur">
@@ -133,30 +127,10 @@ export function TransitionPanel({
             format={(v) => `${v.toFixed(2)} s`}
             onChange={(secs) => onChange({ ...transition, secs }, `transition:${transition.after}`)}
           />
-          {own?.strength !== undefined && (
-            <Slider
-              label="Strength"
-              value={transition.strength ?? own.strength}
-              min={0}
-              max={1}
-              step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(strength) => onChange({ ...transition, strength }, `transition:${transition.after}:strength`)}
-            />
-          )}
-          {own?.colour !== undefined && (
-            <ColorField
-              label="Colour"
-              value={transition.colour ?? own.colour}
-              onChange={(colour) => onChange({ ...transition, colour }, `transition:${transition.after}:colour`)}
-            />
-          )}
-          <Segmented
-            legend="Sound"
-            options={SOUNDS}
-            value={transition.sound ?? "linear"}
-            // Each choice its own step of undo.
-            onChange={(sound: TransitionSound) => onChange({ ...transition, sound })}
+          <TransitionKnobFields
+            transition={transition}
+            // A drag of a slider one step of undo; each choice of sound its own.
+            onChange={(next, knob) => (knob ? onChange(next, `transition:${transition.after}:${knob}`) : onChange(next))}
           />
           <Button variant="ghost" onClick={onRemove} className="self-start">
             <Trash2 aria-hidden size={16} />
@@ -185,5 +159,45 @@ export function TransitionPanel({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A Transition's strength and colour, where its kind reads them (each shown at its kind's own while
+ * unset), and its sound: the Transitions panel's and the Style Preset's Join Transition's. `onChange`
+ * says which knob moved, `strength` or `colour`, so a drag can be one step of undo; a sound, none.
+ */
+export function TransitionKnobFields<T extends JoinTransition>({
+  transition,
+  onChange,
+}: {
+  transition: T;
+  onChange: (transition: T, knob?: "strength" | "colour") => void;
+}) {
+  // Its kind's knobs, each with its own value.
+  const own = TRANSITIONS[transition.kind];
+  return (
+    <>
+      {own.strength !== undefined && (
+        <Slider
+          label="Strength"
+          value={transition.strength ?? own.strength}
+          min={0}
+          max={1}
+          step={0.01}
+          format={(v) => `${Math.round(v * 100)}%`}
+          onChange={(strength) => onChange({ ...transition, strength }, "strength")}
+        />
+      )}
+      {own.colour !== undefined && (
+        <ColorField label="Colour" value={transition.colour ?? own.colour} onChange={(colour) => onChange({ ...transition, colour }, "colour")} />
+      )}
+      <Segmented
+        legend="Sound"
+        options={SOUNDS}
+        value={transition.sound ?? "linear"}
+        onChange={(sound: TransitionSound) => onChange({ ...transition, sound })}
+      />
+    </>
   );
 }

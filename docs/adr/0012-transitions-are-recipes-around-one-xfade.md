@@ -67,7 +67,7 @@ The `transitions-expanded` feature (roadmap #10, `.scratch/advanced-edit-v2/road
 - **The sound follows the Transition's sound setting for every kind,** dips included. A dip never drops the sound out on its own.
 - **Even a non-sampling `custom` expression is too dear** (amended 2026-10-19, ticket 04). At 1080×1920 a 0.5 s join with xfade's plainest one (`A*P+B*(1-P)`) took 1–3 s more than `fade`, and a film burn clamped to white 8–11 s more. So Film burn and Light leak are native filters on both sides too:
   - Film burn is `eq` with per-frame brightness and chroma gammas;
-  - Light leak is a band drawn by `geq` on a 48×48 frame, scaled up and laid over.
+  - Light leak is a band drawn by `geq` on a tiny 48×48 frame, scaled up and laid over. `geq` is a per-pixel expression, but it samples neither picture and costs nothing at that size, so it stays within the render budget.
 
   RGB split's `rgbashift` takes planar RGB, so only the overlap is trimmed out, converted and shifted. `test_transitions.py` holds every new look to 3 s of a fade join.
 - **A knob must map onto a native filter's setting or a constant in the expression.** A knob that would need per-pixel sampling (a softness on xfade's built-in wipes, for example) is out.

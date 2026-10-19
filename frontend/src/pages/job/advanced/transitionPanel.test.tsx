@@ -7,14 +7,16 @@ import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
-import { TransitionPanel } from "./Transitions";
+import { TransitionKnobFields, TransitionPanel } from "./Transitions";
 
 type Choice = { legend: string; options: readonly { value: string; label: string }[]; value: string; onChange: (value: string) => void };
 
-// The elements of `type` in the element tree `node`, without rendering the components in it.
+// The elements of `type` in the element tree `node`, without rendering the components in it but the
+// Transition's knobs, whose fields the panel shows.
 function found<Props>(node: ReactNode, type: JSXElementConstructor<never>): ReactElement<Props>[] {
   if (Array.isArray(node)) return node.flatMap((child) => found<Props>(child, type));
   if (!isValidElement<{ children?: ReactNode }>(node)) return [];
+  if (node.type === TransitionKnobFields) return found<Props>(TransitionKnobFields(node.props as Parameters<typeof TransitionKnobFields>[0]), type);
   const inside = found<Props>(node.props.children, type);
   return node.type === type ? [node as ReactElement<Props>, ...inside] : inside;
 }

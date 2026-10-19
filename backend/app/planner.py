@@ -135,8 +135,6 @@ from app.candidates import (
     TextLayer,
     TextStyle,
     Transform,
-    TransitionKind,
-    TransitionSound,
     WordEdit,
 )
 from app.config import CameraTuning
@@ -159,6 +157,7 @@ from app.styles import (
     WatermarkStyle,
 )
 from app.transcript import Word
+from app.transition_kinds import TransitionKind, TransitionSound
 from app.video_source import SourceMetadata
 
 OUTPUT_WIDTH = 1080
@@ -561,6 +560,11 @@ class TransitionEvent:
     sound: TransitionSound = TransitionSound.LINEAR
     strength: float | None = None
     colour: str | None = None
+
+    @property
+    def length(self) -> float:
+        """How long the two Segments overlap."""
+        return self.end - self.start
 
 
 @dataclass(frozen=True)

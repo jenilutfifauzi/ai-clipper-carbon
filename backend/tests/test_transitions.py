@@ -11,10 +11,10 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from app.candidates import TransitionKind, TransitionSound
 from app.planner import Join, SegmentInput, SegmentPlan, TransitionEvent, plan_render
-from app.transitions import RECIPES, Recipe
 from app.transcript import Word
+from app.transition_kinds import TransitionKind, TransitionSound
+from app.transitions import RECIPES, Recipe
 from app.video_source import SourceMetadata
 from test_mcp import HALO_KABAR, KITA_SOAL, anyio_backend, call, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
@@ -213,7 +213,7 @@ async def test_the_agent_sets_a_transitions_sound_and_the_dry_run_shows_it(mcp):
     assert merged["transitions"] == [{"after": "a", "kind": "fadewhite", "secs": 0.5, "sound": "equal_power", "strength": None, "colour": None}]
     plan = await call(mcp, "edit_candidate", **ids, changes={"transitions": [{"after": "a", "kind": "fade", "sound": "cut"}]}, dry_run=True)
     [crossing] = plan["transitions"]
-    assert (crossing["kind"], crossing["sound"]) == ("fade", "cut")
+    assert crossing == {"after": "a", "kind": "fade", "start": crossing["start"], "end": crossing["end"], "sound": "cut", "strength": None, "colour": None}
 
 
 @pytest.fixture(scope="session")
@@ -487,13 +487,13 @@ async def test_the_agent_sets_a_transitions_knobs_alone_and_the_dry_run_shows_th
     assert (merged["transitions"][0]["strength"], merged["transitions"][0]["colour"]) == (0.4, "#FF8800")
     plan = await call(mcp, "edit_candidate", **ids, changes={"transitions": [{"after": "a", "kind": "filmburn", "strength": 0.9}]}, dry_run=True)
     [crossing] = plan["transitions"]
-    assert (crossing["kind"], crossing["strength"]) == ("filmburn", 0.9) and "colour" not in crossing
+    assert (crossing["kind"], crossing["strength"], crossing["colour"]) == ("filmburn", 0.9, None)
     plan = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
     assert plan["transitions"][0]["colour"] == "#FF8800"
     # The instructions say which kinds read which knob.
     told = mcp.instructions[mcp.instructions.index("- A Transition") :]
     told = told[: told.index("\n- ")]
-    assert "Light (filmburn, lightleak)" in told
+    assert "Light (filmburn, lightleak)" in told and "its sound and its knobs (null when unset)" in told
     strength, colour = told[told.index("`strength`") : told.index("`colour`")], told[told.index("`colour`") : told.index("Its sound")]
     assert all(kind in strength for kind in ("filmburn", "lightleak", "rgbsplit", "blurdissolve", "whipleft", "whipright", "zoomblur", "spin", "glitch"))
     assert "dipcolour" in colour

@@ -4,9 +4,8 @@ kind is rendered, as a recipe around one xfade.
 A recipe is:
 - optionally, a filter chain on the outgoing picture and one on the incoming picture, each enabled
   only over the overlap;
-- then one `xfade`: one of its own transitions by name, or its `custom` one with an expression
-  that reads only `A`, `B`, `X`, `Y`, `P` and constants, never sampling the pictures (ADR 0012's
-  render budget).
+- then one `xfade`: one of its own transitions, by name. No recipe takes a `custom` expression
+  (ADR 0012's render budget).
 
 So the filter graph keeps one xfade (and one acrossfade) per join, whatever the kind. Every
 `TransitionKind` has a recipe here, and a CSS look in the preview's catalogue
@@ -21,8 +20,8 @@ for a 0.5 s join at 1080x1920, and one clamped to white 8-11 s more.
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.candidates import TransitionKind
 from app.planner import TransitionEvent
+from app.transition_kinds import TransitionKind
 
 
 @dataclass(frozen=True)
@@ -46,22 +45,12 @@ SideChain = Callable[[TransitionEvent, Side], str]
 
 @dataclass(frozen=True)
 class Recipe:
-    """How a kind is rendered: xfade's own transition named `xfade`, or its `custom` one with
-    `expr`; and before it, the `outgoing` and `incoming` sides' chains, if any."""
+    """How a kind is rendered: xfade's own transition named `xfade`; and before it, the `outgoing`
+    and `incoming` sides' chains, if any."""
 
-    xfade: str | None = None
-    expr: str | None = None
+    xfade: str
     outgoing: SideChain | None = None
     incoming: SideChain | None = None
-
-    def __post_init__(self) -> None:
-        if (self.xfade is None) == (self.expr is None):
-            raise ValueError("A recipe's xfade is one of its own transitions or a custom expression, not both or neither")
-
-    @property
-    def transition(self) -> str:
-        """xfade's `transition` option (and with it, a custom one's expression)."""
-        return self.xfade if self.xfade is not None else f"custom:expr='{self.expr}'"
 
 
 # xfade's own transitions, each a kind of the same name with nothing around it.
@@ -91,19 +80,19 @@ def strength(event: TransitionEvent) -> float:
 
 def _overlap(event: TransitionEvent, side: Side) -> str:
     """The timeline `enable` of the overlap, in the side's seconds."""
-    return f"enable='between(t,{side.start:.3f},{side.start + event.end - event.start:.3f})'"
+    return f"enable='between(t,{side.start:.3f},{side.start + event.length:.3f})'"
 
 
 def _peak(event: TransitionEvent, side: Side) -> str:
     """An expression in the side's `t`: 0 at either end of the overlap, 1 at its middle."""
-    half = (event.end - event.start) / 2
+    half = event.length / 2
     return f"max(0,1-abs(t-{side.start + half:.4f})/{half:.4f})"
 
 
 def _dipped(event: TransitionEvent, side: Side) -> str:
     """Dip to colour: the outgoing picture faded out to the colour over the first half, the incoming
     one in from it over the second, so the middle is the colour alone."""
-    half = (event.end - event.start) / 2
+    half = event.length / 2
     colour = (event.colour or "#000000").lstrip("#")
     if side.incoming:
         return f"fade=t=in:st={side.start + half:.4f}:d={half:.4f}:c=0x{colour}"
@@ -125,7 +114,7 @@ def _leaked(event: TransitionEvent, side: Side) -> str:
     """Light leak: a warm, soft band across the picture's diagonal, swept from its top left to its
     bottom right over the overlap and brightest at the middle, laid over both sides alike. The band
     is drawn small (48x48, so its expression costs nothing) and scaled up, smooth, to the picture."""
-    length, name = event.end - event.start, side.name
+    length, name = event.length, side.name
     # Its share at each point of the band: the brightness at the middle of the overlap, less towards
     # either end of it and away from the band's line (the points whose (X/W + Y/H)/2 is its place).
     alpha = f"255*{strength(event):.3f}*(1-abs(2*T/{length:.4f}-1))*max(0,1-abs((X/W+Y/H)/2+0.3-1.6*T/{length:.4f})*2.5)"
@@ -144,7 +133,7 @@ def _overlapped(event: TransitionEvent, side: Side, filters: str) -> str:
     name, filtered = side.name, f"{filters},format=yuv420p"
     # The outgoing side's overlap is its end, the incoming side's its start.
     if side.incoming:
-        edge = event.end - event.start
+        edge = event.length
         before, after = f"trim=end={edge:.4f},{filtered}", f"trim=start={edge:.4f},setpts=PTS-STARTPTS"
     else:
         before, after = f"trim=end={side.start:.4f}", f"trim=start={side.start:.4f},setpts=PTS-STARTPTS,{filtered}"
@@ -161,7 +150,7 @@ def _split(event: TransitionEvent, side: Side) -> str:
 def _blurred(event: TransitionEvent, side: Side, sigma: float, across: bool = False) -> str:
     """`gblur` over the overlap, rising to `sigma` at its middle and falling back, or `across` only.
     gblur's sigma takes no expression, so `sendcmd` steps it 30 times a second."""
-    length, blur = event.end - event.start, f"gblur@{side.name}"
+    length, blur = event.length, f"gblur@{side.name}"
     steps = max(2, round(length * 30))
     sigmas = (sigma * (1 - abs(2 * k / steps - 1)) for k in range(steps + 1))
     commands = ";".join(f"{side.start + length * k / steps:.4f} {blur} sigma {each:.2f}" for k, each in enumerate(sigmas))
@@ -196,7 +185,7 @@ def _spun(event: TransitionEvent, side: Side) -> str:
     """Spin: both pictures turned together by the turns (half a turn to two), easing in and out, the
     outgoing one from upright and the incoming one to it; and shrunk by up to 30% at the middle so
     their corners show. `rotate` fills what it uncovers with black."""
-    turns, length = 0.5 + 1.5 * strength(event), event.end - event.start
+    turns, length = 0.5 + 1.5 * strength(event), event.length
     share = f"clip((t-{side.start:.4f})/{length:.4f},0,1)"
     eased = f"({share}*{share}*(3-2*{share}){'-1' if side.incoming else ''})"
     size = f"(1-0.3*{_peak(event, side)})"
