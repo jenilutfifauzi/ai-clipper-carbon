@@ -85,6 +85,13 @@ class PreviewPlan:
     analysed: bool
 
 
+def captions_pending(preview: PreviewPlan) -> bool:
+    """Whether a captioned Segment's Words are still being transcribed, so that the Preview Plan's
+    Cues aren't yet all the Clip's: a caption file made of them (app/caption_files.py) would be
+    missing those."""
+    return WordsStatus.PENDING in preview.words_status.values()
+
+
 def preview_plan(
     job: Job,
     job_dir: Path,

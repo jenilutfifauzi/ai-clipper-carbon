@@ -229,7 +229,7 @@ def test_selected_candidates_render_into_clips_ranked_like_their_candidates(clie
     assert client.get(f"/media/{job['id']}/{clip['poster']}").headers["content-type"] == "image/jpeg"
     # Only the finished files are left.
     assert sorted(path.name for path in (job_dir / "clips").iterdir()) == sorted(
-        f"{c['id']}{suffix}" for c in (first, second) for suffix in (".mp4", ".jpg", ".plan.json")
+        f"{c['id']}{suffix}" for c in (first, second) for suffix in (".mp4", ".jpg", ".plan.json", ".srt", ".vtt")
     )
 
 
@@ -1155,3 +1155,104 @@ def test_a_kicker_and_emphasis_are_saved_previewed_rendered_and_recorded(client,
     plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
     assert plan["hook"]["kicker"]["text"] == "Terbongkar lho"
     assert (plan["hook"]["lines"], plan["hook"]["emphasis"]) == (["Halo semua"], [[[0, 4]]])
+
+
+# Caption files (captions-advanced ticket 10).
+
+
+def subtitle_time(secs: float, mark: str) -> str:
+    ms = round(secs * 1000)
+    return f"{ms // 3_600_000:02d}:{ms // 60_000 % 60:02d}:{ms // 1000 % 60:02d}{mark}{ms % 1000:03d}"
+
+
+def test_a_render_writes_srt_and_vtt_beside_the_mp4_in_the_words_own_case(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    # "ini" corrected; the Caption Style is in UPPERCASE and strips end punctuation.
+    candidate = patch(client, job, candidate, word_edits=[{"at": 4.5, "text": "Keren"}])
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+    output = clip["output"]
+    assert (output["srt"], output["vtt"]) == (f"clips/{candidate['id']}.srt", f"clips/{candidate['id']}.vtt")
+
+    plan = json.loads((job_dir / output["plan"]).read_text())
+    assert [cue_text(cue) for cue in plan["captions"]] == ["PODCAST KEREN", "SERU BANGET YA!"]
+    first, second = plan["captions"]
+    srt = (
+        f"1\n{subtitle_time(first['start'], ',')} --> {subtitle_time(first['end'], ',')}\npodcast Keren\n\n"
+        f"2\n{subtitle_time(second['start'], ',')} --> {subtitle_time(second['end'], ',')}\nseru banget, ya!\n"
+    )
+    vtt = (
+        "WEBVTT\n\n"
+        f"1\n{subtitle_time(first['start'], '.')} --> {subtitle_time(first['end'], '.')}\npodcast Keren\n\n"
+        f"2\n{subtitle_time(second['start'], '.')} --> {subtitle_time(second['end'], '.')}\nseru banget, ya!\n"
+    )
+    assert (job_dir / output["srt"]).read_text() == srt
+    assert (job_dir / output["vtt"]).read_text() == vtt
+    # Served from the Job's directory, as the MP4 is.
+    for file, text, kind in ((output["srt"], srt, "application/x-subrip"), (output["vtt"], vtt, "text/vtt")):
+        response = client.get(f"/media/{job['id']}/{file}")
+        assert response.status_code == 200 and response.text == text
+        assert response.headers["content-type"].startswith(kind)
+    # A Clip is deleted with its Job, and its caption files with it.
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+    assert not job_dir.exists()
+
+
+def test_with_captions_off_a_render_writes_no_caption_files(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = wait_for(client, create_job(client, captions=False)["id"], "review")
+    candidate = add(client, job, "Podcast", "ya")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+    assert (clip["output"]["srt"], clip["output"]["vtt"]) == (None, None)
+    assert sorted(path.suffix for path in (job_dir / "clips").iterdir()) == [".jpg", ".json", ".mp4"]
+    # Nor is there anything to download.
+    assert client.get(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/captions/srt").status_code == 409
+
+
+def subtitle_file(cues: list[dict], format: str) -> str:
+    """The caption file a plan's Cues (its JSON) make in `format`, as the writer's tests spell it."""
+    mark = "," if format == "srt" else "."
+    blocks = [
+        f"{number}\n{subtitle_time(cue['start'], mark)} --> {subtitle_time(cue['end'], mark)}\n" + "".join(f"{line}\n" for line in cue["plain"])
+        for number, cue in enumerate(cues, 1)
+    ]
+    return "\n".join(["WEBVTT\n"] * (format == "vtt") + blocks)
+
+
+def test_a_candidates_captions_are_downloaded_from_its_saved_state_without_a_render(client, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/captions"
+    # Before a render: the episode Transcript's Words, as the Preview Plan has them, with the saved
+    # Word Edits (the one on "ya", keyed by its middle), in their own case.
+    ya = next(word for word in job["transcript"]["words"] if word["text"] == "ya")
+    patch(client, job, candidate, word_edits=[{"at": (ya["start"] + ya["end"]) / 2, "text": "Ya."}])
+    cues = preview(client, job, candidate)["plan"]["captions"]
+    assert cues and [line for cue in cues for line in cue["plain"]][-1].endswith("Ya.")
+    for format, kind in (("srt", "application/x-subrip"), ("vtt", "text/vtt")):
+        response = client.get(f"{url}/{format}")
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith(kind)
+        assert response.text == subtitle_file(cues, format)
+    assert "PODCAST" not in client.get(f"{url}/srt").text
+
+    # Once rendered, the Clip's own Words.
+    render(client, job)
+    rendered(client, job)
+    after = preview(client, job, candidate)["plan"]["captions"]
+    assert after != cues and client.get(f"{url}/srt").text == subtitle_file(after, "srt")
+
+    assert client.get(f"{url}/ass").status_code == 422
+    assert client.get(f"/api/jobs/{job['id']}/candidates/nope/captions/srt").status_code == 404
+    assert client.get("/api/jobs/nope/candidates/nope/captions/srt").status_code == 404

@@ -8,6 +8,7 @@ import { ScoreRing } from "../../components/ScoreRing";
 import { Skeleton } from "../../components/Skeleton";
 import { formatBytes } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
+import { clipFileName } from "./downloads";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
 import { same } from "./editor/merge";
@@ -184,13 +185,30 @@ function ClipCard({
         {output && (
           <a
             href={mediaUrl(jobId, output.video, output.at)}
-            download={`${fileName(candidate?.title) || `clip-${clip.candidate_id}`}.mp4`}
+            download={`${clipFileName(candidate?.title, clip.candidate_id)}.mp4`}
             className={buttonClass("primary", "sm")}
           >
             <Download aria-hidden size={16} />
             Download
           </a>
         )}
+        {/* Its caption files, beside the MP4: none with captions off, nor in a Clip rendered before them. */}
+        {output &&
+          ([["srt", output.srt], ["vtt", output.vtt]] as const).map(
+            ([format, file]) =>
+              file && (
+                <a
+                  key={format}
+                  href={mediaUrl(jobId, file, output.at)}
+                  download={`${clipFileName(candidate?.title, clip.candidate_id)}.${format}`}
+                  className={buttonClass("secondary", "sm")}
+                  aria-label={`Download the captions as ${format.toUpperCase()}`}
+                >
+                  <Download aria-hidden size={16} />
+                  {format.toUpperCase()}
+                </a>
+              ),
+          )}
         {candidate && !busy && (output === null || changed || clip.status === "error") && (
           <Button onClick={onRender} size="sm">
             <Clapperboard aria-hidden size={16} />
@@ -239,9 +257,4 @@ function RenderState({ clip, percent }: { clip: Clip; percent: number | null }) 
     );
   }
   return null;
-}
-
-// A title as a file name: without the characters file systems refuse.
-function fileName(title: string | undefined): string {
-  return (title ?? "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
 }

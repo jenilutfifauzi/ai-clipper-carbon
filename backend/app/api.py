@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -31,10 +31,11 @@ from app.candidates import (
     Volume,
     WordEdit,
 )
+from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
 from app.config import Settings
 from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
-from app.editor import PreviewPlan, preview_plan
+from app.editor import PreviewPlan, captions_pending, preview_plan
 from app.events import candidate_events, job_events
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
@@ -76,9 +77,11 @@ media = APIRouter(prefix="/media")
 # while it is analyzed again and its untouched Candidates are about to be replaced. Review goes on
 # while Clips render; each render takes its Candidate as it is when the render starts.
 EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
-# What /media serves from a Job's directory: its video (or preview proxy), and its Clips and their
-# posters. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
-MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png"})
+# What /media serves from a Job's directory: its video (or preview proxy), and its Clips with their
+# posters and caption files. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
+MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".jpg", ".png", ".srt", ".vtt"})
+# The caption files' types (app/caption_files.py): not every system's MIME table knows them.
+SUBTITLE_TYPES = {".srt": "application/x-subrip", ".vtt": "text/vtt"}
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
@@ -776,6 +779,40 @@ def candidate_preview_plan(
         raise HTTPException(422, f"Invalid style overrides: {exc}") from None
 
 
+@router.get("/jobs/{job_id}/candidates/{candidate_id}/captions/{format}")
+def candidate_captions(
+    job_id: str,
+    candidate_id: str,
+    format: CaptionFormat,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    media_words: MediaWordsDep,
+) -> Response:
+    """The Candidate's captions as an SRT or VTT file (app/caption_files.py): the Cues of its Preview
+    Plan as saved, without a render. (A rendered Clip's are beside its MP4: its `srt` and `vtt`.)
+    409 for a Job with captions off or without Candidates, and while a captioned Segment's Words are
+    still being transcribed."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    transcript, candidates = store.load_transcript(job_id), store.load_candidates(job_id)
+    if job.source is None or transcript is None or candidates is None:
+        raise HTTPException(409, f"Job {job_id} has no Candidates yet")
+    if not job.options.captions:
+        raise HTTPException(409, f"Job {job_id} has captions off: it has no caption files")
+    candidate = next((c for c in candidates if c.id == candidate_id), None)
+    if candidate is None:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+    preview = preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words)
+    if captions_pending(preview):
+        raise HTTPException(409, "Its captions are still being transcribed: ask again once they are ready")
+    return Response(caption_file(preview.plan.captions, format), media_type=SUBTITLE_TYPES[f".{format}"])
+
+
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)
 def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobWorker) -> Job:
     """Queue the Candidate to be prepared for the editor: its caption Words transcribed (its media
@@ -1325,8 +1362,9 @@ def put_profile(profile: ChannelProfile, profiles: Profiles) -> ChannelProfile:
 
 @media.get("/{job_id}/{path:path}")
 def media_file(job_id: str, path: str, store: Store) -> FileResponse:
-    """A video or image from a Job's directory, with HTTP range support (206 Partial Content), so
-    the browser's player can seek in a long Source. Only files inside that directory are served."""
+    """A video, image or caption file from a Job's directory, with HTTP range support (206 Partial
+    Content), so the browser's player can seek in a long Source. Only files inside that directory
+    are served."""
     try:
         job_dir = store.job_dir(job_id).resolve()
     except JobNotFound:
@@ -1334,4 +1372,4 @@ def media_file(job_id: str, path: str, store: Store) -> FileResponse:
     file = (job_dir / path).resolve()
     if not (file.is_relative_to(job_dir) and file.suffix.lower() in MEDIA_SUFFIXES and file.is_file()):
         raise HTTPException(404, f"No media {path!r} in Job {job_id}")
-    return FileResponse(file)
+    return FileResponse(file, media_type=SUBTITLE_TYPES.get(file.suffix.lower()))
