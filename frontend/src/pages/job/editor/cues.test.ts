@@ -16,6 +16,7 @@ const cue = (lines: string[][]): Cue => ({
   key: { at: 12.15, media: null },
   edited: false,
   joinable: false,
+  needs_join: false,
 });
 
 describe("a Cue", () => {

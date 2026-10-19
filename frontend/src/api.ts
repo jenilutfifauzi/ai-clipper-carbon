@@ -126,13 +126,16 @@ export interface WordEdit {
 // The owner's change to one Cue (GLOSSARY: Cue Edit), keyed as a Word Edit is: a time in its first
 // Word on the Source's timeline (with `media`, on that Media Library item's). That Word starts a Cue.
 // `shift` moves the Cue and its highlight, `start_delta` and `end_delta` one edge (negative: earlier),
-// in seconds of that timeline (so they scale with Speed), each within ±CUE_SHIFT_MAX_SECS.
+// in seconds of that timeline (so they scale with Speed), each within ±CUE_SHIFT_MAX_SECS. With
+// `join` (and every other field left 0), instead of starting a Cue its Word's Cue is kept with the
+// one before, where only a pause, a sentence's end or the longest-Cue limit would part them.
 export interface CueEdit {
   at: number;
   media: string | null;
   shift: number;
   start_delta: number;
   end_delta: number;
+  join: boolean;
 }
 
 // The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
@@ -392,6 +395,8 @@ export interface Cue {
   edited: boolean;
   // Merged into the Cue before, it would still fit the line limits.
   joinable: boolean;
+  // A pause, a sentence's end or the longest-Cue limit parts it from the Cue before: merging takes a join.
+  needs_join: boolean;
 }
 
 export interface HookEvent {

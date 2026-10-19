@@ -19,6 +19,7 @@ const cue = (start: number, end: number, at: number, changes: Partial<Cue> = {})
   key: { at, media: null },
   edited: false,
   joinable: false,
+  needs_join: false,
   ...changes,
 });
 
@@ -66,7 +67,7 @@ function edits(changes: Partial<AdvancedEdits> = {}): AdvancedEdits {
   };
 }
 
-const edit = (at: number, changes: Partial<CueEdit> = {}): CueEdit => ({ at, media: null, shift: 0, start_delta: 0, end_delta: 0, ...changes });
+const edit = (at: number, changes: Partial<CueEdit> = {}): CueEdit => ({ at, media: null, shift: 0, start_delta: 0, end_delta: 0, join: false, ...changes });
 
 // "halo semua" from 1.0 to 2.3 s, "apa kabar" from 3.0 to 3.9 s, of a Clip from 100 s lasting 5 s.
 const TALK = [cue(1.0, 2.3, 101.2), cue(3.0, 3.9, 103.1)];

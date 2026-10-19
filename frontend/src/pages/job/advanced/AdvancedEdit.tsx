@@ -100,7 +100,7 @@ import {
 import { commandsOf, type Commands } from "./commands";
 import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
-import { retimeCue } from "./cueEdits";
+import { cueSplitter, deleteCue, retimeCue } from "./cueEdits";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { KeyingContext, usePickedKeyed, type Keying } from "./KeyCluster";
@@ -628,7 +628,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   };
   const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here, job.transcript?.words ?? [])));
   const actions = itemActions(scene, () => playback.time, apply, clip);
-  const splits = splitter(scene, () => playback.time, apply);
+  // A picked Cue's actions (./cueEdits.ts): in the plan's Words, each one change, a field's run one of its group.
+  const cueScene = { edits, plan: preview?.plan ?? null, words: preview?.words, locked: tracks.locked };
+  function applyCue(outcome: Outcome, group?: string) {
+    if (outcome.edits !== edits) history.set(outcome.edits, group);
+    select(outcome.pick);
+  }
+  const splits = pick?.kind === "cue" ? cueSplitter(cueScene, pick.key, () => playback.time, apply) : splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
   // A Segment's or video Overlay's Reverse turned on or off (the inspector's switch, R): one change.
   function setItemReverse(item: SpeedRef, reverse: boolean) {
@@ -713,6 +719,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     paste: pasteHere,
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
+    removeCue:
+      pick?.kind === "cue"
+        ? () => {
+            const outcome = deleteCue(cueScene, pick.key);
+            if (!outcome) return false;
+            apply(outcome);
+          }
+        : null,
     freeze: () => (freezes.canFreeze(playback.time) ? freezes.freeze() : false),
     reverse: () => {
       if (!reversed) return false;
@@ -1081,6 +1095,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
+        locked={tracks.locked}
+        onCue={applyCue}
       />
     </KeyingContext.Provider>
   );

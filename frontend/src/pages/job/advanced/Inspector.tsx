@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
-import type { ClipSegment, CueKey, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
+import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setFade, setVolume, type ItemActions, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setFade, setVolume, type ItemActions, type Outcome, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -19,8 +19,9 @@ import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
-import { itemsOf, onlyItem, sameCue, type ItemKind, type Pick } from "./pick";
-import { cueOf, resetCueTiming } from "./cueEdits";
+import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { CueFields } from "./CueFields";
+import type { TrackKind } from "./trackState";
 import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
@@ -52,6 +53,8 @@ export function Inspector({
   copyOf,
   onHold,
   cropMode,
+  locked = [],
+  onCue,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -82,6 +85,10 @@ export function Inspector({
   onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
   cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
+  // The locked Tracks: a picked Cue's actions are refused on a locked Captions Track.
+  locked?: TrackKind[];
+  // A picked Cue's action applied: its edits as one change (of `group`) and what it picks.
+  onCue: (outcome: Outcome, group?: string) => void;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -255,7 +262,7 @@ export function Inspector({
     return <CaptionsFields edits={edits} style={captionStyle} error={presetsError} fonts={fonts} onEdits={onEdits} />;
   }
   if (pick?.kind === "cue") {
-    return <CueFields cueKey={pick.key} edits={edits} plan={preview?.plan ?? null} onEdits={onEdits} />;
+    return <CueFields cueKey={pick.key} edits={edits} preview={preview} locked={locked} playback={playback} onCue={onCue} />;
   }
   return (
     <div className="flex flex-col gap-1">
@@ -292,53 +299,6 @@ function CaptionsFields({
       <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
       <PresetBar style={style} error={error} />
       {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector /> : !error && <StyleFieldsSkeleton />}
-    </div>
-  );
-}
-
-/**
- * A picked Cue: its words, when it is shown (as planned, its Cue Edit applied) and "Reset timing",
- * which clears its Cue Edit's timing. Its edges and body are dragged on the Captions Track.
- */
-function CueFields({
-  cueKey,
-  edits,
-  plan,
-  onEdits,
-}: {
-  cueKey: CueKey;
-  edits: AdvancedEdits;
-  plan: RenderPlan | null;
-  onEdits: (edits: AdvancedEdits, group?: string) => void;
-}) {
-  const cue = plan?.captions.find((other) => sameCue(other.key, cueKey));
-  const shown = plan && cueOf(plan, cueKey);
-  const reset = resetCueTiming({ edits, plan }, cueKey);
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h2 className="font-semibold">Caption</h2>
-        {cue && <p className="text-sm text-pretty break-words">“{cue.plain.join(" ")}”</p>}
-        <Hint more="Drag its edges to show it earlier or later at either end, or its middle to move it with its highlight. It stays between the captions either side of it.">
-          Retime it on the Captions Track.
-        </Hint>
-      </div>
-      {shown && (
-        <dl className="grid grid-cols-2 gap-2 text-sm">
-          <div>
-            <dt className="text-xs text-muted">Starts</dt>
-            <dd className="tabular-nums">{shown.start.toFixed(2)} s</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">Ends</dt>
-            <dd className="tabular-nums">{shown.end.toFixed(2)} s</dd>
-          </div>
-        </dl>
-      )}
-      <Button size="sm" className="self-start" disabled={!reset} onClick={() => reset && onEdits(reset.edits)}>
-        <RotateCcw aria-hidden size={16} />
-        Reset timing
-      </Button>
     </div>
   );
 }
