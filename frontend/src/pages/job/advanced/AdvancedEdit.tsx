@@ -137,8 +137,9 @@ import { useMediaLibrary } from "./MediaLibrary";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
 import { TakeButton } from "./TakeButton";
-import { guardLeaving, IDLE as TAKE_IDLE, locksEditing, recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
-import { browserRecorder, openTake } from "./takeRecorder";
+import { browserSettings } from "./recordingSettings";
+import { canStart, guardLeaving, IDLE as TAKE_IDLE, locksEditing, recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
+import { browserRecorder } from "./takeRecorder";
 import { atClipEnd, canRecord } from "./voiceover";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
@@ -546,19 +547,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     tell: (_text: string) => {},
     atEnd: (): boolean => false,
   });
-  const [take] = useState(() =>
-    canRecord()
-      ? new TakeFlow({
-          open: (capped) => openTake(browserRecorder(), { capped }),
-          playback,
-          silence: holdBus,
-          upload: (file) => takeLatest.current.upload(file),
-          land: (landed) => takeLatest.current.land(landed),
-          tell: (text) => takeLatest.current.tell(text),
-          atEnd: () => takeLatest.current.atEnd(),
-        })
-      : null,
-  );
+  // The recording settings beside the mic button (./recordingSettings.ts): the input the next Take
+  // opens, "Hear the Clip", and a test meter that doesn't open while a Take has the microphone.
+  const [{ take, takeSettings }] = useState(() => {
+    if (!canRecord()) return { take: null, takeSettings: null };
+    let flow: TakeFlow | null = null;
+    const settings = browserSettings(browserRecorder(), () => !!flow && !canStart(flow.state));
+    flow = new TakeFlow({
+      open: (capped) => settings.openTake(capped),
+      playback,
+      silence: holdBus,
+      hearClip: () => settings.hearClip,
+      upload: (file) => takeLatest.current.upload(file),
+      land: (landed) => takeLatest.current.land(landed),
+      tell: (text) => takeLatest.current.tell(text),
+      atEnd: () => takeLatest.current.atEnd(),
+    });
+    return { take: flow, takeSettings: settings };
+  });
   useEffect(() => () => take?.dispose(), [take]);
   // Leaving the page while the countdown runs or a Take records asks first, and cancels the Take.
   useEffect(() => (take ? guardLeaving(window, take) : undefined), [take]);
@@ -1184,7 +1190,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         tools={
           wide ? (
             <>
-              <TakeButton flow={take} atEnd={atEnd} />
+              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
               {fullscreenButton}
@@ -1192,7 +1198,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           ) : (
             <>
               <FrameStep playback={playback} fps={fps} commands={commands} />
-              <TakeButton flow={take} atEnd={atEnd} />
+              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               {fullscreenButton}
             </>

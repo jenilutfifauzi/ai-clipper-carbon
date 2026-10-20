@@ -11,9 +11,9 @@ The browser remembers the choice of input and "Hear the Clip" in localStorage, w
 
 **Blocked by:** 02 (Record a Take).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The popover lists the inputs, and the next Take records from the one chosen (vitest, fake `enumerateDevices` / `getUserMedia`).
-- [ ] With "Hear the Clip" on, the bus stays audible while recording; with it off, the bus is silent (vitest).
-- [ ] Both settings survive a reload, a broken localStorage doesn't break the page, and a missing remembered input falls back to the default (vitest).
-- [ ] The test meter moves with the chosen input and stops when the popover closes (vitest).
+- [x] The popover lists the inputs, and the next Take records from the one chosen (vitest, fake `enumerateDevices` / `getUserMedia`).
+- [x] With "Hear the Clip" on, the bus stays audible while recording; with it off, the bus is silent (vitest).
+- [x] Both settings survive a reload, a broken localStorage doesn't break the page, and a missing remembered input falls back to the default (vitest).
+- [x] The test meter moves with the chosen input and stops when the popover closes (vitest).

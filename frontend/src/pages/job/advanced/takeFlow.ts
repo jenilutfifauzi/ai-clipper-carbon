@@ -103,6 +103,8 @@ export interface TakeDeps {
   playback: TakePlayback;
   // The master bus held silent, or heard again.
   silence: (silent: boolean) => void;
+  // Whether "Hear the Clip (headphones)" is on: then the bus isn't held silent while recording.
+  hearClip?: () => boolean;
   // The Take's WAV into the Media Library: the item it made, normalized with its Peaks.
   upload: (file: File) => Promise<MediaItem>;
   // The Music Clip added (one edit) and Picked: where it starts, or null when it was refused.
@@ -197,14 +199,14 @@ export class TakeFlow {
     }, 1000);
   }
 
-  // The picture rolled from the playhead, ignoring the Loop, with the bus silent, and the Take
-  // recorded from that moment.
+  // The picture rolled from the playhead, ignoring the Loop, with the bus silent (unless "Hear the
+  // Clip" is on), and the Take recorded from that moment.
   private roll() {
     const recorder = this.recorder;
     if (!recorder) return;
     const { playback } = this.deps;
     const playhead = playback.time;
-    this.deps.silence(true);
+    if (!this.deps.hearClip?.()) this.deps.silence(true);
     playback.setLoop(null);
     const at = recorder.now();
     recorder.record();
