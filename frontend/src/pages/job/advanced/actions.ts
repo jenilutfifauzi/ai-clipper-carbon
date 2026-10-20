@@ -1,4 +1,4 @@
-import type { Adjust, AdjustmentLayer, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
@@ -1265,4 +1265,134 @@ export function setAdjustment(
     fade_out: fade(change.fade_out, layer.fade_out),
   };
   return { edits: { ...edits, adjustment_layers: layers.map((other) => (other.id === id ? next : other)) }, pick };
+}
+
+// An item whose sound has a stack of Audio Effects (ADR 0017).
+export type StackRef = { kind: "segment" | "music" | "overlay"; id: string };
+
+/**
+ * The picked items with sound, which the Audio Effects section acts on: Segments (not a Freeze frame,
+ * nor a video's without sound), Music Clips and video Overlays with sound (`sounded` says whether a
+ * Media Library item has sound; an image hasn't). In the order Segments, Music Clips, Overlays.
+ */
+export function stackedItems({ edits, pick }: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): StackRef[] {
+  return [
+    ...edits.segments
+      .filter((segment) => isPicked(pick, "segment", segment.id) && segment.hold == null && (!segment.media || sounded(segment.media)))
+      .map((segment) => ({ kind: "segment" as const, id: segment.id })),
+    ...edits.music.filter((clip) => isPicked(pick, "music", clip.id)).map((clip) => ({ kind: "music" as const, id: clip.id })),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id) && sounded(overlay.media)).map((overlay) => ({ kind: "overlay" as const, id: overlay.id })),
+  ];
+}
+
+// Every picked item with sound given `change` of its stack (an emptied one left without the field);
+// null when none is picked.
+function restacked(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, change: (stack: AudioEffect[]) => AudioEffect[]): Outcome | null {
+  const { edits, pick } = scene;
+  const refs = stackedItems(scene, sounded);
+  if (!refs.length) return null;
+  const set = <T extends { id: string; audio_effects?: AudioEffect[] }>(items: T[], kind: StackRef["kind"]): T[] =>
+    items.map((item) => {
+      if (!refs.some((ref) => ref.kind === kind && ref.id === item.id)) return item;
+      const { audio_effects, ...rest } = item;
+      const next = change(audio_effects ?? []);
+      return (next.length ? { ...rest, audio_effects: next } : rest) as T;
+    });
+  return { edits: { ...edits, segments: set(edits.segments, "segment"), music: set(edits.music, "music"), overlays: set(edits.overlays, "overlay") }, pick };
+}
+
+/** A catalogue effect's entry at its defaults, switched on. */
+export const audioEffectOf = (kind: AudioEffectKind): AudioEffect => ({
+  id: kind.id,
+  params: Object.fromEntries(kind.settings.map((setting) => [setting.key, setting.default])),
+  enabled: true,
+});
+
+/**
+ * Add effect: `kind` at its defaults, switched on, at the bottom of every picked item's stack that has
+ * sound (stackedItems), as one change. Null when none with sound is picked.
+ */
+export function addAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, kind: AudioEffectKind): Outcome | null {
+  return restacked(scene, sounded, (stack) => [...stack, audioEffectOf(kind)]);
+}
+
+// Whether two entries are the same effect, switched the same way, at the same settings.
+const sameEntry = (a: AudioEffect, b: AudioEffect) =>
+  a.id === b.id &&
+  a.enabled === b.enabled &&
+  Object.keys(a.params).length === Object.keys(b.params).length &&
+  Object.entries(a.params).every(([key, value]) => b.params[key] === value);
+
+/**
+ * The stack of the picked items with sound (stackedItems), when every one's is the same; "mixed" when
+ * they differ; null when none with sound is picked.
+ */
+export function sharedStack(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): AudioEffect[] | "mixed" | null {
+  const stacks = stacksOf(scene, sounded);
+  const [first, ...rest] = stacks;
+  if (!first) return null;
+  return rest.every((other) => other.length === first.length && other.every((entry, index) => sameEntry(entry, first[index]))) ? first : "mixed";
+}
+
+// The stacks of the picked items with sound, in stackedItems' order.
+function stacksOf(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): AudioEffect[][] {
+  const { edits } = scene;
+  const list = { segment: edits.segments, music: edits.music, overlay: edits.overlays } as const;
+  return stackedItems(scene, sounded).map((ref) => (list[ref.kind] as { id: string; audio_effects?: AudioEffect[] }[]).find((item) => item.id === ref.id)?.audio_effects ?? []);
+}
+
+// Entry `index` of the picked stacks given `change` (its stack made anew), on every picked item with
+// sound: only while their stacks are the same (sharedStack) and the entry is there; else null.
+function entryChanged(
+  scene: { edits: AdvancedEdits; pick: Pick },
+  sounded: (media: string) => boolean,
+  index: number,
+  change: (stack: AudioEffect[]) => AudioEffect[] | null,
+): Outcome | null {
+  const shown = sharedStack(scene, sounded);
+  if (shown === null || shown === "mixed" || !shown[index] || !change(shown)) return null;
+  return restacked(scene, sounded, (stack) => change(stack)!);
+}
+
+/** Entry `index` moved one place up (`delta` −1) or down (+1) in every picked stack; null past an end. */
+export function moveAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, index: number, delta: -1 | 1): Outcome | null {
+  const to = index + delta;
+  return entryChanged(scene, sounded, index, (stack) => {
+    if (to < 0 || to >= stack.length) return null;
+    const next = [...stack];
+    [next[index], next[to]] = [next[to], next[index]];
+    return next;
+  });
+}
+
+/** Entry `index` switched on or off in every picked stack, staying in its place. */
+export function setAudioEffectEnabled(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, index: number, enabled: boolean): Outcome | null {
+  return entryChanged(scene, sounded, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, enabled } : entry)));
+}
+
+/** Entry `index` taken out of every picked stack. */
+export function removeAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, index: number): Outcome | null {
+  return entryChanged(scene, sounded, index, (stack) => stack.filter((_, at) => at !== index));
+}
+
+/**
+ * Entry `index`'s `setting` set to `value` in every picked stack, on the setting's steps and within
+ * its range (its other settings as they were). A slider's drag is one change of its group.
+ */
+export function setAudioEffectSetting(
+  scene: { edits: AdvancedEdits; pick: Pick },
+  sounded: (media: string) => boolean,
+  index: number,
+  setting: AudioEffectSetting,
+  value: number,
+): Outcome | null {
+  const { key, min, max, step } = setting;
+  const stepped = step > 0 ? min + Math.round((value - min) / step) * step : value;
+  const level = Number(Math.min(Math.max(stepped, min), max).toFixed(6));
+  return entryChanged(scene, sounded, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [key]: level } } : entry)));
+}
+
+/** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none with sound is picked. */
+export function removeAllAudioEffects(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Outcome | null {
+  return restacked(scene, sounded, () => []);
 }

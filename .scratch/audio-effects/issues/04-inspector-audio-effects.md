@@ -22,10 +22,10 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The section shows for a Segment, a Music Clip and a video Overlay. It doesn't show for a Freeze frame or an image Overlay.
-- [ ] Vitest: add to a mixed Pick; move, toggle and remove by index; a setting change; the Mixed case and Remove all effects.
-- [ ] The library groups and searches the catalogue, and is read from the server.
-- [ ] Undo and redo step through each change.
-- [ ] Walkthrough: add Telephone and Echo to a Segment, reorder them, switch one off, render, and hear it.
+- [x] The section shows for a Segment, a Music Clip and a video Overlay. It doesn't show for a Freeze frame or an image Overlay. (Seen in the app for all but the image Overlay: the Media Library had no image. That case is covered by vitest, and OverlayFields only gives a video the section.)
+- [x] Vitest: add to a mixed Pick; move, toggle and remove by index; a setting change; the Mixed case and Remove all effects.
+- [x] The library groups and searches the catalogue, and is read from the server.
+- [x] Undo and redo step through each change.
+- [x] Walkthrough: add Telephone and Echo to a Segment, reorder them, switch one off, render, and hear it. (Done in the app on a copy of a Job; the render was measured, not listened to: under 200 Hz it is 17 dB below the source, and 1–2 kHz is level.)

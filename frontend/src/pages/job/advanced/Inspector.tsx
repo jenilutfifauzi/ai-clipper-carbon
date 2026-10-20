@@ -11,7 +11,8 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
+import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
@@ -61,6 +62,7 @@ export function Inspector({
   onCue,
   captionsOf,
   detaching,
+  effectsPreparing,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -102,6 +104,8 @@ export function Inspector({
   captionsOf?: (segment: ClipSegment, item: MediaItem) => ReactNode;
   // Detach and Reattach of a Segment's sound (GLOSSARY.md).
   detaching?: Detacher;
+  // Whether any of these items' Effected copies is being made: "Preparing effects…" (ticket 03 feeds it; none until then).
+  effectsPreparing?: (items: StackRef[]) => boolean;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -127,6 +131,13 @@ export function Inspector({
 
   // The picked Segments', Overlays' and Adjustment Layers' Color section: a dial set on all of them, or all reset, each one change.
   const colorOf = () => <ColorFields {...colorChanges({ edits, pick }, onEdits)} />;
+
+  // The picked items' Audio Effects section, for those with sound (a Freeze frame and an image have none): null without any.
+  const sounded = (media: string) => mediaById.get(media)?.has_audio === true;
+  const effectsOf = () => {
+    const controls = audioEffectChanges({ edits, pick }, sounded, onEdits, effectsPreparing);
+    return controls && <AudioEffectsFields {...controls} />;
+  };
 
 
   const items = itemsOf(pick);
@@ -156,12 +167,16 @@ export function Inspector({
       );
     }
     const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
-    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment")) return summary;
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
+    const graded = items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment");
+    // Those with sound: their Audio Effects edited together.
+    const effects = effectsOf();
+    if (!graded && !effects) return summary;
     return (
       <div className="flex flex-col gap-4">
         {summary}
-        {colorOf()}
+        {graded && colorOf()}
+        {effects}
       </div>
     );
   }
@@ -205,6 +220,7 @@ export function Inspector({
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
         color={colorOf()}
+        effects={effectsOf()}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}
@@ -282,6 +298,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         detached={detachedOf(clip)}
+        effects={effectsOf()}
       />
     );
   }
@@ -302,6 +319,7 @@ export function Inspector({
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
         color={colorOf()}
+        effects={effectsOf()}
       />
     );
   }
