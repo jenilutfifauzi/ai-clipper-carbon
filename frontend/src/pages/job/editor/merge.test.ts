@@ -157,6 +157,28 @@ describe("keyed lists", () => {
   });
 });
 
+describe("Audio Effects", () => {
+  // .scratch/audio-effects/issues/02: an item's stack (ADR 0017) is one field of it.
+  const echo = { id: "echo", params: { delay: 0.25, decay: 0.4 }, enabled: true };
+  const telephone = { id: "telephone", params: { drive: 3 }, enabled: true };
+
+  test("a stack edited on each side, on different items, keeps both; the same item's two ways: mine wins, a collision", () => {
+    const base = { segments: [segment("a", 0), segment("b", 10)], overlays: [overlay("o")] };
+    const mine = { segments: [{ ...segment("a", 0), audio_effects: [echo] }, segment("b", 10)], overlays: [overlay("o")] };
+    const theirs = { segments: [segment("a", 0), segment("b", 10)], overlays: [{ ...overlay("o"), audio_effects: [telephone] }] };
+
+    expect(mergeEdits(base, mine, theirs)).toEqual({
+      merged: { segments: [{ ...segment("a", 0), audio_effects: [echo] }, segment("b", 10)], overlays: [{ ...overlay("o"), audio_effects: [telephone] }] },
+      collisions: [],
+    });
+    const other = { ...base, segments: [{ ...segment("a", 0), audio_effects: [{ ...echo, enabled: false }, telephone] }, segment("b", 10)] };
+    expect(mergeEdits(base, mine, other)).toEqual({
+      merged: { segments: mine.segments, overlays: base.overlays },
+      collisions: [{ field: "segments", item: "a" }],
+    });
+  });
+});
+
 describe("keys", () => {
   test("Word Edits merge by their time and Transitions by the Segment they follow", () => {
     const base = { word_edits: [{ at: 1.5, text: "halo", break_before: false }], transitions: [{ after: "a", kind: "fade" as const, secs: 0.5 }] };

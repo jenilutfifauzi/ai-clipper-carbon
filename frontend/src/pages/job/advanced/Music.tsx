@@ -1,4 +1,5 @@
 import { Copy, Link2, Music as MusicIcon, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { MediaItem, MusicClip } from "../../../api";
 import { Button } from "../../../components/Button";
 import { formatPrecise } from "../../../format";
@@ -52,6 +53,7 @@ export function MusicFields({
   onDuplicate,
   onDelete,
   detached,
+  effects,
 }: {
   clip: MusicClip;
   // Its song; undefined while the library loads, and for the Source's sound.
@@ -76,6 +78,8 @@ export function MusicFields({
   onDelete: () => void;
   // A Detached sound's Segment (its `index` on the Main Track), while it is there to Reattach it to.
   detached?: { index: number; onReattach: () => void };
+  // Its Audio Effects section (AudioEffectsFields), after its volume and fades.
+  effects?: ReactNode;
 }) {
   const episode = clip.media === null;
   const length = episode ? sourceLength : (item?.duration ?? clip.offset + clip.secs);
@@ -139,6 +143,7 @@ export function MusicFields({
         />
         {!episode && <DuckFields duck={clip.duck ?? null} group={`music:${clip.id}:duck`} onDuck={onDuck} />}
       </Group>
+      {effects}
       <SpeedFields
         speed={clip.speed ?? 1}
         pitch={clip.pitch ?? false}
