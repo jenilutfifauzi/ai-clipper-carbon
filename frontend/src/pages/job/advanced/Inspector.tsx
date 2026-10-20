@@ -122,13 +122,13 @@ export function Inspector({
     return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
 
-  // The picked Segments' Color section: a dial set on all of them, or all reset, each one change.
-  const colorOf = (segments: ClipSegment[]) => {
+  // The picked Segments' and Overlays' Color section: a dial set on all of them, or all reset, each one change.
+  const colorOf = (graded: (ClipSegment | Overlay)[]) => {
     const regraded = (change: Partial<Adjust> | "reset", group?: string) => {
       const outcome = regrade({ edits, pick }, change);
-      if (outcome) onEdits(outcome.edits, group && `segment:${segments.map((segment) => segment.id).join(",")}:${group}`);
+      if (outcome) onEdits(outcome.edits, group && `grade:${graded.map((item) => item.id).join(",")}:${group}`);
     };
-    return <ColorFields grades={segments.map((segment) => segment.grade)} onDial={regraded} onReset={() => regraded("reset")} />;
+    return <ColorFields grades={graded.map((item) => item.grade)} onDial={regraded} onReset={() => regraded("reset")} />;
   };
 
   const items = itemsOf(pick);
@@ -158,12 +158,15 @@ export function Inspector({
       );
     }
     const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
-    if (!items.every((item) => item.kind === "segment")) return summary;
-    // Several Segments: their Grades edited together.
+    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay")) return summary;
+    // Several Segments and Overlays: their Grades edited together.
     return (
       <div className="flex flex-col gap-4">
         {summary}
-        {colorOf(edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)))}
+        {colorOf([
+          ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
+          ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
+        ])}
       </div>
     );
   }
@@ -285,6 +288,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
+        color={colorOf([overlay])}
       />
     );
   }

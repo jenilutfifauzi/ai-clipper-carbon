@@ -131,7 +131,7 @@ from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shad
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
-from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
+from app.frames import FrameFeed, PictureFrames, VideoDecode, graded_image, read_image, shadow_room
 from app.grading import grade_filters
 from app.ducking import duck_steps
 from app.keyframes import linear_steps
@@ -323,7 +323,7 @@ class Renderer:
         if plan.watermark is None or plan.watermark.kind is not WatermarkKind.LOGO:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
-        keyed = _keyed_items(drawn, files, source, pictures)
+        keyed = _keyed_items(drawn, files, source, pictures, self.ffmpeg)
         try:
             if scripts:
                 registry().gather(_faces(plan), fonts)
@@ -1051,8 +1051,9 @@ def _overlay_inputs(
 def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
-    image's one picture held. A keyed one's frames, drawn whole by its frame process `feed`, are
-    laid at 0, 0, each over the frame of its number (the frames below being at n / fps exactly)."""
+    image's one picture held, graded after it is scaled and flipped. A keyed one's frames, drawn whole
+    (and graded) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
+    frames below being at n / fps exactly)."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
     if feed is not None:
         name = f"[layer{number}]"
@@ -1060,7 +1061,8 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     played = "PTS-STARTPTS" if event.speed == 1 else f"(PTS-STARTPTS)/{event.speed:.6g}"
     timed = "" if event.image else f",setpts={played}+{event.start:.3f}/TB"
     ends = "repeat" if event.image else "pass"
-    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}")
+    graded = grade_filters(event.grade, alpha=f"layer{number}g")
+    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", graded)
 
 
 def _layer_inputs(
@@ -1217,17 +1219,23 @@ Feeds = dict[Keyed, FrameFeed]
 
 
 def _keyed_items(
-    plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None
+    plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None, ffmpeg: Path | None = None
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
-    a keyed or animated Overlay's image's pixels, or a video's file (such an Overlay's or a keyed
-    Segment's), or the `source` for a Manual Scene; and a keyed or animated picture layer's
-    picture's pixels, from `pictures`."""
-    items: dict[Keyed, np.ndarray | Path] = {
-        ("overlay", i): read_image(files[event.media]) if event.image else files[event.media]
-        for i, event in enumerate(plan.overlays)
-        if (_comes_animated(event) or event.picture.motion) and event.media in files
-    }
+    a keyed or animated Overlay's image's pixels (graded once by `ffmpeg` by its Grade), or a
+    video's file (such an Overlay's or a keyed Segment's), or the `source` for a Manual Scene; and a
+    keyed or animated picture layer's picture's pixels, from `pictures`."""
+    items: dict[Keyed, np.ndarray | Path] = {}
+    for i, event in enumerate(plan.overlays):
+        if not (_comes_animated(event) or event.picture.motion) or event.media not in files:
+            continue
+        if not event.image:
+            items[("overlay", i)] = files[event.media]
+            continue
+        image = read_image(files[event.media])
+        if (graded := grade_filters(event.grade, alpha="g")) and ffmpeg is not None:
+            image = graded_image(ffmpeg, image, event.picture, graded)
+        items[("overlay", i)] = image
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
             items[("scene", i)] = source
@@ -1268,8 +1276,8 @@ def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]
 
 def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
     """A frame process for each keyed picture whose item is in `items`, over its span, drawing frames
-    of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`)
-    and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
+    of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`,
+    an Overlay's graded by its Grade; a Segment's is graded with its whole frame, `_segmented`) and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
     as the Scene's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
     rate = _rate_value(plan)
     frame, drawn = (plan.width, plan.height), drawn_scale(plan)
@@ -1296,7 +1304,7 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
             frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
-            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate)
+            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"))
         else:
             frames, video = PictureFrames(event.picture, item, frame, sampled), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
@@ -1308,16 +1316,20 @@ def _later(picture: Picture, by: float) -> Picture:
     return replace(picture, motion={prop: [replace(key, at=key.at + by) for key in keys] for prop, keys in picture.motion.items()})
 
 
-def _picture(picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "") -> str:
+def _picture(
+    picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = ""
+) -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
-    order of docs/adr/0007: crop, scale, flip, corners and border (`_corners`), rotate with a
-    transparent fill, shadow (`_shadow`), opacity, then laid over at its centre. Steps that change
-    nothing are left out. `after` is more filters of the picture's own frames, `laid` more options of
-    the overlay; its own frames are labelled `name`."""
+    order of docs/adr/0007: crop, scale, flip, the filters `graded` (an Overlay's Grade, docs/adr/0013),
+    corners and border (`_corners`), rotate with a transparent fill, shadow (`_shadow`), opacity, then
+    laid over at its centre. Steps that change nothing are left out. `after` is more filters of the
+    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`."""
     crop = picture.crop
     steps = [] if (crop.width, crop.height) == picture.item_size else [f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1"]
     steps.append(f"scale={picture.width}:{picture.height}:flags=lanczos")
     steps += ["hflip"] * picture.flip_h + ["vflip"] * picture.flip_v
+    if graded:
+        steps.append(graded)
     turned = picture.rotation % 360 != 0
     decorated = picture.radius > 0 or picture.border is not None
     if turned or picture.opacity < 1 or decorated or picture.shadow:

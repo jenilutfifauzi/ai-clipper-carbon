@@ -295,7 +295,9 @@ Edits:
   merge_candidate_items changes only the fields given, of an override's framing or the Candidate's.
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
-  output pixels, or null for none; merge_candidate_items changes only the fields given.
+  output pixels, or null for none; merge_candidate_items changes only the fields given. Its `grade`
+  is a Segment's (above), on its picture alone: after it is scaled, before its corners, border,
+  shadow and opacity, so those keep their colours. The dry run lists it likewise.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
@@ -1091,7 +1093,7 @@ def _plan_view(
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
     (`copied`), its fades, its Grade (`_grade_view`)), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
-    video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
+    video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
     (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
@@ -1143,6 +1145,7 @@ def _plan_view(
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
+                **_compact({"grade": _grade_view(event["grade"])}),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
                 **_animation_view(event),

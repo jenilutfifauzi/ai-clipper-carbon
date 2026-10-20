@@ -17,16 +17,23 @@ Duplicate and paste keep the Grade. The agent sets `grade` on Overlays through `
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] **Render:**
+- [x] **Render:**
   - An Overlay's Grade changes its picture's pixels.
   - The Grade leaves its border colour unchanged.
   - The Grade leaves the Segment under it unchanged.
-- [ ] **Keyed items:** each of these, with a Grade, renders graded like its unkeyed form:
+- [x] **Keyed items:** each of these, with a Grade, renders graded like its unkeyed form:
   - a keyed video Overlay;
   - a keyed image Overlay;
   - a keyed media Segment.
-- [ ] **Planner:** Overlay events carry their Grade.
-- [ ] **MCP:** merge sets one dial of an Overlay's Grade, and the dry run lists it.
-- [ ] **Editor (vitest):** a mixed Segment + Overlay Pick changes both in one undo step, and duplicate and paste keep the Grade.
+- [x] **Planner:** Overlay events carry their Grade.
+- [x] **MCP:** merge sets one dial of an Overlay's Grade, and the dry run lists it.
+- [x] **Editor (vitest):** a mixed Segment + Overlay Pick changes both in one undo step, and duplicate and paste keep the Grade.
+
+**Notes (done):** a keyed media Segment was already graded once, with its whole frame at the end of
+its Segment's chain (`_segmented`, from 01), its keyed picture included; grading it again in its
+decoder would grade it twice, so its decoder is left alone and a test pins it graded like its
+unkeyed form. An Overlay's Grade keeps the picture's alpha (`grade_filters(..., alpha=...)`): its
+vignette, which ffmpeg draws only on opaque pictures, is drawn with the alpha split off and merged
+back.

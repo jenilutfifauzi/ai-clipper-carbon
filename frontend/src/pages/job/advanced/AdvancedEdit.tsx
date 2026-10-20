@@ -495,11 +495,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       setSavingSound(false);
     }
   }
-  // The plan as the player draws it, the hidden Tracks left out, its Segments in their Grades as edited
-  // (a dial drag shows before its plan comes).
+  // The plan as the player draws it, the hidden Tracks left out, its Segments and Overlays in their
+  // Grades as edited (a dial drag shows before its plan comes).
   const shown = useMemo(
-    () => preview && { ...preview, plan: draftGrades(shownPlan(preview.plan, tracks), edits.segments) },
-    [preview, tracks, edits.segments],
+    () => preview && { ...preview, plan: draftGrades(shownPlan(preview.plan, tracks), edits.segments, edits.overlays) },
+    [preview, tracks, edits.segments, edits.overlays],
   );
   const playback = useMemo(() => new Playback(), []);
   const magnetic = useMagnetic();

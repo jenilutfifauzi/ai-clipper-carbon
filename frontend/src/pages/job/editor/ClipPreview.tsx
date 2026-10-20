@@ -227,7 +227,7 @@ export function ClipPreview({
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
         {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
         <div ref={incoming} className="absolute inset-0">
-          {drawn && <GradeFilters grades={drawn.segments.map((segment) => segment.grade)} />}
+          {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays].map((item) => item.grade)} />}
           {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
           <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
             {decks.map((refs, deck) =>

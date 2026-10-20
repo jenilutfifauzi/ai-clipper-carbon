@@ -72,12 +72,24 @@ def fold(grade: Grade) -> Folded | None:
     return Folded(tables, matrix, float(adjust.sharpen), float(adjust.vignette))
 
 
-def grade_filters(grade: Grade) -> str:
-    """The ffmpeg filters that draw `grade` on a picture, joined by commas, or "" for a neutral one."""
+def grade_filters(grade: Grade, alpha: str | None = None) -> str:
+    """The ffmpeg filters that draw `grade` on a picture, joined by commas, or "" for a neutral one.
+
+    With `alpha` (a prefix for the labels it needs), the picture's alpha is kept, as an Overlay's
+    image may have one: the tables and matrix are drawn on RGBA, and a vignette (which ffmpeg draws
+    only on opaque pictures) on its colour alone, the alpha split off before and merged back after."""
     folded = fold(grade)
     if folded is None:
         return ""
-    filters = ["format=rgb24"] if folded.tables is not None or folded.matrix is not None else []
+    if alpha is not None and folded.vignette:
+        coloured = _filters(folded, "rgb24")
+        return f"format=rgba,split[{alpha}c][{alpha}a];[{alpha}a]alphaextract[{alpha}m];[{alpha}c]{coloured}[{alpha}g];[{alpha}g][{alpha}m]alphamerge"
+    return _filters(folded, "rgb24" if alpha is None else "rgba")
+
+
+def _filters(folded: Folded, rgb: str) -> str:
+    """The filters of `folded`, its tables and matrix drawn on the pixel format `rgb`."""
+    filters = [f"format={rgb}"] if folded.tables is not None or folded.matrix is not None else []
     if folded.tables is not None:
         # Every entry a point of the curve, so that a spline through them all gives each 8-bit level
         # its own. curves places a point on the level its x is at or just over: each x is nudged up a

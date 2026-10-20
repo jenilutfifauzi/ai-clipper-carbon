@@ -1,4 +1,4 @@
-import type { Adjust, Grade, RenderPlan, SegmentPlan } from "../../../api";
+import type { Adjust, Grade, RenderPlan } from "../../../api";
 
 /**
  * The fold of a Grade (ADR 0013): its Adjust turned into one table per channel, one colour matrix and
@@ -172,13 +172,21 @@ export const adjusted = (grade: Partial<Grade> | null | undefined, change: Parti
 };
 
 /**
- * `plan` with its Segments in the Grades the draft's `segments` give them now (by id), so that a dial
- * dragged shows at once, before the Preview Plan of the change comes (ADR 0013). `plan` itself when
- * none differs.
+ * `plan` with its Segments and Overlays in the Grades the draft's `segments` and `overlays` give them
+ * now (by id), so that a dial dragged shows at once, before the Preview Plan of the change comes (ADR
+ * 0013). `plan` itself when none differs.
  */
-export function draftGrades(plan: RenderPlan, segments: { id: string; grade?: Grade }[]): RenderPlan {
-  const grades = new Map(segments.map((segment) => [segment.id, segment.grade]));
-  const differs = (segment: SegmentPlan) => grades.has(segment.id) && gradeFilterId(grades.get(segment.id)) !== gradeFilterId(segment.grade);
-  if (!plan.segments.some(differs)) return plan;
-  return { ...plan, segments: plan.segments.map((segment) => (differs(segment) ? { ...segment, grade: gradeOf(grades.get(segment.id)) } : segment)) };
+export function draftGrades(plan: RenderPlan, segments: { id: string; grade?: Grade }[], overlays: { id: string; grade?: Grade }[] = []): RenderPlan {
+  const segmentsNow = regraded(plan.segments, segments);
+  const overlaysNow = regraded(plan.overlays, overlays);
+  if (segmentsNow === plan.segments && overlaysNow === plan.overlays) return plan;
+  return { ...plan, segments: segmentsNow, overlays: overlaysNow };
+}
+
+// `planned` with each one's Grade as `drafted` gives it (by id); `planned` itself when none differs.
+function regraded<T extends { id: string; grade?: Grade }>(planned: T[], drafted: { id: string; grade?: Grade }[]): T[] {
+  const grades = new Map(drafted.map((item) => [item.id, item.grade]));
+  const differs = (item: T) => grades.has(item.id) && gradeFilterId(grades.get(item.id)) !== gradeFilterId(item.grade);
+  if (!planned.some(differs)) return planned;
+  return planned.map((item) => (differs(item) ? { ...item, grade: gradeOf(grades.get(item.id)) } : item));
 }

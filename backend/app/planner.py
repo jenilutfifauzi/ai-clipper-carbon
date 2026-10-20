@@ -694,7 +694,8 @@ class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
-    the Clip, coming on and going off by its Overlay's animations. `id` is the Overlay's."""
+    the Clip, coming on and going off by its Overlay's animations, its picture graded by `grade`
+    (docs/adr/0013; as given, folded by the renderer and the preview). `id` is the Overlay's."""
 
     media: str
     picture: Picture
@@ -709,6 +710,7 @@ class OverlayEvent:
     animation_in: Animation = Animation.NONE
     animation_out: Animation = Animation.NONE
     animation_ms: int = 300
+    grade: Grade = Grade()
 
     @property
     def time(self) -> SegmentTime:
@@ -1692,7 +1694,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
-        overlay.animation_in, overlay.animation_out, overlay.animation_ms,
+        overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
     )
 
 

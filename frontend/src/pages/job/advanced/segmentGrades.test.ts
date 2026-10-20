@@ -104,7 +104,7 @@ describe("a Segment's copies keep its Grade", () => {
 describe("the preview", () => {
   const planned = (id: string, grade?: Grade): SegmentPlan =>
     ({ id, start: 0, end: 1, source_start: 0, source_end: 1, media: null, volume: 1, silent: false, scenes: 1, gain: [], fade_in: 0, fade_out: 0, grade }) as SegmentPlan;
-  const plan = { segments: [planned("s1"), planned("s2", WARM)] } as unknown as RenderPlan;
+  const plan = { segments: [planned("s1"), planned("s2", WARM)], overlays: [] } as unknown as RenderPlan;
 
   test("draws the Segments in the draft's Grades at once, before the plan of the change comes", () => {
     const shown = draftGrades(plan, [segment("s1", 0, 1, { grade: WARM }), segment("s2", 0, 1, { grade: WARM })]);

@@ -778,6 +778,8 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   shadow: Shadow | null;
   keys: Keys;
   muted?: boolean;
+  // Its colour (ADR 0013): its picture graded before its corners, border and shadow. Neutral when missing.
+  grade?: Grade;
 }
 
 // How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
@@ -824,6 +826,8 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   end: number;
   offset: number;
   image: boolean;
+  // Its Overlay's Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
+  grade?: Grade;
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.

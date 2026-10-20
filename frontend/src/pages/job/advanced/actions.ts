@@ -680,16 +680,20 @@ export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (sh
 }
 
 /**
- * Every picked Segment's Grade (ADR 0013) with the dials of `change` set, its other dials kept; or with
- * `change` "reset", neutral again. One change, however many Segments are picked. Null with none picked.
+ * Every picked Segment's and Overlay's Grade (ADR 0013) with the dials of `change` set, its other dials
+ * kept; or with `change` "reset", neutral again. One change, however many are picked. Null with none
+ * picked.
  */
 export function regrade(scene: { edits: AdvancedEdits; pick: Pick }, change: Partial<Adjust> | "reset"): Outcome | null {
   const { edits, pick } = scene;
-  if (!edits.segments.some((segment) => isPicked(pick, "segment", segment.id))) return null;
-  const segments = edits.segments.map((segment) =>
-    isPicked(pick, "segment", segment.id) ? { ...segment, grade: change === "reset" ? NEUTRAL_GRADE : adjusted(segment.grade, change) } : segment,
-  );
-  return { edits: { ...edits, segments }, pick };
+  const graded = <T extends ClipSegment | Overlay>(items: T[], kind: "segment" | "overlay"): T[] =>
+    items.some((item) => isPicked(pick, kind, item.id))
+      ? items.map((item) => (isPicked(pick, kind, item.id) ? { ...item, grade: change === "reset" ? NEUTRAL_GRADE : adjusted(item.grade, change) } : item))
+      : items;
+  const segments = graded(edits.segments, "segment");
+  const overlays = graded(edits.overlays, "overlay");
+  if (segments === edits.segments && overlays === edits.overlays) return null;
+  return { edits: { ...edits, segments, overlays }, pick };
 }
 
 /** Every picked Text Layer given `style`, a Text Preset's Text Style: their words, Transforms, Keyframes and times stay their own. */

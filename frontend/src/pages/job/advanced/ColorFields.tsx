@@ -45,7 +45,7 @@ const GROUPS: { title: string; dials: DialSpec[] }[] = [
 ];
 
 /**
- * The Color section (ADR 0013): the Grades of the picked Segments, `grades`, by their Adjust dials in
+ * The Color section (ADR 0013): the Grades of the picked Segments and Overlays, `grades`, by their Adjust dials in
  * groups (Color, Lightness, Effects), shown as the first one's, a dial the Grades differ in marked
  * Mixed. Moving a dial sets it on every one (`onDial`, a change of its group); a double-click puts it
  * back at neutral, and Reset makes every dial neutral (`onReset`).

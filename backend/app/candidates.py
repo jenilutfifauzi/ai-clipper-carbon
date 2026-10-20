@@ -603,73 +603,6 @@ class MusicClip:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
 
 
-@dataclass(frozen=True)
-class Overlay:
-    """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
-    for `secs`, in Timeline time, a video from `offset` seconds into it; cut by its `crop` and placed
-    by its `transform`, a video's sound at `volume` (none by default). Its corners are rounded
-    `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
-    `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
-    and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
-    not from its Transform or `volume`. It comes on and goes off as a Text Layer does, its
-    animations stacked on its keyed values; they move its picture only, never its sound. An image's
-    volume Keyframes, Speed, pitch and Reverse are refused with the Media Library at hand (app/api.py)."""
-
-    id: ItemId
-    media: MediaId
-    start: TimelineStart
-    secs: TimelineSecs
-    offset: FileOffset = 0.0
-    transform: Transform = OVERLAY_TRANSFORM
-    crop: Crop = Crop()
-    volume: Volume = 0.0
-    # A video's: over its `secs` it shows `secs` × speed of it from `offset` (docs/adr/0009), its
-    # sound keeping its pitch unless `pitch`; backwards, from a Retimed copy, with `reverse`, so that
-    # `offset` is then the frame it ends on (its left edge shows `offset + secs × speed`).
-    speed: Speed = 1.0
-    pitch: bool = False
-    reverse: bool = False
-    radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
-    border: Border | None = None
-    shadow: Shadow | None = None
-    keys: Keys = field(default_factory=dict)
-    animation_in: Animation = Animation.NONE
-    animation_out: Animation = Animation.NONE
-    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
-    # A video's sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
-    muted: bool = False
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
-
-
-class BackgroundKind(StrEnum):
-    """What shows behind a Framing's picture: the picture itself, covering the frame, blurred and
-    darkened (as the Blur Layout's background is), or a colour."""
-
-    BLUR = "blur"
-    COLOUR = "colour"
-
-
-@dataclass(frozen=True)
-class Background:
-    """What shows wherever a Framing's picture doesn't cover the frame, and behind it below its full
-    opacity: its `kind`, and its `colour` when that is a colour."""
-
-    kind: BackgroundKind = BackgroundKind.BLUR
-    colour: Colour = "#000000"
-
-
-@dataclass(frozen=True)
-class Framing:
-    """How a picture fills the frame on its own (docs/adr/0007): a media Segment's video, or the
-    Source in a Manual Scene, cut by its `crop`, placed by its `transform`, over its `background`."""
-
-    transform: Transform = Transform()
-    crop: Crop = Crop()
-    background: Background = Background()
-
-
 # An Adjust's dials (docs/adr/0013), in Concat's ranges: temperature in kelvin (6500 the picture as
 # shot), exposure in stops of light, the rest signed percents, or from 0 for sharpen, fade and vignette.
 TEMPERATURE_K = (2000, 11000)
@@ -714,6 +647,76 @@ class Grade:
     def neutral(self) -> bool:
         """Whether it leaves the picture as it is: every dial neutral, and no Look."""
         return self.adjust == Adjust() and self.look is None
+
+
+@dataclass(frozen=True)
+class Overlay:
+    """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
+    for `secs`, in Timeline time, a video from `offset` seconds into it; cut by its `crop` and placed
+    by its `transform`, a video's sound at `volume` (none by default). Its corners are rounded
+    `radius` times the drawn picture's shorter side (0.5 makes a pill or a circle), and it may have a
+    `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
+    and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
+    not from its Transform or `volume`. It comes on and goes off as a Text Layer does, its
+    animations stacked on its keyed values; they move its picture only, never its sound. An image's
+    volume Keyframes, Speed, pitch and Reverse are refused with the Media Library at hand (app/api.py)."""
+
+    id: ItemId
+    media: MediaId
+    start: TimelineStart
+    secs: TimelineSecs
+    offset: FileOffset = 0.0
+    transform: Transform = OVERLAY_TRANSFORM
+    crop: Crop = Crop()
+    volume: Volume = 0.0
+    # A video's: over its `secs` it shows `secs` × speed of it from `offset` (docs/adr/0009), its
+    # sound keeping its pitch unless `pitch`; backwards, from a Retimed copy, with `reverse`, so that
+    # `offset` is then the frame it ends on (its left edge shows `offset + secs × speed`).
+    speed: Speed = 1.0
+    pitch: bool = False
+    reverse: bool = False
+    radius: Annotated[FiniteFloat, Field(ge=0, le=0.5)] = 0.0
+    border: Border | None = None
+    shadow: Shadow | None = None
+    keys: Keys = field(default_factory=dict)
+    animation_in: Animation = Animation.NONE
+    animation_out: Animation = Animation.NONE
+    animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
+    # A video's sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
+    muted: bool = False
+    # Its colour (docs/adr/0013): its picture graded after it is scaled and flipped, before its
+    # corners, border, shadow and opacity. Neutral in one saved before Grades.
+    grade: Grade = Grade()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
+
+
+class BackgroundKind(StrEnum):
+    """What shows behind a Framing's picture: the picture itself, covering the frame, blurred and
+    darkened (as the Blur Layout's background is), or a colour."""
+
+    BLUR = "blur"
+    COLOUR = "colour"
+
+
+@dataclass(frozen=True)
+class Background:
+    """What shows wherever a Framing's picture doesn't cover the frame, and behind it below its full
+    opacity: its `kind`, and its `colour` when that is a colour."""
+
+    kind: BackgroundKind = BackgroundKind.BLUR
+    colour: Colour = "#000000"
+
+
+@dataclass(frozen=True)
+class Framing:
+    """How a picture fills the frame on its own (docs/adr/0007): a media Segment's video, or the
+    Source in a Manual Scene, cut by its `crop`, placed by its `transform`, over its `background`."""
+
+    transform: Transform = Transform()
+    crop: Crop = Crop()
+    background: Background = Background()
 
 
 @dataclass(frozen=True)
