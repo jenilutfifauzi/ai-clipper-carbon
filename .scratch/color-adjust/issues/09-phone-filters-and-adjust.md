@@ -13,9 +13,16 @@
 
 **Blocked by:** 05, 07.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] **Undo:** a tapped card applies its Look to the Pick or the Candidate as one undo step.
-- [ ] **Add as layer:** it makes an Adjustment Layer at the playhead.
-- [ ] **Adjust sheet:** its dials edit the same Grade as the desktop Inspector.
-- [ ] **Checked on an iPhone-sized viewport:** the sheets fit, and no horizontal page scroll appears.
+- [x] **Undo:** a tapped card applies its Look to the Pick or the Candidate as one undo step.
+- [x] **Add as layer:** it makes an Adjustment Layer at the playhead.
+- [x] **Adjust sheet:** its dials edit the same Grade as the desktop Inspector.
+- [x] **Checked on an iPhone-sized viewport:** the sheets fit, and no horizontal page scroll appears.
+
+**Notes (done):**
+- Toolbar: Filters and Adjust buttons for a Pick with Grades (Segments, Overlays, Adjustment Layers); with nothing picked, the asset tab's Filters opens the phone Filters sheet and Adjust sits beside it. Not shown in picking mode (Edit opens the Inspector's Color section there).
+- Filters sheet (`LookPanel.tsx`: `PhoneFilters` → `FiltersPanel` → `LookStrip`, reusing `LookButton`): one sideways-scrolling strip with the Looks by category, intensity (off without a Look), "Add as layer" with the last card tapped, else the target's Look, through the desktop's `addAdjustment` (refused on a locked Adjust Track, 3 s or to the Clip's end). No Import on the phone.
+- Adjust sheet (`ColorFields.tsx`: `AdjustPanel` over `AdjustDials`, the dials split out of `ColorFields`): desktop groups, a 44 px reset per dial, and Reset all.
+- `colorChanges` (ColorFields.tsx) now drives the desktop Inspector's Color section and both phone sheets, so the same Grade and undo groups; `gradesOf` (actions.ts) names what they change.
+- Checked at 390×844 with touch emulation (Looks served by a mock; writes refused, so nothing saved): no horizontal page scroll, strip scrolls within itself, no control under 44 px in either sheet. Tests: `advanced/phoneColor.test.tsx`.

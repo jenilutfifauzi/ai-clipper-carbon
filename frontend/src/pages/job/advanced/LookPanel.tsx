@@ -1,15 +1,18 @@
-import { LoaderCircle, Palette, Trash2 } from "lucide-react";
+import { Layers2, LoaderCircle, Palette, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ApiError, jobFilmstripUrl, mediaFilmstripUrl, mediaThumbnailUrl, type ClipSegment, type Grade, type Look, type MediaItem, type Overlay } from "../../../api";
-import { buttonClass } from "../../../components/Button";
+import { Button, buttonClass } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { deleteLook, importLook, shelvesOf, useLooks } from "../../../looks";
 import { GradeFilters, GradeVignette } from "../editor/GradeFilters";
-import { gradeFilter, NEUTRAL_GRADE } from "../editor/grading";
+import { gradeFilter, gradeOf, NEUTRAL_GRADE } from "../editor/grading";
 import { usePlayback, type Playback, type PlayedSegment } from "../editor/playback";
 import { playedSourceAt } from "../editor/segmentTime";
+import { colorChanges } from "./ColorFields";
 import { DRAG_LOOK } from "./drag";
+import type { AdvancedEdits } from "./edits";
 import { itemsOf, type Pick } from "./pick";
 import { CHUNK_SECS } from "./timelineView";
 
@@ -200,6 +203,127 @@ export function LookCards({
 }
 
 /**
+ * The phone's Filters sheet: `FiltersPanel` with its cards on the picture `frameAt` gives at the
+ * playhead, to the second. The Look "Add as layer" takes is the last card tapped, else the Look of
+ * the Grade a tap goes to.
+ */
+export function PhoneFilters({
+  frameAt,
+  playback,
+  ...panel
+}: Omit<Parameters<typeof FiltersPanel>[0], "frame" | "chosen" | "onChoose"> & {
+  frameAt: (time: number) => LookFrame | null;
+  playback: Playback;
+}) {
+  const second = usePlayback(playback, (time) => Math.round(time));
+  const [chosen, setChosen] = useState<string | null>(null);
+  return <FiltersPanel frame={frameAt(second)} chosen={chosen} onChoose={setChosen} {...panel} />;
+}
+
+/**
+ * The phone's Filters sheet, for the Pick's Grades or the Candidate's with nothing picked: a strip of
+ * Look cards by category on `frame` (`LookStrip`), a tap giving the card's Look to them as one step of
+ * undo (and making it the `chosen` one, `onChoose`); the intensity of their Look; and "Add as layer",
+ * an Adjustment Layer with the chosen Look (else theirs) at the playhead (`onAddLayer`). No audition:
+ * a touch has no hover.
+ */
+export function FiltersPanel({
+  edits,
+  pick,
+  frame,
+  chosen,
+  looks,
+  onChoose,
+  onEdits,
+  onAddLayer,
+}: {
+  edits: AdvancedEdits;
+  pick: Pick;
+  frame: LookFrame | null;
+  chosen: string | null;
+  // The catalogue's by default.
+  looks?: Look[] | null;
+  onChoose: (look: string) => void;
+  onEdits: (edits: AdvancedEdits, group?: string) => void;
+  onAddLayer: (look: string) => void;
+}) {
+  const { grades, onLook } = colorChanges({ edits, pick }, onEdits);
+  const target = grades.length ? gradeOf(grades[0]) : null;
+  const layered = chosen ?? target?.look ?? null;
+  return (
+    <div className="flex flex-col gap-4">
+      {target ? (
+        <p className="text-sm text-pretty text-muted">Tap a look for {pick === null ? "the whole clip" : "the selection"}.</p>
+      ) : (
+        <p className="text-sm text-pretty text-muted">A look goes on Segments, Overlays and Adjustment Layers: select some, or nothing for the whole clip. Or add one as a layer.</p>
+      )}
+      <LookStrip
+        frame={frame}
+        current={target?.look ?? null}
+        looks={looks}
+        onPick={(look) => {
+          onChoose(look);
+          onLook({ look });
+        }}
+      />
+      <Slider
+        label="Intensity"
+        value={target?.look ? target.intensity : 100}
+        min={0}
+        max={100}
+        step={1}
+        format={(value) => `${Math.round(value)}%`}
+        disabled={!target?.look}
+        onChange={(intensity) => onLook({ intensity }, "grade:intensity")}
+      />
+      <Button className="self-start" disabled={layered === null} onClick={() => layered !== null && onAddLayer(layered)}>
+        <Layers2 aria-hidden size={16} />
+        Add as layer
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The phone's strip of Look cards: one row, scrolled sideways within itself, the Looks by category
+ * under their names, each card the picture of `frame` in its Look. A tap gives it (`onPick`);
+ * `current` is the Look of the Grade a tap goes to.
+ */
+export function LookStrip({
+  frame,
+  current,
+  onPick,
+  looks: given,
+}: {
+  frame: LookFrame | null;
+  current: string | null;
+  onPick: (look: string) => void;
+  looks?: Look[] | null;
+}) {
+  const listed = useLooks();
+  const looks = given ?? listed;
+  if (!looks) return <Hint>Loading the looks…</Hint>;
+  const picture = frameStyle(frame);
+  return (
+    <div role="group" aria-label="Looks" className="-mx-4 flex min-w-0 snap-x gap-4 overflow-x-auto overscroll-x-contain px-4 pb-1">
+      <GradeFilters grades={looks.map((look) => lookGrade(look.id))} />
+      {shelvesOf(looks).map(({ category, looks: shelf }) => (
+        <section key={category} aria-label={category} className="flex shrink-0 flex-col gap-1.5">
+          <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">{category}</h3>
+          <div className="flex gap-2">
+            {shelf.map((look) => (
+              <div key={look.id} className="flex w-28 shrink-0 snap-start">
+                <LookButton look={look} picture={picture} current={current === look.id} onPick={() => onPick(look.id)} onAudition={() => {}} />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Import look: a .cube file (a 3D table, 2 to 65 a side) becomes an Imported Look every Job's Filters
  * tab lists, on the Imported shelf; a file that can't be one is refused naming its bad line.
  */
@@ -316,7 +440,7 @@ function LookButton({
       onPointerLeave={() => onAudition(null)}
       aria-pressed={current}
       className={cx(
-        "raised flex w-full flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
+        "raised flex min-h-11 w-full flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
         "focus-visible:outline-2 focus-visible:outline-focus",
         current && "ring-2 ring-accent",
       )}

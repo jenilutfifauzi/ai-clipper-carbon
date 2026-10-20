@@ -6,6 +6,9 @@ import { Slider } from "../../../components/Slider";
 import { shelvesOf, useLooks } from "../../../looks";
 import { gradeOf, isNeutral, NEUTRAL_ADJUST } from "../editor/grading";
 import { Group, Mixed } from "../editor/StyleFields";
+import { gradesOf, regrade, relook } from "./actions";
+import type { AdvancedEdits } from "./edits";
+import type { Pick } from "./pick";
 
 type Dial = keyof Adjust;
 
@@ -50,6 +53,30 @@ const GROUPS: { title: string; dials: DialSpec[] }[] = [
 const NO_LOOK = "";
 
 /**
+ * The Color controls of the Pick, or of the Candidate with nothing picked (actions.ts' `gradesOf`):
+ * their Grades, and their changes as `onEdits` takes them, each one change, a change of a group joined
+ * by the next of that group on the same items. The desktop Inspector's Color section and the phone's
+ * Filters and Adjust sheets alike.
+ */
+export function colorChanges(scene: { edits: AdvancedEdits; pick: Pick }, onEdits: (edits: AdvancedEdits, group?: string) => void) {
+  const graded = gradesOf(scene);
+  const grouped = (group?: string) => group && `grade:${graded.map((item) => item.id).join(",")}:${group}`;
+  const onDial = (change: Partial<Adjust> | "reset", group?: string) => {
+    const outcome = regrade(scene, change);
+    if (outcome) onEdits(outcome.edits, grouped(group));
+  };
+  return {
+    grades: graded.map((item) => item.grade),
+    onDial: onDial as (change: Partial<Adjust>, group?: string) => void,
+    onReset: () => onDial("reset"),
+    onLook: (change: { look?: string | null; intensity?: number }, group?: string) => {
+      const outcome = relook(scene, change);
+      if (outcome) onEdits(outcome.edits, grouped(group));
+    },
+  };
+}
+
+/**
  * The Color section (ADR 0013): the Grades of the picked Segments and Overlays, `grades`, by their Look
  * and its intensity, then their Adjust dials in groups (Color, Lightness, Effects), each shown as the
  * first one's, a field the Grades differ in marked Mixed. Picking a Look, or moving its intensity,
@@ -74,7 +101,6 @@ export function ColorFields({
   const looks = given ?? listed ?? [];
   const whole = grades.map(gradeOf);
   const adjusts = whole.map((grade) => grade.adjust);
-  const [first = NEUTRAL_ADJUST] = adjusts;
   const [firstGrade] = whole;
   const look = firstGrade?.look ?? null;
   return (
@@ -112,26 +138,81 @@ export function ColorFields({
           </Button>
         </>
       )}
-      {GROUPS.map(({ title, dials }) => (
-        <Group key={title} title={title}>
-          {dials.map(({ dial, label, min, max, step, format }) => (
-            // A double-click puts the dial back at neutral.
-            <div key={dial} onDoubleClick={() => onDial({ [dial]: NEUTRAL_ADJUST[dial] }, `grade:${dial}:reset`)} title="Double-click to reset">
-              <Slider
-                label={label}
-                value={first[dial]}
-                min={min}
-                max={max}
-                step={step}
-                format={format}
-                marker={adjusts.some((adjust) => adjust[dial] !== first[dial]) ? <Mixed /> : undefined}
-                onChange={(value) => onDial({ [dial]: value }, `grade:${dial}`)}
-              />
-            </div>
-          ))}
-        </Group>
-      ))}
+      <AdjustDials adjusts={adjusts} onDial={onDial} />
     </section>
+  );
+}
+
+/**
+ * The Adjust dials of `adjusts` in their groups (Color, Lightness, Effects), each shown as the first
+ * one's, a dial they differ in marked Mixed. Moving a dial sets it (`onDial`, a change of its group);
+ * a double-click puts it back at neutral, and so does its reset button where `resettable` (a phone's,
+ * which has no double-click), off while every one is at neutral.
+ */
+export function AdjustDials({
+  adjusts,
+  onDial,
+  resettable = false,
+}: {
+  adjusts: Adjust[];
+  onDial: (change: Partial<Adjust>, group: string) => void;
+  resettable?: boolean;
+}) {
+  const [first = NEUTRAL_ADJUST] = adjusts;
+  return GROUPS.map(({ title, dials }) => (
+    <Group key={title} title={title}>
+      {dials.map(({ dial, label, min, max, step, format }) => {
+        const reset = () => onDial({ [dial]: NEUTRAL_ADJUST[dial] }, `grade:${dial}:reset`);
+        return (
+          // A double-click puts the dial back at neutral.
+          <div key={dial} onDoubleClick={reset} title="Double-click to reset">
+            <Slider
+              label={label}
+              value={first[dial]}
+              min={min}
+              max={max}
+              step={step}
+              format={format}
+              marker={adjusts.some((adjust) => adjust[dial] !== first[dial]) ? <Mixed /> : undefined}
+              onChange={(value) => onDial({ [dial]: value }, `grade:${dial}`)}
+              after={
+                resettable && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={reset}
+                    disabled={adjusts.every((adjust) => adjust[dial] === NEUTRAL_ADJUST[dial])}
+                    aria-label={`Reset ${label}`}
+                  >
+                    <RotateCcw aria-hidden size={16} />
+                  </Button>
+                )
+              }
+            />
+          </div>
+        );
+      })}
+    </Group>
+  ));
+}
+
+/**
+ * The phone's Adjust sheet: the dials of the Pick's Grades, or the Candidate's with nothing picked, in
+ * the desktop's groups, each with a reset, and Reset for them all. They change what the Inspector's
+ * Color section changes (`colorChanges`), each one step of undo.
+ */
+export function AdjustPanel({ edits, pick, onEdits }: { edits: AdvancedEdits; pick: Pick; onEdits: (edits: AdvancedEdits, group?: string) => void }) {
+  const { grades, onDial, onReset } = colorChanges({ edits, pick }, onEdits);
+  if (!grades.length) return <p className="text-sm text-pretty text-muted">Adjust grades Segments, Overlays and Adjustment Layers: select some, or nothing for the whole clip.</p>;
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-pretty text-muted">{pick === null ? "The whole clip's colour." : "The selection's colour."}</p>
+      <Button size="md" variant="ghost" className="self-start" onClick={onReset} disabled={grades.every(isNeutral)}>
+        <RotateCcw aria-hidden size={15} />
+        Reset all
+      </Button>
+      <AdjustDials adjusts={grades.map((grade) => gradeOf(grade).adjust)} onDial={onDial} resettable />
+    </div>
   );
 }
 

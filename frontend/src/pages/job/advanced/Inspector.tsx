@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
-import type { Adjust, AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
+import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -11,9 +11,9 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, regrade, relook, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
-import { ColorFields } from "./ColorFields";
+import { colorChanges, ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -21,7 +21,7 @@ import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
-import { isPicked, itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
 import { ShapeFields, ShapesFields } from "./Shapes";
@@ -126,17 +126,8 @@ export function Inspector({
   };
 
   // The picked Segments', Overlays' and Adjustment Layers' Color section: a dial set on all of them, or all reset, each one change.
-  const colorOf = (graded: (ClipSegment | Overlay | AdjustmentLayer)[]) => {
-    const regraded = (change: Partial<Adjust> | "reset", group?: string) => {
-      const outcome = regrade({ edits, pick }, change);
-      if (outcome) onEdits(outcome.edits, group && `grade:${graded.map((item) => item.id).join(",")}:${group}`);
-    };
-    const relooked = (change: { look?: string | null; intensity?: number }, group?: string) => {
-      const outcome = relook({ edits, pick }, change);
-      if (outcome) onEdits(outcome.edits, group && `grade:${graded.map((item) => item.id).join(",")}:${group}`);
-    };
-    return <ColorFields grades={graded.map((item) => item.grade)} onDial={regraded} onReset={() => regraded("reset")} onLook={relooked} />;
-  };
+  const colorOf = () => <ColorFields {...colorChanges({ edits, pick }, onEdits)} />;
+
 
   const items = itemsOf(pick);
   if (items.length > 1 && actions) {
@@ -170,11 +161,7 @@ export function Inspector({
     return (
       <div className="flex flex-col gap-4">
         {summary}
-        {colorOf([
-          ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
-          ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
-          ...(edits.adjustment_layers ?? []).filter((layer) => isPicked(pick, "adjust", layer.id)),
-        ])}
+        {colorOf()}
       </div>
     );
   }
@@ -217,7 +204,7 @@ export function Inspector({
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
-        color={colorOf([segment])}
+        color={colorOf()}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}
@@ -258,7 +245,7 @@ export function Inspector({
         key={adjustment.id}
         layer={adjustment}
         duration={duration}
-        color={colorOf([adjustment])}
+        color={colorOf()}
         onChange={onAdjustment}
         onMix={(change, group) => {
           const outcome = setAdjustment({ edits, pick }, adjustment.id, change);
@@ -314,7 +301,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
-        color={colorOf([overlay])}
+        color={colorOf()}
       />
     );
   }
@@ -345,14 +332,6 @@ export function Inspector({
     return <CueFields cueKey={pick.key} edits={edits} preview={preview} locked={locked} playback={playback} onCue={onCue} />;
   }
   // Nothing picked: the Candidate's own Grade (ADR 0013), over the whole Main Track, each dial one change.
-  const regradedClip = (change: Partial<Adjust> | "reset", group?: string) => {
-    const outcome = regrade({ edits, pick: null }, change);
-    if (outcome) onEdits(outcome.edits, group && `grade:clip:${group}`);
-  };
-  const relookedClip = (change: { look?: string | null; intensity?: number }, group?: string) => {
-    const outcome = relook({ edits, pick: null }, change);
-    if (outcome) onEdits(outcome.edits, group && `grade:clip:${group}`);
-  };
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -361,7 +340,7 @@ export function Inspector({
           Select an item on the timeline or the preview to change it. The Color here grades the whole clip, not its Overlays.
         </p>
       </div>
-      <ColorFields grades={[edits.grade]} onDial={regradedClip} onReset={() => regradedClip("reset")} onLook={relookedClip} />
+      <ColorFields {...colorChanges({ edits, pick: null }, onEdits)} />
     </div>
   );
 }

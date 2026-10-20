@@ -726,6 +726,21 @@ export function relook(scene: { edits: AdvancedEdits; pick: Pick }, change: { lo
   return regraded(scene, (grade) => relooked(grade, change));
 }
 
+/**
+ * What `regrade` and `relook` change, by id: the picked Segments, Overlays and Adjustment Layers (in
+ * that order) with their Grades, or with nothing picked the Candidate's Grade, by the id "clip". Empty
+ * with only other items picked.
+ */
+export function gradesOf(scene: { edits: AdvancedEdits; pick: Pick }): { id: string; grade?: Grade }[] {
+  const { edits, pick } = scene;
+  if (pick === null) return [{ id: "clip", grade: edits.grade }];
+  return [
+    ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
+    ...listOf(edits, "adjust").filter((layer) => isPicked(pick, "adjust", layer.id)),
+  ];
+}
+
 // The Pick's Grades, or the Candidate's with nothing picked, each made `change` of what it was.
 function regraded(scene: { edits: AdvancedEdits; pick: Pick }, change: (grade: Grade | undefined) => Grade): Outcome | null {
   const { edits, pick } = scene;

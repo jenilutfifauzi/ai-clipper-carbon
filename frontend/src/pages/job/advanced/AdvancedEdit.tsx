@@ -54,6 +54,7 @@ import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   addAdjustmentLayer,
+  gradesOf,
   appliedToAll,
   cardTarget,
   changeMusic,
@@ -87,7 +88,8 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
-import { LookPanel, lookFrame } from "./LookPanel";
+import { AdjustPanel } from "./ColorFields";
+import { LookPanel, lookFrame, PhoneFilters } from "./LookPanel";
 import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
 import {
   ASSET,
@@ -243,7 +245,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "tracks" | "playback" | null>(null);
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
   const [audition, setAudition] = useState<string | null>(null);
@@ -1291,6 +1293,20 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       />
     </KeyingContext.Provider>
   );
+  // The picture the Filters cards show at `time` (ADR 0013).
+  const lookFrameAt = (time: number) =>
+    lookFrame({
+      pick,
+      segments: edits.segments,
+      overlays: edits.overlays,
+      played,
+      time,
+      jobId: job.id,
+      sourceDuration: job.source?.metadata.duration ?? null,
+      library: mediaById,
+    });
+  // Whether the phone's Filters and Adjust have Grades to change: the Pick's, or the Candidate's.
+  const colorable = gradesOf({ edits, pick }).length > 0;
   // The Grade a Filters card's click goes to first: the first picked Segment's, Overlay's or Adjustment
   // Layer's, else the Candidate's.
   const lookTarget =
@@ -1310,18 +1326,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       filters={
         <LookPanel
           playback={playback}
-          frameAt={(time) =>
-            lookFrame({
-              pick,
-              segments: edits.segments,
-              overlays: edits.overlays,
-              played,
-              time,
-              jobId: job.id,
-              sourceDuration: job.source?.metadata.duration ?? null,
-              library: mediaById,
-            })
-          }
+          frameAt={lookFrameAt}
           current={lookTarget?.look ?? null}
           onPick={(look) => {
             const outcome = relook({ edits, pick }, { look });
@@ -1605,6 +1610,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onInspect={() => setSheet("inspector")}
         onTransform={() => setSheet("transform")}
         onSpeed={speedSheet && (() => setSheet("speed"))}
+        onFilters={colorable ? () => setSheet("filters") : null}
+        onAdjust={colorable ? () => setSheet("adjust") : null}
         onTracks={() => setSheet("tracks")}
         onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
@@ -1623,6 +1630,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 ? "Transform"
                 : sheet === "speed"
                   ? "Speed"
+                  : sheet === "adjust"
+                    ? "Adjust"
                   : sheet === "tracks"
                     ? "Tracks"
                       : sheet === "playback"
@@ -1681,6 +1690,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             ) : (
               <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
             )
+          ) : sheet === "filters" ? (
+            <PhoneFilters
+              playback={playback}
+              frameAt={lookFrameAt}
+              edits={edits}
+              pick={pick}
+              onEdits={history.set}
+              onAddLayer={(look) => addAdjustment(look, playback.time)}
+            />
+          ) : sheet === "adjust" ? (
+            <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
           ) : sheet === "playback" ? (
