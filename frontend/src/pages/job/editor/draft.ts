@@ -23,5 +23,6 @@ export function candidateDraft(candidate: Candidate): CandidateChange {
     overlays: candidate.overlays,
     transitions: candidate.transitions,
     grade: candidate.grade,
+    adjustment_layers: candidate.adjustment_layers ?? [],
   };
 }

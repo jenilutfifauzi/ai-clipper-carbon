@@ -31,6 +31,7 @@ export type AdvancedEdits = Pick<
   | "overlays"
   | "transitions"
   | "grade"
+  | "adjustment_layers"
 >;
 
 export function editsOf(candidate: Candidate): AdvancedEdits {
@@ -53,6 +54,7 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     overlays,
     transitions,
     grade,
+    adjustment_layers,
   } = candidate;
   return {
     hook_start,
@@ -75,19 +77,21 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     transitions,
     // The Candidate's own Grade (ADR 0013); neutral in one from before it.
     grade: gradeOf(grade),
+    // Its Adjustment Layers (ADR 0013); none in one from before them.
+    adjustment_layers: adjustment_layers ?? [],
     segments: mainTrackOf(candidate),
   };
 }
 
 /**
- * The items of `next` that aren't in `old` as they are: Segments, Text Layers, Shapes, Music Clips
- * and Overlays by id, and "hook" when its timing or words changed. What the Timeline shows as changed.
+ * The items of `next` that aren't in `old` as they are: Segments, Text Layers, Shapes, Music Clips,
+ * Overlays and Adjustment Layers by id, and "hook" when its timing or words changed. What the Timeline shows as changed.
  */
 export function changedItems(old: AdvancedEdits, next: AdvancedEdits): Set<string> {
   const changed = new Set<string>();
-  for (const field of ["segments", "text_layers", "shapes", "music", "overlays"] as const) {
-    const before = new Map<string, unknown>(old[field].map((item) => [item.id, item]));
-    for (const item of next[field]) if (!same(before.get(item.id), item)) changed.add(item.id);
+  for (const field of ["segments", "text_layers", "shapes", "music", "overlays", "adjustment_layers"] as const) {
+    const before = new Map<string, unknown>((old[field] ?? []).map((item) => [item.id, item]));
+    for (const item of next[field] ?? []) if (!same(before.get(item.id), item)) changed.add(item.id);
   }
   const hook = (edits: AdvancedEdits) => [edits.hook_text, edits.hook_kicker, edits.hook_start, edits.hook_secs];
   if (!same(hook(old), hook(next))) changed.add("hook");

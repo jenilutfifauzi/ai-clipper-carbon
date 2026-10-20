@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
-import type { Adjust, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
+import type { Adjust, AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -11,7 +11,8 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, regrade, relook, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, regrade, relook, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
@@ -27,7 +28,7 @@ import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
- * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's,
+ * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's, an Adjustment Layer's,
  * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them
  * (several Text Layers, or several Shapes, have their look edited together).
  */
@@ -47,6 +48,7 @@ export function Inspector({
   onEdits,
   onText,
   onShape,
+  onAdjustment,
   onMusic,
   onOverlay,
   onSegment,
@@ -78,6 +80,7 @@ export function Inspector({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onShape: (shape: Shape, group?: string) => void;
+  onAdjustment: (layer: AdjustmentLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
@@ -122,8 +125,8 @@ export function Inspector({
     return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
 
-  // The picked Segments' and Overlays' Color section: a dial set on all of them, or all reset, each one change.
-  const colorOf = (graded: (ClipSegment | Overlay)[]) => {
+  // The picked Segments', Overlays' and Adjustment Layers' Color section: a dial set on all of them, or all reset, each one change.
+  const colorOf = (graded: (ClipSegment | Overlay | AdjustmentLayer)[]) => {
     const regraded = (change: Partial<Adjust> | "reset", group?: string) => {
       const outcome = regrade({ edits, pick }, change);
       if (outcome) onEdits(outcome.edits, group && `grade:${graded.map((item) => item.id).join(",")}:${group}`);
@@ -162,14 +165,15 @@ export function Inspector({
       );
     }
     const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
-    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay")) return summary;
-    // Several Segments and Overlays: their Grades edited together.
+    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjust")) return summary;
+    // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
     return (
       <div className="flex flex-col gap-4">
         {summary}
         {colorOf([
           ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
           ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
+          ...(edits.adjustment_layers ?? []).filter((layer) => isPicked(pick, "adjust", layer.id)),
         ])}
       </div>
     );
@@ -246,6 +250,24 @@ export function Inspector({
   const shape = find(edits.shapes, "shape");
   if (shape && actions) {
     return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
+  }
+  const adjustment = find(edits.adjustment_layers ?? [], "adjust");
+  if (adjustment && actions) {
+    return (
+      <AdjustmentLayerFields
+        key={adjustment.id}
+        layer={adjustment}
+        duration={duration}
+        color={colorOf([adjustment])}
+        onChange={onAdjustment}
+        onMix={(change, group) => {
+          const outcome = setAdjustment({ edits, pick }, adjustment.id, change);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
+        onDuplicate={actions.duplicate}
+        onDelete={actions.remove}
+      />
+    );
   }
   const clip = find(edits.music, "music");
   if (clip && actions) {
@@ -405,6 +427,7 @@ const NAMES: Record<ItemKind, [string, string]> = {
   shape: ["Shape", "Shapes"],
   music: ["Music Clip", "Music Clips"],
   overlay: ["Overlay", "Overlays"],
+  adjust: ["Adjustment Layer", "Adjustment Layers"],
 };
 
 /**

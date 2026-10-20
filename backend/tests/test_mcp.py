@@ -53,7 +53,9 @@ KITA_SOAL = (1.6, 2.6)
 # schemas (79_447).
 # Raised from 79_600 for the Candidate's Grade (color-adjust/04): `grade` in edit_candidate's changes
 # and merge_candidate_items' parameters, both referring to the Grade schemas already there (79_648).
-TOOLS_BUDGET_BYTES = 80_000
+# Raised from 80_000 for Adjustment Layers (color-adjust/07): `adjustment_layers` in edit_candidate's
+# changes and merge_candidate_items' parameters, each with its Grade (82_315).
+TOOLS_BUDGET_BYTES = 82_800
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

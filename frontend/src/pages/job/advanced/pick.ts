@@ -9,8 +9,19 @@ import { sameKey } from "../editor/timelineKey";
 // and inspector act on. Kept in the editor only: never saved, never undone.
 
 // The items that are picked together, and the list of the edits each kind is in.
-export type ItemKind = "segment" | "text" | "shape" | "music" | "overlay";
-export const LISTS = { segment: "segments", text: "text_layers", shape: "shapes", music: "music", overlay: "overlays" } as const;
+export type ItemKind = "segment" | "text" | "shape" | "music" | "overlay" | "adjust";
+export const LISTS = {
+  segment: "segments",
+  text: "text_layers",
+  shape: "shapes",
+  music: "music",
+  overlay: "overlays",
+  adjust: "adjustment_layers",
+} as const;
+
+/** The items of `kind` in `edits`: none of a list a Candidate from before it lacks (Adjustment Layers). */
+export const listOf = <K extends ItemKind>(edits: Partial<AdvancedEdits>, kind: K) =>
+  (edits[LISTS[kind]] ?? []) as NonNullable<AdvancedEdits[(typeof LISTS)[K]]>;
 
 // The kinds of item placed on the frame by a Transform, and picked on the stage: Text Layers,
 // Shapes and Overlays.
@@ -27,7 +38,7 @@ export interface ItemRef {
 }
 
 /**
- * One or more Segments, Text Layers, Shapes, Music Clips and Overlays, mixed; or the hook, the captions,
+ * One or more Segments, Text Layers, Shapes, Music Clips, Overlays and Adjustment Layers, mixed; or the hook, the captions,
  * one Cue (by its key) or the join after a Segment (for its Transition), alone; or nothing.
  */
 export type Pick =
@@ -69,7 +80,14 @@ export function toggled(pick: Pick, item: ItemRef): Pick {
 export const clicked = (pick: Pick, item: ItemRef, toggle: boolean): Pick => (toggle ? toggled(pick, item) : picked(item));
 
 /** Each kind of item, by name: "Text Layer". */
-export const NAMES: Record<ItemKind, string> = { segment: "Segment", text: "Text Layer", shape: "Shape", music: "Music Clip", overlay: "Overlay" };
+export const NAMES: Record<ItemKind, string> = {
+  segment: "Segment",
+  text: "Text Layer",
+  shape: "Shape",
+  music: "Music Clip",
+  overlay: "Overlay",
+  adjust: "Adjustment Layer",
+};
 
 /** `n` items of `kind`, by name: "1 Text Layer", "2 Overlays". */
 export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n === 1 ? "" : "s"}`;
@@ -78,7 +96,7 @@ export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n ==
 export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? ""));
 
 /** The Track each kind of item is on. */
-export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay" };
+export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay", adjust: "adjust" };
 
 /** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track, a Cue on the Captions Track. */
 export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {
@@ -97,7 +115,7 @@ export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {
     return index >= 0 && index < edits.segments.length - 1 ? pick : null;
   }
   if (pick?.kind !== "items") return pick;
-  const kept = pick.items.filter((item) => (edits[LISTS[item.kind]] as { id: string }[]).some((other) => other.id === item.id));
+  const kept = pick.items.filter((item) => (listOf(edits, item.kind) as { id: string }[]).some((other) => other.id === item.id));
   return kept.length === pick.items.length ? pick : picked(...kept);
 }
 

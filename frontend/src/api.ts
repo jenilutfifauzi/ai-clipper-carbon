@@ -782,6 +782,32 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   grade?: Grade;
 }
 
+// A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; ADR 0013): its Grade laid over the Main
+// Track and the Overlays from `start` for `secs` (Timeline time), mixed over the picture as it was by
+// `strength` percent (0..100) times its ramp, up over `fade_in` seconds and down over `fade_out`
+// (each at most half its length). Never on the Watermark, captions, Shapes, Text Layers or hook.
+export interface AdjustmentLayer {
+  id: string;
+  start: number;
+  secs: number;
+  grade: Grade;
+  strength: number;
+  fade_in: number;
+  fade_out: number;
+}
+
+// An Adjustment Layer as the plan draws it: from `start` to `end` seconds into the Clip (cut at its
+// end, its fades held to half of what is left), its Grade as given.
+export interface AdjustmentEvent {
+  id: string;
+  start: number;
+  end: number;
+  grade: Grade;
+  strength: number;
+  fade_in: number;
+  fade_out: number;
+}
+
 // How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
 // Left out, they are none, none and 300 ms.
 export interface OverlayAnimation {
@@ -969,6 +995,9 @@ export interface RenderPlan {
   ducking?: Ducking;
   // The Candidate's Grade as given (ADR 0013), over the Main Track: the preview folds it (editor/grading.ts).
   grade?: Grade;
+  // Its Adjustment Layers that show, in the order applied, over the Main Track and the Overlays.
+  // None in a plan from before them.
+  adjustments?: AdjustmentEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
@@ -1192,6 +1221,8 @@ export interface Candidate {
   // Its own colour (ADR 0013): laid over its whole Main Track, after the Segments' Grades and the
   // Transitions, never on the Overlays. Neutral when missing.
   grade?: Grade;
+  // Its Adjustment Layers (ADR 0013), applied in this order; none when missing.
+  adjustment_layers?: AdjustmentLayer[];
   // Its saved state's number: each save that changes it makes the next (ADR 0003).
   revision: number;
 }
@@ -1239,6 +1270,8 @@ export interface CandidateChange {
   transitions?: Transition[];
   // The Candidate's own Grade (ADR 0013), replaced as a whole.
   grade?: Grade;
+  // Replaces the Candidate's Adjustment Layers as a whole.
+  adjustment_layers?: AdjustmentLayer[];
   // The Revision the change was made from: refused (409) if the Candidate has moved past it.
   revision?: number;
 }

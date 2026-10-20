@@ -692,6 +692,29 @@ class Overlay:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
 
 
+@dataclass(frozen=True)
+class AdjustmentLayer:
+    """A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; docs/adr/0013): its `grade` laid
+    over the Main Track and the Overlays from `start` for `secs` in Timeline time, mixed over the
+    picture as it was by `strength` percent times its fade ramp, which comes up over `fade_in`
+    seconds from its start and goes down over `fade_out` to its end, each at most half its length.
+    It never touches the Watermark, captions, Shapes, Text Layers or hook."""
+
+    id: ItemId
+    start: TimelineStart
+    secs: TimelineSecs
+    grade: Grade = Grade()
+    strength: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
+    fade_in: Fade = 0.0
+    fade_out: Fade = 0.0
+
+    def __post_init__(self) -> None:
+        half = self.secs / 2
+        for name in ("fade_in", "fade_out"):
+            if getattr(self, name) > half + 1e-9:
+                raise ValueError(f"Adjustment Layer {self.id}'s {name} is at most half its length ({half:g} s), not {getattr(self, name):g} s")
+
+
 class BackgroundKind(StrEnum):
     """What shows behind a Framing's picture: the picture itself, covering the frame, blurred and
     darkened (as the Blur Layout's background is), or a colour."""
@@ -911,6 +934,9 @@ class Candidate:
     # Its colour (docs/adr/0013): laid over its whole Main Track, after the Segments' own Grades and the
     # Transitions, before the Overlays (which it never touches). Neutral in one saved before it.
     grade: Grade = Grade()
+    # Its Adjustment Layers (docs/adr/0013), over the Main Track and the Overlays, applied in this order;
+    # none in a Candidate saved before them.
+    adjustment_layers: list[AdjustmentLayer] = field(default_factory=list)
     # Its saved state's number (ADR 0003): each save that changes it makes the next; choosing it for
     # rendering doesn't. One saved before Revisions is at 1.
     revision: int = 1
@@ -942,6 +968,7 @@ class Candidate:
         graded = [("its grade", self.grade)]
         graded += [(f"Segment {segment.id}", segment.grade) for segment in self.segments]
         graded += [(f"Overlay {overlay.id}", overlay.grade) for overlay in self.overlays]
+        graded += [(f"Adjustment Layer {layer.id}", layer.grade) for layer in self.adjustment_layers]
         for part, grade in graded:
             if grade.look is not None:
                 named.setdefault(grade.look, []).append(part)

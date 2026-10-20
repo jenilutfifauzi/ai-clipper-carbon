@@ -7,6 +7,7 @@ import {
   mediaUrl,
   type Candidate,
   type CandidateChange,
+  type AdjustmentLayer,
   type ClipSegment,
   type Grade,
   type JobDetail,
@@ -51,6 +52,7 @@ import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/w
 import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
+  addAdjustmentLayer,
   appliedToAll,
   cardTarget,
   changeMusic,
@@ -137,6 +139,7 @@ import {
   isPicked,
   isPlaced,
   itemsOf,
+  listOf,
   LISTS,
   picked,
   prunedCue,
@@ -500,13 +503,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       setSavingSound(false);
     }
   }
-  // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays and the
-  // Candidate in their Grades as edited (a dial drag shows before its plan comes).
+  // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays, Adjustment
+  // Layers and the Candidate in their Grades as edited (a dial drag shows before its plan comes).
   // A Look auditioned is drawn on the Grades a click would give it to.
   const graded = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
   const shown = useMemo(
-    () => preview && { ...preview, plan: draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade) },
-    [preview, tracks, graded.segments, graded.overlays, graded.grade],
+    () =>
+      preview && {
+        ...preview,
+        plan: draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade, graded.adjustment_layers),
+      },
+    [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers],
   );
   const playback = useMemo(() => new Playback(), []);
   const magnetic = useMagnetic();
@@ -576,6 +583,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function addNewShape(kind: ShapeKind, at = playback.time, place?: { x: number; y: number }) {
     if (refused("shape")) return;
     const outcome = addShape(scene, kind, at, duration, { place });
+    history.set(outcome.edits);
+    added(outcome.pick);
+  }
+  // A Filters card dropped on the Timeline at `at`: an Adjustment Layer with its Look there (ADR 0013).
+  function addAdjustment(look: string, at: number) {
+    if (refused("adjust")) return;
+    const outcome = addAdjustmentLayer(scene, look, at);
+    if (!outcome) return;
     history.set(outcome.edits);
     added(outcome.pick);
   }
@@ -661,6 +676,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
   const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
   const updateShape = (shape: Shape, group?: string) => change({ shapes: replaced(edits.shapes, shape) }, group);
+  const updateAdjustment = (layer: AdjustmentLayer, group?: string) => change({ adjustment_layers: replaced(edits.adjustment_layers ?? [], layer) }, group);
   // Moved or trimmed, on the Timeline or in the inspector: its fades kept within it.
   const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
@@ -1168,6 +1184,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onEdits: history.set,
             onText: updateText,
             onShape: updateShape,
+            onAdjustment: updateAdjustment,
             onMusic: updateMusic,
             onOverlay: updateOverlay,
             onSegment: moveSegment,
@@ -1199,6 +1216,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               if (preset) addText(fromPreset(preset), time);
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
+            onDropLook: addAdjustment,
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
             onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
           }}
@@ -1227,6 +1245,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onEdits={history.set}
         onText={updateText}
         onShape={updateShape}
+        onAdjustment={updateAdjustment}
         onMusic={updateMusic}
         onOverlay={updateOverlay}
         onSegment={updateSegment}
@@ -1253,12 +1272,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       />
     </KeyingContext.Provider>
   );
-  // The Grade a Filters card's click goes to first: the first picked Segment's or Overlay's, else the Candidate's.
+  // The Grade a Filters card's click goes to first: the first picked Segment's, Overlay's or Adjustment
+  // Layer's, else the Candidate's.
   const lookTarget =
     pick === null
       ? edits.grade
       : itemsOf(pick).flatMap(({ kind, id }): { grade?: Grade }[] =>
-          kind === "segment" ? edits.segments.filter((item) => item.id === id) : kind === "overlay" ? edits.overlays.filter((item) => item.id === id) : [],
+          kind === "segment" || kind === "overlay" || kind === "adjust" ? (listOf(edits, kind) as { id: string; grade?: Grade }[]).filter((item) => item.id === id) : [],
         )[0]?.grade;
   const assets = (tab: AssetTab) => (
     <AssetPanel
@@ -1287,7 +1307,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onPick={(look) => {
             const outcome = relook({ edits, pick }, { look });
             if (outcome) history.set(outcome.edits);
-            else tellOnce("A look goes on Segments and Overlays: select some, or nothing for the whole clip");
+            else tellOnce("A look goes on Segments, Overlays and Adjustment Layers: select some, or nothing for the whole clip");
           }}
           onAudition={setAudition}
         />

@@ -37,6 +37,7 @@ const KEYS = {
   word_edits: ["at", "media"],
   layout_overrides: "at",
   cue_edits: ["at", "media"],
+  adjustment_layers: "id",
 } as const satisfies Partial<Record<keyof Edits, string | readonly string[]>>;
 
 type ListField = keyof typeof KEYS;
@@ -47,7 +48,8 @@ export function mergeEdits<T extends Edits>(base: T, mine: T, theirs: T): Merged
   const collisions: Collision[] = [];
   for (const field of Object.keys(KEYS) as ListField[]) {
     if (!(field in m)) continue;
-    merged[field] = mergeList(field, b[field] as Item[], m[field] as Item[], t[field] as Item[], collisions);
+    // A list a Candidate from before it lacks (Adjustment Layers) is none.
+    merged[field] = mergeList(field, (b[field] ?? []) as Item[], (m[field] ?? []) as Item[], (t[field] ?? []) as Item[], collisions);
   }
   for (const field of Object.keys(m) as (keyof Edits)[]) {
     if (field in KEYS || field === "style_overrides") continue;
@@ -115,6 +117,7 @@ const PART_OF: Record<Collision["field"], string> = {
   layout_overrides: "Layout Overrides",
   source_volume: "Source volume",
   grade: "Color",
+  adjustment_layers: "Adjustment Layers",
 };
 
 // The parts of a merge's Collisions, each once.

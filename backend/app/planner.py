@@ -116,6 +116,7 @@ from pydantic import ConfigDict, computed_field
 
 from app.candidates import (
     KEY_RANGES,
+    AdjustmentLayer,
     PICTURE_KEYS,
     Background,
     BackgroundKind,
@@ -690,6 +691,35 @@ class Picture:
 
 
 @dataclass(frozen=True)
+class AdjustmentEvent:
+    """An Adjustment Layer as drawn (docs/adr/0013): its `grade` (as given, folded by the renderer and
+    the preview) laid over the Main Track and the Overlays from `start` to `end` seconds into the
+    Clip, mixed over the picture as it was by `strength` percent times its ramp, up over `fade_in`
+    from its start and down over `fade_out` to its end. `id` is the layer's."""
+
+    id: str
+    start: float
+    end: float
+    grade: Grade
+    strength: float = 100.0
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+
+
+def adjustment_event(layer: AdjustmentLayer, duration: float) -> AdjustmentEvent | None:
+    """The Adjustment Layer in a Clip lasting `duration`: cut at its end, its fades then each held to
+    half of what is left; None when it would start at or after the end."""
+    start = round(layer.start, 3)
+    if start >= duration:
+        return None
+    end = round(min(layer.start + layer.secs, duration), 3)
+    half = (end - start) / 2
+    return AdjustmentEvent(
+        layer.id, start, end, layer.grade, layer.strength, round(min(layer.fade_in, half), 3), round(min(layer.fade_out, half), 3)
+    )
+
+
+@dataclass(frozen=True)
 class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
@@ -942,6 +972,9 @@ class RenderPlan:
     # The Candidate's Grade (docs/adr/0013), as given, not folded: laid over the joined Main Track (a
     # Clip of one range's frame too), before the Overlays.
     grade: Grade = Grade()
+    # The Adjustment Layers that show (docs/adr/0013), in the order they are applied: over the Overlays,
+    # under the Watermark, captions, picture layers and hook.
+    adjustments: list[AdjustmentEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -993,6 +1026,7 @@ def plan_render(
     music_words: dict[str, list[Word]] | None = None,
     ducking: DuckTuning = DuckTuning(),
     grade: Grade = Grade(),
+    adjustment_layers: list[AdjustmentLayer] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -1025,7 +1059,8 @@ def plan_render(
 
     The Words (the Clip's, or each Segment's) are speech, which ducks the music (`_ducked`, by
     `ducking`), with those of its Music Clips of the Source (`music_words`, by id); not `captioned`,
-    they are heard and not captioned. Its `grade` (the Candidate's, docs/adr/0013) is carried as given.
+    they are heard and not captioned. Its `grade` (the Candidate's, docs/adr/0013) is carried as given,
+    and its `adjustment_layers` as `adjustment_event` places them.
 
     The Clip is planned at `fps` frames a second, the export's frame rate (docs/adr/0021), or at the
     Source's own without one: the rate it is encoded at, and the frames its keyed pictures are drawn
@@ -1128,6 +1163,7 @@ def plan_render(
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
         ducking=ducking,
         grade=grade,
+        adjustments=[event for layer in adjustment_layers or [] if (event := adjustment_event(layer, duration)) is not None],
     )
 
 

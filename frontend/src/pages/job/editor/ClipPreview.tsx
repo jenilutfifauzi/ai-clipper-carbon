@@ -37,6 +37,7 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { DecksGraded, GradeFilters } from "./GradeFilters";
+import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
@@ -227,39 +228,42 @@ export function ClipPreview({
       }}
     >
       {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
-      {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the
-          Candidate's Grade (ADR 0013): the joined Main Track's, never the Overlays' after it. */}
-      <div data-main-track className={cx("absolute inset-0", blank && "opacity-0")}>
-        <DecksGraded grade={drawn?.grade}>
-          {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
-          <div ref={incoming} className="absolute inset-0">
-            {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
-            <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
-              {decks.map((refs, deck) =>
-                refs.map((ref, slot) => (
-                  <PanelView
-                    key={`${deck}:${slot}`}
-                    videoRef={ref}
-                    src={src}
-                    plan={drawn}
-                    {...slotView(scene, slot)}
-                    playback={playback}
-                    muted={deck > 0 || slot > 0}
-                    hidden={deck !== shownDeck}
-                  />
-                )),
-              )}
-            </DecksGraded>
-            <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
-          </div>
-          <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
-        </DecksGraded>
-      </div>
-      <PreviewOverlays
-        plan={drawn}
-        playback={playback}
-        selected={(controls?.selected ?? []).flatMap((id) => (id.startsWith("overlay:") ? [id.slice("overlay:".length)] : []))}
-      />
+      {/* The Main Track and the Overlays under the Adjustment Layers showing (ADR 0013). */}
+      <PreviewAdjusted plan={drawn} playback={playback}>
+        {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the
+            Candidate's Grade (ADR 0013): the joined Main Track's, never the Overlays' after it. */}
+        <div data-main-track className={cx("absolute inset-0", blank && "opacity-0")}>
+          <DecksGraded grade={drawn?.grade}>
+            {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
+            <div ref={incoming} className="absolute inset-0">
+              {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
+              <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
+                {decks.map((refs, deck) =>
+                  refs.map((ref, slot) => (
+                    <PanelView
+                      key={`${deck}:${slot}`}
+                      videoRef={ref}
+                      src={src}
+                      plan={drawn}
+                      {...slotView(scene, slot)}
+                      playback={playback}
+                      muted={deck > 0 || slot > 0}
+                      hidden={deck !== shownDeck}
+                    />
+                  )),
+                )}
+              </DecksGraded>
+              <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+            </div>
+            <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
+          </DecksGraded>
+        </div>
+        <PreviewOverlays
+          plan={drawn}
+          playback={playback}
+          selected={(controls?.selected ?? []).flatMap((id) => (id.startsWith("overlay:") ? [id.slice("overlay:".length)] : []))}
+        />
+      </PreviewAdjusted>
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}

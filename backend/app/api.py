@@ -31,6 +31,7 @@ from app import emoji, review
 from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
+    AdjustmentLayer,
     Candidate,
     CueEdit,
     Framing,
@@ -118,6 +119,7 @@ SHAPES_MAX = 50
 MUSIC_MAX = 50
 SEGMENTS_MAX = 100
 OVERLAYS_MAX = 50
+ADJUSTMENT_LAYERS_MAX = 50
 # Where a Job's picture layers' pictures are served, under /api/jobs/<job id>/: named when only Text
 # Layers had them, and kept for the editors that ask for them there.
 PICTURES_ROUTE = "texts"
@@ -285,6 +287,8 @@ class CandidateUpdate(BaseModel):
     source_volume: Volume | None = None
     # The Candidate's own Grade (docs/adr/0013), over its whole Main Track; replaced as a whole.
     grade: Grade | None = None
+    # Replaces the Candidate's Adjustment Layers (docs/adr/0013) as a whole.
+    adjustment_layers: Annotated[list[AdjustmentLayer], Field(max_length=ADJUSTMENT_LAYERS_MAX)] | None = None
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
     segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX), BeforeValidator(no_old_segments)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.
@@ -1778,6 +1782,7 @@ def _check_looks_of(body: CandidateUpdate) -> None:
     graded = [(f"Segment {segment.id}", segment.grade) for segment in body.segments or []]
     graded += [(f"Overlay {overlay.id}", overlay.grade) for overlay in body.overlays or []]
     graded += [("The Candidate's grade", body.grade)] if body.grade is not None else []
+    graded += [(f"Adjustment Layer {layer.id}", layer.grade) for layer in body.adjustment_layers or []]
     for what, grade in graded:
         if grade.look is None:
             continue

@@ -1,10 +1,10 @@
-import type { MusicClip, Overlay, Shape, TextLayer } from "../../../api";
+import type { AdjustmentLayer, MusicClip, Overlay, Shape, TextLayer } from "../../../api";
 import { rekeyed } from "./keyActions";
 import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, type AdvancedEdits } from "./edits";
 import { counted, listed, LISTS } from "./pick";
 
 // The Magnetic timeline (GLOSSARY.md, docs/adr/0004-layers-ripple-with-the-main-track.md): the Text
-// Layers, Shapes, Music Clips, Overlays and the hook following the Main Track when it gets shorter or
+// Layers, Shapes, Music Clips, Overlays, Adjustment Layers and the hook following the Main Track when it gets shorter or
 // longer at a point.
 
 /**
@@ -13,12 +13,12 @@ import { counted, listed, LISTS } from "./pick";
  */
 export type TrackChange = { kind: "removed" | "inserted"; at: number; secs: number };
 
-type Layer = TextLayer | Shape | MusicClip | Overlay;
-type LayerKind = "text" | "shape" | "music" | "overlay";
-const LAYER_KINDS: LayerKind[] = ["text", "shape", "music", "overlay"];
+type Layer = TextLayer | Shape | MusicClip | Overlay | AdjustmentLayer;
+type LayerKind = "text" | "shape" | "music" | "overlay" | "adjust";
+const LAYER_KINDS: LayerKind[] = ["text", "shape", "music", "overlay", "adjust"];
 
-/** What a ripple moves: the Text Layers, Shapes, Music Clips, Overlays and the hook. */
-export type Layers = Pick<AdvancedEdits, "text_layers" | "shapes" | "music" | "overlays" | "hook_start" | "hook_secs">;
+/** What a ripple moves: the Text Layers, Shapes, Music Clips, Overlays, Adjustment Layers and the hook. */
+export type Layers = Pick<AdvancedEdits, "text_layers" | "shapes" | "music" | "overlays" | "adjustment_layers" | "hook_start" | "hook_secs">;
 
 /** How many layers of each kind a ripple removed. */
 export type Removed = Record<LayerKind, number>;
@@ -48,7 +48,7 @@ function cutOut(start: number, secs: number, a: number, b: number): { start: num
  * is the Clip's end, which `duration`, the Clip's length before, tells) to end there.
  */
 export function ripple<T extends Layers>(edits: T, changes: TrackChange[], duration = Infinity): { edits: T; removed: Removed } {
-  const removed: Removed = { text: 0, shape: 0, music: 0, overlay: 0 };
+  const removed: Removed = { text: 0, shape: 0, music: 0, overlay: 0, adjust: 0 };
   let next = edits;
   // Whether the hook was wholly inside a stretch cut out, and moved to where it was.
   let rehomed = false;
@@ -56,6 +56,8 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
     const lists = {} as Partial<Layers>;
     for (const kind of LAYER_KINDS) {
       const list = LISTS[kind];
+      // None of a list a Candidate from before it lacks (Adjustment Layers): left as it is.
+      if (!next[list]) continue;
       const items = (next[list] as Layer[]).flatMap((item): Layer[] => {
         const moved = moveItem(item.start, item.secs, change);
         if (!moved || moved.secs < ITEM_MIN_SECS - 1e-6) {
@@ -68,7 +70,8 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
         // Speed; in Reverse, as far as its end was).
         const offset = "offset" in item ? { offset: keptOffset(item, moved.skipped, moved.skipped + moved.secs) } : {};
         // A Music Clip cut shorter than its fades has them shortened with it.
-        const fades = kind === "music" ? fadesWithin(item as MusicClip, secs) : {};
+        // An Adjustment Layer's are each held to half of it.
+        const fades = kind === "music" ? fadesWithin(item as MusicClip, secs) : kind === "adjust" ? halved(item as AdjustmentLayer, secs) : {};
         // Its Keyframes of the part it still plays, from `skipped` of it (keyActions.ts' rekeyed).
         return [rekeyed({ ...item, start: round(moved.start), secs, ...offset, ...fades }, moved.skipped, moved.skipped + secs)];
       });
@@ -82,6 +85,12 @@ export function ripple<T extends Layers>(edits: T, changes: TrackChange[], durat
   const end = changes.reduce((length, change) => length + (change.kind === "inserted" ? change.secs : -change.secs), duration);
   if (rehomed && next.hook_start + next.hook_secs > end + 1e-6) next = { ...next, hook_start: round(Math.max(0, end - next.hook_secs)) };
   return { edits: next, removed };
+}
+
+// An Adjustment Layer's fades in `secs` of it: each at most half of it (ADR 0013).
+function halved({ fade_in, fade_out }: AdjustmentLayer, secs: number): { fade_in: number; fade_out: number } {
+  const half = Math.floor((secs / 2) * 100) / 100;
+  return { fade_in: Math.min(fade_in, half), fade_out: Math.min(fade_out, half) };
 }
 
 function moveItem(start: number, secs: number, change: TrackChange): { start: number; secs: number; skipped: number } | null {

@@ -289,6 +289,7 @@ def candidate_plan(
         captioned=captioned,
         music_words=music,
         grade=candidate.grade,
+        adjustment_layers=candidate.adjustment_layers,
     )
     if not candidate.segments:
         [analysis] = analyses

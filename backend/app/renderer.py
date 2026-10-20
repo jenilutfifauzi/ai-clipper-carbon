@@ -139,6 +139,7 @@ from app.segment_time import SegmentTime
 from app.planner import (
     HOOK_LEADING,
     HOOK_PAD_Y,
+    AdjustmentEvent,
     Box,
     Cue,
     HookEvent,
@@ -465,6 +466,10 @@ class Renderer:
         for i, (event, number, feed) in enumerate(layered):
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
             joined = f"[over{i}]"
+        for i, event in enumerate(plan.adjustments):
+            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i):
+                frame += f";{adjusted}"
+                joined = f"[adjusted{i}]"
         if logo is not None and plan.watermark is not None:
             frame += f";{_logo_overlay(plan.watermark, joined, '[marked]', count)}"
             joined = "[marked]"
@@ -1068,6 +1073,29 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     ends = "repeat" if event.image else "pass"
     graded = grade_filters(event.grade, alpha=f"layer{number}g")
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", graded)
+
+
+def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int) -> str:
+    """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays)
+    into `out` (docs/adr/0013): the stream split, its frames within the layer's span graded, given an
+    alpha of its strength times its fade ramp (`fade` on the alpha alone) and laid back over the
+    ungraded frames, only within its span. Cheap outside it: its graded branch is trimmed to the span.
+    "" when it changes nothing (a neutral Grade, or strength 0)."""
+    graded = grade_filters(event.grade)
+    if not graded or event.strength <= 0:
+        return ""
+    name = f"adjust{index}"
+    ramp = [f"colorchannelmixer=aa={event.strength / 100:.6f}"] if event.strength < 100 else []
+    if event.fade_in:
+        ramp.append(f"fade=t=in:st={event.start:.3f}:d={event.fade_in:.3f}:alpha=1")
+    if event.fade_out:
+        ramp.append(f"fade=t=out:st={event.end - event.fade_out:.3f}:d={event.fade_out:.3f}:alpha=1")
+    shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
+    return (
+        f"{below}split[{name}a][{name}b];"
+        f"[{name}b]trim=start={event.start:.3f}:end={event.end:.3f},{graded},{','.join(['format=rgba', *ramp])}[{name}g];"
+        f"[{name}a][{name}g]overlay=0:0:{shows}:eof_action=pass{out}"
+    )
 
 
 def _layer_inputs(

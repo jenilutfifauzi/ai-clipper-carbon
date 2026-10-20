@@ -47,6 +47,7 @@ from app.candidates import (
     SWITCHED_THICKNESS,
     TEMPERATURE_K,
     Adjust,
+    AdjustmentLayer,
     Ease,
     Framing,
     Grade,
@@ -104,6 +105,7 @@ ITEMS: dict[str, tuple[type, str | tuple[str, ...]]] = {
     "text_layers": (TextLayer, "id"), "shapes": (Shape, "id"), "music": (MusicClip, "id"), "overlays": (Overlay, "id"),
     "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, ("at", "media")),
     "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, ("at", "media")),
+    "adjustment_layers": (AdjustmentLayer, "id"),
 }
 
 
@@ -143,7 +145,7 @@ Times:
   Word's middle; the dry run lists each Word's `at` and `media`). One with `media` applies in every
   Segment showing that time of the video; a Source Word Edit never touches a video's Words, nor the
   other way round.
-- Text Layers, Shapes, Music Clips, Overlays, hook_start and the Preview Plan's events are
+- Text Layers, Shapes, Music Clips, Overlays, Adjustment Layers, hook_start and the Preview Plan's events are
   Timeline time: seconds into the Clip, from 0.
 
 Edits:
@@ -298,6 +300,12 @@ Edits:
 - The Candidate's own `grade` (the same dials, look and intensity) is laid over the whole Main Track, after the
   Segments' grades and the Transitions; never on the Overlays. merge_candidate_items' `grade`
   changes only the fields given; the dry run lists it at the top.
+- Adjustment Layers (`adjustment_layers`, keyed by id) lay a `grade` (the same fields) over the
+  Main Track and the Overlays from `start` for `secs` (Timeline time), never the Watermark,
+  captions, Shapes, Text Layers or hook: mixed over the picture by `strength` 0..100 (100 by
+  default) times a ramp up over `fade_in` and down over `fade_out` seconds (each at most half its
+  secs). Overlapping ones apply in list order; one past the Clip's end is cut there. They don't
+  follow cuts by themselves (as Text Layers). The dry run lists them (`adjustment_layers`).
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -630,6 +638,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         word_edits: list[_PATCHES["word_edits"]] | None = None,  # type: ignore[valid-type]
         layout_overrides: list[_PATCHES["layout_overrides"]] | None = None,  # type: ignore[valid-type]
         cue_edits: list[_PATCHES["cue_edits"]] | None = None,  # type: ignore[valid-type]
+        adjustment_layers: list[_PATCHES["adjustment_layers"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
         framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
         grade: _GRADE_PATCH | None = None,  # type: ignore[valid-type]
@@ -1118,7 +1127,8 @@ def _plan_view(
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
     (`copied`), its fades, its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
-    video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, what of its video an Overlay shows
+    video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, each Adjustment
+    Layer's span, strength, fades and Grade, what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
     (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
@@ -1178,6 +1188,18 @@ def _plan_view(
                 **_animation_view(event),
             }
             for event in plan["overlays"]
+        ],
+        # Over the Main Track and the Overlays, in the order applied; a field at its default left out.
+        "adjustment_layers": [
+            {
+                **_times(event, "id", "start", "end"),
+                **_compact({
+                    "strength": event["strength"] if event["strength"] != 100 else None,
+                    "fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None,
+                    "grade": _grade_view(event["grade"]),
+                }),
+            }
+            for event in plan["adjustments"]
         ],
         **_compact({"sounds": [
             {

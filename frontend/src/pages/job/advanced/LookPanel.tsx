@@ -9,6 +9,7 @@ import { GradeFilters, GradeVignette } from "../editor/GradeFilters";
 import { gradeFilter, NEUTRAL_GRADE } from "../editor/grading";
 import { usePlayback, type Playback, type PlayedSegment } from "../editor/playback";
 import { playedSourceAt } from "../editor/segmentTime";
+import { DRAG_LOOK } from "./drag";
 import { itemsOf, type Pick } from "./pick";
 import { CHUNK_SECS } from "./timelineView";
 
@@ -162,7 +163,7 @@ export function LookCards({
   return (
     <div className="flex flex-col gap-4">
       <Hint more="Its intensity, or taking it away, is in the Color section of the inspector.">
-        Hover to try a look on the preview; click to apply it to the selection, or to the whole clip with nothing selected.
+        Hover to try a look on the preview; click to apply it to the selection, or to the whole clip with nothing selected; drag it onto the Timeline for an adjustment layer.
       </Hint>
       <ImportLook />
       {refused && (
@@ -299,6 +300,13 @@ function LookButton({
     <button
       type="button"
       data-look={look.id}
+      // Dropped on the Timeline, it makes an Adjustment Layer with its Look there.
+      draggable
+      onDragStart={(event) => {
+        onAudition(null);
+        event.dataTransfer.setData(DRAG_LOOK, look.id);
+        event.dataTransfer.effectAllowed = "copy";
+      }}
       onClick={() => {
         onAudition(null);
         onPick();

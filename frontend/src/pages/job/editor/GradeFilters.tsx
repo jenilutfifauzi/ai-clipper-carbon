@@ -29,8 +29,12 @@ export function GradeFilters({ grades }: { grades: (Grade | null | undefined)[] 
   );
 }
 
-/** The filter `id` that draws `grade` (none when it has nothing for one to do). */
-export function GradeFilter({ id, grade }: { id: string; grade: Grade }) {
+/**
+ * The filter `id` that draws `grade` (none when it has nothing for one to do). With `mix` (0..1, an
+ * Adjustment Layer's strength times its fade), the graded picture is mixed over the picture as it was
+ * by that much, as the render lays its graded branch back at that alpha.
+ */
+export function GradeFilter({ id, grade, mix = 1 }: { id: string; grade: Grade; mix?: number }) {
   const folded = foldGrade(grade);
   if (!folded || !hasGradeFilter(grade)) return null;
   const { tables, matrix, sharpen, lut } = folded;
@@ -52,6 +56,7 @@ export function GradeFilter({ id, grade }: { id: string; grade: Grade }) {
       {sharpen > 0 && (
         <feConvolveMatrix order="3" kernelMatrix={sharpenKernel(sharpen).map(number).join(" ")} divisor="1" edgeMode="duplicate" preserveAlpha="true" />
       )}
+      {mix < 1 && <feComposite in2="SourceGraphic" operator="arithmetic" k1="0" k2={number(mix)} k3={number(1 - mix)} k4="0" />}
     </filter>
   );
 }
