@@ -124,6 +124,7 @@ from app.candidates import (
     CueEdit,
     Ease,
     Framing,
+    Grade,
     Keyframe,
     KeyProperty,
     Keys,
@@ -316,6 +317,8 @@ class SegmentInput:
     fade_out: float = 0.0
     # Its sound switched silent (docs/adr/0016).
     muted: bool = False
+    # Its colour (docs/adr/0013), carried to its plan as given.
+    grade: Grade = Grade()
 
     @property
     def time(self) -> SegmentTime:
@@ -614,6 +617,9 @@ class SegmentPlan:
     fade_out: float = 0.0
     # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
     muted: bool = False
+    # Its Grade (docs/adr/0013), as given, not folded: the renderer folds it (app/grading.py) and so
+    # does the preview, which draws a dragged dial before the plan comes.
+    grade: Grade = Grade()
 
     @property
     def time(self) -> SegmentTime:
@@ -1068,7 +1074,7 @@ def plan_render(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
-                    fade_in=fade_in, fade_out=fade_out, muted=given.muted,
+                    fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
                 )
             )
             at, before = round(at + length, 3), length

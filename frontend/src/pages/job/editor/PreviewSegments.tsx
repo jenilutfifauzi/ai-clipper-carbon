@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
+import { gradeFilter } from "./grading";
 import { FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
@@ -108,7 +109,12 @@ export function MediaSegment({
   const picture = scene?.picture;
   const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
   return (
-    <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden", background: scene?.colour ?? "#000" }}>
+    // Its Grade over its whole frame (ADR 0013): its Background and its picture.
+    <div
+      ref={box}
+      className="absolute inset-0 overflow-hidden"
+      style={{ visibility: "hidden", background: scene?.colour ?? "#000", filter: gradeFilter(segment.grade) }}
+    >
       {background && (
         <div className="absolute overflow-hidden" style={background.box}>
           <video
@@ -192,7 +198,7 @@ export function CopiedSourceSegment({
   }, [playback, segment, fade, into, span, plan.source_volume]);
 
   return (
-    <div ref={box} className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden" }}>
+    <div ref={box} className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden", filter: gradeFilter(segment.grade) }}>
       {[master, follower].map((ref, slot) => (
         <PanelView key={slot} videoRef={ref} src={shown} plan={plan} {...slotView(scene, slot)} playback={playback} muted={slot > 0} />
       ))}

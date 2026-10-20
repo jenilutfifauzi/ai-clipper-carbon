@@ -32,21 +32,21 @@ One shared JSON fixture pins both. A neutral Grade adds no filter anywhere.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] **Model:** a stored Candidate without `grade` reads with a neutral Grade. Out-of-range dials are refused with the dial named.
-- [ ] **Fold:** pytest and vitest both pass the shared fixture: neutral, each dial alone at both ends, and a mix.
-- [ ] **Render, on a test source of known colours:**
+- [x] **Model:** a stored Candidate without `grade` reads with a neutral Grade. Out-of-range dials are refused with the dial named.
+- [x] **Fold:** pytest and vitest both pass the shared fixture: neutral, each dial alone at both ends, and a mix.
+- [x] **Render, on a test source of known colours:**
   - Raising temperature warms a grey patch (R up, B down).
   - Raising exposure brightens it.
   - Saturation −100 turns a coloured patch grey.
   - A Segment's Grade changes only that Segment's frames.
-- [ ] **Neutral Grade:** it renders the same pixels as no Grade.
-- [ ] **Render cost:** a graded Clip renders within a set budget of an ungraded one.
-- [ ] **Planner:** Segment plans carry their Grade.
-- [ ] **MCP:** `merge_candidate_items` sets one dial of a Segment's Grade and keeps the others. The dry run lists it.
-- [ ] **Editor (vitest):**
+- [x] **Neutral Grade:** it renders the same pixels as no Grade.
+- [x] **Render cost:** a graded Clip renders within a set budget of an ungraded one.
+- [x] **Planner:** Segment plans carry their Grade.
+- [x] **MCP:** `merge_candidate_items` sets one dial of a Segment's Grade and keeps the others. The dry run lists it.
+- [x] **Editor (vitest):**
   - A dial change on a multi-Segment Pick is one undo step.
   - Split, duplicate, paste and Freeze frame keep the Grade.
   - The preview filter is built from the fold's output.
-- [ ] **GLOSSARY:** terms used as written (Grade, Adjust).
+- [x] **GLOSSARY:** terms used as written (Grade, Adjust).

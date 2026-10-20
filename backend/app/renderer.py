@@ -132,6 +132,7 @@ from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, read_image, shadow_room
+from app.grading import grade_filters
 from app.ducking import duck_steps
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
@@ -733,8 +734,9 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
 def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
-    from its first frame, held), and the Segments joined back to back. A keyed Scene's picture is
-    the input `drawn` gives by its place among the plan's Scenes, from its frame process."""
+    from its first frame, held), then graded (docs/adr/0013), and the Segments joined back to back.
+    A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
+    its frame process."""
     chains, first = [], 0
     for i, segment in enumerate(plan.segments):
         scenes = plan.scenes[first : first + segment.scenes]
@@ -749,7 +751,12 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
             # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
             rate = _rate(plan)
             given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
-        chains.append(_scenes(plan, tuning, scenes, given, f"[g{i}]", f"g{i}s", segment.start, keyed))
+        # Its Grade over its whole frame, before the joins, so that a Transition blends graded pictures.
+        graded = grade_filters(segment.grade)
+        drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
+        chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed))
+        if graded:
+            chains.append(f"{drawn_to}{graded}[g{i}]")
     count = len(plan.segments)
     if not plan.transitions and not _resampled(plan):
         chains.append("".join(f"[g{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0[frame]")

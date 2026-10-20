@@ -1,4 +1,5 @@
-import type { ClipSegment, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import type { Adjust, ClipSegment, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import { adjusted, NEUTRAL_GRADE } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
 import type { StyleDraft } from "../editor/useStyleDraft";
@@ -501,8 +502,8 @@ export const canFreezeAt = (scene: PickContext, time: number) => freezable(scene
  * frame of FREEZE_SECS holding the frame shown at the playhead (at any Speed, in Reverse), and a
  * tail, the Freeze frame picked. The cut is at that frame, a Source Segment's too (not between Words
  * as Split's), so nothing is played twice or skipped. Keyframes are re-anchored on head and tail; a
- * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants. A
- * Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
+ * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants, and
+ * every part keeps the Segment's Grade. A Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
  * playhead, and on the Magnetic timeline the layers after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
  */
 export function freezeFrame(scene: PickContext, at: number, limits: { longest?: number } = {}): Outcome | null {
@@ -532,6 +533,8 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
     rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length),
   );
   const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
+  // The held frame in its Segment's colour.
+  if (segment.grade) held.grade = segment.grade;
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
@@ -674,6 +677,19 @@ export function restyle(scene: { edits: AdvancedEdits; pick: Pick }, change: (la
 export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (shape: Shape) => Shape): Outcome {
   const shapes = scene.edits.shapes.map((shape) => (isPicked(scene.pick, "shape", shape.id) ? change(shape) : shape));
   return { edits: { ...scene.edits, shapes }, pick: scene.pick };
+}
+
+/**
+ * Every picked Segment's Grade (ADR 0013) with the dials of `change` set, its other dials kept; or with
+ * `change` "reset", neutral again. One change, however many Segments are picked. Null with none picked.
+ */
+export function regrade(scene: { edits: AdvancedEdits; pick: Pick }, change: Partial<Adjust> | "reset"): Outcome | null {
+  const { edits, pick } = scene;
+  if (!edits.segments.some((segment) => isPicked(pick, "segment", segment.id))) return null;
+  const segments = edits.segments.map((segment) =>
+    isPicked(pick, "segment", segment.id) ? { ...segment, grade: change === "reset" ? NEUTRAL_GRADE : adjusted(segment.grade, change) } : segment,
+  );
+  return { edits: { ...edits, segments }, pick };
 }
 
 /** Every picked Text Layer given `style`, a Text Preset's Text Style: their words, Transforms, Keyframes and times stay their own. */

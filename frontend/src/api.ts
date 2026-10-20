@@ -925,6 +925,8 @@ export interface SegmentPlan extends Retiming {
   fade_out: number;
   // Its sound switched silent (ADR 0016), keeping its volume, Keyframes and fades.
   muted?: boolean;
+  // Its Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
+  grade?: Grade;
 }
 
 export interface RenderPlan {
@@ -1065,6 +1067,34 @@ export interface ClipSegment extends Retiming {
   fade_in?: number;
   fade_out?: number;
   muted?: boolean;
+  // Its colour (ADR 0013): its whole frame graded before the joins. Neutral when missing.
+  grade?: Grade;
+}
+
+// The dials of a Grade (GLOSSARY: Adjust), in Concat's ranges, each neutral by default: temperature
+// 2000–11000 K (6500 as shot), exposure ±3 EV, sharpen, fade and vignette 0–100, the rest −100–100.
+export interface Adjust {
+  temperature: number;
+  tint: number;
+  saturation: number;
+  exposure: number;
+  brightness: number;
+  contrast: number;
+  highlights: number;
+  shadows: number;
+  whites: number;
+  blacks: number;
+  sharpen: number;
+  fade: number;
+  vignette: number;
+}
+
+// The colour of a picture (GLOSSARY: Grade, ADR 0013): its Adjust, then its Look (an id, or null)
+// mixed over it at `intensity` percent. Constant over its item.
+export interface Grade {
+  adjust: Adjust;
+  look: string | null;
+  intensity: number;
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at

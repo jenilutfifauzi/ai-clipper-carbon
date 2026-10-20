@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
-import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
+import type { Adjust, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -11,7 +11,8 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, regrade, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -19,7 +20,7 @@ import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
-import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { isPicked, itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
 import { ShapeFields, ShapesFields } from "./Shapes";
@@ -121,6 +122,15 @@ export function Inspector({
     return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
 
+  // The picked Segments' Color section: a dial set on all of them, or all reset, each one change.
+  const colorOf = (segments: ClipSegment[]) => {
+    const regraded = (change: Partial<Adjust> | "reset", group?: string) => {
+      const outcome = regrade({ edits, pick }, change);
+      if (outcome) onEdits(outcome.edits, group && `segment:${segments.map((segment) => segment.id).join(",")}:${group}`);
+    };
+    return <ColorFields grades={segments.map((segment) => segment.grade)} onDial={regraded} onReset={() => regraded("reset")} />;
+  };
+
   const items = itemsOf(pick);
   if (items.length > 1 && actions) {
     if (items.every((item) => item.kind === "text")) {
@@ -147,7 +157,15 @@ export function Inspector({
         />
       );
     }
-    return <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
+    const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
+    if (!items.every((item) => item.kind === "segment")) return summary;
+    // Several Segments: their Grades edited together.
+    return (
+      <div className="flex flex-col gap-4">
+        {summary}
+        {colorOf(edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)))}
+      </div>
+    );
   }
   if (pick?.kind === "join") {
     return (
@@ -188,6 +206,7 @@ export function Inspector({
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
+        color={colorOf([segment])}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}

@@ -42,8 +42,11 @@ from app.api import (
 from app.candidates import (
     CUE_MAX_SCALE,
     CUE_MIN_SCALE,
+    EXPOSURE_EV,
     KICKER_MAX_CHARS,
     SWITCHED_THICKNESS,
+    TEMPERATURE_K,
+    Adjust,
     Ease,
     Framing,
     LayoutOverride,
@@ -275,6 +278,15 @@ Edits:
   longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
   a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
   lists them under `segments`.
+- A Segment's `grade` (of the episode or a video) colours its whole frame (panels, picture and
+  Background), before the joins, so a Transition blends two graded pictures. Its `adjust` dials:
+  temperature {TEMPERATURE_K[0]}..{TEMPERATURE_K[1]} K (6500 as shot; higher is warmer), tint (-100 green..100 magenta),
+  saturation (-100 grey..100 twice as vivid), exposure {EXPOSURE_EV[0]}..{EXPOSURE_EV[1]} EV (stops of light), brightness,
+  contrast, highlights and shadows (the upper and lower halves), whites and blacks (the two ends),
+  each -100..100, and fade 0..100 (blacks lifted into a matte); all 0 but temperature by default
+  (neutral). sharpen and vignette (0..100) are kept but not drawn yet, and look and intensity are
+  unused. merge_candidate_items changes only the dials given. The dry run lists a Segment's grade
+  by its dials that aren't neutral.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -1077,7 +1089,7 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`), its fades), each Scene's Layout and the Framing
+    (`copied`), its fades, its Grade (`_grade_view`)), each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
@@ -1110,6 +1122,7 @@ def _plan_view(
                 "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
                 "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
+                "grade": _grade_view(segment["grade"]),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
@@ -1152,6 +1165,15 @@ def _plan_view(
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "media": word["media"], "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _grade_view(grade: dict) -> dict | None:
+    """A Grade as an agent reads it: the dials of its Adjust that aren't neutral, and its Look with its
+    intensity when it has one; None for a neutral one."""
+    neutral = dataclasses.asdict(Adjust())
+    adjust = {dial: value for dial, value in grade["adjust"].items() if value != neutral[dial]}
+    looked = {"look": grade["look"], "intensity": grade["intensity"]} if grade["look"] is not None else {}
+    return _compact({"adjust": adjust or None, **looked}) or None
 
 
 def _cue_view(cue: dict) -> dict:

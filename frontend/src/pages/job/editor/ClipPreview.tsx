@@ -11,6 +11,7 @@ import {
   type DropShadow,
   type Crop,
   type FontInfo,
+  type Grade,
   type HookEvent,
   type HookStyle,
   type Panel,
@@ -35,6 +36,8 @@ import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from ".
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
+import { GradeFilters } from "./GradeFilters";
+import { gradeFilter } from "./grading";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
@@ -135,6 +138,7 @@ export function ClipPreview({
     };
   }, [playback, decks]);
   const shownDeck = usePlayback(playback, (_, p) => p.shownDeck);
+  const shownSegment = usePlayback(playback, (_, p) => p.shownSegmentIndex);
 
   useEffect(() => {
     const element = stage.current;
@@ -225,20 +229,24 @@ export function ClipPreview({
       <div className={cx("absolute inset-0", blank && "opacity-0")}>
         {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
         <div ref={incoming} className="absolute inset-0">
-          {decks.map((refs, deck) =>
-            refs.map((ref, slot) => (
-              <PanelView
-                key={`${deck}:${slot}`}
-                videoRef={ref}
-                src={src}
-                plan={drawn}
-                {...slotView(scene, slot)}
-                playback={playback}
-                muted={deck > 0 || slot > 0}
-                hidden={deck !== shownDeck}
-              />
-            )),
-          )}
+          {drawn && <GradeFilters grades={drawn.segments.map((segment) => segment.grade)} />}
+          {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
+          <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
+            {decks.map((refs, deck) =>
+              refs.map((ref, slot) => (
+                <PanelView
+                  key={`${deck}:${slot}`}
+                  videoRef={ref}
+                  src={src}
+                  plan={drawn}
+                  {...slotView(scene, slot)}
+                  playback={playback}
+                  muted={deck > 0 || slot > 0}
+                  hidden={deck !== shownDeck}
+                />
+              )),
+            )}
+          </DecksGraded>
           <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
         </div>
         <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
@@ -919,6 +927,20 @@ export function PanelView({
     filter: panel.blur ? `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` : undefined,
   };
   return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} />;
+}
+
+/**
+ * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013): drawn
+ * over black, as the render pads a panel, so that the Grade colours the whole frame. As they are
+ * without one.
+ */
+export function DecksGraded({ grade, children }: { grade: Grade | undefined; children: ReactNode }) {
+  const filter = gradeFilter(grade);
+  return (
+    <div className="absolute inset-0" style={filter ? { filter, background: "#000" } : undefined}>
+      {children}
+    </div>
+  );
 }
 
 /**

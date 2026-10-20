@@ -670,6 +670,52 @@ class Framing:
     background: Background = Background()
 
 
+# An Adjust's dials (docs/adr/0013), in Concat's ranges: temperature in kelvin (6500 the picture as
+# shot), exposure in stops of light, the rest signed percents, or from 0 for sharpen, fade and vignette.
+TEMPERATURE_K = (2000, 11000)
+NEUTRAL_TEMPERATURE_K = 6500
+EXPOSURE_EV = (-3, 3)
+Dial = Annotated[FiniteFloat, Field(ge=-100, le=100)]
+EffectDial = Annotated[FiniteFloat, Field(ge=0, le=100)]
+
+
+@dataclass(frozen=True)
+class Adjust:
+    """The dials of a Grade (GLOSSARY.md, Adjust), each neutral by default: Color (temperature, tint
+    green to magenta, saturation from grey), Lightness (exposure, brightness, contrast, then
+    highlights and shadows, the broad halves of the curve, and whites and blacks, its narrow ends)
+    and Effects (sharpen, fade into a matte, vignette)."""
+
+    temperature: Annotated[FiniteFloat, Field(ge=TEMPERATURE_K[0], le=TEMPERATURE_K[1])] = NEUTRAL_TEMPERATURE_K
+    tint: Dial = 0.0
+    saturation: Dial = 0.0
+    exposure: Annotated[FiniteFloat, Field(ge=EXPOSURE_EV[0], le=EXPOSURE_EV[1])] = 0.0
+    brightness: Dial = 0.0
+    contrast: Dial = 0.0
+    highlights: Dial = 0.0
+    shadows: Dial = 0.0
+    whites: Dial = 0.0
+    blacks: Dial = 0.0
+    sharpen: EffectDial = 0.0
+    fade: EffectDial = 0.0
+    vignette: EffectDial = 0.0
+
+
+@dataclass(frozen=True)
+class Grade:
+    """The colour of a picture (GLOSSARY.md, Grade; docs/adr/0013): its `adjust`, then its `look` (a
+    Look's id, none by default) mixed over it at `intensity` percent. Constant over its item."""
+
+    adjust: Adjust = Adjust()
+    look: str | None = None
+    intensity: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
+
+    @property
+    def neutral(self) -> bool:
+        """Whether it leaves the picture as it is: every dial neutral, and no Look."""
+        return self.adjust == Adjust() and self.look is None
+
+
 @dataclass(frozen=True)
 class LayoutOverride:
     """The Layout of the one Scene (as planned, short ones merged) that holds `at`, seconds on the
@@ -731,6 +777,9 @@ class Segment:
     fade_out: Fade = 0.0
     # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
     muted: bool = False
+    # Its colour (docs/adr/0013): its whole frame (panels, picture and Background) graded before the
+    # joins, so that a Transition blends graded pictures. Neutral in one saved before Grades.
+    grade: Grade = Grade()
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):

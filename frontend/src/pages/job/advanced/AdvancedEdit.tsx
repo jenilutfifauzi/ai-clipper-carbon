@@ -45,6 +45,7 @@ import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
@@ -494,8 +495,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       setSavingSound(false);
     }
   }
-  // The plan as the player draws it, the hidden Tracks left out.
-  const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
+  // The plan as the player draws it, the hidden Tracks left out, its Segments in their Grades as edited
+  // (a dial drag shows before its plan comes).
+  const shown = useMemo(
+    () => preview && { ...preview, plan: draftGrades(shownPlan(preview.plan, tracks), edits.segments) },
+    [preview, tracks, edits.segments],
+  );
   const playback = useMemo(() => new Playback(), []);
   const magnetic = useMagnetic();
   // The Main Track as planned (snapped to Words, overlapping at Transitions) once the plan has the

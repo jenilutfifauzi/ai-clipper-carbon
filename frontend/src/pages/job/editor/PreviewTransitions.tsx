@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
 import type { RenderPlan, TransitionEvent } from "../../../api";
-import { PanelView } from "./ClipPreview";
+import { DecksGraded, PanelView } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
@@ -152,9 +152,12 @@ function Ghost({
         ) : own ? (
           <CopiedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
         ) : (
-          [master, follower].map((ref, slot) => (
-            <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />
-          ))
+          // In its Segment's Grade, as the decks draw it (MediaSegment and CopiedSourceSegment grade themselves).
+          <DecksGraded grade={segment.grade}>
+            {[master, follower].map((ref, slot) => (
+              <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />
+            ))}
+          </DecksGraded>
         )}
       </div>
       <div ref={veil} aria-hidden className="pointer-events-none absolute inset-0" style={{ opacity: 0 }} />

@@ -103,7 +103,7 @@ export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
 
 /**
  * The selected Segment: what it shows (of the episode, with how its Scene at the playhead is framed,
- * or of a video, with its Framing), its sound, and what can be done to it.
+ * or of a video, with its Framing), its sound, its colour, and what can be done to it.
  */
 export function SegmentFields({
   segment,
@@ -127,6 +127,7 @@ export function SegmentFields({
   onReattach,
   scene,
   captions,
+  color,
   playback,
   span,
   copy,
@@ -163,6 +164,8 @@ export function SegmentFields({
   scene?: ReactNode;
   // A video's Segment's captions: its Captions switch, its video's language and its Words status.
   captions?: ReactNode;
+  // Its Grade's Color section (ColorFields), last.
+  color?: ReactNode;
   playback: Playback;
   // Where it plays on the Timeline (keying.ts' segmentSpan), which its Keyframes are set in.
   span: KeySpan | null;
@@ -285,6 +288,7 @@ export function SegmentFields({
           {scene}
         </>
       )}
+      {color}
     </div>
   );
 }
