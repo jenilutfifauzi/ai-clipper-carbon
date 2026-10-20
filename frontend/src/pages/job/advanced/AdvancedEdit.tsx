@@ -136,7 +136,7 @@ import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
-import { TakeButton } from "./TakeButton";
+import { TakeButton, WaitingTakeNotice } from "./TakeButton";
 import { browserSettings } from "./recordingSettings";
 import { canStart, guardLeaving, IDLE as TAKE_IDLE, locksEditing, recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
 import { browserRecorder } from "./takeRecorder";
@@ -561,12 +561,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       upload: (file) => takeLatest.current.upload(file),
       land: (landed) => takeLatest.current.land(landed),
       tell: (text) => takeLatest.current.tell(text),
+      // Save WAV of a Take kept after its upload failed: downloaded as the Save audio menu's WAVs are.
+      save: download,
       atEnd: () => takeLatest.current.atEnd(),
     });
     return { take: flow, takeSettings: settings };
   });
   useEffect(() => () => take?.dispose(), [take]);
-  // Leaving the page while the countdown runs or a Take records asks first, and cancels the Take.
+  // Leaving the page while the countdown runs or a Take records asks first, and cancels the Take; while
+  // a failed Take waits in the tab, it asks first too.
   useEffect(() => (take ? guardLeaving(window, take) : undefined), [take]);
   const readTake = () => take?.state ?? TAKE_IDLE;
   const takeState = useSyncExternalStore(take?.subscribe ?? noSubscription, readTake, readTake);
@@ -791,7 +794,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // at its start. Refused, like any addition, on a locked Music Track: the item stays in the library.
   takeLatest.current = {
     upload: library.upload,
-    // Past the editing lock, which holds until it has landed.
+    // Past the editing lock, which holds until it has landed. Refused, the Take waits, uploaded, for Try again.
     land: (landed) => {
       if (refused("music")) return null;
       const outcome = landTake({ edits }, landed);
@@ -1505,6 +1508,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       >
         <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
       </ConfirmDialog>
+      <WaitingTakeNotice flow={take} />
       <ChangeNotice notice={notice} onClose={closeNotice} />
       {itemMenu && <SoundMenu opened={itemMenu} sound={itemSound(itemMenu.item, edits, mediaById)} detaching={detachEntries(itemMenu.item)} saving={savingSound} onSave={saveSound} onClose={setItemMenu} />}
     </>

@@ -9,10 +9,14 @@ import { landing, takeName } from "./voiceover";
  * edit that lands the Take. No React.
  *
  *   idle → opening → countdown (3, 2, 1) → recording → uploading → idle (landed)
+ *                                                          ↕ (Try again)
+ *                                                        failed → idle (Discard)
  *
  * Cancelled (Esc) while opening or counting down, it goes back to idle with nothing kept; and back to
- * idle when the microphone can't be opened or the upload fails, with what went wrong told. A failed
- * state that keeps the Take (05) goes beside uploading.
+ * idle when the microphone can't be opened, with what is wrong and how to fix it told. A Take that
+ * fails to upload, or whose landing is refused (the Music Track locked), is kept in the tab (failed):
+ * Try again uploads it (unless it already is) and lands it where it was recorded, Save WAV downloads
+ * it, Discard lets it go. One waits at a time: Record is refused until it is landed or discarded.
  */
 export type TakeState =
   | { phase: "idle" }
@@ -23,7 +27,20 @@ export type TakeState =
   // The picture rolled from `playhead` at `rolledAt` on the recorder's clock, at `began` local time.
   | { phase: "recording"; playhead: number; rolledAt: number; began: Date }
   // The Take, stopped, on its way to the Media Library, to land at `landing` for `secs`.
-  | { phase: "uploading"; landing: number; secs: number };
+  | { phase: "uploading"; landing: number; secs: number }
+  // The Take kept in the tab after its upload or its landing failed (`why`), waiting for Try again,
+  // Save WAV or Discard. Editing isn't locked meanwhile (the Music Track may need unlocking).
+  | { phase: "failed"; take: WaitingTake; why: string };
+
+/** A Take kept in the tab: its WAV and file name, where it lands, and its item once uploaded. */
+export interface WaitingTake {
+  wav: Uint8Array<ArrayBuffer>;
+  name: string;
+  landing: number;
+  secs: number;
+  // The Media Library item, once the upload got through (only the landing failed): not uploaded again.
+  media: string | null;
+}
 
 export type TakeEvent =
   | { type: "open" }
@@ -33,7 +50,12 @@ export type TakeEvent =
   | { type: "rolled"; playhead: number; at: number; began: Date }
   | { type: "stopped"; secs: number; firstSample: number | null }
   | { type: "landed" }
-  | { type: "failed" };
+  // Back to idle with nothing kept: the microphone wouldn't open, or the editor let go.
+  | { type: "failed" }
+  // The upload or the landing failed: the Take kept.
+  | { type: "kept"; take: WaitingTake; why: string }
+  | { type: "retry" }
+  | { type: "discard" };
 
 /** How long the countdown runs before the picture rolls. */
 export const COUNTDOWN_SECS = 3;
@@ -59,6 +81,12 @@ export function takeStep(state: TakeState, event: TakeEvent): TakeState {
       return state.phase === "uploading" ? IDLE : state;
     case "failed":
       return IDLE;
+    case "kept":
+      return state.phase === "uploading" ? { phase: "failed", take: event.take, why: event.why } : state;
+    case "retry":
+      return state.phase === "failed" ? { phase: "uploading", landing: state.take.landing, secs: state.take.secs } : state;
+    case "discard":
+      return state.phase === "failed" ? IDLE : state;
   }
 }
 
@@ -73,12 +101,36 @@ export const canStart = (state: TakeState) => state.phase === "idle";
 
 /**
  * Whether hand edits are locked (the Timeline, the inspector and the editing shortcuts): from the
- * press until the Take has landed. Edits from elsewhere still arrive (edit-sync).
+ * press until the Take has landed, though not while a failed Take merely waits. Edits from elsewhere
+ * still arrive (edit-sync).
  */
-export const locksEditing = (state: TakeState) => state.phase !== "idle";
+export const locksEditing = (state: TakeState) => state.phase !== "idle" && state.phase !== "failed";
 
-/** Whether leaving the page asks first: while the countdown runs or the Take records, not otherwise. */
-export const asksBeforeLeaving = (state: TakeState) => state.phase === "countdown" || state.phase === "recording";
+/**
+ * Whether leaving the page asks first: while the countdown runs or the Take records, and while a
+ * failed Take waits in the tab; not otherwise.
+ */
+export const asksBeforeLeaving = (state: TakeState) => state.phase === "countdown" || state.phase === "recording" || state.phase === "failed";
+
+/** What the microphone refused (NotAllowedError, SecurityError) tells. */
+export const MIC_REFUSED =
+  "The microphone is blocked for this page. Allow it in the browser's site settings (the icon beside the address), then record again.";
+/** What a missing microphone (NotFoundError, or the chosen one gone and no default) tells. */
+export const MIC_MISSING = "No microphone was found. Plug one in, or choose another in the recording settings, then record again.";
+/** What a busy microphone (NotReadableError, AbortError) tells. */
+export const MIC_BUSY =
+  "The microphone is in use and couldn't start. Close the other app using it (a call or another recorder), then record again.";
+/** What Record says while a failed Take waits. */
+export const TAKE_WAITING = "Save or discard the waiting Take first: Try again, Save WAV or Discard, in its notice.";
+
+/** What a microphone that wouldn't open tells: refused, missing or busy, with how to fix it. */
+export function microphoneTrouble(reason: unknown): string {
+  const name = (reason as Error | null)?.name;
+  if (name === "NotAllowedError" || name === "SecurityError") return MIC_REFUSED;
+  if (name === "NotFoundError" || name === "OverconstrainedError") return MIC_MISSING;
+  if (name === "NotReadableError" || name === "AbortError") return MIC_BUSY;
+  return `Couldn't open the microphone: ${(reason as Error | null)?.message ?? reason}`;
+}
 
 /** The playback as the take flow drives it. */
 export interface TakePlayback {
@@ -111,6 +163,8 @@ export interface TakeDeps {
   land: (take: LandedTake) => number | null;
   // A notice: what went wrong, or that the cap stopped it.
   tell: (text: string) => void;
+  // A waiting Take's WAV downloaded under its name (Save WAV).
+  save?: (wav: Blob, name: string) => void;
   // Local time, for the Take's name.
   now?: () => Date;
   // Whether the playhead is at the Clip's end, where no Take starts (it would never be heard).
@@ -155,6 +209,10 @@ export class TakeFlow {
    * cancelled, or the one recording stopped.
    */
   press(): Promise<void> {
+    if (this.state.phase === "failed") {
+      this.deps.tell(TAKE_WAITING);
+      return Promise.resolve();
+    }
     if (canStart(this.state)) return this.deps.atEnd?.() ? Promise.resolve() : this.start();
     if (counting(this.state)) {
       this.cancel();
@@ -177,7 +235,7 @@ export class TakeFlow {
     } catch (reason) {
       if (run !== this.run) return;
       this.go({ type: "failed" });
-      this.deps.tell(`Couldn't open the microphone: ${(reason as Error).message}`);
+      this.deps.tell(microphoneTrouble(reason));
       return;
     }
     if (run !== this.run) return recorder.close();
@@ -249,19 +307,52 @@ export class TakeFlow {
       this.deps.tell("Nothing was recorded.");
       return;
     }
-    let item: MediaItem;
-    try {
-      item = await this.deps.upload(new File([take.wav], takeName(state.began), { type: "audio/wav" }));
-    } catch (reason) {
+    await this.deliver(run, { wav: take.wav, name: takeName(state.began), landing: uploading.landing, secs: uploading.secs, media: null });
+  }
+
+  // The Take uploaded (unless it already is) and landed, Picked, with the playhead at its start; kept
+  // in the tab when either fails.
+  private async deliver(run: number, take: WaitingTake) {
+    let media = take.media;
+    if (media === null) {
+      let item: MediaItem;
+      try {
+        item = await this.deps.upload(new File([take.wav], take.name, { type: "audio/wav" }));
+      } catch (reason) {
+        if (run !== this.run) return;
+        this.go({ type: "kept", take, why: `Couldn't upload the Take: ${(reason as Error).message}` });
+        return;
+      }
       if (run !== this.run) return;
-      this.go({ type: "failed" });
-      this.deps.tell(`Couldn't upload the Take: ${(reason as Error).message}`);
+      media = item.id;
+    }
+    const start = this.deps.land({ media, start: take.landing, secs: take.secs });
+    if (start === null) {
+      this.go({ type: "kept", take: { ...take, media }, why: "The Take is uploaded, but it couldn't be laid on the Timeline." });
       return;
     }
-    if (run !== this.run) return;
-    const start = this.deps.land({ media: item.id, start: uploading.landing, secs: uploading.secs });
-    if (start !== null) playback.seek(start);
+    this.deps.playback.seek(start);
     this.go({ type: "landed" });
+  }
+
+  /** Try again: the waiting Take uploaded (unless it already is) and landed where it was recorded. */
+  retry(): Promise<void> {
+    const state = this.state;
+    if (state.phase !== "failed") return Promise.resolve();
+    this.go({ type: "retry" });
+    return this.deliver(this.run, state.take);
+  }
+
+  /** Save WAV: the waiting Take downloaded under its name; it keeps waiting. */
+  save() {
+    const state = this.state;
+    if (state.phase !== "failed") return;
+    this.deps.save?.(new Blob([state.take.wav], { type: "audio/wav" }), state.take.name);
+  }
+
+  /** Discard: the waiting Take let go. */
+  discard() {
+    this.go({ type: "discard" });
   }
 
   /**
@@ -286,8 +377,9 @@ export class TakeFlow {
 }
 
 /**
- * While the countdown runs or the Take records, leaving or closing the tab asks first (`beforeunload`
- * on `target`, the window); and once the page is left (`pagehide`), the Take is cancelled. Returns
+ * While the countdown runs, the Take records or a failed Take waits, leaving or closing the tab asks first (`beforeunload`
+ * on `target`, the window); and once the page is left (`pagehide`), a Take counting down or recording
+ * is cancelled. Returns
  * what takes both away.
  */
 export function guardLeaving(target: Pick<EventTarget, "addEventListener" | "removeEventListener">, flow: TakeFlow): () => void {
@@ -295,8 +387,9 @@ export function guardLeaving(target: Pick<EventTarget, "addEventListener" | "rem
     if (!asksBeforeLeaving(flow.state)) return;
     event.preventDefault();
   };
+  // A waiting Take isn't let go: there is nothing to release, and the tab may come back.
   const left = () => {
-    if (asksBeforeLeaving(flow.state) || counting(flow.state)) flow.dispose();
+    if (recording(flow.state) || counting(flow.state)) flow.dispose();
   };
   target.addEventListener("beforeunload", ask);
   target.addEventListener("pagehide", left);

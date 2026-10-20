@@ -8,8 +8,8 @@
 
 **Blocked by:** 02 (Record a Take).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Refused (`NotAllowedError`), missing (`NotFoundError`) and busy (`NotReadableError`) inputs each show their own message and add nothing (vitest).
-- [ ] A failed upload keeps the Take and offers Try again and Save WAV; Try again lands it at its recorded landing; Save WAV downloads a WAV of it (vitest, fake upload).
-- [ ] `beforeunload` asks while a failed Take is waiting, and not after it has landed or been dismissed (vitest).
+- [x] Refused (`NotAllowedError`), missing (`NotFoundError`) and busy (`NotReadableError`) inputs each show their own message and add nothing (vitest).
+- [x] A failed upload keeps the Take and offers Try again and Save WAV; Try again lands it at its recorded landing; Save WAV downloads a WAV of it (vitest, fake upload).
+- [x] `beforeunload` asks while a failed Take is waiting, and not after it has landed or been dismissed (vitest).

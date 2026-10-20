@@ -1,4 +1,4 @@
-import { ChevronDown, Loader2, Mic, Square } from "lucide-react";
+import { ChevronDown, Loader2, Mic, Square, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { Button } from "../../../components/Button";
 import { InfoTip } from "../../../components/InfoTip";
@@ -7,7 +7,7 @@ import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
 import { FLOOR_DB } from "./ballistics";
 import type { RecordingSettings } from "./recordingSettings";
-import { IDLE, type TakeFlow } from "./takeFlow";
+import { IDLE, TAKE_WAITING, type TakeFlow } from "./takeFlow";
 
 const unsubscribed = () => () => {};
 
@@ -52,7 +52,9 @@ export function TakeButton({ flow, atEnd = false, settings = null }: { flow: Tak
       ? "Cancel the countdown (Esc or ⇧R)"
       : off
         ? AT_END_HINT
-        : "Record a Voiceover from the playhead (⇧R): a three-second countdown, then the picture rolls, its sound silent";
+        : state.phase === "failed"
+          ? TAKE_WAITING
+          : "Record a Voiceover from the playhead (⇧R): a three-second countdown, then the picture rolls, its sound silent";
   return (
     // The hint on the wrapper too: an off button takes no pointer, and so shows no title of its own.
     <div className="flex shrink-0 items-center gap-1.5" title={off ? AT_END_HINT : undefined}>
@@ -84,9 +86,39 @@ export function TakeButton({ flow, atEnd = false, settings = null }: { flow: Tak
           <Mic aria-hidden size={18} />
         )}
       </Button>
-      {settings && <TakeSettingsButton settings={settings} busy={state.phase !== "idle"} />}
+      {settings && <TakeSettingsButton settings={settings} busy={state.phase !== "idle" && state.phase !== "failed"} />}
       {off && <span className="sr-only">{AT_END_HINT}</span>}
       {(recording || counting) && <LevelBar read={() => flow.mic?.meter.left.level ?? FLOOR_DB} />}
+    </div>
+  );
+}
+
+/**
+ * The notice of a Take kept in the tab after its upload or its landing failed (the take flow's
+ * failed state): what went wrong, and Try again (uploads it, unless it already is, and lands it where
+ * it was recorded), Save WAV (downloads it) and Discard. It stays until one of them settles it, above
+ * the editor's passing notices.
+ */
+export function WaitingTakeNotice({ flow }: { flow: TakeFlow | null }) {
+  const read = () => flow?.state ?? IDLE;
+  const state = useSyncExternalStore(flow?.subscribe ?? unsubscribed, read, read);
+  if (!flow || state.phase !== "failed") return null;
+  return (
+    <div role="alert" className="pointer-events-none fixed inset-x-0 bottom-36 z-50 flex justify-center px-4 lg:bottom-22">
+      <div className="glass pointer-events-auto flex max-w-lg flex-wrap items-center gap-2 rounded-panel py-2 pr-2 pl-4 text-sm shadow-raised motion-safe:animate-[sheet-in_220ms_var(--ease-out)]">
+        <span className="min-w-0 flex-1 text-pretty">
+          {state.why} It is kept here until you try again, save it or discard it.
+        </span>
+        <Button size="xs" onClick={() => void flow.retry()}>
+          Try again
+        </Button>
+        <Button size="xs" variant="ghost" onClick={() => flow.save()}>
+          Save WAV
+        </Button>
+        <Button variant="ghost" size="icon" onClick={() => flow.discard()} aria-label="Discard the Take" title="Discard the Take">
+          <X aria-hidden size={16} />
+        </Button>
+      </div>
     </div>
   );
 }
