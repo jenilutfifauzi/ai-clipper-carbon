@@ -223,31 +223,34 @@ export function ClipPreview({
         controls?.drop?.onDrop(event.dataTransfer, framePoint(event.currentTarget.getBoundingClientRect(), event, plan));
       }}
     >
-      {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
-      <div className={cx("absolute inset-0", blank && "opacity-0")}>
-        {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
-        <div ref={incoming} className="absolute inset-0">
-          {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays].map((item) => item.grade)} />}
-          {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
-          <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
-            {decks.map((refs, deck) =>
-              refs.map((ref, slot) => (
-                <PanelView
-                  key={`${deck}:${slot}`}
-                  videoRef={ref}
-                  src={src}
-                  plan={drawn}
-                  {...slotView(scene, slot)}
-                  playback={playback}
-                  muted={deck > 0 || slot > 0}
-                  hidden={deck !== shownDeck}
-                />
-              )),
-            )}
-          </DecksGraded>
-          <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
-        </div>
-        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
+      {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
+      {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the
+          Candidate's Grade (ADR 0013): the joined Main Track's, never the Overlays' after it. */}
+      <div data-main-track className={cx("absolute inset-0", blank && "opacity-0")}>
+        <DecksGraded grade={drawn?.grade}>
+          {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
+          <div ref={incoming} className="absolute inset-0">
+            {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
+            <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
+              {decks.map((refs, deck) =>
+                refs.map((ref, slot) => (
+                  <PanelView
+                    key={`${deck}:${slot}`}
+                    videoRef={ref}
+                    src={src}
+                    plan={drawn}
+                    {...slotView(scene, slot)}
+                    playback={playback}
+                    muted={deck > 0 || slot > 0}
+                    hidden={deck !== shownDeck}
+                  />
+                )),
+              )}
+            </DecksGraded>
+            <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+          </div>
+          <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
+        </DecksGraded>
       </div>
       <PreviewOverlays
         plan={drawn}

@@ -51,7 +51,9 @@ KITA_SOAL = (1.6, 2.6)
 # dials with their ranges, in edit_candidate's and merge_candidate_items' schemas (79_046).
 # Raised from 79_200 for an Overlay's Grade (color-adjust/03): `overlays[].grade` in the same two
 # schemas (79_447).
-TOOLS_BUDGET_BYTES = 79_600
+# Raised from 79_600 for the Candidate's Grade (color-adjust/04): `grade` in edit_candidate's changes
+# and merge_candidate_items' parameters, both referring to the Grade schemas already there (79_648).
+TOOLS_BUDGET_BYTES = 80_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

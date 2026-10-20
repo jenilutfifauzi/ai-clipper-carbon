@@ -908,6 +908,9 @@ class Candidate:
     transitions: list[Transition] = field(default_factory=list)
     # How its Manual Layout frames every Scene without an override; only a Manual Candidate has one.
     framing: Framing | None = None
+    # Its colour (docs/adr/0013): laid over its whole Main Track, after the Segments' own Grades and the
+    # Transitions, before the Overlays (which it never touches). Neutral in one saved before it.
+    grade: Grade = Grade()
     # Its saved state's number (ADR 0003): each save that changes it makes the next; choosing it for
     # rendering doesn't. One saved before Revisions is at 1.
     revision: int = 1

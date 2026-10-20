@@ -1,5 +1,6 @@
 import { mainTrackOf, type Candidate } from "../../../api";
 import { overlayTime, sourceAt, type OverlayPlay } from "../editor/segmentTime";
+import { gradeOf } from "../editor/grading";
 import { same } from "../editor/merge";
 
 /**
@@ -29,6 +30,7 @@ export type AdvancedEdits = Pick<
   | "segments"
   | "overlays"
   | "transitions"
+  | "grade"
 >;
 
 export function editsOf(candidate: Candidate): AdvancedEdits {
@@ -50,6 +52,7 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     source_volume,
     overlays,
     transitions,
+    grade,
   } = candidate;
   return {
     hook_start,
@@ -70,6 +73,8 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     source_volume,
     overlays,
     transitions,
+    // The Candidate's own Grade (ADR 0013); neutral in one from before it.
+    grade: gradeOf(grade),
     segments: mainTrackOf(candidate),
   };
 }

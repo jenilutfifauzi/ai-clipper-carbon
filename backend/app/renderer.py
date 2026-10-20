@@ -452,10 +452,15 @@ class Renderer:
         frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
+        if graded := grade_filters(plan.grade):
+            # The Candidate's Grade (docs/adr/0013) over the joined Main Track, the Segments' own Grades
+            # and the Transitions drawn; the Overlays come after, never touched by it.
+            frame += f";[frame]{graded}[graded]"
+            joined = "[graded]"
         if any(feed is not None for _, _, feed in layered + written) or _resampled(plan):
             # At n / fps exactly, the times the Overlays' frame processes draw their frames at; and
             # at another rate than the Source's, the Clip's frames.
-            frame += f";[frame]fps={_rate(plan)}[timed]"
+            frame += f";{joined}fps={_rate(plan)}[timed]"
             joined = "[timed]"
         for i, (event, number, feed) in enumerate(layered):
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"

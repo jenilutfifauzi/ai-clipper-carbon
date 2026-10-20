@@ -967,6 +967,8 @@ export interface RenderPlan {
   cue_min_secs: number;
   // Its ducked sounds' ramps.
   ducking?: Ducking;
+  // The Candidate's Grade as given (ADR 0013), over the Main Track: the preview folds it (editor/grading.ts).
+  grade?: Grade;
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
@@ -1165,6 +1167,9 @@ export interface Candidate {
   overlays: Overlay[];
   // Between its Segments, each by the Segment it follows.
   transitions: Transition[];
+  // Its own colour (ADR 0013): laid over its whole Main Track, after the Segments' Grades and the
+  // Transitions, never on the Overlays. Neutral when missing.
+  grade?: Grade;
   // Its saved state's number: each save that changes it makes the next (ADR 0003).
   revision: number;
 }
@@ -1210,6 +1215,8 @@ export interface CandidateChange {
   overlays?: Overlay[];
   // Replaces the Candidate's Transitions as a whole; those without a join are left out.
   transitions?: Transition[];
+  // The Candidate's own Grade (ADR 0013), replaced as a whole.
+  grade?: Grade;
   // The Revision the change was made from: refused (409) if the Candidate has moved past it.
   revision?: number;
 }

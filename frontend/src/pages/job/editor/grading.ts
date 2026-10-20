@@ -173,14 +173,21 @@ export const adjusted = (grade: Partial<Grade> | null | undefined, change: Parti
 
 /**
  * `plan` with its Segments and Overlays in the Grades the draft's `segments` and `overlays` give them
- * now (by id), so that a dial dragged shows at once, before the Preview Plan of the change comes (ADR
- * 0013). `plan` itself when none differs.
+ * now (by id), and with the Candidate's `grade` as drafted (when given), so that a dial dragged shows
+ * at once, before the Preview Plan of the change comes (ADR 0013); a Clip of one range, which has no
+ * Segment in its plan, too. `plan` itself when none differs.
  */
-export function draftGrades(plan: RenderPlan, segments: { id: string; grade?: Grade }[], overlays: { id: string; grade?: Grade }[] = []): RenderPlan {
+export function draftGrades(
+  plan: RenderPlan,
+  segments: { id: string; grade?: Grade }[],
+  overlays: { id: string; grade?: Grade }[] = [],
+  grade?: Grade,
+): RenderPlan {
   const segmentsNow = regraded(plan.segments, segments);
   const overlaysNow = regraded(plan.overlays, overlays);
-  if (segmentsNow === plan.segments && overlaysNow === plan.overlays) return plan;
-  return { ...plan, segments: segmentsNow, overlays: overlaysNow };
+  const regradedClip = grade !== undefined && gradeFilterId(grade) !== gradeFilterId(plan.grade);
+  if (segmentsNow === plan.segments && overlaysNow === plan.overlays && !regradedClip) return plan;
+  return { ...plan, segments: segmentsNow, overlays: overlaysNow, ...(regradedClip ? { grade: gradeOf(grade) } : {}) };
 }
 
 // `planned` with each one's Grade as `drafted` gives it (by id); `planned` itself when none differs.

@@ -62,11 +62,11 @@ describe("the Color section's dials", () => {
     expect(undone(history)!.value).toBe(before);
   });
 
-  test("reset makes the picked Segments' Grades neutral; nothing picked changes nothing", () => {
+  test("reset makes the picked Segments' Grades neutral; nothing picked leaves them (the Candidate's is graded, color-adjust/04)", () => {
     const before = edits([segment("s1", 100, 106, { grade: WARM }), segment("s2", 200, 204, { grade: WARM })]);
     const reset = regrade({ edits: before, pick: picked(seg("s2")) }, "reset")!;
     expect(reset.edits.segments.map((s) => s.grade)).toEqual([WARM, NEUTRAL_GRADE]);
-    expect(regrade({ edits: before, pick: null }, { tint: 10 })).toBeNull();
+    expect(regrade({ edits: before, pick: null }, { tint: 10 })!.edits.segments).toBe(before.segments);
   });
 });
 

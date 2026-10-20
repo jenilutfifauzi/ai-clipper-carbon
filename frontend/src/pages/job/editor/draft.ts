@@ -22,5 +22,6 @@ export function candidateDraft(candidate: Candidate): CandidateChange {
     source_volume: candidate.source_volume,
     overlays: candidate.overlays,
     transitions: candidate.transitions,
+    grade: candidate.grade,
   };
 }

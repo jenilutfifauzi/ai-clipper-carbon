@@ -11,6 +11,7 @@ from app.candidates import (
     Candidate,
     CueEdit,
     Framing,
+    Grade,
     Keys,
     Layout,
     LayoutOverride,
@@ -85,6 +86,8 @@ class CandidateChange:
     transitions: list[Transition] | None = None
     # The Manual Layout's, which only it has: dropped when the Layout becomes another.
     framing: Framing | None = None
+    # The Candidate's own Grade (docs/adr/0013), over its whole Main Track.
+    grade: Grade | None = None
     # The Revision the change was made from: StaleRevision unless it is the Candidate's. None: saved
     # over whatever is there.
     revision: int | None = None
@@ -253,6 +256,7 @@ def update(
         shapes=_pick(change.shapes, old.shapes),
         music=music,
         source_volume=_pick(change.source_volume, old.source_volume),
+        grade=_pick(change.grade, old.grade),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
         transitions=_joined(transitions, segments),
@@ -309,6 +313,7 @@ def _look(candidate: Candidate) -> tuple:
         candidate.style_overrides, candidate.word_edits, candidate.cue_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.shapes, candidate.music,
         candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,
+        candidate.grade,
     )
 
 

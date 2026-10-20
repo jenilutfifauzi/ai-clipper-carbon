@@ -114,6 +114,7 @@ const PART_OF: Record<Collision["field"], string> = {
   framing: "Layout",
   layout_overrides: "Layout Overrides",
   source_volume: "Source volume",
+  grade: "Color",
 };
 
 // The parts of a merge's Collisions, each once.

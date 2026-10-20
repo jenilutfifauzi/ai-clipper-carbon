@@ -34,6 +34,7 @@ from app.candidates import (
     Candidate,
     CueEdit,
     Framing,
+    Grade,
     KeyProperty,
     Layout,
     LayoutOverride,
@@ -276,6 +277,8 @@ class CandidateUpdate(BaseModel):
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
+    # The Candidate's own Grade (docs/adr/0013), over its whole Main Track; replaced as a whole.
+    grade: Grade | None = None
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
     segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX), BeforeValidator(no_old_segments)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.

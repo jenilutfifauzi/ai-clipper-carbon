@@ -318,10 +318,20 @@ export function Inspector({
   if (pick?.kind === "cue") {
     return <CueFields cueKey={pick.key} edits={edits} preview={preview} locked={locked} playback={playback} onCue={onCue} />;
   }
+  // Nothing picked: the Candidate's own Grade (ADR 0013), over the whole Main Track, each dial one change.
+  const regradedClip = (change: Partial<Adjust> | "reset", group?: string) => {
+    const outcome = regrade({ edits, pick: null }, change);
+    if (outcome) onEdits(outcome.edits, group && `grade:clip:${group}`);
+  };
   return (
-    <div className="flex flex-col gap-1">
-      <h2 className="font-semibold">Nothing selected</h2>
-      <p className="text-sm text-pretty text-muted">Select an item on the timeline or the preview to change it.</p>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="font-semibold">Nothing selected</h2>
+        <p className="text-sm text-pretty text-muted">
+          Select an item on the timeline or the preview to change it. The Color here grades the whole clip, not its Overlays.
+        </p>
+      </div>
+      <ColorFields grades={[edits.grade]} onDial={regradedClip} onReset={() => regradedClip("reset")} />
     </div>
   );
 }

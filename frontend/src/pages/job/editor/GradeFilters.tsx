@@ -62,9 +62,10 @@ const number = (value: number) => String(Math.round(value * 1e6) / 1e6);
 const values = (table: number[]) => table.map(number).join(" ");
 
 /**
- * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013): drawn
- * over black, as the render pads a panel, so that the Grade colours the whole frame, its vignette
- * over them. As they are without one.
+ * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013), or the
+ * whole Main Track (decks, ghost and media Segments) in the Candidate's: drawn over black, as the
+ * render pads a panel, so that the Grade colours the whole frame, its vignette over them. As they
+ * are without one.
  */
 export function DecksGraded({ grade, children }: { grade: Grade | undefined; children: ReactNode }) {
   const filter = gradeFilter(grade);

@@ -939,6 +939,9 @@ class RenderPlan:
     cue_min_secs: float = CAPTION_MIN_SECS
     # How its ducked sounds follow speech (docs/adr/0016): the render's and the preview's ramps.
     ducking: DuckTuning = DuckTuning()
+    # The Candidate's Grade (docs/adr/0013), as given, not folded: laid over the joined Main Track (a
+    # Clip of one range's frame too), before the Overlays.
+    grade: Grade = Grade()
 
     @property
     def duration(self) -> float:
@@ -989,6 +992,7 @@ def plan_render(
     captioned: bool = True,
     music_words: dict[str, list[Word]] | None = None,
     ducking: DuckTuning = DuckTuning(),
+    grade: Grade = Grade(),
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -1021,7 +1025,7 @@ def plan_render(
 
     The Words (the Clip's, or each Segment's) are speech, which ducks the music (`_ducked`, by
     `ducking`), with those of its Music Clips of the Source (`music_words`, by id); not `captioned`,
-    they are heard and not captioned.
+    they are heard and not captioned. Its `grade` (the Candidate's, docs/adr/0013) is carried as given.
 
     The Clip is planned at `fps` frames a second, the export's frame rate (docs/adr/0021), or at the
     Source's own without one: the rate it is encoded at, and the frames its keyed pictures are drawn
@@ -1123,6 +1127,7 @@ def plan_render(
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
         ducking=ducking,
+        grade=grade,
     )
 
 

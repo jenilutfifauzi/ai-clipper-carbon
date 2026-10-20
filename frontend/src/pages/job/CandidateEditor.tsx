@@ -7,6 +7,7 @@ import {
   type Candidate,
   type CandidateChange,
   type ClipSegment,
+  type Grade,
   type JobDetail,
   type JobProgress,
   type Layout,
@@ -25,6 +26,8 @@ import { CaptionTextEditor } from "./editor/CaptionTextEditor";
 import { ClipPreview, type PickedOnStage, type StageControls } from "./editor/ClipPreview";
 import { clipLayoutChange, pictureChange } from "./editor/clipManual";
 import { candidateDraft } from "./editor/draft";
+import { ClipColor } from "./editor/ClipColor";
+import { draftGrades, gradeOf } from "./editor/grading";
 import { useMagnetic } from "./editor/magnetic";
 import { offeredLayouts, portraitSource, shownLayout } from "./editor/layouts";
 import { sceneLayoutOverrides } from "./editor/manual";
@@ -64,7 +67,7 @@ const MODE_HINTS: Record<Mode, string> = {
   new: "Click the first and the last word of a new clip, or drag across them.",
 };
 
-type Tab = "text" | "captions" | "hook" | "watermark" | "transitions" | "trim";
+type Tab = "text" | "captions" | "hook" | "watermark" | "transitions" | "color" | "trim";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "text", label: "Text" },
@@ -72,6 +75,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "hook", label: "Hook" },
   { value: "watermark", label: "Watermark" },
   { value: "transitions", label: "Transitions" },
+  { value: "color", label: "Color" },
   { value: "trim", label: "Trim" },
 ];
 
@@ -159,6 +163,8 @@ export function CandidateEditor({
     (value) => void onSave(value),
     drafts,
   );
+  // The Candidate's own Grade (ADR 0013), saved a moment after its last dial moves.
+  const [grade, setGrade] = useDraftSave<Grade>(gradeOf(candidate.grade), (value) => void onSave({ grade: value }), drafts);
   const [preparing, setPreparing] = useState<string | null>(null);
   const playback = useMemo(() => new Playback(), []);
   // Cut into Segments in the Advanced Edit: the trim and the Source-time timeline give way to it.
@@ -199,8 +205,11 @@ export function CandidateEditor({
     style_overrides: style.draft.style_overrides,
     hook_start: timing.hook_start,
     hook_secs: timing.hook_secs,
+    grade,
   };
   const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
+  // The preview in the Grade as drafted: a dial drag shows at once, before its plan comes (ADR 0013).
+  const graded = useMemo(() => preview && { ...preview, plan: draftGrades(preview.plan, [], [], grade) }, [preview, grade]);
   if (cut) playback.setSegments(preview?.plan.segments.length ? playable(preview.plan.segments) : playedFrom(candidate.segments));
   else playback.setRange(candidate.start, candidate.end);
   const [pending, setPending] = useState<{ first: number; last: number | null } | null>(null);
@@ -344,7 +353,7 @@ export function CandidateEditor({
                 <ClipPreview
                   src={mediaUrl(job.id, job.source.preview ?? job.source.video)}
                   jobId={job.id}
-                  preview={preview}
+                  preview={graded}
                   fonts={fonts}
                   playback={playback}
                   // Dragged on the preview while its tab is open.
@@ -514,6 +523,7 @@ export function CandidateEditor({
                 {style.controls ? <JoinTransitionPanel style={style.controls} /> : !style.error && <StyleFieldsSkeleton />}
               </section>
             )}
+            {tab === "color" && <ClipColor grade={grade} onGrade={setGrade} />}
             {tab === "trim" && (
               <>
                 <div className="flex flex-col gap-1.5">

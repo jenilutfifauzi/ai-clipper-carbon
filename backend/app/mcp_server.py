@@ -49,6 +49,7 @@ from app.candidates import (
     Adjust,
     Ease,
     Framing,
+    Grade,
     LayoutOverride,
     MusicClip,
     Overlay,
@@ -287,6 +288,9 @@ Edits:
   (the corners darkened); all 0 but temperature by default (neutral). look and intensity are
   unused. merge_candidate_items changes only the dials given. The dry run lists a Segment's grade
   by its dials that aren't neutral.
+- The Candidate's own `grade` (the same dials) is laid over the whole Main Track, after the
+  Segments' grades and the Transitions; never on the Overlays. merge_candidate_items' `grade`
+  changes only the dials given; the dry run lists it at the top.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -621,6 +625,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         cue_edits: list[_PATCHES["cue_edits"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
         framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
+        grade: _GRADE_PATCH | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
         one the Candidate has (id; a Transition's `after`; a Word Edit's or Cue Edit's `at` and
@@ -628,7 +633,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
-        field by field. The Candidate is saved once, through the same checks as edit_candidate."""
+        and grade (the Candidate's) field by field. The Candidate is saved once, through the same checks as edit_candidate."""
         # The patches of each list, by the parameter named for it.
         given = {kind: patches for kind, patches in locals().items() if kind in ITEMS}
 
@@ -650,6 +655,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
             if framing is not None:
                 patch = framing.model_dump(mode="json", exclude_unset=True)
                 body["framing"] = _merged_fields(current["framing"], patch) if current["framing"] else patch
+            if grade is not None:
+                body["grade"] = _merged_fields(current["grade"], grade.model_dump(mode="json", exclude_unset=True))
             return body
 
         return await save_from_current(job_id, candidate_id, merged)
@@ -1091,7 +1098,7 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`), its fades, its Grade (`_grade_view`)), each Scene's Layout and the Framing
+    (`copied`), its fades, its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
@@ -1109,6 +1116,8 @@ def _plan_view(
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else SegmentTime(plan["start"], plan["end"]).length, 2),
         "words_source": preview["words_source"],
+        # The Candidate's Grade, over the whole Main Track; left out when neutral.
+        **_compact({"grade": _grade_view(plan["grade"])}),
         "scenes": [
             {
                 **_times(scene, "start", "end", "layout", "framing"),
@@ -1326,6 +1335,7 @@ def _switched_stroke(shapes: list[dict], patch: dict) -> dict:
 
 
 _FRAMING_PATCH = _patch_model(Framing)
+_GRADE_PATCH = _patch_model(Grade)
 _PATCHES = {kind: _patch_model(item, key) for kind, (item, key) in ITEMS.items()}
 # The JSON schema of a list of Shapes, where the tools take one: a line, which keeps the agent's
 # tools within their budget. The server's instructions say the rest.
