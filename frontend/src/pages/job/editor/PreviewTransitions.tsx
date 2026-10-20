@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
 import type { RenderPlan, TransitionEvent } from "../../../api";
-import { DecksGraded, PanelView } from "./ClipPreview";
+import { PanelView } from "./ClipPreview";
+import { DecksGraded } from "./GradeFilters";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";

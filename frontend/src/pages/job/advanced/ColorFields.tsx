@@ -5,7 +5,7 @@ import { Slider } from "../../../components/Slider";
 import { gradeOf, isNeutral, NEUTRAL_ADJUST } from "../editor/grading";
 import { Group, Mixed } from "../editor/StyleFields";
 
-type Dial = Exclude<keyof Adjust, "sharpen" | "vignette">;
+type Dial = keyof Adjust;
 
 interface DialSpec {
   dial: Dial;
@@ -19,8 +19,7 @@ interface DialSpec {
 const signed = (value: number) => `${value > 0 ? "+" : ""}${Math.round(value)}`;
 const percent = (dial: Dial, label: string, min = -100): DialSpec => ({ dial, label, min, max: 100, step: 1, format: signed });
 
-// The Adjust dials in Concat's groups and ranges (backend/app/candidates.py's Adjust). Sharpen and
-// vignette come with their drawing (color-adjust/02).
+// The Adjust dials in Concat's groups and ranges (backend/app/candidates.py's Adjust).
 const GROUPS: { title: string; dials: DialSpec[] }[] = [
   {
     title: "Color",
@@ -42,7 +41,7 @@ const GROUPS: { title: string; dials: DialSpec[] }[] = [
       percent("blacks", "Blacks"),
     ],
   },
-  { title: "Effects", dials: [percent("fade", "Fade", 0)] },
+  { title: "Effects", dials: [percent("sharpen", "Sharpen", 0), percent("fade", "Fade", 0), percent("vignette", "Vignette", 0)] },
 ];
 
 /**

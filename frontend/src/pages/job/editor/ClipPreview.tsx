@@ -11,7 +11,6 @@ import {
   type DropShadow,
   type Crop,
   type FontInfo,
-  type Grade,
   type HookEvent,
   type HookStyle,
   type Panel,
@@ -36,8 +35,7 @@ import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from ".
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
-import { GradeFilters } from "./GradeFilters";
-import { gradeFilter } from "./grading";
+import { DecksGraded, GradeFilters } from "./GradeFilters";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
@@ -927,20 +925,6 @@ export function PanelView({
     filter: panel.blur ? `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` : undefined,
   };
   return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} />;
-}
-
-/**
- * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013): drawn
- * over black, as the render pads a panel, so that the Grade colours the whole frame. As they are
- * without one.
- */
-export function DecksGraded({ grade, children }: { grade: Grade | undefined; children: ReactNode }) {
-  const filter = gradeFilter(grade);
-  return (
-    <div className="absolute inset-0" style={filter ? { filter, background: "#000" } : undefined}>
-      {children}
-    </div>
-  );
 }
 
 /**

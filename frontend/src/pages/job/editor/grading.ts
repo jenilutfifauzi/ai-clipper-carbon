@@ -1,9 +1,10 @@
 import type { Adjust, Grade, RenderPlan, SegmentPlan } from "../../../api";
 
 /**
- * The fold of a Grade (ADR 0013): its Adjust turned into one table per channel and one colour matrix,
- * which the preview draws as an SVG filter (GradeFilters.tsx: an feComponentTransfer of the tables,
- * then an feColorMatrix, in sRGB). The render folds it the same way (backend/app/grading.py, whose
+ * The fold of a Grade (ADR 0013): its Adjust turned into one table per channel, one colour matrix and
+ * the sharpen and vignette amounts, which the preview draws as an SVG filter (GradeFilters.tsx: an
+ * feComponentTransfer of the tables, then an feColorMatrix, then an feConvolveMatrix for sharpen, in
+ * sRGB) and a radial gradient layer over it for vignette; those two are near the render's, not exact. The render folds it the same way (backend/app/grading.py, whose
  * docstring gives the maths), and both test suites read the same cases
  * (backend/tests/fixtures/grade_folds.json), so that the two can't drift.
  */
@@ -21,6 +22,8 @@ const TONE_SHIFT = 0.15;
 const END_SHIFT = 0.25;
 const FADE_LIFT = 0.25;
 const FADE_DIM = 0.05;
+const SHARPEN_AMOUNT = 2;
+const VIGNETTE_ANGLE = Math.PI / 2;
 
 export const NEUTRAL_ADJUST: Adjust = {
   temperature: NEUTRAL_K,
@@ -43,10 +46,12 @@ export type Matrix = [[number, number, number], [number, number, number], [numbe
 
 // A Grade as the preview draws it: a table per channel (R, G, B; TABLE_SIZE entries, the output for
 // input i / (TABLE_SIZE − 1), 0..1), then a colour matrix (rows R, G, B of weights on R, G, B); each
-// null when it would change nothing.
+// null when it would change nothing; then the sharpen and vignette amounts (0..100, 0 for none).
 export interface Folded {
   tables: [number[], number[], number[]] | null;
   matrix: Matrix | null;
+  sharpen: number;
+  vignette: number;
 }
 
 // A Grade as stored or planned, a missing dial at its neutral value (one saved before Grades has none).
@@ -62,13 +67,42 @@ export function isNeutral(grade: Partial<Grade> | null | undefined): boolean {
   return look == null && (Object.keys(NEUTRAL_ADJUST) as (keyof Adjust)[]).every((dial) => adjust[dial] === NEUTRAL_ADJUST[dial]);
 }
 
-/** `grade` folded into its tables and matrix; null for a neutral one, which adds no filter. */
+/** `grade` folded into its tables, matrix and amounts; null for a neutral one, which adds no filter. */
 export function foldGrade(grade: Partial<Grade> | null | undefined): Folded | null {
   const { adjust } = gradeOf(grade);
   const tables = foldTables(adjust);
   const matrix = foldMatrix(adjust);
-  return tables === null && matrix === null ? null : { tables, matrix };
+  const { sharpen, vignette } = adjust;
+  return tables === null && matrix === null && !sharpen && !vignette ? null : { tables, matrix, sharpen, vignette };
 }
+
+/**
+ * The 3×3 kernel (rows top to bottom) that sharpens by `amount` (0..100): the picture plus its
+ * difference from a 3×3 box blur of it, times up to SHARPEN_AMOUNT, as the render's unsharp (which
+ * does it on the luma only; this on R, G and B). It sums to 1, so a flat patch stays.
+ */
+export function sharpenKernel(amount: number): number[] {
+  const k = (SHARPEN_AMOUNT * amount) / 100;
+  return Array.from({ length: 9 }, (_, i) => (i === 4 ? 1 + k - k / 9 : -k / 9));
+}
+
+/**
+ * The CSS background of the layer that draws a vignette of `amount` (0..100) over the graded picture:
+ * black, as opaque as the render's vignette takes light away, 1 − cos(angle · d)^4 at the distance d
+ * from the centre over the half diagonal (a circle to the farthest corner); undefined for none.
+ */
+export function vignetteBackground(amount: number): string | undefined {
+  if (!amount) return undefined;
+  const angle = (VIGNETTE_ANGLE * amount) / 100;
+  const stops = Array.from({ length: 11 }, (_, i) => {
+    const kept = Math.cos((angle * i) / 10) ** 4;
+    return `rgba(0, 0, 0, ${Math.round((1 - kept) * 1000) / 1000}) ${i * 10}%`;
+  });
+  return `radial-gradient(circle farthest-corner at 50% 50%, ${stops.join(", ")})`;
+}
+
+// Whether `folded` has anything for the SVG filter to do (a vignette alone is the layer's).
+const filtered = (folded: Folded | null): folded is Folded => !!folded && (folded.tables !== null || folded.matrix !== null || !!folded.sharpen);
 
 function foldTables(adjust: Adjust): [number[], number[], number[]] | null {
   const { exposure, brightness, contrast, highlights, shadows, whites, blacks, fade } = adjust;
@@ -119,10 +153,16 @@ export function gradeFilterId(grade: Partial<Grade> | null | undefined): string 
   return `grade-${dials.join("-")}`;
 }
 
-/** The CSS `filter` that draws `grade` on an element, or undefined for a neutral one. */
+/** Whether `grade` has an SVG filter (GradeFilters.tsx): anything but a vignette alone, or neutral. */
+export const hasGradeFilter = (grade: Partial<Grade> | null | undefined): boolean => filtered(foldGrade(grade));
+
+/**
+ * The CSS `filter` that draws `grade` on an element (its tables, matrix and sharpen; its vignette is
+ * GradeVignette's layer), or undefined when it has none.
+ */
 export function gradeFilter(grade: Partial<Grade> | null | undefined): string | undefined {
   const id = gradeFilterId(grade);
-  return id && foldGrade(grade) ? `url(#${id})` : undefined;
+  return id && hasGradeFilter(grade) ? `url(#${id})` : undefined;
 }
 
 /** `grade` with the dials of `change` set, the rest kept. */

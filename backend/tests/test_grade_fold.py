@@ -1,5 +1,6 @@
-"""The fold of a Grade into tables and a matrix (.scratch/color-adjust/issues/01-segment-grade-adjust-dials.md,
-docs/adr/0013), on the cases the frontend's tests read too (fixtures/grade_folds.json). Seam C."""
+"""The fold of a Grade into tables, a matrix and the sharpen and vignette amounts
+(.scratch/color-adjust/issues/01-segment-grade-adjust-dials.md, 02-sharpen-and-vignette.md, docs/adr/0013),
+on the cases the frontend's tests read too (fixtures/grade_folds.json). Seam C."""
 
 import json
 from pathlib import Path
@@ -33,10 +34,28 @@ def test_a_grade_folds_into_the_tables_and_matrix_the_shared_cases_say(case):
         assert matrix is not None
         for row, expected in zip(matrix, case["matrix"]):
             assert list(row) == pytest.approx(expected, abs=CLOSE)
+    assert (0.0 if folded is None else folded.sharpen) == pytest.approx(case["sharpen"], abs=CLOSE)
+    assert (0.0 if folded is None else folded.vignette) == pytest.approx(case["vignette"], abs=CLOSE)
 
 
 def test_a_neutral_grade_folds_to_nothing_and_adds_no_filter():
     assert fold(Grade()) is None and grade_filters(Grade()) == ""
+    assert grade_filters(Grade(Adjust(sharpen=0, vignette=0))) == ""
+
+
+def test_sharpen_and_vignette_come_after_the_tables_and_matrix_and_only_when_moved():
+    # Alone, each is its own filter: no tables, no matrix.
+    sharp = grade_filters(Grade(Adjust(sharpen=50)))
+    assert "unsharp" in sharp and "curves" not in sharp and "colorchannelmixer" not in sharp and "vignette" not in sharp
+    dark = grade_filters(Grade(Adjust(vignette=50)))
+    assert "vignette" in dark and "unsharp" not in dark and "curves" not in dark
+    # Moved with the others, they come in the Grade's fixed order.
+    every = grade_filters(Grade(Adjust(exposure=1, saturation=20, sharpen=50, vignette=50)))
+    order = [every.index(name) for name in ("curves", "colorchannelmixer", "unsharp", "vignette")]
+    assert order == sorted(order), every
+    # Only the moved ones.
+    assert "unsharp" not in grade_filters(Grade(Adjust(exposure=1, vignette=50)))
+    assert "vignette" not in grade_filters(Grade(Adjust(exposure=1, sharpen=50)))
 
 
 def test_the_dials_move_the_picture_the_way_they_say():

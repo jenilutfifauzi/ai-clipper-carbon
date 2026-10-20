@@ -283,8 +283,8 @@ Edits:
   temperature {TEMPERATURE_K[0]}..{TEMPERATURE_K[1]} K (6500 as shot; higher is warmer), tint (-100 green..100 magenta),
   saturation (-100 grey..100 twice as vivid), exposure {EXPOSURE_EV[0]}..{EXPOSURE_EV[1]} EV (stops of light), brightness,
   contrast, highlights and shadows (the upper and lower halves), whites and blacks (the two ends),
-  each -100..100, and fade 0..100 (blacks lifted into a matte); all 0 but temperature by default
-  (neutral). sharpen and vignette (0..100) are kept but not drawn yet, and look and intensity are
+  each -100..100, fade 0..100 (blacks lifted into a matte), sharpen 0..100 and vignette 0..100
+  (the corners darkened); all 0 but temperature by default (neutral). look and intensity are
   unused. merge_candidate_items changes only the dials given. The dry run lists a Segment's grade
   by its dials that aren't neutral.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override

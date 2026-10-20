@@ -112,4 +112,13 @@ describe("the preview", () => {
     // As planned already: the same plan.
     expect(draftGrades(plan, [segment("s1", 0, 1), segment("s2", 0, 1, { grade: WARM })])).toBe(plan);
   });
+
+  test("draws a sharpen or vignette dragged at once, and reset takes them back (color-adjust/02)", () => {
+    const effects = adjusted(WARM, { sharpen: 40, vignette: 25 });
+    const shown = draftGrades(plan, [segment("s1", 0, 1), segment("s2", 0, 1, { grade: effects })]);
+    expect(shown.segments[1].grade).toEqual(effects);
+    const before = edits([segment("s1", 0, 1, { grade: effects })]);
+    expect(regrade({ edits: before, pick: picked(seg("s1")) }, "reset")!.edits.segments[0].grade).toEqual(NEUTRAL_GRADE);
+    expect(regrade({ edits: before, pick: picked(seg("s1")) }, { sharpen: 0 })!.edits.segments[0].grade?.adjust).toEqual({ ...effects.adjust, sharpen: 0 });
+  });
 });

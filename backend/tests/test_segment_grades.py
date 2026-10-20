@@ -137,6 +137,55 @@ def test_the_dials_change_a_segments_colours_as_they_say(client, settings, video
     assert np.ptp(greyed) < 8, greyed
 
 
+@pytest.fixture(scope="session")
+def edge_video(tmp_path_factory) -> Path:
+    """8 s of a picture with one edge of light: its left half dark grey (80), its right half light (176)."""
+    path = tmp_path_factory.mktemp("edge") / "edge.mp4"
+    subprocess.run([
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=0x505050:size=640x360:rate=25:duration=8,drawbox=x=320:y=0:w=320:h=360:color=0xB0B0B0:t=fill",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path),
+    ], check=True)
+    return path
+
+
+def test_sharpen_raises_an_edges_contrast_and_vignette_darkens_the_corners_more_than_the_centre(client, settings, video_source, edge_video):
+    # .scratch/color-adjust/issues/02-sharpen-and-vignette.md
+    video_source.video = edge_video
+    job = reviewed(client)
+    candidate = graded(client, job, add(client, job, "halo", "ya"), None)
+    segments = candidate["segments"]
+
+    def drawn(grade: dict | None) -> np.ndarray:
+        if grade is None:
+            return frame_at(client, settings, job, candidate, 0.5).astype(float)
+        return frame_at(client, settings, job, candidate, 0.5, segments=[segments[0] | {"grade": grade}, segments[1]]).astype(float)
+
+    plain, sharp, dark = drawn(None), drawn({"adjust": {"sharpen": 100}}), drawn({"adjust": {"vignette": 60}})
+    # Across the edge between the dark and the light halves (about x 540): sharpened, the dark side
+    # dips and the light side overshoots, so the span of the levels there widens.
+    def edge_span(frame: np.ndarray) -> float:
+        across = frame[700:800, 500:580].mean(axis=(0, 2))
+        return float(across.max() - across.min())
+
+    assert edge_span(sharp) > edge_span(plain) + 8, (edge_span(plain), edge_span(sharp))
+    # Away from the edge, a flat patch stays as it was.
+    assert abs(grey_patch(sharp) - grey_patch(plain)).max() < 4, (grey_patch(plain), grey_patch(sharp))
+
+    # Vignette: a corner keeps a smaller share of its light than the centre.
+    def corner(frame: np.ndarray) -> np.ndarray:
+        return frame[0:60, 0:60].reshape(-1, 3).mean(axis=0)
+
+    def centre(frame: np.ndarray) -> np.ndarray:
+        return frame[930:990, 300:420].reshape(-1, 3).mean(axis=0)
+
+    assert corner(plain).sum() > 30, corner(plain)
+    kept_corner = corner(dark).sum() / corner(plain).sum()
+    kept_centre = centre(dark).sum() / centre(plain).sum()
+    assert kept_corner < 0.6 and kept_corner < kept_centre - 0.2, (kept_corner, kept_centre)
+
+
 def test_a_neutral_grade_draws_the_same_pixels_as_none(client, settings, video_source, colour_video):
     video_source.video = colour_video
     job = reviewed(client)

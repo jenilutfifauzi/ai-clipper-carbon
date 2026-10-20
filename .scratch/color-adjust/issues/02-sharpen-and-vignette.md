@@ -17,9 +17,9 @@ The fold outputs both amounts, and the shared fixture covers them.
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] **Render:** vignette darkens a corner more than the centre, and sharpen raises edge contrast on a test edge.
-- [ ] **Fixture:** it covers sharpen and vignette alone and mixed, in pytest and vitest.
-- [ ] **Neutral:** neutral sharpen and vignette add no filter.
-- [ ] **Preview:** it shows both, and they reset like the other dials.
+- [x] **Render:** vignette darkens a corner more than the centre, and sharpen raises edge contrast on a test edge.
+- [x] **Fixture:** it covers sharpen and vignette alone and mixed, in pytest and vitest.
+- [x] **Neutral:** neutral sharpen and vignette add no filter.
+- [x] **Preview:** it shows both, and they reset like the other dials.
