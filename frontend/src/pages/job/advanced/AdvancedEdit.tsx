@@ -89,6 +89,7 @@ import { effectsPreparing, useEffectedCopies, useEffectedVersion } from "../edit
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
+import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { AdjustPanel } from "./ColorFields";
 import { LOOK_GOES_ON, LookPanel, lookFrame, PhoneFilters } from "./LookPanel";
 import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
@@ -245,8 +246,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }, [candidate.preset_id]);
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
-  // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "tracks" | "playback" | null>(null);
+  // picture's Transform, of the picked item's Speed or Audio effects, of the Tracks or of Playback.
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "effects" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
   const [audition, setAudition] = useState<string | null>(null);
@@ -1256,6 +1257,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <KeyingContext.Provider value={keying}>
       <Inspector
         effectsPreparing={effectsPreparing}
+        effectsElsewhere={!wide}
         pick={pick}
         edits={edits}
         duration={duration}
@@ -1312,6 +1314,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     });
   // Whether the phone's Filters and Adjust have Grades to change: the Pick's, or the Candidate's.
   const colorable = gradesOf({ edits, pick }).length > 0;
+  // The phone's Audio effects sheet: the Inspector's Audio Effects section's controls, for the Pick's
+  // items with sound; null without any (a Freeze frame, an image), and then no toolbar button.
+  const audioEffects = audioEffectChanges({ edits, pick }, (media) => mediaById.get(media)?.has_audio === true, history.set, effectsPreparing);
   // The Grade a Filters card's click goes to first: the first picked Segment's, Overlay's or Adjustment
   // Layer's, else the Candidate's.
   const lookTarget =
@@ -1617,6 +1622,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onSpeed={speedSheet && (() => setSheet("speed"))}
         onFilters={colorable ? () => setSheet("filters") : null}
         onAdjust={colorable ? () => setSheet("adjust") : null}
+        onAudioEffects={audioEffects && (() => setSheet("effects"))}
         onTracks={() => setSheet("tracks")}
         onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
@@ -1637,6 +1643,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                   ? "Speed"
                   : sheet === "adjust"
                     ? "Adjust"
+                  : sheet === "effects"
+                    ? "Audio effects"
                   : sheet === "tracks"
                     ? "Tracks"
                       : sheet === "playback"
@@ -1706,6 +1714,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             />
           ) : sheet === "adjust" ? (
             <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
+          ) : sheet === "effects" ? (
+            audioEffects ? (
+              <AudioEffectsFields {...audioEffects} />
+            ) : (
+              <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip with sound to change its Audio effects.</p>
+            )
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
           ) : sheet === "playback" ? (

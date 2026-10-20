@@ -63,6 +63,7 @@ export function Inspector({
   captionsOf,
   detaching,
   effectsPreparing,
+  effectsElsewhere = false,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -106,6 +107,8 @@ export function Inspector({
   detaching?: Detacher;
   // Whether any of these items' Effected copies is being made: "Preparing effects…" (ticket 03 feeds it; none until then).
   effectsPreparing?: (items: StackRef[]) => boolean;
+  // On a phone, the Audio Effects section is the toolbar's Audio effects sheet, not here.
+  effectsElsewhere?: boolean;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -135,6 +138,7 @@ export function Inspector({
   // The picked items' Audio Effects section, for those with sound (a Freeze frame and an image have none): null without any.
   const sounded = (media: string) => mediaById.get(media)?.has_audio === true;
   const effectsOf = () => {
+    if (effectsElsewhere) return null;
     const controls = audioEffectChanges({ edits, pick }, sounded, onEdits, effectsPreparing);
     return controls && <AudioEffectsFields {...controls} />;
   };

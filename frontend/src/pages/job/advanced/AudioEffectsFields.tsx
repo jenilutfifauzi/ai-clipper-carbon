@@ -6,6 +6,7 @@ import { Button, buttonClass } from "../../../components/Button";
 import { useMenu } from "../../../components/Menu";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
+import { cx } from "../../../format";
 import { Mixed } from "../editor/StyleFields";
 import {
   addAudioEffect,
@@ -100,9 +101,10 @@ export function AudioEffectsFields({ kinds: given, ...controls }: AudioEffectCon
   const { stack, preparing, onAdd, onRemoveAll } = controls;
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 border-t border-border pt-4">
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 border-t border-border pt-4 in-data-sheet:border-t-0 in-data-sheet:pt-0">
       <div className="flex items-center justify-between gap-2">
-        <h3 id={headingId} className="font-semibold">
+        {/* In the phone's sheet, its title names the section. */}
+        <h3 id={headingId} className="font-semibold in-data-sheet:sr-only">
           Audio effects
         </h3>
         <AddEffect kinds={kinds} onAdd={onAdd} />
@@ -120,7 +122,7 @@ export function AudioEffectsFields({ kinds: given, ...controls }: AudioEffectCon
             <Mixed />
             The selected items have different effects.
           </p>
-          <Button size="sm" variant="ghost" onClick={onRemoveAll}>
+          <Button size="sm" variant="ghost" className="in-data-sheet:min-h-11" onClick={onRemoveAll}>
             <X aria-hidden size={15} />
             Remove all effects
           </Button>
@@ -161,7 +163,7 @@ function CleanSwitchRow({
   const intensity = kind.settings.find((setting) => setting.intensity);
   return (
     <div className="flex flex-col">
-      <Switch checked={state.on === true} onChange={(on) => onClean(kind, on)} labelledBy={nameId} className="min-h-10 gap-2">
+      <Switch checked={state.on === true} onChange={(on) => onClean(kind, on)} labelledBy={nameId} className="min-h-10 gap-2 in-data-sheet:min-h-11">
         <span id={nameId} className="flex min-w-0 items-center gap-2 text-sm font-medium" title={kind.description}>
           {kind.name}
           {state.on === "mixed" && <Mixed />}
@@ -236,20 +238,20 @@ function EffectRow({
   return (
     <li className="flex flex-col gap-1 rounded-[10px] bg-fill/60 p-2">
       <div className="flex items-center gap-1">
-        <Switch checked={entry.enabled} onChange={(on) => onEnabled(index, on)} labelledBy={nameId} className="min-h-9 gap-2">
+        <Switch checked={entry.enabled} onChange={(on) => onEnabled(index, on)} labelledBy={nameId} className="min-h-9 gap-2 in-data-sheet:min-h-11">
           <span id={nameId} className={`min-w-0 truncate text-sm font-medium ${entry.enabled ? "" : "text-muted"}`} title={kind?.description}>
             {name}
           </span>
         </Switch>
         <div className="ml-auto flex shrink-0">
           {others.length > 0 && <MoreSettings name={name} settings={others} slider={slider} />}
-          <Button variant="ghost" size="xs" onClick={() => onMove(index, -1)} disabled={first} aria-label={`Move ${name} up`}>
+          <Button variant="ghost" size="xs" className={ROW_BUTTON} onClick={() => onMove(index, -1)} disabled={first} aria-label={`Move ${name} up`}>
             <ChevronUp aria-hidden size={16} />
           </Button>
-          <Button variant="ghost" size="xs" onClick={() => onMove(index, 1)} disabled={last} aria-label={`Move ${name} down`}>
+          <Button variant="ghost" size="xs" className={ROW_BUTTON} onClick={() => onMove(index, 1)} disabled={last} aria-label={`Move ${name} down`}>
             <ChevronDown aria-hidden size={16} />
           </Button>
-          <Button variant="ghost" size="xs" onClick={() => onRemove(index)} aria-label={`Remove ${name}`}>
+          <Button variant="ghost" size="xs" className={ROW_BUTTON} onClick={() => onRemove(index)} aria-label={`Remove ${name}`}>
             <Trash2 aria-hidden size={16} />
           </Button>
         </div>
@@ -258,6 +260,9 @@ function EffectRow({
     </li>
   );
 }
+
+// A row's icon buttons (More, up, down, remove), a finger's size in the phone's sheet.
+const ROW_BUTTON = "in-data-sheet:min-h-11 in-data-sheet:min-w-11";
 
 // Escape in a popover closes it (the browser's light dismiss), and goes no further: not to the
 // editor's "Pick nothing", which would take the Inspector away with it.
@@ -274,7 +279,7 @@ function MoreSettings({ name, settings, slider }: { name: string; settings: Audi
       <button
         ref={buttonRef}
         type="button"
-        className={buttonClass("ghost", "xs")}
+        className={cx(buttonClass("ghost", "xs"), ROW_BUTTON)}
         onClick={toggle}
         aria-label={`More settings of ${name}`}
         aria-expanded={open}
@@ -307,7 +312,7 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
   const groups = kinds ? libraryOf(kinds, query) : [];
   return (
     <>
-      <button ref={buttonRef} type="button" className={buttonClass("ghost", "sm")} onClick={toggle} aria-expanded={open} aria-controls={id} aria-haspopup="dialog">
+      <button ref={buttonRef} type="button" className={cx(buttonClass("ghost", "sm"), "in-data-sheet:min-h-11")} onClick={toggle} aria-expanded={open} aria-controls={id} aria-haspopup="dialog">
         <Plus aria-hidden size={15} />
         Add effect
       </button>
@@ -320,7 +325,7 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
         onKeyDown={keepEscape}
         className="glass fixed inset-auto m-0 max-h-[min(28rem,calc(100vh-1rem))] w-72 max-w-[calc(100vw-1rem)] flex-col gap-2 overflow-y-auto rounded-[10px] bg-bg/90! p-2 text-text [&:popover-open]:flex"
       >
-        <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-border bg-fill px-2">
+        <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-border bg-fill px-2 in-data-sheet:min-h-11">
           <Search aria-hidden size={15} className="shrink-0 text-muted" />
           <input
             type="search"
@@ -329,7 +334,7 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
             placeholder="Search effects"
             aria-label="Search effects"
             autoComplete="off"
-            className="min-w-0 flex-1 bg-transparent py-1.5 text-base outline-none"
+            className="min-w-0 flex-1 bg-transparent py-1.5 text-base outline-none in-data-sheet:min-h-11"
           />
         </label>
         {kinds === null ? (
@@ -348,7 +353,7 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
                     onAdd(kind);
                     hide();
                   }}
-                  className="flex min-h-9 flex-col items-start rounded-md px-2 py-1 text-left hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
+                  className="flex min-h-9 flex-col items-start rounded-md px-2 py-1 text-left in-data-sheet:min-h-11 in-data-sheet:justify-center hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
                 >
                   <span className="text-sm">{kind.name}</span>
                   {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
