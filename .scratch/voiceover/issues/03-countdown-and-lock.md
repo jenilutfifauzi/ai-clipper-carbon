@@ -10,10 +10,10 @@
 
 **Blocked by:** 02 (Record a Take).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The countdown runs three seconds with the playhead still, then rolls (vitest, fake timers).
-- [ ] Esc during the countdown cancels it: the microphone closes and nothing is uploaded or added (vitest).
-- [ ] During the countdown and the recording, hand-edit actions and editing shortcuts are refused, and a remote edit still applies (vitest).
-- [ ] `beforeunload` asks while a Take is counting down or recording, and not otherwise (vitest).
-- [ ] The button is off, with its hint, while the playhead is at the Clip's end (vitest).
+- [x] The countdown runs three seconds with the playhead still, then rolls (vitest, fake timers).
+- [x] Esc during the countdown cancels it: the microphone closes and nothing is uploaded or added (vitest).
+- [x] During the countdown and the recording, hand-edit actions and editing shortcuts are refused, and a remote edit still applies (vitest).
+- [x] `beforeunload` asks while a Take is counting down or recording, and not otherwise (vitest).
+- [x] The button is off, with its hint, while the playhead is at the Clip's end (vitest).

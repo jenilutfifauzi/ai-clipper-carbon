@@ -11,13 +11,17 @@ const unsubscribed = () => () => {};
 // Green to −12 dB, orange to −3 dB, red above, as the Meters' bars, left to right.
 const BAR_FILL = "bg-[linear-gradient(to_right,var(--success)_80%,var(--accent)_80%_95%,var(--danger)_95%)]";
 
+/** What the mic button says while it is off at the Clip's end. */
+export const AT_END_HINT = "Move the playhead into the Clip to record a Voiceover: a Take from its end would never be heard";
+
 /**
- * The mic button by the transport (GLOSSARY.md, Voiceover): it starts a Take at the playhead, and
- * while one records it reads Stop, with the microphone's level beside it. With no `flow` (the page
- * isn't a secure context, as on a phone over plain HTTP) there is no button: a hint says how to add a
- * voice memo instead.
+ * The mic button by the transport (GLOSSARY.md, Voiceover): it starts a Take at the playhead, counts
+ * 3, 2, 1 (pressed again, or Esc, cancels), and while one records it reads Stop; from the countdown on
+ * the microphone's level is beside it. Off while the playhead is `atEnd` of the Clip, with a hint.
+ * With no `flow` (the page isn't a secure context, as on a phone over plain HTTP) there is no button:
+ * a hint says how to add a voice memo instead.
  */
-export function TakeButton({ flow }: { flow: TakeFlow | null }) {
+export function TakeButton({ flow, atEnd = false }: { flow: TakeFlow | null; atEnd?: boolean }) {
   const read = () => flow?.state ?? IDLE;
   const state = useSyncExternalStore(flow?.subscribe ?? unsubscribed, read, read);
   if (!flow) {
@@ -29,10 +33,26 @@ export function TakeButton({ flow }: { flow: TakeFlow | null }) {
     );
   }
   const recording = state.phase === "recording";
+  const counting = state.phase === "countdown";
   const busy = state.phase === "opening" || state.phase === "uploading";
-  const label = recording ? "Stop the Take" : state.phase === "uploading" ? "Uploading the Take" : "Record a Voiceover";
+  const off = state.phase === "idle" && atEnd;
+  const label = recording
+    ? "Stop the Take"
+    : counting
+      ? `Recording in ${state.left}: cancel`
+      : state.phase === "uploading"
+        ? "Uploading the Take"
+        : "Record a Voiceover";
+  const title = recording
+    ? "Stop the Take (Space or ⇧R)"
+    : counting
+      ? "Cancel the countdown (Esc or ⇧R)"
+      : off
+        ? AT_END_HINT
+        : "Record a Voiceover from the playhead (⇧R): a three-second countdown, then the picture rolls, its sound silent";
   return (
-    <div className="flex shrink-0 items-center gap-1.5">
+    // The hint on the wrapper too: an off button takes no pointer, and so shows no title of its own.
+    <div className="flex shrink-0 items-center gap-1.5" title={off ? AT_END_HINT : undefined}>
       <Button
         variant="ghost"
         size="icon"
@@ -41,16 +61,28 @@ export function TakeButton({ flow }: { flow: TakeFlow | null }) {
           event.currentTarget.blur();
           void flow.press();
         }}
-        disabled={busy}
-        aria-pressed={recording}
+        disabled={busy || off}
+        aria-pressed={recording || counting}
         aria-label={label}
         aria-keyshortcuts="Shift+R"
-        title={recording ? "Stop the Take (Space or ⇧R)" : "Record a Voiceover from the playhead (⇧R): the picture rolls, its sound silent"}
-        className={cx(recording && "text-danger hover:text-danger")}
+        title={title}
+        className={cx((recording || counting) && "text-danger hover:text-danger")}
       >
-        {busy ? <Loader2 aria-hidden size={18} className="motion-safe:animate-spin" /> : recording ? <Square aria-hidden size={16} fill="currentColor" /> : <Mic aria-hidden size={18} />}
+        {busy ? (
+          <Loader2 aria-hidden size={18} className="motion-safe:animate-spin" />
+        ) : recording ? (
+          <Square aria-hidden size={16} fill="currentColor" />
+        ) : counting ? (
+          // 3, 2, 1, read out as it goes.
+          <span aria-live="assertive" className="text-lg font-semibold tabular-nums">
+            {state.left}
+          </span>
+        ) : (
+          <Mic aria-hidden size={18} />
+        )}
       </Button>
-      {recording && <TakeMeter flow={flow} />}
+      {off && <span className="sr-only">{AT_END_HINT}</span>}
+      {(recording || counting) && <TakeMeter flow={flow} />}
     </div>
   );
 }

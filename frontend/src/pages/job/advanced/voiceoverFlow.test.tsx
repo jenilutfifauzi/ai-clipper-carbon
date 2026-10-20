@@ -4,7 +4,7 @@
 // Space or Shift+R uploads the Take and lands one Music Clip marked Speech, not Ducked, Picked, with
 // the playhead at its start. Outside a secure context there is no button, and a hint instead.
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { MediaItem, MusicClip } from "../../../api";
 import { Playback, playedFrom } from "../editor/playback";
 import { harness } from "../editor/playbackHarness";
@@ -13,12 +13,19 @@ import { commandsOf } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { resolveShortcut } from "./keymap";
 import type { Pick } from "./pick";
-import { TakeButton } from "./TakeButton";
-import { IDLE, takeStep, TakeFlow, type TakeState } from "./takeFlow";
+import { AT_END_HINT, TakeButton } from "./TakeButton";
+import { asksBeforeLeaving, guardLeaving, IDLE, locksEditing, takeStep, TakeFlow, type TakeState } from "./takeFlow";
+import { lockedWhile } from "./useEditHistory";
 import { openTake, type Block, type RecorderDeps } from "./takeRecorder";
-import { canRecord, TAKE_RATE } from "./voiceover";
+import { atClipEnd, canRecord, TAKE_RATE } from "./voiceover";
+
+// The countdown's seconds on fake timers; the playback's clock is the harness's own.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+});
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -48,14 +55,15 @@ async function setUp(upload: (file: File) => Promise<MediaItem> = async () => IT
   let block: Block = () => {};
   let clock = 50;
   const asked: MediaStreamConstraints[] = [];
+  const closed: string[] = [];
   const mic: RecorderDeps = {
     getUserMedia: async (constraints) => {
       asked.push(constraints);
-      return { getTracks: () => [{ stop: () => {} }] } as unknown as MediaStream;
+      return { getTracks: () => [{ stop: () => closed.push("track") }] } as unknown as MediaStream;
     },
     capture: async (_stream, onBlock) => {
       block = onBlock;
-      return { now: () => clock, rate: TAKE_RATE, close: () => {} };
+      return { now: () => clock, rate: TAKE_RATE, close: () => closed.push("capture") };
     },
   };
   // `secs` of the microphone, from `from` on its clock.
@@ -86,13 +94,16 @@ async function setUp(upload: (file: File) => Promise<MediaItem> = async () => IT
     },
     tell: (text) => told.push(text),
     now: () => new Date(2026, 9, 20, 14, 3, 5),
+    atEnd: () => atClipEnd(playback.time, playback.duration, 30),
   });
+  const picked: string[] = [];
+  const split: string[] = [];
   const commands = commandsOf({ undo: () => (world.edits = world.undo.pop() ?? world.edits), redo: () => {} }, playback, null, {
     pickAll: () => {},
-    pickNone: () => {},
+    pickNone: () => void picked.push("none"),
     paste: null,
     move: null,
-    split: () => {},
+    split: () => void split.push("split"),
     freeze: () => {},
     reverse: () => {},
     mute: () => {},
@@ -109,18 +120,23 @@ async function setUp(upload: (file: File) => Promise<MediaItem> = async () => IT
     toggleAssets: () => {},
     toggleInspector: () => {},
     keyframes: null,
-    take: { recording: () => flow.state.phase === "recording", press: () => void flow.press() },
+    take: { state: () => flow.state, press: () => void flow.press(), cancel: () => flow.cancel() },
   });
   // A key pressed on a desktop, nothing focused, through the keymap to its command.
   const key = (keys: Parameters<typeof resolveShortcut>[0]) => commands[resolveShortcut(keys)!]();
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-  return { stage, playback, flow, world, silent, told, uploaded, asked, speak, key, settle, commands };
+  const settle = () => vi.advanceTimersByTimeAsync(0);
+  // Pressed, and the countdown run out: the picture rolls.
+  const roll = async () => {
+    await flow.press();
+    vi.advanceTimersByTime(3000);
+  };
+  return { stage, playback, flow, world, silent, told, uploaded, asked, closed, picked, split, speak, key, settle, roll, commands };
 }
 
 // Recorded: pressed, then 2 s spoken, the first sample 0.12 s after the roll.
 async function recorded(press: (env: Awaited<ReturnType<typeof setUp>>) => unknown, env?: Awaited<ReturnType<typeof setUp>>) {
   const it = env ?? (await setUp());
-  await it.flow.press();
+  await it.roll();
   expect(it.flow.state.phase).toBe("recording");
   it.speak(50.12, 2);
   it.stage.advance(0.5);
@@ -131,8 +147,8 @@ async function recorded(press: (env: Awaited<ReturnType<typeof setUp>>) => unkno
 
 describe("recording a Take", () => {
   test("the button rolls the picture from the playhead, ignoring the Loop, with the bus silent; the input raw", async () => {
-    const { flow, playback, silent, asked, stage } = await setUp();
-    await flow.press();
+    const { flow, playback, silent, asked, stage, roll } = await setUp();
+    await roll();
     expect(flow.state).toMatchObject({ phase: "recording", playhead: 3, rolledAt: 50 });
     expect(playback.playing).toBe(true);
     expect(playback.loop).toBeNull();
@@ -171,6 +187,8 @@ describe("recording a Take", () => {
     const it = await setUp();
     it.key({ key: "R", shift: true });
     await it.settle();
+    expect(it.flow.state.phase).toBe("countdown");
+    vi.advanceTimersByTime(3000);
     expect(it.flow.state.phase).toBe("recording");
     it.speak(50.12, 2);
     it.stage.advance(0.5);
@@ -188,7 +206,7 @@ describe("recording a Take", () => {
 
   test("past the Clip's end the picture stops, and the Take records on", async () => {
     const it = await setUp();
-    await it.flow.press();
+    await it.roll();
     it.stage.advance(8);
     expect(it.playback.playing).toBe(false);
     expect(it.flow.state.phase).toBe("recording");
@@ -202,7 +220,7 @@ describe("recording a Take", () => {
 
   test("at eight minutes it stops itself, with a notice, and lands", async () => {
     const it = await setUp();
-    await it.flow.press();
+    await it.roll();
     it.speak(50, 8 * 60 + 1);
     await it.settle();
     expect(it.told).toContain("The Take stopped at eight minutes, the longest a Take can be.");
@@ -237,10 +255,17 @@ describe("recording a Take", () => {
 describe("the take flow's states", () => {
   const recordingState: TakeState = { phase: "recording", playhead: 2, rolledAt: 10, began: new Date(0) };
 
-  test("idle → opening → recording → uploading (at its landing) → idle", () => {
+  test("idle → opening → countdown 3, 2, 1 → recording → uploading (at its landing) → idle", () => {
     const opening = takeStep(IDLE, { type: "open" });
     expect(opening).toEqual({ phase: "opening" });
-    expect(takeStep(opening, { type: "rolled", playhead: 2, at: 10, began: new Date(0) })).toEqual(recordingState);
+    // It rolls only from the countdown.
+    expect(takeStep(opening, { type: "rolled", playhead: 2, at: 10, began: new Date(0) })).toBe(opening);
+    const three = takeStep(opening, { type: "opened" });
+    expect(three).toEqual({ phase: "countdown", left: 3 });
+    const one = takeStep(takeStep(three, { type: "tick" }), { type: "tick" });
+    expect(one).toEqual({ phase: "countdown", left: 1 });
+    expect(takeStep(one, { type: "tick" })).toBe(one);
+    expect(takeStep(one, { type: "rolled", playhead: 2, at: 10, began: new Date(0) })).toEqual(recordingState);
     const uploading = takeStep(recordingState, { type: "stopped", secs: 1.5, firstSample: 10.25 });
     expect(uploading).toEqual({ phase: "uploading", landing: 2.25, secs: 1.5 });
     expect(takeStep(uploading, { type: "landed" })).toEqual(IDLE);
@@ -250,6 +275,10 @@ describe("the take flow's states", () => {
     expect(takeStep(IDLE, { type: "stopped", secs: 1, firstSample: 0 })).toBe(IDLE);
     expect(takeStep(recordingState, { type: "open" })).toBe(recordingState);
     expect(takeStep(recordingState, { type: "failed" })).toEqual(IDLE);
+    // Cancelled while opening or counting down only.
+    expect(takeStep({ phase: "countdown", left: 2 }, { type: "cancel" })).toEqual(IDLE);
+    expect(takeStep({ phase: "opening" }, { type: "cancel" })).toEqual(IDLE);
+    expect(takeStep(recordingState, { type: "cancel" })).toBe(recordingState);
   });
 });
 
@@ -277,10 +306,253 @@ describe("the mic button", () => {
     const idle = renderToStaticMarkup(<TakeButton flow={it.flow} />);
     expect(idle).toContain('aria-label="Record a Voiceover"');
     expect(idle).toContain('aria-keyshortcuts="Shift+R"');
-    await it.flow.press();
+    await it.roll();
     const live = renderToStaticMarkup(<TakeButton flow={it.flow} />);
     expect(live).toContain('aria-label="Stop the Take"');
     expect(live).toContain('aria-pressed="true"');
     expect(live).toContain("The microphone&#x27;s level");
+  });
+});
+
+// .scratch/voiceover/issues/03-countdown-and-lock.md: the countdown, the editing lock, leaving the
+// page, and the button off at the Clip's end.
+describe("the countdown", () => {
+  test("three seconds with the playhead still and the microphone open, then the roll", async () => {
+    const it = await setUp();
+    await it.flow.press();
+    expect(it.flow.state).toEqual({ phase: "countdown", left: 3 });
+    // The microphone is open, so the meter already moves; nothing records yet.
+    expect(it.flow.mic).not.toBeNull();
+    expect(it.asked).toHaveLength(1);
+    expect(renderToStaticMarkup(<TakeButton flow={it.flow} />)).toContain("The microphone&#x27;s level");
+    vi.advanceTimersByTime(1000);
+    it.stage.advance(1);
+    expect(it.flow.state).toEqual({ phase: "countdown", left: 2 });
+    expect(renderToStaticMarkup(<TakeButton flow={it.flow} />)).toMatch(/>2<\/span>/);
+    vi.advanceTimersByTime(1000);
+    it.stage.advance(1);
+    expect(it.flow.state).toEqual({ phase: "countdown", left: 1 });
+    expect(it.playback.playing).toBe(false);
+    expect(it.playback.time).toBe(3);
+    expect(it.silent).toEqual([]);
+    vi.advanceTimersByTime(999);
+    expect(it.flow.state.phase).toBe("countdown");
+    vi.advanceTimersByTime(1);
+    expect(it.flow.state).toMatchObject({ phase: "recording", playhead: 3 });
+    expect(it.playback.playing).toBe(true);
+    expect(it.silent).toEqual([true]);
+  });
+
+  test("a press while the picture plays pauses it where it is, for the countdown", async () => {
+    const it = await setUp();
+    it.playback.play();
+    it.stage.advance(0.5);
+    await it.flow.press();
+    expect(it.playback.playing).toBe(false);
+    const at = it.playback.time;
+    it.stage.advance(2);
+    expect(it.playback.time).toBe(at);
+  });
+
+  test("Esc cancels it: the microphone closed, nothing picked, rolled, uploaded or added", async () => {
+    const it = await setUp();
+    await it.flow.press();
+    vi.advanceTimersByTime(1500);
+    it.key({ key: "Escape" });
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.flow.mic).toBeNull();
+    expect(it.closed).toEqual(expect.arrayContaining(["track", "capture"]));
+    // Esc cancelled the countdown, and didn't also pick nothing.
+    expect(it.picked).toEqual([]);
+    vi.advanceTimersByTime(5000);
+    await it.settle();
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.playback.playing).toBe(false);
+    expect(it.silent).toEqual([]);
+    expect(it.uploaded).toEqual([]);
+    expect(it.world.edits.music).toHaveLength(1);
+    // With no countdown, Esc picks nothing as ever.
+    it.key({ key: "Escape" });
+    expect(it.picked).toEqual(["none"]);
+  });
+
+  test("pressed again (the button or Shift+R), it is cancelled the same", async () => {
+    const it = await setUp();
+    await it.flow.press();
+    it.key({ key: "R", shift: true });
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.closed).toContain("track");
+    vi.advanceTimersByTime(5000);
+    expect(it.playback.playing).toBe(false);
+  });
+
+  test("Esc while the microphone is still asked for: once it opens, it is closed, and nothing rolls", async () => {
+    const it = await setUp();
+    const pending = it.flow.press();
+    expect(it.flow.state.phase).toBe("opening");
+    it.key({ key: "Escape" });
+    expect(it.flow.state).toEqual(IDLE);
+    await pending;
+    expect(it.closed).toContain("track");
+    vi.advanceTimersByTime(5000);
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.playback.playing).toBe(false);
+  });
+
+  test("Space during the countdown leaves the playhead still", async () => {
+    const it = await setUp();
+    await it.flow.press();
+    it.key({ key: " " });
+    expect(it.playback.playing).toBe(false);
+    expect(it.flow.state.phase).toBe("countdown");
+  });
+});
+
+describe("the editing lock", () => {
+  test("editing and navigation shortcuts are refused during the countdown and the recording; Space and the view's still work", async () => {
+    const it = await setUp();
+    const undone = () => it.world.edits;
+    it.world.undo.push(it.world.edits);
+    await it.flow.press();
+    for (const phase of ["countdown", "recording"]) {
+      expect(it.flow.state.phase).toBe(phase);
+      // Taken, so the browser doesn't do them either (⌘D, ⌥←), but done: nothing.
+      expect(it.key({ key: "b", command: true })).toBeUndefined();
+      it.key({ key: "z", command: true });
+      it.key({ key: "ArrowRight" });
+      it.key({ key: "End" });
+      expect(it.split).toEqual([]);
+      expect(undone().music).toHaveLength(1);
+      expect(it.world.undo).toHaveLength(1);
+      expect(it.playback.time).toBeCloseTo(phase === "countdown" ? 3 : it.playback.time);
+      vi.advanceTimersByTime(3000);
+    }
+    expect(it.playback.playing).toBe(true);
+    // Space stops the Take; once it has landed, the shortcuts are back.
+    it.speak(50.12, 1);
+    it.key({ key: " " });
+    await it.settle();
+    expect(it.flow.state).toEqual(IDLE);
+    it.key({ key: "b", command: true });
+    expect(it.split).toEqual(["split"]);
+  });
+
+  test("the history's hand edits, undo and redo are refused while locked; a change from elsewhere still applies", () => {
+    let locked = true;
+    const calls: string[] = [];
+    const history = {
+      value: 0,
+      set: (value: number) => void calls.push(`set ${value}`),
+      undo: () => void calls.push("undo"),
+      redo: () => void calls.push("redo"),
+      canUndo: true,
+      canRedo: false,
+      flush: async () => {},
+      waiting: () => false,
+      elsewhere: (value: number) => void calls.push(`elsewhere ${value}`),
+    };
+    const refused: string[] = [];
+    const hands = lockedWhile(history, () => {
+      if (locked) refused.push("told");
+      return locked;
+    });
+    hands.set(1);
+    hands.undo();
+    hands.redo();
+    hands.elsewhere(2, (step) => step, false);
+    expect(calls).toEqual(["elsewhere 2"]);
+    expect(refused).toEqual(["told", "told", "told"]);
+    locked = false;
+    hands.set(3);
+    hands.undo();
+    expect(calls).toEqual(["elsewhere 2", "set 3", "undo"]);
+  });
+
+  test("it holds from the press until the Take has landed", async () => {
+    let answer: (item: MediaItem) => void = () => {};
+    const it = await setUp(() => new Promise((resolve) => (answer = resolve)));
+    expect(locksEditing(it.flow.state)).toBe(false);
+    const pending = it.flow.press();
+    expect(locksEditing(it.flow.state)).toBe(true);
+    await pending;
+    expect(locksEditing(it.flow.state)).toBe(true);
+    vi.advanceTimersByTime(3000);
+    it.speak(50.12, 1);
+    void it.flow.press();
+    expect(it.flow.state.phase).toBe("uploading");
+    expect(locksEditing(it.flow.state)).toBe(true);
+    answer(ITEM);
+    await it.settle();
+    expect(locksEditing(it.flow.state)).toBe(false);
+    expect(it.world.edits.music).toHaveLength(2);
+  });
+});
+
+describe("leaving the page", () => {
+  // `beforeunload` as the browser fires it: it asks when the event's default is prevented.
+  const leave = (target: EventTarget) => {
+    const event = new Event("beforeunload", { cancelable: true });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  test("asks while the countdown runs or the Take records, and not otherwise", async () => {
+    const it = await setUp();
+    const page = new EventTarget();
+    const unguard = guardLeaving(page, it.flow);
+    expect(leave(page)).toBe(false);
+    await it.flow.press();
+    expect(leave(page)).toBe(true);
+    vi.advanceTimersByTime(3000);
+    expect(it.flow.state.phase).toBe("recording");
+    expect(leave(page)).toBe(true);
+    it.speak(50.12, 1);
+    await it.flow.press();
+    await it.settle();
+    expect(it.flow.state).toEqual(IDLE);
+    expect(leave(page)).toBe(false);
+    unguard();
+    await it.roll();
+    expect(leave(page)).toBe(false);
+    expect(asksBeforeLeaving({ phase: "uploading", landing: 0, secs: 1 })).toBe(false);
+    expect(asksBeforeLeaving({ phase: "opening" })).toBe(false);
+  });
+
+  test("leaving cancels the Take: the microphone closed, the bus heard, nothing uploaded", async () => {
+    const it = await setUp();
+    const page = new EventTarget();
+    guardLeaving(page, it.flow);
+    await it.roll();
+    page.dispatchEvent(new Event("pagehide"));
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.closed).toContain("track");
+    expect(it.silent).toEqual([true, false]);
+    await it.settle();
+    expect(it.uploaded).toEqual([]);
+  });
+});
+
+describe("at the Clip's end", () => {
+  test("the end is the End key's: the Clip's last frame, or past it", () => {
+    expect(atClipEnd(10 - 1 / 30, 10, 30)).toBe(true);
+    expect(atClipEnd(10, 10, 30)).toBe(true);
+    expect(atClipEnd(10 - 2 / 30, 10, 30)).toBe(false);
+  });
+
+  test("the button is off, with its hint, and neither it nor Shift+R starts a Take", async () => {
+    const it = await setUp();
+    it.key({ key: "End" });
+    it.stage.settle();
+    expect(atClipEnd(it.playback.time, it.playback.duration, 30)).toBe(true);
+    const html = renderToStaticMarkup(<TakeButton flow={it.flow} atEnd />);
+    expect(html).toMatch(/<button[^>]*disabled=""/);
+    expect(html).toContain(AT_END_HINT);
+    await it.flow.press();
+    it.key({ key: "R", shift: true });
+    await it.settle();
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.asked).toEqual([]);
+    // In the Clip, it is on.
+    expect(renderToStaticMarkup(<TakeButton flow={it.flow} atEnd={false} />)).not.toMatch(/<button[^>]*disabled=""/);
   });
 });

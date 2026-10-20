@@ -1,3 +1,5 @@
+import { lastFrame, onFrame } from "./playhead";
+
 /**
  * The take recorder's pure parts (GLOSSARY.md, Voiceover and Take; ADR 0018): the WAV a Take is
  * uploaded as, where it lands on the Timeline, its eight-minute cap and its file's name. Kept apart
@@ -86,4 +88,12 @@ export function takeName(at: Date): string {
  */
 export function canRecord(): boolean {
   return typeof window !== "undefined" && window.isSecureContext === true && typeof navigator !== "undefined" && !!navigator.mediaDevices;
+}
+
+/**
+ * Whether the playhead at `time` is at the Clip's end (its last frame, where End puts it, or past
+ * it), where the mic button is off: a Take recorded from there would never be heard.
+ */
+export function atClipEnd(time: number, duration: number, fps: number): boolean {
+  return onFrame(time, fps) >= lastFrame(duration, fps);
 }

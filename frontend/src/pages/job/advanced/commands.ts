@@ -1,8 +1,9 @@
 import type { Playback } from "../editor/playback";
 import type { ItemActions } from "./actions";
-import type { ShortcutId } from "./keymap";
+import { SHORTCUTS, type ShortcutId } from "./keymap";
 import { lastFrame, onFrame, stepFrames } from "./playhead";
 import { toggleSkim } from "./skim";
+import { counting, locksEditing, recording, type TakeState } from "./takeFlow";
 import { nextEditPoint, previousEditPoint } from "./timelineView";
 
 /**
@@ -12,6 +13,14 @@ import { nextEditPoint, previousEditPoint } from "./timelineView";
  * its key is then left to the browser.
  */
 export type Commands = Record<ShortcutId, () => boolean | void>;
+
+/** The take flow as the commands see it (`more.take`). */
+export interface TakeCommands {
+  state: () => TakeState;
+  press: () => void;
+  cancel: () => boolean;
+  refused?: () => void;
+}
 
 /**
  * The Advanced Edit's commands: those for the picked items only while something is picked, and copy
@@ -59,9 +68,10 @@ export function commandsOf(
     // While the Pick is one item that can have Keyframes: a Keyframe added or removed at the
     // playhead on its active row (K), and where its Keyframe before or after `time` is ([ and ]).
     keyframes: { toggle: () => boolean | void; around: (time: number, direction: -1 | 1) => number | null } | null;
-    // The take flow (./takeFlow.ts): whether a Take is recording, which Space then stops, and its
-    // mic button's press (Shift+R); null where the page can't record.
-    take?: { recording: () => boolean; press: () => void } | null;
+    // The take flow (./takeFlow.ts): its state (a Take recording, which Space then stops; one counting
+    // down, which Esc cancels; the editing lock), its mic button's press (Shift+R), Esc's cancel, and
+    // what tells that a key was refused by the lock; null where the page can't record.
+    take?: TakeCommands | null;
   },
 ): Commands {
   // The picked Text Layers, Shapes, Music Clips and Overlays moved `frames` frames; a run of presses is
@@ -89,14 +99,22 @@ export function commandsOf(
     if (playback.playing) playback.pause();
     playback.seek(at);
   };
-  return {
-    // While a Take records, Space stops it rather than only the picture.
-    play: () => (more.take?.recording() ? more.take.press() : playback.toggle()),
+  const take = more.take;
+  const commands: Commands = {
+    // While a Take records, Space stops it rather than only the picture; while one counts down, the
+    // playhead stays still.
+    play: () => {
+      const state = take?.state();
+      if (state && recording(state)) return take!.press();
+      if (state && counting(state)) return;
+      playback.toggle();
+    },
     record: () => (more.take ? more.take.press() : false),
     undo: () => history.undo(),
     redo: () => history.redo(),
     "pick-all": () => more.pickAll(),
-    "pick-none": () => more.pickNone(),
+    // Esc cancels a Take's countdown, and then picks nothing else.
+    "pick-none": () => (take?.cancel() ? undefined : more.pickNone()),
     split: () => more.split(),
     "freeze-frame": () => more.freeze(),
     reverse: () => more.reverse(),
@@ -126,7 +144,10 @@ export function commandsOf(
     "zoom-out": () => more.zoom(-1),
     fit: () => more.fit(),
     fullscreen: () => more.setFullscreen(true),
-    "fullscreen-exit": () => more.setFullscreen(false),
+    "fullscreen-exit": () => {
+      take?.cancel();
+      more.setFullscreen(false);
+    },
     skim: () => toggleSkim(),
     "toggle-assets": () => more.toggleAssets(),
     "toggle-inspector": () => more.toggleInspector(),
@@ -136,4 +157,33 @@ export function commandsOf(
     loop: () => more.loop(),
     "clear-marks": () => more.clearMarks(),
   };
+  return take ? lockedWhileTaking(commands, take) : commands;
+}
+
+// The editing shortcuts, and the navigation ones, by their group in the keymap table.
+const EDITING = new Set(SHORTCUTS.filter((shortcut) => shortcut.group === "editing").map((shortcut) => shortcut.id));
+const NAVIGATION = new Set(SHORTCUTS.filter((shortcut) => shortcut.group === "navigation").map((shortcut) => shortcut.id));
+
+/**
+ * `commands` locked while a Take is under way (ADR 0018): from the mic button's press until the Take
+ * lands, the editing shortcuts are refused, but Esc still cancels a countdown; while it counts down or
+ * records, so are the navigation ones, which would move the playhead the Take is recorded from.
+ * Playback (Space stops the Take) and the view's stay. A refused key is still taken, and does nothing
+ * (⌘D would be the browser's bookmark, ⌥← its Back), but Esc, which is left to the browser as ever.
+ */
+function lockedWhileTaking(commands: Commands, take: TakeCommands): Commands {
+  const locked = Object.entries(commands).map(([id, run]) => {
+    const refused = (state: TakeState) =>
+      (EDITING.has(id as ShortcutId) && locksEditing(state) && !(id === "pick-none" && counting(state))) ||
+      (NAVIGATION.has(id as ShortcutId) && (counting(state) || recording(state)));
+    return [
+      id,
+      () => {
+        if (!refused(take.state())) return run();
+        take.refused?.();
+        return id === "pick-none" ? false : undefined;
+      },
+    ];
+  });
+  return Object.fromEntries(locked) as Commands;
 }
