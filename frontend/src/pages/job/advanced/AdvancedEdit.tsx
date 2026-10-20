@@ -1,5 +1,5 @@
 import { ArrowLeft, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   api,
@@ -40,10 +40,11 @@ import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } fro
 import { boxStyle } from "../editor/textBox";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
+import { holdBus } from "../editor/masterBus";
 import { candidateDraft } from "../editor/draft";
 import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
 import { placedOverrides, type Place } from "../editor/placing";
-import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
+import { playable, playedFrom, Playback, usePlayback, type PlayedSegment } from "../editor/playback";
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
@@ -84,6 +85,7 @@ import {
   type Outcome,
   type SegmentDrag,
   type SpeedRef,
+  landTake,
 } from "./actions";
 import { effectsPreparing, useEffectedCopies, useEffectedVersion } from "../editor/effectedCopy";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
@@ -136,6 +138,11 @@ import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
+import { TakeButton, WaitingTakeNotice } from "./TakeButton";
+import { browserSettings } from "./recordingSettings";
+import { guardLeaving, holdsMicrophone, IDLE as TAKE_IDLE, locksEditing, recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
+import { browserRecorder } from "./takeRecorder";
+import { atClipEnd, canRecord } from "./voiceover";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
 import { DEFAULT_FPS, loopRegion, onFrame, type LoopMarks } from "./playhead";
@@ -168,7 +175,7 @@ import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
 import { TRANSITION_DEFAULT_SECS, TransitionPanel } from "./Transitions";
-import { useEditHistory } from "./useEditHistory";
+import { lockedWhile, useEditHistory } from "./useEditHistory";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
 const EDITABLE = new Set(["review", "rendering"]);
@@ -181,6 +188,10 @@ type Taken = "elsewhere" | "refused" | "restored";
 
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
+// What a store with nothing to follow subscribes with.
+const noSubscription = () => () => {};
+// What a hand edit refused while a Take is under way tells.
+const TAKE_LOCKED = "Editing is locked while the Take records. Stop it (Space) or cancel its countdown (Esc) first.";
 
 /**
  * The Advanced Edit of a Candidate (/jobs/:jobId/candidates/:candidateId/advanced): a CapCut-like
@@ -371,7 +382,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     sending.current = sending.current.then(send);
     return sending.current;
   }
-  const history = useEditHistory<AdvancedEdits>(editsOf(initial), save);
+  // The history as it is saved and synced, and as the editor's hands reach it: locked while a Take is
+  // under way (ADR 0018), so that every hand edit, undo and redo is refused at this one gate, while a
+  // change from elsewhere still applies (`elsewhere`) and a Take still lands (`edited.set`).
+  const edited = useEditHistory<AdvancedEdits>(editsOf(initial), save);
+  const history = lockedWhile(edited, () => lockedForTake());
   const edits = history.value;
 
   // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once; the edits
@@ -528,6 +543,49 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // The player's checks of a Grade: the before view, held; and Compare render of the draft, on a
   // desktop, cleared on any playhead move or edit.
   const checks = usePlayerChecks(playback, JSON.stringify(draft));
+  // The take flow (./takeFlow.ts): a Take recorded from the playhead, landed as a Music Clip marked
+  // Speech. Only where the browser gives a microphone (a secure context); null elsewhere. What it
+  // lands and tells goes through `takeLatest`, this render's, as the upload answers after later ones.
+  const takeLatest = useRef({
+    upload: library.upload,
+    land: (_take: LandedTake): number | null => null,
+    tell: (_text: string) => {},
+    atEnd: (): boolean => false,
+  });
+  // The recording settings beside the mic button (./recordingSettings.ts): the input the next Take
+  // opens, "Hear the Clip", and a test meter that doesn't open while a Take holds the microphone (it
+  // does while one uploads or waits in the tab).
+  const [{ take, takeSettings }] = useState(() => {
+    if (!canRecord()) return { take: null, takeSettings: null };
+    let flow: TakeFlow | null = null;
+    const settings = browserSettings(browserRecorder(), () => !!flow && holdsMicrophone(flow.state));
+    flow = new TakeFlow({
+      open: (capped) => settings.openTake(capped),
+      playback,
+      silence: holdBus,
+      hearClip: () => settings.hearClip,
+      upload: (file) => takeLatest.current.upload(file),
+      land: (landed) => takeLatest.current.land(landed),
+      tell: (text) => takeLatest.current.tell(text),
+      // Save WAV of a Take waiting after its upload failed: downloaded as the Save audio menu's WAVs are.
+      save: download,
+      atEnd: () => takeLatest.current.atEnd(),
+    });
+    return { take: flow, takeSettings: settings };
+  });
+  useEffect(() => () => take?.dispose(), [take]);
+  // Leaving the page while the countdown runs or a Take records asks first, and cancels the Take; while
+  // a Take uploads or waits in the tab, it asks first too.
+  useEffect(() => (take ? guardLeaving(window, take) : undefined), [take]);
+  const readTake = () => take?.state ?? TAKE_IDLE;
+  const takeState = useSyncExternalStore(take?.subscribe ?? noSubscription, readTake, readTake);
+  const recordingTake = takeRecording(takeState);
+  // Whether a hand edit is refused now, as a Take is under way: the owner is told.
+  function lockedForTake() {
+    if (!take || !locksEditing(take.state)) return false;
+    tellOnce(TAKE_LOCKED);
+    return true;
+  }
   const fetchCompare = (at: number, signal: AbortSignal) => api.compareFrame(job.id, candidate.id, { at, draft }, signal);
   const { compare } = checks;
   useEffect(() => {
@@ -547,9 +605,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const duration = playback.duration;
   // The Clip's frame rate, the Source's, which the playhead steps by.
   const fps = preview?.plan.fps || DEFAULT_FPS;
+  // The playhead at the Clip's end (where End puts it), where the mic button is off.
+  const atEnd = usePlayback(playback, (time, p) => atClipEnd(time, p.duration, fps));
   // The Loop Region the marks make, clamped inside the Clip as it is now; played while Loop is on.
   const region = useMemo(() => loopRegion(marks, { fps, duration }), [marks, fps, duration]);
-  useEffect(() => playback.setLoop(looping ? region : null), [playback, looping, region]);
+  // A Take rolls from the playhead whatever the Loop: it is set again once the Take stops.
+  useEffect(() => playback.setLoop(looping && !recordingTake ? region : null), [playback, looping, region, recordingTake]);
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   const longest = longestClip(job.options.max_secs);
   // A Speed's steps, from the slider, the chips or the field, each made from where its group began.
@@ -735,6 +796,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
+  // A Take landed: its Music Clip added (one step of undo) and Picked; the take flow puts the playhead
+  // at its start. Refused, like any addition, on a locked Music Track: the item stays in the library.
+  takeLatest.current = {
+    upload: library.upload,
+    // Past the editing lock, which holds until it has landed. Refused, the Take waits, uploaded, for Try again.
+    land: (landed) => {
+      if (refused("music")) return null;
+      const outcome = landTake({ edits }, landed);
+      const clip = outcome.edits.music.find((music) => music.id === outcome.id);
+      if (!clip) return null;
+      edited.set(outcome.edits);
+      select(outcome.pick);
+      return clip.start;
+    },
+    tell: (text) => setNotice({ id: Date.now(), text }),
+    atEnd: () => atClipEnd(playback.time, playback.duration, fps),
+  };
   const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join };
   // The captions' look, from the inspector's Caption Style panel and Preset bar: each change a step of undo.
   const presets = usePresets();
@@ -911,6 +989,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     toggleAssets: () => layout.setAssetHidden(!layout.read().assetHidden),
     toggleInspector: () => layout.setInspectorHidden(!layout.read().inspectorHidden),
     keyframes,
+    take: take && { state: () => take.state, press: () => void take.press(), cancel: () => take.cancel(), refused: () => tellOnce(TAKE_LOCKED) },
   });
   useShortcuts(commands, { fullscreen: fullscreen.way !== null, phone: !wide });
 
@@ -1115,11 +1194,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           // A Stickers tile dropped on the preview: its Shape there, at the playhead.
           drop: { types: [DRAG_SHAPE], onDrop: (data, at) => addNewShape(data.getData(DRAG_SHAPE) as ShapeKind, playback.time, at) },
         }}
+        // Its Play button is Space: it stops a Take while one records.
+        onPlay={() => void commands.play()}
         fit
         rates={wide}
         tools={
           wide ? (
             <>
+              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
               {fullscreenButton}
@@ -1127,6 +1209,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           ) : (
             <>
               <FrameStep playback={playback} fps={fps} commands={commands} />
+              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               {fullscreenButton}
             </>
@@ -1438,6 +1521,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       >
         <p>This clip was changed elsewhere (another tab or the agent), so your latest changes weren't saved. Leaving drops them.</p>
       </ConfirmDialog>
+      <WaitingTakeNotice flow={take} />
       <ChangeNotice notice={notice} onClose={closeNotice} />
       {itemMenu && <SoundMenu opened={itemMenu} sound={itemSound(itemMenu.item, edits, mediaById)} detaching={detachEntries(itemMenu.item)} saving={savingSound} onSave={saveSound} onClose={setItemMenu} />}
     </>

@@ -197,6 +197,17 @@ describe("resolving a key", () => {
     expect(resolveShortcut({ key: "]" }, typing)).toBeNull();
   });
 
+  // .scratch/voiceover/issues/02-record-a-take.md
+  test("Shift+R records a Take, in either case, while R alone Reverses; on a phone or typing it gives nothing", () => {
+    expect(resolveShortcut({ key: "R", shift: true })).toBe("record");
+    expect(resolveShortcut({ key: "r", shift: true })).toBe("record");
+    expect(resolveShortcut({ key: "r" })).toBe("reverse");
+    expect(resolveShortcut({ key: "R", shift: true }, { phone: true })).toBeNull();
+    expect(resolveShortcut({ key: "R", shift: true }, { typing: true })).toBeNull();
+    expect(resolveShortcut({ key: "r", shift: true, command: true })).toBeNull();
+    expect(keyNames(SHORTCUTS.find((shortcut) => shortcut.id === "record")!, true)).toEqual(["⇧R"]);
+  });
+
   test("on a phone, ? gives nothing: there is no sheet", () => {
     expect(resolveShortcut({ key: "?", shift: true }, { phone: true })).toBeNull();
     expect(resolveShortcut({ key: "z", command: true }, { phone: true })).toBe("undo");
@@ -326,7 +337,7 @@ describe("the shortcuts sheet", () => {
 
   test("the marks and Loop are listed under playback; Alt+X is ⌥X on a Mac and Alt+X elsewhere", () => {
     const playback = shortcutSheet().find((group) => group.group === "playback")!;
-    expect(playback.shortcuts.map((shortcut) => shortcut.id)).toEqual(["play", "mark-in", "mark-out", "loop", "clear-marks"]);
+    expect(playback.shortcuts.map((shortcut) => shortcut.id)).toEqual(["play", "mark-in", "mark-out", "loop", "clear-marks", "record"]);
     expect(keyNames(row("clear-marks"), true)).toEqual(["⌥X"]);
     expect(keyNames(row("clear-marks"), false)).toEqual(["Alt+X"]);
     expect(keyNames(row("mark-in"), true)).toEqual(["I"]);

@@ -622,7 +622,8 @@ export type ShapeEvent = PictureLayerEvent<Shape>;
 // in and out. Its `keys` shape its volume over its length (ADR 0008), in place of `volume`; the fades
 // multiply them.
 // Muted (ADR 0016), it is silent and keeps them. With `duck`, a depth in dB (-30 to -1), it is
-// turned down that far while speech is heard (ADR 0016); a Music Clip of the Source has none.
+// turned down that far while speech is heard (ADR 0016); a Music Clip of the Source has none. Marked
+// `speech` (ADR 0018), a song's or a video's is itself speech over its whole span, and has no `duck`.
 export interface MusicClip extends Omit<Retiming, "hold"> {
   id: string;
   media: string | null;
@@ -635,6 +636,8 @@ export interface MusicClip extends Omit<Retiming, "hold"> {
   keys: Keys;
   muted?: boolean;
   duck?: number | null;
+  // Left out, false: stored Music Clips aren't Speech.
+  speech?: boolean;
   // The Segment whose sound was Detached onto it (ADR 0016), which Reattach finds it by.
   detached_from?: string | null;
   // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume, duck and
@@ -656,8 +659,8 @@ export interface Retiming {
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
 // `volume`; its fades multiply them. It plays (end − start) × speed of its item: with `source`, of
 // the Source (`media` null), at the Clip's `source_volume` too. A Muted one (ADR 0016) isn't heard.
-// A ducked one (`duck` dB) is turned down under the spans of `speech` that reach it, in seconds into
-// the Clip, by the plan's `ducking` (ADR 0016).
+// A ducked one (`duck` dB) is turned down under the spans of speech that reach it (`speech_spans`),
+// in seconds into the Clip, by the plan's `ducking` (ADR 0016).
 export interface AudioEvent extends Omit<Retiming, "hold"> {
   media: string | null;
   source?: boolean;
@@ -671,9 +674,12 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   id: string;
   muted?: boolean;
   duck?: number | null;
-  speech?: [number, number][];
+  speech_spans?: [number, number][];
   // Where a ducked one is turned down, ramps included, within it (the planner's ducked_stretches).
   ducked?: [number, number][];
+  // A Music Clip's marked Speech (ADR 0018), as MusicClip.speech: its whole span is speech where it
+  // isn't Muted.
+  speech?: boolean;
   detached_from?: string | null;
   // Its item's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];

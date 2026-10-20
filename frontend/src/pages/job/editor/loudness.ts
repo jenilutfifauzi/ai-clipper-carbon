@@ -50,7 +50,7 @@ export function loudness(event: Heard, time: number, crossed: Share = () => 1): 
   if (event.fade_out > 0) share = Math.min(share, (event.end - time) / event.fade_out);
   const { crossfade } = event;
   const taken = crossfade && time > crossfade.start ? crossedVolumes(crossfade, time).outgoing : 1;
-  const ducked = event.duck != null && event.ducking ? duckAt(event.speech ?? [], event.duck, time, event.ducking) : 1;
+  const ducked = event.duck != null && event.ducking ? duckAt(event.speech_spans ?? [], event.duck, time, event.ducking) : 1;
   return valueAt(event.gain, time - event.start, event.volume) * Math.max(0, Math.min(1, share)) * Math.max(0, Math.min(1, taken)) * ducked * crossed(time);
 }
 
@@ -107,7 +107,7 @@ export function eventSound(event: AudioEvent, sourceVolume: number, ducking?: Du
 
 /** Whether a sound's loudness changes over its time: keyed, faded, ducked under speech or taken away by a Transition. */
 export const changing = (event: Heard): boolean =>
-  event.gain.length > 0 || event.fade_in > 0 || event.fade_out > 0 || !!event.crossfade || (event.duck != null && !!event.speech?.length);
+  event.gain.length > 0 || event.fade_in > 0 || event.fade_out > 0 || !!event.crossfade || (event.duck != null && !!event.speech_spans?.length);
 
 /**
  * `event`'s loudness (times `crossed`) from `time` to its end, CURVE_RATE values a second of the

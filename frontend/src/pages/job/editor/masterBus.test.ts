@@ -12,7 +12,17 @@ class FakeNode {
 }
 
 class FakeGain extends FakeNode {
-  readonly gain = { value: 1, cancelScheduledValues: () => {} };
+  // What was scheduled on its gain, in order, at the context's time.
+  readonly scheduled: string[] = [];
+  readonly gain = {
+    value: 1,
+    cancelScheduledValues: (at: number) => void this.scheduled.push(`cancel ${at}`),
+    setValueAtTime: (value: number, at: number) => void this.scheduled.push(`set ${value} at ${at}`),
+    linearRampToValueAtTime: (value: number, at: number) => {
+      this.scheduled.push(`ramp ${value} by ${at}`);
+      this.gain.value = value;
+    },
+  };
 }
 
 class FakeAnalyser extends FakeNode {
@@ -33,7 +43,7 @@ class FakeContext {
     contexts.push(this);
   }
   readonly state = "running";
-  readonly currentTime = 0;
+  currentTime = 0;
   readonly destination = new FakeNode();
   resume = () => Promise.resolve();
   private make<T extends FakeNode>(node: T): T {
@@ -109,6 +119,38 @@ describe("the preview's master bus", () => {
       listeners.get(type)?.();
       expect(resume, type).toHaveBeenCalledTimes(1);
     }
+  });
+
+  // .scratch/voiceover/issues/02-record-a-take.md: while a Take records, the speakers are silent.
+  test("is held silent while a Take records, and heard again after; a bus made meanwhile starts silent", async () => {
+    const { setVolume } = await import("./PreviewMusic");
+    const { heardBus, holdBus } = await import("./masterBus");
+    holdBus(true);
+    setVolume(element(), 1);
+    const input = heardBus()!.input as unknown as FakeGain;
+    expect(input.gain.value).toBe(0);
+    expect(input.scheduled).toEqual([]);
+    holdBus(false);
+    expect(input.gain.value).toBe(1);
+    holdBus(true);
+    expect(input.gain.value).toBe(0);
+    holdBus(false);
+  });
+
+  // An instant step of the gain clicks: the hold ramps down and back up in a few milliseconds.
+  test("is held and let go along a short ramp, from where its gain is, not in one step", async () => {
+    const { setVolume } = await import("./PreviewMusic");
+    const { heardBus, holdBus, HOLD_RAMP_SECS } = await import("./masterBus");
+    setVolume(element(), 1);
+    const input = heardBus()!.input as unknown as FakeGain;
+    contexts[0].currentTime = 2;
+    holdBus(true);
+    expect(HOLD_RAMP_SECS).toBeGreaterThanOrEqual(0.01);
+    expect(HOLD_RAMP_SECS).toBeLessThanOrEqual(0.02);
+    expect(input.scheduled).toEqual(["cancel 2", "set 1 at 2", `ramp 0 by ${2 + HOLD_RAMP_SECS}`]);
+    input.scheduled.length = 0;
+    holdBus(false);
+    expect(input.scheduled).toEqual(["cancel 2", "set 0 at 2", `ramp 1 by ${2 + HOLD_RAMP_SECS}`]);
   });
 
   test("is not made before anything is heard", async () => {

@@ -20,7 +20,7 @@ type Case = {
   keys?: { at: number; value: number; ease?: number[] }[];
   muted?: boolean;
   duck?: number;
-  speech?: number[][];
+  speech_spans?: number[][];
   source?: boolean;
   source_volume?: number;
   tail?: number;
@@ -36,13 +36,13 @@ describe("a sound", () => {
     const gain = (sound.keys ?? []).map(({ at, value, ease }) => ({ at, value, ease: (ease ?? LINEAR) as Ease }));
     const muted = sound.muted ?? false;
     const sourceVolume = sound.source_volume ?? 1;
-    const speech = (sound.speech ?? []) as [number, number][];
+    const speech = (sound.speech_spans ?? []) as [number, number][];
     const tail = sound.tail ?? 0;
 
     test(`${name}: is as loud as the shared cases say`, () => {
       // A ducked one as the plan has it, with the cases' ramps (`eventSound`); a Segment taken away by
       // the Transition into the next over its tail.
-      const ducked = sound.duck != null ? { duck: sound.duck, speech } : {};
+      const ducked = sound.duck != null ? { duck: sound.duck, speech_spans: speech } : {};
       const crossfade = sound.crossfade ? { start: sound.end - tail, end: sound.end } : undefined;
       const media = sound.source ? null : isSegment ? "video" : "song";
       const event: Heard = isSegment
@@ -214,7 +214,7 @@ describe("a Music Clip of the Source's sound", () => {
 // .scratch/audio-mixing/issues/10: a ducked song, as its gain node follows it.
 describe("a ducked sound", () => {
   const ducking = { lead_secs: 0.25, release_secs: 0.5, bridge_secs: 0.8 };
-  const song: AudioEvent = { id: "m", media: "song", start: 0, end: 10, offset: 0, volume: 1, fade_in: 0, fade_out: 0, gain: [], duck: -20, speech: [[3, 5]] };
+  const song: AudioEvent = { id: "m", media: "song", start: 0, end: 10, offset: 0, volume: 1, fade_in: 0, fade_out: 0, gain: [], duck: -20, speech_spans: [[3, 5]] };
 
   test("follows a curve that goes down under speech and comes back up, as the plan's ramps say", () => {
     const sound = eventSound(song, 1, ducking);
@@ -226,6 +226,6 @@ describe("a ducked sound", () => {
 
   test("isn't ducked without the plan's ramps, nor follows a curve without speech to duck under", () => {
     expect(loudness(eventSound(song, 1), 4)).toBe(1);
-    expect(changing(eventSound({ ...song, speech: [] }, 1, ducking))).toBe(false);
+    expect(changing(eventSound({ ...song, speech_spans: [] }, 1, ducking))).toBe(false);
   });
 });

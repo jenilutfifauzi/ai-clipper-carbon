@@ -103,6 +103,7 @@ export function ClipPreview({
   tools,
   hideBar = false,
   over,
+  onPlay,
 }: {
   src: string;
   // The Job whose Source `src` is: a reversed Segment of it plays from its Retimed copy.
@@ -122,6 +123,9 @@ export function ClipPreview({
   hideBar?: boolean;
   // Laid over the whole stage, under nothing (the Advanced Edit's Compare render).
   over?: ReactNode;
+  // What the Play button does instead of playing or pausing (the Advanced Edit's Space, which stops a
+  // Take while one records).
+  onPlay?: () => void;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -335,7 +339,7 @@ export function ClipPreview({
         <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
           {frame}
         </div>
-        <Transport playback={playback} compact rates={rates} loop={loop} tools={tools} hidden={hideBar} />
+        <Transport playback={playback} compact rates={rates} loop={loop} tools={tools} hidden={hideBar} onPlay={onPlay} />
       </div>
     );
   }
@@ -1312,6 +1316,7 @@ function Transport({
   tools,
   hidden = false,
   loop,
+  onPlay,
 }: {
   playback: Playback;
   compact?: boolean;
@@ -1319,6 +1324,7 @@ function Transport({
   tools?: ReactNode;
   hidden?: boolean;
   loop?: LoopControl;
+  onPlay?: () => void;
 }) {
   const playing = usePlayback(playback, (_, p) => p.playing);
   // Tenths of a second: enough for the label and the scrubber, and few re-renders.
@@ -1333,7 +1339,7 @@ function Transport({
     >
       {/* Compact on a phone (closer together, the time over the Clip's length) to fit 375 px. */}
       <div className={cx("flex items-center gap-3", compact && "max-sm:gap-2")}>
-        <Button variant="secondary" size="icon" onClick={() => playback.toggle()} aria-label={playing ? "Pause" : "Play"}>
+        <Button variant="secondary" size="icon" onClick={() => (onPlay ? onPlay() : playback.toggle())} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause aria-hidden size={18} /> : <Play aria-hidden size={18} />}
         </Button>
         <input

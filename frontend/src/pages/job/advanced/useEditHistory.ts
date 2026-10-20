@@ -137,3 +137,24 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     elsewhere,
   };
 }
+
+/**
+ * `history` as the editor's hands reach it, locked while `refuse()` says so (a Take under way, ADR
+ * 0018): every hand edit (the Timeline's, the inspector's, the stage's and the shortcuts', which all
+ * go through `set`), undo and redo do nothing then, and `refuse` tells why. A change from elsewhere
+ * (`elsewhere`, edit-sync) still applies, and saving goes on as ever.
+ */
+export function lockedWhile<T>(history: EditHistory<T>, refuse: () => boolean): EditHistory<T> {
+  return {
+    ...history,
+    set: (value, group) => {
+      if (!refuse()) history.set(value, group);
+    },
+    undo: () => {
+      if (!refuse()) history.undo();
+    },
+    redo: () => {
+      if (!refuse()) history.redo();
+    },
+  };
+}

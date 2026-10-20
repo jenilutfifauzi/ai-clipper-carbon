@@ -360,7 +360,13 @@ Edits:
   far while speech is heard: the Words of the episode's Segments and Music Clips without media
   that aren't Muted, captions on or not. Down over 0.25 s before speech, through pauses under 0.8 s,
   up over 0.5 s after. One added without `duck` gets -12 (not a Detached one), so give null to keep
-  it off; one without media has none. The dry run's `sounds` list every sound's span, fades, Muted and `ducked` stretches.
+  it off; one without media has none. The dry run's `sounds` list every sound's span, fades, Muted, and
+  a ducked one's `speech_spans` (the speech that reaches it) and `ducked` stretches.
+- A Music Clip of a song or a video's sound with `speech` true (a voiceover or a voice memo; false
+  by default) is speech over its whole span, pauses included, while it isn't Muted: the ducked
+  sounds go down under it as under Words. It is never ducked, so it refuses a `duck`: give
+  `duck` null with it on one that has one (one added with `speech` gets no -12). One without media
+  refuses `speech` (its Words are its speech). The dry run marks it `speech` in `sounds`.
 - Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
   J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
   Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
@@ -1232,7 +1238,12 @@ def _plan_view(
                 **_times(event, "start", "end"),
                 **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
                 **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
-                **({"duck": event["duck"], "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]]} if event.get("duck") is not None else {}),
+                **({"speech": True} if event.get("speech") else {}),
+                **({
+                    "duck": event["duck"],
+                    "speech_spans": [[round(time, 2) for time in span] for span in event["speech_spans"]],
+                    "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]],
+                } if event.get("duck") is not None else {}),
                 **({"detached_from": event["detached_from"]} if event.get("detached_from") else {}),
                 **_compact({"audio_effects": _effects_view(event.get("audio_effects", []))}),
                 **(_video_read(event, copied) if _retimed(event) else {}),

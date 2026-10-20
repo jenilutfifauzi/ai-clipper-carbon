@@ -121,7 +121,7 @@ def test_a_ducked_music_clips_wav_is_as_loud_as_with_duck_off(client, song):
     candidate = patch(client, job, candidate, music=[under | {"duck": -20}])
     # The plan ducks it under the Words.
     planned = client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan").json()["plan"]
-    assert planned["audio"][0]["duck"] == -20 and planned["audio"][0]["speech"]
+    assert planned["audio"][0]["duck"] == -20 and planned["audio"][0]["speech_spans"]
     ducked = saved_sound(client, job, candidate, "music", "m")
     unducked = saved_sound(client, job, candidate, "music", "m", {"music": [under | {"duck": None}]})
     for at in (0.5, 1.0, 1.5):

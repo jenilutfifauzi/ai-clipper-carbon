@@ -32,8 +32,8 @@ const percent = (value: number) => `${Math.round(value * 100)}%`;
 export const musicName = (clip: MusicClip, item: MediaItem | undefined) => (clip.media === null ? "The episode's sound" : (item?.name ?? "Music"));
 
 /**
- * The selected Music Clip's volume, Muted, fades, Duck under speech and its depth (none for the
- * Source's sound, which is never Ducked), Speed (the Overlay's fields), part of its song (or,
+ * The selected Music Clip's volume, Muted, fades, Speech and, while it isn't Speech, its Duck under
+ * speech and its depth (neither for the Source's sound, whose Words are speech and never Ducked), Speed (the Overlay's fields), part of its song (or,
  * of the Source's sound, the time in the episode it plays from) and time. Its volume is shown at the
  * playhead, and keyed there (`onVolume` writes a Keyframe once it has some), with its ‹ ◆ ›.
  */
@@ -50,6 +50,7 @@ export function MusicFields({
   onSpeed,
   onReverse,
   onDuck,
+  onSpeech,
   onDuplicate,
   onDelete,
   detached,
@@ -74,6 +75,8 @@ export function MusicFields({
   onReverse: (reverse: boolean) => void;
   // Its Duck under speech set (actions.ts' setDuck): off with null, else a depth in dB.
   onDuck: (duck: number | null, group?: string) => void;
+  // Marked Speech or not (actions.ts' setSpeech), its Duck cleared when on.
+  onSpeech: (speech: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
   // A Detached sound's Segment (its `index` on the Main Track), while it is there to Reattach it to.
@@ -141,7 +144,7 @@ export function MusicFields({
           format={(v) => `${v.toFixed(1)} s`}
           onChange={fade("fade_out")}
         />
-        {!episode && <DuckFields duck={clip.duck ?? null} group={`music:${clip.id}:duck`} onDuck={onDuck} />}
+        <SpeechFields clip={clip} onSpeech={onSpeech} onDuck={onDuck} />
       </Group>
       {effects}
       <SpeedFields
@@ -166,6 +169,31 @@ export function MusicFields({
         onChange={onChange}
       />
     </div>
+  );
+}
+
+/**
+ * A Music Clip's Speech switch (GLOSSARY.md, Speech; ADR 0018) and, while it is off, its Duck under
+ * speech (`DuckFields`), a Speech one never being Ducked. Neither for a Music Clip of the Source, whose
+ * Words are its speech.
+ */
+export function SpeechFields({
+  clip,
+  onSpeech,
+  onDuck,
+}: {
+  clip: MusicClip;
+  onSpeech: (speech: boolean) => void;
+  onDuck: (duck: number | null, group?: string) => void;
+}) {
+  if (clip.media === null) return null;
+  return (
+    <>
+      <Switch checked={clip.speech ?? false} onChange={onSpeech}>
+        <span className="text-sm font-medium">Speech</span>
+      </Switch>
+      {!clip.speech && <DuckFields duck={clip.duck ?? null} group={`music:${clip.id}:duck`} onDuck={onDuck} />}
+    </>
   );
 }
 

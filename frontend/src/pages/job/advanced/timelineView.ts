@@ -409,7 +409,7 @@ export interface Duck {
  */
 export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [], tail = 0, duck }: Heard): number {
   const sound: AudioEvent = { id: "", media: null, start: 0, end: secs + tail, offset: 0, volume, fade_in, fade_out, gain: [...keys] };
-  return loudness(duck ? { ...sound, duck: duck.depth, speech: duck.speech, ducking: duck.ducking } : sound, time);
+  return loudness(duck ? { ...sound, duck: duck.depth, speech_spans: duck.speech, ducking: duck.ducking } : sound, time);
 }
 
 /**
@@ -421,7 +421,7 @@ export function gainAt(time: number, { volume, secs, fade_in, fade_out, keys = [
 export function musicDuck(clip: MusicClip, event: AudioEvent | undefined, ducking: Ducking | undefined): Duck | undefined {
   if (clip.media === null || clip.duck == null || !event || !ducking) return undefined;
   const into = (spans: [number, number][] = []) => spans.map(([start, end]): [number, number] => [start - clip.start, end - clip.start]);
-  return { depth: clip.duck, speech: into(event.speech), stretches: into(event.ducked), ducking };
+  return { depth: clip.duck, speech: into(event.speech_spans), stretches: into(event.ducked), ducking };
 }
 
 /** A Segment's sound: its volume, its Keyframes and its fades. */

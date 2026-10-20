@@ -8,6 +8,7 @@ export type ShortcutId =
   | "mark-out"
   | "loop"
   | "clear-marks"
+  | "record"
   | "undo"
   | "redo"
   | "pick-all"
@@ -97,6 +98,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "mark-out", keys: [{ key: "o" }], group: "playback", label: "Mark Out at the playhead" },
   { id: "loop", keys: [{ key: "l" }], group: "playback", label: "Loop the Region on or off (with no marks, the whole Clip)" },
   { id: "clear-marks", keys: [{ key: "x", alt }], group: "playback", label: "Clear the marks and stop looping" },
+  // R alone is Reverse.
+  { id: "record", keys: [{ key: "r", shift }], group: "playback", label: "Record a Voiceover from the playhead, or stop the Take", desktop: true },
   { id: "step-back", keys: [{ key: "ArrowLeft" }], group: "navigation", label: "Playhead one frame back" },
   { id: "step-forward", keys: [{ key: "ArrowRight" }], group: "navigation", label: "Playhead one frame forward" },
   { id: "step-back-10", keys: [{ key: "ArrowLeft", shift }], group: "navigation", label: "Playhead ten frames back" },

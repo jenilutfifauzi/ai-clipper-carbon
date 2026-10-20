@@ -568,7 +568,8 @@ class MusicClip:
     """A song (or a video's sound) from the Media Library under the Clip, or without `media` the
     Source's sound, heard from `start` for `secs` in Timeline time: secs * speed of it from `offset`
     seconds in, at `volume` (its volume `keys` in place of it), faded in and out, ducked under speech
-    by `duck` dB (docs/adr/0008, 0016), heard through its stack of `audio_effects` (docs/adr/0017)."""
+    by `duck` dB (docs/adr/0008, 0016), or itself speech when marked `speech` (docs/adr/0018), heard
+    through its stack of `audio_effects` (docs/adr/0017)."""
     # Its read is kept within its file with the Media Library at hand (app/api.py), or within the
     # Source (app/review.py), and its fades multiply its keys. The Source's is also at the Clip's
     # own volume (`source_volume`), as a Segment of it is; `offset` is then a time on its timeline.
@@ -592,6 +593,10 @@ class MusicClip:
     # Turned down by this many dB while speech is heard (docs/adr/0016); None: not ducked. The
     # Source's sound is speech itself, and is never ducked.
     duck: Duck | None = None
+    # Marked Speech (docs/adr/0018): a song's of a voice, a Take's or an uploaded voice memo's, which
+    # is speech for Ducking over its whole span, pauses included, and so is never ducked itself. The
+    # Source's sound has its Words for speech, and is never marked.
+    speech: bool = False
     # The Segment whose sound was Detached onto it (docs/adr/0016), which Reattach finds it by: it
     # names one of the Candidate's when it is added or changed (app/review.py).
     detached_from: ItemId | None = None
@@ -606,6 +611,10 @@ class MusicClip:
             raise TypeError(f"Music Clip {self.id} was given its media in place of its start")
         if self.media is None and self.duck is not None:
             raise ValueError(f"Music Clip {self.id} plays the episode's sound, which is never ducked: it has no duck")
+        if self.media is None and self.speech:
+            raise ValueError(f"Music Clip {self.id} plays the episode's sound, whose Words are its speech: it isn't marked Speech")
+        if self.speech and self.duck is not None:
+            raise ValueError(f"Music Clip {self.id} is Speech, which is never ducked: it has no duck")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Music Clip {self.id}"))
 
