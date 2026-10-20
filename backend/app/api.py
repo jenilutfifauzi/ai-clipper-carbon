@@ -62,7 +62,7 @@ from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, 
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
-from app.looks import Look, LookNotFound, all_looks, get_look
+from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -167,6 +167,10 @@ def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
 
+def _imported_looks(request: Request) -> ImportedLooks:
+    return request.app.state.looks
+
+
 def _faces(request: Request) -> Faces:
     return request.app.state.faces
 
@@ -195,6 +199,7 @@ Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
+ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
@@ -1318,8 +1323,50 @@ def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetSto
 
 @router.get("/looks")
 def list_looks() -> list[Look]:
-    """Every Look a Grade can have (app/looks.py), by its order: id, name, category and Adjust values."""
+    """Every Look a Grade can have (app/looks.py): the built-in ones by their order, then the Imported
+    ones as they were imported. Each with its id, name, category, Adjust values, whether it has a 3D
+    table (an Imported Look) and the tables and matrix fitted to it, which the preview draws."""
     return all_looks()
+
+
+@router.post("/looks", status_code=201)
+def import_look(file: UploadFile, imported: ImportedLookStore) -> Look:
+    """Import an uploaded `.cube` file (a multipart/form-data `file`) as a new Imported Look, kept for
+    every Job: a 3D table of 2 to 65 a side. 422 naming the line for one that isn't."""
+    try:
+        return imported.add(file.file.read(MAX_LOOK_BYTES + 1), file.filename or "Look")
+    except BadCube as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+@router.delete("/looks/{look_id}", status_code=204)
+def delete_look(look_id: str, imported: ImportedLookStore, store: Store) -> None:
+    """Delete an Imported Look and its table. 409 for a built-in one, and while a Candidate's Grade
+    names it, listing them."""
+    if any(look.id == look_id for look in builtin_looks()):
+        raise HTTPException(409, f"Look {look_id} comes with the app and can't be deleted")
+    try:
+        look = imported.get(look_id)
+    except LookNotFound:
+        raise HTTPException(404, f"No Look {look_id}") from None
+    if uses := look_uses(store, look_id):
+        where = "; ".join(f"{use.title} (Job {use.job_id}, Candidate {use.candidate_id})" for use in uses)
+        message = f"Look {look.name} is used by {where}: change their grades first"
+        raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
+    try:
+        imported.delete(look_id)
+    except LookNotFound:
+        raise HTTPException(404, f"No Look {look_id}") from None
+
+
+def look_uses(store: JobStore, look_id: str) -> list["MediaUse"]:
+    """The Candidates, of every Job, whose Grades name the Look."""
+    return [
+        MediaUse(job_id=job.id, candidate_id=candidate.id, title=candidate.title or f"Clip {candidate.id}")
+        for job in store.all()
+        for candidate in store.load_candidates(job.id) or []
+        if look_id in candidate.looks()
+    ]
 
 
 @router.get("/text-presets")

@@ -936,6 +936,17 @@ class Candidate:
             | {overlay.media for overlay in self.overlays}
         )
 
+    def looks(self) -> dict[str, list[str]]:
+        """The Looks its Grades name (app/looks.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        graded = [("its grade", self.grade)]
+        graded += [(f"Segment {segment.id}", segment.grade) for segment in self.segments]
+        graded += [(f"Overlay {overlay.id}", overlay.grade) for overlay in self.overlays]
+        for part, grade in graded:
+            if grade.look is not None:
+                named.setdefault(grade.look, []).append(part)
+        return named
+
     def faces(self) -> dict[str, list[str]]:
         """The Faces it names (app/fonts.py), each with the parts that name it: its Text Layers, and
         its Style Overrides by section."""

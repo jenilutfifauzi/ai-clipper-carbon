@@ -1,0 +1,4 @@
+TITLE "A 1D table"
+LUT_1D_SIZE 2
+0 0 0
+1 1 1

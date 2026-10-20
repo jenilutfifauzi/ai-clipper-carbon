@@ -85,7 +85,8 @@ def test_the_fold_reads_a_looks_values_from_the_catalogue():
 def test_a_look_is_listed_saved_and_planned_and_an_unknown_one_refused(client):
     listed = client.get("/api/looks").json()
     assert [look["id"] for look in listed] == [look.id for look in all_looks()]
-    assert set(listed[0]) == {"id", "name", "category", "order", "adjust"}
+    assert set(listed[0]) == {"id", "name", "category", "order", "adjust", "has_table", "fit"}
+    assert (listed[0]["has_table"], listed[0]["fit"]) == (False, None)
     assert {f.name for f in fields(Adjust)} == set(listed[0]["adjust"])
 
     job = reviewed(client)

@@ -1112,6 +1112,17 @@ export interface Look {
   category: string;
   order: number;
   adjust: Adjust;
+  // An Imported Look's: it has a 3D table (from a .cube file), and the tables and matrix fitted to it,
+  // which the preview draws in its place. A built-in Look has neither.
+  has_table?: boolean;
+  fit?: LookFit | null;
+}
+
+// The table per channel (R, G, B; 256 entries, 0..1) and the 3×3 matrix (rows R, G, B) fitted to an
+// Imported Look's 3D table (backend/app/looks.py), drawn as a Grade's tables and matrix are.
+export interface LookFit {
+  tables: [number[], number[], number[]];
+  matrix: [[number, number, number], [number, number, number], [number, number, number]];
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
@@ -1558,6 +1569,14 @@ export const api = {
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
   // Every Look, by its order.
   listLooks: () => request<Look[]>("/looks"),
+  // A .cube file (a 3D table, 2 to 65 a side) as a new Imported Look; rejects naming its bad line.
+  importLook: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<Look>("/looks", { method: "POST", body: form });
+  },
+  // Rejects with an ApiError of 409, saying which clips' grades use it, while any does.
+  deleteLook: (id: string) => request<void>(`/looks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   createTextPreset: (name: string, style: TextStyle) =>
     request<TextPreset>("/text-presets", { method: "POST", body: JSON.stringify({ name, style }) }),
   // One of the owner's renamed, or given another style.

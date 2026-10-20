@@ -14,7 +14,7 @@ LIBASS_BLUR_SIGMA = 2 / math.sqrt(math.log(256))
 
 def ass_filter(script: Path, fonts: Path) -> str:
     """The filter that draws the ASS `script` over the frames, in the Faces in `fonts`."""
-    return f"ass=filename={_filter_value(str(script))}:fontsdir={_filter_value(str(fonts))}"
+    return f"ass=filename={filter_value(str(script))}:fontsdir={filter_value(str(fonts))}"
 
 
 def spacing(tracking: float) -> str:
@@ -108,7 +108,7 @@ def ass_text(text: str) -> str:
     return text.replace("\\", "⧵").replace("{", "(").replace("}", ")")
 
 
-def _filter_value(value: str) -> str:
+def filter_value(value: str) -> str:
     """`value` escaped as a filter option inside a filtergraph: once for the option, once for the graph."""
     for special in ("\\':", "\\'[],;"):
         for char in special:

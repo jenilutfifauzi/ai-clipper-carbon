@@ -1,8 +1,10 @@
-import { useEffect, useRef, type CSSProperties } from "react";
-import { jobFilmstripUrl, mediaFilmstripUrl, mediaThumbnailUrl, type ClipSegment, type Grade, type Look, type MediaItem, type Overlay } from "../../../api";
+import { LoaderCircle, Palette, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { ApiError, jobFilmstripUrl, mediaFilmstripUrl, mediaThumbnailUrl, type ClipSegment, type Grade, type Look, type MediaItem, type Overlay } from "../../../api";
+import { buttonClass } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { cx } from "../../../format";
-import { shelvesOf, useLooks } from "../../../looks";
+import { deleteLook, importLook, shelvesOf, useLooks } from "../../../looks";
 import { GradeFilters, GradeVignette } from "../editor/GradeFilters";
 import { gradeFilter, NEUTRAL_GRADE } from "../editor/grading";
 import { usePlayback, type Playback, type PlayedSegment } from "../editor/playback";
@@ -124,6 +126,8 @@ export function LookPanel({
  * `frame` in that Look. A mouse over a card auditions it (`onAudition`, null when it leaves), which
  * draws the preview in it without saving anything; a click gives it to the Pick's Grades, or to the
  * Candidate's with nothing picked (`onPick`). `current` is the Look of the Grade a click goes to.
+ * Import look takes a .cube file as an Imported Look; an Imported card has a delete action, refused
+ * with the reason while a clip's Grade names it.
  */
 export function LookCards({
   frame,
@@ -141,13 +145,31 @@ export function LookCards({
 }) {
   const listed = useLooks();
   const looks = given ?? listed;
+  // What the last delete said, by the Look it was of.
+  const [refused, setRefused] = useState<{ look: string; message: string } | null>(null);
   if (!looks) return <Hint>Loading the looks…</Hint>;
   const picture = frameStyle(frame);
+
+  async function remove(look: Look) {
+    setRefused(null);
+    try {
+      await deleteLook(look.id);
+    } catch (reason) {
+      setRefused({ look: look.id, message: reason instanceof ApiError ? reason.message : `${look.name} couldn't be deleted.` });
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Hint more="Its intensity, or taking it away, is in the Color section of the inspector.">
         Hover to try a look on the preview; click to apply it to the selection, or to the whole clip with nothing selected.
       </Hint>
+      <ImportLook />
+      {refused && (
+        <p role="alert" className="text-sm text-danger">
+          {refused.message}
+        </p>
+      )}
       <GradeFilters grades={looks.map((look) => lookGrade(look.id))} />
       {shelvesOf(looks).map(({ category, looks: shelf }) => {
         const heading = `looks-${category.replace(/[^a-z0-9]/gi, "-")}`;
@@ -158,7 +180,15 @@ export function LookCards({
             </h3>
             <div className="grid grid-cols-2 gap-2">
               {shelf.map((look) => (
-                <LookCard key={look.id} look={look} picture={picture} current={current === look.id} onPick={() => onPick(look.id)} onAudition={onAudition} />
+                <LookCard
+                  key={look.id}
+                  look={look}
+                  picture={picture}
+                  current={current === look.id}
+                  onPick={() => onPick(look.id)}
+                  onAudition={onAudition}
+                  onDelete={look.has_table ? () => void remove(look) : undefined}
+                />
               ))}
             </div>
           </section>
@@ -168,8 +198,90 @@ export function LookCards({
   );
 }
 
-/** A Look's card: the picture under the Look's filter and vignette, its name under it. */
+/**
+ * Import look: a .cube file (a 3D table, 2 to 65 a side) becomes an Imported Look every Job's Filters
+ * tab lists, on the Imported shelf; a file that can't be one is refused naming its bad line.
+ */
+export function ImportLook() {
+  const [importing, setImporting] = useState(false);
+  const [said, setSaid] = useState<{ text: string; problem: boolean } | null>(null);
+
+  async function choose(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    if (!file || importing) return;
+    setImporting(true);
+    setSaid(null);
+    try {
+      const look = await importLook(file);
+      setSaid({ text: `Added ${look.name} to Imported. Its preview is close; the render draws it exactly.`, problem: false });
+    } catch (reason) {
+      setSaid({ text: reason instanceof ApiError ? reason.message : "The look couldn't be imported.", problem: true });
+    } finally {
+      setImporting(false);
+      // The same file can be chosen again.
+      input.value = "";
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <label
+        className={buttonClass(
+          "secondary",
+          "sm",
+          "cursor-pointer self-start has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus",
+        )}
+      >
+        <input type="file" accept=".cube" disabled={importing} onChange={(event) => void choose(event.currentTarget)} className="sr-only" />
+        {importing ? <LoaderCircle aria-hidden size={16} className="motion-safe:animate-spin" /> : <Palette aria-hidden size={16} />}
+        <span aria-live="polite">{importing ? "Importing…" : "Import look (.cube)"}</span>
+      </label>
+      {said && <p className={cx("text-sm", said.problem ? "text-danger" : "text-muted")}>{said.text}</p>}
+    </div>
+  );
+}
+
+/**
+ * A Look's card: the picture under the Look's filter and vignette, its name under it; an Imported
+ * one's with a delete action (`onDelete`).
+ */
 function LookCard({
+  look,
+  picture,
+  current,
+  onPick,
+  onAudition,
+  onDelete,
+}: {
+  look: Look;
+  picture: CSSProperties;
+  current: boolean;
+  onPick: () => void;
+  onAudition: (look: string | null) => void;
+  onDelete?: () => void;
+}) {
+  const card = <LookButton look={look} picture={picture} current={current} onPick={onPick} onAudition={onAudition} />;
+  if (!onDelete) return card;
+  return (
+    <div className="group relative flex">
+      {card}
+      <button
+        type="button"
+        onClick={onDelete}
+        aria-label={`Delete ${look.name}`}
+        title={`Delete ${look.name}`}
+        className={cx(
+          "absolute top-2.5 right-2.5 grid size-7 place-items-center rounded-md bg-black/60 text-white hover:bg-black/80",
+          "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-focus [@media(hover:none)]:opacity-100",
+        )}
+      >
+        <Trash2 aria-hidden size={14} />
+      </button>
+    </div>
+  );
+}
+
+function LookButton({
   look,
   picture,
   current,
@@ -196,7 +308,7 @@ function LookCard({
       onPointerLeave={() => onAudition(null)}
       aria-pressed={current}
       className={cx(
-        "raised flex flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
+        "raised flex w-full flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
         "focus-visible:outline-2 focus-visible:outline-focus",
         current && "ring-2 ring-accent",
       )}

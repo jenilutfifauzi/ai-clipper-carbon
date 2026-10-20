@@ -1,4 +1,4 @@
-import type { Adjust, Grade, RenderPlan } from "../../../api";
+import type { Adjust, Grade, LookFit, RenderPlan } from "../../../api";
 
 /**
  * The fold of a Grade (ADR 0013): its Adjust turned into one table per channel, one colour matrix and
@@ -14,6 +14,11 @@ import type { Adjust, Grade, RenderPlan } from "../../../api";
  * without the Look, entry by entry (a missing table or matrix the identity): at 0 the fold without
  * it, at 100 the fold with it. The Looks' values come from the catalogue (looks.ts, `knowLooks`); a
  * Look not (yet) known is drawn as none.
+ *
+ * An Imported Look also has a 3D table, which the render draws with lut3d after the tables and matrix
+ * and before sharpen and vignette, mixed over the picture by the intensity. The preview draws the
+ * table per channel and the matrix fitted to it at import (its `fit`) in its place (`Folded.lut`),
+ * mixed so too (GradeFilters.tsx): near, not exact.
  */
 
 export const TABLE_SIZE = 256;
@@ -58,13 +63,19 @@ const DIAL_RANGES: Partial<Record<keyof Adjust, [number, number]>> = {
   vignette: [0, 100],
 };
 
-// The Adjust values of each Look known, by its id (looks.ts registers the catalogue's).
+// The Adjust values of each Look known, by its id (looks.ts registers the catalogue's), and the fit
+// of each one with a 3D table (an Imported Look's).
 const lookAdjusts = new Map<string, Adjust>();
+const lookFits = new Map<string, LookFit>();
 
-/** Make the Looks' Adjust values known to the fold, replacing those known before. */
-export function knowLooks(looks: { id: string; adjust: Adjust }[]) {
+/** Make the Looks' Adjust values (and fits) known to the fold, replacing those known before. */
+export function knowLooks(looks: { id: string; adjust: Adjust; fit?: LookFit | null }[]) {
   lookAdjusts.clear();
-  for (const { id, adjust } of looks) lookAdjusts.set(id, { ...NEUTRAL_ADJUST, ...adjust });
+  lookFits.clear();
+  for (const { id, adjust, fit } of looks) {
+    lookAdjusts.set(id, { ...NEUTRAL_ADJUST, ...adjust });
+    if (fit) lookFits.set(id, fit);
+  }
 }
 
 /** The Adjust values of the Look `id`, or null while it isn't known. */
@@ -74,12 +85,15 @@ export type Matrix = [[number, number, number], [number, number, number], [numbe
 
 // A Grade as the preview draws it: a table per channel (R, G, B; TABLE_SIZE entries, the output for
 // input i / (TABLE_SIZE − 1), 0..1), then a colour matrix (rows R, G, B of weights on R, G, B); each
-// null when it would change nothing; then the sharpen and vignette amounts (0..100, 0 for none).
+// null when it would change nothing; then the sharpen and vignette amounts (0..100, 0 for none); and
+// an Imported Look's table (its Look, the intensity it is mixed at, and its fit), drawn after the
+// tables and matrix and before sharpen, or none.
 export interface Folded {
   tables: [number[], number[], number[]] | null;
   matrix: Matrix | null;
   sharpen: number;
   vignette: number;
+  lut?: { look: string; intensity: number; fit: LookFit } | null;
 }
 
 // A Grade as stored or planned, a missing dial at its neutral value (one saved before Grades has none).
@@ -97,15 +111,19 @@ export function isNeutral(grade: Partial<Grade> | null | undefined): boolean {
 
 /**
  * `grade` folded into its tables, matrix and amounts; null for a neutral one, which adds no filter.
- * `look` is the Adjust of its Look, by default the catalogue's (none while it isn't known).
+ * `look` is the Adjust of its Look and `fit` its table's (an Imported Look's), by default the
+ * catalogue's (none while it isn't known).
  */
-export function foldGrade(grade: Partial<Grade> | null | undefined, look?: Partial<Adjust> | null): Folded | null {
+export function foldGrade(grade: Partial<Grade> | null | undefined, look?: Partial<Adjust> | null, fit?: LookFit | null): Folded | null {
   const { adjust, look: id, intensity } = gradeOf(grade);
   const without = foldAdjust(adjust);
   const values = id == null ? null : look ? { ...NEUTRAL_ADJUST, ...look } : lookAdjust(id);
   if (!values || intensity <= 0) return without;
   const looked = foldAdjust(withLook(adjust, values));
-  return intensity >= 100 ? looked : mixed(without, looked, intensity / 100);
+  const folded = intensity >= 100 ? looked : mixed(without, looked, intensity / 100);
+  const table = look ? fit : (lookFits.get(id!) ?? null);
+  if (!table) return folded;
+  return { ...(folded ?? { tables: null, matrix: null, sharpen: 0, vignette: 0 }), lut: { look: id!, intensity, fit: table } };
 }
 
 /** `adjust` with a Look's values laid over it: each dial moved by as much as the Look's is from neutral, held within its range. */
@@ -171,7 +189,8 @@ export function vignetteBackground(amount: number): string | undefined {
 }
 
 // Whether `folded` has anything for the SVG filter to do (a vignette alone is the layer's).
-const filtered = (folded: Folded | null): folded is Folded => !!folded && (folded.tables !== null || folded.matrix !== null || !!folded.sharpen);
+const filtered = (folded: Folded | null): folded is Folded =>
+  !!folded && (folded.tables !== null || folded.matrix !== null || !!folded.sharpen || !!folded.lut);
 
 function foldTables(adjust: Adjust): [number[], number[], number[]] | null {
   const { exposure, brightness, contrast, highlights, shadows, whites, blacks, fade } = adjust;

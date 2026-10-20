@@ -6,7 +6,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/grade_folds.json";
-import type { Adjust, Grade } from "../../../api";
+import type { Adjust, Grade, LookFit } from "../../../api";
 import { ColorFields } from "../advanced/ColorFields";
 import { DecksGraded } from "./GradeFilters";
 import { GradeFilter, GradeFilters, GradeVignette } from "./GradeFilters";
@@ -23,7 +23,17 @@ describe("a Grade's fold", () => {
       // JSON types each case's missing dials as undefined, which a Grade leaves out. A case with a Look
       // gives its values inline.
       const look = "look" in rest ? (rest.look as Partial<Adjust>) : undefined;
-      const folded = foldGrade(grade as unknown as Partial<Grade>, look);
+      // One with an Imported Look names its table's fit, and expects it passed through (or none).
+      const fit = "fit" in rest ? (cases.fits[rest.fit as keyof typeof cases.fits] as unknown as LookFit) : undefined;
+      const folded = foldGrade(grade as unknown as Partial<Grade>, look, fit);
+      if ("lut" in rest) {
+        const lut = rest.lut as { look: string; intensity: number } | null;
+        if (lut === null) expect(folded?.lut ?? null).toBeNull();
+        else {
+          expect([folded?.lut?.look, folded?.lut?.intensity]).toEqual([lut.look, lut.intensity]);
+          expect(folded?.lut?.fit).toBe(fit);
+        }
+      }
       if (tables === null) expect(folded?.tables ?? null).toBeNull();
       else {
         expect(folded?.tables?.map((table) => table.length)).toEqual([TABLE_SIZE, TABLE_SIZE, TABLE_SIZE]);

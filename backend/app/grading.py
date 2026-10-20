@@ -31,14 +31,21 @@ dials corrected, and a dial the Look leaves at neutral stays the Grade's. That A
 any other; then the Look's intensity mixes it over the fold without the Look: each table entry,
 matrix weight and amount is a + (b − a) · intensity / 100, a missing table or matrix taken as the
 identity. At 0 it is the fold without the Look, at 100 the fold with it.
+
+An **Imported Look** (app/looks.py) has neutral Adjust values and a 3D table of its own, which comes
+after the tables and matrix and before sharpen and vignette (`Folded.lut`). The render draws it with
+`lut3d`, from a table mixed over the identity at the Grade's intensity (`ImportedLooks.table`), which
+mixes the picture after it over the picture before it by the intensity. The preview draws the table
+per channel and the matrix fitted to it at import (`Fit`) in its place, mixed so too.
 """
 
 import math
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from app.ass import filter_value
 from app.candidates import EXPOSURE_EV, NEUTRAL_TEMPERATURE_K, TEMPERATURE_K, Adjust, Grade
-from app.looks import LookNotFound, get_look
+from app.looks import Fit, LookNotFound, get_look, imported_looks
 
 TABLE_SIZE = 256
 # The luma weights (Rec. 709) a saturation change keeps, and the temperature and tint gains too.
@@ -68,37 +75,52 @@ Matrix = tuple[tuple[float, float, float], tuple[float, float, float], tuple[flo
 
 
 @dataclass(frozen=True)
+class LookTable:
+    """An Imported Look's 3D table in a fold: the Look's id (whose table the render draws), the Grade's
+    intensity it is mixed over the picture at (0..100), and the `fit` the preview draws in its place."""
+
+    look: str
+    intensity: float
+    fit: Fit
+
+
+@dataclass(frozen=True)
 class Folded:
     """A Grade as the render and the preview draw it: a table per channel (R, G, B; TABLE_SIZE
     entries each, the output for input i / (TABLE_SIZE − 1), 0..1), or None when they would change
     nothing; then a colour matrix (rows R, G, B of weights on the input's R, G, B), or None likewise;
-    then the sharpen and vignette amounts (0..100, 0 for none)."""
+    then the sharpen and vignette amounts (0..100, 0 for none); then an Imported Look's table, drawn
+    after the tables and matrix and before sharpen and vignette, or None."""
 
     tables: tuple[tuple[float, ...], tuple[float, ...], tuple[float, ...]] | None
     matrix: Matrix | None
     sharpen: float = 0.0
     vignette: float = 0.0
+    lut: LookTable | None = None
 
 
-def fold(grade: Grade, look: Adjust | None = None) -> Folded | None:
+def fold(grade: Grade, look: Adjust | None = None, fit: Fit | None = None) -> Folded | None:
     """`grade` folded into its tables, matrix and amounts; None for a neutral one, which adds no filter.
 
-    `look` is the Adjust of the Grade's Look, by default the catalogue's (app/looks.py); a Look id
-    that isn't there (as an imported one deleted) is drawn as no Look."""
+    `look` is the Adjust of the Grade's Look and `fit` its table's (an Imported Look's), by default
+    the catalogue's (app/looks.py); a Look id that isn't there (as an imported one deleted) is drawn
+    as no Look."""
     without = _folded(grade.adjust)
     if grade.look is None:
         return without
     if look is None:
         try:
-            look = get_look(grade.look).adjust
+            found = get_look(grade.look)
         except LookNotFound:
             return without
+        look, fit = found.adjust, found.fit if found.has_table else None
     if grade.intensity <= 0:
         return without
     looked = _folded(with_look(grade.adjust, look))
-    if grade.intensity >= 100:
-        return looked
-    return _mixed(without, looked, grade.intensity / 100)
+    folded = looked if grade.intensity >= 100 else _mixed(without, looked, grade.intensity / 100)
+    if fit is None:
+        return folded
+    return replace(folded or Folded(None, None), lut=LookTable(grade.look, float(grade.intensity), fit))
 
 
 def with_look(adjust: Adjust, look: Adjust) -> Adjust:
@@ -156,8 +178,16 @@ def grade_filters(grade: Grade, alpha: str | None = None) -> str:
 
 
 def _filters(folded: Folded, rgb: str) -> str:
-    """The filters of `folded`, its tables and matrix drawn on the pixel format `rgb`."""
-    filters = [f"format={rgb}"] if folded.tables is not None or folded.matrix is not None else []
+    """The filters of `folded`, its tables, matrix and Look's table drawn on the pixel format `rgb`."""
+    table = None
+    if folded.lut is not None:
+        try:
+            table = imported_looks().table(folded.lut.look, folded.lut.intensity)
+        except LookNotFound:
+            # Deleted since: drawn as no Look.
+            table = None
+    coloured = folded.tables is not None or folded.matrix is not None or table is not None
+    filters = [f"format={rgb}"] if coloured else []
     if folded.tables is not None:
         # Every entry a point of the curve, so that a spline through them all gives each 8-bit level
         # its own. curves places a point on the level its x is at or just over: each x is nudged up a
@@ -167,6 +197,9 @@ def _filters(folded: Folded, rgb: str) -> str:
     if folded.matrix is not None:
         weights = [f"{out}{given}={weight:.6f}" for out, row in zip("rgb", folded.matrix) for given, weight in zip("rgb", row)]
         filters.append("colorchannelmixer=" + ":".join(weights))
+    if table is not None:
+        # Tetrahedral, as most grading tools read a table; an alpha (of rgba) is kept as it is.
+        filters.append(f"lut3d=file={filter_value(str(table))}:interp=tetrahedral")
     if folded.sharpen:
         # On the luma only (unsharp takes no RGB): a 3×3 box, as the preview's convolution.
         filters.append(f"unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount={SHARPEN_AMOUNT * folded.sharpen / 100:.6f}:chroma_amount=0")

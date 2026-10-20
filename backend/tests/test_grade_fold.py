@@ -1,6 +1,6 @@
 """The fold of a Grade into tables, a matrix and the sharpen and vignette amounts
 (.scratch/color-adjust/issues/01-segment-grade-adjust-dials.md, 02-sharpen-and-vignette.md, docs/adr/0013),
-a Look's included (05-built-in-looks-and-filters-tab.md),
+a Look's included (05-built-in-looks-and-filters-tab.md), an Imported Look's table too (06-imported-looks.md),
 on the cases the frontend's tests read too (fixtures/grade_folds.json). Seam C."""
 
 import json
@@ -11,18 +11,28 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Adjust, Grade
 from app.grading import TABLE_SIZE, fold, grade_filters
+from app.looks import Fit
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CASES = json.loads((FIXTURES / "grade_folds.json").read_text())
 CLOSE = CASES["tolerance"]
 _GRADE = TypeAdapter(Grade)
 _ADJUST = TypeAdapter(Adjust)
+_FIT = TypeAdapter(Fit)
 
 
 @pytest.mark.parametrize("case", CASES["cases"], ids=lambda case: case["name"])
 def test_a_grade_folds_into_the_tables_and_matrix_the_shared_cases_say(case):
     look = None if case.get("look") is None else _ADJUST.validate_python(case["look"])
-    folded = fold(_GRADE.validate_python(case["grade"]), look)
+    fit = None if case.get("fit") is None else _FIT.validate_python(CASES["fits"][case["fit"]])
+    folded = fold(_GRADE.validate_python(case["grade"]), look, fit)
+    if "lut" in case:
+        lut = None if folded is None else folded.lut
+        if case["lut"] is None:
+            assert lut is None
+        else:
+            assert lut is not None and (lut.look, lut.intensity) == (case["lut"]["look"], pytest.approx(case["lut"]["intensity"]))
+            assert lut.fit == fit
     tables = None if folded is None else folded.tables
     matrix = None if folded is None else folded.matrix
     if case["tables"] is None:

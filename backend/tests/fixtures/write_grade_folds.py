@@ -5,16 +5,21 @@ add cases, from backend/:
     PYTHONPATH=$PWD .venv/bin/python tests/fixtures/write_grade_folds.py
 
 A case with a Look gives that Look's Adjust values inline (`look`), so that the fixture doesn't depend
-on the catalogue: both suites fold the Grade with them.
+on the catalogue: both suites fold the Grade with them. A case with an Imported Look also names the
+tables and matrix fitted to its 3D table (`fit`), kept once at the top (`fits`), and expects the fold's
+`lut`: the Look and the intensity it is mixed at (its fit passed through), or null.
 """
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
+import numpy as np
 from pydantic import TypeAdapter
 
 from app.candidates import Adjust, Grade
 from app.grading import fold
+from app.looks import Fit, _identity, fit_table
 
 PATH = Path(__file__).parent / "grade_folds.json"
 
@@ -42,6 +47,20 @@ LOOKED = [
     ),
 ]
 
+# Imported Looks' fits, by name: each fitted to a 3D table made here.
+def _warm_table() -> np.ndarray:
+    grid = _identity(9)
+    return np.clip(np.stack([grid[..., 0] ** 0.8, grid[..., 1] * 0.95 + 0.02, grid[..., 2] ** 1.25], axis=-1), 0, 1)
+
+
+FITS = {"warm": _warm_table}
+# Grades with an Imported Look (named "x", neutral Adjust values), whose fit is FITS' `fit`.
+IMPORTED = [
+    ("an Imported Look at 100%", {"look": "x"}, "warm"),
+    ("an Imported Look at 40% over dials", {"adjust": _DIALLED, "look": "x", "intensity": 40}, "warm"),
+    ("an Imported Look at 0%", {"adjust": _DIALLED, "look": "x", "intensity": 0}, "warm"),
+]
+
 
 def num(x: float) -> str:
     return repr(round(float(x), 6) + 0.0)
@@ -59,27 +78,47 @@ def main() -> None:
             "then the sharpen and vignette amounts (0..100, 0 for none).",
             "then the sharpen and vignette amounts (0..100, 0 for none). A Grade with a Look gives the Look's Adjust values inline (`look`).",
         )
+    if "`fits`" not in about:
+        about = about.replace(
+            "inline (`look`).",
+            "inline (`look`). One with an Imported Look names its fitted tables and matrix (`fit`, in `fits`) and expects `lut`: the Look and its intensity (the fit passed through), or null.",
+        )
+    fits = {name: asdict(fit_table(table())) for name, table in FITS.items()} | data.get("fits", {})
     names = {case["name"] for case in data["cases"]}
-    grades = [(case["name"], case["grade"], case.get("look")) for case in data["cases"]]
-    grades += [(name, {"adjust": adjust}, None) for name, adjust in EXTRA if name not in names]
-    grades += [(name, grade, look) for name, grade, look in LOOKED if name not in names]
+    grades = [(case["name"], case["grade"], case.get("look"), case.get("fit")) for case in data["cases"]]
+    grades += [(name, {"adjust": adjust}, None, None) for name, adjust in EXTRA if name not in names]
+    grades += [(name, grade, look, None) for name, grade, look in LOOKED if name not in names]
+    grades += [(name, grade, {}, fit) for name, grade, fit in IMPORTED if name not in names]
     adapter = TypeAdapter(Grade)
     adjusts = TypeAdapter(Adjust)
+    fitted = TypeAdapter(Fit)
 
-    out = ["{", f' "about": {json.dumps(about)},', f' "tolerance": {data["tolerance"]},', ' "cases": [']
+    out = ["{", f' "about": {json.dumps(about)},', f' "tolerance": {data["tolerance"]},']
+    out.append(' "fits": {\n' + ",\n".join(
+        f'  {json.dumps(name)}: {{"tables": {rows(fit["tables"])},\n   "matrix": {rows(fit["matrix"])}}}' for name, fit in fits.items()
+    ) + "\n },")
+    out.append(' "cases": [')
     cases = []
-    for name, grade, look in grades:
-        f = fold(adapter.validate_python(grade), None if look is None else adjusts.validate_python(look))
+    for name, grade, look, fit in grades:
+        f = fold(
+            adapter.validate_python(grade),
+            None if look is None else adjusts.validate_python(look),
+            None if fit is None else fitted.validate_python(fits[fit]),
+        )
         tables = None if f is None else f.tables
         matrix = None if f is None else f.matrix
         sharpen = 0 if f is None else f.sharpen
         vignette = 0 if f is None else f.vignette
         looked = "" if look is None else f', "look": {json.dumps(look)}'
+        lut = ""
+        if fit is not None:
+            given = None if f is None or f.lut is None else {"look": f.lut.look, "intensity": f.lut.intensity}
+            lut = f',\n   "fit": {json.dumps(fit)}, "lut": {json.dumps(given)}'
         cases.append(
             f'  {{"name": {json.dumps(name)}, "grade": {json.dumps(grade)}{looked},\n'
             f'   "tables": {"null" if tables is None else rows(tables)},\n'
             f'   "matrix": {"null" if matrix is None else rows(matrix)},\n'
-            f'   "sharpen": {num(sharpen)}, "vignette": {num(vignette)}}}'
+            f'   "sharpen": {num(sharpen)}, "vignette": {num(vignette)}{lut}}}'
         )
     out.append(",\n".join(cases))
     out += [" ]", "}"]

@@ -69,6 +69,7 @@ from app.events import SETTLED, JobProgress, job_events
 from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
+from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES
 from app.media import BadMedia
 from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
@@ -94,7 +95,7 @@ STALE_RETRIES = 5
 # Who makes the edits the tools save (ADR 0003): the editors send their own.
 EDIT_SOURCE = {"X-Edit-Source": "agent"}
 # The API's routes of each kind of asset.
-ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
+ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts", "look": "looks"}
 # The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
 # and remove_candidate_items change item by item: each list's item, and the field that identifies
 # one within its Candidate (or the fields: a Word Edit's or Cue Edit's time and its timeline, None
@@ -288,7 +289,10 @@ Edits:
   (the corners darkened); all 0 but temperature by default (neutral). Its `look` (a Look's id from
   list_assets kind "looks", or null) styles the picture after the dials: each of the Look's dials
   moves the grade's by as much as it is from neutral, held in range; `intensity` 0..100 (100 by
-  default) mixes the result over the grade without the Look. An unknown Look is refused.
+  default) mixes the result over the grade without the Look. An unknown Look is refused. An Imported
+  Look (category "Imported", has_table) is a .cube file's 3D table, drawn after the dials' colour
+  and before sharpen and vignette: add_asset kind "look" imports one for every Job (each import a
+  new Look), delete_asset removes one no Candidate's grade names.
   merge_candidate_items changes only the fields given. The dry run lists a Segment's grade by its
   dials that aren't neutral, and its look and intensity.
 - The Candidate's own `grade` (the same dials, look and intensity) is laid over the whole Main Track, after the
@@ -861,7 +865,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def list_assets(kind: Literal["fonts", "logos", "media", "looks"] | None = None) -> dict:
         """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, the
         Media Library (songs, videos and images for Music Clips, Overlays and Segments) and the Looks
-        a grade's `look` names (id, name, category, Adjust values): all, or one `kind`."""
+        a grade's `look` names (id, name, category, Adjust values; has_table for an Imported Look's
+        .cube): all, or one `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
             listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
@@ -870,17 +875,24 @@ def build_mcp(app: FastAPI) -> MCPServer:
         if kind in (None, "media"):
             listed["media"] = await api("GET", "/media")
         if kind in (None, "looks"):
-            listed["looks"] = await api("GET", "/looks")
+            # Without the tables fitted for the preview.
+            listed["looks"] = [{key: value for key, value in look.items() if key != "fit"} for look in await api("GET", "/looks")]
         return listed
 
     @tool()
-    async def add_asset(kind: Literal["logo", "media", "font"], path: str) -> dict:
+    async def add_asset(kind: Literal["logo", "media", "font", "look"], path: str) -> dict:
         """Add a file on this Mac, by its path, as a Logo (PNG, JPEG or WebP), to the Media Library (a
-        video of 3 minutes at most, a song or an image), or as a font (TTF, OTF or TTC). The file is
-        left where it is. A font gives the Faces added, those already there (existing) and warnings."""
+        video of 3 minutes at most, a song or an image), as a font (TTF, OTF or TTC), or as an
+        Imported Look (a .cube 3D table, 2 to 65 a side). The file is left where it is. A font gives
+        the Faces added, those already there (existing) and warnings."""
         file = Path(path).expanduser()
         if not file.is_file():
             raise ToolError(f"No file {file}")
+        if kind == "look":
+            with file.open("rb") as data:
+                cube = data.read(MAX_LOOK_BYTES + 1)
+            look = await api("POST", "/looks", files={"file": (file.name, cube)})
+            return {key: value for key, value in look.items() if key != "fit"}
         if kind == "font":
             with file.open("rb") as data:
                 font = data.read(MAX_FONT_BYTES + 1)
@@ -900,8 +912,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return TypeAdapter(type(item)).dump_python(item, mode="json")
 
     @tool(destructive=True)
-    async def delete_asset(kind: Literal["logo", "media", "font"], asset_id: str) -> dict:
-        """Delete a Logo, or a Media Library item or an imported font's Face that nothing uses."""
+    async def delete_asset(kind: Literal["logo", "media", "font", "look"], asset_id: str) -> dict:
+        """Delete a Logo, or a Media Library item, an imported font's Face or an Imported Look that
+        nothing uses."""
         await api("DELETE", f"/{ASSET_ROUTES[kind]}/{asset_id}")
         return {"deleted": asset_id}
 
