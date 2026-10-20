@@ -52,6 +52,67 @@ def test_each_effect_runs_at_its_default_minimum_and_maximum_and_keeps_a_1_s_ton
     assert np.isfinite(heard).all()
 
 
+# The 22 presets so far (the Clean three come in 06), by shelf.
+CATALOGUE = {
+    "Voice": ["pitch", "sweet", "deep", "chipmunk", "robot", "megaphone", "whisper"],
+    "Tone": ["bass", "treble", "bright", "telephone", "radio", "vinyl", "lofi", "distorted"],
+    "Space": ["echo", "room", "hall", "plate", "cathedral", "stadium", "underwater"],
+}
+
+
+def test_the_catalogue_holds_every_preset_on_its_shelf_in_order_each_with_one_intensity():
+    listed = effects()
+    assert {group: [effect.id for effect in listed if effect.group == group] for group in CATALOGUE} == CATALOGUE
+    assert [effect.id for effect in listed] == [id for ids in CATALOGUE.values() for id in ids]
+    for effect in listed:
+        assert sum(setting.intensity for setting in effect.settings) == 1, effect.id
+        assert all(setting.min <= setting.default <= setting.max for setting in effect.settings), effect.id
+
+
+def peak_frequency(heard: np.ndarray) -> float:
+    """The loudest frequency of `heard`, in Hz."""
+    spectrum = np.abs(np.fft.rfft(heard * np.hanning(len(heard))))
+    return float(np.fft.rfftfreq(len(heard), 1 / RATE)[spectrum.argmax()])
+
+
+def energy(heard: np.ndarray, low: float = 0, high: float = RATE / 2) -> float:
+    """The energy of `heard` between `low` and `high` Hz."""
+    spectrum = np.abs(np.fft.rfft(heard)) ** 2
+    frequencies = np.fft.rfftfreq(len(heard), 1 / RATE)
+    return float(spectrum[(frequencies >= low) & (frequencies < high)].sum())
+
+
+def heard_through(effect_id: str, source: str = "sine=frequency=440:sample_rate=48000:duration=1", **params: float) -> np.ndarray:
+    [applied] = checked_effects([AudioEffect(effect_id, params)], "Segment s")
+    return samples(effect_chain([applied], RATE, 1.0), source)
+
+
+def test_deep_lowers_a_tones_pitch_and_chipmunk_raises_it_at_the_same_length():
+    assert peak_frequency(samples([])) == pytest.approx(440, abs=3)
+    deep, chipmunk = heard_through("deep"), heard_through("chipmunk")
+    assert len(deep) == len(chipmunk) == RATE
+    # Three semitones down (370 Hz), seven up (659 Hz) at their defaults.
+    assert peak_frequency(deep) == pytest.approx(440 * 2 ** (-3 / 12), abs=5)
+    assert peak_frequency(chipmunk) == pytest.approx(440 * 2 ** (7 / 12), abs=5)
+
+
+def test_underwater_takes_away_the_sound_above_1_khz():
+    both = "aevalsrc=0.3*sin(2*PI*200*t)+0.3*sin(2*PI*2000*t):s=48000:d=1"
+    dry, wet = samples([], both), heard_through("underwater", both)
+    assert energy(dry, 1000) > 0.4 * energy(dry)
+    assert energy(wet, 1000) < 0.01 * energy(wet)
+    assert energy(wet, 0, 1000) > 0.3 * energy(dry, 0, 1000)
+
+
+def test_hall_leaves_a_tail_after_the_sound_stops_inside_the_item():
+    beep = "aevalsrc=0.5*sin(2*PI*440*t)*lt(t\\,0.4):s=48000:d=1"
+    dry, wet = samples([], beep), heard_through("hall", beep)
+    tail = slice(int(0.45 * RATE), int(0.7 * RATE))
+    assert np.abs(dry[tail]).max() < 1e-3
+    assert np.abs(wet[tail]).max() > 0.05
+    assert len(wet) == RATE
+
+
 def test_a_setting_left_out_takes_its_default_and_a_bad_entry_is_refused_naming_the_item_index_and_why():
     [echo] = checked_effects([AudioEffect("echo", {"delay": 0.5})], "Segment s")
     assert echo == AudioEffect("echo", {"delay": 0.5, "decay": 0.4})
@@ -238,7 +299,7 @@ def test_a_media_segment_with_effects_between_plain_ones_keeps_its_place_at_a_cu
 def test_the_catalogue_lists_each_effect_with_its_settings_one_of_them_the_intensity(client):
     listed = client.get("/api/audio-effects").json()
     by_id = {effect["id"]: effect for effect in listed}
-    assert {"telephone", "echo", "pitch"} <= set(by_id)
+    assert set(by_id) == {id for ids in CATALOGUE.values() for id in ids}
     assert (by_id["echo"]["name"], by_id["echo"]["group"]) == ("Echo", "Space")
     assert by_id["echo"]["settings"] == [
         {"key": "delay", "label": "Delay", "min": 0.05, "max": 1, "default": 0.25, "step": 0.05, "unit": "s", "intensity": False},
@@ -252,7 +313,7 @@ def test_the_catalogue_lists_each_effect_with_its_settings_one_of_them_the_inten
 async def test_the_agent_lists_the_effects_sets_a_stack_sees_it_in_the_dry_run_and_is_refused_a_bad_one(mcp):
     listed = await call(mcp, "list_assets", kind="audio_effects")
     assert set(listed) == {"audio_effects"}
-    assert {"telephone", "echo", "pitch"} <= {effect["id"] for effect in listed["audio_effects"]}
+    assert [effect["id"] for effect in listed["audio_effects"]] == [id for ids in CATALOGUE.values() for id in ids]
 
     job = await reviewed_by_mcp(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)

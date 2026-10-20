@@ -15,9 +15,9 @@ Each preset has its own settings, one marked as the intensity, each with a range
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] All 22 presets are in the registry, with groups and orders.
-- [ ] Every preset runs at its default, minimum and maximum over a 1 s tone, without error and at the input's length.
-- [ ] Seam A spot checks: Deep lowers a tone's pitch, Chipmunk raises it, Underwater removes energy above 1 kHz, and Hall leaves a tail inside the item.
-- [ ] `list_assets(kind="audio_effects")` lists them all.
+- [x] All 22 presets are in the registry, with groups and orders.
+- [x] Every preset runs at its default, minimum and maximum over a 1 s tone, without error and at the input's length.
+- [x] Seam A spot checks: Deep lowers a tone's pitch, Chipmunk raises it, Underwater removes energy above 1 kHz, and Hall leaves a tail inside the item.
+- [x] `list_assets(kind="audio_effects")` lists them all.
