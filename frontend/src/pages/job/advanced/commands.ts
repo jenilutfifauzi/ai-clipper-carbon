@@ -59,6 +59,9 @@ export function commandsOf(
     // While the Pick is one item that can have Keyframes: a Keyframe added or removed at the
     // playhead on its active row (K), and where its Keyframe before or after `time` is ([ and ]).
     keyframes: { toggle: () => boolean | void; around: (time: number, direction: -1 | 1) => number | null } | null;
+    // The take flow (./takeFlow.ts): whether a Take is recording, which Space then stops, and its
+    // mic button's press (Shift+R); null where the page can't record.
+    take?: { recording: () => boolean; press: () => void } | null;
   },
 ): Commands {
   // The picked Text Layers, Shapes, Music Clips and Overlays moved `frames` frames; a run of presses is
@@ -87,7 +90,9 @@ export function commandsOf(
     playback.seek(at);
   };
   return {
-    play: () => playback.toggle(),
+    // While a Take records, Space stops it rather than only the picture.
+    play: () => (more.take?.recording() ? more.take.press() : playback.toggle()),
+    record: () => (more.take ? more.take.press() : false),
     undo: () => history.undo(),
     redo: () => history.redo(),
     "pick-all": () => more.pickAll(),

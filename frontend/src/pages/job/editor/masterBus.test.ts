@@ -111,6 +111,21 @@ describe("the preview's master bus", () => {
     }
   });
 
+  // .scratch/voiceover/issues/02-record-a-take.md: while a Take records, the speakers are silent.
+  test("is held silent while a Take records, and heard again after; a bus made meanwhile starts silent", async () => {
+    const { setVolume } = await import("./PreviewMusic");
+    const { heardBus, holdBus } = await import("./masterBus");
+    holdBus(true);
+    setVolume(element(), 1);
+    const input = heardBus()!.input as unknown as FakeGain;
+    expect(input.gain.value).toBe(0);
+    holdBus(false);
+    expect(input.gain.value).toBe(1);
+    holdBus(true);
+    expect(input.gain.value).toBe(0);
+    holdBus(false);
+  });
+
   test("is not made before anything is heard", async () => {
     const { heardBus } = await import("./masterBus");
     expect(heardBus()).toBeNull();

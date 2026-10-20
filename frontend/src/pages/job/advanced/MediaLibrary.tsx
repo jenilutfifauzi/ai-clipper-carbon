@@ -40,7 +40,8 @@ export interface MediaLibrary {
   items: MediaItem[] | null;
   error: string | null;
   uploads: Uploading[];
-  upload: (file: File) => void;
+  // The item it makes, once uploaded and converted: rejected as the upload is.
+  upload: (file: File) => Promise<MediaItem>;
   dismiss: (key: number) => void;
   // Resolves to the clips using it when it can't be deleted.
   remove: (item: MediaItem) => Promise<MediaUse[] | null>;
@@ -88,6 +89,7 @@ export function useMediaLibrary(): MediaLibrary {
         },
         (reason: Error) => change(key, { error: reason.message, percent: 0 }),
       );
+      return done;
     },
     dismiss: (key) => setUploads((old) => old.filter((item) => item.key !== key)),
     async setLanguage(item, language) {

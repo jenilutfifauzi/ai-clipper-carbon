@@ -6,6 +6,8 @@
 export type MasterBus = { input: GainNode; sides: readonly [AnalyserNode, AnalyserNode] };
 
 let made: { audio: BaseAudioContext; bus: MasterBus } | null = null;
+// Held silent while a Take records (ADR 0018), so that the speakers don't bleed into the microphone.
+let held = false;
 
 /** The bus of `audio`, the page's AudioContext, made on first need. */
 export function masterBus(audio: BaseAudioContext): MasterBus {
@@ -21,7 +23,17 @@ export function masterBus(audio: BaseAudioContext): MasterBus {
   input.connect(splitter);
   sides.forEach((side, channel) => splitter.connect(side, channel));
   made = { audio, bus: { input, sides } };
+  input.gain.value = held ? 0 : 1;
   return made.bus;
+}
+
+/**
+ * The bus held silent (true) or heard again (false): the speakers and the Meters, everything the
+ * preview plays, as one. Kept for a bus made later.
+ */
+export function holdBus(silent: boolean) {
+  held = silent;
+  if (made) made.bus.input.gain.value = silent ? 0 : 1;
 }
 
 /** The bus, once anything plays through Web Audio; null before. */

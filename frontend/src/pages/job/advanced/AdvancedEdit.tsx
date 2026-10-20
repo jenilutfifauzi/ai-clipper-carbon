@@ -1,5 +1,5 @@
 import { ArrowLeft, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   api,
@@ -40,6 +40,7 @@ import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } fro
 import { boxStyle } from "../editor/textBox";
 import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
+import { holdBus } from "../editor/masterBus";
 import { candidateDraft } from "../editor/draft";
 import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
 import { placedOverrides, type Place } from "../editor/placing";
@@ -84,6 +85,7 @@ import {
   type Outcome,
   type SegmentDrag,
   type SpeedRef,
+  landTake,
 } from "./actions";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
@@ -134,6 +136,10 @@ import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
+import { TakeButton } from "./TakeButton";
+import { recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
+import { browserRecorder, openTake } from "./takeRecorder";
+import { canRecord } from "./voiceover";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
 import { DEFAULT_FPS, loopRegion, onFrame, type LoopMarks } from "./playhead";
@@ -179,6 +185,8 @@ type Taken = "elsewhere" | "refused" | "restored";
 
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
+// What a store with nothing to follow subscribes with.
+const noSubscription = () => () => {};
 
 /**
  * The Advanced Edit of a Candidate (/jobs/:jobId/candidates/:candidateId/advanced): a CapCut-like
@@ -523,6 +531,25 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // The player's checks of a Grade: the before view, held; and Compare render of the draft, on a
   // desktop, cleared on any playhead move or edit.
   const checks = usePlayerChecks(playback, JSON.stringify(draft));
+  // The take flow (./takeFlow.ts): a Take recorded from the playhead, landed as a Music Clip marked
+  // Speech. Only where the browser gives a microphone (a secure context); null elsewhere. What it
+  // lands and tells goes through `takeLatest`, this render's, as the upload answers after later ones.
+  const takeLatest = useRef({ upload: library.upload, land: (_take: LandedTake): number | null => null, tell: (_text: string) => {} });
+  const [take] = useState(() =>
+    canRecord()
+      ? new TakeFlow({
+          open: (capped) => openTake(browserRecorder(), { capped }),
+          playback,
+          silence: holdBus,
+          upload: (file) => takeLatest.current.upload(file),
+          land: (landed) => takeLatest.current.land(landed),
+          tell: (text) => takeLatest.current.tell(text),
+        })
+      : null,
+  );
+  useEffect(() => () => take?.dispose(), [take]);
+  const readTake = () => (take ? takeRecording(take.state) : false);
+  const recordingTake = useSyncExternalStore(take?.subscribe ?? noSubscription, readTake, readTake);
   const fetchCompare = (at: number, signal: AbortSignal) => api.compareFrame(job.id, candidate.id, { at, draft }, signal);
   const { compare } = checks;
   useEffect(() => {
@@ -544,7 +571,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const fps = preview?.plan.fps || DEFAULT_FPS;
   // The Loop Region the marks make, clamped inside the Clip as it is now; played while Loop is on.
   const region = useMemo(() => loopRegion(marks, { fps, duration }), [marks, fps, duration]);
-  useEffect(() => playback.setLoop(looping ? region : null), [playback, looping, region]);
+  // A Take rolls from the playhead whatever the Loop: it is set again once the Take stops.
+  useEffect(() => playback.setLoop(looping && !recordingTake ? region : null), [playback, looping, region, recordingTake]);
   const sourceLength = job.source?.metadata.duration ?? Infinity;
   const longest = longestClip(job.options.max_secs);
   // A Speed's steps, from the slider, the chips or the field, each made from where its group began.
@@ -730,6 +758,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
+  // A Take landed: its Music Clip added (one step of undo) and Picked; the take flow puts the playhead
+  // at its start. Refused, like any addition, on a locked Music Track: the item stays in the library.
+  takeLatest.current = {
+    upload: library.upload,
+    land: (landed) => {
+      if (refused("music")) return null;
+      const outcome = landTake({ edits }, landed);
+      apply(outcome);
+      return outcome.edits.music.at(-1)!.start;
+    },
+    tell: (text) => setNotice({ id: Date.now(), text }),
+  };
   const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join };
   // The captions' look, from the inspector's Caption Style panel and Preset bar: each change a step of undo.
   const presets = usePresets();
@@ -906,6 +946,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     toggleAssets: () => layout.setAssetHidden(!layout.read().assetHidden),
     toggleInspector: () => layout.setInspectorHidden(!layout.read().inspectorHidden),
     keyframes,
+    take: take && { recording: () => takeRecording(take.state), press: () => void take.press() },
   });
   useShortcuts(commands, { fullscreen: fullscreen.way !== null, phone: !wide });
 
@@ -1115,6 +1156,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         tools={
           wide ? (
             <>
+              <TakeButton flow={take} />
               {holdOriginal}
               <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
               {fullscreenButton}
@@ -1122,6 +1164,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           ) : (
             <>
               <FrameStep playback={playback} fps={fps} commands={commands} />
+              <TakeButton flow={take} />
               {holdOriginal}
               {fullscreenButton}
             </>

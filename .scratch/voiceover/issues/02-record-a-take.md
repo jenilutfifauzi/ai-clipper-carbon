@@ -16,11 +16,18 @@
 
 **Status:** ready-for-agent
 
-- [ ] The WAV encoding round-trips its header and samples (vitest).
-- [ ] The landing from a playhead, a roll time and a first-sample time is right, and never before 0 (vitest).
-- [ ] The recorder stops itself at eight minutes (vitest, fake clock).
-- [ ] With a fake `getUserMedia`, AudioContext and upload, pressing the button rolls the picture with the bus silent, and Stop by button, Space and Shift+R lands one Music Clip (media, start, secs, `speech: true`, no `duck`), Picked, with the playhead at its start (vitest).
-- [ ] The input is opened with echo cancellation, noise suppression and automatic gain off (vitest).
-- [ ] Outside a secure context the button is absent and the hint is shown (vitest).
-- [ ] Seam A: a mono 48 kHz WAV upload becomes an audio item with Peaks, named from its file.
+- [x] The WAV encoding round-trips its header and samples (vitest).
+- [x] The landing from a playhead, a roll time and a first-sample time is right, and never before 0 (vitest).
+- [x] The recorder stops itself at eight minutes (vitest, fake clock).
+- [x] With a fake `getUserMedia`, AudioContext and upload, pressing the button rolls the picture with the bus silent, and Stop by button, Space and Shift+R lands one Music Clip (media, start, secs, `speech: true`, no `duck`), Picked, with the playhead at its start (vitest).
+- [x] The input is opened with echo cancellation, noise suppression and automatic gain off (vitest).
+- [x] Outside a secure context the button is absent and the hint is shown (vitest).
+- [x] Seam A: a mono 48 kHz WAV upload becomes an audio item with Peaks, named from its file.
 - [ ] Checked by hand in Chrome and Safari on the Mac: the words of a Take land in time with the picture.
+
+## Comments
+
+- Built test-first. Pure parts in `frontend/src/pages/job/advanced/voiceover.ts` (WAV, landing, cap, name, `canRecord`); the recorder in `takeRecorder.ts` (no React); the flow in `takeFlow.ts` (`takeStep` and `TakeFlow`); the button and its meter in `TakeButton.tsx`; `landTake` in `actions.ts`; `holdBus` in `editor/masterBus.ts`; the `record` row in `keymap.ts` and `commands.ts`. Tests: `voiceover.test.ts`, `voiceoverFlow.test.tsx`, `keymap.test.ts`, `masterBus.test.ts`; Seam A in `backend/tests/test_voiceover.py`.
+- The upload's name keeps the time's dots ("Voiceover 2026-10-20 14.03.05"): the backend takes `Path(filename).stem`, which drops only ".wav". No backend change.
+- Still to do: the last criterion, a check by hand in Chrome and Safari on the Mac that a Take's words land in time with the picture. Status stays `ready-for-agent` until it is done.
+

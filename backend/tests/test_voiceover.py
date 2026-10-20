@@ -3,6 +3,8 @@ Music Clip marked Speech that isn't Muted is speech for Ducking over its whole s
 and is never ducked itself. Seam B on the model and the planner's speech spans, then Seam A through
 the API, MCP and the real ffmpeg (as test_ducking.py)."""
 
+import io
+import wave
 from dataclasses import replace
 from pathlib import Path
 
@@ -128,6 +130,31 @@ def tones(tmp_path_factory) -> dict[str, bytes]:
         name: make(folder / f"{name}.wav", "-f", "lavfi", "-i", f"sine=frequency={frequency}:sample_rate=44100:duration=5")
         for name, frequency in (("song", 880), ("take", 1320), ("reference", 440))
     }
+
+
+def take_wav(seconds: float) -> bytes:
+    """A Take as the browser writes it (.scratch/voiceover/issues/02-record-a-take.md): mono 16-bit
+    PCM at 48 kHz in a plain 44-byte WAV header, here a 660 Hz tone at half scale."""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(48000)
+        times = np.arange(int(seconds * 48000)) / 48000
+        wav.writeframes((np.sin(2 * np.pi * 660 * times) * 16384).astype("<i2").tobytes())
+    return out.getvalue()
+
+
+def test_a_mono_48_khz_take_becomes_an_audio_item_with_peaks_named_from_its_file(client):
+    answer = upload(client, take_wav(2.0), "Voiceover 2026-10-20 14.03.05.wav")
+    assert answer.status_code == 201, answer.text
+    item = answer.json()
+    # Its name is the file's without ".wav": the time's dots kept.
+    assert (item["kind"], item["name"], item["has_audio"]) == ("audio", "Voiceover 2026-10-20 14.03.05", True)
+    assert item["duration"] == pytest.approx(2, abs=0.05)
+    assert client.get(f"/api/media/{item['id']}").headers["content-type"] == "audio/mp4"
+    peaks = client.get(f"/api/media/{item['id']}/peaks/v1/0.peaks")
+    assert peaks.status_code == 200 and len(peaks.content) > 6
 
 
 def test_a_speech_music_clip_is_added_with_no_duck_and_refuses_one_as_the_sources_refuses_speech(client, tones):

@@ -857,6 +857,28 @@ export function setSpeech(scene: { edits: AdvancedEdits; pick: Pick }, id: strin
 }
 
 /**
+ * A Take landed (GLOSSARY.md, Take; ADR 0018): one change that adds a Music Clip of its item `media`
+ * at `start` for `secs`, marked Speech and not Ducked, whole and at full volume; the Timeline lays it
+ * on the Music Track's lowest free lane. It is Picked. Undone, the Music Clip goes and the item stays.
+ */
+export function landTake(scene: { edits: AdvancedEdits }, take: { media: string; start: number; secs: number }, ids: () => string = newId): Outcome {
+  const clip: MusicClip = {
+    id: ids(),
+    media: take.media,
+    start: round(Math.max(0, take.start)),
+    secs: round(take.secs),
+    offset: 0,
+    volume: 1,
+    fade_in: 0,
+    fade_out: 0,
+    keys: {},
+    duck: null,
+    speech: true,
+  };
+  return { edits: { ...scene.edits, music: [...scene.edits.music, clip] }, pick: picked({ kind: "music", id: clip.id }) };
+}
+
+/**
  * Whether Segment `id` can be Detached (GLOSSARY.md, Detach): it has a sound of its own to move off,
  * which a Freeze frame, a Muted Segment and a video without sound (`sounded` says whether a Media
  * Library item has sound) don't, and no Music Clip is Detached from it already.
