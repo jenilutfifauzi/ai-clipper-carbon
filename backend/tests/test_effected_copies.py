@@ -178,3 +178,25 @@ def test_after_a_save_the_copies_no_candidate_uses_are_removed(client, settings)
     # Its effects saved off, the first Candidate's copy goes too; the other's stays.
     patch(client, job, first, segments=[item | {"audio_effects": []}])
     assert not kept.exists() and others.is_file()
+
+
+@pytest.mark.parametrize("save", ["add a Candidate", "restore a Revision"])
+def test_every_save_of_a_candidate_removes_the_copies_no_candidate_uses(client, settings, save):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "soal")
+    words = words_of(job)
+    item = {"id": "e", "start": words["halo"]["start"], "end": words["soal"]["end"], "audio_effects": UP}
+    candidate = patch(client, job, candidate, segments=[item])
+    folder = settings.data_dir / "jobs" / job["id"] / "effected"
+    kept = folder / asked(client, job, candidate, "segment", "e")["url"].rsplit("/", 1)[1]
+    draft = {"segments": [item | {"audio_effects": [{"id": "telephone"}]}]}
+    tried = folder / asked(client, job, candidate, "segment", "e", draft)["url"].rsplit("/", 1)[1]
+    assert kept.is_file() and tried.is_file()
+    if save == "add a Candidate":
+        add(client, job, "halo", "kabar", selected=False)
+    else:
+        url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/revisions/{candidate['revision']}/restore"
+        response = client.post(url, json={})
+        assert response.status_code == 200, response.text
+    assert kept.is_file()
+    assert not tried.exists()

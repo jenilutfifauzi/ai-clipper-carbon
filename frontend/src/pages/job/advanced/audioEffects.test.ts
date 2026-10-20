@@ -329,4 +329,25 @@ describe("the Clean switches", () => {
     expect(moveAudioEffect({ edits: state, pick: one }, sounded, 2, 1)).toBeNull();
     expect(moveAudioEffect({ edits: state, pick: one }, sounded, 1, 1)!.edits.segments[0].audio_effects).toEqual([denoise, telephone, echo, normalize]);
   });
+
+  test("a row moved past a switch's entry an agent put between rows lands beside its neighbour; the rest keep their order", () => {
+    const radio: AudioEffect = { id: "radio", params: {}, enabled: true };
+    const state = alone([radio, normalize, echo]);
+    expect(moveAudioEffect({ edits: state, pick: one }, sounded, 2, -1)!.edits.segments[0].audio_effects).toEqual([echo, radio, normalize]);
+    expect(moveAudioEffect({ edits: state, pick: one }, sounded, 0, 1)!.edits.segments[0].audio_effects).toEqual([normalize, echo, radio]);
+  });
+
+  test("Add effect puts a preset above Normalize loudness, which stays last", () => {
+    const echoKind: AudioEffectKind = { id: "echo", name: "Echo", group: "Space", order: 0, description: "", settings: [] };
+    const added: AudioEffect = { id: "echo", params: {}, enabled: true };
+    const after = (state: AdvancedEdits) => addAudioEffect({ edits: state, pick: one }, sounded, echoKind)!.edits.segments[0].audio_effects;
+    expect(after(alone([denoise, telephone, normalize]))).toEqual([denoise, telephone, added, normalize]);
+    expect(after(alone([normalize]))).toEqual([added, normalize]);
+    expect(after(alone([denoise]))).toEqual([denoise, added]);
+  });
+
+  test("Enhance voice goes right after a Reduce noise wherever it is, else at the top", () => {
+    expect(stackAfter(alone([echo, denoise, telephone]), [enhanceKind, true])).toEqual([echo, denoise, enhance, telephone]);
+    expect(stackAfter(alone([echo, normalize]), [enhanceKind, true])).toEqual([enhance, echo, normalize]);
+  });
 });

@@ -186,6 +186,17 @@ def _edit(request: Request) -> Edit:
     return Edit.of(request.headers.get("X-Edit-Source"), request.headers.get("X-Edit-Tab"))
 
 
+def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str, float], None]:
+    """What runs once a save of a Job's Candidates is sent: removing the Job's Effected copies none of
+    its Candidates uses, made before the save started (`sweep_unused_effected`)."""
+    state = request.app.state
+
+    def after(job_id: str, started: float) -> None:
+        background.add_task(sweep_unused_effected, state.store, state.settings, state.presets, state.logos, state.media, job_id, started)
+
+    return after
+
+
 def _job(job_id: str, request: Request) -> Job:
     """The Job, or a 404. For streaming routes, which can't answer 404 once they have started."""
     try:
@@ -207,6 +218,7 @@ MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
+AfterSave = Annotated[Callable[[str, float], None], Depends(_after_save)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -838,11 +850,11 @@ def update_candidate(
     logos: Logos,
     library: Media,
     edit: EditBy,
-    background: BackgroundTasks,
+    after_save: AfterSave,
 ) -> Candidate:
     """Change a Candidate's bounds (snapped to Words), hook text, layout, Style Preset, Style
-    Overrides or selected flag, and save it at once; then, once it is sent, remove the Job's Effected
-    copies none of its Candidates uses (`sweep_unused_effected`). 422 for a range that isn't a usable clip or
+    Overrides or selected flag, and save it at once (sweeping the Job's unused Effected copies, as
+    every save does: `_review`). 422 for a range that isn't a usable clip or
     overrides that don't make a valid style; 404 for an unknown Preset; 409 unless the Job is in review."""
     if body.preset_id is not None:
         _preset(presets, body.preset_id)
@@ -860,9 +872,7 @@ def update_candidate(
             raise InvalidEdit(f"Invalid style overrides: {exc}") from None
         return candidates, candidate
 
-    saved = _review(store, settings, job_id, update, edit)
-    background.add_task(sweep_unused_effected, store, settings, presets, logos, library, job_id, time.time())
-    return saved
+    return _review(store, settings, job_id, update, edit, after_save)
 
 
 @router.get("/jobs/{job_id}/candidates/{candidate_id}/revisions")
@@ -896,6 +906,7 @@ def restore_revision(
     logos: Logos,
     library: Media,
     edit: EditBy,
+    after_save: AfterSave,
     body: RestoreBody | None = None,
 ) -> Candidate:
     """Save the Candidate as it was in an entry of its Revision History, as its next Revision (source
@@ -907,7 +918,7 @@ def restore_revision(
         **{name: getattr(was, name) for name in RESTORED},
         revision=body.revision if body else None,
     )
-    return update_candidate(job_id, candidate_id, update, store, settings, presets, logos, library, Edit("restore", edit.tab))
+    return update_candidate(job_id, candidate_id, update, store, settings, presets, logos, library, Edit("restore", edit.tab), after_save)
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/preview-plan")
@@ -1237,10 +1248,12 @@ def transcribe_media_words(
 
 
 @router.post("/jobs/{job_id}/candidates", status_code=201)
-def add_candidate(job_id: str, body: ManualCandidate, store: Store, settings: AppSettings, edit: EditBy) -> Candidate:
+def add_candidate(
+    job_id: str, body: ManualCandidate, store: Store, settings: AppSettings, edit: EditBy, after_save: AfterSave
+) -> Candidate:
     """Add a manual Candidate for a transcript range, snapped to Words, after the AI's Candidates."""
     return _review(
-        store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode), edit
+        store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode), edit, after_save
     )
 
 
@@ -1263,7 +1276,12 @@ def _review(
     job_id: str,
     change: Callable[[list[Candidate], Episode], tuple[list[Candidate], Candidate]],
     edit: Edit,
+    after_save: Callable[[str, float], None],
 ) -> Candidate:
+    """Save the Candidates `change` makes, then `after_save` (every save of a Candidate sweeps the
+    Job's unused Effected copies; one made since the save started survives)."""
+    started = time.time()
+
     def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
         transcript = store.load_transcript(job.id)
         assert job.source is not None and transcript is not None  # a Job in review has both
@@ -1271,7 +1289,7 @@ def _review(
         return change(candidates, episode)
 
     try:
-        return store.change_candidates(job_id, changed, expect=EDITABLE, edit=edit)
+        saved = store.change_candidates(job_id, changed, expect=EDITABLE, edit=edit)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     except CandidateNotFound as exc:
@@ -1283,6 +1301,8 @@ def _review(
     except StaleRevision as exc:
         message = f"{exc}: it changed since this edit was made; merge the edit into it and save again"
         raise HTTPException(409, {"message": message, "candidate": _CANDIDATE.dump_python(exc.candidate, mode="json")}) from None
+    after_save(job_id, started)
+    return saved
 
 
 @router.post("/jobs/{job_id}/render")

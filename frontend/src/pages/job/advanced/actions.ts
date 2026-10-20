@@ -1311,10 +1311,14 @@ export const audioEffectOf = (kind: AudioEffectKind): AudioEffect => ({
 
 /**
  * Add effect: `kind` at its defaults, switched on, at the bottom of every picked item's stack that has
- * sound (stackedItems), as one change. Null when none with sound is picked.
+ * sound (stackedItems), as one change; above a Normalize loudness at the bottom, which stays last. Null
+ * when none with sound is picked.
  */
 export function addAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, kind: AudioEffectKind): Outcome | null {
-  return restacked(scene, sounded, (stack) => [...stack, audioEffectOf(kind)]);
+  return restacked(scene, sounded, (stack) => {
+    const at = stack.at(-1)?.id === "normalize" ? stack.length - 1 : stack.length;
+    return [...stack.slice(0, at), audioEffectOf(kind), ...stack.slice(at)];
+  });
 }
 
 // Whether two entries are the same effect, switched the same way, at the same settings.
@@ -1356,17 +1360,19 @@ function entryChanged(
 }
 
 /**
- * Entry `index` swapped with the next row up (`delta` −1) or down (+1) in every picked stack: a Clean
- * switch's entry, not a row, is passed over and stays where it is. Null past the first or last row.
+ * Entry `index` moved past the next row up (`delta` −1) or down (+1) in every picked stack, landing
+ * beside it: a Clean switch's entry is not a row, and the other entries keep their order (so the Clean
+ * entries the editor places stay at the top and bottom). Null past the first or last row.
  */
 export function moveAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, index: number, delta: -1 | 1): Outcome | null {
   return entryChanged(scene, sounded, index, (stack) => {
     let to = index + delta;
     while (to >= 0 && to < stack.length && isCleanSwitch(stack[to].id)) to += delta;
     if (to < 0 || to >= stack.length) return null;
-    const next = [...stack];
-    [next[index], next[to]] = [next[to], next[index]];
-    return next;
+    const rest = stack.filter((_, at) => at !== index);
+    const neighbour = rest.indexOf(stack[to]);
+    const at = delta < 0 ? neighbour : neighbour + 1;
+    return [...rest.slice(0, at), stack[index], ...rest.slice(at)];
   });
 }
 
@@ -1423,11 +1429,12 @@ export function cleanSwitches(scene: { edits: AdvancedEdits; pick: Pick }, sound
   ) as Record<CleanSwitchId, CleanSwitch>;
 }
 
-// Where a Clean switch's entry goes in a stack: Reduce noise at the top; Enhance voice at the top
-// too, after a Reduce noise there; Normalize loudness at the bottom, so that it measures the rest.
+// Where a Clean switch's entry goes in a stack: Reduce noise at the top; Enhance voice right after a
+// Reduce noise, wherever an agent put it, else at the top; Normalize loudness at the bottom, so that
+// it measures the rest.
 function cleanPlace(stack: AudioEffect[], id: string): number {
   if (id === "normalize") return stack.length;
-  if (id === "enhance-voice" && stack[0]?.id === "denoise") return 1;
+  if (id === "enhance-voice") return stack.findLastIndex((entry) => entry.id === "denoise") + 1;
   return 0;
 }
 

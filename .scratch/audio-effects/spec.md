@@ -29,7 +29,7 @@ Every sounding item in the Advanced Edit gets a stack of **Audio Effects**: Segm
 - **Order matters, and the owner sets it.**
   - Reduce noise and Enhance voice go to the top when switched on: clean first, colour after.
   - Normalize loudness goes to the bottom, so it measures the result.
-  - Anything can be moved afterwards.
+  - The presets can be moved afterwards; the Clean three keep their places in the editor (an agent may still order them).
 - **The render applies the stack exactly.** It runs after the item's Speed and Reverse and before its volume, Keyframes, Ducking and fades. An echo's tail is cut at the item's end, so items keep their length. The final loudness pass of the Export Settings still runs on the whole mix.
 - **The preview plays what the render will.**
   - When an item's effects change, the server makes its **Effected copy**: the item's sound with its Speed, Reverse and Audio Effects, through the same ffmpeg chain.
