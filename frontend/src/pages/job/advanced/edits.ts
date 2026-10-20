@@ -142,6 +142,9 @@ export function keptOffset(item: OverlayPlay, from: number, to: number): number 
 // A Music Clip's or Segment's longest fade (Fade in backend/app/candidates.py).
 export const FADE_MAX_SECS = 10;
 
+/** The longest fade an Adjustment Layer `secs` long takes: half of it, down to the hundredth (ADR 0013, as the backend refuses longer ones). */
+export const halfFadeMax = (secs: number) => Math.floor((secs / 2) * 100) / 100;
+
 /**
  * A Music Clip's or Segment's fades within `secs` of it, as the planner hears them (fades_within in
  * backend/app/planner.py, which is the rule; both are tested on the cases in

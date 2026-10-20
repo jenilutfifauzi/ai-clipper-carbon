@@ -210,7 +210,7 @@ export function Tracks({
   const locked = (kind: TrackKind) => tracks.locked.includes(kind);
   const textLanes = lanes(edits.text_layers, true);
   const shapeLanes = lanes(edits.shapes, true);
-  const adjustLanes = lanes(listOf(edits, "adjust"), true);
+  const adjustLanes = lanes(listOf(edits, "adjustment"), true);
   // An Adjustment Layer is named by its Look.
   const looks = useLooks();
   const lookNames = new Map((looks ?? []).map((look) => [look.id, look.name]));
@@ -303,7 +303,7 @@ export function Tracks({
           drop={{ types: [DRAG_LOOK], onDrop: (data, clientX) => handlers.onDropLook(data.getData(DRAG_LOOK), geometry.timeAt(clientX)) }}
         >
           {lane.map((layer) => {
-            const selected = isPicked(pick, "adjust", layer.id);
+            const selected = isPicked(pick, "adjustment", layer.id);
             const look = layer.grade.look ? lookNames.get(layer.grade.look) : undefined;
             const name = look ?? "Adjustment";
             return (
@@ -314,14 +314,14 @@ export function Tracks({
                 end={Math.min(layer.start + layer.secs, duration)}
                 max={duration}
                 minSecs={ITEM_MIN_SECS}
-                tone="adjust"
+                tone="adjustment"
                 selected={selected}
                 changed={changed.has(layer.id)}
                 label={`Adjustment Layer ${name}, from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s at ${Math.round(layer.strength)}%`}
-                pickKey={keyOf({ kind: "adjust", id: layer.id })}
-                onSelect={choose({ kind: "adjust", id: layer.id })}
+                pickKey={keyOf({ kind: "adjustment", id: layer.id })}
+                onSelect={choose({ kind: "adjustment", id: layer.id })}
                 onChange={({ start, end, edge }, group) =>
-                  layerChanged({ kind: "adjust", id: layer.id }, layer.start, { start, edge }, group, () =>
+                  layerChanged({ kind: "adjustment", id: layer.id }, layer.start, { start, edge }, group, () =>
                     // Trimmed, its fades are kept within half of it.
                     handlers.onAdjustment(fadesHalved({ ...layer, start: round(start), secs: round(end - start) }), group),
                   )

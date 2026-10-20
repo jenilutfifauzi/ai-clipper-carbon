@@ -28,7 +28,7 @@ export interface AdjustmentFilter {
  * neutral or at weight 0, which change nothing.
  */
 export function adjustmentFilters(plan: RenderPlan | null, time: number): AdjustmentFilter[] {
-  return (plan?.adjustments ?? []).flatMap((event) => {
+  return (plan?.adjustment_layers ?? []).flatMap((event) => {
     const weight = Math.round(adjustmentWeight(event, time) * 200) / 200;
     if (weight <= 0 || !foldGrade(event.grade)) return [];
     const filterId = hasGradeFilter(event.grade) ? `adjust-${event.id}-${gradeFilterId(event.grade)}` : null;

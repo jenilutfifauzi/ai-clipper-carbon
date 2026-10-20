@@ -58,7 +58,7 @@ function scene(state: AdvancedEdits, pick: Pick, changes: Partial<PickContext> =
   return { edits: state, pick, played, duration: played.at(-1)?.end ?? 0, gap: (time) => time, ids: () => `n${++n}`, ...changes };
 }
 
-const ref = (id: string) => ({ kind: "adjust", id }) as const;
+const ref = (id: string) => ({ kind: "adjustment", id }) as const;
 const seg = (id: string) => ({ kind: "segment", id }) as const;
 
 describe("the Magnetic timeline", () => {
@@ -246,7 +246,7 @@ describe("the preview", () => {
 
   test("the layers at a time are mixed in list order; a neutral one or one at strength 0 adds no filter", () => {
     const plan = {
-      adjustments: [event("a", 0, 4), event("b", 1, 3, { strength: 50 }), event("off", 0, 4, { strength: 0 }), event("plain", 0, 4, { grade: NEUTRAL_GRADE })],
+      adjustment_layers: [event("a", 0, 4), event("b", 1, 3, { strength: 50 }), event("off", 0, 4, { strength: 0 }), event("plain", 0, 4, { grade: NEUTRAL_GRADE })],
     } as RenderPlan;
     expect(adjustmentFilters(plan, 2).map(({ id, weight }) => [id, weight])).toEqual([
       ["a", 1],
@@ -256,13 +256,13 @@ describe("the preview", () => {
   });
 
   test("hiding the Adjust Track drops them from the preview", () => {
-    const plan = { adjustments: [event("a", 0, 4)], texts: [], shapes: [], overlays: [], captions: [], hook: null } as unknown as RenderPlan;
-    expect(shownPlan(plan, { ...UNTOUCHED, hidden: ["adjust"] }).adjustments).toEqual([]);
+    const plan = { adjustment_layers: [event("a", 0, 4)], texts: [], shapes: [], overlays: [], captions: [], hook: null } as unknown as RenderPlan;
+    expect(shownPlan(plan, { ...UNTOUCHED, hidden: ["adjust"] }).adjustment_layers).toEqual([]);
   });
 });
 
 describe("the preview's wrapper", () => {
-  const plan = { adjustments: [event("a", 2, 6, { strength: 50, fade_in: 1 })] } as RenderPlan;
+  const plan = { adjustment_layers: [event("a", 2, 6, { strength: 50, fade_in: 1 })] } as RenderPlan;
   const drawn = (time: number) => renderToStaticMarkup(createElement(AdjustedStack, { filters: adjustmentFilters(plan, time), children: createElement("video") }));
 
   test("mid-fade, filters the Main Track and Overlays' wrapper, mixing the graded picture back by strength times fade", () => {

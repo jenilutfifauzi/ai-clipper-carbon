@@ -466,7 +466,7 @@ class Renderer:
         for i, (event, number, feed) in enumerate(layered):
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
             joined = f"[over{i}]"
-        for i, event in enumerate(plan.adjustments):
+        for i, event in enumerate(plan.adjustment_layers):
             if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i):
                 frame += f";{adjusted}"
                 joined = f"[adjusted{i}]"
@@ -1077,24 +1077,28 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
 
 def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int) -> str:
     """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays)
-    into `out` (docs/adr/0013): the stream split, its frames within the layer's span graded, given an
-    alpha of its strength times its fade ramp (`fade` on the alpha alone) and laid back over the
-    ungraded frames, only within its span. Cheap outside it: its graded branch is trimmed to the span.
-    "" when it changes nothing (a neutral Grade, or strength 0)."""
-    graded = grade_filters(event.grade)
+    into `out` (docs/adr/0013): the stream split, its frames graded, given an alpha of its strength
+    times its fade ramp (`fade` on the alpha alone, its times those of the Clip) and laid back over the
+    ungraded frames, only within its span. Both branches keep every frame at its time, so neither
+    waits on the other and no frame is held back; outside its span the grade and the alpha pass the
+    frames through untouched (`enable`). "" when it changes nothing (a neutral Grade, or strength 0)."""
+    span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
+    graded = grade_filters(event.grade, enable=span)
     if not graded or event.strength <= 0:
         return ""
     name = f"adjust{index}"
-    ramp = [f"colorchannelmixer=aa={event.strength / 100:.6f}"] if event.strength < 100 else []
+    # Straight to the 4:2:0 with alpha the overlay draws, the alpha scaled by a table.
+    ramp = ["format=yuva420p"]
+    if event.strength < 100:
+        ramp.append(f"lut=a='val*{event.strength / 100:.6f}':enable='{span}'")
     if event.fade_in:
-        ramp.append(f"fade=t=in:st={event.start:.3f}:d={event.fade_in:.3f}:alpha=1")
+        ramp.append(f"fade=t=in:st={event.start:.3f}:d={event.fade_in:.3f}:alpha=1:enable='{span}'")
     if event.fade_out:
-        ramp.append(f"fade=t=out:st={event.end - event.fade_out:.3f}:d={event.fade_out:.3f}:alpha=1")
-    shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
+        ramp.append(f"fade=t=out:st={event.end - event.fade_out:.3f}:d={event.fade_out:.3f}:alpha=1:enable='{span}'")
     return (
         f"{below}split[{name}a][{name}b];"
-        f"[{name}b]trim=start={event.start:.3f}:end={event.end:.3f},{graded},{','.join(['format=rgba', *ramp])}[{name}g];"
-        f"[{name}a][{name}g]overlay=0:0:{shows}:eof_action=pass{out}"
+        f"[{name}b]{graded},{','.join(ramp)}[{name}g];"
+        f"[{name}a][{name}g]overlay=0:0:enable='{span}':eof_action=pass{out}"
     )
 
 

@@ -162,8 +162,10 @@ def _mixed(a: Folded | None, b: Folded | None, t: float) -> Folded | None:
     return Folded(tables, matrix, sharpen, vignette)  # type: ignore[arg-type]
 
 
-def grade_filters(grade: Grade, alpha: str | None = None) -> str:
+def grade_filters(grade: Grade, alpha: str | None = None, enable: str | None = None) -> str:
     """The ffmpeg filters that draw `grade` on a picture, joined by commas, or "" for a neutral one.
+    With `enable` (an ffmpeg expression of `t`), each filter that changes the picture does so only
+    while it holds, passing the other frames through untouched (the pixel format still converted).
 
     With `alpha` (a prefix for the labels it needs), the picture's alpha is kept, as an Overlay's
     image may have one: the tables and matrix are drawn on RGBA, and a vignette (which ffmpeg draws
@@ -172,13 +174,14 @@ def grade_filters(grade: Grade, alpha: str | None = None) -> str:
     if folded is None:
         return ""
     if alpha is not None and folded.vignette:
-        coloured = _filters(folded, "rgb24")
+        coloured = _filters(folded, "rgb24", enable)
         return f"format=rgba,split[{alpha}c][{alpha}a];[{alpha}a]alphaextract[{alpha}m];[{alpha}c]{coloured}[{alpha}g];[{alpha}g][{alpha}m]alphamerge"
-    return _filters(folded, "rgb24" if alpha is None else "rgba")
+    return _filters(folded, "rgb24" if alpha is None else "rgba", enable)
 
 
-def _filters(folded: Folded, rgb: str) -> str:
-    """The filters of `folded`, its tables, matrix and Look's table drawn on the pixel format `rgb`."""
+def _filters(folded: Folded, rgb: str, enable: str | None = None) -> str:
+    """The filters of `folded`, its tables, matrix and Look's table drawn on the pixel format `rgb`,
+    each only while `enable` holds when given."""
     table = None
     if folded.lut is not None:
         try:
@@ -205,7 +208,9 @@ def _filters(folded: Folded, rgb: str) -> str:
         filters.append(f"unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount={SHARPEN_AMOUNT * folded.sharpen / 100:.6f}:chroma_amount=0")
     if folded.vignette:
         # On RGB, so that it scales each channel's level as the preview's gradient does.
-        filters.append(f"format=rgb24,vignette=angle={VIGNETTE_ANGLE * folded.vignette / 100:.6f}")
+        filters += ["format=rgb24", f"vignette=angle={VIGNETTE_ANGLE * folded.vignette / 100:.6f}"]
+    if enable is not None:
+        filters = [f if f.startswith("format=") else f"{f}:enable='{enable}'" for f in filters]
     return ",".join(filters)
 
 

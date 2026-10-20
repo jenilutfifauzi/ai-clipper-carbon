@@ -39,7 +39,7 @@ export function shownPlan(plan: RenderPlan, { hidden }: TrackState): RenderPlan 
     ...plan,
     texts: hidden.includes("text") ? [] : plan.texts,
     shapes: hidden.includes("shape") ? [] : plan.shapes,
-    adjustments: hidden.includes("adjust") ? [] : plan.adjustments,
+    adjustment_layers: hidden.includes("adjust") ? [] : plan.adjustment_layers,
     overlays: hidden.includes("overlay") ? [] : plan.overlays,
     captions: hidden.includes("captions") ? [] : plan.captions,
     hook: hidden.includes("hook") ? null : plan.hook,

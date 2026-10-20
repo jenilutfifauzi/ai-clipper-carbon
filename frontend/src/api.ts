@@ -997,7 +997,7 @@ export interface RenderPlan {
   grade?: Grade;
   // Its Adjustment Layers that show, in the order applied, over the Main Track and the Overlays.
   // None in a plan from before them.
-  adjustments?: AdjustmentEvent[];
+  adjustment_layers?: AdjustmentEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its

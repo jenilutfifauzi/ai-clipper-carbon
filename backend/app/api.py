@@ -49,6 +49,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    grades_of,
 )
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
@@ -948,15 +949,18 @@ def compare_frame(
     store: Store,
     settings: AppSettings,
     presets: Presets,
+    export_presets: ExportPresets,
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
 ) -> Response:
     """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
     the Preview Plan plans it), drawn by the render path as save_frame draws it, at 1080x1920 and the
-    Source's frame rate, as `image/png`. Never kept: drawn outside the Job, which doesn't change.
-    Synchronous, outside the render queue. 422 for a draft that isn't a valid edit."""
-    export = ExportSettings()
+    frame rate its Clip renders at (its Clip's Export Preset as it is now, the default's when it has
+    none or it was deleted: docs/adr/0021), as `image/png`. Never kept: drawn outside the Job, which
+    doesn't change. Synchronous, outside the render queue. 422 for a draft that isn't a valid edit."""
+    asked = next((clip.export_preset_id for clip in store.load_clips(job_id) if clip.candidate_id == candidate_id), None)
+    export = replace(ExportSettings(), fps=export_presets.get_or_default(asked).settings.fps)
     planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
     job, job_dir = store.get(job_id), store.job_dir(job_id)
     with tempfile.TemporaryDirectory(prefix="compare-") as folder:
@@ -1818,11 +1822,7 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
 
 def _check_looks_of(body: CandidateUpdate) -> None:
     """422 for an edit giving a Grade a Look that isn't one of the Looks."""
-    graded = [(f"Segment {segment.id}", segment.grade) for segment in body.segments or []]
-    graded += [(f"Overlay {overlay.id}", overlay.grade) for overlay in body.overlays or []]
-    graded += [("The Candidate's grade", body.grade)] if body.grade is not None else []
-    graded += [(f"Adjustment Layer {layer.id}", layer.grade) for layer in body.adjustment_layers or []]
-    for what, grade in graded:
+    for what, grade in grades_of(body.grade, body.segments or [], body.overlays or [], body.adjustment_layers or []):
         if grade.look is None:
             continue
         try:

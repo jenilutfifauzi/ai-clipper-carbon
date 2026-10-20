@@ -3,6 +3,7 @@
 import math
 from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
+from collections.abc import Iterable, Iterator
 from typing import Annotated, Any, NamedTuple
 
 from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
@@ -962,14 +963,14 @@ class Candidate:
             | {overlay.media for overlay in self.overlays}
         )
 
+    def grades(self) -> Iterator[tuple[str, Grade]]:
+        """Each of its Grades, with the part it is."""
+        return grades_of(self.grade, self.segments, self.overlays, self.adjustment_layers)
+
     def looks(self) -> dict[str, list[str]]:
         """The Looks its Grades name (app/looks.py), each with the parts that name it."""
         named: dict[str, list[str]] = {}
-        graded = [("its grade", self.grade)]
-        graded += [(f"Segment {segment.id}", segment.grade) for segment in self.segments]
-        graded += [(f"Overlay {overlay.id}", overlay.grade) for overlay in self.overlays]
-        graded += [(f"Adjustment Layer {layer.id}", layer.grade) for layer in self.adjustment_layers]
-        for part, grade in graded:
+        for part, grade in self.grades():
             if grade.look is not None:
                 named.setdefault(grade.look, []).append(part)
         return named
@@ -990,6 +991,20 @@ class Candidate:
     def reviewed(self) -> bool:
         """Whether it holds the owner's review work, which a new run of Selection must keep."""
         return self.origin is Origin.MANUAL or self.edited or self.selected
+
+
+def grades_of(
+    grade: Grade | None, segments: Iterable[Segment], overlays: Iterable[Overlay], adjustment_layers: Iterable[AdjustmentLayer]
+) -> Iterator[tuple[str, Grade]]:
+    """Each Grade of these parts of a Candidate (its own `grade` when given), with the part it is."""
+    if grade is not None:
+        yield "its grade", grade
+    for segment in segments:
+        yield f"Segment {segment.id}", segment.grade
+    for overlay in overlays:
+        yield f"Overlay {overlay.id}", overlay.grade
+    for layer in adjustment_layers:
+        yield f"Adjustment Layer {layer.id}", layer.grade
 
 
 def manual_candidate(id: str, start: float, end: float) -> Candidate:

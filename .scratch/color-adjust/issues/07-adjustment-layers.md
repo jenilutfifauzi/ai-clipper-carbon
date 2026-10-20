@@ -46,12 +46,17 @@
 `__post_init__`) is `Candidate.adjustment_layers` (none in one saved before), counted by
 `Candidate.looks()` so an Imported Look it names can't be deleted, and checked for unknown Looks with
 the other Grades (`_check_looks_of`). The planner's `adjustment_event` cuts one at the Clip's end
-(its fades then held to half of what is left) and drops one starting at or past it; `RenderPlan.adjustments`.
+(its fades then held to half of what is left) and drops one starting at or past it; `RenderPlan.adjustment_layers`.
 Render (`renderer._adjustment`): after the Overlays, before the logo, each layer is
-`split` → the second branch `trim`med to its span, graded (`grade_filters`), given an alpha of
-strength (`colorchannelmixer=aa`) times its ramp (`fade ... alpha=1`) → `overlay` back with
-`enable` on its span and `eof_action=pass`: an alpha overlay instead of `blend`, so the mix is
-per-frame cheap (no per-pixel expression) and the grade runs only on the span's frames; one
+`split` → the second branch graded (`grade_filters(..., enable=span)`), turned to `yuva420p`, given
+an alpha of strength (`lut=a=val*s`) times its ramp (`fade ... alpha=1`, its `st` in Clip time) →
+`overlay` back with `enable` on its span and `eof_action=pass`: an alpha overlay instead of `blend`,
+so the mix is per-frame cheap (no per-pixel expression). No `trim` on the graded branch (review
+fix): a trimmed branch made the overlay hold every frame before the span in memory (some 500 MB for
+a layer 18 s in at 1080x1920); instead both branches keep every frame at its time and the grade,
+the alpha and the overlay are each `enable`d only on the span. The cost is the RGB conversion of
+every frame (about 3 ms a 1080x1920 frame): Seam A holds a late layer's peak memory within 64 MB of
+an early one's and a Clip with a layer within 3x the render time of one without. One
 `-filter_complex` still. A neutral layer or strength 0 adds nothing. Overlapping layers chain in
 list order (tested: grey-then-warm is warm, warm-then-grey is grey).
 
@@ -66,7 +71,7 @@ during a fade. A layer's vignette is a gradient over the wrapper at its weight's
 one layer; after all layers' colour where several overlap). The draft's layer Grades show at once
 (`draftGrades`' `layers`).
 
-Editor: item kind `adjust` (pick.ts `LISTS`, `NAMES`, `TRACK_OF`; `listOf` reads a list a Candidate
+Editor: item kind `adjustment` (renamed from `adjust` in review: GLOSSARY's Adjust is the dials) (pick.ts `LISTS`, `NAMES`, `TRACK_OF`; `listOf` reads a list a Candidate
 from before it lacks as none), Track `adjust` ("Adjust", hides and locks; hidden it is dropped from
 the preview only) drawn above the Overlay Track with lanes; it moves, trims (fades kept within half,
 `fadesHalved`), splits (no fade at the cut), duplicates, copies/pastes and deletes through the

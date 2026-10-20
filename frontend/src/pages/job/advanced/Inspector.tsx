@@ -156,7 +156,7 @@ export function Inspector({
       );
     }
     const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
-    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjust")) return summary;
+    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment")) return summary;
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
     return (
       <div className="flex flex-col gap-4">
@@ -238,7 +238,7 @@ export function Inspector({
   if (shape && actions) {
     return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
   }
-  const adjustment = find(edits.adjustment_layers ?? [], "adjust");
+  const adjustment = find(edits.adjustment_layers ?? [], "adjustment");
   if (adjustment && actions) {
     return (
       <AdjustmentLayerFields
@@ -406,7 +406,7 @@ const NAMES: Record<ItemKind, [string, string]> = {
   shape: ["Shape", "Shapes"],
   music: ["Music Clip", "Music Clips"],
   overlay: ["Overlay", "Overlays"],
-  adjust: ["Adjustment Layer", "Adjustment Layers"],
+  adjustment: ["Adjustment Layer", "Adjustment Layers"],
 };
 
 /**

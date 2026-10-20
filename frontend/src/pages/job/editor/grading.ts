@@ -280,7 +280,7 @@ export function draftGrades(
 ): RenderPlan {
   const segmentsNow = regraded(plan.segments, segments);
   const overlaysNow = regraded(plan.overlays, overlays);
-  const adjustments = plan.adjustments ?? [];
+  const adjustments = plan.adjustment_layers ?? [];
   const adjustmentsNow = regraded(adjustments, layers) as typeof adjustments;
   const regradedClip = grade !== undefined && gradeFilterId(grade) !== gradeFilterId(plan.grade);
   if (segmentsNow === plan.segments && overlaysNow === plan.overlays && adjustmentsNow === adjustments && !regradedClip) return plan;
@@ -288,7 +288,7 @@ export function draftGrades(
     ...plan,
     segments: segmentsNow,
     overlays: overlaysNow,
-    ...(adjustmentsNow !== adjustments ? { adjustments: adjustmentsNow } : {}),
+    ...(adjustmentsNow !== adjustments ? { adjustment_layers: adjustmentsNow } : {}),
     ...(regradedClip ? { grade: gradeOf(grade) } : {}),
   };
 }

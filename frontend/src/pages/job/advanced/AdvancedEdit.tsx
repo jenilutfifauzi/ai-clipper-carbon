@@ -89,7 +89,7 @@ import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
 import { AdjustPanel } from "./ColorFields";
-import { LookPanel, lookFrame, PhoneFilters } from "./LookPanel";
+import { LOOK_GOES_ON, LookPanel, lookFrame, PhoneFilters } from "./LookPanel";
 import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
 import {
   ASSET,
@@ -1313,7 +1313,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     pick === null
       ? edits.grade
       : itemsOf(pick).flatMap(({ kind, id }): { grade?: Grade }[] =>
-          kind === "segment" || kind === "overlay" || kind === "adjust" ? (listOf(edits, kind) as { id: string; grade?: Grade }[]).filter((item) => item.id === id) : [],
+          kind === "segment" || kind === "overlay" || kind === "adjustment" ? (listOf(edits, kind) as { id: string; grade?: Grade }[]).filter((item) => item.id === id) : [],
         )[0]?.grade;
   const assets = (tab: AssetTab) => (
     <AssetPanel
@@ -1331,7 +1331,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           onPick={(look) => {
             const outcome = relook({ edits, pick }, { look });
             if (outcome) history.set(outcome.edits);
-            else tellOnce("A look goes on Segments, Overlays and Adjustment Layers: select some, or nothing for the whole clip");
+            else tellOnce(LOOK_GOES_ON);
           }}
           onAudition={setAudition}
         />

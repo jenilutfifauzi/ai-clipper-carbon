@@ -974,7 +974,7 @@ class RenderPlan:
     grade: Grade = Grade()
     # The Adjustment Layers that show (docs/adr/0013), in the order they are applied: over the Overlays,
     # under the Watermark, captions, picture layers and hook.
-    adjustments: list[AdjustmentEvent] = field(default_factory=list)
+    adjustment_layers: list[AdjustmentEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -1163,7 +1163,7 @@ def plan_render(
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
         ducking=ducking,
         grade=grade,
-        adjustments=[event for layer in adjustment_layers or [] if (event := adjustment_event(layer, duration)) is not None],
+        adjustment_layers=[event for layer in adjustment_layers or [] if (event := adjustment_event(layer, duration)) is not None],
     )
 
 

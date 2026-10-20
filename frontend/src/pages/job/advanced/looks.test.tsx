@@ -159,12 +159,12 @@ describe("the Color section's Look", () => {
     const without = renderToStaticMarkup(<ColorFields grades={[WARM]} looks={LOOKS} onDial={noop} onReset={noop} onLook={noop} />);
     expect(without).toMatch(/<option value="" selected="">None<\/option><optgroup label="Cinematic">/);
     expect(without).not.toContain("Intensity");
-    expect(without).not.toContain("Remove look");
+    expect(without).not.toContain("Remove Look");
     const looked = renderToStaticMarkup(<ColorFields grades={[{ ...WARM, look: "noir", intensity: 40 }]} looks={LOOKS} onDial={noop} onReset={noop} onLook={noop} />);
     expect(looked).toMatch(/<option value="noir" selected="">NOIR<\/option>/);
     expect(looked).toContain("Intensity");
     expect(looked).toContain("40%");
-    expect(looked).toContain("Remove look");
+    expect(looked).toContain("Remove Look");
     // Two Grades of different Looks: Mixed.
     const mixed = renderToStaticMarkup(<ColorFields grades={[{ ...WARM, look: "noir" }, WARM]} looks={LOOKS} onDial={noop} onReset={noop} onLook={noop} />);
     expect(mixed).toContain("Mixed");

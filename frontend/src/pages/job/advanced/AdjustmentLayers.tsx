@@ -6,6 +6,7 @@ import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { Group } from "../editor/StyleFields";
 import { fadesHalved } from "./actions";
+import { halfFadeMax } from "./edits";
 import { TimingFields } from "./TimingFields";
 
 /**
@@ -31,7 +32,7 @@ export function AdjustmentLayerFields({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const half = Math.floor((layer.secs / 2) * 100) / 100;
+  const half = halfFadeMax(layer.secs);
   const group = (field: string) => `adjust:${layer.id}:${field}`;
   return (
     <div className="flex flex-col gap-4">
@@ -41,10 +42,10 @@ export function AdjustmentLayerFields({
           <span className="truncate">Adjustment Layer</span>
         </h2>
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate adjustment layer">
+          <Button variant="ghost" size="icon" onClick={onDuplicate} aria-label="Duplicate Adjustment Layer">
             <Copy aria-hidden size={17} />
           </Button>
-          <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete adjustment layer">
+          <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete Adjustment Layer">
             <Trash2 aria-hidden size={17} />
           </Button>
         </div>

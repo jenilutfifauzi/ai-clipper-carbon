@@ -5,7 +5,7 @@ import type { PlayedSegment } from "../editor/playback";
 import type { StyleDraft } from "../editor/useStyleDraft";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { TRANSITION_KINDS } from "../editor/transitions";
-import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, NEW_LAYER_SECS, newId, round, type AdvancedEdits } from "./edits";
+import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, halfFadeMax, ITEM_MIN_SECS, keptOffset, NEW_LAYER_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
@@ -41,7 +41,7 @@ export interface Outcome {
 }
 
 export type Timed = TextLayer | Shape | MusicClip | Overlay | AdjustmentLayer;
-export type TimedKind = "text" | "shape" | "music" | "overlay" | "adjust";
+export type TimedKind = "text" | "shape" | "music" | "overlay" | "adjustment";
 
 /**
  * An Adjustment Layer with its fades each held to half its length (ADR 0013, as the backend refuses
@@ -49,7 +49,7 @@ export type TimedKind = "text" | "shape" | "music" | "overlay" | "adjust";
  */
 export function fadesHalved<T extends Timed>(item: T): T {
   if (!("strength" in item)) return item;
-  const half = Math.floor((item.secs / 2) * 100) / 100;
+  const half = halfFadeMax(item.secs);
   if (item.fade_in <= half && item.fade_out <= half) return item;
   return { ...item, fade_in: Math.min(item.fade_in, half), fade_out: Math.min(item.fade_out, half) };
 }
@@ -109,7 +109,7 @@ const KINDS: {
       return { first: { offset: keptOffset(overlay, 0, into) }, second: { offset: keptOffset(overlay, into, overlay.secs) } };
     },
   },
-  adjust: {
+  adjustment: {
     list: "adjustment_layers",
     aside: () => ({}),
     // No fade at the cut, so that the grade goes on across it; each part's other fade held to half of it.
@@ -118,8 +118,8 @@ const KINDS: {
       const into = at - layer.start;
       const rest = layer.start + layer.secs - at;
       return {
-        first: { fade_in: Math.min(layer.fade_in, Math.floor((into / 2) * 100) / 100), fade_out: 0 },
-        second: { fade_in: 0, fade_out: Math.min(layer.fade_out, Math.floor((rest / 2) * 100) / 100) },
+        first: { fade_in: Math.min(layer.fade_in, halfFadeMax(into)), fade_out: 0 },
+        second: { fade_in: 0, fade_out: Math.min(layer.fade_out, halfFadeMax(rest)) },
       };
     },
   },
@@ -156,7 +156,7 @@ export function remove(scene: PickContext, rippled = scene.magnetic ?? false): O
     music: kept(edits.music, "music"),
     overlays: kept(edits.overlays, "overlay"),
     // Left out of a Candidate from before them, which has none.
-    ...(edits.adjustment_layers && { adjustment_layers: kept(edits.adjustment_layers, "adjust") }),
+    ...(edits.adjustment_layers && { adjustment_layers: kept(edits.adjustment_layers, "adjustment") }),
   };
   if (!next.segments.length) {
     const first = edits.segments[0];
@@ -215,7 +215,7 @@ export function rippleRemove(scene: PickContext): Outcome | null {
     const gone = layers.filter((layer) => layer.kind === kind).map(({ item }) => ({ start: item.start, end: item.start + item.secs }));
     if (!gone.length) continue;
     const list = KINDS[kind].list;
-    const closed = ((edits[list] ?? []) as Timed[])
+    const closed = (listOf(edits, kind) as Timed[])
       .filter((item) => !isPicked(scene.pick, kind, item.id))
       .map((item) => {
         const by = covered(gone.filter((span) => span.end <= item.start + 1e-6));
@@ -370,7 +370,7 @@ export function dragSegment(
 /** Every Segment, Text Layer, Shape, Music Clip and Overlay picked (not the hook, the captions or a join). */
 export function pickAll(edits: AdvancedEdits): Pick {
   const refs = (kind: ItemKind) => (listOf(edits, kind) as { id: string }[]).map((item) => ({ kind, id: item.id }));
-  return picked(...refs("segment"), ...refs("text"), ...refs("shape"), ...refs("music"), ...refs("overlay"), ...refs("adjust"));
+  return picked(...refs("segment"), ...refs("text"), ...refs("shape"), ...refs("music"), ...refs("overlay"), ...refs("adjustment"));
 }
 
 // The picked Segments in Main Track order, and the picked Text Layers, Shapes, Music Clips and
@@ -417,7 +417,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     for (const { kind, item } of moved) {
       const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed, next.segments);
       const list = KINDS[kind].list;
-      Object.assign(next, { [list]: [...((next[list] ?? []) as Timed[]), copy] });
+      Object.assign(next, { [list]: [...(listOf(next, kind) as Timed[]), copy] });
       copies.push({ kind, id: copy.id });
     }
   }
@@ -485,7 +485,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
       next.segments,
     );
     const list = KINDS[kind].list;
-    Object.assign(next, { [list]: ((next[list] ?? []) as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
+    Object.assign(next, { [list]: (listOf(next, kind) as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
     tails.push({ kind, id: tail.id });
   }
   return tails.length ? withJoins(scene, { edits: next, pick: picked(...tails) }) : null;
@@ -641,7 +641,7 @@ export function move(scene: PickContext, delta: number): Outcome | null {
   const next = { ...scene.edits };
   for (const { kind, item } of layers) {
     const list = KINDS[kind].list;
-    Object.assign(next, { [list]: ((next[list] ?? []) as Timed[]).map((other) => (other.id === item.id ? { ...other, start: round(other.start + by) } : other)) });
+    Object.assign(next, { [list]: (listOf(next, kind) as Timed[]).map((other) => (other.id === item.id ? { ...other, start: round(other.start + by) } : other)) });
   }
   return { edits: next, pick: scene.pick };
 }
@@ -676,7 +676,7 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   for (const { kind, item } of placed) {
     const list = KINDS[kind].list;
     Object.assign(next, {
-      [list]: ((next[list] ?? []) as Placed[]).map((other) => {
+      [list]: (listOf(next, kind) as Placed[]).map((other) => {
         if (other.id !== item.id) return other;
         const { x, y } = middleOf(other);
         const moved = middledAt(other, Math.round(x + byX), Math.round(y + byY));
@@ -726,18 +726,21 @@ export function relook(scene: { edits: AdvancedEdits; pick: Pick }, change: { lo
   return regraded(scene, (grade) => relooked(grade, change));
 }
 
+/** The id `gradesOf` gives the Candidate's own Grade, with nothing picked. */
+export const CLIP_GRADE_ID = "clip";
+
 /**
  * What `regrade` and `relook` change, by id: the picked Segments, Overlays and Adjustment Layers (in
- * that order) with their Grades, or with nothing picked the Candidate's Grade, by the id "clip". Empty
+ * that order) with their Grades, or with nothing picked the Candidate's Grade, by CLIP_GRADE_ID. Empty
  * with only other items picked.
  */
 export function gradesOf(scene: { edits: AdvancedEdits; pick: Pick }): { id: string; grade?: Grade }[] {
   const { edits, pick } = scene;
-  if (pick === null) return [{ id: "clip", grade: edits.grade }];
+  if (pick === null) return [{ id: CLIP_GRADE_ID, grade: edits.grade }];
   return [
     ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
     ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
-    ...listOf(edits, "adjust").filter((layer) => isPicked(pick, "adjust", layer.id)),
+    ...listOf(edits, "adjustment").filter((layer) => isPicked(pick, "adjustment", layer.id)),
   ];
 }
 
@@ -749,9 +752,9 @@ function regraded(scene: { edits: AdvancedEdits; pick: Pick }, change: (grade: G
     items.some((item) => isPicked(pick, kind, item.id)) ? items.map((item) => (isPicked(pick, kind, item.id) ? { ...item, grade: change(item.grade) } : item)) : items;
   const segments = graded(edits.segments, "segment");
   const overlays = graded(edits.overlays, "overlay");
-  const layers = listOf(edits, "adjust");
-  const adjustment_layers = layers.some((layer) => isPicked(pick, "adjust", layer.id))
-    ? layers.map((layer) => (isPicked(pick, "adjust", layer.id) ? { ...layer, grade: change(layer.grade) } : layer))
+  const layers = listOf(edits, "adjustment");
+  const adjustment_layers = layers.some((layer) => isPicked(pick, "adjustment", layer.id))
+    ? layers.map((layer) => (isPicked(pick, "adjustment", layer.id) ? { ...layer, grade: change(layer.grade) } : layer))
     : edits.adjustment_layers;
   if (segments === edits.segments && overlays === edits.overlays && adjustment_layers === edits.adjustment_layers) return null;
   return { edits: { ...edits, segments, overlays, ...(adjustment_layers && { adjustment_layers }) }, pick };
@@ -1235,7 +1238,7 @@ export function addAdjustmentLayer(scene: PickContext, look: string, at: number)
   if (secs < ITEM_MIN_SECS) return null;
   const layer: AdjustmentLayer = { id: idOf(scene), start, secs, grade: relooked(NEUTRAL_GRADE, { look }), strength: 100, fade_in: 0, fade_out: 0 };
   const { edits } = scene;
-  return { edits: { ...edits, adjustment_layers: [...listOf(edits, "adjust"), layer] }, pick: picked({ kind: "adjust", id: layer.id }) };
+  return { edits: { ...edits, adjustment_layers: [...listOf(edits, "adjustment"), layer] }, pick: picked({ kind: "adjustment", id: layer.id }) };
 }
 
 /**
@@ -1248,10 +1251,10 @@ export function setAdjustment(
   change: { strength?: number; fade_in?: number; fade_out?: number },
 ): Outcome | null {
   const { edits, pick } = scene;
-  const layers = listOf(edits, "adjust");
+  const layers = listOf(edits, "adjustment");
   const layer = layers.find((other) => other.id === id);
   if (!layer) return null;
-  const half = Math.floor((layer.secs / 2) * 100) / 100;
+  const half = halfFadeMax(layer.secs);
   const fade = (value: number | undefined, was: number) => (value === undefined ? was : round(Math.min(Math.max(value, 0), half)));
   const next = {
     ...layer,

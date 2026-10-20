@@ -24,7 +24,8 @@
 
 Backend: `POST /api/jobs/{job}/candidates/{candidate}/compare-frame` (`CompareRequest`: `at`, optional
 `draft` as the Preview Plan takes it) returns `image/png` (`Cache-Control: no-store`), drawn at
-`ExportSettings()` (1080x1920, the Source's frame rate) by `draw_frame` (export_files.py), the
+1080x1920 at the frame rate its Clip renders at (the Clip's Export Preset as it is now, else the
+default's, `get_or_default`; review fix: it was always the Source's) by `draw_frame` (export_files.py), the
 drawing `save_frame` now calls too, into a system temp folder deleted before answering: nothing in
 the Job's folder changes. No MCP tool. Tests: backend/tests/test_compare_render.py (matches the
 rendered Clip's frame, Candidate Grade, hook and Shape included; the Job's files unchanged; a draft's

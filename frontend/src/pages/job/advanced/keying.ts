@@ -388,7 +388,7 @@ export function keyedInPick(edits: AdvancedEdits, pick: Pick, plan?: RenderPlan 
   const keyed = (ref: KeyedRef) => Object.keys(keyedItem(edits, ref, undefined, plan)?.keys ?? {}).length > 0;
   return itemsOf(pick).some(({ kind, id }) => {
     // An Adjustment Layer has no Keyframes (ADR 0013): its fades ease it.
-    if (kind === "adjust") return false;
+    if (kind === "adjustment") return false;
     if (keyed({ kind, id })) return true;
     return kind === "segment" && !!plan && scenesOf(edits, plan, id).some((index) => keyed(sceneRef(index)));
   });
@@ -414,7 +414,7 @@ function scenesOf(edits: AdvancedEdits, plan: RenderPlan, id: string): number[] 
 export function pickedKeyed(pick: Pick, scene: number | null = null): KeyedRef | null {
   const item = onlyItem(pick);
   if (item?.kind === "segment" && scene !== null) return sceneRef(scene);
-  return item && item.kind !== "adjust" ? { kind: item.kind, id: item.id } : null;
+  return item && item.kind !== "adjustment" ? { kind: item.kind, id: item.id } : null;
 }
 
 /**

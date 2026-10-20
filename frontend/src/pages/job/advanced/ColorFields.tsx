@@ -134,7 +134,7 @@ export function ColorFields({
           />
           <Button size="sm" variant="ghost" className="self-start" onClick={() => onLook({ look: null })} title="Take the Look away, keeping the dials">
             <X aria-hidden size={15} />
-            Remove look
+            Remove Look
           </Button>
         </>
       )}
@@ -203,10 +203,10 @@ export function AdjustDials({
  */
 export function AdjustPanel({ edits, pick, onEdits }: { edits: AdvancedEdits; pick: Pick; onEdits: (edits: AdvancedEdits, group?: string) => void }) {
   const { grades, onDial, onReset } = colorChanges({ edits, pick }, onEdits);
-  if (!grades.length) return <p className="text-sm text-pretty text-muted">Adjust grades Segments, Overlays and Adjustment Layers: select some, or nothing for the whole clip.</p>;
+  if (!grades.length) return <p className="text-sm text-pretty text-muted">Adjust grades Segments, Overlays and Adjustment Layers: select some, or nothing for the whole Clip.</p>;
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-pretty text-muted">{pick === null ? "The whole clip's colour." : "The selection's colour."}</p>
+      <p className="text-sm text-pretty text-muted">{pick === null ? "The whole Clip's colour." : "The selection's colour."}</p>
       <Button size="md" variant="ghost" className="self-start" onClick={onReset} disabled={grades.every(isNeutral)}>
         <RotateCcw aria-hidden size={15} />
         Reset all

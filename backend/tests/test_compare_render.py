@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from test_render import add, probe, render, rendered, reviewed  # noqa: F401 (a fixture)
+from test_render import add, pixels, plain_video, probe, render, rendered, reviewed  # noqa: F401 (fixtures)
 from test_review import patch
 from test_save_frame import SHAPE, clip_frame, pixels_of, saved_frame
 
@@ -87,3 +87,32 @@ def test_a_compare_render_draws_an_unsaved_draft_as_save_frame_does_without_savi
     bad = client.post(compare_url(job, candidate), json={"at": 1.0, "draft": {"grade": {"adjust": {"saturation": 500}}}})
     assert bad.status_code == 422
 
+
+
+GREEN = np.array([0, 255, 0])
+# A green bar sliding from x 200 to 880 in 0.2 s, from the Clip's start: 3400 px a second.
+SLID = {
+    "id": "slid", "start": 0.0, "secs": 2.0, "transform": {"y": 300}, "style": {"width": 100, "height": 120, "fill": "#00FF00"},
+    "keys": {"x": [{"at": 0, "value": 200}, {"at": 0.2, "value": 880}]},
+}
+
+
+def test_a_compare_render_is_drawn_at_the_frame_rate_its_clip_renders_at(client, settings, tmp_path, video_source, plain_video):
+    video_source.video = plain_video
+    job = reviewed(client)
+    candidate = patch(client, job, add(client, job, "Podcast", "ya"), shapes=[SLID])
+
+    def bar_at(at: float) -> float:
+        _, columns = pixels(compared(client, settings, tmp_path, job, candidate, at=at)[200:400], GREEN)
+        return columns.mean()
+
+    # Never rendered: the default Export Preset's rate, the 25 fps Source's. At 0.07 s, its frame 1 (0.04 s).
+    assert abs(bar_at(0.07) - (200 + 3400 * 0.04)) <= 3
+    # Rendered with a 60 fps Preset, which the Clip remembers: its frame 4 (0.0667 s), as in the Clip.
+    response = client.post("/api/export-presets", json={"name": "Smooth", "settings": {"codec": "h264", "resolution": 1080, "fps": 60, "quality": "recommended", "bitrate": None, "loudness": -14}})
+    assert response.status_code == 201, response.text
+    rendering = client.post(f"/api/jobs/{job['id']}/render", json={"candidate_ids": [candidate["id"]], "export_preset_id": response.json()["id"]})
+    assert rendering.status_code == 200, rendering.text
+    [clip] = rendered(client, job)["clips"]
+    assert clip["status"] == "done", clip["error"]
+    assert abs(bar_at(0.07) - (200 + 3400 * 4 / 60)) <= 3

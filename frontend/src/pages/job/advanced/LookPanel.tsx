@@ -16,6 +16,9 @@ import type { AdvancedEdits } from "./edits";
 import { itemsOf, type Pick } from "./pick";
 import { CHUNK_SECS } from "./timelineView";
 
+/** What a Look goes on, told when nothing it can go on is picked. */
+export const LOOK_GOES_ON = "A Look goes on Segments, Overlays and Adjustment Layers: select some, or nothing for the whole Clip";
+
 /**
  * A picture a Look's card is drawn on: a still (`url`), or one frame of a Filmstrip chunk (`url`,
  * frame `index` of its `count`, laid side by side).
@@ -130,7 +133,7 @@ export function LookPanel({
  * `frame` in that Look. A mouse over a card auditions it (`onAudition`, null when it leaves), which
  * draws the preview in it without saving anything; a click gives it to the Pick's Grades, or to the
  * Candidate's with nothing picked (`onPick`). `current` is the Look of the Grade a click goes to.
- * Import look takes a .cube file as an Imported Look; an Imported card has a delete action, refused
+ * Import Look takes a .cube file as an Imported Look; an Imported card has a delete action, refused
  * with the reason while a clip's Grade names it.
  */
 export function LookCards({
@@ -151,7 +154,7 @@ export function LookCards({
   const looks = given ?? listed;
   // What the last delete said, by the Look it was of.
   const [refused, setRefused] = useState<{ look: string; message: string } | null>(null);
-  if (!looks) return <Hint>Loading the looks…</Hint>;
+  if (!looks) return <Hint>Loading the Looks…</Hint>;
   const picture = frameStyle(frame);
 
   async function remove(look: Look) {
@@ -166,7 +169,7 @@ export function LookCards({
   return (
     <div className="flex flex-col gap-4">
       <Hint more="Its intensity, or taking it away, is in the Color section of the inspector.">
-        Hover to try a look on the preview; click to apply it to the selection, or to the whole clip with nothing selected; drag it onto the Timeline for an adjustment layer.
+        Hover to try a Look on the preview; click to apply it to the selection, or to the whole Clip with nothing selected; drag it onto the Timeline for an Adjustment Layer.
       </Hint>
       <ImportLook />
       {refused && (
@@ -253,9 +256,9 @@ export function FiltersPanel({
   return (
     <div className="flex flex-col gap-4">
       {target ? (
-        <p className="text-sm text-pretty text-muted">Tap a look for {pick === null ? "the whole clip" : "the selection"}.</p>
+        <p className="text-sm text-pretty text-muted">Tap a Look for {pick === null ? "the whole Clip" : "the selection"}.</p>
       ) : (
-        <p className="text-sm text-pretty text-muted">A look goes on Segments, Overlays and Adjustment Layers: select some, or nothing for the whole clip. Or add one as a layer.</p>
+        <p className="text-sm text-pretty text-muted">{LOOK_GOES_ON}. Or add one as a layer.</p>
       )}
       <LookStrip
         frame={frame}
@@ -302,7 +305,7 @@ export function LookStrip({
 }) {
   const listed = useLooks();
   const looks = given ?? listed;
-  if (!looks) return <Hint>Loading the looks…</Hint>;
+  if (!looks) return <Hint>Loading the Looks…</Hint>;
   const picture = frameStyle(frame);
   return (
     <div role="group" aria-label="Looks" className="-mx-4 flex min-w-0 snap-x gap-4 overflow-x-auto overscroll-x-contain px-4 pb-1">
@@ -324,7 +327,7 @@ export function LookStrip({
 }
 
 /**
- * Import look: a .cube file (a 3D table, 2 to 65 a side) becomes an Imported Look every Job's Filters
+ * Import Look: a .cube file (a 3D table, 2 to 65 a side) becomes an Imported Look every Job's Filters
  * tab lists, on the Imported shelf; a file that can't be one is refused naming its bad line.
  */
 export function ImportLook() {
@@ -359,7 +362,7 @@ export function ImportLook() {
       >
         <input type="file" accept=".cube" disabled={importing} onChange={(event) => void choose(event.currentTarget)} className="sr-only" />
         {importing ? <LoaderCircle aria-hidden size={16} className="motion-safe:animate-spin" /> : <Palette aria-hidden size={16} />}
-        <span aria-live="polite">{importing ? "Importing…" : "Import look (.cube)"}</span>
+        <span aria-live="polite">{importing ? "Importing…" : "Import Look (.cube)"}</span>
       </label>
       {said && <p className={cx("text-sm", said.problem ? "text-danger" : "text-muted")}>{said.text}</p>}
     </div>

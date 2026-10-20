@@ -125,7 +125,7 @@ export function edgesOf(
   const edges: number[] = [];
   if (edits.hook_text.trim() && !hidden.includes("hook")) edges.push(edits.hook_start, edits.hook_start + edits.hook_secs);
   const left = (kind: ItemKind, id: string) => hidden.includes(TRACK_OF[kind]) || (itemsOf(moving).length > 1 && isPicked(moving, kind, id));
-  for (const kind of ["text", "shape", "music", "overlay", "adjust"] as const) {
+  for (const kind of ["text", "shape", "music", "overlay", "adjustment"] as const) {
     for (const item of edits[LISTS[kind]] ?? []) if (!left(kind, item.id)) edges.push(item.start, item.start + item.secs);
   }
   if (!hidden.includes("video")) for (const shown of played) edges.push(shown.end);

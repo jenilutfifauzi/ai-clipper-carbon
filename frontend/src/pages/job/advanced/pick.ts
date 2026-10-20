@@ -9,14 +9,14 @@ import { sameKey } from "../editor/timelineKey";
 // and inspector act on. Kept in the editor only: never saved, never undone.
 
 // The items that are picked together, and the list of the edits each kind is in.
-export type ItemKind = "segment" | "text" | "shape" | "music" | "overlay" | "adjust";
+export type ItemKind = "segment" | "text" | "shape" | "music" | "overlay" | "adjustment";
 export const LISTS = {
   segment: "segments",
   text: "text_layers",
   shape: "shapes",
   music: "music",
   overlay: "overlays",
-  adjust: "adjustment_layers",
+  adjustment: "adjustment_layers",
 } as const;
 
 /** The items of `kind` in `edits`: none of a list a Candidate from before it lacks (Adjustment Layers). */
@@ -86,7 +86,7 @@ export const NAMES: Record<ItemKind, string> = {
   shape: "Shape",
   music: "Music Clip",
   overlay: "Overlay",
-  adjust: "Adjustment Layer",
+  adjustment: "Adjustment Layer",
 };
 
 /** `n` items of `kind`, by name: "1 Text Layer", "2 Overlays". */
@@ -96,7 +96,7 @@ export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n ==
 export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? ""));
 
 /** The Track each kind of item is on. */
-export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay", adjust: "adjust" };
+export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay", adjustment: "adjust" };
 
 /** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track, a Cue on the Captions Track. */
 export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {

@@ -884,8 +884,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         if kind in (None, "media"):
             listed["media"] = await api("GET", "/media")
         if kind in (None, "looks"):
-            # Without the tables fitted for the preview.
-            listed["looks"] = [{key: value for key, value in look.items() if key != "fit"} for look in await api("GET", "/looks")]
+            listed["looks"] = [_look(look) for look in await api("GET", "/looks")]
         return listed
 
     @tool()
@@ -901,7 +900,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
             with file.open("rb") as data:
                 cube = data.read(MAX_LOOK_BYTES + 1)
             look = await api("POST", "/looks", files={"file": (file.name, cube)})
-            return {key: value for key, value in look.items() if key != "fit"}
+            return _look(look)
         if kind == "font":
             with file.open("rb") as data:
                 font = data.read(MAX_FONT_BYTES + 1)
@@ -1018,6 +1017,11 @@ def _face(face: dict) -> dict:
     """A Face as the tools list it: without its measures and URL, and without licence fields its font leaves empty."""
     keys = ("id", "label", "typographic_family", "weight", "italic", "bundled", "restricted", "copyright", "licence", "licence_url")
     return {key: face[key] for key in keys if face[key] != ""}
+
+
+def _look(look: dict) -> dict:
+    """An Imported Look as the tools list it: without the tables fitted for the preview."""
+    return {key: value for key, value in look.items() if key != "fit"}
 
 
 def _validated(kind: type[BaseModel], given: BaseModel | None) -> dict:
@@ -1199,7 +1203,7 @@ def _plan_view(
                     "grade": _grade_view(event["grade"]),
                 }),
             }
-            for event in plan["adjustments"]
+            for event in plan["adjustment_layers"]
         ],
         **_compact({"sounds": [
             {

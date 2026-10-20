@@ -1,6 +1,6 @@
 // .scratch/color-adjust/issues/06-imported-looks.md: Imported Looks (ADR 0013). The preview draws an
 // Imported Look's table as the tables and matrix fitted to it, mixed over the picture by the intensity;
-// the Filters tab lists them on the Imported shelf with Import look and a delete action. (The fold
+// the Filters tab lists them on the Imported shelf with Import Look and a delete action. (The fold
 // itself is pinned by the shared fixture in editor/grading.test.tsx.)
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
@@ -66,9 +66,9 @@ describe("an Imported Look in the preview", () => {
 });
 
 describe("the Filters tab's Imported Looks", () => {
-  test("are on the Imported shelf with a delete action, beside Import look; built-in cards have none", () => {
+  test("are on the Imported shelf with a delete action, beside Import Look; built-in cards have none", () => {
     const markup = renderToStaticMarkup(<LookCards frame={null} current={null} onPick={() => {}} onAudition={() => {}} looks={LOOKS} />);
-    expect(markup).toContain("Import look (.cube)");
+    expect(markup).toContain("Import Look (.cube)");
     expect(markup).toContain('accept=".cube"');
     expect(markup).toMatch(/<h3[^>]*>Imported<\/h3>/);
     expect(markup).toContain('aria-label="Delete Swap"');

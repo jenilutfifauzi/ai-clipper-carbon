@@ -10,7 +10,7 @@ import { Button } from "../../../components/Button";
 import { Slider } from "../../../components/Slider";
 import { adjusted, knowLooks, NEUTRAL_ADJUST, NEUTRAL_GRADE } from "../editor/grading";
 import { Playback, playedFrom } from "../editor/playback";
-import { addAdjustmentLayer, freezer, gradesOf, regrade, relook, splitter, type PickContext } from "./actions";
+import { addAdjustmentLayer, CLIP_GRADE_ID, freezer, gradesOf, regrade, relook, splitter, type PickContext } from "./actions";
 import { Toolbar } from "./Chrome";
 import { AdjustDials, AdjustPanel, colorChanges } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
@@ -134,8 +134,8 @@ describe("Filters and Adjust in the phone's toolbar", () => {
 
   test("act on the picked Segments, Overlays and Adjustment Layers, or the Candidate", () => {
     const withLayer = edits({ adjustment_layers: [layer("a1")] });
-    expect(gradesOf({ edits: withLayer, pick: picked(over("o1"), seg("s1"), { kind: "adjust", id: "a1" }) }).map((item) => item.id)).toEqual(["s1", "o1", "a1"]);
-    expect(gradesOf({ edits: withLayer, pick: null })).toEqual([{ id: "clip", grade: NEUTRAL_GRADE }]);
+    expect(gradesOf({ edits: withLayer, pick: picked(over("o1"), seg("s1"), { kind: "adjustment", id: "a1" }) }).map((item) => item.id)).toEqual(["s1", "o1", "a1"]);
+    expect(gradesOf({ edits: withLayer, pick: null })).toEqual([{ id: CLIP_GRADE_ID, grade: NEUTRAL_GRADE }]);
   });
 });
 
@@ -200,7 +200,7 @@ describe("the Filters sheet", () => {
     // At the playhead, 3 s long; near the Clip's end, to its end.
     const outcome = addAdjustmentLayer(scene(state, picked(seg("s2"))), "moody", 4)!;
     expect(outcome.edits.adjustment_layers).toEqual([{ id: "n1", start: 4, secs: 3, grade: { ...NEUTRAL_GRADE, look: "moody" }, strength: 100, fade_in: 0, fade_out: 0 }]);
-    expect(outcome.pick).toEqual(picked({ kind: "adjust", id: "n1" }));
+    expect(outcome.pick).toEqual(picked({ kind: "adjustment", id: "n1" }));
     expect(addAdjustmentLayer(scene(state), "moody", 10)!.edits.adjustment_layers![0]).toMatchObject({ start: 10, secs: 2 });
     // Refused on a locked Adjust Track.
     expect(addAdjustmentLayer(scene(state, null, ["adjust"]), "moody", 4)).toBeNull();
