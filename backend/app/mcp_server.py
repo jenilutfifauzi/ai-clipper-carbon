@@ -282,16 +282,16 @@ Edits:
   longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
   a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
   lists them under `segments`.
-- A Segment's `audio_effects` (of the episode or a video) is its sound's ordered stack of Audio
-  Effects, each {{id, params, enabled}}: id from list_assets kind "audio_effects" (with each
-  setting's range and default), params a setting's key to its value (one left out takes its
-  default), enabled false to keep it in the stack unheard. Order is heard: they run in turn after the
-  Segment's Speed and Reverse and before its volume, Keyframes and fades, under a Transition before
-  the crossfade, and each is cut at the Segment's end (an echo's tail too; fade it out to soften
-  that), so its length never changes. The Clip's final loudness still runs on the whole mix. An
-  unknown id or setting or a value out of range is refused; a Freeze frame has none.
-  merge_candidate_items replaces a Segment's stack as a whole. The dry run lists each Segment's
-  enabled ones under `segments`.
+- `audio_effects` on a Segment (of the episode or a video), a Music Clip or a video Overlay is its
+  sound's ordered stack of Audio Effects, each {{id, params, enabled}}: id from
+  list_assets kind "audio_effects" (with each setting's range and default), params a setting's key to
+  its value (one left out takes its default), enabled false to keep it in the stack unheard. Order is heard: they
+  run in turn after the item's Speed and Reverse and before its volume, Keyframes, duck and fades
+  (a Segment's under a Transition before the crossfade), and each is cut at the item's end (an
+  echo's tail too; fade it out to soften that), so its length never changes. The Clip's final
+  loudness still runs on the whole mix. An unknown id or setting or a value out of range is
+  refused; a Freeze frame and an image Overlay have none. merge_candidate_items replaces an item's
+  stack as a whole. The dry run lists each sound's enabled ones under `segments` and `sounds`.
 - A Segment's `grade` (of the episode or a video) colours its whole frame (panels, picture and
   Background), before the joins, so a Transition blends two graded pictures. Its `adjust` dials:
   temperature {TEMPERATURE_K[0]}..{TEMPERATURE_K[1]} K (6500 as shot; higher is warmer), tint (-100 green..100 magenta),
@@ -357,7 +357,7 @@ Edits:
 - Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
   J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
   Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
-  reverse, volume, fades and volume keys (the same `at`), start and secs where it plays in the Clip
+  reverse, volume, fades, volume keys (the same `at`) and audio_effects, start and secs where it plays in the Clip
   (the dry run's `segments`, a Transition's overlap included), and set the Segment's `muted`.
   Reattach: remove every Music Clip Detached from it, then clear its `muted`. A `detached_from` added
   or changed must name one of the Candidate's Segments; a saved one stays after its Segment is removed.
@@ -1151,7 +1151,7 @@ def _plan_view(
     (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
     comes `after`, every sound (a Segment's, a Music Clip's, an Overlay's) with its span, fades,
     volume Keyframes, whether it is Muted, a ducked one's depth and where it is turned down (the
-    plan's `ducked`), the Segment a Detached one is from, what a sound at a Speed or in Reverse
+    plan's `ducked`), the Segment a Detached one is from, its Audio Effects (`_effects_view`), what a sound at a Speed or in Reverse
     reads (`_video_read`), and whether it is the Source's (`source`, a Music Clip's), each Shape's
     and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
     picture layer's (`_layer_view`), each Segment's Words status (and a failed one's error), the
@@ -1227,6 +1227,7 @@ def _plan_view(
                 **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
                 **({"duck": event["duck"], "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]]} if event.get("duck") is not None else {}),
                 **({"detached_from": event["detached_from"]} if event.get("detached_from") else {}),
+                **_compact({"audio_effects": _effects_view(event.get("audio_effects", []))}),
                 **(_video_read(event, copied) if _retimed(event) else {}),
             }
             # A silent video's Segment and a Freeze frame have no sound.

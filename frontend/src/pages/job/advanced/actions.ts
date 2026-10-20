@@ -868,8 +868,8 @@ const toThousandth = (seconds: number) => Math.round(seconds * 1000) / 1000;
  * sound onto a new Music Clip of it (the Source's for a Segment of the episode, the video's for a
  * video's), and the Segment Muted. The Music Clip is heard as the Segment was, as planned (`track`:
  * snapped to Words, a Transition's overlap included): from where its sound starts on the Timeline, as
- * long, its range, Speed, pitch, Reverse, volume, fades and volume Keyframes (the same `at`), with
- * `detached_from`. It lands on the first Music lane free there. The new Music Clips are picked; null
+ * long, its range, Speed, pitch, Reverse, volume, fades, volume Keyframes (the same `at`) and Audio
+ * Effects, with `detached_from`. It lands on the first Music lane free there. The new Music Clips are picked; null
  * when none of the Segments allows it.
  */
 export function detach(scene: PickContext, ids: string[], track: PlayedSegment[], sounded: (media: string) => boolean): Outcome | null {
@@ -891,6 +891,8 @@ export function detach(scene: PickContext, ids: string[], track: PlayedSegment[]
       reverse: segment.reverse ?? false,
       ...fadesWithin({ fade_in: segment.fade_in ?? 0, fade_out: segment.fade_out ?? 0 }, secs),
       keys: segment.keys?.volume?.length ? { volume: segment.keys.volume } : {},
+      // Its Audio Effects (ADR 0017), switched-off entries too; the Segment keeps its own for Reattach.
+      ...(segment.audio_effects?.length ? { audio_effects: segment.audio_effects } : {}),
       detached_from: segment.id,
       // Speech isn't ducked: said so, so that the server's default for a new song doesn't apply (ADR 0016).
       duck: null,

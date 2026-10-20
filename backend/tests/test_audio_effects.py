@@ -1,6 +1,7 @@
 """Audio Effects on Segments (.scratch/audio-effects/issues/01-segment-effects-in-the-render.md, ADR
-0017): the catalogue run by the real ffmpeg over a tone; Seam B on the planner; then Seam A through
-the API, MCP and the real ffmpeg: what is heard, and what is refused."""
+0017), then on Music Clips and video Overlays (02-music-clip-and-overlay-effects.md): the catalogue
+run by the real ffmpeg over a tone; Seam B on the planner; then Seam A through the API, MCP and the
+real ffmpeg: what is heard, and what is refused."""
 
 import subprocess
 from dataclasses import replace
@@ -10,8 +11,10 @@ import numpy as np
 import pytest
 
 from app.audio_effects import AudioEffect, checked_effects, effect_chain, effects
+from app.candidates import MusicClip, Overlay
 from app.config import load_settings
-from app.planner import SegmentInput, plan_render
+from app.planner import MediaInfo, SegmentInput, audio_events, overlay_sound, plan_render
+from test_keyframes import stills  # noqa: F401
 from test_keyed_volume import tone_level
 from test_keyframes import clip_of
 from test_media_library import make, upload
@@ -284,3 +287,108 @@ async def test_the_agent_lists_the_effects_sets_a_stack_sees_it_in_the_dry_run_a
     message = await fails(mcp, "edit_candidate", **ids, changes={"segments": [head, still, tail]})
     assert "Segment still is a Freeze frame (hold), which is silent: it has no audio effects" in message, message
     assert "audio_effects" in mcp.instructions and "list_assets kind \"audio_effects\"" in mcp.instructions
+
+
+# Music Clips and video Overlays (02)
+
+SONG, VIDEO = "ef" * 16, "ab" * 16
+ITEMS = {SONG: MediaInfo(0, 0, 10.0, True), VIDEO: MediaInfo(640, 360, 10.0, True)}
+
+
+def test_a_music_clips_and_an_overlays_stack_is_checked_as_a_segments_and_one_stored_without_has_none():
+    [echo] = MusicClip("m", 0.0, 2.0, media=SONG, audio_effects=[AudioEffect("echo")]).audio_effects
+    assert echo == AudioEffect("echo", {"delay": 0.25, "decay": 0.4})
+    assert MusicClip("m", 0.0, 2.0, media=SONG).audio_effects == []
+    assert Overlay("o", VIDEO, 0.0, 2.0).audio_effects == []
+    with pytest.raises(ValueError, match="Music Clip m's audio_effects\\[0\\]: there is no audio effect 'flanger'"):
+        MusicClip("m", 0.0, 2.0, media=SONG, audio_effects=[AudioEffect("flanger")])
+    with pytest.raises(ValueError, match="Overlay o's audio_effects\\[0\\] \\(pitch\\) semitones is 20"):
+        Overlay("o", VIDEO, 0.0, 2.0, audio_effects=[AudioEffect("pitch", {"semitones": 20})])
+
+
+def test_a_music_clips_and_a_video_overlays_enabled_effects_reach_their_sound_in_order():
+    echo, telephone = AudioEffect("echo", {"delay": 0.25, "decay": 0.4}), AudioEffect("telephone", {"drive": 3})
+    stack = [telephone, replace(echo, enabled=False), echo]
+    effected, plain = audio_events([MusicClip("m", 0.0, 2.0, media=SONG, audio_effects=stack), MusicClip("n", 0.0, 2.0, media=SONG)], 10, ITEMS)
+    assert effected.audio_effects == [telephone, echo]
+    assert plain.audio_effects == []
+    [sound] = overlay_sound([Overlay("o", VIDEO, 0.0, 2.0, volume=1.0, audio_effects=stack)], 10, ITEMS)
+    assert sound.audio_effects == [telephone, echo]
+
+
+@pytest.fixture(scope="session")
+def low_and_high_media(tmp_path_factory) -> dict[str, bytes]:
+    """A 3 s song and a 3 s video, each sounding 150 Hz and 1000 Hz together."""
+    lavfi = ("-f", "lavfi", "-i")
+    folder = tmp_path_factory.mktemp("low-and-high-media")
+    both = "aevalsrc=0.3*sin(2*PI*150*t)+0.3*sin(2*PI*1000*t):s=44100:d=3"
+    return {
+        "song": make(folder / "song.wav", *lavfi, both),
+        "video": make(folder / "video.mp4", *lavfi, "color=c=green:size=640x360:rate=25:duration=3", *lavfi, both, "-c:v", "libx264", "-c:a", "aac", "-shortest"),
+    }
+
+
+@pytest.mark.parametrize("kind", ["music", "overlays"])
+def test_telephone_on_a_song_and_on_an_overlay_videos_sound_takes_most_of_its_sound_under_300_hz_away(client, settings, low_and_high_media, kind):
+    item = upload(client, low_and_high_media["song" if kind == "music" else "video"], "song.wav" if kind == "music" else "video.mp4").json()
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "soal")
+    # The same 1 s twice: as it is, then through Telephone.
+    if kind == "music":
+        first = {"id": "a", "media": item["id"], "start": 0.0, "secs": 1.0, "duck": None}
+    else:
+        first = {"id": "a", "media": item["id"], "start": 0.0, "secs": 1.0, "volume": 1.0, "transform": {"scale": 0.3}}
+    second = first | {"id": "b", "start": 1.0, "audio_effects": [{"id": "telephone"}]}
+    candidate = patch(client, job, candidate, **{kind: [first, second]})
+    assert candidate[kind][1]["audio_effects"] == [{"id": "telephone", "params": {"drive": 3}, "enabled": True}]
+    clip = clip_of(client, settings, job, candidate)
+    low, high = tone_level(settings, clip, 150, 0.5, 0.2), tone_level(settings, clip, 1000, 0.5, 0.2)
+    assert low > 100 and high > 100
+    assert tone_level(settings, clip, 150, 1.5, 0.2) < 0.3 * low
+    assert tone_level(settings, clip, 1000, 1.5, 0.2) > 0.5 * high
+
+
+def test_a_stack_on_an_image_overlay_is_refused(client, stills):  # noqa: F811
+    image = upload(client, stills["blue"], "blue.png").json()
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "soal")
+    overlay = {"id": "i", "media": image["id"], "start": 0, "secs": 1, "audio_effects": [{"id": "echo"}]}
+    response = client.patch(candidate_url(job, candidate), json={"overlays": [overlay]})
+    assert response.status_code == 422 and "Overlay i is an image, which has no sound: it has no audio effects" in response.text, response.text
+    # Switched off, it is still refused; an empty one is not.
+    response = client.patch(candidate_url(job, candidate), json={"overlays": [overlay | {"audio_effects": [{"id": "echo", "enabled": False}]}]})
+    assert response.status_code == 422
+    assert patch(client, job, candidate, overlays=[overlay | {"audio_effects": []}])["overlays"][0]["audio_effects"] == []
+
+
+@pytest.mark.anyio
+async def test_the_agent_sets_a_music_clips_and_an_overlays_stack_sees_them_in_the_dry_run_and_is_refused_one_on_an_image(mcp, tmp_path, stills):  # noqa: F811
+    job = await reviewed_by_mcp(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    song, video, image = tmp_path / "song.wav", tmp_path / "video.mp4", tmp_path / "blue.png"
+    make(song, "-f", "lavfi", "-i", "sine=frequency=880:duration=3")
+    make(
+        video, "-f", "lavfi", "-i", "color=c=green:size=320x180:rate=25:duration=3",
+        "-f", "lavfi", "-i", "sine=frequency=880:duration=3", "-c:v", "libx264", "-c:a", "aac", "-shortest",
+    )
+    image.write_bytes(stills["blue"])
+    song_id, video_id, image_id = [(await call(mcp, "add_asset", kind="media", path=str(path)))["id"] for path in (song, video, image)]
+    await call(mcp, "merge_candidate_items", **ids,
+               music=[{"id": "m", "media": song_id, "start": 0, "secs": 1, "audio_effects": [{"id": "telephone"}]}],
+               overlays=[{"id": "o", "media": video_id, "start": 0, "secs": 1, "volume": 1}])
+    # A merge replaces an item's stack as a whole.
+    merged = await call(mcp, "merge_candidate_items", **ids,
+                        music=[{"id": "m", "audio_effects": [{"id": "echo", "params": {"delay": 0.5}}]}],
+                        overlays=[{"id": "o", "audio_effects": [{"id": "pitch", "params": {"semitones": 3}}, {"id": "telephone", "enabled": False}]}])
+    assert merged["music"][0]["audio_effects"] == [{"id": "echo", "params": {"delay": 0.5, "decay": 0.4}, "enabled": True}]
+    assert merged["music"][0]["start"] == 0
+    plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
+    sounds = {sound["id"]: sound for sound in plan["sounds"]}
+    assert sounds["m"]["audio_effects"] == [{"id": "echo", "params": {"delay": 0.5, "decay": 0.4}}]
+    assert sounds["o"]["audio_effects"] == [{"id": "pitch", "params": {"semitones": 3}}]
+
+    message = await fails(mcp, "merge_candidate_items", **ids, overlays=[{"id": "i", "media": image_id, "start": 0, "secs": 1, "audio_effects": [{"id": "echo"}]}])
+    assert "Overlay i is an image, which has no sound: it has no audio effects" in message, message
+    message = await fails(mcp, "merge_candidate_items", **ids, music=[{"id": "m", "audio_effects": [{"id": "flanger"}]}])
+    assert "Music Clip m's audio_effects[0]: there is no audio effect 'flanger'" in message, message

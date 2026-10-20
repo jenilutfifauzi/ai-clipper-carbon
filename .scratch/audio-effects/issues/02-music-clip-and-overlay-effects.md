@@ -22,12 +22,12 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A: Telephone on a song Music Clip, and on an Overlay video's sound, is heard in the render.
-- [ ] Seam A: a Detached sound of the Source, with Echo, sounds the same as the Segment did, at its new place.
-- [ ] Seam A: the per-item WAV includes the effects.
-- [ ] Ducking is unchanged: a song with effects still ducks under speech.
-- [ ] A stack on an image Overlay is refused through the API and MCP.
-- [ ] Vitest: Detach copies the stack and Reattach keeps the Segment's; Split and paste carry it; the Revision merge handles two different stack edits.
-- [ ] Stored Candidates render as before.
+- [x] Seam A: Telephone on a song Music Clip, and on an Overlay video's sound, is heard in the render.
+- [x] Seam A: a Detached sound of the Source, with Echo, sounds the same as the Segment did, at its new place.
+- [x] Seam A: the per-item WAV includes the effects.
+- [x] Ducking is unchanged: a song with effects still ducks under speech.
+- [x] A stack on an image Overlay is refused through the API and MCP.
+- [x] Vitest: Detach copies the stack and Reattach keeps the Segment's; Split and paste carry it; the Revision merge handles two different stack edits.
+- [x] Stored Candidates render as before.

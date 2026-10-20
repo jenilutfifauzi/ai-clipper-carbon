@@ -1796,7 +1796,8 @@ def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
     be a song or a video with sound, within its length at its Speed, a Segment a video, within its
-    length, and an Overlay within its video's at its Speed, an image's having no Speed nor Reverse.
+    length, and an Overlay within its video's at its Speed, an image's having no Speed, Reverse nor
+    Audio Effects.
     (Music of the Source is kept within it by `review.update`.)"""
     for clip in body.music or []:
         if clip.media is None:
@@ -1827,6 +1828,8 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
         if (overlay.speed != 1 or overlay.pitch or overlay.reverse) and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed, pitch or Reverse")
+        if overlay.audio_effects and item.kind is not MediaKind.VIDEO:
+            raise HTTPException(422, f"Overlay {overlay.id} is an image, which has no sound: it has no audio effects")
 
 
 def _check_looks_of(body: CandidateUpdate) -> None:

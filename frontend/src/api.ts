@@ -637,6 +637,9 @@ export interface MusicClip extends Omit<Retiming, "hold"> {
   duck?: number | null;
   // The Segment whose sound was Detached onto it (ADR 0016), which Reattach finds it by.
   detached_from?: string | null;
+  // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume, duck and
+  // fades. Empty when missing.
+  audio_effects?: AudioEffect[];
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
@@ -672,6 +675,8 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   // Where a ducked one is turned down, ramps included, within it (the planner's ducked_stretches).
   ducked?: [number, number][];
   detached_from?: string | null;
+  // Its item's enabled Audio Effects (ADR 0017), in order.
+  audio_effects?: AudioEffect[];
 }
 
 // How a ducked sound follows speech (ADR 0016): down over `lead_secs` before a span, up over
@@ -780,6 +785,8 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   muted?: boolean;
   // Its colour (ADR 0013): its picture graded before its corners, border and shadow. Neutral when missing.
   grade?: Grade;
+  // A video's sound's Audio Effects (ADR 0017), as a Music Clip's; an image has none. Empty when missing.
+  audio_effects?: AudioEffect[];
 }
 
 // A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; ADR 0013): its Grade laid over the Main

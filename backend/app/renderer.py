@@ -966,8 +966,9 @@ def _music_count(reads: dict[int, Read]) -> int:
 def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str = "[0:a:0]") -> str | None:
     """Filters that mix the Clip's sound (the link `source`), at its volume, with its music into
     [mix]: each sound its part of what it reads (`reads`, by its place in the plan's audio), played
-    at its Speed (`speed_filters`), at its volume (a Music Clip of the Source's at the Clip's own
-    too, as a Segment of it is) ducked under its speech (`duck_steps`), faded, delayed to its start.
+    at its Speed (`speed_filters`), through its Audio Effects (`effect_chain`, cut at its end), at
+    its volume (a Music Clip of the Source's at the Clip's own too, as a Segment of it is) ducked
+    under its speech (`duck_steps`), faded, delayed to its start.
     None without music at the Clip's own volume, where the sound goes as it is. The loudness passes
     hear the mix after ducking."""
     heard = [(event, reads[i]) for i, event in enumerate(plan.audio) if i in reads]
@@ -993,7 +994,7 @@ def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str 
         filters = [
             f"atrim=start={at:g}:end={at + read:g}", "asetpts=PTS-STARTPTS",
             # Then its time on the Timeline from 0 at its start, which its Keyframes and fades are in.
-            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *level,
+            *([*sped, "asetpts=PTS-STARTPTS"] if sped else []), *effect_chain(event.audio_effects, rate, length), *level,
             *_fades(event.fade_in, event.fade_out, length), f"adelay={round(event.start * 1000)}:all=1",
         ]
         chains.append(f"[{number}:a:0]{','.join(filters)},{form}[m{i}]")

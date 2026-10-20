@@ -560,7 +560,8 @@ class AudioEvent:
     Retimed copy it is read from). A ducked one (a Music Clip's with `duck`, docs/adr/0016) is turned
     down by that many dB under the spans of `speech` that reach it (app/ducking.py), in seconds into
     the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included, within it
-    (`ducked_stretches`). A Music Clip's Detached from a Segment names it (`detached_from`)."""
+    (`ducked_stretches`). A Music Clip's Detached from a Segment names it (`detached_from`). Its
+    `audio_effects` (docs/adr/0017) are its item's enabled ones, in order."""
 
     media: str | None
     start: float
@@ -580,6 +581,8 @@ class AudioEvent:
     speech: list[Span] = field(default_factory=list)
     ducked: list[Span] = field(default_factory=list)
     detached_from: str | None = None
+    # Heard after its Speed and before its volume (× its duck), fades and delay.
+    audio_effects: list[AudioEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -1653,7 +1656,7 @@ def audio_events(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
                 clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
-                clip.media is None, clip.duck, detached_from=clip.detached_from,
+                clip.media is None, clip.duck, detached_from=clip.detached_from, audio_effects=enabled_effects(clip.audio_effects),
             )
         )
     return events
@@ -1713,7 +1716,7 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
         sounds.append(
             AudioEvent(
                 overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse,
-                overlay.muted,
+                overlay.muted, audio_effects=enabled_effects(overlay.audio_effects),
             )
         )
     return sounds

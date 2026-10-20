@@ -568,7 +568,7 @@ class MusicClip:
     """A song (or a video's sound) from the Media Library under the Clip, or without `media` the
     Source's sound, heard from `start` for `secs` in Timeline time: secs * speed of it from `offset`
     seconds in, at `volume` (its volume `keys` in place of it), faded in and out, ducked under speech
-    by `duck` dB (docs/adr/0008, 0016)."""
+    by `duck` dB (docs/adr/0008, 0016), heard through its stack of `audio_effects` (docs/adr/0017)."""
     # Its read is kept within its file with the Media Library at hand (app/api.py), or within the
     # Source (app/review.py), and its fades multiply its keys. The Source's is also at the Clip's
     # own volume (`source_volume`), as a Segment of it is; `offset` is then a time on its timeline.
@@ -595,6 +595,10 @@ class MusicClip:
     # The Segment whose sound was Detached onto it (docs/adr/0016), which Reattach finds it by: it
     # names one of the Candidate's when it is added or changed (app/review.py).
     detached_from: ItemId | None = None
+    # Its sound's Audio Effects (docs/adr/0017), in order, after its Speed and Reverse and before its
+    # volume (× its duck), fades and delay; each setting filled in once checked. Empty in one saved
+    # before them.
+    audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if isinstance(self.start, str):
@@ -603,6 +607,7 @@ class MusicClip:
         if self.media is None and self.duck is not None:
             raise ValueError(f"Music Clip {self.id} plays the episode's sound, which is never ducked: it has no duck")
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
+        object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Music Clip {self.id}"))
 
 
 # An Adjust's dials (docs/adr/0013), in Concat's ranges: temperature in kelvin (6500 the picture as
@@ -660,8 +665,9 @@ class Overlay:
     `border` and a `shadow`. Its `keys` move its centre, scale, rotation and opacity over its length,
     and shape a video's volume (docs/adr/0008): a property with Keyframes takes its value from them,
     not from its Transform or `volume`. It comes on and goes off as a Text Layer does, its
-    animations stacked on its keyed values; they move its picture only, never its sound. An image's
-    volume Keyframes, Speed, pitch and Reverse are refused with the Media Library at hand (app/api.py)."""
+    animations stacked on its keyed values; they move its picture only, never its sound. A video's
+    sound is heard through its `audio_effects` (docs/adr/0017). An image's volume Keyframes, Speed,
+    pitch, Reverse and Audio Effects are refused with the Media Library at hand (app/api.py)."""
 
     id: ItemId
     media: MediaId
@@ -689,9 +695,13 @@ class Overlay:
     # Its colour (docs/adr/0013): its picture graded after it is scaled and flipped, before its
     # corners, border, shadow and opacity. Neutral in one saved before Grades.
     grade: Grade = Grade()
+    # A video's sound's Audio Effects (docs/adr/0017), as a Music Clip's; an image has none (refused
+    # with the Media Library at hand, app/api.py). Empty in one saved before them.
+    audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
+        object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Overlay {self.id}"))
 
 
 @dataclass(frozen=True)
