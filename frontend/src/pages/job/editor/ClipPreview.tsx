@@ -85,7 +85,7 @@ const percent = (value: number) => `${value * 100}%`;
  * While a picture is held, it is drawn from the drag until the plan has it. With `fit`, the frame is as large as fits the space its parent gives it (the
  * Advanced Edit's player), and the transport is a single row, ending with `tools`; with `rates` too,
  * it offers the playback rate, and with `loop` a button that turns Loop on and off; with `hideBar`,
- * that row fades out (full screen, while the pointer is still).
+ * that row fades out (full screen, while the pointer is still). `over` is laid over the stage.
  */
 export function ClipPreview({
   src,
@@ -101,6 +101,7 @@ export function ClipPreview({
   blank = false,
   tools,
   hideBar = false,
+  over,
 }: {
   src: string;
   // The Job whose Source `src` is: a reversed Segment of it plays from its Retimed copy.
@@ -118,6 +119,8 @@ export function ClipPreview({
   blank?: boolean;
   tools?: ReactNode;
   hideBar?: boolean;
+  // Laid over the whole stage, under nothing (the Advanced Edit's Compare render).
+  over?: ReactNode;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -320,6 +323,7 @@ export function ClipPreview({
           onClose={() => setEditing(null)}
         />
       )}
+      {over}
       <PreviewMusic plan={plan} playback={playback} masters={masters} src={src} jobId={jobId} />
     </div>
   );

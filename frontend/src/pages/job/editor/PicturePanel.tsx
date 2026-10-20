@@ -1,8 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Grade, Picture } from "../../../api";
 import { animatedPicture, type Look } from "./animation";
-import { GradeVignette } from "./GradeFilters";
-import { gradeFilter } from "./grading";
+import { GradeVignette, useGradeFilter } from "./GradeFilters";
 import { isKeyed, pictureAt, pictureStyle } from "./picture";
 import type { Playback } from "./playback";
 
@@ -48,6 +47,7 @@ export function PicturePanel({
   const drawn = moving ? drawnAt(picture, moving.shownTime, look) : picture;
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
   const visibility = hidden ? "hidden" : "visible";
+  const filter = useGradeFilter(grade);
 
   useLayoutEffect(() => {
     if (!moving) return;
@@ -68,7 +68,7 @@ export function PicturePanel({
     <div className="pointer-events-none absolute inset-0" style={{ filter: shadow, visibility }}>
       <div ref={box} className="absolute" style={place}>
         <div ref={shown} className="absolute inset-0 overflow-hidden" style={{ opacity: faded ?? opacity, borderRadius: radius }}>
-          <div className="absolute" style={{ ...inner, filter: gradeFilter(grade) }}>
+          <div className="absolute" style={{ ...inner, filter }}>
             {media}
           </div>
           <GradeVignette grade={grade} />

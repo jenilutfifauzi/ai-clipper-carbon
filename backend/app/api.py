@@ -57,7 +57,7 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, captions_pending, preview_plan
 from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
-from app.export_files import SavedExport, save_audio, save_frame, saved_export
+from app.export_files import SavedExport, draw_frame, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
@@ -530,6 +530,16 @@ class FrameRequest(BaseModel):
     export_preset_id: str | None = None
 
 
+class CompareRequest(BaseModel):
+    """The frame Compare render draws: at `at` seconds of Timeline time, of the Candidate or of
+    `draft` (as a Preview Plan's)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: Annotated[FiniteFloat, Field(ge=0)]
+    draft: CandidateUpdate | None = None
+
+
 class SaveAudioRequest(BaseModel):
     """The format a Candidate's sound is saved alone in, and the Export Preset whose loudness it
     takes; the default when left out."""
@@ -928,6 +938,35 @@ def save_candidate_frame(
     except RuntimeError as exc:
         raise HTTPException(500, str(exc)) from None
     return saved_export(job_id, job_dir, path)
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/compare-frame", response_class=Response)
+def compare_frame(
+    job_id: str,
+    candidate_id: str,
+    body: CompareRequest,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    media_words: MediaWordsDep,
+) -> Response:
+    """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
+    the Preview Plan plans it), drawn by the render path as save_frame draws it, at 1080x1920 and the
+    Source's frame rate, as `image/png`. Never kept: drawn outside the Job, which doesn't change.
+    Synchronous, outside the render queue. 422 for a draft that isn't a valid edit."""
+    export = ExportSettings()
+    planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
+    job, job_dir = store.get(job_id), store.job_dir(job_id)
+    with tempfile.TemporaryDirectory(prefix="compare-") as folder:
+        path = Path(folder) / "frame.png"
+        try:
+            draw_frame(job, job_dir, planned.plan, body.at, path, export, settings, library, logos)
+        except RuntimeError as exc:
+            raise HTTPException(500, str(exc)) from None
+        png = path.read_bytes()
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 def _draft_plan(

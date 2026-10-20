@@ -34,6 +34,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
+import { ShowOriginal } from "../editor/GradeFilters";
 import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
 import { boxStyle } from "../editor/textBox";
@@ -129,6 +130,7 @@ import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
+import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
@@ -516,6 +518,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers],
   );
   const playback = useMemo(() => new Playback(), []);
+  // The player's checks of a Grade: the before view, held; and Compare render of the draft, on a
+  // desktop, cleared on any playhead move or edit.
+  const checks = usePlayerChecks(playback, JSON.stringify(draft));
+  const fetchCompare = (at: number, signal: AbortSignal) => api.compareFrame(job.id, candidate.id, { at, draft }, signal);
+  const { compare } = checks;
+  useEffect(() => {
+    if (!wide) compare.clear();
+  }, [wide, compare]);
   const magnetic = useMagnetic();
   // The Main Track as planned (snapped to Words, overlapping at Transitions) once the plan has the
   // draft's Segments, else as drafted; and as played, one Segment at a time. Everything placed on
@@ -1054,63 +1064,72 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       {fullscreen.way ? <Minimize aria-hidden size={18} /> : <Maximize aria-hidden size={18} />}
     </Button>
   );
+  const holdOriginal = <HoldOriginalButton held={checks.original} onHold={checks.setOriginal} />;
   const player = (
-    <ClipPreview
-      src={mediaUrl(job.id, source.preview ?? source.video)}
-      jobId={job.id}
-      preview={shown}
-      blank={tracks.hidden.includes("video")}
-      fonts={fonts}
-      playback={playback}
-      // Full screen, nothing on the stage is picked, moved or retyped: it is watched.
-      stage={fullscreen.way ? undefined : {
-        selected: stageIdsOf(pick),
-        onSelect: (id, toggle) => {
-          const item = stageItem(id);
-          select("id" in item ? clicked(pick, item, toggle || picking) : item);
-        },
-        onPlace: (id, place, group) =>
-          id === "hook"
-            ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
-            : placeCaptions({ kind: "captions" }, place, group),
-        // A Cue moved or scaled on its own: its Cue Edit.
-        cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
-        retype: {
-          textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
-          onText: (id, text) => {
-            if (id === "hook") change({ hook_text: text });
-            else if (id === "kicker") change({ hook_kicker: text });
-            else {
-              const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
-              if (layer) updateText({ ...layer, text });
-            }
+    <ShowOriginal on={checks.original}>
+      <ClipPreview
+        src={mediaUrl(job.id, source.preview ?? source.video)}
+        jobId={job.id}
+        preview={shown}
+        blank={tracks.hidden.includes("video")}
+        fonts={fonts}
+        playback={playback}
+        // Full screen, nothing on the stage is picked, moved or retyped: it is watched.
+        stage={fullscreen.way ? undefined : {
+          selected: stageIdsOf(pick),
+          onSelect: (id, toggle) => {
+            const item = stageItem(id);
+            select("id" in item ? clicked(pick, item, toggle || picking) : item);
           },
-          onWords: (update) => change({ word_edits: update(edits.word_edits) }),
-        },
-        texts: textControls,
-        shapes: shapeControls,
-        fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
-        overlays: overlayControls,
-        pictureAt,
-        cropAsked,
-        // A Stickers tile dropped on the preview: its Shape there, at the playhead.
-        drop: { types: [DRAG_SHAPE], onDrop: (data, at) => addNewShape(data.getData(DRAG_SHAPE) as ShapeKind, playback.time, at) },
-      }}
-      fit
-      rates={wide}
-      tools={
-        wide ? (
-          fullscreenButton
-        ) : (
-          <>
-            <FrameStep playback={playback} fps={fps} commands={commands} />
-            {fullscreenButton}
-          </>
-        )
-      }
-      hideBar={!fullscreenBar.shown}
-      loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
-    />
+          onPlace: (id, place, group) =>
+            id === "hook"
+              ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
+              : placeCaptions({ kind: "captions" }, place, group),
+          // A Cue moved or scaled on its own: its Cue Edit.
+          cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
+          retype: {
+            textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
+            onText: (id, text) => {
+              if (id === "hook") change({ hook_text: text });
+              else if (id === "kicker") change({ hook_kicker: text });
+              else {
+                const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
+                if (layer) updateText({ ...layer, text });
+              }
+            },
+            onWords: (update) => change({ word_edits: update(edits.word_edits) }),
+          },
+          texts: textControls,
+          shapes: shapeControls,
+          fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
+          overlays: overlayControls,
+          pictureAt,
+          cropAsked,
+          // A Stickers tile dropped on the preview: its Shape there, at the playhead.
+          drop: { types: [DRAG_SHAPE], onDrop: (data, at) => addNewShape(data.getData(DRAG_SHAPE) as ShapeKind, playback.time, at) },
+        }}
+        fit
+        rates={wide}
+        tools={
+          wide ? (
+            <>
+              {holdOriginal}
+              <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
+              {fullscreenButton}
+            </>
+          ) : (
+            <>
+              <FrameStep playback={playback} fps={fps} commands={commands} />
+              {holdOriginal}
+              {fullscreenButton}
+            </>
+          )
+        }
+        hideBar={!fullscreenBar.shown}
+        loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
+        over={wide && <CompareSplit state={checks.state} onClose={() => checks.compare.clear()} />}
+      />
+    </ShowOriginal>
   );
   // The player, or full screen (over the whole window where the browser can't put it full screen),
   // the player alone on black, its bar shown while the pointer moves.

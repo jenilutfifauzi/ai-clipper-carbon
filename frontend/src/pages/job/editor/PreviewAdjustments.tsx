@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { RenderPlan } from "../../../api";
 import { adjustmentFilters, type AdjustmentFilter } from "./adjustments";
-import { GradeFilter, GradeVignette } from "./GradeFilters";
+import { GradeFilter, GradeVignette, useOriginal } from "./GradeFilters";
 import { useShown, type Playback } from "./playback";
 
 /**
@@ -24,8 +24,12 @@ export function PreviewAdjusted({ plan, playback, children }: { plan: RenderPlan
   return <AdjustedStack filters={adjustmentFilters(plan, playback.shownTime)}>{children}</AdjustedStack>;
 }
 
-/** `children` under the Adjustment Layers `filters` (adjustmentFilters'), as PreviewAdjusted draws them. */
-export function AdjustedStack({ filters, children }: { filters: AdjustmentFilter[]; children: ReactNode }) {
+/**
+ * `children` under the Adjustment Layers `filters` (adjustmentFilters'), as PreviewAdjusted draws them;
+ * under none while the original is shown (ShowOriginal), the wrapper kept.
+ */
+export function AdjustedStack({ filters: layers, children }: { filters: AdjustmentFilter[]; children: ReactNode }) {
+  const filters = useOriginal() ? [] : layers;
   const filter = filters.flatMap(({ filterId }) => (filterId ? [`url(#${filterId})`] : [])).join(" ");
   return (
     <>

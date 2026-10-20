@@ -1574,6 +1574,12 @@ export const api = {
   // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
   saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
     request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
+  // Compare render: the frame at `at` (Timeline time) as the render draws it at 1080x1920, of the
+  // Candidate or of an unsaved draft, as a PNG; never kept in the Job.
+  compareFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange }, signal?: AbortSignal) =>
+    send(`/jobs/${jobId}/candidates/${id}/compare-frame`, { method: "POST", body: JSON.stringify(frame), signal }).then((response) =>
+      response.blob(),
+    ),
   // Save sound as WAV: the sound of the Candidate's item of `kind`, alone as heard in the Clip, from an
   // unsaved draft of its edits; the WAV, and the Content-Disposition that names the file.
   saveSound: async (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange) => {

@@ -1,6 +1,28 @@
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import type { Grade } from "../../../api";
 import { foldGrade, gradeFilter, gradeFilterId, hasGradeFilter, sharpenKernel, vignetteBackground } from "./grading";
+
+// Whether the player shows the original: every Grade dropped (the before view, while its button is held).
+const Original = createContext(false);
+
+/**
+ * `children` drawn as the original while `on` (the before view): every Grade-drawing piece of the
+ * preview under it (a Segment's, an Overlay's, the Candidate's and the Adjustment Layers' filters and
+ * vignettes) reads this one flag (`useOriginal`) and draws nothing of its Grade. Nothing remounts:
+ * only their `filter` styles and vignette layers go, so the videos play on.
+ */
+export function ShowOriginal({ on, children }: { on: boolean; children: ReactNode }) {
+  return <Original.Provider value={on}>{children}</Original.Provider>;
+}
+
+/** Whether the preview is drawn as the original, every Grade dropped (ShowOriginal). */
+export const useOriginal = () => useContext(Original);
+
+/** The CSS filter that draws `grade` (`gradeFilter`), or none while the original is shown. */
+export function useGradeFilter(grade: Grade | null | undefined): string | undefined {
+  const original = useOriginal();
+  return original ? undefined : gradeFilter(grade);
+}
 
 /**
  * The SVG filters the preview's Grades are drawn with (ADR 0013), one per distinct Grade of `grades`,
@@ -66,8 +88,9 @@ export function GradeFilter({ id, grade, mix = 1 }: { id: string; grade: Grade; 
  * parent, as the render's vignette comes after the Grade's other filters; nothing without one.
  */
 export function GradeVignette({ grade }: { grade: Grade | null | undefined }) {
+  const original = useOriginal();
   const background = vignetteBackground(foldGrade(grade)?.vignette ?? 0);
-  return background ? <div aria-hidden data-vignette className="pointer-events-none absolute inset-0" style={{ background }} /> : null;
+  return background && !original ? <div aria-hidden data-vignette className="pointer-events-none absolute inset-0" style={{ background }} /> : null;
 }
 
 // The tables as an feComponentTransfer, from `input` (the previous result by default).
@@ -93,10 +116,10 @@ const values = (table: number[]) => table.map(number).join(" ");
  * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013), or the
  * whole Main Track (decks, ghost and media Segments) in the Candidate's: drawn over black, as the
  * render pads a panel, so that the Grade colours the whole frame, its vignette over them. As they
- * are without one.
+ * are without one, or while the original is shown.
  */
 export function DecksGraded({ grade, children }: { grade: Grade | undefined; children: ReactNode }) {
-  const filter = gradeFilter(grade);
+  const filter = useGradeFilter(grade);
   return (
     <>
       <div className="absolute inset-0" style={filter ? { filter, background: "#000" } : undefined}>
