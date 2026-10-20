@@ -116,6 +116,7 @@ from pydantic import ConfigDict, computed_field
 
 from app.candidates import (
     KEY_RANGES,
+    AdjustmentLayer,
     PICTURE_KEYS,
     Background,
     BackgroundKind,
@@ -124,6 +125,7 @@ from app.candidates import (
     CueEdit,
     Ease,
     Framing,
+    Grade,
     Keyframe,
     KeyProperty,
     Keys,
@@ -316,6 +318,8 @@ class SegmentInput:
     fade_out: float = 0.0
     # Its sound switched silent (docs/adr/0016).
     muted: bool = False
+    # Its colour (docs/adr/0013), carried to its plan as given.
+    grade: Grade = Grade()
 
     @property
     def time(self) -> SegmentTime:
@@ -614,6 +618,9 @@ class SegmentPlan:
     fade_out: float = 0.0
     # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
     muted: bool = False
+    # Its Grade (docs/adr/0013), as given, not folded: the renderer folds it (app/grading.py) and so
+    # does the preview, which draws a dragged dial before the plan comes.
+    grade: Grade = Grade()
 
     @property
     def time(self) -> SegmentTime:
@@ -684,11 +691,41 @@ class Picture:
 
 
 @dataclass(frozen=True)
+class AdjustmentEvent:
+    """An Adjustment Layer as drawn (docs/adr/0013): its `grade` (as given, folded by the renderer and
+    the preview) laid over the Main Track and the Overlays from `start` to `end` seconds into the
+    Clip, mixed over the picture as it was by `strength` percent times its ramp, up over `fade_in`
+    from its start and down over `fade_out` to its end. `id` is the layer's."""
+
+    id: str
+    start: float
+    end: float
+    grade: Grade
+    strength: float = 100.0
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+
+
+def adjustment_event(layer: AdjustmentLayer, duration: float) -> AdjustmentEvent | None:
+    """The Adjustment Layer in a Clip lasting `duration`: cut at its end, its fades then each held to
+    half of what is left; None when it would start at or after the end."""
+    start = round(layer.start, 3)
+    if start >= duration:
+        return None
+    end = round(min(layer.start + layer.secs, duration), 3)
+    half = (end - start) / 2
+    return AdjustmentEvent(
+        layer.id, start, end, layer.grade, layer.strength, round(min(layer.fade_in, half), 3), round(min(layer.fade_out, half), 3)
+    )
+
+
+@dataclass(frozen=True)
 class OverlayEvent:
     """An Overlay as drawn: the Media Library item `media` (an image, or a video from `offset` seconds
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
-    the Clip, coming on and going off by its Overlay's animations. `id` is the Overlay's."""
+    the Clip, coming on and going off by its Overlay's animations, its picture graded by `grade`
+    (docs/adr/0013; as given, folded by the renderer and the preview). `id` is the Overlay's."""
 
     media: str
     picture: Picture
@@ -703,6 +740,7 @@ class OverlayEvent:
     animation_in: Animation = Animation.NONE
     animation_out: Animation = Animation.NONE
     animation_ms: int = 300
+    grade: Grade = Grade()
 
     @property
     def time(self) -> SegmentTime:
@@ -931,6 +969,12 @@ class RenderPlan:
     cue_min_secs: float = CAPTION_MIN_SECS
     # How its ducked sounds follow speech (docs/adr/0016): the render's and the preview's ramps.
     ducking: DuckTuning = DuckTuning()
+    # The Candidate's Grade (docs/adr/0013), as given, not folded: laid over the joined Main Track (a
+    # Clip of one range's frame too), before the Overlays.
+    grade: Grade = Grade()
+    # The Adjustment Layers that show (docs/adr/0013), in the order they are applied: over the Overlays,
+    # under the Watermark, captions, picture layers and hook.
+    adjustment_layers: list[AdjustmentEvent] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -981,6 +1025,8 @@ def plan_render(
     captioned: bool = True,
     music_words: dict[str, list[Word]] | None = None,
     ducking: DuckTuning = DuckTuning(),
+    grade: Grade = Grade(),
+    adjustment_layers: list[AdjustmentLayer] | None = None,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -1013,7 +1059,8 @@ def plan_render(
 
     The Words (the Clip's, or each Segment's) are speech, which ducks the music (`_ducked`, by
     `ducking`), with those of its Music Clips of the Source (`music_words`, by id); not `captioned`,
-    they are heard and not captioned.
+    they are heard and not captioned. Its `grade` (the Candidate's, docs/adr/0013) is carried as given,
+    and its `adjustment_layers` as `adjustment_event` places them.
 
     The Clip is planned at `fps` frames a second, the export's frame rate (docs/adr/0021), or at the
     Source's own without one: the rate it is encoded at, and the frames its keyed pictures are drawn
@@ -1068,7 +1115,7 @@ def plan_render(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
-                    fade_in=fade_in, fade_out=fade_out, muted=given.muted,
+                    fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
                 )
             )
             at, before = round(at + length, 3), length
@@ -1115,6 +1162,8 @@ def plan_render(
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
         ducking=ducking,
+        grade=grade,
+        adjustment_layers=[event for layer in adjustment_layers or [] if (event := adjustment_event(layer, duration)) is not None],
     )
 
 
@@ -1686,7 +1735,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
-        overlay.animation_in, overlay.animation_out, overlay.animation_ms,
+        overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
     )
 
 

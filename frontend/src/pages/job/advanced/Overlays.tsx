@@ -1,4 +1,5 @@
 import { Copy, Layers, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { NO_CROP } from "../editor/cropGestures";
@@ -102,6 +103,7 @@ export function OverlayFields({
   onDuplicate,
   onDelete,
   onCropMode,
+  color,
 }: {
   overlay: Overlay;
   item: MediaItem | undefined;
@@ -118,6 +120,8 @@ export function OverlayFields({
   onDelete: () => void;
   // Crop mode on the stage, when it can be opened there.
   onCropMode?: () => void;
+  // Its Color section (ColorFields: its Grade's dials).
+  color?: ReactNode;
 }) {
   const video = item?.kind === "video";
   const length = item?.duration ?? Infinity;
@@ -151,6 +155,7 @@ export function OverlayFields({
       </p>
       <OverlayTransform overlay={overlay} item={item} playback={playback} onChange={onChange} onCropMode={onCropMode} />
       <DecorationFields overlay={overlay} onChange={onChange} />
+      {color}
       <MotionFields item={overlay} kind="overlay" onChange={onChange} />
       {video && (
         <Group title="Sound">

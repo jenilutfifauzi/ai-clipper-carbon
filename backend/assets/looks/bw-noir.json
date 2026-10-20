@@ -1,0 +1,14 @@
+{
+  "id": "bw-noir",
+  "name": "Noir",
+  "category": "Black & White",
+  "order": 530,
+  "adjust": {
+    "saturation": -100,
+    "exposure": -0.25,
+    "contrast": 35,
+    "shadows": -15,
+    "sharpen": 15,
+    "vignette": 45
+  }
+}

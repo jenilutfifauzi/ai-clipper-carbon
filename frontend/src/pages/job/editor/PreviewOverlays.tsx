@@ -14,6 +14,7 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
  * outside their time too. A keyed one moves with the playback (PicturePanel), and so does one coming
  * on or going off as a picture layer does (its picture only: a video's sound is left to its volume).
+ * Each is in its Grade (ADR 0013), its border and shadow not.
  * A selected one is shown whole while paused in its time, as a picked Text Layer is, so that it can
  * be seen while it is edited on a frame its animation hasn't reached.
  */
@@ -85,6 +86,7 @@ function OverlayView({
         hidden={!shown && !selected}
         faded={shown ? undefined : 0.25}
         look={look}
+        grade={event.grade}
         media={
           image ? (
             <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" />

@@ -42,10 +42,15 @@ from app.api import (
 from app.candidates import (
     CUE_MAX_SCALE,
     CUE_MIN_SCALE,
+    EXPOSURE_EV,
     KICKER_MAX_CHARS,
     SWITCHED_THICKNESS,
+    TEMPERATURE_K,
+    Adjust,
+    AdjustmentLayer,
     Ease,
     Framing,
+    Grade,
     LayoutOverride,
     MusicClip,
     Overlay,
@@ -65,6 +70,7 @@ from app.events import SETTLED, JobProgress, job_events
 from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
+from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES
 from app.media import BadMedia
 from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
@@ -90,7 +96,7 @@ STALE_RETRIES = 5
 # Who makes the edits the tools save (ADR 0003): the editors send their own.
 EDIT_SOURCE = {"X-Edit-Source": "agent"}
 # The API's routes of each kind of asset.
-ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
+ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts", "look": "looks"}
 # The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
 # and remove_candidate_items change item by item: each list's item, and the field that identifies
 # one within its Candidate (or the fields: a Word Edit's or Cue Edit's time and its timeline, None
@@ -99,6 +105,7 @@ ITEMS: dict[str, tuple[type, str | tuple[str, ...]]] = {
     "text_layers": (TextLayer, "id"), "shapes": (Shape, "id"), "music": (MusicClip, "id"), "overlays": (Overlay, "id"),
     "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, ("at", "media")),
     "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, ("at", "media")),
+    "adjustment_layers": (AdjustmentLayer, "id"),
 }
 
 
@@ -138,7 +145,7 @@ Times:
   Word's middle; the dry run lists each Word's `at` and `media`). One with `media` applies in every
   Segment showing that time of the video; a Source Word Edit never touches a video's Words, nor the
   other way round.
-- Text Layers, Shapes, Music Clips, Overlays, hook_start and the Preview Plan's events are
+- Text Layers, Shapes, Music Clips, Overlays, Adjustment Layers, hook_start and the Preview Plan's events are
   Timeline time: seconds into the Clip, from 0.
 
 Edits:
@@ -275,6 +282,30 @@ Edits:
   longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
   a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
   lists them under `segments`.
+- A Segment's `grade` (of the episode or a video) colours its whole frame (panels, picture and
+  Background), before the joins, so a Transition blends two graded pictures. Its `adjust` dials:
+  temperature {TEMPERATURE_K[0]}..{TEMPERATURE_K[1]} K (6500 as shot; higher is warmer), tint (-100 green..100 magenta),
+  saturation (-100 grey..100 twice as vivid), exposure {EXPOSURE_EV[0]}..{EXPOSURE_EV[1]} EV (stops of light), brightness,
+  contrast, highlights and shadows (the upper and lower halves), whites and blacks (the two ends),
+  each -100..100, fade 0..100 (blacks lifted into a matte), sharpen 0..100 and vignette 0..100
+  (the corners darkened); all 0 but temperature by default (neutral). Its `look` (a Look's id from
+  list_assets kind "looks", or null) styles the picture after the dials: each of the Look's dials
+  moves the grade's by as much as it is from neutral, held in range; `intensity` 0..100 (100 by
+  default) mixes the result over the grade without the Look. An unknown Look is refused. An Imported
+  Look (category "Imported", has_table) is a .cube file's 3D table, drawn after the dials' colour
+  and before sharpen and vignette: add_asset kind "look" imports one for every Job (each import a
+  new Look), delete_asset removes one no Candidate's grade names.
+  merge_candidate_items changes only the fields given. The dry run lists a Segment's grade by its
+  dials that aren't neutral, and its look and intensity.
+- The Candidate's own `grade` (the same dials, look and intensity) is laid over the whole Main Track, after the
+  Segments' grades and the Transitions; never on the Overlays. merge_candidate_items' `grade`
+  changes only the fields given; the dry run lists it at the top.
+- Adjustment Layers (`adjustment_layers`, keyed by id) lay a `grade` (the same fields) over the
+  Main Track and the Overlays from `start` for `secs` (Timeline time), never the Watermark,
+  captions, Shapes, Text Layers or hook: mixed over the picture by `strength` 0..100 (100 by
+  default) times a ramp up over `fade_in` and down over `fade_out` seconds (each at most half its
+  secs). Overlapping ones apply in list order; one past the Clip's end is cut there. They don't
+  follow cuts by themselves (as Text Layers). The dry run lists them (`adjustment_layers`).
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -283,7 +314,9 @@ Edits:
   merge_candidate_items changes only the fields given, of an override's framing or the Candidate's.
 - An Overlay's radius rounds its corners, 0..0.5 of its drawn shorter side (0.5: a pill or circle).
   border (width 1..40, colour) and shadow (blur 0..100; x, y -100..100; colour; opacity) are in
-  output pixels, or null for none; merge_candidate_items changes only the fields given.
+  output pixels, or null for none; merge_candidate_items changes only the fields given. Its `grade`
+  is a Segment's (above), on its picture alone: after it is scaled, before its corners, border,
+  shadow and opacity, so those keep their colours. The dry run lists it likewise.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
@@ -605,8 +638,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         word_edits: list[_PATCHES["word_edits"]] | None = None,  # type: ignore[valid-type]
         layout_overrides: list[_PATCHES["layout_overrides"]] | None = None,  # type: ignore[valid-type]
         cue_edits: list[_PATCHES["cue_edits"]] | None = None,  # type: ignore[valid-type]
+        adjustment_layers: list[_PATCHES["adjustment_layers"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
         framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
+        grade: _GRADE_PATCH | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
         one the Candidate has (id; a Transition's `after`; a Word Edit's or Cue Edit's `at` and
@@ -614,7 +649,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
-        field by field. The Candidate is saved once, through the same checks as edit_candidate."""
+        and grade (the Candidate's) field by field. The Candidate is saved once, through the same checks as edit_candidate."""
         # The patches of each list, by the parameter named for it.
         given = {kind: patches for kind, patches in locals().items() if kind in ITEMS}
 
@@ -636,6 +671,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
             if framing is not None:
                 patch = framing.model_dump(mode="json", exclude_unset=True)
                 body["framing"] = _merged_fields(current["framing"], patch) if current["framing"] else patch
+            if grade is not None:
+                body["grade"] = _merged_fields(current["grade"], grade.model_dump(mode="json", exclude_unset=True))
             return body
 
         return await save_from_current(job_id, candidate_id, merged)
@@ -834,10 +871,11 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return {"deleted": preset_id}
 
     @tool(read_only=True)
-    async def list_assets(kind: Literal["fonts", "logos", "media"] | None = None) -> dict:
-        """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, and the
-        Media Library (songs, videos and images for Music Clips, Overlays and Segments): all, or one
-        `kind`."""
+    async def list_assets(kind: Literal["fonts", "logos", "media", "looks"] | None = None) -> dict:
+        """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, the
+        Media Library (songs, videos and images for Music Clips, Overlays and Segments) and the Looks
+        a grade's `look` names (id, name, category, Adjust values; has_table for an Imported Look's
+        .cube): all, or one `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
             listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
@@ -845,16 +883,24 @@ def build_mcp(app: FastAPI) -> MCPServer:
             listed["logos"] = await api("GET", "/logos")
         if kind in (None, "media"):
             listed["media"] = await api("GET", "/media")
+        if kind in (None, "looks"):
+            listed["looks"] = [_look(look) for look in await api("GET", "/looks")]
         return listed
 
     @tool()
-    async def add_asset(kind: Literal["logo", "media", "font"], path: str) -> dict:
+    async def add_asset(kind: Literal["logo", "media", "font", "look"], path: str) -> dict:
         """Add a file on this Mac, by its path, as a Logo (PNG, JPEG or WebP), to the Media Library (a
-        video of 3 minutes at most, a song or an image), or as a font (TTF, OTF or TTC). The file is
-        left where it is. A font gives the Faces added, those already there (existing) and warnings."""
+        video of 3 minutes at most, a song or an image), as a font (TTF, OTF or TTC), or as an
+        Imported Look (a .cube 3D table, 2 to 65 a side). The file is left where it is. A font gives
+        the Faces added, those already there (existing) and warnings."""
         file = Path(path).expanduser()
         if not file.is_file():
             raise ToolError(f"No file {file}")
+        if kind == "look":
+            with file.open("rb") as data:
+                cube = data.read(MAX_LOOK_BYTES + 1)
+            look = await api("POST", "/looks", files={"file": (file.name, cube)})
+            return _look(look)
         if kind == "font":
             with file.open("rb") as data:
                 font = data.read(MAX_FONT_BYTES + 1)
@@ -874,8 +920,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return TypeAdapter(type(item)).dump_python(item, mode="json")
 
     @tool(destructive=True)
-    async def delete_asset(kind: Literal["logo", "media", "font"], asset_id: str) -> dict:
-        """Delete a Logo, or a Media Library item or an imported font's Face that nothing uses."""
+    async def delete_asset(kind: Literal["logo", "media", "font", "look"], asset_id: str) -> dict:
+        """Delete a Logo, or a Media Library item, an imported font's Face or an Imported Look that
+        nothing uses."""
         await api("DELETE", f"/{ASSET_ROUTES[kind]}/{asset_id}")
         return {"deleted": asset_id}
 
@@ -970,6 +1017,11 @@ def _face(face: dict) -> dict:
     """A Face as the tools list it: without its measures and URL, and without licence fields its font leaves empty."""
     keys = ("id", "label", "typographic_family", "weight", "italic", "bundled", "restricted", "copyright", "licence", "licence_url")
     return {key: face[key] for key in keys if face[key] != ""}
+
+
+def _look(look: dict) -> dict:
+    """An Imported Look as the tools list it: without the tables fitted for the preview."""
+    return {key: value for key, value in look.items() if key != "fit"}
 
 
 def _validated(kind: type[BaseModel], given: BaseModel | None) -> dict:
@@ -1077,9 +1129,10 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`), its fades), each Scene's Layout and the Framing
+    (`copied`), its fades, its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
-    video's Scene and of each Overlay is drawn (`_picture_view`), what of its video an Overlay shows
+    video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, each Adjustment
+    Layer's span, strength, fades and Grade, what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
     (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
@@ -1095,6 +1148,8 @@ def _plan_view(
     return {
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else SegmentTime(plan["start"], plan["end"]).length, 2),
         "words_source": preview["words_source"],
+        # The Candidate's Grade, over the whole Main Track; left out when neutral.
+        **_compact({"grade": _grade_view(plan["grade"])}),
         "scenes": [
             {
                 **_times(scene, "start", "end", "layout", "framing"),
@@ -1110,6 +1165,7 @@ def _plan_view(
                 "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
                 "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
+                "grade": _grade_view(segment["grade"]),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
@@ -1130,11 +1186,24 @@ def _plan_view(
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
+                **_compact({"grade": _grade_view(event["grade"])}),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
                 **_animation_view(event),
             }
             for event in plan["overlays"]
+        ],
+        # Over the Main Track and the Overlays, in the order applied; a field at its default left out.
+        "adjustment_layers": [
+            {
+                **_times(event, "id", "start", "end"),
+                **_compact({
+                    "strength": event["strength"] if event["strength"] != 100 else None,
+                    "fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None,
+                    "grade": _grade_view(event["grade"]),
+                }),
+            }
+            for event in plan["adjustment_layers"]
         ],
         **_compact({"sounds": [
             {
@@ -1152,6 +1221,15 @@ def _plan_view(
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "media": word["media"], "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _grade_view(grade: dict) -> dict | None:
+    """A Grade as an agent reads it: the dials of its Adjust that aren't neutral, and its Look with its
+    intensity when it has one; None for a neutral one."""
+    neutral = dataclasses.asdict(Adjust())
+    adjust = {dial: value for dial, value in grade["adjust"].items() if value != neutral[dial]}
+    looked = {"look": grade["look"], "intensity": grade["intensity"]} if grade["look"] is not None else {}
+    return _compact({"adjust": adjust or None, **looked}) or None
 
 
 def _cue_view(cue: dict) -> dict:
@@ -1301,6 +1379,7 @@ def _switched_stroke(shapes: list[dict], patch: dict) -> dict:
 
 
 _FRAMING_PATCH = _patch_model(Framing)
+_GRADE_PATCH = _patch_model(Grade)
 _PATCHES = {kind: _patch_model(item, key) for kind, (item, key) in ITEMS.items()}
 # The JSON schema of a list of Shapes, where the tools take one: a line, which keeps the agent's
 # tools within their budget. The server's instructions say the rest.

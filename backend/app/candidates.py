@@ -3,6 +3,7 @@
 import math
 from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
+from collections.abc import Iterable, Iterator
 from typing import Annotated, Any, NamedTuple
 
 from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
@@ -603,6 +604,52 @@ class MusicClip:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Music Clip {self.id}", SOUND_KEYS, self.secs))
 
 
+# An Adjust's dials (docs/adr/0013), in Concat's ranges: temperature in kelvin (6500 the picture as
+# shot), exposure in stops of light, the rest signed percents, or from 0 for sharpen, fade and vignette.
+TEMPERATURE_K = (2000, 11000)
+NEUTRAL_TEMPERATURE_K = 6500
+EXPOSURE_EV = (-3, 3)
+Dial = Annotated[FiniteFloat, Field(ge=-100, le=100)]
+EffectDial = Annotated[FiniteFloat, Field(ge=0, le=100)]
+
+
+@dataclass(frozen=True)
+class Adjust:
+    """The dials of a Grade (GLOSSARY.md, Adjust), each neutral by default: Color (temperature, tint
+    green to magenta, saturation from grey), Lightness (exposure, brightness, contrast, then
+    highlights and shadows, the broad halves of the curve, and whites and blacks, its narrow ends)
+    and Effects (sharpen, fade into a matte, vignette)."""
+
+    temperature: Annotated[FiniteFloat, Field(ge=TEMPERATURE_K[0], le=TEMPERATURE_K[1])] = NEUTRAL_TEMPERATURE_K
+    tint: Dial = 0.0
+    saturation: Dial = 0.0
+    exposure: Annotated[FiniteFloat, Field(ge=EXPOSURE_EV[0], le=EXPOSURE_EV[1])] = 0.0
+    brightness: Dial = 0.0
+    contrast: Dial = 0.0
+    highlights: Dial = 0.0
+    shadows: Dial = 0.0
+    whites: Dial = 0.0
+    blacks: Dial = 0.0
+    sharpen: EffectDial = 0.0
+    fade: EffectDial = 0.0
+    vignette: EffectDial = 0.0
+
+
+@dataclass(frozen=True)
+class Grade:
+    """The colour of a picture (GLOSSARY.md, Grade; docs/adr/0013): its `adjust`, then its `look` (a
+    Look's id, none by default) mixed over it at `intensity` percent. Constant over its item."""
+
+    adjust: Adjust = Adjust()
+    look: str | None = None
+    intensity: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
+
+    @property
+    def neutral(self) -> bool:
+        """Whether it leaves the picture as it is: every dial neutral, and no Look."""
+        return self.adjust == Adjust() and self.look is None
+
+
 @dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
@@ -638,9 +685,35 @@ class Overlay:
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
     # A video's sound switched silent (docs/adr/0016), keeping its volume and Keyframes.
     muted: bool = False
+    # Its colour (docs/adr/0013): its picture graded after it is scaled and flipped, before its
+    # corners, border, shadow and opacity. Neutral in one saved before Grades.
+    grade: Grade = Grade()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
+
+
+@dataclass(frozen=True)
+class AdjustmentLayer:
+    """A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; docs/adr/0013): its `grade` laid
+    over the Main Track and the Overlays from `start` for `secs` in Timeline time, mixed over the
+    picture as it was by `strength` percent times its fade ramp, which comes up over `fade_in`
+    seconds from its start and goes down over `fade_out` to its end, each at most half its length.
+    It never touches the Watermark, captions, Shapes, Text Layers or hook."""
+
+    id: ItemId
+    start: TimelineStart
+    secs: TimelineSecs
+    grade: Grade = Grade()
+    strength: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
+    fade_in: Fade = 0.0
+    fade_out: Fade = 0.0
+
+    def __post_init__(self) -> None:
+        half = self.secs / 2
+        for name in ("fade_in", "fade_out"):
+            if getattr(self, name) > half + 1e-9:
+                raise ValueError(f"Adjustment Layer {self.id}'s {name} is at most half its length ({half:g} s), not {getattr(self, name):g} s")
 
 
 class BackgroundKind(StrEnum):
@@ -731,6 +804,9 @@ class Segment:
     fade_out: Fade = 0.0
     # Its sound switched silent (docs/adr/0016), keeping its volume, Keyframes and fades.
     muted: bool = False
+    # Its colour (docs/adr/0013): its whole frame (panels, picture and Background) graded before the
+    # joins, so that a Transition blends graded pictures. Neutral in one saved before Grades.
+    grade: Grade = Grade()
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
@@ -856,6 +932,12 @@ class Candidate:
     transitions: list[Transition] = field(default_factory=list)
     # How its Manual Layout frames every Scene without an override; only a Manual Candidate has one.
     framing: Framing | None = None
+    # Its colour (docs/adr/0013): laid over its whole Main Track, after the Segments' own Grades and the
+    # Transitions, before the Overlays (which it never touches). Neutral in one saved before it.
+    grade: Grade = Grade()
+    # Its Adjustment Layers (docs/adr/0013), over the Main Track and the Overlays, applied in this order;
+    # none in a Candidate saved before them.
+    adjustment_layers: list[AdjustmentLayer] = field(default_factory=list)
     # Its saved state's number (ADR 0003): each save that changes it makes the next; choosing it for
     # rendering doesn't. One saved before Revisions is at 1.
     revision: int = 1
@@ -881,6 +963,18 @@ class Candidate:
             | {overlay.media for overlay in self.overlays}
         )
 
+    def grades(self) -> Iterator[tuple[str, Grade]]:
+        """Each of its Grades, with the part it is."""
+        return grades_of(self.grade, self.segments, self.overlays, self.adjustment_layers)
+
+    def looks(self) -> dict[str, list[str]]:
+        """The Looks its Grades name (app/looks.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        for part, grade in self.grades():
+            if grade.look is not None:
+                named.setdefault(grade.look, []).append(part)
+        return named
+
     def faces(self) -> dict[str, list[str]]:
         """The Faces it names (app/fonts.py), each with the parts that name it: its Text Layers, and
         its Style Overrides by section."""
@@ -897,6 +991,20 @@ class Candidate:
     def reviewed(self) -> bool:
         """Whether it holds the owner's review work, which a new run of Selection must keep."""
         return self.origin is Origin.MANUAL or self.edited or self.selected
+
+
+def grades_of(
+    grade: Grade | None, segments: Iterable[Segment], overlays: Iterable[Overlay], adjustment_layers: Iterable[AdjustmentLayer]
+) -> Iterator[tuple[str, Grade]]:
+    """Each Grade of these parts of a Candidate (its own `grade` when given), with the part it is."""
+    if grade is not None:
+        yield "its grade", grade
+    for segment in segments:
+        yield f"Segment {segment.id}", segment.grade
+    for overlay in overlays:
+        yield f"Overlay {overlay.id}", overlay.grade
+    for layer in adjustment_layers:
+        yield f"Adjustment Layer {layer.id}", layer.grade
 
 
 def manual_candidate(id: str, start: float, end: float) -> Candidate:

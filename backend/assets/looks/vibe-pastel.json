@@ -1,0 +1,13 @@
+{
+  "id": "vibe-pastel",
+  "name": "Pastel",
+  "category": "Vibe",
+  "order": 610,
+  "adjust": {
+    "tint": 6,
+    "saturation": -25,
+    "brightness": 12,
+    "contrast": -15,
+    "fade": 18
+  }
+}

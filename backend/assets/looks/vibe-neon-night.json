@@ -1,0 +1,14 @@
+{
+  "id": "vibe-neon-night",
+  "name": "Neon Night",
+  "category": "Vibe",
+  "order": 620,
+  "adjust": {
+    "temperature": 5000,
+    "tint": 18,
+    "saturation": 30,
+    "contrast": 20,
+    "blacks": -12,
+    "vignette": 25
+  }
+}

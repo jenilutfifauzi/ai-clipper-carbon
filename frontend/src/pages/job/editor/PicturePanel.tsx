@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
-import type { Picture } from "../../../api";
+import type { Grade, Picture } from "../../../api";
 import { animatedPicture, type Look } from "./animation";
+import { GradeVignette, useGradeFilter } from "./GradeFilters";
 import { isKeyed, pictureAt, pictureStyle } from "./picture";
 import type { Playback } from "./playback";
 
@@ -8,8 +9,10 @@ import type { Playback } from "./playback";
  * A Picture of the plan drawn on the stage (ADR 0007): a box at its centre as large as it is drawn,
  * turned and flipped by CSS transforms. `media` (the video or image) fills it, but for what its crop
  * cuts off and its rounded corners, under its border, at the picture's opacity, or at `faded`
- * instead. Its shadow is a filter on a layer that isn't turned, so that it falls in screen space as
- * the renderer's does. It is only drawn: the Advanced Edit's stage lays its handle and Grips over it
+ * instead. Its `grade` (an Overlay's, ADR 0013) is a filter on the media alone, its vignette a layer
+ * over it, so that its border and shadow keep their colours, as the renderer grades it before them.
+ * Its shadow is a filter on a layer that isn't turned, so that it falls in screen space as the
+ * renderer's does. It is only drawn: the Advanced Edit's stage lays its handle and Grips over it
  * (StageEdit.tsx).
  *
  * A keyed picture (ADR 0008) moves with `playback`: on every frame of its clock (and every seek) it
@@ -26,6 +29,7 @@ export function PicturePanel({
   hidden,
   playback,
   look,
+  grade,
 }: {
   picture: Picture;
   frame: { width: number; height: number };
@@ -34,6 +38,7 @@ export function PicturePanel({
   hidden?: boolean;
   playback?: Playback;
   look?: (time: number) => Look;
+  grade?: Grade;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const shown = useRef<HTMLDivElement>(null);
@@ -42,6 +47,7 @@ export function PicturePanel({
   const drawn = moving ? drawnAt(picture, moving.shownTime, look) : picture;
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
   const visibility = hidden ? "hidden" : "visible";
+  const filter = useGradeFilter(grade);
 
   useLayoutEffect(() => {
     if (!moving) return;
@@ -62,9 +68,10 @@ export function PicturePanel({
     <div className="pointer-events-none absolute inset-0" style={{ filter: shadow, visibility }}>
       <div ref={box} className="absolute" style={place}>
         <div ref={shown} className="absolute inset-0 overflow-hidden" style={{ opacity: faded ?? opacity, borderRadius: radius }}>
-          <div className="absolute" style={inner}>
+          <div className="absolute" style={{ ...inner, filter }}>
             {media}
           </div>
+          <GradeVignette grade={grade} />
           {border && <div ref={edge} className="absolute inset-0" style={{ border, borderRadius: radius }} />}
         </div>
       </div>

@@ -1,0 +1,15 @@
+{
+  "id": "portrait-warm-glow",
+  "name": "Warm Glow",
+  "category": "Portrait",
+  "order": 420,
+  "adjust": {
+    "temperature": 7400,
+    "tint": 5,
+    "saturation": 8,
+    "brightness": 6,
+    "contrast": -6,
+    "highlights": 10,
+    "fade": 6
+  }
+}

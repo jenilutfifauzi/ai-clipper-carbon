@@ -10,7 +10,7 @@ import logging
 import sys
 from pathlib import Path
 
-from app import fonts
+from app import fonts, looks
 from app.candidates import Candidate
 from app.clips import Clip
 from app.config import Settings, load_settings
@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         return _gate(args.report)
 
     fonts.use(settings.data_dir / fonts.IMPORTED_DIR)
+    looks.use(settings.data_dir / looks.IMPORTED_DIR)
     media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
     store = JobStore(settings.data_dir / "jobs", media.sizes)
     if args.command == "render":

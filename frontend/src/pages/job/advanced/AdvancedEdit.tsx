@@ -7,7 +7,9 @@ import {
   mediaUrl,
   type Candidate,
   type CandidateChange,
+  type AdjustmentLayer,
   type ClipSegment,
+  type Grade,
   type JobDetail,
   type JoinTransition,
   type KeyProperty,
@@ -32,6 +34,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
+import { ShowOriginal } from "../editor/GradeFilters";
 import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
 import { boxStyle } from "../editor/textBox";
@@ -45,10 +48,13 @@ import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
+  addAdjustmentLayer,
+  gradesOf,
   appliedToAll,
   cardTarget,
   changeMusic,
@@ -67,6 +73,7 @@ import {
   placeDropped,
   randomCardKind,
   randomisedTransitions,
+  relook,
   reversible,
   setFade,
   setHold,
@@ -81,6 +88,8 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
+import { AdjustPanel } from "./ColorFields";
+import { LOOK_GOES_ON, LookPanel, lookFrame, PhoneFilters } from "./LookPanel";
 import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
 import {
   ASSET,
@@ -123,6 +132,7 @@ import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
+import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
 import { newMusicClip } from "./Music";
 import { newOverlay } from "./Overlays";
@@ -133,6 +143,7 @@ import {
   isPicked,
   isPlaced,
   itemsOf,
+  listOf,
   LISTS,
   picked,
   prunedCue,
@@ -234,8 +245,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "tracks" | "playback" | null>(null);
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
+  // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
+  const [audition, setAudition] = useState<string | null>(null);
   // The player's room, which goes full screen with the stage and the player bar.
   const fullscreenRoom = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(fullscreenRoom);
@@ -494,9 +507,27 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       setSavingSound(false);
     }
   }
-  // The plan as the player draws it, the hidden Tracks left out.
-  const shown = useMemo(() => preview && { ...preview, plan: shownPlan(preview.plan, tracks) }, [preview, tracks]);
+  // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays, Adjustment
+  // Layers and the Candidate in their Grades as edited (a dial drag shows before its plan comes).
+  // A Look auditioned is drawn on the Grades a click would give it to.
+  const graded = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
+  const shown = useMemo(
+    () =>
+      preview && {
+        ...preview,
+        plan: draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade, graded.adjustment_layers),
+      },
+    [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers],
+  );
   const playback = useMemo(() => new Playback(), []);
+  // The player's checks of a Grade: the before view, held; and Compare render of the draft, on a
+  // desktop, cleared on any playhead move or edit.
+  const checks = usePlayerChecks(playback, JSON.stringify(draft));
+  const fetchCompare = (at: number, signal: AbortSignal) => api.compareFrame(job.id, candidate.id, { at, draft }, signal);
+  const { compare } = checks;
+  useEffect(() => {
+    if (!wide) compare.clear();
+  }, [wide, compare]);
   const magnetic = useMagnetic();
   // The Main Track as planned (snapped to Words, overlapping at Transitions) once the plan has the
   // draft's Segments, else as drafted; and as played, one Segment at a time. Everything placed on
@@ -564,6 +595,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function addNewShape(kind: ShapeKind, at = playback.time, place?: { x: number; y: number }) {
     if (refused("shape")) return;
     const outcome = addShape(scene, kind, at, duration, { place });
+    history.set(outcome.edits);
+    added(outcome.pick);
+  }
+  // A Filters card dropped on the Timeline at `at`: an Adjustment Layer with its Look there (ADR 0013).
+  function addAdjustment(look: string, at: number) {
+    if (refused("adjust")) return;
+    const outcome = addAdjustmentLayer(scene, look, at);
+    if (!outcome) return;
     history.set(outcome.edits);
     added(outcome.pick);
   }
@@ -649,6 +688,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   );
   const updateText = (layer: TextLayer, group?: string) => change({ text_layers: replaced(edits.text_layers, layer) }, group);
   const updateShape = (shape: Shape, group?: string) => change({ shapes: replaced(edits.shapes, shape) }, group);
+  const updateAdjustment = (layer: AdjustmentLayer, group?: string) => change({ adjustment_layers: replaced(edits.adjustment_layers ?? [], layer) }, group);
   // Moved or trimmed, on the Timeline or in the inspector: its fades kept within it.
   const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
@@ -1026,63 +1066,72 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       {fullscreen.way ? <Minimize aria-hidden size={18} /> : <Maximize aria-hidden size={18} />}
     </Button>
   );
+  const holdOriginal = <HoldOriginalButton held={checks.original} onHold={checks.setOriginal} />;
   const player = (
-    <ClipPreview
-      src={mediaUrl(job.id, source.preview ?? source.video)}
-      jobId={job.id}
-      preview={shown}
-      blank={tracks.hidden.includes("video")}
-      fonts={fonts}
-      playback={playback}
-      // Full screen, nothing on the stage is picked, moved or retyped: it is watched.
-      stage={fullscreen.way ? undefined : {
-        selected: stageIdsOf(pick),
-        onSelect: (id, toggle) => {
-          const item = stageItem(id);
-          select("id" in item ? clicked(pick, item, toggle || picking) : item);
-        },
-        onPlace: (id, place, group) =>
-          id === "hook"
-            ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
-            : placeCaptions({ kind: "captions" }, place, group),
-        // A Cue moved or scaled on its own: its Cue Edit.
-        cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
-        retype: {
-          textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
-          onText: (id, text) => {
-            if (id === "hook") change({ hook_text: text });
-            else if (id === "kicker") change({ hook_kicker: text });
-            else {
-              const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
-              if (layer) updateText({ ...layer, text });
-            }
+    <ShowOriginal on={checks.original}>
+      <ClipPreview
+        src={mediaUrl(job.id, source.preview ?? source.video)}
+        jobId={job.id}
+        preview={shown}
+        blank={tracks.hidden.includes("video")}
+        fonts={fonts}
+        playback={playback}
+        // Full screen, nothing on the stage is picked, moved or retyped: it is watched.
+        stage={fullscreen.way ? undefined : {
+          selected: stageIdsOf(pick),
+          onSelect: (id, toggle) => {
+            const item = stageItem(id);
+            select("id" in item ? clicked(pick, item, toggle || picking) : item);
           },
-          onWords: (update) => change({ word_edits: update(edits.word_edits) }),
-        },
-        texts: textControls,
-        shapes: shapeControls,
-        fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
-        overlays: overlayControls,
-        pictureAt,
-        cropAsked,
-        // A Stickers tile dropped on the preview: its Shape there, at the playhead.
-        drop: { types: [DRAG_SHAPE], onDrop: (data, at) => addNewShape(data.getData(DRAG_SHAPE) as ShapeKind, playback.time, at) },
-      }}
-      fit
-      rates={wide}
-      tools={
-        wide ? (
-          fullscreenButton
-        ) : (
-          <>
-            <FrameStep playback={playback} fps={fps} commands={commands} />
-            {fullscreenButton}
-          </>
-        )
-      }
-      hideBar={!fullscreenBar.shown}
-      loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
-    />
+          onPlace: (id, place, group) =>
+            id === "hook"
+              ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
+              : placeCaptions({ kind: "captions" }, place, group),
+          // A Cue moved or scaled on its own: its Cue Edit.
+          cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
+          retype: {
+            textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
+            onText: (id, text) => {
+              if (id === "hook") change({ hook_text: text });
+              else if (id === "kicker") change({ hook_kicker: text });
+              else {
+                const layer = edits.text_layers.find((other) => `text:${other.id}` === id);
+                if (layer) updateText({ ...layer, text });
+              }
+            },
+            onWords: (update) => change({ word_edits: update(edits.word_edits) }),
+          },
+          texts: textControls,
+          shapes: shapeControls,
+          fixed: tracks.locked.filter((kind) => kind === "hook" || kind === "captions"),
+          overlays: overlayControls,
+          pictureAt,
+          cropAsked,
+          // A Stickers tile dropped on the preview: its Shape there, at the playhead.
+          drop: { types: [DRAG_SHAPE], onDrop: (data, at) => addNewShape(data.getData(DRAG_SHAPE) as ShapeKind, playback.time, at) },
+        }}
+        fit
+        rates={wide}
+        tools={
+          wide ? (
+            <>
+              {holdOriginal}
+              <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
+              {fullscreenButton}
+            </>
+          ) : (
+            <>
+              <FrameStep playback={playback} fps={fps} commands={commands} />
+              {holdOriginal}
+              {fullscreenButton}
+            </>
+          )
+        }
+        hideBar={!fullscreenBar.shown}
+        loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
+        over={wide && <CompareSplit state={checks.state} onClose={() => checks.compare.clear()} />}
+      />
+    </ShowOriginal>
   );
   // The player, or full screen (over the whole window where the browser can't put it full screen),
   // the player alone on black, its bar shown while the pointer moves.
@@ -1156,6 +1205,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onEdits: history.set,
             onText: updateText,
             onShape: updateShape,
+            onAdjustment: updateAdjustment,
             onMusic: updateMusic,
             onOverlay: updateOverlay,
             onSegment: moveSegment,
@@ -1187,6 +1237,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               if (preset) addText(fromPreset(preset), time);
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
+            onDropLook: addAdjustment,
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
             onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
           }}
@@ -1215,6 +1266,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onEdits={history.set}
         onText={updateText}
         onShape={updateShape}
+        onAdjustment={updateAdjustment}
         onMusic={updateMusic}
         onOverlay={updateOverlay}
         onSegment={updateSegment}
@@ -1241,6 +1293,28 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       />
     </KeyingContext.Provider>
   );
+  // The picture the Filters cards show at `time` (ADR 0013).
+  const lookFrameAt = (time: number) =>
+    lookFrame({
+      pick,
+      segments: edits.segments,
+      overlays: edits.overlays,
+      played,
+      time,
+      jobId: job.id,
+      sourceDuration: job.source?.metadata.duration ?? null,
+      library: mediaById,
+    });
+  // Whether the phone's Filters and Adjust have Grades to change: the Pick's, or the Candidate's.
+  const colorable = gradesOf({ edits, pick }).length > 0;
+  // The Grade a Filters card's click goes to first: the first picked Segment's, Overlay's or Adjustment
+  // Layer's, else the Candidate's.
+  const lookTarget =
+    pick === null
+      ? edits.grade
+      : itemsOf(pick).flatMap(({ kind, id }): { grade?: Grade }[] =>
+          kind === "segment" || kind === "overlay" || kind === "adjustment" ? (listOf(edits, kind) as { id: string; grade?: Grade }[]).filter((item) => item.id === id) : [],
+        )[0]?.grade;
   const assets = (tab: AssetTab) => (
     <AssetPanel
       tab={tab}
@@ -1249,6 +1323,19 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
+      filters={
+        <LookPanel
+          playback={playback}
+          frameAt={lookFrameAt}
+          current={lookTarget?.look ?? null}
+          onPick={(look) => {
+            const outcome = relook({ edits, pick }, { look });
+            if (outcome) history.set(outcome.edits);
+            else tellOnce(LOOK_GOES_ON);
+          }}
+          onAudition={setAudition}
+        />
+      }
       onAddText={(made) => addText(made)}
       onAddShape={(kind) => addNewShape(kind)}
       onAddMusic={(item) => addMusic(item)}
@@ -1523,6 +1610,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         onInspect={() => setSheet("inspector")}
         onTransform={() => setSheet("transform")}
         onSpeed={speedSheet && (() => setSheet("speed"))}
+        onFilters={colorable ? () => setSheet("filters") : null}
+        onAdjust={colorable ? () => setSheet("adjust") : null}
         onTracks={() => setSheet("tracks")}
         onPlayback={() => setSheet("playback")}
         onPicking={() => setPickingMode(true)}
@@ -1541,6 +1630,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 ? "Transform"
                 : sheet === "speed"
                   ? "Speed"
+                  : sheet === "adjust"
+                    ? "Adjust"
                   : sheet === "tracks"
                     ? "Tracks"
                       : sheet === "playback"
@@ -1599,6 +1690,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             ) : (
               <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
             )
+          ) : sheet === "filters" ? (
+            <PhoneFilters
+              playback={playback}
+              frameAt={lookFrameAt}
+              edits={edits}
+              pick={pick}
+              onEdits={history.set}
+              onAddLayer={(look) => addAdjustment(look, playback.time)}
+            />
+          ) : sheet === "adjust" ? (
+            <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
           ) : sheet === "tracks" ? (
             <TracksPanel tracks={tracks} onTrack={toggleTrack} />
           ) : sheet === "playback" ? (

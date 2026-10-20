@@ -20,9 +20,10 @@ by the rule the preview samples them by (`picture_at`, app/keyframes.py), and `P
 
 The alpha is straight: ffmpeg's overlay of a premultiplied picture over yuv420p darkens it.
 
-An image is read once. A video is decoded by an ffmpeg process of its own (`VideoDecode`), which
-crops and flips it, brings it down to the largest size it is drawn at, and sends a frame for each
-of the Clip's, timed as the still chain times a video Overlay.
+An image is read once, and graded once by ffmpeg when its Overlay has a Grade (`graded_image`). A
+video is decoded by an ffmpeg process of its own (`VideoDecode`), which crops and flips it, brings
+it down to the largest size it is drawn at, grades it, and sends a frame for each of the Clip's,
+timed as the still chain times a video Overlay.
 
 `FrameFeed` writes one picture's frames to its pipe from a thread of its own, so that ffmpeg, reading
 every input as it needs it, never waits on another. A feed whose ffmpeg has gone (failed or stopped)
@@ -281,6 +282,26 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
     return cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGBA)
 
 
+def graded_image(ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str) -> np.ndarray:
+    """`image` (RGBA, its whole size) with the part `picture`'s crop keeps graded by the ffmpeg filters
+    `graded` (an Overlay's Grade, keeping its alpha: app/grading.py), as the still chain grades it
+    after its crop; the rest, which isn't drawn, as it was."""
+    crop = picture.crop
+    cut = np.ascontiguousarray(image[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width])
+    command = [
+        str(ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
+        "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{crop.width}x{crop.height}", "-i", "pipe:0",
+        "-vf", graded, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
+    ]
+    done = subprocess.run(command, input=cut.tobytes(), capture_output=True)
+    if done.returncode or len(done.stdout) != cut.nbytes:
+        said = (done.stderr.decode(errors="replace").strip() or "no picture").splitlines()[-1]
+        raise RuntimeError(f"An image couldn't be graded: {said}")
+    graded_image = image.copy()
+    graded_image[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width] = np.frombuffer(done.stdout, np.uint8).reshape(cut.shape)
+    return graded_image
+
+
 # How much of its video a Freeze frame reads, of which it shows the first frame: a frame at any rate.
 _HELD_READ_SECS = 0.5
 
@@ -293,10 +314,13 @@ class VideoDecode:
     frame at or before the Clip's frame's time, the video's first frame from `shown`'s start at the
     Overlay's start, as the still chain lays a video Overlay over the frames (renderer.py's
     `_overlay`). When the video ends early, its last frame is held, and a held `shown` (a Freeze
-    frame's) is its first frame throughout."""
+    frame's) is its first frame throughout. Each is graded by the ffmpeg filters `graded` (an
+    Overlay's Grade, app/grading.py), after it is scaled and flipped, as the still chain grades it."""
 
-    def __init__(self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float) -> None:
-        self.ffmpeg, self.video, self.picture = ffmpeg, video, picture
+    def __init__(
+        self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float, graded: str = ""
+    ) -> None:
+        self.ffmpeg, self.video, self.picture, self.graded = ffmpeg, video, picture, graded
         self.start, self.end, self.shown, self.fps = start, end, shown, fps
         self.numbers = frame_numbers(start, end, fps)
         # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
@@ -317,6 +341,7 @@ class VideoDecode:
             f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1",
             *([] if (width, height) == (crop.width, crop.height) else [f"scale={width}:{height}:flags=lanczos"]),
             *["hflip"] * self.picture.flip_h, *["vflip"] * self.picture.flip_v,
+            *([self.graded] if self.graded else []),
             "format=rgba",
         ]
         command = [

@@ -35,6 +35,8 @@ PARTS: dict[str, tuple[str, ...]] = {
     "Layout": ("layout", "framing"),
     "Layout Overrides": ("layout_overrides",),
     "Source volume": ("source_volume",),
+    "Color": ("grade",),
+    "Adjustment Layers": ("adjustment_layers",),
 }
 
 

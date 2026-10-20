@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
+import { GradeVignette, useGradeFilter } from "./GradeFilters";
 import { FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
@@ -105,31 +106,36 @@ export function MediaSegment({
     return playback.subscribe(sync);
   }, [playback, segment, end, fade, into, span]);
 
+  const filter = useGradeFilter(segment.grade);
   const picture = scene?.picture;
   const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
   return (
-    <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden", background: scene?.colour ?? "#000" }}>
-      {background && (
-        <div className="absolute overflow-hidden" style={background.box}>
-          <video
-            ref={back}
-            src={src}
-            muted
-            playsInline
-            preload="auto"
-            className="absolute max-w-none object-fill"
-            style={{ ...background.inner, filter: `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` }}
+    <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
+      {/* Its Grade over its whole frame (ADR 0013): its Background and its picture, its vignette over them. */}
+      <div className="absolute inset-0" style={{ background: scene?.colour ?? "#000", filter }}>
+        {background && (
+          <div className="absolute overflow-hidden" style={background.box}>
+            <video
+              ref={back}
+              src={src}
+              muted
+              playsInline
+              preload="auto"
+              className="absolute max-w-none object-fill"
+              style={{ ...background.inner, filter: `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` }}
+            />
+          </div>
+        )}
+        {picture && (
+          <PicturePanel
+            picture={picture}
+            frame={FRAME}
+            playback={playback}
+            media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
           />
-        </div>
-      )}
-      {picture && (
-        <PicturePanel
-          picture={picture}
-          frame={FRAME}
-          playback={playback}
-          media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
-        />
-      )}
+        )}
+      </div>
+      <GradeVignette grade={segment.grade} />
       <CopyProgress range={range} copy={copy} what="video" />
     </div>
   );
@@ -191,11 +197,16 @@ export function CopiedSourceSegment({
     return playback.subscribe(sync);
   }, [playback, segment, fade, into, span, plan.source_volume]);
 
+  const filter = useGradeFilter(segment.grade);
   return (
-    <div ref={box} className="absolute inset-0 overflow-hidden bg-black" style={{ visibility: "hidden" }}>
-      {[master, follower].map((ref, slot) => (
-        <PanelView key={slot} videoRef={ref} src={shown} plan={plan} {...slotView(scene, slot)} playback={playback} muted={slot > 0} />
-      ))}
+    <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
+      {/* Its Grade over its whole frame (ADR 0013), its vignette over it. */}
+      <div className="absolute inset-0 bg-black" style={{ filter }}>
+        {[master, follower].map((ref, slot) => (
+          <PanelView key={slot} videoRef={ref} src={shown} plan={plan} {...slotView(scene, slot)} playback={playback} muted={slot > 0} />
+        ))}
+      </div>
+      <GradeVignette grade={segment.grade} />
       <CopyProgress range={range} copy={copy} what="Segment" />
     </div>
   );

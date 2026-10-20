@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ClipSegment, CueEdit, LayoutOverride, MusicClip, Transition, WordEdit } from "../../../api";
 import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
-import { idOf, pickedItems, remove, stillDetached, withJoins, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
+import { fadesHalved, idOf, pickedItems, remove, stillDetached, withJoins, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
 import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
@@ -180,11 +180,12 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     const offset = "offset" in item ? { offset: keptOffset(item, start - from, end - from) } : {};
     // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed). A Detached
     // sound stays Detached from its Segment only in its own Candidate, while the Segment is there.
+    // An Adjustment Layer cut short keeps its fades within half of it.
     const copy = stillDetached(
-      rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from),
+      fadesHalved(rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from)),
       sameJob && to.candidate === clipboard.from.candidate ? next.segments : [],
     );
-    Object.assign(next, { [LISTS[kind]]: [...(next[LISTS[kind]] as Timed[]), copy] });
+    Object.assign(next, { [LISTS[kind]]: [...((next[LISTS[kind]] ?? []) as Timed[]), copy] });
     pasted.push({ kind, id: copy.id });
   }
   const left = unlocked.length - kept.length;

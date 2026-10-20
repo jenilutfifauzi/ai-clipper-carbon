@@ -78,13 +78,30 @@ def save_frame(
 ) -> Path:
     """Write the frame of `plan` (the Candidate's, at `export`'s frame rate) shown at `at` seconds
     into it, drawn at `export`'s size, as its `frame_name`, and return its path."""
+    return _written(
+        job_dir, frame_name(candidate_id, at, plan.fps, plan.duration), settings,
+        lambda _, path: draw_frame(job, job_dir, plan, at, path, export, settings, media, logos),
+    )
+
+
+def draw_frame(
+    job: Job,
+    job_dir: Path,
+    plan: RenderPlan,
+    at: float,
+    path: Path,
+    export: ExportSettings,
+    settings: Settings,
+    media: MediaStore,
+    logos: LogoStore,
+) -> None:
+    """Draw the frame of `plan` shown at `at` seconds into it, at `export`'s size, as a PNG at `path`,
+    as the render draws it (with a Renderer of its own): save_frame's drawing, which Compare render
+    (GLOSSARY) uses too, writing it outside the Job."""
     assert job.source is not None
     source = job.source
     drawn, logo, files, pictures = drawing_inputs(plan, export, job_dir, source, settings, media, logos)
-    return _written(
-        job_dir, frame_name(candidate_id, at, plan.fps, plan.duration), settings,
-        lambda renderer, path: renderer.frame(job_dir / source.video, drawn, at, path, logo, files, pictures, export),
-    )
+    Renderer(settings.ffmpeg_bin, settings.render).frame(job_dir / source.video, drawn, at, path, logo, files, pictures, export)
 
 
 def save_audio(

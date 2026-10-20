@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from app import api, fonts
+from app import api, fonts, looks
 from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.logos import LOGOS_DIR, LogoStore
@@ -57,6 +57,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.media = media
     app.state.media_words = media_words
     app.state.faces = fonts.use(settings.data_dir / fonts.IMPORTED_DIR)
+    app.state.looks = looks.use(settings.data_dir / looks.IMPORTED_DIR)
     app.include_router(api.router)
     app.include_router(api.media)
     # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its

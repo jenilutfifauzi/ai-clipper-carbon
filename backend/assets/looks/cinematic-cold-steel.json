@@ -1,0 +1,15 @@
+{
+  "id": "cinematic-cold-steel",
+  "name": "Cold Steel",
+  "category": "Cinematic",
+  "order": 120,
+  "adjust": {
+    "temperature": 5200,
+    "tint": -4,
+    "saturation": -15,
+    "contrast": 22,
+    "whites": 5,
+    "blacks": -12,
+    "vignette": 20
+  }
+}

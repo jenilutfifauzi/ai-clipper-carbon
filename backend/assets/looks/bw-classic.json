@@ -1,0 +1,10 @@
+{
+  "id": "bw-classic",
+  "name": "Classic",
+  "category": "Black & White",
+  "order": 500,
+  "adjust": {
+    "saturation": -100,
+    "contrast": 15
+  }
+}

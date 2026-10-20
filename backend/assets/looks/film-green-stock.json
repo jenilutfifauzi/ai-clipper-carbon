@@ -1,0 +1,14 @@
+{
+  "id": "film-green-stock",
+  "name": "Green Stock",
+  "category": "Film",
+  "order": 210,
+  "adjust": {
+    "temperature": 6300,
+    "tint": -8,
+    "saturation": 5,
+    "contrast": 10,
+    "shadows": 6,
+    "fade": 10
+  }
+}

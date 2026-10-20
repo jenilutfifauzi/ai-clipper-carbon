@@ -31,9 +31,11 @@ from app import emoji, review
 from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
+    AdjustmentLayer,
     Candidate,
     CueEdit,
     Framing,
+    Grade,
     KeyProperty,
     Layout,
     LayoutOverride,
@@ -47,6 +49,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    grades_of,
 )
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
@@ -55,12 +58,13 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, captions_pending, preview_plan
 from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
-from app.export_files import SavedExport, save_audio, save_frame, saved_export
+from app.export_files import SavedExport, draw_frame, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
+from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -116,6 +120,7 @@ SHAPES_MAX = 50
 MUSIC_MAX = 50
 SEGMENTS_MAX = 100
 OVERLAYS_MAX = 50
+ADJUSTMENT_LAYERS_MAX = 50
 # Where a Job's picture layers' pictures are served, under /api/jobs/<job id>/: named when only Text
 # Layers had them, and kept for the editors that ask for them there.
 PICTURES_ROUTE = "texts"
@@ -165,6 +170,10 @@ def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
 
+def _imported_looks(request: Request) -> ImportedLooks:
+    return request.app.state.looks
+
+
 def _faces(request: Request) -> Faces:
     return request.app.state.faces
 
@@ -193,6 +202,7 @@ Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
+ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
@@ -276,6 +286,10 @@ class CandidateUpdate(BaseModel):
     # Replaces the Candidate's Music Clips as a whole; each names a song or a video with sound.
     music: Annotated[list[MusicClip], Field(max_length=MUSIC_MAX)] | None = None
     source_volume: Volume | None = None
+    # The Candidate's own Grade (docs/adr/0013), over its whole Main Track; replaced as a whole.
+    grade: Grade | None = None
+    # Replaces the Candidate's Adjustment Layers (docs/adr/0013) as a whole.
+    adjustment_layers: Annotated[list[AdjustmentLayer], Field(max_length=ADJUSTMENT_LAYERS_MAX)] | None = None
     # Replaces the Candidate's Main Track as a whole; each Segment is snapped to Words.
     segments: Annotated[list[Segment], Field(max_length=SEGMENTS_MAX), BeforeValidator(no_old_segments)] | None = None
     # Replaces the Candidate's Overlays as a whole; each names a video or an image.
@@ -515,6 +529,16 @@ class FrameRequest(BaseModel):
     at: Annotated[FiniteFloat, Field(ge=0)]
     draft: CandidateUpdate | None = None
     export_preset_id: str | None = None
+
+
+class CompareRequest(BaseModel):
+    """The frame Compare render draws: at `at` seconds of Timeline time, of the Candidate or of
+    `draft` (as a Preview Plan's)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: Annotated[FiniteFloat, Field(ge=0)]
+    draft: CandidateUpdate | None = None
 
 
 class SaveAudioRequest(BaseModel):
@@ -812,6 +836,7 @@ def update_candidate(
     if body.style_overrides is not None:
         _check_logo(logos, body.style_overrides.watermark.get("logo"))
     _check_media_of(library, body)
+    _check_looks_of(body)
     change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
@@ -916,6 +941,38 @@ def save_candidate_frame(
     return saved_export(job_id, job_dir, path)
 
 
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/compare-frame", response_class=Response)
+def compare_frame(
+    job_id: str,
+    candidate_id: str,
+    body: CompareRequest,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    export_presets: ExportPresets,
+    logos: Logos,
+    library: Media,
+    media_words: MediaWordsDep,
+) -> Response:
+    """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
+    the Preview Plan plans it), drawn by the render path as save_frame draws it, at 1080x1920 and the
+    frame rate its Clip renders at (its Clip's Export Preset as it is now, the default's when it has
+    none or it was deleted: docs/adr/0021), as `image/png`. Never kept: drawn outside the Job, which
+    doesn't change. Synchronous, outside the render queue. 422 for a draft that isn't a valid edit."""
+    asked = next((clip.export_preset_id for clip in store.load_clips(job_id) if clip.candidate_id == candidate_id), None)
+    export = replace(ExportSettings(), fps=export_presets.get_or_default(asked).settings.fps)
+    planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
+    job, job_dir = store.get(job_id), store.job_dir(job_id)
+    with tempfile.TemporaryDirectory(prefix="compare-") as folder:
+        path = Path(folder) / "frame.png"
+        try:
+            draw_frame(job, job_dir, planned.plan, body.at, path, export, settings, library, logos)
+        except RuntimeError as exc:
+            raise HTTPException(500, str(exc)) from None
+        png = path.read_bytes()
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 def _draft_plan(
     job_id: str,
     candidate_id: str,
@@ -995,6 +1052,7 @@ def _drafted(
         _preset(presets, body.preset_id)
     if body is not None:
         _check_media_of(library, body)
+        _check_looks_of(body)
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
     change = body.change if body else CandidateChange()
     try:
@@ -1308,6 +1366,54 @@ def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetSto
                 where=f"Text Preset {text_preset.name}",
             ))
     return uses
+
+
+@router.get("/looks")
+def list_looks() -> list[Look]:
+    """Every Look a Grade can have (app/looks.py): the built-in ones by their order, then the Imported
+    ones as they were imported. Each with its id, name, category, Adjust values, whether it has a 3D
+    table (an Imported Look) and the tables and matrix fitted to it, which the preview draws."""
+    return all_looks()
+
+
+@router.post("/looks", status_code=201)
+def import_look(file: UploadFile, imported: ImportedLookStore) -> Look:
+    """Import an uploaded `.cube` file (a multipart/form-data `file`) as a new Imported Look, kept for
+    every Job: a 3D table of 2 to 65 a side. 422 naming the line for one that isn't."""
+    try:
+        return imported.add(file.file.read(MAX_LOOK_BYTES + 1), file.filename or "Look")
+    except BadCube as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+@router.delete("/looks/{look_id}", status_code=204)
+def delete_look(look_id: str, imported: ImportedLookStore, store: Store) -> None:
+    """Delete an Imported Look and its table. 409 for a built-in one, and while a Candidate's Grade
+    names it, listing them."""
+    if any(look.id == look_id for look in builtin_looks()):
+        raise HTTPException(409, f"Look {look_id} comes with the app and can't be deleted")
+    try:
+        look = imported.get(look_id)
+    except LookNotFound:
+        raise HTTPException(404, f"No Look {look_id}") from None
+    if uses := look_uses(store, look_id):
+        where = "; ".join(f"{use.title} (Job {use.job_id}, Candidate {use.candidate_id})" for use in uses)
+        message = f"Look {look.name} is used by {where}: change their grades first"
+        raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
+    try:
+        imported.delete(look_id)
+    except LookNotFound:
+        raise HTTPException(404, f"No Look {look_id}") from None
+
+
+def look_uses(store: JobStore, look_id: str) -> list["MediaUse"]:
+    """The Candidates, of every Job, whose Grades name the Look."""
+    return [
+        MediaUse(job_id=job.id, candidate_id=candidate.id, title=candidate.title or f"Clip {candidate.id}")
+        for job in store.all()
+        for candidate in store.load_candidates(job.id) or []
+        if look_id in candidate.looks()
+    ]
 
 
 @router.get("/text-presets")
@@ -1712,6 +1818,17 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
         if (overlay.speed != 1 or overlay.pitch or overlay.reverse) and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed, pitch or Reverse")
+
+
+def _check_looks_of(body: CandidateUpdate) -> None:
+    """422 for an edit giving a Grade a Look that isn't one of the Looks."""
+    for what, grade in grades_of(body.grade, body.segments or [], body.overlays or [], body.adjustment_layers or []):
+        if grade.look is None:
+            continue
+        try:
+            get_look(grade.look)
+        except LookNotFound:
+            raise HTTPException(422, f"{what}: no Look {grade.look}") from None
 
 
 # Media Library files never change under their id.

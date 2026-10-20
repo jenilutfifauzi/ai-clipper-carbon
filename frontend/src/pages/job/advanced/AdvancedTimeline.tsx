@@ -701,7 +701,7 @@ function SkimLine({ playback, pps, labelWidth }: { playback: Playback; pps: numb
   );
 }
 
-export type ItemTone = "accent" | "waiting" | "text" | "shape" | "audio" | "neutral" | "video" | "overlay";
+export type ItemTone = "accent" | "waiting" | "text" | "shape" | "adjustment" | "audio" | "neutral" | "video" | "overlay";
 
 const TONES: Record<ItemTone, string> = {
   accent: "bg-accent/25 ring-accent/70",
@@ -713,6 +713,7 @@ const TONES: Record<ItemTone, string> = {
   video: "bg-transparent ring-text/40",
   overlay: "bg-[oklch(0.66_0.13_235/0.3)] ring-[oklch(0.66_0.13_235/0.85)]",
   shape: "bg-[oklch(0.72_0.15_60/0.28)] ring-[oklch(0.72_0.15_60/0.8)]",
+  adjustment: "bg-[oklch(0.7_0.14_350/0.26)] ring-[oklch(0.7_0.14_350/0.8)]",
 };
 
 let gestures = 0;

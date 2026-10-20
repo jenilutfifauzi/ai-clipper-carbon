@@ -8,9 +8,11 @@ from uuid import uuid4
 
 from app.candidates import (
     DEFAULT_DUCK,
+    AdjustmentLayer,
     Candidate,
     CueEdit,
     Framing,
+    Grade,
     Keys,
     Layout,
     LayoutOverride,
@@ -85,6 +87,10 @@ class CandidateChange:
     transitions: list[Transition] | None = None
     # The Manual Layout's, which only it has: dropped when the Layout becomes another.
     framing: Framing | None = None
+    # The Candidate's own Grade (docs/adr/0013), over its whole Main Track.
+    grade: Grade | None = None
+    # Its Adjustment Layers (docs/adr/0013), replaced as a whole.
+    adjustment_layers: list[AdjustmentLayer] | None = None
     # The Revision the change was made from: StaleRevision unless it is the Candidate's. None: saved
     # over whatever is there.
     revision: int | None = None
@@ -202,13 +208,14 @@ def update(
         transitions = _joined(transitions, segments)
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
-        # filmed is a plain range (one at a Speed, faded, Muted, or at a volume or Keyframes of its own,
-        # is kept as its Segment).
+        # filmed is a plain range (one at a Speed, faded, Muted, graded, or at a volume or Keyframes of
+        # its own, is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         [first, *more] = segments
         as_filmed = segment_time(first) == SegmentTime(start, end)
-        if not more and as_filmed and first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted:
+        plain = first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted and first.grade.neutral
+        if not more and as_filmed and plain:
             segments = []
     elif change.transitions is not None:
         episode.check_length(old.main_track(), _joined(transitions, old.segments))
@@ -223,6 +230,8 @@ def update(
         music = _ducked_by_default(change.music, old.music, change.duck_unset)
     if change.overlays is not None:
         _check_ids("Overlay", [overlay.id for overlay in change.overlays])
+    if change.adjustment_layers is not None:
+        _check_ids("Adjustment Layer", [layer.id for layer in change.adjustment_layers])
     if change.layout_overrides is not None:
         for override in change.layout_overrides:
             _check_framing(f"A {override.layout} Layout Override", override.layout, override.framing)
@@ -252,6 +261,8 @@ def update(
         shapes=_pick(change.shapes, old.shapes),
         music=music,
         source_volume=_pick(change.source_volume, old.source_volume),
+        grade=_pick(change.grade, old.grade),
+        adjustment_layers=_pick(change.adjustment_layers, old.adjustment_layers),
         segments=segments,
         overlays=_pick(change.overlays, old.overlays),
         transitions=_joined(transitions, segments),
@@ -308,6 +319,7 @@ def _look(candidate: Candidate) -> tuple:
         candidate.style_overrides, candidate.word_edits, candidate.cue_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.shapes, candidate.music,
         candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,
+        candidate.grade, candidate.adjustment_layers,
     )
 
 

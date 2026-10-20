@@ -778,6 +778,34 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   shadow: Shadow | null;
   keys: Keys;
   muted?: boolean;
+  // Its colour (ADR 0013): its picture graded before its corners, border and shadow. Neutral when missing.
+  grade?: Grade;
+}
+
+// A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; ADR 0013): its Grade laid over the Main
+// Track and the Overlays from `start` for `secs` (Timeline time), mixed over the picture as it was by
+// `strength` percent (0..100) times its ramp, up over `fade_in` seconds and down over `fade_out`
+// (each at most half its length). Never on the Watermark, captions, Shapes, Text Layers or hook.
+export interface AdjustmentLayer {
+  id: string;
+  start: number;
+  secs: number;
+  grade: Grade;
+  strength: number;
+  fade_in: number;
+  fade_out: number;
+}
+
+// An Adjustment Layer as the plan draws it: from `start` to `end` seconds into the Clip (cut at its
+// end, its fades held to half of what is left), its Grade as given.
+export interface AdjustmentEvent {
+  id: string;
+  start: number;
+  end: number;
+  grade: Grade;
+  strength: number;
+  fade_in: number;
+  fade_out: number;
 }
 
 // How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
@@ -824,6 +852,8 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   end: number;
   offset: number;
   image: boolean;
+  // Its Overlay's Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
+  grade?: Grade;
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
@@ -925,6 +955,8 @@ export interface SegmentPlan extends Retiming {
   fade_out: number;
   // Its sound switched silent (ADR 0016), keeping its volume, Keyframes and fades.
   muted?: boolean;
+  // Its Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
+  grade?: Grade;
 }
 
 export interface RenderPlan {
@@ -961,6 +993,11 @@ export interface RenderPlan {
   cue_min_secs: number;
   // Its ducked sounds' ramps.
   ducking?: Ducking;
+  // The Candidate's Grade as given (ADR 0013), over the Main Track: the preview folds it (editor/grading.ts).
+  grade?: Grade;
+  // Its Adjustment Layers that show, in the order applied, over the Main Track and the Overlays.
+  // None in a plan from before them.
+  adjustment_layers?: AdjustmentEvent[];
 }
 
 // A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
@@ -1065,6 +1102,56 @@ export interface ClipSegment extends Retiming {
   fade_in?: number;
   fade_out?: number;
   muted?: boolean;
+  // Its colour (ADR 0013): its whole frame graded before the joins. Neutral when missing.
+  grade?: Grade;
+}
+
+// The dials of a Grade (GLOSSARY: Adjust), in Concat's ranges, each neutral by default: temperature
+// 2000–11000 K (6500 as shot), exposure ±3 EV, sharpen, fade and vignette 0–100, the rest −100–100.
+export interface Adjust {
+  temperature: number;
+  tint: number;
+  saturation: number;
+  exposure: number;
+  brightness: number;
+  contrast: number;
+  highlights: number;
+  shadows: number;
+  whites: number;
+  blacks: number;
+  sharpen: number;
+  fade: number;
+  vignette: number;
+}
+
+// The colour of a picture (GLOSSARY: Grade, ADR 0013): its Adjust, then its Look (an id, or null)
+// mixed over it at `intensity` percent. Constant over its item.
+export interface Grade {
+  adjust: Adjust;
+  look: string | null;
+  intensity: number;
+}
+
+// A Look a Grade's `look` names (GLOSSARY: Look; backend/app/looks.py): its Adjust values, laid over
+// the Grade's own (editor/grading.ts says how); its category is its shelf in the Filters tab, and
+// `order` its place.
+export interface Look {
+  id: string;
+  name: string;
+  category: string;
+  order: number;
+  adjust: Adjust;
+  // An Imported Look's: it has a 3D table (from a .cube file), and the tables and matrix fitted to it,
+  // which the preview draws in its place. A built-in Look has neither.
+  has_table?: boolean;
+  fit?: LookFit | null;
+}
+
+// The table per channel (R, G, B; 256 entries, 0..1) and the 3×3 matrix (rows R, G, B) fitted to an
+// Imported Look's 3D table (backend/app/looks.py), drawn as a Grade's tables and matrix are.
+export interface LookFit {
+  tables: [number[], number[], number[]];
+  matrix: [[number, number, number], [number, number, number], [number, number, number]];
 }
 
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
@@ -1131,6 +1218,11 @@ export interface Candidate {
   overlays: Overlay[];
   // Between its Segments, each by the Segment it follows.
   transitions: Transition[];
+  // Its own colour (ADR 0013): laid over its whole Main Track, after the Segments' Grades and the
+  // Transitions, never on the Overlays. Neutral when missing.
+  grade?: Grade;
+  // Its Adjustment Layers (ADR 0013), applied in this order; none when missing.
+  adjustment_layers?: AdjustmentLayer[];
   // Its saved state's number: each save that changes it makes the next (ADR 0003).
   revision: number;
 }
@@ -1176,6 +1268,10 @@ export interface CandidateChange {
   overlays?: Overlay[];
   // Replaces the Candidate's Transitions as a whole; those without a join are left out.
   transitions?: Transition[];
+  // The Candidate's own Grade (ADR 0013), replaced as a whole.
+  grade?: Grade;
+  // Replaces the Candidate's Adjustment Layers as a whole.
+  adjustment_layers?: AdjustmentLayer[];
   // The Revision the change was made from: refused (409) if the Candidate has moved past it.
   revision?: number;
 }
@@ -1478,6 +1574,12 @@ export const api = {
   // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
   saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
     request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
+  // Compare render: the frame at `at` (Timeline time) as the render draws it at 1080x1920, of the
+  // Candidate or of an unsaved draft, as a PNG; never kept in the Job.
+  compareFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange }, signal?: AbortSignal) =>
+    send(`/jobs/${jobId}/candidates/${id}/compare-frame`, { method: "POST", body: JSON.stringify(frame), signal }).then((response) =>
+      response.blob(),
+    ),
   // Save sound as WAV: the sound of the Candidate's item of `kind`, alone as heard in the Clip, from an
   // unsaved draft of its edits; the WAV, and the Content-Disposition that names the file.
   saveSound: async (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange) => {
@@ -1504,6 +1606,16 @@ export const api = {
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
+  // Every Look, by its order.
+  listLooks: () => request<Look[]>("/looks"),
+  // A .cube file (a 3D table, 2 to 65 a side) as a new Imported Look; rejects naming its bad line.
+  importLook: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<Look>("/looks", { method: "POST", body: form });
+  },
+  // Rejects with an ApiError of 409, saying which clips' grades use it, while any does.
+  deleteLook: (id: string) => request<void>(`/looks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   createTextPreset: (name: string, style: TextStyle) =>
     request<TextPreset>("/text-presets", { method: "POST", body: JSON.stringify({ name, style }) }),
   // One of the owner's renamed, or given another style.

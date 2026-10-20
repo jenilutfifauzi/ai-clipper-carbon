@@ -1,13 +1,14 @@
-import type { ClipSegment, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import type { Adjust, AdjustmentLayer, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
 import type { StyleDraft } from "../editor/useStyleDraft";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
 import { TRANSITION_KINDS } from "../editor/transitions";
-import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, ITEM_MIN_SECS, keptOffset, newId, round, type AdvancedEdits } from "./edits";
+import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, halfFadeMax, ITEM_MIN_SECS, keptOffset, NEW_LAYER_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, isPlaced, itemsOf, LISTS, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
+import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import { speedLabel, speedOf } from "./speed";
 import type { TrackKind } from "./trackState";
@@ -39,8 +40,19 @@ export interface Outcome {
   notice?: string;
 }
 
-export type Timed = TextLayer | Shape | MusicClip | Overlay;
-export type TimedKind = "text" | "shape" | "music" | "overlay";
+export type Timed = TextLayer | Shape | MusicClip | Overlay | AdjustmentLayer;
+export type TimedKind = "text" | "shape" | "music" | "overlay" | "adjustment";
+
+/**
+ * An Adjustment Layer with its fades each held to half its length (ADR 0013, as the backend refuses
+ * longer ones): after a trim, a cut or a split. As it is when they fit.
+ */
+export function fadesHalved<T extends Timed>(item: T): T {
+  if (!("strength" in item)) return item;
+  const half = halfFadeMax(item.secs);
+  if (item.fade_in <= half && item.fade_out <= half) return item;
+  return { ...item, fade_in: Math.min(item.fade_in, half), fade_out: Math.min(item.fade_out, half) };
+}
 
 /**
  * How each kind of timed item behaves: its list in the edits; where a copy goes when there is no
@@ -50,7 +62,7 @@ export type TimedKind = "text" | "shape" | "music" | "overlay";
  */
 const KINDS: {
   [K in TimedKind]: {
-    list: "text_layers" | "shapes" | "music" | "overlays";
+    list: "text_layers" | "shapes" | "music" | "overlays" | "adjustment_layers";
     aside: (item: Timed) => Partial<Timed>;
     cut: (item: Timed, at: number) => { first: Partial<Timed>; second: Partial<Timed> };
   };
@@ -97,6 +109,20 @@ const KINDS: {
       return { first: { offset: keptOffset(overlay, 0, into) }, second: { offset: keptOffset(overlay, into, overlay.secs) } };
     },
   },
+  adjustment: {
+    list: "adjustment_layers",
+    aside: () => ({}),
+    // No fade at the cut, so that the grade goes on across it; each part's other fade held to half of it.
+    cut: (item, at) => {
+      const layer = item as AdjustmentLayer;
+      const into = at - layer.start;
+      const rest = layer.start + layer.secs - at;
+      return {
+        first: { fade_in: Math.min(layer.fade_in, halfFadeMax(into)), fade_out: 0 },
+        second: { fade_in: 0, fade_out: Math.min(layer.fade_out, halfFadeMax(rest)) },
+      };
+    },
+  },
 };
 
 export const idOf = (scene: PickContext) => (scene.ids ?? newId)();
@@ -129,6 +155,8 @@ export function remove(scene: PickContext, rippled = scene.magnetic ?? false): O
     shapes: kept(edits.shapes, "shape"),
     music: kept(edits.music, "music"),
     overlays: kept(edits.overlays, "overlay"),
+    // Left out of a Candidate from before them, which has none.
+    ...(edits.adjustment_layers && { adjustment_layers: kept(edits.adjustment_layers, "adjustment") }),
   };
   if (!next.segments.length) {
     const first = edits.segments[0];
@@ -165,11 +193,12 @@ function rippledIf<T extends Layers>(next: T, changes: TrackChange[], on: boolea
 }
 
 /** The layers and the hook of `edits`: what a ripple changes. */
-export const layersOf = ({ text_layers, shapes, music, overlays, hook_start, hook_secs }: Layers): Layers => ({
+export const layersOf = ({ text_layers, shapes, music, overlays, adjustment_layers, hook_start, hook_secs }: Layers): Layers => ({
   text_layers,
   shapes,
   music,
   overlays,
+  adjustment_layers,
   hook_start,
   hook_secs,
 });
@@ -186,7 +215,7 @@ export function rippleRemove(scene: PickContext): Outcome | null {
     const gone = layers.filter((layer) => layer.kind === kind).map(({ item }) => ({ start: item.start, end: item.start + item.secs }));
     if (!gone.length) continue;
     const list = KINDS[kind].list;
-    const closed = (edits[list] as Timed[])
+    const closed = (listOf(edits, kind) as Timed[])
       .filter((item) => !isPicked(scene.pick, kind, item.id))
       .map((item) => {
         const by = covered(gone.filter((span) => span.end <= item.start + 1e-6));
@@ -340,8 +369,8 @@ export function dragSegment(
 
 /** Every Segment, Text Layer, Shape, Music Clip and Overlay picked (not the hook, the captions or a join). */
 export function pickAll(edits: AdvancedEdits): Pick {
-  const refs = (kind: ItemKind) => edits[LISTS[kind]].map((item) => ({ kind, id: item.id }));
-  return picked(...refs("segment"), ...refs("text"), ...refs("shape"), ...refs("music"), ...refs("overlay"));
+  const refs = (kind: ItemKind) => (listOf(edits, kind) as { id: string }[]).map((item) => ({ kind, id: item.id }));
+  return picked(...refs("segment"), ...refs("text"), ...refs("shape"), ...refs("music"), ...refs("overlay"), ...refs("adjustment"));
 }
 
 // The picked Segments in Main Track order, and the picked Text Layers, Shapes, Music Clips and
@@ -350,7 +379,7 @@ export function pickedItems(scene: PickContext) {
   const { edits, pick } = scene;
   const segments = edits.segments.filter((segment) => isPicked(pick, "segment", segment.id));
   const layers = (Object.keys(KINDS) as TimedKind[]).flatMap((kind) =>
-    (edits[KINDS[kind].list] as Timed[]).filter((item) => isPicked(pick, kind, item.id)).map((item) => ({ kind, item })),
+    ((edits[KINDS[kind].list] ?? []) as Timed[]).filter((item) => isPicked(pick, kind, item.id)).map((item) => ({ kind, item })),
   );
   return { segments, layers };
 }
@@ -388,7 +417,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     for (const { kind, item } of moved) {
       const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed, next.segments);
       const list = KINDS[kind].list;
-      Object.assign(next, { [list]: [...(next[list] as Timed[]), copy] });
+      Object.assign(next, { [list]: [...(listOf(next, kind) as Timed[]), copy] });
       copies.push({ kind, id: copy.id });
     }
   }
@@ -404,7 +433,7 @@ function inside(scene: PickContext, ref: ItemRef, time: number): boolean {
     if (scene.edits.segments[index]?.hold != null) return false;
     return !!shown && time > shown.start + SEGMENT_MIN_SECS && time < shown.end - SEGMENT_MIN_SECS;
   }
-  const item = (scene.edits[KINDS[ref.kind].list] as Timed[]).find((other) => other.id === ref.id);
+  const item = ((scene.edits[KINDS[ref.kind].list] ?? []) as Timed[]).find((other) => other.id === ref.id);
   return !!item && time > item.start + ITEM_MIN_SECS && time < item.start + item.secs - ITEM_MIN_SECS;
 }
 
@@ -456,7 +485,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
       next.segments,
     );
     const list = KINDS[kind].list;
-    Object.assign(next, { [list]: (next[list] as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
+    Object.assign(next, { [list]: (listOf(next, kind) as Timed[]).flatMap((other) => (other.id === item.id ? [head, tail] : [other])) });
     tails.push({ kind, id: tail.id });
   }
   return tails.length ? withJoins(scene, { edits: next, pick: picked(...tails) }) : null;
@@ -501,8 +530,8 @@ export const canFreezeAt = (scene: PickContext, time: number) => freezable(scene
  * frame of FREEZE_SECS holding the frame shown at the playhead (at any Speed, in Reverse), and a
  * tail, the Freeze frame picked. The cut is at that frame, a Source Segment's too (not between Words
  * as Split's), so nothing is played twice or skipped. Keyframes are re-anchored on head and tail; a
- * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants. A
- * Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
+ * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants, and
+ * every part keeps the Segment's Grade. A Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
  * playhead, and on the Magnetic timeline the layers after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
  */
 export function freezeFrame(scene: PickContext, at: number, limits: { longest?: number } = {}): Outcome | null {
@@ -532,6 +561,8 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
     rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length),
   );
   const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
+  // The held frame in its Segment's colour.
+  if (segment.grade) held.grade = segment.grade;
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
@@ -610,7 +641,7 @@ export function move(scene: PickContext, delta: number): Outcome | null {
   const next = { ...scene.edits };
   for (const { kind, item } of layers) {
     const list = KINDS[kind].list;
-    Object.assign(next, { [list]: (next[list] as Timed[]).map((other) => (other.id === item.id ? { ...other, start: round(other.start + by) } : other)) });
+    Object.assign(next, { [list]: (listOf(next, kind) as Timed[]).map((other) => (other.id === item.id ? { ...other, start: round(other.start + by) } : other)) });
   }
   return { edits: next, pick: scene.pick };
 }
@@ -645,7 +676,7 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   for (const { kind, item } of placed) {
     const list = KINDS[kind].list;
     Object.assign(next, {
-      [list]: (next[list] as Placed[]).map((other) => {
+      [list]: (listOf(next, kind) as Placed[]).map((other) => {
         if (other.id !== item.id) return other;
         const { x, y } = middleOf(other);
         const moved = middledAt(other, Math.round(x + byX), Math.round(y + byY));
@@ -674,6 +705,59 @@ export function restyle(scene: { edits: AdvancedEdits; pick: Pick }, change: (la
 export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (shape: Shape) => Shape): Outcome {
   const shapes = scene.edits.shapes.map((shape) => (isPicked(scene.pick, "shape", shape.id) ? change(shape) : shape));
   return { edits: { ...scene.edits, shapes }, pick: scene.pick };
+}
+
+/**
+ * Every picked Segment's, Overlay's and Adjustment Layer's Grade (ADR 0013) with the dials of `change` set, its other dials
+ * kept; or with `change` "reset", neutral again. One change, however many are picked. With nothing
+ * picked, the Candidate's own Grade instead. Null with only other items picked.
+ */
+export function regrade(scene: { edits: AdvancedEdits; pick: Pick }, change: Partial<Adjust> | "reset"): Outcome | null {
+  return regraded(scene, (grade) => (change === "reset" ? NEUTRAL_GRADE : adjusted(grade, change)));
+}
+
+/**
+ * Every picked Segment's, Overlay's and Adjustment Layer's Grade given the Look of `change` (null: none, its Adjust kept),
+ * its intensity, or both: a Filters card's click, or the Color section's Look picker and intensity.
+ * One change, however many are picked; with nothing picked, the Candidate's own Grade. Null with only
+ * other items picked. A card's hover draws the preview from it, never saving it.
+ */
+export function relook(scene: { edits: AdvancedEdits; pick: Pick }, change: { look?: string | null; intensity?: number }): Outcome | null {
+  return regraded(scene, (grade) => relooked(grade, change));
+}
+
+/** The id `gradesOf` gives the Candidate's own Grade, with nothing picked. */
+export const CLIP_GRADE_ID = "clip";
+
+/**
+ * What `regrade` and `relook` change, by id: the picked Segments, Overlays and Adjustment Layers (in
+ * that order) with their Grades, or with nothing picked the Candidate's Grade, by CLIP_GRADE_ID. Empty
+ * with only other items picked.
+ */
+export function gradesOf(scene: { edits: AdvancedEdits; pick: Pick }): { id: string; grade?: Grade }[] {
+  const { edits, pick } = scene;
+  if (pick === null) return [{ id: CLIP_GRADE_ID, grade: edits.grade }];
+  return [
+    ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
+    ...listOf(edits, "adjustment").filter((layer) => isPicked(pick, "adjustment", layer.id)),
+  ];
+}
+
+// The Pick's Grades, or the Candidate's with nothing picked, each made `change` of what it was.
+function regraded(scene: { edits: AdvancedEdits; pick: Pick }, change: (grade: Grade | undefined) => Grade): Outcome | null {
+  const { edits, pick } = scene;
+  if (pick === null) return { edits: { ...edits, grade: change(edits.grade) }, pick };
+  const graded = <T extends ClipSegment | Overlay>(items: T[], kind: "segment" | "overlay"): T[] =>
+    items.some((item) => isPicked(pick, kind, item.id)) ? items.map((item) => (isPicked(pick, kind, item.id) ? { ...item, grade: change(item.grade) } : item)) : items;
+  const segments = graded(edits.segments, "segment");
+  const overlays = graded(edits.overlays, "overlay");
+  const layers = listOf(edits, "adjustment");
+  const adjustment_layers = layers.some((layer) => isPicked(pick, "adjustment", layer.id))
+    ? layers.map((layer) => (isPicked(pick, "adjustment", layer.id) ? { ...layer, grade: change(layer.grade) } : layer))
+    : edits.adjustment_layers;
+  if (segments === edits.segments && overlays === edits.overlays && adjustment_layers === edits.adjustment_layers) return null;
+  return { edits: { ...edits, segments, overlays, ...(adjustment_layers && { adjustment_layers }) }, pick };
 }
 
 /** Every picked Text Layer given `style`, a Text Preset's Text Style: their words, Transforms, Keyframes and times stay their own. */
@@ -1140,4 +1224,43 @@ export function itemActions(
     split: () => run(split(scene, now())),
     ...clip,
   };
+}
+
+/**
+ * A new Adjustment Layer (ADR 0013) with Look `look` at `at` (where a Filters card was dropped on the
+ * Timeline): NEW_LAYER_SECS long, or to the Clip's end, at full strength without fades, picked. Null
+ * while the Adjust Track is locked, or in a Clip too short for one there.
+ */
+export function addAdjustmentLayer(scene: PickContext, look: string, at: number): Outcome | null {
+  if (scene.locked?.includes("adjust")) return null;
+  const start = round(Math.max(0, Math.min(at, scene.duration - ITEM_MIN_SECS)));
+  const secs = round(Math.min(NEW_LAYER_SECS, scene.duration - start));
+  if (secs < ITEM_MIN_SECS) return null;
+  const layer: AdjustmentLayer = { id: idOf(scene), start, secs, grade: relooked(NEUTRAL_GRADE, { look }), strength: 100, fade_in: 0, fade_out: 0 };
+  const { edits } = scene;
+  return { edits: { ...edits, adjustment_layers: [...listOf(edits, "adjustment"), layer] }, pick: picked({ kind: "adjustment", id: layer.id }) };
+}
+
+/**
+ * Adjustment Layer `id`'s strength (0..100, whole percents) or fades (each within 0..half its length,
+ * to the hundredth) set from the Inspector. Null for a layer that isn't there.
+ */
+export function setAdjustment(
+  scene: { edits: AdvancedEdits; pick: Pick },
+  id: string,
+  change: { strength?: number; fade_in?: number; fade_out?: number },
+): Outcome | null {
+  const { edits, pick } = scene;
+  const layers = listOf(edits, "adjustment");
+  const layer = layers.find((other) => other.id === id);
+  if (!layer) return null;
+  const half = halfFadeMax(layer.secs);
+  const fade = (value: number | undefined, was: number) => (value === undefined ? was : round(Math.min(Math.max(value, 0), half)));
+  const next = {
+    ...layer,
+    strength: change.strength === undefined ? layer.strength : Math.round(Math.min(Math.max(change.strength, 0), 100)),
+    fade_in: fade(change.fade_in, layer.fade_in),
+    fade_out: fade(change.fade_out, layer.fade_out),
+  };
+  return { edits: { ...edits, adjustment_layers: layers.map((other) => (other.id === id ? next : other)) }, pick };
 }

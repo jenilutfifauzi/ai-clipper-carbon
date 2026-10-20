@@ -1,0 +1,13 @@
+{
+  "id": "vibe-sunset",
+  "name": "Sunset",
+  "category": "Vibe",
+  "order": 630,
+  "adjust": {
+    "temperature": 8600,
+    "tint": 14,
+    "saturation": 14,
+    "contrast": 8,
+    "highlights": -8
+  }
+}

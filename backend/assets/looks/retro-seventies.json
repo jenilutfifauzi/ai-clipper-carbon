@@ -1,0 +1,14 @@
+{
+  "id": "retro-seventies",
+  "name": "Seventies",
+  "category": "Retro",
+  "order": 300,
+  "adjust": {
+    "temperature": 8000,
+    "tint": 8,
+    "saturation": -10,
+    "contrast": -5,
+    "fade": 25,
+    "vignette": 25
+  }
+}

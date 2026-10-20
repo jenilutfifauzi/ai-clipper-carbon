@@ -23,6 +23,7 @@ import {
 } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
+import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
@@ -35,6 +36,8 @@ import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from ".
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
+import { DecksGraded, GradeFilters } from "./GradeFilters";
+import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
@@ -82,7 +85,7 @@ const percent = (value: number) => `${value * 100}%`;
  * While a picture is held, it is drawn from the drag until the plan has it. With `fit`, the frame is as large as fits the space its parent gives it (the
  * Advanced Edit's player), and the transport is a single row, ending with `tools`; with `rates` too,
  * it offers the playback rate, and with `loop` a button that turns Loop on and off; with `hideBar`,
- * that row fades out (full screen, while the pointer is still).
+ * that row fades out (full screen, while the pointer is still). `over` is laid over the stage.
  */
 export function ClipPreview({
   src,
@@ -98,6 +101,7 @@ export function ClipPreview({
   blank = false,
   tools,
   hideBar = false,
+  over,
 }: {
   src: string;
   // The Job whose Source `src` is: a reversed Segment of it plays from its Retimed copy.
@@ -115,6 +119,8 @@ export function ClipPreview({
   blank?: boolean;
   tools?: ReactNode;
   hideBar?: boolean;
+  // Laid over the whole stage, under nothing (the Advanced Edit's Compare render).
+  over?: ReactNode;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -135,6 +141,7 @@ export function ClipPreview({
     };
   }, [playback, decks]);
   const shownDeck = usePlayback(playback, (_, p) => p.shownDeck);
+  const shownSegment = usePlayback(playback, (_, p) => p.shownSegmentIndex);
 
   useEffect(() => {
     const element = stage.current;
@@ -189,6 +196,8 @@ export function ClipPreview({
   );
   // The plan as drawn: a picture held or moved with one is drawn where it is being put.
   const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex, keyedAt) : plan;
+  // Drawn again once the Looks' values are known, for the Grades with a Look.
+  useLooks();
   // What is dropped on the stage from the asset panel (a Stickers tile), at its point on the frame.
   const [dropOver, setDropOver] = useState(false);
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
@@ -221,33 +230,43 @@ export function ClipPreview({
         controls?.drop?.onDrop(event.dataTransfer, framePoint(event.currentTarget.getBoundingClientRect(), event, plan));
       }}
     >
-      {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is. */}
-      <div className={cx("absolute inset-0", blank && "opacity-0")}>
-        {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
-        <div ref={incoming} className="absolute inset-0">
-          {decks.map((refs, deck) =>
-            refs.map((ref, slot) => (
-              <PanelView
-                key={`${deck}:${slot}`}
-                videoRef={ref}
-                src={src}
-                plan={drawn}
-                {...slotView(scene, slot)}
-                playback={playback}
-                muted={deck > 0 || slot > 0}
-                hidden={deck !== shownDeck}
-              />
-            )),
-          )}
-          <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+      {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
+      {/* The Main Track and the Overlays under the Adjustment Layers showing (ADR 0013). */}
+      <PreviewAdjusted plan={drawn} playback={playback}>
+        {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the
+            Candidate's Grade (ADR 0013): the joined Main Track's, never the Overlays' after it. */}
+        <div data-main-track className={cx("absolute inset-0", blank && "opacity-0")}>
+          <DecksGraded grade={drawn?.grade}>
+            {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
+            <div ref={incoming} className="absolute inset-0">
+              {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
+              <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
+                {decks.map((refs, deck) =>
+                  refs.map((ref, slot) => (
+                    <PanelView
+                      key={`${deck}:${slot}`}
+                      videoRef={ref}
+                      src={src}
+                      plan={drawn}
+                      {...slotView(scene, slot)}
+                      playback={playback}
+                      muted={deck > 0 || slot > 0}
+                      hidden={deck !== shownDeck}
+                    />
+                  )),
+                )}
+              </DecksGraded>
+              <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+            </div>
+            <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
+          </DecksGraded>
         </div>
-        <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
-      </div>
-      <PreviewOverlays
-        plan={drawn}
-        playback={playback}
-        selected={(controls?.selected ?? []).flatMap((id) => (id.startsWith("overlay:") ? [id.slice("overlay:".length)] : []))}
-      />
+        <PreviewOverlays
+          plan={drawn}
+          playback={playback}
+          selected={(controls?.selected ?? []).flatMap((id) => (id.startsWith("overlay:") ? [id.slice("overlay:".length)] : []))}
+        />
+      </PreviewAdjusted>
       {plan && fonts && (
         <svg viewBox={`0 0 ${plan.width} ${plan.height}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden>
           {watermark.event && <Watermark plan={plan} event={watermark.event} font={fontById.get(plan.watermark_style.font)} />}
@@ -304,6 +323,7 @@ export function ClipPreview({
           onClose={() => setEditing(null)}
         />
       )}
+      {over}
       <PreviewMusic plan={plan} playback={playback} masters={masters} src={src} jobId={jobId} />
     </div>
   );

@@ -47,7 +47,15 @@ KITA_SOAL = (1.6, 2.6)
 # and its join (captions-advanced/09). Raised from 73_700 for the captions tools (captions-advanced/11):
 # set_media_language, get_media_words and get_captions; the rest of what an agent needs is in the server's instructions.
 # Merged with captions-advanced, the two features' increases summed (+400 and +6_700 over 69_000).
-TOOLS_BUDGET_BYTES = 76_100
+# Raised from 76_100 for a Segment's Grade (color-adjust/01): `segments[].grade`, its Adjust's thirteen
+# dials with their ranges, in edit_candidate's and merge_candidate_items' schemas (79_046).
+# Raised from 79_200 for an Overlay's Grade (color-adjust/03): `overlays[].grade` in the same two
+# schemas (79_447).
+# Raised from 79_600 for the Candidate's Grade (color-adjust/04): `grade` in edit_candidate's changes
+# and merge_candidate_items' parameters, both referring to the Grade schemas already there (79_648).
+# Raised from 80_000 for Adjustment Layers (color-adjust/07): `adjustment_layers` in edit_candidate's
+# changes and merge_candidate_items' parameters, each with its Grade (82_315).
+TOOLS_BUDGET_BYTES = 82_800
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

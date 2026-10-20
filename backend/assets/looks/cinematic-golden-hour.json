@@ -1,0 +1,16 @@
+{
+  "id": "cinematic-golden-hour",
+  "name": "Golden Hour",
+  "category": "Cinematic",
+  "order": 130,
+  "adjust": {
+    "temperature": 8200,
+    "tint": 6,
+    "saturation": 10,
+    "exposure": 0.1,
+    "contrast": 10,
+    "highlights": -10,
+    "shadows": 8,
+    "vignette": 15
+  }
+}

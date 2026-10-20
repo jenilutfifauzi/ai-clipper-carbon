@@ -20,6 +20,8 @@ import {
   Scaling,
   Scissors,
   Shuffle,
+  SunMedium,
+  SwatchBook,
   SlidersHorizontal,
   Snowflake,
   StepBack,
@@ -51,7 +53,7 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions";
+export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
@@ -59,6 +61,7 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
   { value: "audio", label: "Audio", icon: AudioLines },
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
+  { value: "filters", label: "Filters", icon: SwatchBook },
 ];
 
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
@@ -175,7 +178,9 @@ export function SaveStatus({
 /**
  * The phone's bottom bar: the asset tabs and Pick, or what can be done to the picked items (with
  * Transform, for an Overlay or a Segment picked alone, opening the Transform sheet, and Speed, for a
- * Segment or a video Overlay picked alone, the Speed sheet). Freeze frame sits beside Split. In picking
+ * Segment or a video Overlay picked alone, the Speed sheet; Filters and Adjust, for the picked
+ * Segments, Overlays and Adjustment Layers or with nothing picked the whole Clip, their sheets: with
+ * nothing picked, Filters is the asset tab's). Freeze frame sits beside Split. In picking
  * mode (`picking`, started by Pick), a tap adds an item to the Pick or takes it out, and the bar counts
  * them and offers what can be done to them all, Paste while the Clipboard holds something
  * (`paste`), and Done.
@@ -193,6 +198,8 @@ export function Toolbar({
   onInspect,
   onTransform,
   onSpeed,
+  onFilters = null,
+  onAdjust = null,
   onTracks,
   onPlayback,
   onPicking,
@@ -214,6 +221,10 @@ export function Toolbar({
   // Opens the Speed sheet of the Segment or video Overlay picked alone (actions.ts'
   // `speedSheetItem`): null for any other pick.
   onSpeed: (() => void) | null;
+  // Open the Filters and Adjust sheets of the Pick's Grades (or the Candidate's, with nothing picked):
+  // null while the Pick has none.
+  onFilters?: (() => void) | null;
+  onAdjust?: (() => void) | null;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;
   // Opens the Playback sheet: the rate, the Loop Region and the Edit Point jumps.
@@ -249,6 +260,8 @@ export function Toolbar({
           <ToolButton icon={SlidersHorizontal} label="Edit" onClick={onInspect} />
           {picture && <ToolButton icon={Scaling} label="Transform" onClick={onTransform} />}
           {onSpeed && <ToolButton icon={FastForward} label="Speed" onClick={onSpeed} />}
+          {onFilters && <ToolButton icon={SwatchBook} label="Filters" onClick={onFilters} />}
+          {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
           <MuteButton mute={mute} />
           {actions && (
             <>
@@ -266,6 +279,7 @@ export function Toolbar({
           {ASSET_TABS.map((tab) => (
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
+          {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
           <SplitButton splitter={splitter} playback={playback} />
           <FreezeButton freezer={freezer} playback={playback} />
           <PlaybackButton playback={playback} onClick={onPlayback} />

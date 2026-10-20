@@ -1,0 +1,12 @@
+{
+  "id": "vibe-vivid",
+  "name": "Vivid",
+  "category": "Vibe",
+  "order": 600,
+  "adjust": {
+    "saturation": 35,
+    "contrast": 15,
+    "shadows": 6,
+    "sharpen": 10
+  }
+}

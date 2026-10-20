@@ -1,0 +1,13 @@
+{
+  "id": "portrait-crisp",
+  "name": "Crisp",
+  "category": "Portrait",
+  "order": 430,
+  "adjust": {
+    "saturation": 5,
+    "contrast": 15,
+    "whites": 6,
+    "blacks": -6,
+    "sharpen": 35
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "film-soft-stock",
+  "name": "Soft Stock",
+  "category": "Film",
+  "order": 220,
+  "adjust": {
+    "temperature": 6900,
+    "tint": 4,
+    "saturation": -5,
+    "contrast": -5,
+    "highlights": -10,
+    "shadows": 10,
+    "fade": 15
+  }
+}

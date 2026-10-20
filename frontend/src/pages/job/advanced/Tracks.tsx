@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Lock, LockOpen, Mic, Music, Square, Type, Volume2, VolumeX } from "lucide-react";
+import { Eye, EyeOff, Lock, LockOpen, Mic, Music, Palette, Square, Type, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
 import {
   jobFilmstripUrl,
@@ -6,6 +6,7 @@ import {
   mediaFilmstripUrl,
   mediaPeaksUrl,
   mediaThumbnailUrl,
+  type AdjustmentLayer,
   type CueKey,
   type MediaItem,
   type MusicClip,
@@ -22,6 +23,7 @@ import {
 import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
+import { useLooks } from "../../../looks";
 import { cueText } from "../editor/cues";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
@@ -29,15 +31,15 @@ import type { PlayedSegment, Playback } from "../editor/playback";
 import { TRANSITIONS } from "../editor/transitions";
 import { offsetAt, overlayTime, rangeOf, transitionOverlap } from "../editor/segmentTime";
 import { keyText, sameKey } from "../editor/timelineKey";
-import { gestureRetime } from "./actions";
+import { fadesHalved, gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
-import { DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
+import { DRAG_LOOK, DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
-import { clicked, isPicked, itemsOf, keyOf, picked, type ItemRef, type Pick } from "./pick";
+import { clicked, isPicked, itemsOf, keyOf, listOf, picked, type ItemRef, type Pick } from "./pick";
 import { cueEditOf, shownCues, type CueDragStart } from "./cueEdits";
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
@@ -72,6 +74,7 @@ export interface TrackHandlers {
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onShape: (shape: Shape, group?: string) => void;
+  onAdjustment: (layer: AdjustmentLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (id: string, moved: { start: number; end: number; edge: "move" | "start" | "end" }, group: string) => void;
@@ -92,6 +95,8 @@ export interface TrackHandlers {
   onDropMedia: (track: DropTrack, media: string, time: number) => void;
   onDropText: (preset: string, time: number) => void;
   onDropShape: (kind: ShapeKind, time: number) => void;
+  // A Filters card (its Look's id) dropped at `time`: an Adjustment Layer with that Look there.
+  onDropLook: (look: string, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
   // A Segment's, Music Clip's or Overlay's context menu asked for, at that point of the window (a desktop's).
@@ -108,7 +113,8 @@ const MEDIA_WAVE_BAND = 14;
 const CAPTION_SEEK_IN = 0.05;
 
 /**
- * The tracks, top to bottom: the Text Layers' lanes, the Shapes' lanes, the Overlays' lanes, the
+ * The tracks, top to bottom: the Text Layers' lanes, the Shapes' lanes, the Adjustment Layers' lanes
+ * (the Adjust Track), the Overlays' lanes, the
  * Main Track (its Segments as played over their Scenes, and the joins between them), the caption
  * lines, the hook, and the Music Clips' lanes. Each track takes what is dropped on it from the
  * asset panel.
@@ -204,6 +210,10 @@ export function Tracks({
   const locked = (kind: TrackKind) => tracks.locked.includes(kind);
   const textLanes = lanes(edits.text_layers, true);
   const shapeLanes = lanes(edits.shapes, true);
+  const adjustLanes = lanes(listOf(edits, "adjustment"), true);
+  // An Adjustment Layer is named by its Look.
+  const looks = useLooks();
+  const lookNames = new Map((looks ?? []).map((look) => [look.id, look.name]));
   const overlayLanes = lanes(edits.overlays, true);
   const musicLanes = lanes(edits.music, false);
   return (
@@ -279,6 +289,48 @@ export function Tracks({
               >
                 <Square aria-hidden size={12} className="shrink-0" />
                 <span className="truncate font-medium capitalize">{shape.style.kind}</span>
+              </TimelineItem>
+            );
+          })}
+        </TrackRow>
+      ))}
+      {adjustLanes.map((lane, i) => (
+        <TrackRow
+          key={`adjust${adjustLanes.length - i}`}
+          label={i === adjustLanes.length - 1 ? label("adjust") : ""}
+          dimmed={dimmed("adjust")}
+          locked={locked("adjust")}
+          drop={{ types: [DRAG_LOOK], onDrop: (data, clientX) => handlers.onDropLook(data.getData(DRAG_LOOK), geometry.timeAt(clientX)) }}
+        >
+          {lane.map((layer) => {
+            const selected = isPicked(pick, "adjustment", layer.id);
+            const look = layer.grade.look ? lookNames.get(layer.grade.look) : undefined;
+            const name = look ?? "Adjustment";
+            return (
+              <TimelineItem
+                key={layer.id}
+                geometry={geometry}
+                start={layer.start}
+                end={Math.min(layer.start + layer.secs, duration)}
+                max={duration}
+                minSecs={ITEM_MIN_SECS}
+                tone="adjustment"
+                selected={selected}
+                changed={changed.has(layer.id)}
+                label={`Adjustment Layer ${name}, from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s at ${Math.round(layer.strength)}%`}
+                pickKey={keyOf({ kind: "adjustment", id: layer.id })}
+                onSelect={choose({ kind: "adjustment", id: layer.id })}
+                onChange={({ start, end, edge }, group) =>
+                  layerChanged({ kind: "adjustment", id: layer.id }, layer.start, { start, edge }, group, () =>
+                    // Trimmed, its fades are kept within half of it.
+                    handlers.onAdjustment(fadesHalved({ ...layer, start: round(start), secs: round(end - start) }), group),
+                  )
+                }
+                onDelete={selected ? onDelete : undefined}
+              >
+                <Palette aria-hidden size={12} className="shrink-0" />
+                <span className="truncate font-medium">{name}</span>
+                {layer.strength < 100 && <span className="shrink-0 text-muted tabular-nums">{Math.round(layer.strength)}%</span>}
               </TimelineItem>
             );
           })}

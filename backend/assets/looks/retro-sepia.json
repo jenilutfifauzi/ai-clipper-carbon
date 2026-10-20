@@ -1,0 +1,14 @@
+{
+  "id": "retro-sepia",
+  "name": "Sepia",
+  "category": "Retro",
+  "order": 330,
+  "adjust": {
+    "temperature": 9500,
+    "tint": 6,
+    "saturation": -70,
+    "contrast": 5,
+    "fade": 15,
+    "vignette": 30
+  }
+}

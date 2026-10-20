@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
-import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
+import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -11,7 +11,9 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { AdjustmentLayerFields } from "./AdjustmentLayers";
+import { colorChanges, ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -26,7 +28,7 @@ import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
 /**
- * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's,
+ * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's, an Adjustment Layer's,
  * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them
  * (several Text Layers, or several Shapes, have their look edited together).
  */
@@ -46,6 +48,7 @@ export function Inspector({
   onEdits,
   onText,
   onShape,
+  onAdjustment,
   onMusic,
   onOverlay,
   onSegment,
@@ -77,6 +80,7 @@ export function Inspector({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
   onText: (layer: TextLayer, group?: string) => void;
   onShape: (shape: Shape, group?: string) => void;
+  onAdjustment: (layer: AdjustmentLayer, group?: string) => void;
   onMusic: (clip: MusicClip, group?: string) => void;
   onOverlay: (overlay: Overlay, group?: string) => void;
   onSegment: (segment: ClipSegment, group?: string) => void;
@@ -121,6 +125,10 @@ export function Inspector({
     return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
 
+  // The picked Segments', Overlays' and Adjustment Layers' Color section: a dial set on all of them, or all reset, each one change.
+  const colorOf = () => <ColorFields {...colorChanges({ edits, pick }, onEdits)} />;
+
+
   const items = itemsOf(pick);
   if (items.length > 1 && actions) {
     if (items.every((item) => item.kind === "text")) {
@@ -147,7 +155,15 @@ export function Inspector({
         />
       );
     }
-    return <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
+    const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
+    if (!items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment")) return summary;
+    // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
+    return (
+      <div className="flex flex-col gap-4">
+        {summary}
+        {colorOf()}
+      </div>
+    );
   }
   if (pick?.kind === "join") {
     return (
@@ -188,6 +204,7 @@ export function Inspector({
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
+        color={colorOf()}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}
@@ -220,6 +237,24 @@ export function Inspector({
   const shape = find(edits.shapes, "shape");
   if (shape && actions) {
     return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
+  }
+  const adjustment = find(edits.adjustment_layers ?? [], "adjustment");
+  if (adjustment && actions) {
+    return (
+      <AdjustmentLayerFields
+        key={adjustment.id}
+        layer={adjustment}
+        duration={duration}
+        color={colorOf()}
+        onChange={onAdjustment}
+        onMix={(change, group) => {
+          const outcome = setAdjustment({ edits, pick }, adjustment.id, change);
+          if (outcome) onEdits(outcome.edits, group);
+        }}
+        onDuplicate={actions.duplicate}
+        onDelete={actions.remove}
+      />
+    );
   }
   const clip = find(edits.music, "music");
   if (clip && actions) {
@@ -266,6 +301,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
+        color={colorOf()}
       />
     );
   }
@@ -295,10 +331,16 @@ export function Inspector({
   if (pick?.kind === "cue") {
     return <CueFields cueKey={pick.key} edits={edits} preview={preview} locked={locked} playback={playback} onCue={onCue} />;
   }
+  // Nothing picked: the Candidate's own Grade (ADR 0013), over the whole Main Track, each dial one change.
   return (
-    <div className="flex flex-col gap-1">
-      <h2 className="font-semibold">Nothing selected</h2>
-      <p className="text-sm text-pretty text-muted">Select an item on the timeline or the preview to change it.</p>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="font-semibold">Nothing selected</h2>
+        <p className="text-sm text-pretty text-muted">
+          Select an item on the timeline or the preview to change it. The Color here grades the whole clip, not its Overlays.
+        </p>
+      </div>
+      <ColorFields {...colorChanges({ edits, pick: null }, onEdits)} />
     </div>
   );
 }
@@ -364,6 +406,7 @@ const NAMES: Record<ItemKind, [string, string]> = {
   shape: ["Shape", "Shapes"],
   music: ["Music Clip", "Music Clips"],
   overlay: ["Overlay", "Overlays"],
+  adjustment: ["Adjustment Layer", "Adjustment Layers"],
 };
 
 /**
