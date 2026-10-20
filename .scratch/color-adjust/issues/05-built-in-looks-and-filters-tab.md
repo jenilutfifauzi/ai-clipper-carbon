@@ -20,16 +20,34 @@
 
 **Blocked by:** 01, 04.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] **Built-in Looks:** they load, their ids are unique, and every Adjust value is in range.
-- [ ] **Fixture:** the shared fold fixture covers Looks at 0, 50 and 100%.
-- [ ] **Render:** a Look at intensity 0 matches the Grade without it, and at 100 it differs.
-- [ ] **API/MCP:**
+- [x] **Built-in Looks:** they load, their ids are unique, and every Adjust value is in range.
+- [x] **Fixture:** the shared fold fixture covers Looks at 0, 50 and 100%.
+- [x] **Render:** a Look at intensity 0 matches the Grade without it, and at 100 it differs.
+- [x] **API/MCP:**
   - `list_assets looks` lists the catalogue.
   - An unknown Look id is refused.
   - The dry run shows `look` and `intensity`.
-- [ ] **Editor (vitest):**
+- [x] **Editor (vitest):**
   - A card click on a mixed Pick sets their Looks in one undo step.
   - With nothing picked, a card click sets the Candidate's Look.
   - Hovering changes nothing saved.
+
+**Notes (done):** 24 built-in Looks in `backend/assets/looks/` (four per category), loaded by
+`app/looks.py` (`builtin_looks`, `all_looks`, `get_look`), listed by `GET /api/looks`. A Look's
+Adjust is laid over the Grade's own (`with_look` / `withLook`): each dial moved by as much as the
+Look's is from neutral, held in range; that Adjust is folded as any other, and intensity mixes it
+over the fold without the Look entry by entry (missing table or matrix = identity). The fixture's
+Look cases carry the Look's values inline (`look`), so they don't depend on the catalogue; its
+generator is `backend/tests/fixtures/write_grade_folds.py`. An unknown Look id is refused (422) on
+save and on a draft (`_check_looks_of`); the render draws a Look missing from the catalogue as none.
+The frontend loads the catalogue once (`src/looks.ts`, which registers each Look's values with the
+fold via `knowLooks`); `ClipPreview` re-renders when it arrives. The Filters tab (`LookPanel.tsx`)
+draws each card on the Filmstrip frame nearest the playhead (to the second) of the first picked
+Segment or Overlay (an image Overlay's thumbnail), else the Clip's; hover sets an audition the
+Advanced Edit draws through `relook` + `draftGrades` without touching the edits; click is
+`relook` as one history step. The Color section (Inspector and clip editor) has the Look picker,
+intensity and Remove look; Reset still makes the whole Grade neutral, Look included. The phone's
+toolbar gains the Filters tab too (no hover there). Look values were tuned by their folded effect
+on grey, black, white and a skin tone, not yet with Compare render (ticket 08).

@@ -1,0 +1,16 @@
+{
+  "id": "cinematic-blockbuster",
+  "name": "Blockbuster",
+  "category": "Cinematic",
+  "order": 100,
+  "adjust": {
+    "temperature": 7300,
+    "tint": 4,
+    "saturation": 12,
+    "contrast": 25,
+    "highlights": -10,
+    "shadows": -8,
+    "blacks": -10,
+    "vignette": 20
+  }
+}

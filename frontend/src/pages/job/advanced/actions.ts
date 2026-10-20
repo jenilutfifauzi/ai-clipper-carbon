@@ -1,5 +1,5 @@
-import type { Adjust, ClipSegment, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
-import { adjusted, NEUTRAL_GRADE } from "../editor/grading";
+import type { Adjust, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
 import type { StyleDraft } from "../editor/useStyleDraft";
@@ -685,12 +685,25 @@ export function reshape(scene: { edits: AdvancedEdits; pick: Pick }, change: (sh
  * picked, the Candidate's own Grade instead. Null with only other items picked.
  */
 export function regrade(scene: { edits: AdvancedEdits; pick: Pick }, change: Partial<Adjust> | "reset"): Outcome | null {
+  return regraded(scene, (grade) => (change === "reset" ? NEUTRAL_GRADE : adjusted(grade, change)));
+}
+
+/**
+ * Every picked Segment's and Overlay's Grade given the Look of `change` (null: none, its Adjust kept),
+ * its intensity, or both: a Filters card's click, or the Color section's Look picker and intensity.
+ * One change, however many are picked; with nothing picked, the Candidate's own Grade. Null with only
+ * other items picked. A card's hover draws the preview from it, never saving it.
+ */
+export function relook(scene: { edits: AdvancedEdits; pick: Pick }, change: { look?: string | null; intensity?: number }): Outcome | null {
+  return regraded(scene, (grade) => relooked(grade, change));
+}
+
+// The Pick's Grades, or the Candidate's with nothing picked, each made `change` of what it was.
+function regraded(scene: { edits: AdvancedEdits; pick: Pick }, change: (grade: Grade | undefined) => Grade): Outcome | null {
   const { edits, pick } = scene;
-  if (pick === null) return { edits: { ...edits, grade: change === "reset" ? NEUTRAL_GRADE : adjusted(edits.grade, change) }, pick };
+  if (pick === null) return { edits: { ...edits, grade: change(edits.grade) }, pick };
   const graded = <T extends ClipSegment | Overlay>(items: T[], kind: "segment" | "overlay"): T[] =>
-    items.some((item) => isPicked(pick, kind, item.id))
-      ? items.map((item) => (isPicked(pick, kind, item.id) ? { ...item, grade: change === "reset" ? NEUTRAL_GRADE : adjusted(item.grade, change) } : item))
-      : items;
+    items.some((item) => isPicked(pick, kind, item.id)) ? items.map((item) => (isPicked(pick, kind, item.id) ? { ...item, grade: change(item.grade) } : item)) : items;
   const segments = graded(edits.segments, "segment");
   const overlays = graded(edits.overlays, "overlay");
   if (segments === edits.segments && overlays === edits.overlays) return null;

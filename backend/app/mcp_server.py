@@ -285,12 +285,15 @@ Edits:
   saturation (-100 grey..100 twice as vivid), exposure {EXPOSURE_EV[0]}..{EXPOSURE_EV[1]} EV (stops of light), brightness,
   contrast, highlights and shadows (the upper and lower halves), whites and blacks (the two ends),
   each -100..100, fade 0..100 (blacks lifted into a matte), sharpen 0..100 and vignette 0..100
-  (the corners darkened); all 0 but temperature by default (neutral). look and intensity are
-  unused. merge_candidate_items changes only the dials given. The dry run lists a Segment's grade
-  by its dials that aren't neutral.
-- The Candidate's own `grade` (the same dials) is laid over the whole Main Track, after the
+  (the corners darkened); all 0 but temperature by default (neutral). Its `look` (a Look's id from
+  list_assets kind "looks", or null) styles the picture after the dials: each of the Look's dials
+  moves the grade's by as much as it is from neutral, held in range; `intensity` 0..100 (100 by
+  default) mixes the result over the grade without the Look. An unknown Look is refused.
+  merge_candidate_items changes only the fields given. The dry run lists a Segment's grade by its
+  dials that aren't neutral, and its look and intensity.
+- The Candidate's own `grade` (the same dials, look and intensity) is laid over the whole Main Track, after the
   Segments' grades and the Transitions; never on the Overlays. merge_candidate_items' `grade`
-  changes only the dials given; the dry run lists it at the top.
+  changes only the fields given; the dry run lists it at the top.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face
@@ -855,10 +858,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return {"deleted": preset_id}
 
     @tool(read_only=True)
-    async def list_assets(kind: Literal["fonts", "logos", "media"] | None = None) -> dict:
-        """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, and the
-        Media Library (songs, videos and images for Music Clips, Overlays and Segments): all, or one
-        `kind`."""
+    async def list_assets(kind: Literal["fonts", "logos", "media", "looks"] | None = None) -> dict:
+        """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, the
+        Media Library (songs, videos and images for Music Clips, Overlays and Segments) and the Looks
+        a grade's `look` names (id, name, category, Adjust values): all, or one `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
             listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
@@ -866,6 +869,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
             listed["logos"] = await api("GET", "/logos")
         if kind in (None, "media"):
             listed["media"] = await api("GET", "/media")
+        if kind in (None, "looks"):
+            listed["looks"] = await api("GET", "/looks")
         return listed
 
     @tool()

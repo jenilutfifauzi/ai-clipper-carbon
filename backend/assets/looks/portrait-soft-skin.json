@@ -1,0 +1,16 @@
+{
+  "id": "portrait-soft-skin",
+  "name": "Soft Skin",
+  "category": "Portrait",
+  "order": 400,
+  "adjust": {
+    "temperature": 6900,
+    "tint": 3,
+    "saturation": -6,
+    "exposure": 0.1,
+    "contrast": -10,
+    "highlights": -10,
+    "shadows": 12,
+    "fade": 5
+  }
+}

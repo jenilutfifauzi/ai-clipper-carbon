@@ -23,6 +23,7 @@ import {
 } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
+import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
@@ -191,6 +192,8 @@ export function ClipPreview({
   );
   // The plan as drawn: a picture held or moved with one is drawn where it is being put.
   const drawn = plan && edit.moving ? drawnPlan(plan, edit, sceneIndex, keyedAt) : plan;
+  // Drawn again once the Looks' values are known, for the Grades with a Look.
+  useLooks();
   // What is dropped on the stage from the asset panel (a Stickers tile), at its point on the frame.
   const [dropOver, setDropOver] = useState(false);
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));

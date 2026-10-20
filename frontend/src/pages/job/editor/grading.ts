@@ -7,6 +7,13 @@ import type { Adjust, Grade, RenderPlan } from "../../../api";
  * sRGB) and a radial gradient layer over it for vignette; those two are near the render's, not exact. The render folds it the same way (backend/app/grading.py, whose
  * docstring gives the maths), and both test suites read the same cases
  * (backend/tests/fixtures/grade_folds.json), so that the two can't drift.
+ *
+ * A Grade's Look is a set of Adjust values laid over the Grade's own (`withLook`): each dial moved by
+ * as much as the Look's is from neutral, held within its range, so the Look styles what the dials
+ * corrected. That Adjust is folded as any other, and the Look's intensity mixes it over the fold
+ * without the Look, entry by entry (a missing table or matrix the identity): at 0 the fold without
+ * it, at 100 the fold with it. The Looks' values come from the catalogue (looks.ts, `knowLooks`); a
+ * Look not (yet) known is drawn as none.
  */
 
 export const TABLE_SIZE = 256;
@@ -42,6 +49,27 @@ export const NEUTRAL_ADJUST: Adjust = {
 };
 export const NEUTRAL_GRADE: Grade = { adjust: NEUTRAL_ADJUST, look: null, intensity: 100 };
 
+// Each dial's range (backend/app/candidates.py's Adjust), which a Look's added values are held within.
+const DIAL_RANGES: Partial<Record<keyof Adjust, [number, number]>> = {
+  temperature: [2000, 11000],
+  exposure: [-3, 3],
+  sharpen: [0, 100],
+  fade: [0, 100],
+  vignette: [0, 100],
+};
+
+// The Adjust values of each Look known, by its id (looks.ts registers the catalogue's).
+const lookAdjusts = new Map<string, Adjust>();
+
+/** Make the Looks' Adjust values known to the fold, replacing those known before. */
+export function knowLooks(looks: { id: string; adjust: Adjust }[]) {
+  lookAdjusts.clear();
+  for (const { id, adjust } of looks) lookAdjusts.set(id, { ...NEUTRAL_ADJUST, ...adjust });
+}
+
+/** The Adjust values of the Look `id`, or null while it isn't known. */
+export const lookAdjust = (id: string | null | undefined): Adjust | null => (id == null ? null : (lookAdjusts.get(id) ?? null));
+
 export type Matrix = [[number, number, number], [number, number, number], [number, number, number]];
 
 // A Grade as the preview draws it: a table per channel (R, G, B; TABLE_SIZE entries, the output for
@@ -67,13 +95,54 @@ export function isNeutral(grade: Partial<Grade> | null | undefined): boolean {
   return look == null && (Object.keys(NEUTRAL_ADJUST) as (keyof Adjust)[]).every((dial) => adjust[dial] === NEUTRAL_ADJUST[dial]);
 }
 
-/** `grade` folded into its tables, matrix and amounts; null for a neutral one, which adds no filter. */
-export function foldGrade(grade: Partial<Grade> | null | undefined): Folded | null {
-  const { adjust } = gradeOf(grade);
+/**
+ * `grade` folded into its tables, matrix and amounts; null for a neutral one, which adds no filter.
+ * `look` is the Adjust of its Look, by default the catalogue's (none while it isn't known).
+ */
+export function foldGrade(grade: Partial<Grade> | null | undefined, look?: Partial<Adjust> | null): Folded | null {
+  const { adjust, look: id, intensity } = gradeOf(grade);
+  const without = foldAdjust(adjust);
+  const values = id == null ? null : look ? { ...NEUTRAL_ADJUST, ...look } : lookAdjust(id);
+  if (!values || intensity <= 0) return without;
+  const looked = foldAdjust(withLook(adjust, values));
+  return intensity >= 100 ? looked : mixed(without, looked, intensity / 100);
+}
+
+/** `adjust` with a Look's values laid over it: each dial moved by as much as the Look's is from neutral, held within its range. */
+export function withLook(adjust: Adjust, look: Adjust): Adjust {
+  const moved = { ...adjust };
+  for (const dial of Object.keys(NEUTRAL_ADJUST) as (keyof Adjust)[]) {
+    const [low, high] = DIAL_RANGES[dial] ?? [-100, 100];
+    moved[dial] = Math.min(high, Math.max(low, adjust[dial] + (look[dial] - NEUTRAL_ADJUST[dial])));
+  }
+  return moved;
+}
+
+function foldAdjust(adjust: Adjust): Folded | null {
   const tables = foldTables(adjust);
   const matrix = foldMatrix(adjust);
   const { sharpen, vignette } = adjust;
   return tables === null && matrix === null && !sharpen && !vignette ? null : { tables, matrix, sharpen, vignette };
+}
+
+const IDENTITY_TABLE = Array.from({ length: TABLE_SIZE }, (_, i) => i / (TABLE_SIZE - 1));
+const IDENTITY_MATRIX: Matrix = [
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+];
+
+// `b` mixed over `a` by `t` (0..1), entry by entry; a missing table or matrix is the identity.
+function mixed(a: Folded | null, b: Folded | null, t: number): Folded | null {
+  if (!a && !b) return null;
+  const mix = (x: number, y: number) => x + (y - x) * t;
+  const mixRows = <R extends number[]>(p: R[], q: R[]) => p.map((row, i) => row.map((x, j) => mix(x, q[i][j])));
+  const tables =
+    a?.tables || b?.tables
+      ? (mixRows(a?.tables ?? [IDENTITY_TABLE, IDENTITY_TABLE, IDENTITY_TABLE], b?.tables ?? [IDENTITY_TABLE, IDENTITY_TABLE, IDENTITY_TABLE]) as Folded["tables"])
+      : null;
+  const matrix = a?.matrix || b?.matrix ? (mixRows(a?.matrix ?? IDENTITY_MATRIX, b?.matrix ?? IDENTITY_MATRIX) as Matrix) : null;
+  return { tables, matrix, sharpen: mix(a?.sharpen ?? 0, b?.sharpen ?? 0), vignette: mix(a?.vignette ?? 0, b?.vignette ?? 0) };
 }
 
 /**
@@ -144,13 +213,13 @@ const linearToSrgb = (value: number) => (value <= 0.0031308 ? value * 12.92 : 1.
 
 /**
  * The id of the SVG filter that draws `grade` (GradeFilters.tsx defines one per distinct Grade), named
- * by its dials so that equal Grades share it; null for a neutral one.
+ * by its dials, Look and intensity so that equal Grades share it; null for a neutral one.
  */
 export function gradeFilterId(grade: Partial<Grade> | null | undefined): string | null {
   if (isNeutral(grade)) return null;
-  const { adjust } = gradeOf(grade);
-  const dials = (Object.keys(NEUTRAL_ADJUST) as (keyof Adjust)[]).map((dial) => String(adjust[dial]).replace(/[^0-9a-z]/gi, "_"));
-  return `grade-${dials.join("-")}`;
+  const { adjust, look, intensity } = gradeOf(grade);
+  const parts = [...(Object.keys(NEUTRAL_ADJUST) as (keyof Adjust)[]).map((dial) => adjust[dial]), ...(look == null ? [] : [look, intensity])];
+  return `grade-${parts.map((part) => String(part).replace(/[^0-9a-z]/gi, "_")).join("-")}`;
 }
 
 /** Whether `grade` has an SVG filter (GradeFilters.tsx): anything but a vignette alone, or neutral. */
@@ -170,6 +239,12 @@ export const adjusted = (grade: Partial<Grade> | null | undefined, change: Parti
   const given = gradeOf(grade);
   return { ...given, adjust: { ...given.adjust, ...change } };
 };
+
+/** `grade` with its Look set (null: none, its Adjust kept), its intensity, or both. */
+export const relooked = (grade: Partial<Grade> | null | undefined, change: { look?: string | null; intensity?: number }): Grade => ({
+  ...gradeOf(grade),
+  ...change,
+});
 
 /**
  * `plan` with its Segments and Overlays in the Grades the draft's `segments` and `overlays` give them

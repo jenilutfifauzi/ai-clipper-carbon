@@ -17,19 +17,28 @@ color-interpolation-filters="sRGB" does. The tables come first, then the matrix:
   blue down) and more magenta with tint (green down), kept at the same luma; then saturation, mixed
   with the luma (Rec. 709) from grey at −100 to twice as vivid at +100. It has no offset term, as
   ffmpeg's colorchannelmixer has none: whatever moves a level goes in the tables.
-- **Sharpen and vignette** (0..100), carried as amounts (a Look's mixed in by its intensity, ticket
-  05). Sharpen adds the picture's difference from a 3×3 blur of it, times up to SHARPEN_AMOUNT (on
-  the luma); vignette multiplies each pixel by cos(angle · d)^4, d its distance from the centre over
-  the half diagonal, the angle up to VIGNETTE_ANGLE (the corners black). The preview's are near, not
+- **Sharpen and vignette** (0..100), carried as amounts. Sharpen adds the picture's difference from
+  a 3×3 blur of it, times up to SHARPEN_AMOUNT (on the luma); vignette multiplies each pixel by
+  cos(angle · d)^4, d its distance from the centre over the half diagonal, the angle up to
+  VIGNETTE_ANGLE (the corners black). The preview's are near, not
   exact: an feConvolveMatrix of the same 3×3 sum (on R, G and B) and a radial gradient of the same
   falloff.
+
+A Grade's **Look** (app/looks.py) is a set of Adjust values laid over the Grade's own: the Grade with
+its Look has, for each dial, the Grade's value moved by as much as the Look's is from neutral (its
+temperature from 6500 K), held within the dial's range (`with_look`). So the Look styles what the
+dials corrected, and a dial the Look leaves at neutral stays the Grade's. That Adjust is folded as
+any other; then the Look's intensity mixes it over the fold without the Look: each table entry,
+matrix weight and amount is a + (b − a) · intensity / 100, a missing table or matrix taken as the
+identity. At 0 it is the fold without the Look, at 100 the fold with it.
 """
 
 import math
 
 from dataclasses import dataclass
 
-from app.candidates import NEUTRAL_TEMPERATURE_K, Adjust, Grade
+from app.candidates import EXPOSURE_EV, NEUTRAL_TEMPERATURE_K, TEMPERATURE_K, Adjust, Grade
+from app.looks import LookNotFound, get_look
 
 TABLE_SIZE = 256
 # The luma weights (Rec. 709) a saturation change keeps, and the temperature and tint gains too.
@@ -45,6 +54,15 @@ FADE_LIFT = 0.25  # black, at fade 100
 FADE_DIM = 0.05  # white, at fade 100
 SHARPEN_AMOUNT = 2.0  # unsharp's luma amount, at sharpen 100
 VIGNETTE_ANGLE = math.pi / 2  # vignette's lens angle, at vignette 100: the corners black
+
+# Each dial's range (Adjust's), which a Look's added values are held within.
+DIAL_RANGES: dict[str, tuple[float, float]] = {
+    "temperature": TEMPERATURE_K,
+    "exposure": EXPOSURE_EV,
+    **{dial: (0, 100) for dial in ("sharpen", "fade", "vignette")},
+}
+_IDENTITY_TABLE = tuple(i / (TABLE_SIZE - 1) for i in range(TABLE_SIZE))
+_IDENTITY_MATRIX = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 Matrix = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 
@@ -62,14 +80,64 @@ class Folded:
     vignette: float = 0.0
 
 
-def fold(grade: Grade) -> Folded | None:
-    """`grade` folded into its tables, matrix and amounts; None for a neutral one, which adds no filter."""
-    adjust = grade.adjust
+def fold(grade: Grade, look: Adjust | None = None) -> Folded | None:
+    """`grade` folded into its tables, matrix and amounts; None for a neutral one, which adds no filter.
+
+    `look` is the Adjust of the Grade's Look, by default the catalogue's (app/looks.py); a Look id
+    that isn't there (as an imported one deleted) is drawn as no Look."""
+    without = _folded(grade.adjust)
+    if grade.look is None:
+        return without
+    if look is None:
+        try:
+            look = get_look(grade.look).adjust
+        except LookNotFound:
+            return without
+    if grade.intensity <= 0:
+        return without
+    looked = _folded(with_look(grade.adjust, look))
+    if grade.intensity >= 100:
+        return looked
+    return _mixed(without, looked, grade.intensity / 100)
+
+
+def with_look(adjust: Adjust, look: Adjust) -> Adjust:
+    """`adjust` with `look`'s values laid over it: each dial moved by as much as the Look's is from
+    neutral, held within its range."""
+    neutral = Adjust()
+    moved = {}
+    for name in adjust.__dataclass_fields__:
+        low, high = DIAL_RANGES.get(name, (-100, 100))
+        moved[name] = min(high, max(low, getattr(adjust, name) + (getattr(look, name) - getattr(neutral, name))))
+    return Adjust(**moved)
+
+
+def _folded(adjust: Adjust) -> Folded | None:
     tables = _tables(adjust)
     matrix = _matrix(adjust)
     if tables is None and matrix is None and not adjust.sharpen and not adjust.vignette:
         return None
     return Folded(tables, matrix, float(adjust.sharpen), float(adjust.vignette))
+
+
+def _mixed(a: Folded | None, b: Folded | None, t: float) -> Folded | None:
+    """`b` mixed over `a` by `t` (0..1), entry by entry; a missing table or matrix is the identity."""
+    if a is None and b is None:
+        return None
+    mix = lambda x, y: x + (y - x) * t  # noqa: E731
+    a_tables, b_tables = (None if f is None else f.tables for f in (a, b))
+    tables = None
+    if a_tables is not None or b_tables is not None:
+        given = [a_tables or (_IDENTITY_TABLE,) * 3, b_tables or (_IDENTITY_TABLE,) * 3]
+        tables = tuple(tuple(mix(x, y) for x, y in zip(p, q)) for p, q in zip(*given))
+    a_matrix, b_matrix = (None if f is None else f.matrix for f in (a, b))
+    matrix = None
+    if a_matrix is not None or b_matrix is not None:
+        given = [a_matrix or _IDENTITY_MATRIX, b_matrix or _IDENTITY_MATRIX]
+        matrix = tuple(tuple(mix(x, y) for x, y in zip(p, q)) for p, q in zip(*given))
+    sharpen = mix(a.sharpen if a else 0.0, b.sharpen if b else 0.0)
+    vignette = mix(a.vignette if a else 0.0, b.vignette if b else 0.0)
+    return Folded(tables, matrix, sharpen, vignette)  # type: ignore[arg-type]
 
 
 def grade_filters(grade: Grade, alpha: str | None = None) -> str:

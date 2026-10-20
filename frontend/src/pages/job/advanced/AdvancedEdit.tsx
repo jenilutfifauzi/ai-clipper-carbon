@@ -8,6 +8,7 @@ import {
   type Candidate,
   type CandidateChange,
   type ClipSegment,
+  type Grade,
   type JobDetail,
   type JoinTransition,
   type KeyProperty,
@@ -68,6 +69,7 @@ import {
   placeDropped,
   randomCardKind,
   randomisedTransitions,
+  relook,
   reversible,
   setFade,
   setHold,
@@ -82,6 +84,7 @@ import {
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
+import { LookPanel, lookFrame } from "./LookPanel";
 import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
 import {
   ASSET,
@@ -237,6 +240,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // picture's Transform, of the picked item's Speed, of the Tracks or of Playback.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
+  // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
+  const [audition, setAudition] = useState<string | null>(null);
   // The player's room, which goes full screen with the stage and the player bar.
   const fullscreenRoom = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(fullscreenRoom);
@@ -497,9 +502,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays and the
   // Candidate in their Grades as edited (a dial drag shows before its plan comes).
+  // A Look auditioned is drawn on the Grades a click would give it to.
+  const graded = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
   const shown = useMemo(
-    () => preview && { ...preview, plan: draftGrades(shownPlan(preview.plan, tracks), edits.segments, edits.overlays, edits.grade) },
-    [preview, tracks, edits.segments, edits.overlays, edits.grade],
+    () => preview && { ...preview, plan: draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade) },
+    [preview, tracks, graded.segments, graded.overlays, graded.grade],
   );
   const playback = useMemo(() => new Playback(), []);
   const magnetic = useMagnetic();
@@ -1246,6 +1253,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       />
     </KeyingContext.Provider>
   );
+  // The Grade a Filters card's click goes to first: the first picked Segment's or Overlay's, else the Candidate's.
+  const lookTarget =
+    pick === null
+      ? edits.grade
+      : itemsOf(pick).flatMap(({ kind, id }): { grade?: Grade }[] =>
+          kind === "segment" ? edits.segments.filter((item) => item.id === id) : kind === "overlay" ? edits.overlays.filter((item) => item.id === id) : [],
+        )[0]?.grade;
   const assets = (tab: AssetTab) => (
     <AssetPanel
       tab={tab}
@@ -1254,6 +1268,30 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
+      filters={
+        <LookPanel
+          playback={playback}
+          frameAt={(time) =>
+            lookFrame({
+              pick,
+              segments: edits.segments,
+              overlays: edits.overlays,
+              played,
+              time,
+              jobId: job.id,
+              sourceDuration: job.source?.metadata.duration ?? null,
+              library: mediaById,
+            })
+          }
+          current={lookTarget?.look ?? null}
+          onPick={(look) => {
+            const outcome = relook({ edits, pick }, { look });
+            if (outcome) history.set(outcome.edits);
+            else tellOnce("A look goes on Segments and Overlays: select some, or nothing for the whole clip");
+          }}
+          onAudition={setAudition}
+        />
+      }
       onAddText={(made) => addText(made)}
       onAddShape={(kind) => addNewShape(kind)}
       onAddMusic={(item) => addMusic(item)}

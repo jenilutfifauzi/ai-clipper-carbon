@@ -1103,6 +1103,17 @@ export interface Grade {
   intensity: number;
 }
 
+// A Look a Grade's `look` names (GLOSSARY: Look; backend/app/looks.py): its Adjust values, laid over
+// the Grade's own (editor/grading.ts says how); its category is its shelf in the Filters tab, and
+// `order` its place.
+export interface Look {
+  id: string;
+  name: string;
+  category: string;
+  order: number;
+  adjust: Adjust;
+}
+
 // A range of a video to play from a Retimed copy (docs/adr/0009): backwards when `reverse`, at
 // `speed` (1 by default), its pitch following the Speed with `pitch`.
 export interface RetimedRange extends Omit<Retiming, "hold"> {
@@ -1545,6 +1556,8 @@ export const api = {
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
+  // Every Look, by its order.
+  listLooks: () => request<Look[]>("/looks"),
   createTextPreset: (name: string, style: TextStyle) =>
     request<TextPreset>("/text-presets", { method: "POST", body: JSON.stringify({ name, style }) }),
   // One of the owner's renamed, or given another style.

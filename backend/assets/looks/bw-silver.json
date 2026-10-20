@@ -1,0 +1,12 @@
+{
+  "id": "bw-silver",
+  "name": "Silver",
+  "category": "Black & White",
+  "order": 520,
+  "adjust": {
+    "saturation": -100,
+    "contrast": -8,
+    "highlights": -10,
+    "fade": 18
+  }
+}

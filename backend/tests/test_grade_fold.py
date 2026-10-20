@@ -1,5 +1,6 @@
 """The fold of a Grade into tables, a matrix and the sharpen and vignette amounts
 (.scratch/color-adjust/issues/01-segment-grade-adjust-dials.md, 02-sharpen-and-vignette.md, docs/adr/0013),
+a Look's included (05-built-in-looks-and-filters-tab.md),
 on the cases the frontend's tests read too (fixtures/grade_folds.json). Seam C."""
 
 import json
@@ -15,11 +16,13 @@ FIXTURES = Path(__file__).parent / "fixtures"
 CASES = json.loads((FIXTURES / "grade_folds.json").read_text())
 CLOSE = CASES["tolerance"]
 _GRADE = TypeAdapter(Grade)
+_ADJUST = TypeAdapter(Adjust)
 
 
 @pytest.mark.parametrize("case", CASES["cases"], ids=lambda case: case["name"])
 def test_a_grade_folds_into_the_tables_and_matrix_the_shared_cases_say(case):
-    folded = fold(_GRADE.validate_python(case["grade"]))
+    look = None if case.get("look") is None else _ADJUST.validate_python(case["look"])
+    folded = fold(_GRADE.validate_python(case["grade"]), look)
     tables = None if folded is None else folded.tables
     matrix = None if folded is None else folded.matrix
     if case["tables"] is None:

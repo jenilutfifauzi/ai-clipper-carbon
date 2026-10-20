@@ -1,11 +1,12 @@
 // The fold of a Grade into tables, a matrix and the sharpen and vignette amounts
 // (.scratch/color-adjust/issues/01-segment-grade-adjust-dials.md, 02-sharpen-and-vignette.md, ADR 0013),
+// a Look's at an intensity included (05-built-in-looks-and-filters-tab.md),
 // on the cases the backend's tests read too (backend/tests/fixtures/grade_folds.json), so that the
 // preview's fold and the render's can't drift; and the preview's SVG filter and vignette layer, built from it.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/grade_folds.json";
-import type { Grade } from "../../../api";
+import type { Adjust, Grade } from "../../../api";
 import { ColorFields } from "../advanced/ColorFields";
 import { DecksGraded } from "./GradeFilters";
 import { GradeFilter, GradeFilters, GradeVignette } from "./GradeFilters";
@@ -17,10 +18,12 @@ const close = (actual: number[], expected: number[]) => {
 };
 
 describe("a Grade's fold", () => {
-  for (const { name, grade, tables, matrix, sharpen, vignette } of cases.cases) {
+  for (const { name, grade, tables, matrix, sharpen, vignette, ...rest } of cases.cases) {
     test(`${name}: folds into the tables, matrix and amounts the shared cases say`, () => {
-      // JSON types each case's missing dials as undefined, which a Grade leaves out.
-      const folded = foldGrade(grade as unknown as Partial<Grade>);
+      // JSON types each case's missing dials as undefined, which a Grade leaves out. A case with a Look
+      // gives its values inline.
+      const look = "look" in rest ? (rest.look as Partial<Adjust>) : undefined;
+      const folded = foldGrade(grade as unknown as Partial<Grade>, look);
       if (tables === null) expect(folded?.tables ?? null).toBeNull();
       else {
         expect(folded?.tables?.map((table) => table.length)).toEqual([TABLE_SIZE, TABLE_SIZE, TABLE_SIZE]);
@@ -136,7 +139,7 @@ describe("sharpen and vignette in the preview (color-adjust/02)", () => {
   test("the Color section's Effects group shows Sharpen, Fade and Vignette, and Reset takes them back too", () => {
     const noop = () => {};
     const effects = (grades: (Grade | undefined)[]) => {
-      const markup = renderToStaticMarkup(<ColorFields grades={grades} onDial={noop} onReset={noop} />);
+      const markup = renderToStaticMarkup(<ColorFields grades={grades} onDial={noop} onReset={noop} onLook={noop} />);
       return { markup, reset: /<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Reset/s.test(markup) ? "disabled" : "enabled" };
     };
     const { markup } = effects([undefined]);

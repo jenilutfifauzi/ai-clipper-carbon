@@ -1,0 +1,16 @@
+{
+  "id": "portrait-bright",
+  "name": "Bright & Clean",
+  "category": "Portrait",
+  "order": 410,
+  "adjust": {
+    "temperature": 6700,
+    "saturation": 6,
+    "exposure": 0.25,
+    "brightness": 8,
+    "contrast": 5,
+    "shadows": 15,
+    "whites": 8,
+    "sharpen": 15
+  }
+}

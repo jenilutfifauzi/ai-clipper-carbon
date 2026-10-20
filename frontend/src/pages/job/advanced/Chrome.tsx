@@ -20,6 +20,7 @@ import {
   Scaling,
   Scissors,
   Shuffle,
+  SwatchBook,
   SlidersHorizontal,
   Snowflake,
   StepBack,
@@ -51,7 +52,7 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions";
+export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
@@ -59,6 +60,7 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
   { value: "audio", label: "Audio", icon: AudioLines },
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
+  { value: "filters", label: "Filters", icon: SwatchBook },
 ];
 
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {

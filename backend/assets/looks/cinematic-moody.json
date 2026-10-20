@@ -1,0 +1,16 @@
+{
+  "id": "cinematic-moody",
+  "name": "Moody",
+  "category": "Cinematic",
+  "order": 110,
+  "adjust": {
+    "temperature": 6100,
+    "saturation": -20,
+    "exposure": -0.2,
+    "contrast": 20,
+    "highlights": -20,
+    "shadows": -15,
+    "fade": 8,
+    "vignette": 35
+  }
+}

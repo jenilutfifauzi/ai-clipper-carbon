@@ -9,8 +9,9 @@ import { TextAssets } from "./TextPresets";
 
 /**
  * An asset tab's content: the Text Presets; the Shapes (the Stickers tab); the episode's moments and
- * the Media Library's videos and images; its songs; or the Transitions. Each added at the playhead
- * by a click, or (but a Shape) where it is dropped on the timeline.
+ * the Media Library's videos and images; its songs; the Transitions; or the Looks (the Filters tab).
+ * Each added at the playhead by a click, or (but a Shape and a Look) where it is dropped on the
+ * timeline; a Look is given to the Pick's Grades, or the Candidate's.
  */
 export function AssetPanel({
   tab,
@@ -19,6 +20,7 @@ export function AssetPanel({
   transcript,
   near,
   transitions,
+  filters,
   onAddText,
   onAddShape,
   onAddMusic,
@@ -34,6 +36,7 @@ export function AssetPanel({
   // Where the episode's transcript opens: the Clip's first Segment.
   near: ClipSegment;
   transitions: ReactNode;
+  filters: ReactNode;
   onAddText: (made: UntimedTextLayer) => void;
   onAddShape: (kind: ShapeKind) => void;
   onAddMusic: (item: MediaItem) => void;
@@ -84,5 +87,6 @@ export function AssetPanel({
       />
     );
   }
+  if (tab === "filters") return filters;
   return transitions;
 }

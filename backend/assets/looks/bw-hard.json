@@ -1,0 +1,13 @@
+{
+  "id": "bw-hard",
+  "name": "Hard",
+  "category": "Black & White",
+  "order": 510,
+  "adjust": {
+    "saturation": -100,
+    "contrast": 45,
+    "whites": 15,
+    "blacks": -20,
+    "vignette": 20
+  }
+}

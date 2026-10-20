@@ -62,6 +62,7 @@ from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, 
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
+from app.looks import Look, LookNotFound, all_looks, get_look
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -815,6 +816,7 @@ def update_candidate(
     if body.style_overrides is not None:
         _check_logo(logos, body.style_overrides.watermark.get("logo"))
     _check_media_of(library, body)
+    _check_looks_of(body)
     change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
@@ -998,6 +1000,7 @@ def _drafted(
         _preset(presets, body.preset_id)
     if body is not None:
         _check_media_of(library, body)
+        _check_looks_of(body)
     episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
     change = body.change if body else CandidateChange()
     try:
@@ -1311,6 +1314,12 @@ def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetSto
                 where=f"Text Preset {text_preset.name}",
             ))
     return uses
+
+
+@router.get("/looks")
+def list_looks() -> list[Look]:
+    """Every Look a Grade can have (app/looks.py), by its order: id, name, category and Adjust values."""
+    return all_looks()
 
 
 @router.get("/text-presets")
@@ -1715,6 +1724,20 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} has no volume Keyframes: an image has no sound")
         if (overlay.speed != 1 or overlay.pitch or overlay.reverse) and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed, pitch or Reverse")
+
+
+def _check_looks_of(body: CandidateUpdate) -> None:
+    """422 for an edit giving a Grade a Look that isn't one of the Looks."""
+    graded = [(f"Segment {segment.id}", segment.grade) for segment in body.segments or []]
+    graded += [(f"Overlay {overlay.id}", overlay.grade) for overlay in body.overlays or []]
+    graded += [("The Candidate's grade", body.grade)] if body.grade is not None else []
+    for what, grade in graded:
+        if grade.look is None:
+            continue
+        try:
+            get_look(grade.look)
+        except LookNotFound:
+            raise HTTPException(422, f"{what}: no Look {grade.look}") from None
 
 
 # Media Library files never change under their id.

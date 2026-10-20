@@ -1,0 +1,12 @@
+{
+  "id": "film-faded",
+  "name": "Faded",
+  "category": "Film",
+  "order": 230,
+  "adjust": {
+    "saturation": -18,
+    "contrast": -10,
+    "highlights": -8,
+    "fade": 30
+  }
+}

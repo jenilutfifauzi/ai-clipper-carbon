@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, regrade, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, regrade, relook, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
 import { ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
@@ -128,7 +128,11 @@ export function Inspector({
       const outcome = regrade({ edits, pick }, change);
       if (outcome) onEdits(outcome.edits, group && `grade:${graded.map((item) => item.id).join(",")}:${group}`);
     };
-    return <ColorFields grades={graded.map((item) => item.grade)} onDial={regraded} onReset={() => regraded("reset")} />;
+    const relooked = (change: { look?: string | null; intensity?: number }, group?: string) => {
+      const outcome = relook({ edits, pick }, change);
+      if (outcome) onEdits(outcome.edits, group && `grade:${graded.map((item) => item.id).join(",")}:${group}`);
+    };
+    return <ColorFields grades={graded.map((item) => item.grade)} onDial={regraded} onReset={() => regraded("reset")} onLook={relooked} />;
   };
 
   const items = itemsOf(pick);
@@ -323,6 +327,10 @@ export function Inspector({
     const outcome = regrade({ edits, pick: null }, change);
     if (outcome) onEdits(outcome.edits, group && `grade:clip:${group}`);
   };
+  const relookedClip = (change: { look?: string | null; intensity?: number }, group?: string) => {
+    const outcome = relook({ edits, pick: null }, change);
+    if (outcome) onEdits(outcome.edits, group && `grade:clip:${group}`);
+  };
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -331,7 +339,7 @@ export function Inspector({
           Select an item on the timeline or the preview to change it. The Color here grades the whole clip, not its Overlays.
         </p>
       </div>
-      <ColorFields grades={[edits.grade]} onDial={regradedClip} onReset={() => regradedClip("reset")} />
+      <ColorFields grades={[edits.grade]} onDial={regradedClip} onReset={() => regradedClip("reset")} onLook={relookedClip} />
     </div>
   );
 }

@@ -1,0 +1,16 @@
+{
+  "id": "retro-instant",
+  "name": "Instant",
+  "category": "Retro",
+  "order": 310,
+  "adjust": {
+    "temperature": 7200,
+    "tint": 6,
+    "saturation": -12,
+    "exposure": 0.15,
+    "contrast": -12,
+    "whites": -10,
+    "fade": 22,
+    "vignette": 18
+  }
+}

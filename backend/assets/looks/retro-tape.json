@@ -1,0 +1,15 @@
+{
+  "id": "retro-tape",
+  "name": "Tape",
+  "category": "Retro",
+  "order": 320,
+  "adjust": {
+    "temperature": 6000,
+    "tint": -6,
+    "saturation": 18,
+    "contrast": 15,
+    "blacks": 8,
+    "fade": 12,
+    "vignette": 15
+  }
+}

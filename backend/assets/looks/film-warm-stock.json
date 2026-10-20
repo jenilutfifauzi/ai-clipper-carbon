@@ -1,0 +1,14 @@
+{
+  "id": "film-warm-stock",
+  "name": "Warm Stock",
+  "category": "Film",
+  "order": 200,
+  "adjust": {
+    "temperature": 7000,
+    "tint": 3,
+    "saturation": 8,
+    "contrast": 12,
+    "highlights": -12,
+    "fade": 12
+  }
+}
