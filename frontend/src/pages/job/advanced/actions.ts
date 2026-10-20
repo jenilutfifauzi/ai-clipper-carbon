@@ -11,6 +11,7 @@ import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import { speedLabel, speedOf } from "./speed";
+import type { LandedTake } from "./takeFlow";
 import type { TrackKind } from "./trackState";
 
 /**
@@ -859,9 +860,10 @@ export function setSpeech(scene: { edits: AdvancedEdits; pick: Pick }, id: strin
 /**
  * A Take landed (GLOSSARY.md, Take; ADR 0018): one change that adds a Music Clip of its item `media`
  * at `start` for `secs`, marked Speech and not Ducked, whole and at full volume; the Timeline lays it
- * on the Music Track's lowest free lane. It is Picked. Undone, the Music Clip goes and the item stays.
+ * on the Music Track's lowest free lane. It is Picked, and `id` names it. Undone, the Music Clip goes
+ * and the item stays.
  */
-export function landTake(scene: { edits: AdvancedEdits }, take: { media: string; start: number; secs: number }, ids: () => string = newId): Outcome {
+export function landTake(scene: { edits: AdvancedEdits }, take: LandedTake, ids: () => string = newId): Outcome & { id: string } {
   const clip: MusicClip = {
     id: ids(),
     media: take.media,
@@ -875,7 +877,7 @@ export function landTake(scene: { edits: AdvancedEdits }, take: { media: string;
     duck: null,
     speech: true,
   };
-  return { edits: { ...scene.edits, music: [...scene.edits.music, clip] }, pick: picked({ kind: "music", id: clip.id }) };
+  return { edits: { ...scene.edits, music: [...scene.edits.music, clip] }, pick: picked({ kind: "music", id: clip.id }), id: clip.id };
 }
 
 /**

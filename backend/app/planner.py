@@ -555,10 +555,10 @@ class AudioEvent:
     `muted` one (docs/adr/0016) keeps its volume and Keyframes but isn't heard. With `source` it is
     the Source's sound, which the Clip's own volume scales too (and stays so once `media` names the
     Retimed copy it is read from). A ducked one (a Music Clip's with `duck`, docs/adr/0016) is turned
-    down by that many dB under the spans of `speech` that reach it (app/ducking.py), in seconds into
-    the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included, within it
-    (`ducked_stretches`). One that `speaks` (a Music Clip marked Speech, docs/adr/0018) is speech over
-    its whole span, and is never ducked. A Music Clip's Detached from a Segment names it (`detached_from`)."""
+    down by that many dB under the spans of speech that reach it (`speech_spans`, app/ducking.py), in
+    seconds into the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included,
+    within it (`ducked_stretches`). One marked `speech` (a Music Clip marked Speech, docs/adr/0018) is
+    speech over its whole span, and is never ducked. A Music Clip's Detached from a Segment names it (`detached_from`)."""
 
     media: str | None
     start: float
@@ -575,9 +575,9 @@ class AudioEvent:
     muted: bool = False
     source: bool = False
     duck: float | None = None
-    speech: list[Span] = field(default_factory=list)
+    speech_spans: list[Span] = field(default_factory=list)
     ducked: list[Span] = field(default_factory=list)
-    speaks: bool = False
+    speech: bool = False
     detached_from: str | None = None
 
     @property
@@ -1229,7 +1229,7 @@ def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, l
     """The sounds, each ducked one with the spans of speech that reach it and where it is turned down
     (app/ducking.py): `words`, the Source Segments' as heard, the Words of each Music Clip of the
     Source heard forwards and not Muted (`music_words`, by its id, in seconds from its offset), where it
-    plays, and the whole span of each Music Clip marked Speech that isn't Muted (`speaks`, docs/adr/0018),
+    plays, and the whole span of each Music Clip marked Speech that isn't Muted (`speech`, docs/adr/0018),
     cut to the Clip as it is heard."""
     if all(event.duck is None for event in audio):
         return audio
@@ -1237,11 +1237,11 @@ def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, l
     for event in audio:
         if event.source and not event.muted and not event.reverse:
             said += heard_words(music_words.get(event.id, []), event.start, event.end, event.speed)
-        if event.speaks and not event.muted:
+        if event.speech and not event.muted:
             said.append(Word("", event.start, event.end))
     spans = speech_spans(said, ducking)
     return [
-        replace(event, speech=touching(spans, event.start, event.end, ducking), ducked=ducked_stretches(spans, event.start, event.end, ducking))
+        replace(event, speech_spans=touching(spans, event.start, event.end, ducking), ducked=ducked_stretches(spans, event.start, event.end, ducking))
         if event.duck is not None else event
         for event in audio
     ]
@@ -1652,7 +1652,7 @@ def audio_events(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
                 clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
-                clip.media is None, clip.duck, speaks=clip.speech, detached_from=clip.detached_from,
+                clip.media is None, clip.duck, speech=clip.speech, detached_from=clip.detached_from,
             )
         )
     return events
@@ -1682,7 +1682,7 @@ def gain_at(
     if event.fade_out > 0:
         share = min(share, (event.end - time) / event.fade_out)
     taken = (crossfade.end - time) / (crossfade.end - crossfade.start) if crossfade and time > crossfade.start else 1.0
-    ducked = duck_at(event.speech, event.duck, time, ducking) if isinstance(event, AudioEvent) and event.duck is not None else 1.0
+    ducked = duck_at(event.speech_spans, event.duck, time, ducking) if isinstance(event, AudioEvent) and event.duck is not None else 1.0
     level = value_at(event.gain, into, event.volume) * own_volume(event, source_volume)
     return level * min(max(share, 0.0), 1.0) * min(max(taken, 0.0), 1.0) * ducked
 

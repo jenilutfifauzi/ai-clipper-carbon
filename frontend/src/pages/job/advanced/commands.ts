@@ -104,16 +104,15 @@ export function commandsOf(
     // While a Take records, Space stops it rather than only the picture; while one counts down, the
     // playhead stays still.
     play: () => {
-      const state = take?.state();
-      if (state && recording(state)) return take!.press();
-      if (state && counting(state)) return;
+      if (take && recording(take.state())) return take.press();
+      if (take && counting(take.state())) return;
       playback.toggle();
     },
-    record: () => (more.take ? more.take.press() : false),
+    record: () => (take ? take.press() : false),
     undo: () => history.undo(),
     redo: () => history.redo(),
     "pick-all": () => more.pickAll(),
-    // Esc cancels a Take's countdown, and then picks nothing else.
+    // Esc cancels a Take's countdown, and then picks nothing else (LET_THROUGH lets it past the lock).
     "pick-none": () => (take?.cancel() ? undefined : more.pickNone()),
     split: () => more.split(),
     "freeze-frame": () => more.freeze(),
@@ -165,23 +164,33 @@ const EDITING = new Set(SHORTCUTS.filter((shortcut) => shortcut.group === "editi
 const NAVIGATION = new Set(SHORTCUTS.filter((shortcut) => shortcut.group === "navigation").map((shortcut) => shortcut.id));
 
 /**
+ * The keys the lock lets through, by id, and while when: Esc cancels a Take's countdown (and so picks
+ * nothing else), though picking nothing is an editing key. Refused, each is left to the browser (its
+ * command says false), as Esc ever is; any other refused key is taken.
+ */
+const LET_THROUGH: Partial<Record<ShortcutId, (state: TakeState) => boolean>> = {
+  "pick-none": counting,
+};
+
+/**
  * `commands` locked while a Take is under way (ADR 0018): from the mic button's press until the Take
- * lands, the editing shortcuts are refused, but Esc still cancels a countdown; while it counts down or
- * records, so are the navigation ones, which would move the playhead the Take is recorded from.
- * Playback (Space stops the Take) and the view's stay. A refused key is still taken, and does nothing
- * (⌘D would be the browser's bookmark, ⌥← its Back), but Esc, which is left to the browser as ever.
+ * lands, the editing shortcuts are refused; while it counts down or records, so are the navigation
+ * ones, which would move the playhead the Take is recorded from. Playback (Space stops the Take) and
+ * the view's stay, and LET_THROUGH's keys pass when it says. A refused key is still taken, and does
+ * nothing (⌘D would be the browser's bookmark, ⌥← its Back), but LET_THROUGH's, which are left to the
+ * browser.
  */
 function lockedWhileTaking(commands: Commands, take: TakeCommands): Commands {
-  const locked = Object.entries(commands).map(([id, run]) => {
+  const locked = (Object.entries(commands) as [ShortcutId, Commands[ShortcutId]][]).map(([id, run]) => {
+    const through = LET_THROUGH[id];
     const refused = (state: TakeState) =>
-      (EDITING.has(id as ShortcutId) && locksEditing(state) && !(id === "pick-none" && counting(state))) ||
-      (NAVIGATION.has(id as ShortcutId) && (counting(state) || recording(state)));
+      !through?.(state) && ((EDITING.has(id) && locksEditing(state)) || (NAVIGATION.has(id) && (counting(state) || recording(state))));
     return [
       id,
       () => {
         if (!refused(take.state())) return run();
         take.refused?.();
-        return id === "pick-none" ? false : undefined;
+        return through ? false : undefined;
       },
     ];
   });

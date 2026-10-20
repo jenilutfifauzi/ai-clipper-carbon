@@ -980,7 +980,7 @@ def _audio_mix(plan: RenderPlan, reads: dict[int, Read], rate: int, source: str 
         sped = speed_filters(event.speed, event.pitch, rate)
         # The Source's at the Clip's own volume too (a keyed one's after its Keyframes, as a Segment's).
         own = own_volume(event, plan.source_volume)
-        duck = duck_steps(event.speech, event.duck, plan.ducking, event.start) if event.duck is not None else []
+        duck = duck_steps(event.speech_spans, event.duck, plan.ducking, event.start) if event.duck is not None else []
         if event.gain:
             level = [*_volume(event.gain, event.volume, duck), *([f"volume={own:g}"] if own != 1 else [])]
         else:

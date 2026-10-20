@@ -76,14 +76,14 @@ describe("a ducked Music Clip on the Timeline", () => {
   test("takes its depth from the draft, and its speech and shaded stretches from the plan, in seconds into it", () => {
     const clip = music("a", { start: 2, duck: -12 });
     // The plan's stretches, ramps included, joined and cut to the clip (ducked_stretches in backend/app/ducking.py).
-    const planned = event("a", { duck: -6, speech: [[4, 5]], ducked: [[3.75, 5.5]] });
+    const planned = event("a", { duck: -6, speech_spans: [[4, 5]], ducked: [[3.75, 5.5]] });
     expect(musicDuck(clip, planned, DUCKING)).toEqual({ depth: -12, speech: [[2, 3]], stretches: [[1.75, 3.5]], ducking: DUCKING });
     // Planned before the plan carried them: none shaded.
-    expect(musicDuck(clip, event("a", { duck: -6, speech: [[4, 5]] }), DUCKING)?.stretches).toEqual([]);
+    expect(musicDuck(clip, event("a", { duck: -6, speech_spans: [[4, 5]] }), DUCKING)?.stretches).toEqual([]);
   });
 
   test("isn't ducked when switched off, of the Source, unplanned or without the plan's ducking", () => {
-    const planned = event("a", { duck: -12, speech: [[4, 5]] });
+    const planned = event("a", { duck: -12, speech_spans: [[4, 5]] });
     expect(musicDuck(music("a", { duck: null }), planned, DUCKING)).toBeUndefined();
     expect(musicDuck(music("a", { media: null }), planned, DUCKING)).toBeUndefined();
     expect(musicDuck(music("a", { duck: -12 }), undefined, DUCKING)).toBeUndefined();

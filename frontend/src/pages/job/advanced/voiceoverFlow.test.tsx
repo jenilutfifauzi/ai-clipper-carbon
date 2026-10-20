@@ -13,9 +13,11 @@ import { commandsOf } from "./commands";
 import type { AdvancedEdits } from "./edits";
 import { resolveShortcut } from "./keymap";
 import type { Pick } from "./pick";
-import { AT_END_HINT, TakeButton, WaitingTakeNotice } from "./TakeButton";
+import { TakeButton, WaitingTakeNotice } from "./TakeButton";
 import {
   asksBeforeLeaving,
+  AT_END_HINT,
+  holdsMicrophone,
   guardLeaving,
   IDLE,
   locksEditing,
@@ -28,6 +30,7 @@ import {
   TakeFlow,
   type TakeState,
 } from "./takeFlow";
+import { RecordingSettings } from "./recordingSettings";
 import { lockedWhile } from "./useEditHistory";
 import { openTake, type Block, type RecorderDeps } from "./takeRecorder";
 import { atClipEnd, canRecord, TAKE_RATE } from "./voiceover";
@@ -66,27 +69,29 @@ async function setUp(upload: (file: File) => Promise<MediaItem> = async () => IT
   playback.setLoop({ in: 5, out: 6 });
 
   let block: Block = () => {};
-  let clock = 50;
+  // The recorder's clock: 50 s at the page's 0, running with the page's clock (the harness's).
+  const clock = () => 50 + performance.now() / 1000;
+  let latency = 0;
   const asked: MediaStreamConstraints[] = [];
   const closed: string[] = [];
   const mic: RecorderDeps = {
     getUserMedia: async (constraints) => {
       asked.push(constraints);
-      return { getTracks: () => [{ stop: () => closed.push("track") }] } as unknown as MediaStream;
+      const track = { stop: () => closed.push("track"), getSettings: () => ({ latency }) };
+      return { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
     },
     capture: async (_stream, onBlock) => {
       block = onBlock;
-      return { now: () => clock, rate: TAKE_RATE, close: () => closed.push("capture") };
+      return { now: clock, rate: TAKE_RATE, close: () => closed.push("capture") };
     },
   };
   // `secs` of the microphone, from `from` on its clock.
   const speak = (from: number, secs: number) => {
     for (let at = 0; at < secs * TAKE_RATE; at += 4800) block(from + at / TAKE_RATE, new Float32Array(4800).fill(0.25));
-    clock = from + secs;
   };
 
   const song: MusicClip = { id: "song", media: "song-item", start: 0, secs: 10, offset: 0, volume: 1, fade_in: 0, fade_out: 0, keys: {}, duck: -12 };
-  const world = { edits: { music: [song] } as unknown as AdvancedEdits, pick: null as Pick, undo: [] as AdvancedEdits[], musicLocked: false };
+  const world = { edits: { music: [song] } as unknown as AdvancedEdits, pick: null as Pick, undo: [] as AdvancedEdits[], musicLocked: false, landed: 0 };
   const saved: { blob: Blob; name: string }[] = [];
   const silent: boolean[] = [];
   const told: string[] = [];
@@ -105,7 +110,8 @@ async function setUp(upload: (file: File) => Promise<MediaItem> = async () => IT
       world.undo.push(world.edits);
       world.edits = outcome.edits;
       world.pick = outcome.pick;
-      return outcome.edits.music.at(-1)!.start;
+      world.landed += 1;
+      return outcome.edits.music.find((clip) => clip.id === outcome.id)?.start ?? null;
     },
     tell: (text) => told.push(text),
     save: (blob, name) => void saved.push({ blob, name }),
@@ -146,7 +152,9 @@ async function setUp(upload: (file: File) => Promise<MediaItem> = async () => IT
     await flow.press();
     vi.advanceTimersByTime(3000);
   };
-  return { stage, playback, flow, world, silent, told, uploaded, saved, asked, closed, picked, split, speak, key, settle, roll, commands };
+  // The microphone reporting `secs` of input latency from the next time it opens.
+  const lagging = (secs: number) => void (latency = secs);
+  return { stage, playback, flow, world, silent, told, uploaded, saved, asked, closed, picked, split, speak, key, settle, roll, commands, lagging, mic };
 }
 
 // Recorded: pressed, then 2 s spoken, the first sample 0.12 s after the roll.
@@ -324,11 +332,11 @@ describe("when the upload fails", () => {
   test("the Take is kept, with what went wrong; nothing lands and editing isn't locked", async () => {
     const it = await failedTake();
     const state = it.flow.state;
-    expect(state.phase).toBe("failed");
-    if (state.phase !== "failed") return;
+    expect(state.phase).toBe("waiting");
+    if (state.phase !== "waiting") return;
     expect(state.why).toBe("Couldn't upload the Take: The upload stopped");
     expect(state.take).toMatchObject({ name: "Voiceover 2026-10-20 14.03.05.wav", media: null });
-    expect(state.take.landing).toBeCloseTo(3.12);
+    expect(state.take.start).toBeCloseTo(3.12);
     expect(state.take.secs).toBeCloseTo(2);
     expect(state.take.wav.byteLength).toBe(44 + 2 * 2 * TAKE_RATE);
     expect(it.world.edits.music).toHaveLength(1);
@@ -362,7 +370,7 @@ describe("when the upload fails", () => {
   test("failing again, it is kept again", async () => {
     const it = await failedTake(2);
     await it.flow.retry();
-    expect(it.flow.state.phase).toBe("failed");
+    expect(it.flow.state.phase).toBe("waiting");
     await it.flow.retry();
     expect(it.flow.state).toEqual(IDLE);
     expect(it.world.edits.music).toHaveLength(2);
@@ -377,7 +385,7 @@ describe("when the upload fails", () => {
     const bytes = new Uint8Array(await it.saved[0].blob.arrayBuffer());
     expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe("RIFF");
     expect(bytes.byteLength).toBe(44 + 2 * 2 * TAKE_RATE);
-    expect(it.flow.state.phase).toBe("failed");
+    expect(it.flow.state.phase).toBe("waiting");
   });
 
   test("Discard lets it go", async () => {
@@ -391,7 +399,7 @@ describe("when the upload fails", () => {
   test("Record while a Take waits refuses, and says to save or discard it first", async () => {
     const it = await failedTake();
     await it.flow.press();
-    expect(it.flow.state.phase).toBe("failed");
+    expect(it.flow.state.phase).toBe("waiting");
     expect(it.told.at(-1)).toBe(TAKE_WAITING);
     expect(it.asked).toHaveLength(1);
   });
@@ -401,18 +409,139 @@ describe("when the upload fails", () => {
     env.world.musicLocked = true;
     const it = await recorded(({ flow }) => flow.press(), env);
     const state = it.flow.state;
-    expect(state.phase).toBe("failed");
-    if (state.phase !== "failed") return;
+    expect(state.phase).toBe("waiting");
+    if (state.phase !== "waiting") return;
     expect(state.take.media).toBe("take-item");
     expect(it.world.edits.music).toHaveLength(1);
     // Still locked: kept again, not uploaded again.
     await it.flow.retry();
-    expect(it.flow.state.phase).toBe("failed");
+    expect(it.flow.state.phase).toBe("waiting");
     it.world.musicLocked = false;
     await it.flow.retry();
     expect(it.uploaded).toHaveLength(1);
     expect(it.flow.state).toEqual(IDLE);
     expect(it.world.edits.music[1]).toMatchObject({ media: "take-item", start: 3.12, speech: true });
+  });
+});
+
+describe("where the Take lands", () => {
+  test("from the moment the picture moved, not the moment Play was asked: a video slow to start doesn't shift it", async () => {
+    const it = await setUp();
+    // The live deck is still seeking: the picture won't move until its frame is ready.
+    it.playback.seek(3);
+    await it.roll();
+    expect(it.flow.state).toMatchObject({ phase: "recording", rolledAt: 50 });
+    it.stage.advance(0.2);
+    expect(it.playback.time).toBe(3);
+    // Ready 0.2 s after Play: the picture leaves 3 s then, at 50.2 s on the recorder's clock.
+    it.stage.settle();
+    it.stage.advance(0.5);
+    const state = it.flow.state;
+    expect(state.phase).toBe("recording");
+    if (state.phase !== "recording") return;
+    expect(state.rolledAt).toBeCloseTo(50.2, 2);
+    // The first word, 0.12 s into the picture's roll, lands 0.12 s past the playhead.
+    it.speak(50.32, 2);
+    await it.flow.press();
+    expect(it.world.edits.music[1].start).toBeCloseTo(3.12, 2);
+  });
+
+  test("earlier by the input latency the browser reports for the microphone", async () => {
+    const it = await setUp();
+    it.lagging(0.02);
+    await it.roll();
+    it.speak(50.12, 2);
+    it.stage.advance(0.5);
+    await it.flow.press();
+    expect(it.world.edits.music[1].start).toBeCloseTo(3.1, 3);
+  });
+});
+
+describe("once the editor lets go of the flow", () => {
+  test("an upload answered late lands nothing, picks nothing and doesn't move the playhead", async () => {
+    let answer: (item: MediaItem) => void = () => {};
+    const it = await setUp(() => new Promise((resolve) => (answer = resolve)));
+    await it.roll();
+    it.speak(50.12, 1);
+    it.stage.advance(0.5);
+    void it.flow.press();
+    expect(it.flow.state.phase).toBe("uploading");
+    const at = it.playback.time;
+    it.flow.dispose();
+    expect(it.flow.state).toEqual(IDLE);
+    answer(ITEM);
+    await it.settle();
+    expect(it.world.landed).toBe(0);
+    expect(it.world.pick).toBeNull();
+    expect(it.playback.time).toBe(at);
+    expect(it.flow.state).toEqual(IDLE);
+  });
+
+  test("an upload failing late keeps no Take", async () => {
+    let refuse: (reason: Error) => void = () => {};
+    const it = await setUp(() => new Promise((_, reject) => (refuse = reject)));
+    await it.roll();
+    it.speak(50.12, 1);
+    void it.flow.press();
+    it.flow.dispose();
+    refuse(new Error("gone"));
+    await it.settle();
+    expect(it.flow.state).toEqual(IDLE);
+  });
+
+  test("a Try again under way lands nothing; a Try again after it does nothing", async () => {
+    let fails = 1;
+    let answer: (item: MediaItem) => void = () => {};
+    const it = await setUp(() => (fails-- > 0 ? Promise.reject(new Error("no")) : new Promise((resolve) => (answer = resolve))));
+    await recorded(({ flow }) => flow.press(), it);
+    expect(it.flow.state.phase).toBe("waiting");
+    void it.flow.retry();
+    it.flow.dispose();
+    answer(ITEM);
+    await it.settle();
+    expect(it.world.landed).toBe(0);
+    await it.flow.retry();
+    expect(it.world.landed).toBe(0);
+    expect(it.uploaded).toHaveLength(2);
+  });
+
+  test("a waiting Take whose item is uploaded lands nothing once let go", async () => {
+    const env = await setUp();
+    env.world.musicLocked = true;
+    const it = await recorded(({ flow }) => flow.press(), env);
+    it.flow.dispose();
+    it.world.musicLocked = false;
+    await it.flow.retry();
+    expect(it.world.landed).toBe(0);
+  });
+});
+
+describe("the recording settings beside the button", () => {
+  // The settings as the editor makes them: no test meter while a Take holds the microphone.
+  const settingsOf = (it: Awaited<ReturnType<typeof setUp>>) =>
+    new RecordingSettings({
+      devices: { enumerateDevices: async () => [], addEventListener: () => {}, removeEventListener: () => {} },
+      recorder: it.mic,
+      busy: () => holdsMicrophone(it.flow.state),
+    });
+
+  test("are off while a Take holds the microphone, and its test meter doesn't open", async () => {
+    const it = await setUp();
+    const settings = settingsOf(it);
+    await it.flow.press();
+    expect(renderToStaticMarkup(<TakeButton flow={it.flow} settings={settings} />)).toMatch(/<button[^>]* disabled=""[^>]*aria-haspopup/);
+    await settings.openTest();
+    expect(settings.state.testing).toBe(false);
+  });
+
+  test("work while a Take waits in the tab: the chevron is on and the test meter reads the microphone", async () => {
+    const it = await recorded(({ flow }) => flow.press(), await setUp(() => Promise.reject(new Error("no"))));
+    expect(it.flow.state.phase).toBe("waiting");
+    const settings = settingsOf(it);
+    expect(renderToStaticMarkup(<TakeButton flow={it.flow} settings={settings} />)).not.toMatch(/<button[^>]* disabled=""[^>]*aria-haspopup/);
+    await settings.openTest();
+    expect(settings.state.testing).toBe(true);
+    settings.closeTest();
   });
 });
 
@@ -431,32 +560,55 @@ describe("the take flow's states", () => {
     expect(takeStep(one, { type: "tick" })).toBe(one);
     expect(takeStep(one, { type: "rolled", playhead: 2, at: 10, began: new Date(0) })).toEqual(recordingState);
     const uploading = takeStep(recordingState, { type: "stopped", secs: 1.5, firstSample: 10.25 });
-    expect(uploading).toEqual({ phase: "uploading", landing: 2.25, secs: 1.5 });
+    expect(uploading).toEqual({ phase: "uploading", start: 2.25, secs: 1.5 });
     expect(takeStep(uploading, { type: "landed" })).toEqual(IDLE);
   });
 
   test("an event out of turn changes nothing; a failure goes back to idle", () => {
     expect(takeStep(IDLE, { type: "stopped", secs: 1, firstSample: 0 })).toBe(IDLE);
     expect(takeStep(recordingState, { type: "open" })).toBe(recordingState);
-    expect(takeStep(recordingState, { type: "failed" })).toEqual(IDLE);
+    expect(takeStep(recordingState, { type: "dropped" })).toEqual(IDLE);
     // Cancelled while opening or counting down only.
     expect(takeStep({ phase: "countdown", left: 2 }, { type: "cancel" })).toEqual(IDLE);
     expect(takeStep({ phase: "opening" }, { type: "cancel" })).toEqual(IDLE);
     expect(takeStep(recordingState, { type: "cancel" })).toBe(recordingState);
   });
 
-  test("uploading → failed (the Take kept) → uploading again on Try again, or idle on Discard", () => {
-    const take = { wav: new Uint8Array(44), name: "Voiceover.wav", landing: 2.25, secs: 1.5, media: null };
-    const uploading = { phase: "uploading", landing: 2.25, secs: 1.5 } as const;
-    const failed = takeStep(uploading, { type: "kept", take, why: "Couldn't upload the Take: no" });
-    expect(failed).toEqual({ phase: "failed", take, why: "Couldn't upload the Take: no" });
+  test("uploading → waiting (the Take kept) → uploading again on Try again, or idle on Discard", () => {
+    const take = { wav: new Uint8Array(44), name: "Voiceover.wav", start: 2.25, secs: 1.5, media: null };
+    const uploading = { phase: "uploading", start: 2.25, secs: 1.5 } as const;
+    const waiting = takeStep(uploading, { type: "kept", take, why: "Couldn't upload the Take: no" });
+    expect(waiting).toEqual({ phase: "waiting", take, why: "Couldn't upload the Take: no" });
     expect(takeStep(IDLE, { type: "kept", take, why: "no" })).toBe(IDLE);
-    expect(takeStep(failed, { type: "retry" })).toEqual(uploading);
-    expect(takeStep(failed, { type: "discard" })).toEqual(IDLE);
-    expect(takeStep(failed, { type: "open" })).toBe(failed);
+    expect(takeStep(waiting, { type: "retry" })).toEqual(uploading);
+    expect(takeStep(waiting, { type: "discard" })).toEqual(IDLE);
+    expect(takeStep(waiting, { type: "open" })).toBe(waiting);
     expect(takeStep(uploading, { type: "discard" })).toBe(uploading);
-    expect(asksBeforeLeaving(failed)).toBe(true);
-    expect(locksEditing(failed)).toBe(false);
+    expect(asksBeforeLeaving(waiting)).toBe(true);
+    expect(locksEditing(waiting)).toBe(false);
+  });
+
+  test("the roll timed again by the picture, and the landing less the input latency", () => {
+    const rolled: TakeState = { phase: "recording", playhead: 2, rolledAt: 10, began: new Date(0) };
+    const timed = takeStep(rolled, { type: "timed", rolledAt: 10.2 });
+    expect(timed).toEqual({ ...rolled, rolledAt: 10.2 });
+    expect(takeStep(IDLE, { type: "timed", rolledAt: 1 })).toBe(IDLE);
+    const stopped = takeStep(timed, { type: "stopped", secs: 1, firstSample: 10.45, latency: 0.05 });
+    expect(stopped).toMatchObject({ phase: "uploading", secs: 1 });
+    expect(stopped.phase === "uploading" && stopped.start).toBeCloseTo(2.2, 9);
+  });
+
+  test("a Take holds the microphone from its opening to its stop, not while it uploads or waits", () => {
+    const waiting: TakeState = { phase: "waiting", take: { wav: new Uint8Array(44), name: "", start: 0, secs: 1, media: null }, why: "" };
+    const phases: [TakeState, boolean][] = [
+      [IDLE, false],
+      [{ phase: "opening" }, true],
+      [{ phase: "countdown", left: 2 }, true],
+      [recordingState, true],
+      [{ phase: "uploading", start: 0, secs: 1 }, false],
+      [waiting, false],
+    ];
+    for (const [state, holds] of phases) expect(holdsMicrophone(state), state.phase).toBe(holds);
   });
 });
 
@@ -692,11 +844,29 @@ describe("leaving the page", () => {
     unguard();
     await it.roll();
     expect(leave(page)).toBe(false);
-    expect(asksBeforeLeaving({ phase: "uploading", landing: 0, secs: 1 })).toBe(false);
     expect(asksBeforeLeaving({ phase: "opening" })).toBe(false);
   });
 
-  test("asks while a failed Take waits, and not after it has landed or been discarded", async () => {
+  test("asks while the Take uploads, which isn't safe yet; leaving then doesn't let it go", async () => {
+    let answer: (item: MediaItem) => void = () => {};
+    const it = await setUp(() => new Promise((resolve) => (answer = resolve)));
+    const page = new EventTarget();
+    guardLeaving(page, it.flow);
+    await it.roll();
+    it.speak(50.12, 1);
+    void it.flow.press();
+    expect(it.flow.state.phase).toBe("uploading");
+    expect(leave(page)).toBe(true);
+    page.dispatchEvent(new Event("pagehide"));
+    expect(it.flow.state.phase).toBe("uploading");
+    answer(ITEM);
+    await it.settle();
+    expect(it.flow.state).toEqual(IDLE);
+    expect(it.world.edits.music).toHaveLength(2);
+    expect(leave(page)).toBe(false);
+  });
+
+  test("asks while a Take waits, and not after it has landed or been discarded", async () => {
     let fails = 2;
     const it = await recorded(
       ({ flow }) => flow.press(),
@@ -707,11 +877,11 @@ describe("leaving the page", () => {
     );
     const page = new EventTarget();
     guardLeaving(page, it.flow);
-    expect(it.flow.state.phase).toBe("failed");
+    expect(it.flow.state.phase).toBe("waiting");
     expect(leave(page)).toBe(true);
     // Leaving the page (pagehide) doesn't throw it away: the tab may yet come back.
     page.dispatchEvent(new Event("pagehide"));
-    expect(it.flow.state.phase).toBe("failed");
+    expect(it.flow.state.phase).toBe("waiting");
     await it.flow.retry();
     expect(leave(page)).toBe(true);
     await it.flow.retry();
@@ -761,6 +931,8 @@ describe("at the Clip's end", () => {
     await it.settle();
     expect(it.flow.state).toEqual(IDLE);
     expect(it.asked).toEqual([]);
+    // Each says why, in the editor's notice, as the button's hint does.
+    expect(it.told).toEqual([AT_END_HINT, AT_END_HINT]);
     // In the Clip, it is on.
     expect(renderToStaticMarkup(<TakeButton flow={it.flow} atEnd={false} />)).not.toMatch(/<button[^>]*disabled=""/);
   });

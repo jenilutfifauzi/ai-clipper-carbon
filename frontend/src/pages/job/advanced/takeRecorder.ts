@@ -41,6 +41,9 @@ export interface TakeRecorder {
   readonly meter: Meter;
   // The recorder's AudioContext time now, which the picture's roll is timed by.
   now: () => number;
+  // The microphone's input latency in seconds, as the browser reports it for the track (0 where it
+  // doesn't): how long before its capture a sample was heard. The landing takes it off.
+  readonly latency: number;
   // From now on, what the microphone hears is kept.
   record: () => void;
   // The Take kept, and the microphone closed.
@@ -74,6 +77,7 @@ export function takeConstraints(deviceId?: string | null): MediaStreamConstraint
 export async function openTake(deps: RecorderDeps, options: { deviceId?: string | null; capped?: () => void } = {}): Promise<TakeRecorder> {
   const stream = await deps.getUserMedia(takeConstraints(options.deviceId));
   const release = () => stream.getTracks().forEach((track) => track.stop());
+  const latency = inputLatency(stream);
   let meter = QUIET;
   // Kept since `record` was called: from the block holding `from`, in 16-bit chunks.
   let from: number | null = null;
@@ -122,6 +126,7 @@ export async function openTake(deps: RecorderDeps, options: { deviceId?: string 
       return meter;
     },
     now: capture.now,
+    latency,
     record() {
       if (from === null) from = capture.now();
     },
@@ -134,6 +139,17 @@ export async function openTake(deps: RecorderDeps, options: { deviceId?: string 
       meter = clearClip(meter);
     },
   };
+}
+
+/**
+ * The input latency of `stream`'s microphone, in seconds: its track's `latency` setting where the
+ * browser reports one (Chrome does), else 0. The AudioContext's `baseLatency` isn't added: it is the
+ * output's, from the context to the speakers, which a capture doesn't pass through.
+ */
+export function inputLatency(stream: MediaStream): number {
+  const [track] = stream.getAudioTracks?.() ?? [];
+  const latency = (track?.getSettings?.() as { latency?: unknown } | undefined)?.latency;
+  return typeof latency === "number" && Number.isFinite(latency) && latency > 0 ? latency : 0;
 }
 
 // The AudioWorklet's processor: each block of its input (mixed to mono by the node) posted with the

@@ -7,15 +7,12 @@ import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
 import { FLOOR_DB } from "./ballistics";
 import type { RecordingSettings } from "./recordingSettings";
-import { IDLE, TAKE_WAITING, type TakeFlow } from "./takeFlow";
+import { AT_END_HINT, counting, holdsMicrophone, IDLE, recording, TAKE_WAITING, type TakeFlow } from "./takeFlow";
 
 const unsubscribed = () => () => {};
 
 // Green to −12 dB, orange to −3 dB, red above, as the Meters' bars, left to right.
 const BAR_FILL = "bg-[linear-gradient(to_right,var(--success)_80%,var(--accent)_80%_95%,var(--danger)_95%)]";
-
-/** What the mic button says while it is off at the Clip's end. */
-export const AT_END_HINT = "Move the playhead into the Clip to record a Voiceover: a Take from its end would never be heard";
 
 /**
  * The mic button by the transport (GLOSSARY.md, Voiceover): it starts a Take at the playhead, counts
@@ -35,24 +32,26 @@ export function TakeButton({ flow, atEnd = false, settings = null }: { flow: Tak
       </InfoTip>
     );
   }
-  const recording = state.phase === "recording";
-  const counting = state.phase === "countdown";
-  const busy = state.phase === "opening" || state.phase === "uploading";
+  const taking = recording(state);
+  // The seconds left of the countdown, while it runs.
+  const left = state.phase === "countdown" ? state.left : null;
+  // The microphone being asked for, or the Take uploading: the button waits, spinning.
+  const pending = state.phase === "opening" || state.phase === "uploading";
   const off = state.phase === "idle" && atEnd;
-  const label = recording
+  const label = taking
     ? "Stop the Take"
-    : counting
-      ? `Recording in ${state.left}: cancel`
+    : left !== null
+      ? `Recording in ${left}: cancel`
       : state.phase === "uploading"
         ? "Uploading the Take"
         : "Record a Voiceover";
-  const title = recording
+  const title = taking
     ? "Stop the Take (Space or ⇧R)"
-    : counting
+    : counting(state)
       ? "Cancel the countdown (Esc or ⇧R)"
       : off
         ? AT_END_HINT
-        : state.phase === "failed"
+        : state.phase === "waiting"
           ? TAKE_WAITING
           : "Record a Voiceover from the playhead (⇧R): a three-second countdown, then the picture rolls, its sound silent";
   return (
@@ -66,43 +65,43 @@ export function TakeButton({ flow, atEnd = false, settings = null }: { flow: Tak
           event.currentTarget.blur();
           void flow.press();
         }}
-        disabled={busy || off}
-        aria-pressed={recording || counting}
+        disabled={pending || off}
+        aria-pressed={taking || left !== null}
         aria-label={label}
         aria-keyshortcuts="Shift+R"
         title={title}
-        className={cx((recording || counting) && "text-danger hover:text-danger")}
+        className={cx((taking || left !== null) && "text-danger hover:text-danger")}
       >
-        {busy ? (
+        {pending ? (
           <Loader2 aria-hidden size={18} className="motion-safe:animate-spin" />
-        ) : recording ? (
+        ) : taking ? (
           <Square aria-hidden size={16} fill="currentColor" />
-        ) : counting ? (
+        ) : left !== null ? (
           // 3, 2, 1, read out as it goes.
           <span aria-live="assertive" className="text-lg font-semibold tabular-nums">
-            {state.left}
+            {left}
           </span>
         ) : (
           <Mic aria-hidden size={18} />
         )}
       </Button>
-      {settings && <TakeSettingsButton settings={settings} busy={state.phase !== "idle" && state.phase !== "failed"} />}
+      {settings && <TakeSettingsButton settings={settings} busy={holdsMicrophone(state)} />}
       {off && <span className="sr-only">{AT_END_HINT}</span>}
-      {(recording || counting) && <LevelBar read={() => flow.mic?.meter.left.level ?? FLOOR_DB} />}
+      {(taking || left !== null) && <LevelBar read={() => flow.mic?.meter.left.level ?? FLOOR_DB} />}
     </div>
   );
 }
 
 /**
  * The notice of a Take kept in the tab after its upload or its landing failed (the take flow's
- * failed state): what went wrong, and Try again (uploads it, unless it already is, and lands it where
+ * waiting state): what went wrong, and Try again (uploads it, unless it already is, and lands it where
  * it was recorded), Save WAV (downloads it) and Discard. It stays until one of them settles it, above
  * the editor's passing notices.
  */
 export function WaitingTakeNotice({ flow }: { flow: TakeFlow | null }) {
   const read = () => flow?.state ?? IDLE;
   const state = useSyncExternalStore(flow?.subscribe ?? unsubscribed, read, read);
-  if (!flow || state.phase !== "failed") return null;
+  if (!flow || state.phase !== "waiting") return null;
   return (
     <div role="alert" className="pointer-events-none fixed inset-x-0 bottom-36 z-50 flex justify-center px-4 lg:bottom-22">
       <div className="glass pointer-events-auto flex max-w-lg flex-wrap items-center gap-2 rounded-panel py-2 pr-2 pl-4 text-sm shadow-raised motion-safe:animate-[sheet-in_220ms_var(--ease-out)]">
@@ -164,7 +163,7 @@ const EDGE_PX = 8;
  * The chevron beside the mic button, and its popover of recording settings: the microphone, "Hear
  * the Clip (headphones)" and a test meter reading the chosen input while the popover is open. The
  * popover is in the top layer, as the Save audio menu's is; light dismiss and Escape close it. Off,
- * and closed, while a Take is under way (`busy`), which has the microphone.
+ * and closed, while a Take holds the microphone (`busy`: holdsMicrophone).
  */
 export function TakeSettingsButton({ settings, busy = false }: { settings: RecordingSettings; busy?: boolean }) {
   const read = () => settings.state;

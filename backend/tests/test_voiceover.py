@@ -58,36 +58,36 @@ def planned(main_track: list[SegmentInput], *music: MusicClip):
 def test_a_speech_music_clips_whole_span_is_speech_and_a_ducked_song_under_it_carries_it_and_its_stretch():
     events, plan = planned([SegmentInput(10, 30)], take("t", 3.0, 2.0, offset=4.0, speed=2))
     # Its whole span on the Timeline, pauses included, however it reads its file.
-    assert events["m"].speech == [(3.0, 5.0)]
+    assert events["m"].speech_spans == [(3.0, 5.0)]
     assert events["m"].ducked == [(2.75, 5.5)]
     tenth = 10 ** (DEPTH / 20)
     assert [round(gain_at(events["m"], time, plan.ducking), 6) for time in (2.0, 4.0, 6.0)] == [1, tenth, 1]
-    assert events["t"].speaks and not events["m"].speaks
+    assert events["t"].speech and not events["m"].speech
 
 
 def test_a_muted_speech_music_clip_makes_no_speech():
     events, _ = planned([SegmentInput(10, 30)], take("t", 3.0, 2.0, muted=True))
-    assert events["m"].speech == [] and events["m"].ducked == []
+    assert events["m"].speech_spans == [] and events["m"].ducked == []
 
 
 def test_a_speech_music_clips_span_joins_the_sources_words_across_a_short_gap_and_not_a_long_one():
     words = said((1.0, 2.5))
     events, _ = planned([SegmentInput(10, 30, words=words)], take("t", 3.0, 2.0))
-    assert events["m"].speech == [(1.0, 5.0)]
+    assert events["m"].speech_spans == [(1.0, 5.0)]
     events, _ = planned([SegmentInput(10, 30, words=words)], take("t", 4.0, 2.0))
-    assert events["m"].speech == [(1.0, 2.5), (4.0, 6.0)]
+    assert events["m"].speech_spans == [(1.0, 2.5), (4.0, 6.0)]
 
 
 def test_a_speech_span_past_the_clips_end_is_cut_to_it():
     events, _ = planned([SegmentInput(10, 14)], take("t", 3.0, 3.0))
-    assert events["m"].speech == [(3.0, 4.0)]
+    assert events["m"].speech_spans == [(3.0, 4.0)]
 
 
 def test_a_speech_music_clip_is_never_ducked_and_two_overlapping_ones_dont_duck_each_other():
     events, plan = planned([SegmentInput(10, 30, words=said((1.0, 9.0)))], take("t", 2.0, 4.0), take("u", 3.0, 4.0))
-    assert events["m"].speech == [(1.0, 9.0)]
+    assert events["m"].speech_spans == [(1.0, 9.0)]
     for spoken in (events["t"], events["u"]):
-        assert (spoken.duck, spoken.speech, spoken.ducked) == (None, [], [])
+        assert (spoken.duck, spoken.speech_spans, spoken.ducked) == (None, [], [])
         assert gain_at(spoken, 4.0, plan.ducking) == 1
     with pytest.raises(ValueError, match="Music Clip t is Speech, which is never ducked"):
         take("t", 0.0, 2.0, duck=-12.0)
@@ -113,9 +113,9 @@ def test_a_stored_candidate_without_speech_reads_as_not_speech_and_plans_as_befo
 
     assert plan(read.music) == plan(candidate.music)
     # The other Music Clip, not marked, makes no speech: the song ducks under the Words alone.
-    assert plan(read.music).audio[0].speech == [(0.2, 0.6)]
+    assert plan(read.music).audio[0].speech_spans == [(0.2, 0.6)]
     marked = [read.music[0], replace(read.music[1], speech=True)]
-    assert plan(marked).audio[0].speech == [(0.2, 3.0)]
+    assert plan(marked).audio[0].speech_spans == [(0.2, 3.0)]
 
 
 # Seam A: the API and MCP

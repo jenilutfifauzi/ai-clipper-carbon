@@ -27,13 +27,26 @@ export function masterBus(audio: BaseAudioContext): MasterBus {
   return made.bus;
 }
 
+/** How long the bus takes to fall silent, or to come back: short, but not a step, which would click. */
+export const HOLD_RAMP_SECS = 0.015;
+
 /**
  * The bus held silent (true) or heard again (false): the speakers and the Meters, everything the
- * preview plays, as one. Kept for a bus made later.
+ * preview plays, as one, along a ramp of HOLD_RAMP_SECS from where its gain is. Kept for a bus made
+ * later, which starts in that state at once (nothing plays through it yet).
+ *
+ * Without Web Audio the preview sets each element's own volume (PreviewMusic's `setVolume`), past
+ * any bus. That can't happen while a Take records: the take recorder captures on an AudioContext of
+ * its own, so a browser without one opens no microphone, and no Take rolls.
  */
 export function holdBus(silent: boolean) {
   held = silent;
-  if (made) made.bus.input.gain.value = silent ? 0 : 1;
+  if (!made) return;
+  const { gain } = made.bus.input;
+  const now = made.audio.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(gain.value, now);
+  gain.linearRampToValueAtTime(silent ? 0 : 1, now + HOLD_RAMP_SECS);
 }
 
 /** The bus, once anything plays through Web Audio; null before. */

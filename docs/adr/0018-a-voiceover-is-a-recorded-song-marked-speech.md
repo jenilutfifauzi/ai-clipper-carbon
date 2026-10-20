@@ -37,22 +37,24 @@ Today:
   - Echo cancellation, noise suppression and automatic gain are off.
   - A Take stops itself at eight minutes, which keeps it under the 50 MB limit.
 - **The landing is compensated automatically.**
-  - The Take lands at the playhead plus the time from the moment the picture rolled to the moment its first sample was captured, both on the AudioContext's clock.
+  - The Take lands at the playhead plus the time from the moment the picture moved from the playhead to the moment its first sample was heard, both on the recorder's AudioContext clock.
+  - The roll is timed by the first frame the picture is seen to move on, its time and the recorder's clock read together, not by the moment Play was asked.
+  - The first sample was heard the microphone's input latency before it was captured: the track's reported `latency` (0 where the browser reports none) is taken off.
   - There is no manual offset.
 - **The take flow:**
   - Recording starts from the mic button by the transport or Shift+R (R is Reverse). It starts after a three-second countdown with the playhead still. The microphone is already open during the countdown, so the meter shows.
   - The button is off while the playhead is at the Clip's end, where nothing would be heard.
-  - Esc cancels the countdown.
+  - Esc cancels the countdown, and so does pressing the button or Shift+R again. At the Clip's end, Shift+R tells the button's hint.
   - Recording stops from the same button, Space or Shift+R, or by itself at eight minutes. When the picture reaches the Clip's end it stops, but the Take records on, and the render cuts what runs past the end.
-  - Hand edits are locked during the countdown and the recording. Edits from other tabs and MCP still arrive (edit-sync).
-  - Leaving the page asks first, and cancels the Take.
+  - Hand edits are locked from the press until the Take has landed: while the microphone is being opened, the countdown, the recording and the upload. During the countdown and the recording the navigation shortcuts are locked too (they would move the playhead the Take is timed from). Edits from other tabs and MCP still arrive (edit-sync).
+  - Leaving the page asks first while a Take counts down, records, uploads or waits, and cancels one that holds the microphone.
   - After a Take lands, it is Picked and the playhead goes back to its start.
 - **Monitoring:**
   - The Clip's sound is silent while recording, unless "Hear the Clip" is on (for headphones).
   - A popover beside the button holds that switch, the choice of input and a test meter. The browser remembers them.
-- **A failed upload never loses a Take.** It is kept in the tab, with "Try again" and "Save WAV", and with a warning before the tab closes.
+- **A failed upload never loses a Take.** It is kept in the tab (it waits), with "Try again", "Save WAV" and "Discard", and with a warning before the tab closes. Record is refused while one waits. A landing refused (a locked Music Track) waits the same, and Try again lands it without uploading it again.
 - **No punch-in.** A new Take is a new Music Clip on a free lane. Takes already there aren't touched.
-- **The MCP tools gain no new tool.** `speech` is an ordinary Music Clip field in `edit_candidate`, `merge_candidate_items` and `dry_run`. Recording needs a browser.
+- **The MCP tools gain no new tool.** `speech` is an ordinary Music Clip field in `edit_candidate`, `merge_candidate_items` and `dry_run`. The dry run's sounds list `speech` and, for a ducked one, `speech_spans`; the plan's Audio events name them the same. Recording needs a browser.
 
 ## Considered options
 

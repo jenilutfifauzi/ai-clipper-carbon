@@ -66,12 +66,13 @@ export function encodeWav(chunks: readonly Int16Array[], rate = TAKE_RATE): Uint
 
 /**
  * Where a Take lands on the Timeline (Concat's `record::landing`): the playhead it was recorded from,
- * plus the time from the moment the picture rolled to its first captured sample, both on the
- * recorder's AudioContext clock, so that the browser's start-up latency drops out. A Take with no
- * sample lands at the playhead; none lands before 0.
+ * plus the time from the moment the picture rolled from it (`rolledAt`) to its first captured sample,
+ * both on the recorder's AudioContext clock, so that the browser's start-up latency drops out; less
+ * the microphone's input `latency`, as the first sample was heard that long before it was captured.
+ * A Take with no sample lands at the playhead; none lands before 0.
  */
-export function landing(playhead: number, rolledAt: number, firstSample: number | null): number {
-  return Math.max(0, playhead + (firstSample === null ? 0 : firstSample - rolledAt));
+export function landing(playhead: number, rolledAt: number, firstSample: number | null, latency = 0): number {
+  return Math.max(0, playhead + (firstSample === null ? 0 : firstSample - latency - rolledAt));
 }
 
 const two = (n: number) => String(n).padStart(2, "0");

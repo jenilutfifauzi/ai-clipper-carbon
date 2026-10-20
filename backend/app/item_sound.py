@@ -118,7 +118,7 @@ def _from_start[T: (SegmentPlan, AudioEvent)](item: T) -> T:
     """The item's sound heard alone: from 0 s, its Keyframes and fades being from its start, not
     Muted, and not ducked (Ducking is left out, docs/adr/0016)."""
     alone = replace(item, start=0.0, end=round(item.end - item.start, 3), muted=False)
-    return replace(alone, duck=None, speech=[], ducked=[]) if isinstance(alone, AudioEvent) else alone
+    return replace(alone, duck=None, speech_spans=[], ducked=[]) if isinstance(alone, AudioEvent) else alone
 
 
 def _file_name(text: str) -> str:

@@ -656,8 +656,8 @@ export interface Retiming {
 // song ends. A keyed one's `gain` is its volume Keyframes in seconds from its `start`, in place of
 // `volume`; its fades multiply them. It plays (end − start) × speed of its item: with `source`, of
 // the Source (`media` null), at the Clip's `source_volume` too. A Muted one (ADR 0016) isn't heard.
-// A ducked one (`duck` dB) is turned down under the spans of `speech` that reach it, in seconds into
-// the Clip, by the plan's `ducking` (ADR 0016).
+// A ducked one (`duck` dB) is turned down under the spans of speech that reach it (`speech_spans`),
+// in seconds into the Clip, by the plan's `ducking` (ADR 0016).
 export interface AudioEvent extends Omit<Retiming, "hold"> {
   media: string | null;
   source?: boolean;
@@ -671,11 +671,12 @@ export interface AudioEvent extends Omit<Retiming, "hold"> {
   id: string;
   muted?: boolean;
   duck?: number | null;
-  speech?: [number, number][];
+  speech_spans?: [number, number][];
   // Where a ducked one is turned down, ramps included, within it (the planner's ducked_stretches).
   ducked?: [number, number][];
-  // A Music Clip's marked Speech (ADR 0018): its whole span is speech where it isn't Muted.
-  speaks?: boolean;
+  // A Music Clip's marked Speech (ADR 0018), as MusicClip.speech: its whole span is speech where it
+  // isn't Muted.
+  speech?: boolean;
   detached_from?: string | null;
 }
 

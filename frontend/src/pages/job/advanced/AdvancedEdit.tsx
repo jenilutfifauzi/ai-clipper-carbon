@@ -138,7 +138,7 @@ import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from
 import { Meters } from "./Meters";
 import { TakeButton, WaitingTakeNotice } from "./TakeButton";
 import { browserSettings } from "./recordingSettings";
-import { canStart, guardLeaving, IDLE as TAKE_IDLE, locksEditing, recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
+import { guardLeaving, holdsMicrophone, IDLE as TAKE_IDLE, locksEditing, recording as takeRecording, TakeFlow, type LandedTake } from "./takeFlow";
 import { browserRecorder } from "./takeRecorder";
 import { atClipEnd, canRecord } from "./voiceover";
 import { newMusicClip } from "./Music";
@@ -548,11 +548,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     atEnd: (): boolean => false,
   });
   // The recording settings beside the mic button (./recordingSettings.ts): the input the next Take
-  // opens, "Hear the Clip", and a test meter that doesn't open while a Take has the microphone.
+  // opens, "Hear the Clip", and a test meter that doesn't open while a Take holds the microphone (it
+  // does while one uploads or waits in the tab).
   const [{ take, takeSettings }] = useState(() => {
     if (!canRecord()) return { take: null, takeSettings: null };
     let flow: TakeFlow | null = null;
-    const settings = browserSettings(browserRecorder(), () => !!flow && !canStart(flow.state));
+    const settings = browserSettings(browserRecorder(), () => !!flow && holdsMicrophone(flow.state));
     flow = new TakeFlow({
       open: (capped) => settings.openTake(capped),
       playback,
@@ -561,7 +562,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       upload: (file) => takeLatest.current.upload(file),
       land: (landed) => takeLatest.current.land(landed),
       tell: (text) => takeLatest.current.tell(text),
-      // Save WAV of a Take kept after its upload failed: downloaded as the Save audio menu's WAVs are.
+      // Save WAV of a Take waiting after its upload failed: downloaded as the Save audio menu's WAVs are.
       save: download,
       atEnd: () => takeLatest.current.atEnd(),
     });
@@ -569,7 +570,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   });
   useEffect(() => () => take?.dispose(), [take]);
   // Leaving the page while the countdown runs or a Take records asks first, and cancels the Take; while
-  // a failed Take waits in the tab, it asks first too.
+  // a Take uploads or waits in the tab, it asks first too.
   useEffect(() => (take ? guardLeaving(window, take) : undefined), [take]);
   const readTake = () => take?.state ?? TAKE_IDLE;
   const takeState = useSyncExternalStore(take?.subscribe ?? noSubscription, readTake, readTake);
@@ -798,9 +799,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     land: (landed) => {
       if (refused("music")) return null;
       const outcome = landTake({ edits }, landed);
+      const clip = outcome.edits.music.find((music) => music.id === outcome.id);
+      if (!clip) return null;
       edited.set(outcome.edits);
       select(outcome.pick);
-      return outcome.edits.music.at(-1)!.start;
+      return clip.start;
     },
     tell: (text) => setNotice({ id: Date.now(), text }),
     atEnd: () => atClipEnd(playback.time, playback.duration, fps),

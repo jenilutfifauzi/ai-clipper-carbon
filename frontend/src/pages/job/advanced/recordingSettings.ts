@@ -70,7 +70,8 @@ export type SettingsDevices = Pick<MediaDevices, "enumerateDevices" | "addEventL
 export interface SettingsDeps {
   devices: SettingsDevices;
   recorder: RecorderDeps;
-  // Whether a Take is under way (counting down or recording): no test meter opens then.
+  // Whether a Take holds the microphone (the take flow's holdsMicrophone: being opened, counting down
+  // or recording): no test meter opens then. A Take uploading or waiting in the tab doesn't hold it.
   busy?: () => boolean;
 }
 
@@ -170,7 +171,7 @@ export class RecordingSettings {
 
   /**
    * The test meter opened on the chosen input (or moved to it), while the popover is open; not while a
-   * Take is under way, which has the microphone. What went wrong is kept in `error`.
+   * Take holds the microphone. What went wrong is kept in `error`.
    */
   async openTest(): Promise<void> {
     this.release();

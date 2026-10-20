@@ -23,7 +23,7 @@ The owner records a Voiceover straight onto the Timeline while the picture plays
 
 **Recording a Take.**
 - A mic button sits by the transport, beside Play, with Shift+R as its key (R is Reverse).
-- Pressing it starts a three-second countdown with the playhead still. Esc cancels it.
+- Pressing it starts a three-second countdown with the playhead still. Esc cancels it, and so does pressing the button or Shift+R again.
   - The browser asks for the microphone the first time.
   - The microphone opens at the start of the countdown, so the meter already moves.
 - After the countdown the picture rolls from the playhead and the Take records.
@@ -33,13 +33,13 @@ The owner records a Voiceover straight onto the Timeline while the picture plays
   - The button reads Stop.
 - The same button, Space or Shift+R stops the Take. So does reaching eight minutes, with a notice.
 - If the picture reaches the Clip's end, it stops there and the Take records on. The render cuts whatever runs past the end.
-- The button is off while the playhead is at the Clip's end, with a hint to move it into the Clip.
+- The button is off while the playhead is at the Clip's end, with a hint to move it into the Clip. Shift+R there tells the same hint in the editor's notice.
 
 **Where it lands.**
 - The Take is uploaded to the Media Library as an audio item named "Voiceover <date time>", normalized like any song.
 - It is laid as a new Music Clip:
   - on the lowest free lane of the Music Track;
-  - at the playhead plus the time from the moment the picture rolled to the Take's first captured sample;
+  - at the playhead plus the time from the moment the picture moved from the playhead to the moment the Take's first sample was heard (its capture time less the microphone's input latency, where the browser reports it);
   - marked Speech, not Ducked.
 - It is one step of undo. Undoing removes the Music Clip but keeps the Media Library item, which is deleted from the Media tab like any upload.
 - After it lands, the new Music Clip is Picked and the playhead goes back to its start, so Space plays it back.
@@ -63,13 +63,15 @@ The owner records a Voiceover straight onto the Timeline while the picture plays
 - The microphone is recorded raw, with the browser's echo cancellation, noise suppression and automatic gain off.
 
 **Locked while recording.**
-- During the countdown and the recording, hand edits are locked: the Timeline, the inspector and the editing shortcuts.
+- From the press until the Take has landed (while the microphone is being opened, the countdown, the recording and the upload), hand edits are locked: the Timeline, the inspector and the editing shortcuts.
+- During the countdown and the recording, the navigation shortcuts are locked too: they would move the playhead the Take is timed from.
 - Edits from another tab or from MCP still arrive (edit-sync), and the Take lands where it was recorded in Timeline time.
-- Leaving the page or closing the tab asks first, and cancels the Take.
+- Leaving the page or closing the tab asks first while the countdown runs, the Take records or uploads, or a Take waits. Leaving cancels a Take that holds the microphone; one uploading or waiting is kept.
 
 **When something fails.**
 - **The microphone is refused or missing.** The owner is told why, and nothing changes.
-- **The upload or the normalization fails.** The Take is kept in the tab, with "Try again" and "Save WAV". The tab warns before it closes while a Take is waiting.
+- **The upload or the normalization fails.** The Take is kept in the tab (it waits), with "Try again", "Save WAV" and "Discard". The tab warns before it closes while a Take is waiting. Record is refused while one waits, with a notice to settle it first.
+- **The landing is refused** (the Music Track locked, say). The Take waits the same, its item already uploaded: "Try again" lands it without uploading it again.
 
 **On a phone.**
 - A phone reaches the app over plain HTTP, where the browser gives no microphone. Wherever the page isn't a secure context, the mic button is hidden.
@@ -133,7 +135,7 @@ The owner records a Voiceover straight onto the Timeline while the picture plays
 - The speech the planner gathers for Ducking (today the heard Words of Source Segments and of Music Clips of the Source) also takes, for each Music Clip with `speech` that isn't Muted, one span from where it starts to where it ends on the Timeline.
 - These spans are cut to the Clip's length, like other sounds. They then go through the same joining (`speech_spans`) and reach (`touching`, `ducked_stretches`) as Words.
 - A Speech Music Clip has no `duck`, so it carries no speech spans of its own: it is never ducked, and never by itself.
-- The plan's Audio events carry the spans as today. The render's volume expression and the preview's gain curve need no change, so preview and render stay equal (ADR 0001).
+- The plan's Audio events carry the spans as `speech_spans` (named `speech` before), and `speech` marks the event of a Music Clip marked Speech, as on the Music Clip. The render's volume expression and the preview's gain curve read the spans as before, so preview and render stay equal (ADR 0001); the shared gain cases (`tests/fixtures/gain_vectors.json`) name them `speech_spans` too.
 - Track mute in the editor still doesn't change Ducking.
 
 **Media Library.**
@@ -143,23 +145,25 @@ The owner records a Voiceover straight onto the Timeline while the picture plays
 
 **MCP.**
 - No new tool. `speech` is a Music Clip field in `edit_candidate`, `merge_candidate_items` and `dry_run`, described in their schemas next to `duck` and `muted`.
-- The dry run already lists each sound's speech spans and ducked stretches, which now include the Takes'.
+- The dry run's sounds now list `speech` (true for a Music Clip marked Speech) and, for a ducked sound, its `speech_spans` and ducked stretches, which include the Takes'.
 - Recording needs a browser and isn't offered to the agent.
 
 **Frontend: a take recorder module** (deep, no React):
 - Opens the chosen input with `echoCancellation`, `noiseSuppression` and `autoGainControl` off. Captures mono PCM at 48 kHz through an AudioWorklet on its own AudioContext.
 - Reports the level for the meter, reusing the Meters' ballistics.
 - On stop, returns the WAV bytes, the length and the AudioContext time of the first captured sample.
+- Tells the microphone's input latency: the track's `getSettings().latency` where the browser reports it, else 0. The AudioContext's `baseLatency` is the output's, and isn't added.
 - Its pure parts are kept apart and tested on their own:
   - the WAV encoding;
-  - the landing (`playhead + (firstSampleTime − rolledTime)`, never before 0);
+  - the landing (`playhead + (firstSampleTime − inputLatency − rolledTime)`, never before 0);
   - the eight-minute cap.
 
 **Frontend: the take flow** (a small state machine in the Advanced Edit):
-- States: idle → countdown → recording → uploading → landed, or back to idle on cancel or error.
-- From uploading it can go to failed, which offers Try again and Save WAV.
+- States: idle → opening (the microphone asked for) → countdown → recording → uploading → landed, or back to idle on cancel or error.
+- From uploading it can go to waiting (the upload or the landing failed), which offers Try again, Save WAV and Discard. Record is refused while one waits.
+- Pressing the mic button or Shift+R during the opening or the countdown cancels it, as Esc does.
 - On roll it:
-  - notes the AudioContext time;
+  - notes the recorder's AudioContext time, then times the roll again on the first frame the picture is seen to move: the picture's time and the recorder's clock are read together there, and the moment it left the playhead is reckoned back from them on the recorder's clock (a video can take a moment to start, and the picture runs on the page's clock);
   - starts playback from the playhead, ignoring the Loop;
   - holds the master bus silent unless "Hear the Clip" is on.
 - On landed it adds the Music Clip with one edit:
@@ -167,10 +171,10 @@ The owner records a Voiceover straight onto the Timeline while the picture plays
   - `speech: true`, no `duck`;
   - laid by the existing auto-lane.
   It then Picks the Music Clip and puts the playhead at its start.
-- While the flow is in countdown or recording:
-  - the editor's hand-edit actions and editing shortcuts are refused;
-  - `beforeunload` asks before leaving;
-  - remote edits apply as usual.
+- From the press until the Take has landed (opening, countdown, recording, uploading), the editor's hand-edit actions and editing shortcuts are refused; during the countdown and the recording, so are the navigation shortcuts. Not while a Take waits: the Music Track may need unlocking.
+- `beforeunload` asks before leaving during the countdown, the recording, the upload and while a Take waits; `pagehide` cancels a Take that holds the microphone (opening, countdown, recording).
+- Remote edits apply as usual.
+- The recording settings are off, and no test meter opens, only while a Take holds the microphone; while one uploads or waits, they work.
 - The mic button and its popover are rendered only when `window.isSecureContext` and `navigator.mediaDevices` exist. Elsewhere the hint is shown.
 - A new keymap entry: `record`, Shift+R, desktop only, group playback.
 - The popover's settings (input device id, "Hear the Clip") are in localStorage, with every read and write wrapped in try/catch, like the workspace layout.
@@ -236,7 +240,7 @@ Good tests check what the owner, the agent or the render sees through a public s
 
 ## Further Notes
 
-- **Concat's landing** (`record::landing`) is the model for the latency compensation. It is the playhead plus the delay between the picture rolling and the microphone's first sample. Here both times are read on the recorder's AudioContext clock, so the browser's start-up latency drops out.
+- **Concat's landing** (`record::landing`) is the model for the latency compensation. It is the playhead plus the delay between the picture rolling and the microphone's first sample. Here both times are read on the recorder's AudioContext clock, so the browser's start-up latency drops out; the roll is timed by the first frame the picture moves on, and the input latency the browser reports is taken off.
 - **Chrome's `MediaRecorder` was rejected** because its WebM/Opus isn't accepted by the Media Library and doesn't timestamp its first sample. The AudioWorklet's WAV is accepted as it is.
 - **`audio-effects` is being designed in parallel.** Its spec should say whether a Speech Music Clip gets "Enhance voice" by default.
 - **The meter during recording reads the microphone, not the preview's master bus.** The Meters pane keeps showing the preview's sound (silent while recording, unless "Hear the Clip" is on).

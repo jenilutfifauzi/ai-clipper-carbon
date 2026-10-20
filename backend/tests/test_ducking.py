@@ -49,7 +49,7 @@ def speech(main_track: list[SegmentInput], music: list[MusicClip] | None = None,
     plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(), *(music or [])], media_info=ITEMS, **planned)
     [ducked] = [event for event in plan.audio if event.id == "m"]
     assert ducked.duck == DEPTH
-    return ducked.speech
+    return ducked.speech_spans
 
 
 # Seam B: the speech spans
@@ -92,11 +92,11 @@ def test_spans_stay_joined_through_a_short_pause_and_not_through_a_long_one():
 def test_speech_is_gathered_with_captions_off():
     main_track = [SegmentInput(10, 20, words=said((1.0, 2.0)))]
     plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song()], media_info=ITEMS, captioned=False)
-    assert plan.captions == [] and plan.audio[0].speech == [(1.0, 2.0)]
+    assert plan.captions == [] and plan.audio[0].speech_spans == [(1.0, 2.0)]
     assert plan_render(0, 1, SOURCE, main_track=main_track).captions != []
     # A Clip of one range too, its Words heard in it only (those of the margins aren't).
     whole = plan_render(10, 20, SOURCE, words=said((-1.0, -0.4), (1.0, 2.0), (9.8, 10.6)), music=[song()], media_info=ITEMS, captioned=False)
-    assert whole.captions == [] and whole.audio[0].speech == [(1.0, 2.0)]
+    assert whole.captions == [] and whole.audio[0].speech_spans == [(1.0, 2.0)]
 
 
 def test_a_music_clip_of_the_sources_words_are_speech_where_it_plays_at_its_speed():
@@ -117,7 +117,7 @@ def test_a_ducked_sound_carries_the_spans_whose_ramps_reach_it_and_the_plan_its_
     main_track = [SegmentInput(10, 30, words=said((1.0, 2.0), (4.4, 4.6), (8.1, 9.0), (12.0, 13.0)))]
     plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(start=5.0, secs=3.0)], media_info=ITEMS)
     # Its release reaches 5.1 s, past its start; the next's lead begins at 7.85 s, before its end.
-    assert plan.audio[0].speech == [(4.4, 4.6), (8.1, 9.0)]
+    assert plan.audio[0].speech_spans == [(4.4, 4.6), (8.1, 9.0)]
     assert plan.ducking == DuckTuning(lead_secs=0.25, release_secs=0.5, bridge_secs=0.8)
     # Where it is turned down, ramps included, cut to it: what the dry run lists and the Timeline shades.
     assert plan.audio[0].ducked == [(5.0, 5.1), (7.85, 8.0)]
@@ -132,7 +132,7 @@ def test_the_ducked_stretches_are_joined_where_they_meet_and_cut_to_the_sound():
 
 def test_an_unducked_song_carries_no_speech_and_a_music_clip_of_the_source_refuses_a_duck():
     plan = plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 20, words=said((1.0, 2.0)))], music=[song(duck=None)], media_info=ITEMS)
-    assert (plan.audio[0].duck, plan.audio[0].speech) == (None, [])
+    assert (plan.audio[0].duck, plan.audio[0].speech_spans) == (None, [])
     assert gain_at(plan.audio[0], 1.5) == 1
     with pytest.raises(ValueError, match="Music Clip s plays the episode's sound, which is never ducked"):
         MusicClip("s", 0.0, 2.0, duck=-12.0)
@@ -159,7 +159,7 @@ def test_a_new_song_ducks_at_minus_12_unless_the_edit_says_and_a_stored_one_stay
     assert again["music"][0]["duck"] is None
     # A draft's new song ducks in the preview too, under the Words.
     [event] = preview(client, job, again, {"music": [{**added, "id": "p"}]})["plan"]["audio"]
-    assert event["duck"] == -12 and event["speech"]
+    assert event["duck"] == -12 and event["speech_spans"]
 
     for music, message in (
         ([{"id": "s", "start": 0, "secs": 1, "offset": 1.0, "duck": -12}], "Music Clip s plays the episode's sound, which is never ducked"),
@@ -195,7 +195,7 @@ def test_with_captions_off_the_transcripts_words_duck_the_song(client, tone):
     plan = preview(client, job, candidate, {"music": [{"id": "m", "media": song_id, "start": 0.0, "secs": 4.0}]})["plan"]
     assert plan["captions"] == []
     # halo to soal, then Podcast, back on the Source's timeline.
-    spans = [[round(start + candidate["start"], 1), round(end + candidate["start"], 1)] for start, end in plan["audio"][0]["speech"]]
+    spans = [[round(start + candidate["start"], 1), round(end + candidate["start"], 1)] for start, end in plan["audio"][0]["speech_spans"]]
     assert spans == [[0.1, 2.6], [4.0, 4.5]]
 
 
@@ -253,7 +253,7 @@ def test_a_song_is_12_db_quieter_mid_sentence_and_back_to_full_half_a_second_aft
         return [tone_level(settings, video, 880, at) / tone_level(settings, video, 440, at) for at in times]
 
     saved, video = rendered(-12)
-    [(said, ended), (again, _)] = preview(client, job, saved)["plan"]["audio"][0]["speech"]
+    [(said, ended), (again, _)] = preview(client, job, saved)["plan"]["audio"][0]["speech_spans"]
     # Mid-sentence; halfway up the release (0.225 to 0.275 s after the last Word); back to full,
     # before the next sentence's lead.
     times = ((said + ended) / 2, ended + 0.225, ended + 0.6)

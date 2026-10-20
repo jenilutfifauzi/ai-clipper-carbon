@@ -36,7 +36,7 @@ def heard(sound: dict) -> AudioEvent:
         keys=keys_of(sound), muted=sound.get("muted", False), duck=sound.get("duck"),
     )
     [event] = audio_events([clip], sound["end"] + 1, {SONG: MediaInfo(0, 0, secs, True)}, SOURCE.duration)
-    return replace(event, speech=[(start, end) for start, end in sound.get("speech", [])])
+    return replace(event, speech_spans=[(start, end) for start, end in sound.get("speech_spans", [])])
 
 
 def played(sound: dict) -> tuple[SegmentPlan, RenderPlan]:

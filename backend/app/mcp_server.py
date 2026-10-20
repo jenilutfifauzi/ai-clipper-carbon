@@ -1217,10 +1217,10 @@ def _plan_view(
                 **_times(event, "start", "end"),
                 **({"keys": _keys_view({"volume": event["gain"]}, event["start"])} if event["gain"] else {}),
                 **_compact({"fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None, "muted": event["muted"] or None}),
-                **({"speech": True} if event.get("speaks") else {}),
+                **({"speech": True} if event.get("speech") else {}),
                 **({
                     "duck": event["duck"],
-                    "speech_spans": [[round(time, 2) for time in span] for span in event["speech"]],
+                    "speech_spans": [[round(time, 2) for time in span] for span in event["speech_spans"]],
                     "ducked": [[round(time, 2) for time in stretch] for stretch in event["ducked"]],
                 } if event.get("duck") is not None else {}),
                 **({"detached_from": event["detached_from"]} if event.get("detached_from") else {}),

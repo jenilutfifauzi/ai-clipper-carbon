@@ -78,6 +78,12 @@ describe("where a Take lands", () => {
     expect(landing(0, 10, 9.5)).toBe(0);
     expect(landing(0.1, 10, 9.5)).toBe(0);
   });
+
+  test("earlier by the microphone's input latency: its first sample was heard that long before it was captured", () => {
+    expect(landing(4, 10, 10.25, 0.02)).toBeCloseTo(4.23, 9);
+    expect(landing(4, 10, null, 0.02)).toBe(4);
+    expect(landing(0, 10, 10.01, 0.02)).toBe(0);
+  });
 });
 
 test("a Take is named by the local time it was recorded, its time's dots kept", () => {
@@ -89,7 +95,7 @@ test("a Take is named by the local time it was recorded, its time's dots kept", 
 // one after another, each told the time it was captured from; and the AudioContext's clock, which the
 // blocks keep up with and which `wait` moves on ahead of them (a block reaches the recorder a moment
 // after it was captured).
-function fakeMic() {
+function fakeMic(settings: { latency?: number } = {}) {
   const asked: MediaStreamConstraints[] = [];
   const stopped: string[] = [];
   let block: Block = () => {};
@@ -99,7 +105,8 @@ function fakeMic() {
   const deps: RecorderDeps = {
     getUserMedia: async (constraints) => {
       asked.push(constraints);
-      return { getTracks: () => [{ stop: () => stopped.push("track") }] } as unknown as MediaStream;
+      const track = { stop: () => stopped.push("track"), getSettings: () => settings };
+      return { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
     },
     capture: async (_stream, onBlock) => {
       block = onBlock;
@@ -184,6 +191,11 @@ describe("the take recorder", () => {
     const take = recorder.stop();
     expect(take.secs).toBe(TAKE_MAX_SECS);
     expect(take.wav.length).toBe(44 + TAKE_MAX_SECS * TAKE_RATE * 2);
+  });
+
+  test("tells the input latency the browser reports for its track, and none where it reports none", async () => {
+    expect((await openTake(fakeMic({ latency: 0.015 }).deps)).latency).toBe(0.015);
+    expect((await openTake(fakeMic().deps)).latency).toBe(0);
   });
 
   test("a silent microphone leaves the meter on its foot", async () => {
