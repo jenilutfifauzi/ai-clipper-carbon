@@ -168,3 +168,23 @@ def test_a_freeze_frame_an_image_a_silent_overlay_and_an_unknown_item_are_refuse
     drafted = {"segments": [head], "overlays": []}
     assert client.post(sound_url(job, candidate, "segment", "still"), json=drafted).status_code == 404
     assert client.post(sound_url(job, candidate, "overlay", "i"), json=drafted).status_code == 404
+
+
+def test_a_music_clips_and_an_overlays_wav_is_heard_through_their_audio_effects(client, song, toned):
+    """An octave up through Pitch (.scratch/audio-effects/issues/02): the song's SONG_TONE and the
+    video's TONE are saved at twice their pitch, as long as before; and as they are with it off."""
+    tune = upload(client, song, "song.wav").json()
+    video = upload(client, toned, "toned.mp4").json()
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "soal")
+    up = [{"id": "pitch", "params": {"semitones": 12}}]
+    music = {"id": "m", "media": tune["id"], "start": 0.5, "secs": 1.5, "audio_effects": up}
+    overlay = {"id": "o", "media": video["id"], "start": 0.5, "secs": 1.5, "volume": 1, "audio_effects": up}
+    candidate = patch(client, job, candidate, music=[music], overlays=[overlay])
+    for kind, item, tone in (("music", "m", SONG_TONE), ("overlay", "o", TONE)):
+        samples = saved_sound(client, job, candidate, kind, item)
+        assert length(samples) == pytest.approx(1.5, abs=0.03)
+        assert level(samples, 2 * tone, 0.75) > 0.05, kind
+        assert level(samples, tone, 0.75) < 0.1 * level(samples, 2 * tone, 0.75), kind
+    off = saved_sound(client, job, candidate, "music", "m", {"music": [music | {"audio_effects": [up[0] | {"enabled": False}]}]})
+    assert level(off, SONG_TONE, 0.75) > 10 * level(off, 2 * SONG_TONE, 0.75)

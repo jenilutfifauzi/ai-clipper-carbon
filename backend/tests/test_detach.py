@@ -209,3 +209,47 @@ def test_a_reversed_segments_detached_sound_reads_the_same_range_backwards(clien
     }
     candidate = patch(client, job, candidate, segments=[{**a, "muted": True}, b], music=[measure, detached])
     assert heard(candidate) == pytest.approx(before, abs=1)
+
+
+def test_a_detached_sound_with_echo_sounds_as_its_segment_did_at_its_new_place(client, settings, steady_song):
+    """Source Segment a, halo..kabar, with an Echo half a second long (.scratch/audio-effects/issues/02):
+    a moment of the sweep is heard again 0.5 s later. Detached with its stack copied, as the editor
+    does it, and moved a second later, its echo is heard as it was, a second later."""
+    song = upload(client, steady_song, "steady.wav").json()
+    job = reviewed(client)
+    words = _words(job)
+    candidate = add(client, job, "halo", "ya")
+    echo = [{"id": "echo", "params": {"delay": 0.5, "decay": 0.6}}]
+    a = {"id": "a", "start": words["halo"]["start"], "end": words["kabar"]["end"], "audio_effects": echo}
+    b = {"id": "b", "start": words["Podcast"]["start"], "end": words["ya"]["end"]}
+    measure = {"id": "m", "media": song["id"], "start": 0.0, "secs": 3.0, "duck": None}
+    candidate = patch(client, job, candidate, segments=[a, b], music=[measure])
+    [played, _] = preview(client, job, candidate)["plan"]["segments"]
+    # Into a: its echo of the moment half a second before.
+    moments = (0.7, 1.0, 1.3)
+
+    def heard(candidate: dict, shift: float = 0.0) -> list[float]:
+        """The level (dB) of the echo `at` seconds into a, against the steady song there, `shift`
+        seconds later in the Clip, for each of the `moments`."""
+        video = clip_of(client, settings, job, candidate)
+
+        def level(at: float) -> float:
+            moment, when = sweep_at(played["source_start"] + at - 0.5), played["start"] + at + shift
+            return 20 * np.log10(tone_level(settings, video, moment, when, secs=0.02) / tone_level(settings, video, STEADY, when, secs=0.02))
+
+        return [level(at) for at in moments]
+
+    before = heard(candidate)
+    assert min(before) > -15, before
+    # Without it, there is no repeat.
+    plain = heard(patch(client, job, candidate, segments=[{**a, "audio_effects": []}, b]))
+    assert all(none < echoed - 15 for none, echoed in zip(plain, before)), (plain, before)
+
+    detached = {
+        "id": "d", "start": played["start"] + 1, "secs": round(played["end"] - played["start"], 3), "offset": played["source_start"],
+        "detached_from": "a", "audio_effects": echo,
+    }
+    candidate = patch(client, job, candidate, segments=[{**a, "muted": True}, b], music=[measure, detached])
+    # The Segment keeps its own stack, for Reattach.
+    assert candidate["segments"][0]["audio_effects"] == candidate["music"][1]["audio_effects"]
+    assert heard(candidate, 1.0) == pytest.approx(before, abs=1)

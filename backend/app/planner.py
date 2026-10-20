@@ -144,6 +144,7 @@ from app.candidates import (
     Transform,
     WordEdit,
 )
+from app.audio_effects import AudioEffect, enabled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
@@ -320,6 +321,8 @@ class SegmentInput:
     muted: bool = False
     # Its colour (docs/adr/0013), carried to its plan as given.
     grade: Grade = Grade()
+    # Its sound's Audio Effects (docs/adr/0017), checked, in order; the plan keeps the enabled ones.
+    audio_effects: list[AudioEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -558,7 +561,8 @@ class AudioEvent:
     down by that many dB under the spans of speech that reach it (`speech_spans`, app/ducking.py), in
     seconds into the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included,
     within it (`ducked_stretches`). One marked `speech` (a Music Clip marked Speech, docs/adr/0018) is
-    speech over its whole span, and is never ducked. A Music Clip's Detached from a Segment names it (`detached_from`)."""
+    speech over its whole span, and is never ducked. A Music Clip's Detached from a Segment names it
+    (`detached_from`). Its `audio_effects` (docs/adr/0017) are its item's enabled ones, in order."""
 
     media: str | None
     start: float
@@ -579,6 +583,8 @@ class AudioEvent:
     ducked: list[Span] = field(default_factory=list)
     speech: bool = False
     detached_from: str | None = None
+    # Heard after its Speed and before its volume (× its duck), fades and delay.
+    audio_effects: list[AudioEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -623,6 +629,9 @@ class SegmentPlan:
     # Its Grade (docs/adr/0013), as given, not folded: the renderer folds it (app/grading.py) and so
     # does the preview, which draws a dragged dial before the plan comes.
     grade: Grade = Grade()
+    # Its sound's enabled Audio Effects (docs/adr/0017), in order, heard after its Speed and before
+    # its volume, Keyframes and fades.
+    audio_effects: list[AudioEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -1118,6 +1127,7 @@ def plan_render(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
                     fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
+                    audio_effects=enabled_effects(given.audio_effects),
                 )
             )
             at, before = round(at + length, 3), length
@@ -1653,6 +1663,7 @@ def audio_events(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
                 clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
                 clip.media is None, clip.duck, speech=clip.speech, detached_from=clip.detached_from,
+                audio_effects=enabled_effects(clip.audio_effects),
             )
         )
     return events
@@ -1712,7 +1723,7 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
         sounds.append(
             AudioEvent(
                 overlay.media, event.start, event.end, event.offset, overlay.volume, 0.0, 0.0, gain, overlay.id, event.speed, event.pitch, event.reverse,
-                overlay.muted,
+                overlay.muted, audio_effects=enabled_effects(overlay.audio_effects),
             )
         )
     return sounds

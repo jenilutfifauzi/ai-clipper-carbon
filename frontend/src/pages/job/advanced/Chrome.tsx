@@ -4,6 +4,7 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   AudioLines,
+  AudioWaveform,
   Check,
   ClipboardCopy,
   ClipboardPaste,
@@ -180,7 +181,8 @@ export function SaveStatus({
  * Transform, for an Overlay or a Segment picked alone, opening the Transform sheet, and Speed, for a
  * Segment or a video Overlay picked alone, the Speed sheet; Filters and Adjust, for the picked
  * Segments, Overlays and Adjustment Layers or with nothing picked the whole Clip, their sheets: with
- * nothing picked, Filters is the asset tab's). Freeze frame sits beside Split. In picking
+ * nothing picked, Filters is the asset tab's; Audio effects, for the picked items with sound, its
+ * sheet). Freeze frame sits beside Split. In picking
  * mode (`picking`, started by Pick), a tap adds an item to the Pick or takes it out, and the bar counts
  * them and offers what can be done to them all, Paste while the Clipboard holds something
  * (`paste`), and Done.
@@ -200,6 +202,7 @@ export function Toolbar({
   onSpeed,
   onFilters = null,
   onAdjust = null,
+  onAudioEffects = null,
   onTracks,
   onPlayback,
   onPicking,
@@ -225,6 +228,9 @@ export function Toolbar({
   // null while the Pick has none.
   onFilters?: (() => void) | null;
   onAdjust?: (() => void) | null;
+  // Opens the Audio effects sheet of the Pick's items with sound (AudioEffectsFields'
+  // `audioEffectChanges`): null while it has none, as with a Freeze frame or an image.
+  onAudioEffects?: (() => void) | null;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;
   // Opens the Playback sheet: the rate, the Loop Region and the Edit Point jumps.
@@ -262,6 +268,7 @@ export function Toolbar({
           {onSpeed && <ToolButton icon={FastForward} label="Speed" onClick={onSpeed} />}
           {onFilters && <ToolButton icon={SwatchBook} label="Filters" onClick={onFilters} />}
           {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
+          {onAudioEffects && <ToolButton icon={AudioWaveform} label="Audio effects" onClick={onAudioEffects} />}
           <MuteButton mute={mute} />
           {actions && (
             <>

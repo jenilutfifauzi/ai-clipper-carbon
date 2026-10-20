@@ -27,6 +27,7 @@ import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
@@ -329,6 +330,7 @@ export function ClipPreview({
       )}
       {over}
       <PreviewMusic plan={plan} playback={playback} masters={masters} src={src} jobId={jobId} />
+      <PreviewEffected plan={plan} playback={playback} />
     </div>
   );
   if (fit) {

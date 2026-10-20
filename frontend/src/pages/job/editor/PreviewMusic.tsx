@@ -6,6 +6,7 @@ import { masterBus } from "./masterBus";
 import { onOwnVideos, type Playback, type PlayedSegment } from "./playback";
 import { eventPlay, soundAsk, useRetimedCopies } from "./retimedCopy";
 import { broughtIn } from "./transitionSound";
+import { silencedForCopy } from "./effectedCopy";
 
 let context: AudioContext | null = null;
 
@@ -86,7 +87,7 @@ export function followCurve(element: HTMLMediaElement, playback: Playback, event
  * (each deck's master video, heard while its deck is live) is set to the plan's `source_volume`, times the Segment's
  * own volume (a keyed one's Keyframes, as a curve), through its fades, and within a Transition its share as the side
  * brought in (transitionSound.ts), or held at 0 while it is Muted, as a Muted
- * Music Clip or Overlay sound is (`loudness`). A ducked Music Clip follows its curve, its duck included. Every element is heard through Web Audio and its master bus
+ * Music Clip or Overlay sound is (`loudness`). A ducked Music Clip follows its curve, its duck included. An item heard from its Effected copy (PreviewEffected.tsx) is silent here while it plays. Every element is heard through Web Audio and its master bus
  * (masterBus.ts), which the Meters read.
  */
 export function PreviewMusic({
@@ -115,6 +116,9 @@ export function PreviewMusic({
   // The Segments' sounds as planned (their fades fitted, each to its end past a Transition's start),
   // which the decks' masters play while the plan has the Segments the playback plays.
   const planned = useMemo(() => plan?.segments.map((segment) => segmentSound(segment, plan.source_volume)) ?? [], [plan]);
+  // Which items each sound and each Segment are, for whether they are heard from an Effected copy.
+  const kinds = useMemo(() => events.map((event) => (plan?.overlays.some((overlay) => overlay.id === event.id) ? "overlay" : "music") as "overlay" | "music"), [events, plan]);
+  const segmentIds = useMemo(() => plan?.segments.map((segment) => segment.id) ?? [], [plan]);
   const copies = useRetimedCopies(events.map((event) => soundAsk(event, jobId)));
   const played = events.map((event, i) => eventPlay(event, event.media ? mediaItemUrl(event.media) : src, copies[i]));
   // Followed on each tick as they are now, and at once when a copy comes.
@@ -134,21 +138,26 @@ export function PreviewMusic({
       const shown = playback.segments[index];
       const sound = onOwnVideos(shown) ? null : planned.length === playback.segments.length ? planned[index] : soundOf(shown);
       const volume = shown.muted ? 0 : sourceVolume * (shown.media ? 1 : (shown.volume ?? 1)) * brought(playback.shownTime);
+      // Heard from its Effected copy (PreviewEffected.tsx) instead, while it plays.
+      const id = segmentIds.length === playback.segments.length ? segmentIds[index] : (shown as { id?: string }).id;
+      const copied = !!id && silencedForCopy({ kind: "segment", id }, playback);
       for (const { current: video } of masters) {
-        if (video && sound && changing(sound)) followCurve(video, playback, sound, brought);
+        if (video && copied) setVolume(video, 0);
+        else if (video && sound && changing(sound)) followCurve(video, playback, sound, brought);
         else if (video) setVolume(video, volume);
       }
       sounds.forEach((sound, i) => {
         const element = players.current.get(key(sound, i));
         if (element && follow(element, playback, plays.current[i].span)) {
-          if (changing(sound)) followCurve(element, playback, sound);
+          if (silencedForCopy({ kind: kinds[i], id: sound.id }, playback)) setVolume(element, 0);
+          else if (changing(sound)) followCurve(element, playback, sound);
           else setVolume(element, loudness(sound, playback.shownTime));
         }
       });
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, sounds, masters, sourceVolume, planned, sources, brought]);
+  }, [playback, sounds, masters, sourceVolume, planned, sources, brought, kinds, segmentIds]);
 
   return (
     <>

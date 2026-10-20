@@ -128,6 +128,7 @@ export function SegmentFields({
   scene,
   captions,
   color,
+  effects,
   playback,
   span,
   copy,
@@ -166,6 +167,8 @@ export function SegmentFields({
   captions?: ReactNode;
   // Its Grade's Color section (ColorFields), last.
   color?: ReactNode;
+  // Its Audio Effects section (AudioEffectsFields), after its volume and fades; none for a Freeze frame or a video without sound.
+  effects?: ReactNode;
   playback: Playback;
   // Where it plays on the Timeline (keying.ts' segmentSpan), which its Keyframes are set in.
   span: KeySpan | null;
@@ -246,6 +249,7 @@ export function SegmentFields({
             </>
           )}
           {!held && item?.has_audio !== false && <FadeFields segment={segment} onFade={onFade} />}
+          {effects}
           {!held && !segment.reverse && item?.has_audio !== false && captions}
         </>
       ) : (
@@ -283,6 +287,7 @@ export function SegmentFields({
                 format={(v) => `${Math.round(v * 100)}%`}
                 onChange={onSourceVolume}
               />
+              {effects}
             </>
           )}
           {scene}

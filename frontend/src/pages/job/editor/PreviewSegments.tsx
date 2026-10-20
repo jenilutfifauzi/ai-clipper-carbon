@@ -11,6 +11,7 @@ import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, use
 import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
 import { crossedBy } from "./transitionSound";
+import { silencedForCopy } from "./effectedCopy";
 
 /**
  * The plan's Segments on videos of their own (`onOwnVideos`), over the Source's panels while they
@@ -98,7 +99,9 @@ export function MediaSegment({
     const sync = () => {
       const inside = main.current ? follow(main.current, playback, span, true) : false;
       if (back.current) follow(back.current, playback, span, true);
-      if (main.current && !segment.silent && changing(sound)) followCurve(main.current, playback, sound, crossed);
+      // Heard from its Effected copy (PreviewEffected.tsx) instead, while it plays.
+      if (main.current && silencedForCopy({ kind: "segment", id: segment.id }, playback)) setVolume(main.current, 0);
+      else if (main.current && !segment.silent && changing(sound)) followCurve(main.current, playback, sound, crossed);
       else if (main.current) setVolume(main.current, segment.silent ? 0 : loudness(sound, playback.shownTime, crossed));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };
@@ -189,7 +192,8 @@ export function CopiedSourceSegment({
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;
       if (follower.current) follow(follower.current, playback, span, true);
-      if (master.current && changing(sound)) followCurve(master.current, playback, sound, crossed);
+      if (master.current && silencedForCopy({ kind: "segment", id: segment.id }, playback)) setVolume(master.current, 0);
+      else if (master.current && changing(sound)) followCurve(master.current, playback, sound, crossed);
       else if (master.current) setVolume(master.current, loudness(sound, playback.shownTime, crossed));
       if (box.current) box.current.style.visibility = inside ? "visible" : "hidden";
     };

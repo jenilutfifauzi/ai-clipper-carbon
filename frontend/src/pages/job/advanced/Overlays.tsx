@@ -104,6 +104,7 @@ export function OverlayFields({
   onDelete,
   onCropMode,
   color,
+  effects,
 }: {
   overlay: Overlay;
   item: MediaItem | undefined;
@@ -122,6 +123,8 @@ export function OverlayFields({
   onCropMode?: () => void;
   // Its Color section (ColorFields: its Grade's dials).
   color?: ReactNode;
+  // A video's Audio Effects section (AudioEffectsFields), after its sound; none for an image or a video without sound.
+  effects?: ReactNode;
 }) {
   const video = item?.kind === "video";
   const length = item?.duration ?? Infinity;
@@ -178,6 +181,7 @@ export function OverlayFields({
           )}
         </Group>
       )}
+      {video && effects}
       {video && (
         <SpeedFields
           speed={overlay.speed ?? 1}

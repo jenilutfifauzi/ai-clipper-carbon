@@ -267,3 +267,31 @@ def test_a_song_is_12_db_quieter_mid_sentence_and_back_to_full_half_a_second_aft
     # On a slope, the volume set per 10 ms block and the encode's few ms of delay count: within 1 dB.
     assert release == pytest.approx(20 * np.log10(halfway), abs=1)
     assert after == pytest.approx(0, abs=0.5)
+
+
+def test_a_song_with_audio_effects_still_ducks_12_db_under_speech(client, settings, video_source, plain_video, tone):
+    """Its Audio Effects come before its volume and duck (.scratch/audio-effects/issues/02): a song
+    through Telephone and Echo is turned down as far mid-sentence as one without them."""
+    video_source.video = plain_video
+    song_id = upload(client, tone, "tone.wav").json()["id"]
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "Podcast")
+    effects = [{"id": "telephone"}, {"id": "echo", "params": {"delay": 0.1, "decay": 0.3}}]
+    music = {"id": "m", "media": song_id, "start": 0.0, "secs": 4.0, "audio_effects": effects}
+
+    def rendered(duck: float | None) -> tuple[dict, Path]:
+        saved = patch(client, job, candidate, music=[{**music, "duck": duck}])
+        return saved, clip_of(client, settings, job, saved)
+
+    def ratio(video: Path, at: float) -> float:
+        """The song's level against the Source's at `at` (each render replaces the one before)."""
+        return tone_level(settings, video, 880, at) / tone_level(settings, video, 440, at)
+
+    saved, video = rendered(-12)
+    [sound] = preview(client, job, saved)["plan"]["audio"]
+    assert sound["audio_effects"]
+    [(said, ended), _] = sound["speech_spans"]
+    middle = (said + ended) / 2
+    ducked = ratio(video, middle)
+    full = ratio(rendered(None)[1], middle)
+    assert 20 * np.log10(ducked / full) == pytest.approx(-12, abs=0.5)
