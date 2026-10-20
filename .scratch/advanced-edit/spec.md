@@ -171,7 +171,7 @@ Add these terms to `GLOSSARY.md`: **Advanced Edit**, **Media Library**, **Text L
 - Text styles in Style Presets (duplicate a layer instead).
 - Transcribing uploaded videos for captions. (Overturned for media Segments, not Overlays or Music Clips, by ADR 0020.)
 - Face tracking or Layouts on uploaded videos.
-- Speed changes (overturned by `.scratch/speed/spec.md`, ADR 0009), voiceover recording.
+- Speed changes (overturned by `.scratch/speed/spec.md`, ADR 0009), voiceover recording (overturned by ADR 0018).
 
 ## Accepted additions
 
