@@ -557,7 +557,8 @@ class AudioEvent:
     Retimed copy it is read from). A ducked one (a Music Clip's with `duck`, docs/adr/0016) is turned
     down by that many dB under the spans of `speech` that reach it (app/ducking.py), in seconds into
     the Clip, as the plan's `ducking` says, and `ducked` where that is, ramps included, within it
-    (`ducked_stretches`). A Music Clip's Detached from a Segment names it (`detached_from`)."""
+    (`ducked_stretches`). One that `speaks` (a Music Clip marked Speech, docs/adr/0018) is speech over
+    its whole span, and is never ducked. A Music Clip's Detached from a Segment names it (`detached_from`)."""
 
     media: str | None
     start: float
@@ -576,6 +577,7 @@ class AudioEvent:
     duck: float | None = None
     speech: list[Span] = field(default_factory=list)
     ducked: list[Span] = field(default_factory=list)
+    speaks: bool = False
     detached_from: str | None = None
 
     @property
@@ -1225,14 +1227,18 @@ def _segment_words(
 
 def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, list[Word]], ducking: DuckTuning) -> list[AudioEvent]:
     """The sounds, each ducked one with the spans of speech that reach it and where it is turned down
-    (app/ducking.py): `words`, the Source Segments' as heard, and the Words of each Music Clip of the
-    Source heard forwards and not Muted (`music_words`, by its id, in seconds from its offset), where it plays."""
+    (app/ducking.py): `words`, the Source Segments' as heard, the Words of each Music Clip of the
+    Source heard forwards and not Muted (`music_words`, by its id, in seconds from its offset), where it
+    plays, and the whole span of each Music Clip marked Speech that isn't Muted (`speaks`, docs/adr/0018),
+    cut to the Clip as it is heard."""
     if all(event.duck is None for event in audio):
         return audio
     said = list(words)
     for event in audio:
         if event.source and not event.muted and not event.reverse:
             said += heard_words(music_words.get(event.id, []), event.start, event.end, event.speed)
+        if event.speaks and not event.muted:
+            said.append(Word("", event.start, event.end))
     spans = speech_spans(said, ducking)
     return [
         replace(event, speech=touching(spans, event.start, event.end, ducking), ducked=ducked_stretches(spans, event.start, event.end, ducking))
@@ -1646,7 +1652,7 @@ def audio_events(
             AudioEvent(
                 clip.media, start, end, round(time.start, 3), clip.volume, fade_in, fade_out,
                 clip.keys.get(KeyProperty.VOLUME, []), clip.id, clip.speed, clip.pitch, clip.reverse, clip.muted,
-                clip.media is None, clip.duck, detached_from=clip.detached_from,
+                clip.media is None, clip.duck, speaks=clip.speech, detached_from=clip.detached_from,
             )
         )
     return events

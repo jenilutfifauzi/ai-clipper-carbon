@@ -834,14 +834,26 @@ export function muter(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (med
 
 /**
  * Music Clip `id`'s Duck under speech (GLOSSARY.md, Ducking): off with null, else on at `duck` dB, a
- * whole number from DUCK_MIN to DUCK_MAX. Null for a Music Clip of the Source, which is never Ducked,
- * or one that isn't there.
+ * whole number from DUCK_MIN to DUCK_MAX. Null for a Music Clip of the Source or one marked Speech,
+ * which are never Ducked, or one that isn't there.
  */
 export function setDuck(scene: { edits: AdvancedEdits; pick: Pick }, id: string, duck: number | null): Outcome | null {
   const { edits, pick } = scene;
-  if (!edits.music.some((clip) => clip.id === id && clip.media !== null)) return null;
+  if (!edits.music.some((clip) => clip.id === id && clip.media !== null && !clip.speech)) return null;
   const depth = duck === null ? null : Math.min(Math.max(Math.round(duck), DUCK_MIN), DUCK_MAX);
   return { edits: { ...edits, music: edits.music.map((clip) => (clip.id === id ? { ...clip, duck: depth } : clip)) }, pick };
+}
+
+/**
+ * Music Clip `id` marked Speech or not (GLOSSARY.md, Speech; ADR 0018), in one change: switched on, its
+ * Duck is cleared too, since a Music Clip that is speech is never Ducked. Null for a Music Clip of the
+ * Source, whose Words are its speech, or one that isn't there.
+ */
+export function setSpeech(scene: { edits: AdvancedEdits; pick: Pick }, id: string, speech: boolean): Outcome | null {
+  const { edits, pick } = scene;
+  if (!edits.music.some((clip) => clip.id === id && clip.media !== null)) return null;
+  const marked = (clip: MusicClip): MusicClip => (speech ? { ...clip, speech, duck: null } : { ...clip, speech });
+  return { edits: { ...edits, music: edits.music.map((clip) => (clip.id === id ? marked(clip) : clip)) }, pick };
 }
 
 /**

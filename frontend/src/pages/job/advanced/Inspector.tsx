@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setSpeech, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
@@ -278,6 +278,10 @@ export function Inspector({
         onDuck={(duck, group) => {
           const outcome = setDuck({ edits, pick }, clip.id, duck);
           if (outcome) onEdits(outcome.edits, group);
+        }}
+        onSpeech={(speech) => {
+          const outcome = setSpeech({ edits, pick }, clip.id, speech);
+          if (outcome) onEdits(outcome.edits);
         }}
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}

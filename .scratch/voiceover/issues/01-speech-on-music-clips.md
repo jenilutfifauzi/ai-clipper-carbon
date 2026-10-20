@@ -13,15 +13,15 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam B: a Speech Music Clip's whole span is speech, and a ducked song under it carries the span and its ducked stretch.
-- [ ] Seam B: a Muted Speech Music Clip makes no speech; spans from a Speech Music Clip and from Source Words join across a short gap; a span past the Clip's end is cut to it.
-- [ ] Seam B: a Speech Music Clip carries no speech spans of its own, and two overlapping Speech Music Clips don't duck each other.
-- [ ] Seam B: a stored Candidate without `speech` plans exactly as before.
-- [ ] Seam A: an edit adding a Music Clip with `speech: true` and no `duck` stores no duck.
-- [ ] Seam A: `duck` on a Speech Music Clip is refused, and so is `speech` on a Music Clip of the Source.
-- [ ] Seam A: the agent sets `speech` through `edit_candidate` and `merge_candidate_items`, and the `dry_run` lists the song's speech spans from it.
-- [ ] Seam A (real ffmpeg): with a tone as the song and a tone as the Speech Music Clip, the song is 12 dB quieter in the middle of the Speech span and back to full after the release.
-- [ ] The inspector's Speech switch hides the duck control and clears `duck` (vitest).
-- [ ] Only the new backend test file and the touched ones are run, not the whole suite.
+- [x] Seam B: a Speech Music Clip's whole span is speech, and a ducked song under it carries the span and its ducked stretch.
+- [x] Seam B: a Muted Speech Music Clip makes no speech; spans from a Speech Music Clip and from Source Words join across a short gap; a span past the Clip's end is cut to it.
+- [x] Seam B: a Speech Music Clip carries no speech spans of its own, and two overlapping Speech Music Clips don't duck each other.
+- [x] Seam B: a stored Candidate without `speech` plans exactly as before.
+- [x] Seam A: an edit adding a Music Clip with `speech: true` and no `duck` stores no duck.
+- [x] Seam A: `duck` on a Speech Music Clip is refused, and so is `speech` on a Music Clip of the Source.
+- [x] Seam A: the agent sets `speech` through `edit_candidate` and `merge_candidate_items`, and the `dry_run` lists the song's speech spans from it.
+- [x] Seam A (real ffmpeg): with a tone as the song and a tone as the Speech Music Clip, the song is 12 dB quieter in the middle of the Speech span and back to full after the release.
+- [x] The inspector's Speech switch hides the duck control and clears `duck` (vitest).
+- [x] Only the new backend test file and the touched ones are run, not the whole suite.

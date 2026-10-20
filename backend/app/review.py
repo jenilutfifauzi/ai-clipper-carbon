@@ -348,11 +348,11 @@ def _ducked_by_default(music: list[MusicClip], old: list[MusicClip], unset: froz
     """The Music Clips an edit gives, a song's (or a video's sound's) that is new to the Candidate
     and whose `duck` the edit didn't set (`unset`, by id) ducked by DEFAULT_DUCK: Music Clips added
     from now on duck, and stored ones don't (docs/adr/0016). A Detached sound (`detached_from`) is
-    speech, a video's too, and isn't ducked."""
+    speech, a video's too, and isn't ducked; nor is one marked Speech (docs/adr/0018)."""
     had = {clip.id for clip in old}
     return [
         replace(clip, duck=DEFAULT_DUCK)
-        if clip.id in unset and clip.id not in had and clip.media is not None and clip.detached_from is None
+        if clip.id in unset and clip.id not in had and clip.media is not None and clip.detached_from is None and not clip.speech
         else clip
         for clip in music
     ]
