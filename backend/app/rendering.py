@@ -39,6 +39,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
+from app.audio_effects import MEASURED_DIR
 from app.candidates import Candidate, Framing, Layout, Segment, WordEdit
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
@@ -734,6 +735,7 @@ class Renders:
             )
             encoder, bitrate_fallback = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures, export,
+                job_dir / MEASURED_DIR,
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
             # Its caption files, beside the MP4: the plan's Cues as subtitles (docs/adr/0020).

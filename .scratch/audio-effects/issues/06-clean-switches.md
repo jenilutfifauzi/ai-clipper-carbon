@@ -22,12 +22,12 @@ They are catalogue entries in the Clean group, hidden from the library. With sev
 
 **Blocked by:** 03, 04.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A: Reduce noise lowers the level of a noise bed under a tone, and keeps the tone.
-- [ ] Seam A: Enhance voice runs and keeps the item's length.
-- [ ] Seam A: Normalize brings a quiet tone and a loud one near the target, steady over their length (no pumping).
-- [ ] Seam A: the render reuses the cached measurement when one exists.
-- [ ] Vitest: insert positions for each switch, alone and together with presets; switching off; a mixed Pick.
-- [ ] The library doesn't list the Clean three. `list_assets` does.
-- [ ] Walkthrough: switch on Reduce noise on the Source, hear "Preparing effects…" and then the cleaned sound.
+- [x] Seam A: Reduce noise lowers the level of a noise bed under a tone, and keeps the tone.
+- [x] Seam A: Enhance voice runs and keeps the item's length.
+- [x] Seam A: Normalize brings a quiet tone and a loud one near the target, steady over their length (no pumping).
+- [x] Seam A: the render reuses the cached measurement when one exists. (After the Effected copy measured it: the render runs no measurement, and Save sound as WAV hears the copy's level.)
+- [x] Vitest: insert positions for each switch, alone and together with presets; switching off; a mixed Pick.
+- [x] The library doesn't list the Clean three. `list_assets` does.
+- [x] Walkthrough: switch on Reduce noise on the Source, hear "Preparing effects…" and then the cleaned sound. (Done in the app on a copy of a Job: "Preparing effects…" showed, then the preview played the Effected copy; Normalize loudness then went below Reduce noise and its copy measured −23.0 LUFS. Driven by script, not listened to.)

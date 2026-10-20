@@ -13,6 +13,11 @@ on/off switch. `checked_effects` refuses an unknown id, an unknown setting or a 
 fills a setting left out with its default; `effect_chain` is the stack's enabled entries in order,
 cut (or padded) to the item's length, so that an echo's tail is lost at its end.
 
+The Clean group is the Inspector's three switches, hidden from its library: Reduce noise, Enhance
+voice and Normalize loudness. Normalize isn't a fixed fragment: the renderer measures the item's
+sound up to it and gives it the gain that takes it to its target (MEASURED_GAIN,
+Renderer._levelled), before its chain is built; built unmeasured, it raises Unmeasured.
+
 Video effects (#12) will join the same registry under another kind.
 """
 
@@ -107,6 +112,59 @@ def _taps(delays: tuple[float, ...], decays: tuple[float, ...], scale: float, ou
         f"aecho=in_gain=0.8:out_gain={out_gain}:delays={'|'.join(str(round(delay * scale)) for delay in delays)}"
         f":decays={'|'.join(f'{decay:.3f}' for decay in decays)}"
     )
+
+
+# Clean
+
+
+def _denoise(params: dict[str, float], rate: int) -> list[str]:
+    """The steady hum and hiss under the sound taken out (`afftdn`): with `strength`, a lower noise
+    floor sought (-20 to -50 dB) and more taken off it (6 to 36 dB). No model is shipped."""
+    strength = params["strength"] / 100
+    return [f"afftdn=nf={-20 - 30 * strength:.1f}:nr={6 + 30 * strength:.1f}"]
+
+
+def _enhance_voice(params: dict[str, float], rate: int) -> list[str]:
+    """A voice cleared of its room, more of each with `amount`: the rumble cut, the hiss lightly
+    taken out, the esses tamed, its level evened out, held under full scale."""
+    amount = params["amount"] / 100
+    return [
+        "highpass=f=80", f"afftdn=nf={-25 - 20 * amount:.1f}:nr={6 + 18 * amount:.1f}", f"deesser=i={0.5 * amount:.2f}",
+        f"acompressor=threshold={0.5 - 0.3 * amount:.2f}:ratio={2 + 2 * amount:.1f}:attack=15:release=120", _held(0.95),
+    ]
+
+
+NORMALIZE = "normalize"
+# The setting the renderer gives a Normalize loudness entry once it has measured the item's sound up
+# to it (Renderer._levelled): the gain, in dB, that takes it to its target. Never saved:
+# `checked_effects` refuses it.
+MEASURED_GAIN = "gain"
+# In a Job's directory, beside its Effected copies (app/effected.py), and gone with it: the
+# measurements of its items' sounds that Normalize loudness gives its gain from, one small JSON file
+# each (Renderer._levelled). Never swept: they are a few bytes each.
+MEASURED_DIR = "effected/loudness"
+# The true peak Normalize loudness holds the sound under, in dBTP.
+NORMALIZE_PEAK_DB = -1.5
+
+
+class Unmeasured(ValueError):
+    """A Normalize loudness entry built before its item's sound was measured."""
+
+
+def _normalize(params: dict[str, float], rate: int) -> list[str]:
+    """One steady gain, the one measured to take the sound to its target (`MEASURED_GAIN`), then its
+    peaks held under NORMALIZE_PEAK_DB, looked for at four times the rate so that those between
+    samples are caught too."""
+    if MEASURED_GAIN not in params:
+        raise Unmeasured("Normalize loudness needs its item's sound measured first")
+    peak = 10 ** (NORMALIZE_PEAK_DB / 20)
+    return [f"volume={params[MEASURED_GAIN]:.2f}dB", f"aresample={4 * rate}", _held(round(peak, 4)), f"aresample={rate}"]
+
+
+def normalize_gain(loudness: float | None, target: float) -> float:
+    """The gain in dB that takes a sound measured at `loudness` LUFS to `target`: none for a silent
+    one (None)."""
+    return 0.0 if loudness is None else target - loudness
 
 
 # Voice
@@ -277,6 +335,20 @@ def _gain(default: float) -> tuple[Setting, ...]:
 
 
 _EFFECTS = (
+    # Clean: the Inspector's switches, not the library's shelves.
+    Effect(
+        "denoise", "Reduce noise", Group.CLEAN, 10, "Takes the steady hum and hiss out from under the sound.",
+        (Setting("strength", "Strength", 0, 100, 50, 1, "%", intensity=True),), _denoise,
+    ),
+    Effect(
+        "enhance-voice", "Enhance voice", Group.CLEAN, 20, "Clears the room out of a voice: rumble, hiss, sibilance and uneven level.",
+        (Setting("amount", "Amount", 0, 100, 60, 1, "%", intensity=True),), _enhance_voice,
+    ),
+    Effect(
+        NORMALIZE, "Normalize loudness", Group.CLEAN, 30,
+        "Brings the sound to one loudness: measured up to here in the stack, then one steady gain to the target.",
+        (Setting("target", "Target", -30, -12, -23, 1, "LUFS", intensity=True),), _normalize,
+    ),
     # Voice
     Effect(
         "pitch", "Pitch", Group.VOICE, 10, "Up or down by semitones, the length untouched.",

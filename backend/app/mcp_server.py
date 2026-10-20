@@ -292,6 +292,13 @@ Edits:
   loudness still runs on the whole mix. An unknown id or setting or a value out of range is
   refused; a Freeze frame and an image Overlay have none. merge_candidate_items replaces an item's
   stack as a whole. The dry run lists each sound's enabled ones under `segments` and `sounds`.
+  The group "Clean" holds the editor's three switches, ordinary entries otherwise: "denoise"
+  (Reduce noise, strength) and "enhance-voice" (Enhance voice, amount), which the editor puts at
+  the top of the stack, to clean before anything colours the sound; and "normalize" (Normalize
+  loudness, target -30..-12 LUFS, -23 by default), which it puts at the bottom. Normalize measures
+  the item's sound up to its place in the stack, then applies one steady gain to the target (none
+  to a silent item) with its true peak held under -1.5 dBTP: it never pumps, and an entry after it
+  changes the level again.
 - A Segment's `grade` (of the episode or a video) colours its whole frame (panels, picture and
   Background), before the joins, so a Transition blends two graded pictures. Its `adjust` dials:
   temperature {TEMPERATURE_K[0]}..{TEMPERATURE_K[1]} K (6500 as shot; higher is warmer), tint (-100 green..100 magenta),

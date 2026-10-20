@@ -5,7 +5,22 @@ import { describe, expect, test } from "vitest";
 import type { AudioEffect, AudioEffectKind, ClipSegment, MusicClip, Overlay } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
 import { playedFrom } from "../editor/playback";
-import { addAudioEffect, detach, moveAudioEffect, removeAllAudioEffects, removeAudioEffect, setAudioEffectEnabled, setAudioEffectSetting, sharedStack, reattach, split, type PickContext } from "./actions";
+import {
+  addAudioEffect,
+  cleanSwitches,
+  detach,
+  moveAudioEffect,
+  removeAllAudioEffects,
+  removeAudioEffect,
+  setAudioEffectEnabled,
+  setAudioEffectSetting,
+  setCleanSetting,
+  setCleanSwitch,
+  sharedStack,
+  reattach,
+  split,
+  type PickContext,
+} from "./actions";
 import { copy, paste } from "./clipboard";
 import type { AdvancedEdits } from "./edits";
 import { picked, type Pick } from "./pick";
@@ -224,5 +239,94 @@ describe("the Inspector's Audio Effects actions", () => {
     expect(moveAudioEffect({ edits: mixed(), pick: all }, hasSound, 0, 1)).toBeNull();
     expect(setAudioEffectEnabled({ edits: mixed(), pick: all }, hasSound, 0, false)).toBeNull();
     expect(removeAudioEffect({ edits: mixed(), pick: all }, hasSound, 0)).toBeNull();
+  });
+});
+
+// .scratch/audio-effects/issues/06-clean-switches.md: the Clean switches put their entries at the top
+// (Reduce noise, then Enhance voice) or at the bottom (Normalize loudness) of every picked stack.
+describe("the Clean switches", () => {
+  const clean = (id: string, name: string, key: string, min: number, max: number, def: number): AudioEffectKind => ({
+    id,
+    name,
+    group: "Clean",
+    order: 0,
+    description: "",
+    settings: [{ key, label: key, min, max, default: def, step: 1, unit: "", intensity: true }],
+  });
+  const denoiseKind = clean("denoise", "Reduce noise", "strength", 0, 100, 50);
+  const enhanceKind = clean("enhance-voice", "Enhance voice", "amount", 0, 100, 60);
+  const normalizeKind = clean("normalize", "Normalize loudness", "target", -30, -12, -23);
+  const denoise: AudioEffect = { id: "denoise", params: { strength: 50 }, enabled: true };
+  const enhance: AudioEffect = { id: "enhance-voice", params: { amount: 60 }, enabled: true };
+  const normalize: AudioEffect = { id: "normalize", params: { target: -23 }, enabled: true };
+  const one = picked({ kind: "segment", id: "a" });
+  const alone = (audio_effects?: AudioEffect[]) => edits({ segments: [segment("a", 0, 5, audio_effects ? { audio_effects } : {})] });
+  const stackAfter = (state: AdvancedEdits, ...switches: [AudioEffectKind, boolean][]) =>
+    switches.reduce((now, [kind, on]) => setCleanSwitch({ edits: now, pick: one }, sounded, kind, on)!.edits, state).segments[0].audio_effects;
+
+  test("each switched on alone is the stack's one entry, at its defaults", () => {
+    expect(stackAfter(alone(), [denoiseKind, true])).toEqual([denoise]);
+    expect(stackAfter(alone(), [enhanceKind, true])).toEqual([enhance]);
+    expect(stackAfter(alone(), [normalizeKind, true])).toEqual([normalize]);
+  });
+
+  test("with presets, Reduce noise then Enhance voice go at the top and Normalize at the bottom, in whatever order switched on", () => {
+    expect(stackAfter(alone(stack), [normalizeKind, true], [enhanceKind, true], [denoiseKind, true])).toEqual([denoise, enhance, echo, telephone, normalize]);
+    expect(stackAfter(alone(stack), [denoiseKind, true], [enhanceKind, true], [normalizeKind, true])).toEqual([denoise, enhance, echo, telephone, normalize]);
+  });
+
+  test("switched off, its entry is taken out wherever it was moved to; the last one taken, the item has no stack", () => {
+    const moved = alone([echo, denoise, normalize, telephone]);
+    expect(stackAfter(moved, [denoiseKind, false])).toEqual([echo, normalize, telephone]);
+    expect(stackAfter(moved, [normalizeKind, false], [denoiseKind, false])).toEqual(stack);
+    const emptied = setCleanSwitch({ edits: alone([normalize]), pick: one }, sounded, normalizeKind, false)!.edits;
+    expect("audio_effects" in emptied.segments[0]).toBe(false);
+  });
+
+  test("a switch shows on, off or Mixed, with its settings when on; an entry switched off counts as off and is switched on in place", () => {
+    const state = edits({ segments: [segment("a", 0, 5, { audio_effects: [denoise, echo] }), segment("b", 5, 9, { audio_effects: [{ ...denoise, params: { strength: 80 } }] })] });
+    const both = picked({ kind: "segment", id: "a" }, { kind: "segment", id: "b" });
+    expect(cleanSwitches({ edits: state, pick: both }, sounded)).toEqual({
+      denoise: { on: true, params: { strength: 50 } },
+      "enhance-voice": { on: false, params: null },
+      normalize: { on: false, params: null },
+    });
+    const half = edits({ segments: [segment("a", 0, 5, { audio_effects: [denoise] }), segment("b", 5, 9)] });
+    expect(cleanSwitches({ edits: half, pick: both }, sounded)!.denoise).toEqual({ on: "mixed", params: null });
+    const unheard = alone([echo, { ...normalize, enabled: false }]);
+    expect(cleanSwitches({ edits: unheard, pick: one }, sounded)!.normalize.on).toBe(false);
+    expect(stackAfter(unheard, [normalizeKind, true])).toEqual([echo, normalize]);
+    expect(cleanSwitches({ edits: edits(), pick: picked({ kind: "overlay", id: "none" }) }, sounded)).toBeNull();
+  });
+
+  test("on a mixed Pick, a switch puts its entry on every item with sound that hasn't it, and a slider sets it on every one", () => {
+    const state = edits({
+      segments: [segment("a", 0, 5, { audio_effects: [denoise, echo] }), segment("f", 5, 5, { hold: 1 })],
+      music: [music("m1")],
+      overlays: [overlay("o1", { audio_effects: [telephone] })],
+    });
+    const all = picked({ kind: "segment", id: "a" }, { kind: "segment", id: "f" }, { kind: "music", id: "m1" }, { kind: "overlay", id: "o1" });
+    const on = setCleanSwitch({ edits: state, pick: all }, sounded, denoiseKind, true)!;
+    expect(on.pick).toBe(all);
+    expect(on.edits.segments[0].audio_effects).toEqual([denoise, echo]);
+    expect(on.edits.music[0].audio_effects).toEqual([denoise]);
+    expect(on.edits.overlays[0].audio_effects).toEqual([denoise, telephone]);
+    expect(on.edits.segments[1].audio_effects).toBeUndefined();
+    const [strength] = denoiseKind.settings;
+    const set = setCleanSetting({ edits: on.edits, pick: all }, sounded, "denoise", strength, 72.4)!;
+    expect([set.edits.segments[0], set.edits.music[0], set.edits.overlays[0]].map((item) => item.audio_effects![0].params)).toEqual([
+      { strength: 72 },
+      { strength: 72 },
+      { strength: 72 },
+    ]);
+    const off = setCleanSwitch({ edits: set.edits, pick: all }, sounded, denoiseKind, false)!;
+    expect([off.edits.segments[0], off.edits.music[0], off.edits.overlays[0]].map((item) => item.audio_effects)).toEqual([[echo], undefined, [telephone]]);
+  });
+
+  test("a stack row moves past the rows beside it, never past a switch's entry, which it doesn't show", () => {
+    const state = alone([denoise, echo, telephone, normalize]);
+    expect(moveAudioEffect({ edits: state, pick: one }, sounded, 1, -1)).toBeNull();
+    expect(moveAudioEffect({ edits: state, pick: one }, sounded, 2, 1)).toBeNull();
+    expect(moveAudioEffect({ edits: state, pick: one }, sounded, 1, 1)!.edits.segments[0].audio_effects).toEqual([denoise, telephone, echo, normalize]);
   });
 });

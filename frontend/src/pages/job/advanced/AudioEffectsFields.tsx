@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, Loader2, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AudioEffect, AudioEffectKind, AudioEffectSetting } from "../../../api";
-import { libraryOf, useAudioEffects } from "../../../audioEffects";
+import { CLEAN_SWITCHES, isCleanSwitch, libraryOf, useAudioEffects, type CleanSwitchId } from "../../../audioEffects";
 import { Button, buttonClass } from "../../../components/Button";
 import { useMenu } from "../../../components/Menu";
 import { Slider } from "../../../components/Slider";
@@ -9,13 +9,17 @@ import { Switch } from "../../../components/Switch";
 import { Mixed } from "../editor/StyleFields";
 import {
   addAudioEffect,
+  cleanSwitches,
   moveAudioEffect,
   removeAllAudioEffects,
   removeAudioEffect,
   setAudioEffectEnabled,
   setAudioEffectSetting,
+  setCleanSetting,
+  setCleanSwitch,
   sharedStack,
   stackedItems,
+  type CleanSwitch,
   type Outcome,
   type StackRef,
 } from "./actions";
@@ -26,6 +30,8 @@ import type { Pick } from "./pick";
 export interface AudioEffectControls {
   // The picked stack, or "mixed" when the picked items' stacks differ.
   stack: AudioEffect[] | "mixed";
+  // The Clean switches (Reduce noise, Enhance voice, Normalize loudness), on, off or Mixed.
+  clean: Record<CleanSwitchId, CleanSwitch>;
   // While any picked item's Effected copy is being made (ticket 03 feeds it).
   preparing: boolean;
   onAdd: (kind: AudioEffectKind) => void;
@@ -35,6 +41,10 @@ export interface AudioEffectControls {
   // A setting's slider, each drag one change of its group.
   onSetting: (index: number, setting: AudioEffectSetting, value: number) => void;
   onRemoveAll: () => void;
+  // A Clean switch turned on or off on every picked item with sound.
+  onClean: (kind: AudioEffectKind, on: boolean) => void;
+  // A Clean switch's slider, on every picked item that has it; each drag one change of its group.
+  onCleanSetting: (id: CleanSwitchId, setting: AudioEffectSetting, value: number) => void;
 }
 
 /**
@@ -50,7 +60,8 @@ export function audioEffectChanges(
   preparing: (items: StackRef[]) => boolean = () => false,
 ): AudioEffectControls | null {
   const stack = sharedStack(scene, sounded);
-  if (stack === null) return null;
+  const clean = cleanSwitches(scene, sounded);
+  if (stack === null || clean === null) return null;
   const items = stackedItems(scene, sounded);
   const apply = (outcome: Outcome | null, group?: string) => {
     if (outcome) onEdits(outcome.edits, group);
@@ -58,6 +69,7 @@ export function audioEffectChanges(
   const ids = items.map((item) => item.id).join(",");
   return {
     stack,
+    clean,
     preparing: preparing(items),
     onAdd: (kind) => apply(addAudioEffect(scene, sounded, kind)),
     onMove: (index, delta) => apply(moveAudioEffect(scene, sounded, index, delta)),
@@ -65,6 +77,8 @@ export function audioEffectChanges(
     onRemove: (index) => apply(removeAudioEffect(scene, sounded, index)),
     onSetting: (index, setting, value) => apply(setAudioEffectSetting(scene, sounded, index, setting, value), `effects:${ids}:${index}:${setting.key}`),
     onRemoveAll: () => apply(removeAllAudioEffects(scene, sounded)),
+    onClean: (kind, on) => apply(setCleanSwitch(scene, sounded, kind, on)),
+    onCleanSetting: (id, setting, value) => apply(setCleanSetting(scene, sounded, id, setting, value), `clean:${ids}:${id}:${setting.key}`),
   };
 }
 
@@ -75,10 +89,10 @@ function formatSetting({ step, unit }: AudioEffectSetting) {
 }
 
 /**
- * The Audio Effects section (ADR 0017), after an item's volume and fades: its stack, one row per
- * effect in the order they are heard, and Add effect, opening the library. With several items
- * picked whose stacks differ, it says Mixed and offers Remove all effects. `kinds` is the catalogue's
- * by default.
+ * The Audio Effects section (ADR 0017), after an item's volume and fades: the Clean switches, each
+ * with its slider when on; its stack, one row per effect in the order they are heard (the switches'
+ * entries aren't rows); and Add effect, opening the library. With several items picked whose stacks
+ * differ, it says Mixed and offers Remove all effects. `kinds` is the catalogue's by default.
  */
 export function AudioEffectsFields({ kinds: given, ...controls }: AudioEffectControls & { kinds?: AudioEffectKind[] | null }) {
   const listed = useAudioEffects();
@@ -99,7 +113,7 @@ export function AudioEffectsFields({ kinds: given, ...controls }: AudioEffectCon
           Preparing effects…
         </p>
       )}
-      {/* The Clean switches (Reduce noise, Enhance voice, Normalize loudness) go here, above the stack (ticket 06). */}
+      <CleanSwitches kinds={kinds} {...controls} />
       {stack === "mixed" ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-2 text-sm text-muted">
@@ -111,23 +125,81 @@ export function AudioEffectsFields({ kinds: given, ...controls }: AudioEffectCon
             Remove all effects
           </Button>
         </div>
-      ) : stack.length === 0 ? (
-        <p className="text-sm text-pretty text-muted">No effects. Add one to change how this sound is heard.</p>
       ) : (
-        <ol className="flex flex-col gap-2">
-          {stack.map((entry, index) => (
-            <EffectRow
-              key={`${index}:${entry.id}`}
-              entry={entry}
-              kind={kinds?.find((kind) => kind.id === entry.id)}
-              index={index}
-              count={stack.length}
-              {...controls}
-            />
-          ))}
-        </ol>
+        <EffectRows stack={stack} kinds={kinds} controls={controls} />
       )}
     </section>
+  );
+}
+
+// The Clean switches, in CLEAN_SWITCHES' order, each with its intensity slider while it is on for
+// every picked item (Mixed while only some have it: switched on, it is on for all).
+function CleanSwitches({ kinds, clean, onClean, onCleanSetting }: AudioEffectControls & { kinds: AudioEffectKind[] | null }) {
+  const shown = CLEAN_SWITCHES.flatMap((id) => kinds?.find((kind) => kind.id === id) ?? []);
+  if (!shown.length) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      {shown.map((kind) => (
+        <CleanSwitchRow key={kind.id} kind={kind} state={clean[kind.id as CleanSwitchId]} onClean={onClean} onCleanSetting={onCleanSetting} />
+      ))}
+    </div>
+  );
+}
+
+function CleanSwitchRow({
+  kind,
+  state,
+  onClean,
+  onCleanSetting,
+}: {
+  kind: AudioEffectKind;
+  state: CleanSwitch;
+  onClean: AudioEffectControls["onClean"];
+  onCleanSetting: AudioEffectControls["onCleanSetting"];
+}) {
+  const nameId = useId();
+  const intensity = kind.settings.find((setting) => setting.intensity);
+  return (
+    <div className="flex flex-col">
+      <Switch checked={state.on === true} onChange={(on) => onClean(kind, on)} labelledBy={nameId} className="min-h-10 gap-2">
+        <span id={nameId} className="flex min-w-0 items-center gap-2 text-sm font-medium" title={kind.description}>
+          {kind.name}
+          {state.on === "mixed" && <Mixed />}
+        </span>
+      </Switch>
+      {state.on === true && intensity && state.params && (
+        <Slider
+          label={intensity.label}
+          value={state.params[intensity.key] ?? intensity.default}
+          min={intensity.min}
+          max={intensity.max}
+          step={intensity.step}
+          format={formatSetting(intensity)}
+          onChange={(value) => onCleanSetting(kind.id as CleanSwitchId, intensity, value)}
+        />
+      )}
+    </div>
+  );
+}
+
+// The stack's rows: its entries but the Clean switches', each at its place in the stack.
+function EffectRows({ stack, kinds, controls }: { stack: AudioEffect[]; kinds: AudioEffectKind[] | null; controls: AudioEffectControls }) {
+  const rows = stack.flatMap((entry, index) => (isCleanSwitch(entry.id) ? [] : [{ entry, index }]));
+  if (!rows.length) return <p className="text-sm text-pretty text-muted">No effects. Add one to change how this sound is heard.</p>;
+  return (
+    <ol className="flex flex-col gap-2">
+      {rows.map(({ entry, index }, row) => (
+        <EffectRow
+          key={`${index}:${entry.id}`}
+          entry={entry}
+          kind={kinds?.find((kind) => kind.id === entry.id)}
+          index={index}
+          first={row === 0}
+          last={row === rows.length - 1}
+          {...controls}
+        />
+      ))}
+    </ol>
   );
 }
 
@@ -137,12 +209,13 @@ function EffectRow({
   entry,
   kind,
   index,
-  count,
+  first,
+  last,
   onMove,
   onEnabled,
   onRemove,
   onSetting,
-}: AudioEffectControls & { entry: AudioEffect; kind: AudioEffectKind | undefined; index: number; count: number }) {
+}: AudioEffectControls & { entry: AudioEffect; kind: AudioEffectKind | undefined; index: number; first: boolean; last: boolean }) {
   const name = kind?.name ?? entry.id;
   const nameId = useId();
   const intensity = kind?.settings.find((setting) => setting.intensity);
@@ -170,10 +243,10 @@ function EffectRow({
         </Switch>
         <div className="ml-auto flex shrink-0">
           {others.length > 0 && <MoreSettings name={name} settings={others} slider={slider} />}
-          <Button variant="ghost" size="xs" onClick={() => onMove(index, -1)} disabled={index === 0} aria-label={`Move ${name} up`}>
+          <Button variant="ghost" size="xs" onClick={() => onMove(index, -1)} disabled={first} aria-label={`Move ${name} up`}>
             <ChevronUp aria-hidden size={16} />
           </Button>
-          <Button variant="ghost" size="xs" onClick={() => onMove(index, 1)} disabled={index === count - 1} aria-label={`Move ${name} down`}>
+          <Button variant="ghost" size="xs" onClick={() => onMove(index, 1)} disabled={last} aria-label={`Move ${name} down`}>
             <ChevronDown aria-hidden size={16} />
           </Button>
           <Button variant="ghost" size="xs" onClick={() => onRemove(index)} aria-label={`Remove ${name}`}>

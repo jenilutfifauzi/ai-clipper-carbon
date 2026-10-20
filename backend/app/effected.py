@@ -7,7 +7,9 @@ volume, Keyframes, fades, duck and Transition share on it in Web Audio as before
 
 A copy is named by a hash of everything it is made from (`copy_key`): the Source's video or the Media
 Library item, the range, Speed, pitch, Reverse, length, the validated enabled stack and the sample
-rate; so a volume, a fade or a move in the Clip makes no new one. Copies are kept in the Job's
+rate; so a volume, a fade or a move in the Clip makes no new one. A Normalize loudness entry's gain
+is not in it: it follows from the rest, measured once and kept (Renderer._levelled, MEASURED_DIR),
+so the render reads the same measurement as the copy. Copies are kept in the Job's
 EFFECTED_DIR, made once per key: a request for one being made waits on that one ffmpeg run. After a
 save, the copies no Candidate of the Job uses are removed (`sweep`), but never one made since the
 save started, which a draft not saved yet may be playing. They go with the Job.

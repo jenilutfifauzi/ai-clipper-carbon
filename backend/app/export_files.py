@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.analysis import ClipAnalysis
+from app.audio_effects import MEASURED_DIR
 from app.candidates import Candidate
 from app.config import Settings
 from app.encoding import ExportSettings
@@ -138,7 +139,7 @@ def save_audio(
     plan, files = played_files(replace(plan, overlays=[]), job_dir, source, media, settings.ffmpeg_bin)
     return _written(
         job_dir, audio_name(candidate.id, format), settings,
-        lambda renderer, path: renderer.render_audio(job_dir / source.video, plan, path, format, export.loudness, files),
+        lambda renderer, path: renderer.render_audio(job_dir / source.video, plan, path, format, export.loudness, files, job_dir / MEASURED_DIR),
     )
 
 

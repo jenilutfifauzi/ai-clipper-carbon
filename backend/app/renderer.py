@@ -109,6 +109,7 @@ command is as it was.
 """
 
 import functools
+import hashlib
 import json
 import logging
 import math
@@ -128,7 +129,7 @@ from typing import Literal, NamedTuple
 import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
-from app.audio_effects import effect_chain
+from app.audio_effects import MEASURED_GAIN, NORMALIZE, effect_chain, normalize_gain
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
@@ -139,6 +140,8 @@ from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
 from app.planner import (
     HOOK_LEADING,
+    AudioEvent,
+    SegmentPlan,
     HOOK_PAD_Y,
     AdjustmentEvent,
     Box,
@@ -220,6 +223,7 @@ class Renderer:
         files: dict[str, Path] | None = None,
         pictures: dict[str, Path] | None = None,
         export: ExportSettings = ExportSettings(),
+        measured: Path | None = None,
     ) -> Encoded:
         """Write the Clip that `plan` describes to `video` (MP4, fast start) and its poster to `poster`
         (JPEG), encoded as `export` says, and return what made them: the first of its codec's encoders
@@ -232,10 +236,12 @@ class Renderer:
 
         Both files are written under temporary names and then renamed, so a Clip that is rendered
         again stays playable until its new files are complete. Raises RenderStopped after `stop()`.
+        Its items' Normalize loudness measurements are kept in `measured` (`_levelled`).
         """
         _check(plan)
         files = files or {}
         pictures = pictures or {}
+        plan = self._levelled(source, plan, files, measured)
         parts = video.with_name(f".{video.stem}.part{video.suffix}"), poster.with_name(f".{poster.stem}.part{poster.suffix}")
         failures = []
         try:
@@ -339,14 +345,23 @@ class Renderer:
             shutil.rmtree(fonts, ignore_errors=True)
 
     def render_audio(
-        self, source: Path, plan: RenderPlan, audio: Path, format: AudioFormat, lufs: float | None, files: dict[str, Path] | None = None
+        self,
+        source: Path,
+        plan: RenderPlan,
+        audio: Path,
+        format: AudioFormat,
+        lufs: float | None,
+        files: dict[str, Path] | None = None,
+        measured: Path | None = None,
     ) -> None:
         """Write the Clip's sound alone to `audio`, mixed as the Clip's own is (the Clip's sound or
         its Segments', its Music Clips and its Overlays' sound) and normalized to `lufs` (left as it is
         without one): a 48 kHz 16-bit WAV, or AAC in an M4A. Nothing of the picture is decoded.
-        Written under a temporary name and then renamed, as a Clip's files are."""
+        Written under a temporary name and then renamed, as a Clip's files are. Its items' Normalize
+        loudness measurements are kept in `measured` (`_levelled`)."""
         tuning = self.tuning
         files = files or {}
+        plan = self._levelled(source, plan, files, measured)
         loudness = None if lufs is None else self._measure(source, plan, lufs, files)
         sources, inputs, _, heard = _sound(plan, source, files, tuning.audio_rate)
         part = audio.with_name(f".{audio.stem}.part{audio.suffix}")
@@ -364,22 +379,14 @@ class Renderer:
         finally:
             part.unlink(missing_ok=True)
 
-    def save_sound(self, source: Path, plan: RenderPlan, wav: Path, files: dict[str, Path] | None = None) -> None:
+    def save_sound(self, source: Path, plan: RenderPlan, wav: Path, files: dict[str, Path] | None = None, measured: Path | None = None) -> None:
         """Write the sound of `plan`'s one item to `wav`, 16-bit PCM at the Clip's sample rate in
-        stereo: its one Segment (or its range) heard as the Clip's own sound is (`_source_inputs`,
-        then `_audio_mix` without music); or its one sound of `audio`, mixed as the Clip's music is
-        (`_music_inputs`, `_audio_mix`) over silence as long as it, in place of the Clip's own sound.
-        Nothing is normalized. Read from the Source, or from its video or song in `files`."""
+        stereo, as `_alone_sound` hears it. Nothing is normalized but by its own Normalize loudness,
+        whose measurements are kept in `measured` (`_levelled`). Read from the Source, or from its
+        video or song in `files`."""
         rate = self.tuning.audio_rate
-        if plan.audio:
-            [event] = plan.audio
-            inputs, reads = _music_inputs(plan, files or {}, 0, source)
-            bed = f"anullsrc=r={rate}:cl=stereo,atrim=duration={event.end - event.start:.3f}[bed];"
-            heard = f"{bed}{_audio_mix(plan, reads, rate, '[bed]')};[mix]"
-        else:
-            inputs, sounds, sound = _source_inputs(plan, source, files or {}, rate)
-            mix = _audio_mix(plan, {}, rate, sound)
-            heard = f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+        files = files or {}
+        inputs, heard = _alone_sound(self._levelled(source, plan, files, measured), source, files, rate)
         part = wav.with_name(f".{wav.stem}.part{wav.suffix}")
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y",
@@ -391,6 +398,58 @@ class Renderer:
             part.unlink(missing_ok=True)
             raise RuntimeError(f"ffmpeg couldn't make the sound: {last_lines(result.stderr)}")
         os.replace(part, wav)
+
+    def _levelled(self, source: Path, plan: RenderPlan, files: dict[str, Path], measured: Path | None) -> RenderPlan:
+        """`plan` with each Normalize loudness entry of its items' stacks given its gain
+        (MEASURED_GAIN, `normalize_gain`): the item's sound up to that entry, alone and before its
+        volume, as `_unvolumed` hears it, is measured (`_loudness_of`). A measurement is kept in
+        `measured` (made if need be) as a JSON file named by a hash of everything that sound is made
+        from (`_measured_key`), and read from there when it is: so the Effected copy, Save sound as
+        WAV and the render, which hear an item alike, measure it once, and agree."""
+        segments = [
+            segment if segment.silent or segment.hold is not None or segment.muted
+            else self._item_levelled(source, plan, segment, files, measured)
+            for segment in plan.segments
+        ]
+        audio = [event if event.muted else self._item_levelled(source, plan, event, files, measured) for event in plan.audio]
+        return replace(plan, segments=segments, audio=audio)
+
+    def _item_levelled[T: (SegmentPlan, AudioEvent)](
+        self, source: Path, plan: RenderPlan, item: T, files: dict[str, Path], measured: Path | None
+    ) -> T:
+        stack = list(item.audio_effects)
+        for i, applied in enumerate(stack):
+            if applied.id != NORMALIZE or not applied.enabled or MEASURED_GAIN in applied.params:
+                continue
+            alone = _unvolumed(plan, replace(item, audio_effects=stack[:i]))
+            path = None if measured is None else measured / f"{_measured_key(source, alone, files, self.tuning.audio_rate)}.json"
+            if path is not None and path.is_file():
+                loudness = json.loads(path.read_text())["lufs"]
+            else:
+                loudness = self._loudness_of(source, alone, files)
+                if path is not None:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    part = path.with_name(f".{path.stem}.{threading.get_ident()}.part")
+                    part.write_text(json.dumps({"lufs": loudness}))
+                    os.replace(part, path)
+            stack[i] = replace(applied, params={**applied.params, MEASURED_GAIN: normalize_gain(loudness, applied.params["target"])})
+        return replace(item, audio_effects=stack)
+
+    def _loudness_of(self, source: Path, alone: RenderPlan, files: dict[str, Path]) -> float | None:
+        """The integrated loudness, in LUFS, of `alone`'s one item's sound (`_alone_sound`), as
+        loudnorm measures it; None for one too quiet or too short to measure, which is left as it is."""
+        rate = self.tuning.audio_rate
+        inputs, heard = _alone_sound(alone, source, files, rate)
+        command = [
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "info", *inputs,
+            "-filter_complex", f"{heard}aresample={rate},loudnorm=print_format=json[measured]", "-map", "[measured]", "-f", "null", "-",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, errors="replace")
+        output = result.stderr
+        if result.returncode or "{" not in output:
+            raise RuntimeError(f"ffmpeg couldn't measure the loudness of a sound: {last_lines(output)}")
+        loudness = float(json.loads(output[output.rindex("{") : output.rindex("}") + 1])["input_i"])
+        return loudness if math.isfinite(loudness) and loudness > _SILENT_LUFS else None
 
     def stop(self) -> None:
         """Kill the running encode, if any; renders from now on raise RenderStopped."""
@@ -649,6 +708,63 @@ def _sound(plan: RenderPlan, source: Path, files: dict[str, Path], rate: int, be
     inputs, reads = _music_inputs(plan, files, len(sources) // _INPUT_ARGS + between, source)
     mix = _audio_mix(plan, reads, rate, sound)
     return sources, inputs, _music_count(reads), f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+
+
+def _alone_sound(plan: RenderPlan, source: Path, files: dict[str, Path], rate: int) -> tuple[list[str], str]:
+    """The input options and filters of `plan`'s one item's sound, ending with the link it is heard
+    from: its one Segment (or its range) heard as the Clip's own sound is (`_source_inputs`, then
+    `_audio_mix` without music); or its one sound of `audio`, mixed as the Clip's music is
+    (`_music_inputs`, `_audio_mix`) over silence as long as it, in place of the Clip's own sound."""
+    if plan.audio:
+        [event] = plan.audio
+        inputs, reads = _music_inputs(plan, files, 0, source)
+        bed = f"anullsrc=r={rate}:cl=stereo,atrim=duration={event.end - event.start:.3f}[bed];"
+        return inputs, f"{bed}{_audio_mix(plan, reads, rate, '[bed]')};[mix]"
+    inputs, sounds, sound = _source_inputs(plan, source, files, rate)
+    mix = _audio_mix(plan, {}, rate, sound)
+    return inputs, f"{sounds}{mix};[mix]" if mix is not None else f"{sounds}{sound}"
+
+
+# Quieter than this (loudnorm's and EBU R 128's absolute gate), a sound is silent: Normalize leaves it.
+_SILENT_LUFS = -70.0
+# Changed when what a Normalize loudness measurement is of changes for the same key.
+_MEASURED_VERSION = 1
+
+
+def _unvolumed[T: (SegmentPlan, AudioEvent)](plan: RenderPlan, item: T) -> RenderPlan:
+    """`plan` with only `item`'s sound, from 0 s, before its volume: at 1, unkeyed, unfaded, unducked,
+    not Muted, and a sound of the Source's not at the Clip's own volume."""
+    length = round(item.end - item.start, 3)
+    bare = replace(plan, segments=[], audio=[], transitions=[], source_volume=1.0)
+    level = {"start": 0.0, "end": length, "volume": 1.0, "gain": [], "fade_in": 0.0, "fade_out": 0.0, "muted": False}
+    if isinstance(item, SegmentPlan):
+        return replace(bare, segments=[replace(item, **level)])
+    return replace(bare, audio=[replace(item, **level, duck=None, speech=[], ducked=[])])
+
+
+def _measured_key(source: Path, alone: RenderPlan, files: dict[str, Path], rate: int) -> str:
+    """The name of the Normalize loudness measurement of `alone`'s one sound (`_unvolumed`): a hash of
+    everything it is made from: the file it reads and where, its Speed and pitch (a reversed one's
+    read forwards from its Retimed copy), its length, the stack before the entry and the sample rate."""
+    if alone.segments:
+        [segment] = alone.segments
+        file = segment.media or segment.read_from
+        item: dict = {
+            "file": str(files[file] if file else source), "start": segment.source_start, "end": segment.source_end,
+            "speed": segment.speed, "pitch": segment.pitch, "reverse": segment.reverse,
+        }
+    else:
+        [event] = alone.audio
+        item = {
+            "file": str(source if event.media is None else files[event.media]), "offset": event.offset, "span": event.time.span,
+            "speed": event.speed, "pitch": event.pitch, "reverse": event.reverse,
+        }
+    [sound] = alone.segments or alone.audio
+    made = {
+        "version": _MEASURED_VERSION, "rate": rate, **item, "secs": sound.end - sound.start,
+        "effects": [[effect.id, sorted(effect.params.items())] for effect in sound.audio_effects if effect.enabled],
+    }
+    return hashlib.sha256(json.dumps(made, sort_keys=True).encode()).hexdigest()[:32]
 
 
 def _normalized(tuning: RenderTuning, lufs: float | None, loudness: dict[str, str] | None) -> str:

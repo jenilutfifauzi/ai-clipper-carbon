@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.audio_effects import AudioEffect, checked_effects, effect_chain, effects
+from app.audio_effects import MEASURED_GAIN, NORMALIZE, AudioEffect, Unmeasured, checked_effects, effect_chain, effects
 from app.candidates import MusicClip, Overlay
 from app.config import load_settings
 from app.planner import MediaInfo, SegmentInput, audio_events, overlay_sound, plan_render
@@ -47,13 +47,17 @@ def samples(filters: list[str], source: str = "sine=frequency=440:sample_rate=48
 @pytest.mark.parametrize("effect", effects(), ids=lambda effect: effect.id)
 def test_each_effect_runs_at_its_default_minimum_and_maximum_and_keeps_a_1_s_tones_length(effect, corner):
     params = {setting.key: getattr(setting, corner) for setting in effect.settings}
+    if effect.id == NORMALIZE:
+        # As the renderer gives it, measured (test_clean_switches.py): a loud gain, its peaks held.
+        params[MEASURED_GAIN] = 20.0
     heard = samples(effect_chain([AudioEffect(effect.id, params)], RATE, 1.0))
     assert len(heard) == RATE, len(heard)
     assert np.isfinite(heard).all()
 
 
-# The 22 presets so far (the Clean three come in 06), by shelf.
+# The Clean switches and the 22 presets, by shelf.
 CATALOGUE = {
+    "Clean": ["denoise", "enhance-voice", "normalize"],
     "Voice": ["pitch", "sweet", "deep", "chipmunk", "robot", "megaphone", "whisper"],
     "Tone": ["bass", "treble", "bright", "telephone", "radio", "vinyl", "lofi", "distorted"],
     "Space": ["echo", "room", "hall", "plate", "cathedral", "stadium", "underwater"],
@@ -124,6 +128,13 @@ def test_a_setting_left_out_takes_its_default_and_a_bad_entry_is_refused_naming_
         with pytest.raises(ValueError) as refused:
             checked_effects(stack, "Segment s")
         assert message in str(refused.value)
+
+
+def test_normalize_is_refused_its_measured_gain_and_is_not_built_before_it_is_measured():
+    with pytest.raises(ValueError, match="has no setting 'gain': its settings are target"):
+        checked_effects([AudioEffect(NORMALIZE, {MEASURED_GAIN: 6})], "Music Clip m")
+    with pytest.raises(Unmeasured):
+        effect_chain(checked_effects([AudioEffect(NORMALIZE)], "Music Clip m"), RATE, 1.0)
 
 
 def test_a_disabled_entry_adds_nothing_to_the_chain():

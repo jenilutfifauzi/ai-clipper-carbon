@@ -1,4 +1,5 @@
 import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
 import type { PlayedSegment } from "../editor/playback";
@@ -1354,10 +1355,14 @@ function entryChanged(
   return restacked(scene, sounded, (stack) => change(stack)!);
 }
 
-/** Entry `index` moved one place up (`delta` −1) or down (+1) in every picked stack; null past an end. */
+/**
+ * Entry `index` swapped with the next row up (`delta` −1) or down (+1) in every picked stack: a Clean
+ * switch's entry, not a row, is passed over and stays where it is. Null past the first or last row.
+ */
 export function moveAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, index: number, delta: -1 | 1): Outcome | null {
-  const to = index + delta;
   return entryChanged(scene, sounded, index, (stack) => {
+    let to = index + delta;
+    while (to >= 0 && to < stack.length && isCleanSwitch(stack[to].id)) to += delta;
     if (to < 0 || to >= stack.length) return null;
     const next = [...stack];
     [next[index], next[to]] = [next[to], next[index]];
@@ -1386,13 +1391,69 @@ export function setAudioEffectSetting(
   setting: AudioEffectSetting,
   value: number,
 ): Outcome | null {
-  const { key, min, max, step } = setting;
+  const level = steppedSetting(setting, value);
+  return entryChanged(scene, sounded, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
+}
+
+// `value` on `setting`'s steps and within its range.
+function steppedSetting({ min, max, step }: AudioEffectSetting, value: number): number {
   const stepped = step > 0 ? min + Math.round((value - min) / step) * step : value;
-  const level = Number(Math.min(Math.max(stepped, min), max).toFixed(6));
-  return entryChanged(scene, sounded, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [key]: level } } : entry)));
+  return Number(Math.min(Math.max(stepped, min), max).toFixed(6));
 }
 
 /** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none with sound is picked. */
 export function removeAllAudioEffects(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Outcome | null {
   return restacked(scene, sounded, () => []);
+}
+
+/** A Clean switch as the picked items with sound show it: on when every one has its entry switched on, off when none has, else Mixed; with the first one's settings while it is on. */
+export type CleanSwitch = { on: boolean | "mixed"; params: Record<string, number> | null };
+
+/** The Clean switches of the picked items with sound (stackedItems), by id; null when none with sound is picked. An entry switched off (by the agent) counts as off. */
+export function cleanSwitches(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Record<CleanSwitchId, CleanSwitch> | null {
+  const stacks = stacksOf(scene, sounded);
+  if (!stacks.length) return null;
+  const entries = (id: CleanSwitchId) => stacks.map((stack) => stack.find((entry) => entry.id === id && entry.enabled));
+  return Object.fromEntries(
+    CLEAN_SWITCHES.map((id) => {
+      const found = entries(id);
+      const on = found.every(Boolean) ? true : found.some(Boolean) ? "mixed" : false;
+      return [id, { on, params: on === true ? found[0]!.params : null }];
+    }),
+  ) as Record<CleanSwitchId, CleanSwitch>;
+}
+
+// Where a Clean switch's entry goes in a stack: Reduce noise at the top; Enhance voice at the top
+// too, after a Reduce noise there; Normalize loudness at the bottom, so that it measures the rest.
+function cleanPlace(stack: AudioEffect[], id: string): number {
+  if (id === "normalize") return stack.length;
+  if (id === "enhance-voice" && stack[0]?.id === "denoise") return 1;
+  return 0;
+}
+
+/**
+ * A Clean switch (`kind`, of the Clean group) turned on or off on every picked item with sound, as
+ * one change. On: an item without its entry gets it at its defaults, at its place (`cleanPlace`); an
+ * entry there but switched off is switched on where it is. Off: its entries are taken out, wherever
+ * they were moved to. Null when none with sound is picked.
+ */
+export function setCleanSwitch(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean, kind: AudioEffectKind, on: boolean): Outcome | null {
+  return restacked(scene, sounded, (stack) => {
+    if (!on) return stack.filter((entry) => entry.id !== kind.id);
+    if (stack.some((entry) => entry.id === kind.id)) return stack.map((entry) => (entry.id === kind.id ? { ...entry, enabled: true } : entry));
+    const at = cleanPlace(stack, kind.id);
+    return [...stack.slice(0, at), audioEffectOf(kind), ...stack.slice(at)];
+  });
+}
+
+/** A Clean switch's `setting` set to `value` (on its steps, within its range) on every picked item's entry of `id`, Mixed or not. */
+export function setCleanSetting(
+  scene: { edits: AdvancedEdits; pick: Pick },
+  sounded: (media: string) => boolean,
+  id: CleanSwitchId,
+  setting: AudioEffectSetting,
+  value: number,
+): Outcome | null {
+  const level = steppedSetting(setting, value);
+  return restacked(scene, sounded, (stack) => stack.map((entry) => (entry.id === id ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
 }

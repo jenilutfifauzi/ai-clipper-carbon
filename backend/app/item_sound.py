@@ -13,6 +13,7 @@ from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 
+from app.audio_effects import MEASURED_DIR
 from app.candidates import Candidate
 from app.config import Settings
 from app.jobs import Job
@@ -74,7 +75,7 @@ def sound_of(job: Job, job_dir: Path, alone: RenderPlan, wav: Path, settings: Se
     alone, files = read_from_copies(alone, files, lambda media_id, played: (
         media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
     ).make(settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end)))
-    Renderer(settings.ffmpeg_bin, settings.render).save_sound(job_dir / job.source.video, alone, wav, files)
+    Renderer(settings.ffmpeg_bin, settings.render).save_sound(job_dir / job.source.video, alone, wav, files, job_dir / MEASURED_DIR)
 
 
 def _alone(plan: RenderPlan, candidate: Candidate, kind: SoundOf, item_id: str, media: MediaStore) -> tuple[RenderPlan, str]:
