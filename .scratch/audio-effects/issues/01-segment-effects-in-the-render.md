@@ -37,14 +37,14 @@ The rest come in 05 and 06.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Segments accept `audio_effects`. Stored Candidates plan and render exactly as before (the existing command fixture is unchanged).
-- [ ] The catalogue registry holds Telephone, Echo and Pitch. It validates and fills defaults, and a disabled entry adds nothing.
-- [ ] Seam A: Telephone on a Source Segment removes most of a tone's energy under 300 Hz.
-- [ ] Seam A: Pitch +12 moves 440 Hz to about 880 Hz at the same length.
-- [ ] Seam A: Echo is heard after the tone stops within the Segment, but not past the Segment's end.
-- [ ] Seam A: a media Segment with effects works, and so does a Segment with effects between plain ones, keeping its timing at a join and under a Transition.
-- [ ] Refusals cover an unknown id, an unknown key, an out-of-range value and a stack on a Freeze frame, through the API and through MCP.
-- [ ] `list_assets(kind="audio_effects")`, `dry_run` stacks and the instructions text are in place.
-- [ ] Each catalogue entry runs at its default, minimum and maximum over a 1 s tone and keeps the input's length.
+- [x] Segments accept `audio_effects`. Stored Candidates plan and render exactly as before (the existing command fixture is unchanged).
+- [x] The catalogue registry holds Telephone, Echo and Pitch. It validates and fills defaults, and a disabled entry adds nothing.
+- [x] Seam A: Telephone on a Source Segment removes most of a tone's energy under 300 Hz.
+- [x] Seam A: Pitch +12 moves 440 Hz to about 880 Hz at the same length.
+- [x] Seam A: Echo is heard after the tone stops within the Segment, but not past the Segment's end.
+- [x] Seam A: a media Segment with effects works, and so does a Segment with effects between plain ones, keeping its timing at a join and under a Transition.
+- [x] Refusals cover an unknown id, an unknown key, an out-of-range value and a stack on a Freeze frame, through the API and through MCP.
+- [x] `list_assets(kind="audio_effects")`, `dry_run` stacks and the instructions text are in place.
+- [x] Each catalogue entry runs at its default, minimum and maximum over a 1 s tone and keeps the input's length.

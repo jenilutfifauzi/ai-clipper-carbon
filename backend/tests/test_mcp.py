@@ -55,7 +55,9 @@ KITA_SOAL = (1.6, 2.6)
 # and merge_candidate_items' parameters, both referring to the Grade schemas already there (79_648).
 # Raised from 80_000 for Adjustment Layers (color-adjust/07): `adjustment_layers` in edit_candidate's
 # changes and merge_candidate_items' parameters, each with its Grade (82_315).
-TOOLS_BUDGET_BYTES = 82_800
+# Raised from 82_800 for Audio Effects (audio-effects/01): `segments[].audio_effects` in
+# edit_candidate's and merge_candidate_items' schemas, and list_assets' kind "audio_effects" (83_670).
+TOOLS_BUDGET_BYTES = 84_100
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

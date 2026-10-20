@@ -128,6 +128,7 @@ from typing import Literal, NamedTuple
 import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
+from app.audio_effects import effect_chain
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
@@ -591,10 +592,11 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     """The input options that read the Source (its one range, or each Segment's in order, from the
     Source or from its video in `files`: inputs 0, 1, ...), the filters that join the Segments'
     sounds (none for one range), and the link the Clip's sound is then heard from. With videos among
-    the Segments, a Segment's own volume, Speed or fades, a Muted one, or Transitions, each Segment's
-    sound is first played at its Speed (`speed_filters`), set to its volume (a Source Segment's also
-    to the Clip's own, which the mix then leaves) and faded (`_fades`) in one format, and a video
-    without sound, a Freeze frame and a Muted Segment give silence."""
+    the Segments, a Segment's own volume, Speed, fades or Audio Effects, a Muted one, or Transitions,
+    each Segment's sound is first played at its Speed (`speed_filters`), through its Audio Effects
+    (`effect_chain`, cut at its end), set to its volume (a Source Segment's also to the Clip's own,
+    which the mix then leaves) and faded (`_fades`) in one format, and a video without sound, a
+    Freeze frame and a Muted Segment give silence."""
     if not plan.segments:
         return [*_range(plan), "-i", str(source)], "", "[0:a:0]"
     inputs = []
@@ -605,7 +607,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     count = len(plan.segments)
     plain = all(
         segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.gain
-        and not (segment.fade_in or segment.fade_out) and not segment.muted
+        and not (segment.fade_in or segment.fade_out) and not segment.muted and not segment.audio_effects
         for segment in plan.segments
     )
     if plain and not plan.transitions:
@@ -617,10 +619,13 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
             chains.append(f"anullsrc=r={rate}:cl=stereo,atrim=duration={segment.time.length:.3f}[a{i}]")
             continue
         sped = speed_filters(segment.speed, segment.pitch, rate)
-        faded = _fades(segment.fade_in, segment.fade_out, round(segment.end - segment.start, 3))
+        length = round(segment.end - segment.start, 3)
+        faded = _fades(segment.fade_in, segment.fade_out, length)
+        # Its Audio Effects (docs/adr/0017) after its Speed, cut at its end, before its volume and fades.
+        effected = effect_chain(segment.audio_effects, rate, length)
         # Its time on the Timeline from 0 at its start (a Transition's overlap included), which its
-        # Keyframes and fades are in.
-        zeroed = [*sped, "asetpts=PTS-STARTPTS"] if segment.gain or faded else sped
+        # Keyframes, fades and Audio Effects are in.
+        zeroed = [*sped, "asetpts=PTS-STARTPTS", *effected] if segment.gain or faded or effected else sped
         # The Source's at the Clip's own volume too (`own_volume`), a keyed one's after its Keyframes.
         own = own_volume(segment, plan.source_volume)
         if segment.gain:

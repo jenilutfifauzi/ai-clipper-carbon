@@ -8,6 +8,7 @@ from typing import Annotated, Any, NamedTuple
 
 from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
 
+from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect, checked_effects
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
 # Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
@@ -776,7 +777,8 @@ class Segment:
     has: the Source is framed by its Layouts), its own sound at `volume`. A Clip's Segments play in
     order, back to back. `id` names it in the editor. It may have `keys` (docs/adr/0008): a video's
     Segment for its Framing and sound, a Segment of the Source for its sound only.
-    With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent."""
+    With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent.
+    Its sound is heard through its stack of `audio_effects` (docs/adr/0017)."""
 
     id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
@@ -807,6 +809,9 @@ class Segment:
     # Its colour (docs/adr/0013): its whole frame (panels, picture and Background) graded before the
     # joins, so that a Transition blends graded pictures. Neutral in one saved before Grades.
     grade: Grade = Grade()
+    # Its sound's Audio Effects (docs/adr/0017), in order, after its Speed and Reverse and before its
+    # volume, Keyframes and fades; each setting filled in once checked. Empty in one saved before them.
+    audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
@@ -817,11 +822,12 @@ class Segment:
             _check_held(self)
         length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
+        object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Segment {self.id}"))
 
 
 def _check_held(segment: Segment) -> None:
     """ValueError unless a Freeze frame's other fields are a held frame's: its `end` at its `start`,
-    at 1x, forwards, and no volume Keyframes nor fades (it is silent)."""
+    at 1x, forwards, and no volume Keyframes, fades nor Audio Effects (it is silent)."""
     if segment.end != segment.start:
         raise ValueError(f"Segment {segment.id} holds the frame at its start for {segment.hold:g} s: its end must equal its start")
     if segment.speed != 1 or segment.pitch or segment.reverse:
@@ -830,6 +836,8 @@ def _check_held(segment: Segment) -> None:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no volume Keyframes")
     if segment.fade_in or segment.fade_out:
         raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no fades")
+    if segment.audio_effects:
+        raise ValueError(f"Segment {segment.id} is a Freeze frame (hold), which is silent: it has no audio effects")
 
 
 @dataclass(frozen=True)

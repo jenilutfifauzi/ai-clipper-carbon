@@ -957,6 +957,8 @@ export interface SegmentPlan extends Retiming {
   muted?: boolean;
   // Its Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
   grade?: Grade;
+  // Its sound's enabled Audio Effects (ADR 0017), in order.
+  audio_effects?: AudioEffect[];
 }
 
 export interface RenderPlan {
@@ -1104,6 +1106,41 @@ export interface ClipSegment extends Retiming {
   muted?: boolean;
   // Its colour (ADR 0013): its whole frame graded before the joins. Neutral when missing.
   grade?: Grade;
+  // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume and fades.
+  // Empty when missing.
+  audio_effects?: AudioEffect[];
+}
+
+// An Audio Effect applied to an item's sound (GLOSSARY: Audio Effect; ADR 0017): a catalogue
+// effect's `id`, its settings by key (the server fills in each one left out with its default), and
+// whether it is heard; off, it stays in the stack.
+export interface AudioEffect {
+  id: string;
+  params: Record<string, number>;
+  enabled: boolean;
+}
+
+// One of a catalogue effect's settings: a number from `min` to `max` in steps of `step`; the
+// `intensity` one is the slider of the effect's row in the stack.
+export interface AudioEffectSetting {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  default: number;
+  step: number;
+  unit: string;
+  intensity: boolean;
+}
+
+// An entry of the Audio Effects catalogue (backend/app/audio_effects.py), on its group's shelf at `order`.
+export interface AudioEffectKind {
+  id: string;
+  name: string;
+  group: "Clean" | "Voice" | "Tone" | "Space";
+  order: number;
+  description: string;
+  settings: AudioEffectSetting[];
 }
 
 // The dials of a Grade (GLOSSARY: Adjust), in Concat's ranges, each neutral by default: temperature
@@ -1606,6 +1643,8 @@ export const api = {
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
+  // Every Audio Effect an item's stack can name, by group and order.
+  listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
   // Every Look, by its order.
   listLooks: () => request<Look[]>("/looks"),
   // A .cube file (a 3D table, 2 to 65 a side) as a new Imported Look; rejects naming its bad line.

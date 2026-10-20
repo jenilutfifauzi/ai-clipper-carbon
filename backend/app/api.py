@@ -64,6 +64,7 @@ from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, 
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
+from app import audio_effects
 from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
@@ -1366,6 +1367,14 @@ def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetSto
                 where=f"Text Preset {text_preset.name}",
             ))
     return uses
+
+
+@router.get("/audio-effects")
+def list_audio_effects() -> list[dict]:
+    """Every Audio Effect an item's stack can name (app/audio_effects.py), by group and order: its id,
+    name, group, order, description and settings (key, label, min, max, default, step, unit, and
+    whether it is the intensity its stack row shows)."""
+    return audio_effects.catalogue()
 
 
 @router.get("/looks")

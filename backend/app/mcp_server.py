@@ -282,6 +282,16 @@ Edits:
   longer than the Segment, both shrink in proportion. They count from where it starts in the Clip,
   a Transition's overlap included, and multiply the crossfade. A Freeze frame has none. The dry run
   lists them under `segments`.
+- A Segment's `audio_effects` (of the episode or a video) is its sound's ordered stack of Audio
+  Effects, each {{id, params, enabled}}: id from list_assets kind "audio_effects" (with each
+  setting's range and default), params a setting's key to its value (one left out takes its
+  default), enabled false to keep it in the stack unheard. Order is heard: they run in turn after the
+  Segment's Speed and Reverse and before its volume, Keyframes and fades, under a Transition before
+  the crossfade, and each is cut at the Segment's end (an echo's tail too; fade it out to soften
+  that), so its length never changes. The Clip's final loudness still runs on the whole mix. An
+  unknown id or setting or a value out of range is refused; a Freeze frame has none.
+  merge_candidate_items replaces a Segment's stack as a whole. The dry run lists each Segment's
+  enabled ones under `segments`.
 - A Segment's `grade` (of the episode or a video) colours its whole frame (panels, picture and
   Background), before the joins, so a Transition blends two graded pictures. Its `adjust` dials:
   temperature {TEMPERATURE_K[0]}..{TEMPERATURE_K[1]} K (6500 as shot; higher is warmer), tint (-100 green..100 magenta),
@@ -871,11 +881,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return {"deleted": preset_id}
 
     @tool(read_only=True)
-    async def list_assets(kind: Literal["fonts", "logos", "media", "looks"] | None = None) -> dict:
+    async def list_assets(kind: Literal["fonts", "logos", "media", "looks", "audio_effects"] | None = None) -> dict:
         """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, the
-        Media Library (songs, videos and images for Music Clips, Overlays and Segments) and the Looks
+        Media Library (songs, videos and images for Music Clips, Overlays and Segments), the Looks
         a grade's `look` names (id, name, category, Adjust values; has_table for an Imported Look's
-        .cube): all, or one `kind`."""
+        .cube) and the Audio Effects a sound's `audio_effects` name (id, name, group, settings with
+        their ranges and defaults): all, or one `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
             listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
@@ -885,6 +896,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
             listed["media"] = await api("GET", "/media")
         if kind in (None, "looks"):
             listed["looks"] = [_look(look) for look in await api("GET", "/looks")]
+        if kind in (None, "audio_effects"):
+            listed["audio_effects"] = await api("GET", "/audio-effects")
         return listed
 
     @tool()
@@ -1129,7 +1142,7 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`), its fades, its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
+    (`copied`), its fades, its Audio Effects (`_effects_view`), its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, each Adjustment
     Layer's span, strength, fades and Grade, what of its video an Overlay shows
@@ -1164,6 +1177,7 @@ def _plan_view(
                 "speed": segment["speed"] if segment["speed"] != 1 else None, "pitch": segment["pitch"] or None,
                 "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
                 "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
+                "audio_effects": _effects_view(segment.get("audio_effects", [])),
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
                 "grade": _grade_view(segment["grade"]),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
@@ -1221,6 +1235,12 @@ def _plan_view(
         ]}),
         "words": [_compact({**_times(word, "text", "start", "end", "at"), "media": word["media"], "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _effects_view(stack: list[dict]) -> list[dict] | None:
+    """An item's planned Audio Effects as an agent reads them, in order, each its id and settings (the
+    plan's are the enabled ones); None for none."""
+    return [{"id": applied["id"], "params": applied["params"]} for applied in stack] or None
 
 
 def _grade_view(grade: dict) -> dict | None:
