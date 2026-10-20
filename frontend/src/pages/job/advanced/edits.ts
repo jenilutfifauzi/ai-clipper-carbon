@@ -6,7 +6,8 @@ import { same } from "../editor/merge";
  * What the Advanced Edit changes of a Candidate, saved and undone together. Its Main Track is always
  * its Segments here, one for a Clip that isn't cut (the backend keeps that one as `start` and `end`).
  * The hook's words and the captions' (Word Edits), and their places and sizes (Style Overrides), are
- * changed on the preview; the Layouts (the clip's, and its Scenes' Layout Overrides) in the inspector.
+ * changed on the preview, single Cues' timing (Cue Edits) on the Captions Track; the captions' look (the Style Preset and the Style Overrides) and the Layouts
+ * (the clip's, and its Scenes' Layout Overrides) in the inspector.
  */
 export type AdvancedEdits = Pick<
   Candidate,
@@ -14,8 +15,10 @@ export type AdvancedEdits = Pick<
   | "hook_secs"
   | "hook_text"
   | "hook_kicker"
+  | "preset_id"
   | "style_overrides"
   | "word_edits"
+  | "cue_edits"
   | "layout"
   | "framing"
   | "layout_overrides"
@@ -34,8 +37,10 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     hook_secs,
     hook_text,
     hook_kicker,
+    preset_id,
     style_overrides,
     word_edits,
+    cue_edits,
     layout,
     framing,
     layout_overrides,
@@ -51,8 +56,11 @@ export function editsOf(candidate: Candidate): AdvancedEdits {
     hook_secs,
     hook_text,
     hook_kicker,
+    preset_id,
     style_overrides,
     word_edits,
+    // None in a Candidate from before them.
+    cue_edits: cue_edits ?? [],
     layout,
     framing,
     layout_overrides,

@@ -1,13 +1,17 @@
 import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
-import { useContext, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { CaptionStylePanel } from "../editor/CaptionStylePanel";
+import { PresetBar } from "../editor/PresetBar";
 import { usePlayback, type Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { isPlaced, unplacedOverrides } from "../editor/placing";
+import { StyleFieldsSkeleton } from "../editor/StyleFields";
+import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type SpeedRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setDuck, setFade, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -16,6 +20,8 @@ import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
 import { OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
+import { CueFields } from "./CueFields";
+import type { TrackKind } from "./trackState";
 import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 
@@ -30,6 +36,8 @@ export function Inspector({
   duration,
   preview,
   fonts,
+  captionStyle,
+  presetsError,
   actions,
   mediaById,
   sourceLength,
@@ -46,6 +54,9 @@ export function Inspector({
   copyOf,
   onHold,
   cropMode,
+  locked = [],
+  onCue,
+  captionsOf,
   detaching,
 }: {
   pick: Pick;
@@ -53,6 +64,9 @@ export function Inspector({
   duration: number;
   preview: PreviewPlan | null;
   fonts: FontInfo[] | null;
+  // The Caption Style panel's and the Preset bar's controls, writing the edits; null while the Presets load.
+  captionStyle: StyleControls | null;
+  presetsError: string | null;
   actions: ItemActions | null;
   mediaById: Map<string, MediaItem>;
   // The Source's length, which a Music Clip of the Source reads within.
@@ -76,6 +90,12 @@ export function Inspector({
   onHold: (id: string, hold: number) => void;
   // What opens Crop mode on the stage for a picked Segment's or Overlay's picture: none where it can't be.
   cropMode?: (kind: "segment" | "overlay", id: string) => (() => void) | undefined;
+  // The locked Tracks: a picked Cue's actions are refused on a locked Captions Track.
+  locked?: TrackKind[];
+  // A picked Cue's action applied: its edits as one change (of `group`) and what it picks.
+  onCue: (outcome: Outcome, group?: string) => void;
+  // A video's Segment's caption controls (MediaCaptionFields).
+  captionsOf?: (segment: ClipSegment, item: MediaItem) => ReactNode;
   // Detach and Reattach of a Segment's sound (GLOSSARY.md).
   detaching?: Detacher;
 }) {
@@ -167,6 +187,7 @@ export function Inspector({
         onReattach={detaching?.canReattach(segment.id) ? () => detaching.reattach(segment.id) : undefined}
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
+        captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
         scene={
           <SceneFields
             plan={preview?.plan ?? null}
@@ -269,22 +290,46 @@ export function Inspector({
     );
   }
   if (pick?.kind === "captions") {
-    return (
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="font-semibold">Captions</h2>
-          <Hint more="Drag one to move them all, or a corner to resize them; arrow keys nudge them. Their look is changed in the clip editor.">
-            Double-click a line on the preview to correct its words.
-          </Hint>
-        </div>
-        <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
-      </div>
-    );
+    return <CaptionsFields edits={edits} style={captionStyle} error={presetsError} fonts={fonts} onEdits={onEdits} />;
+  }
+  if (pick?.kind === "cue") {
+    return <CueFields cueKey={pick.key} edits={edits} preview={preview} locked={locked} playback={playback} onCue={onCue} />;
   }
   return (
     <div className="flex flex-col gap-1">
       <h2 className="font-semibold">Nothing selected</h2>
       <p className="text-sm text-pretty text-muted">Select an item on the timeline or the preview to change it.</p>
+    </div>
+  );
+}
+
+/**
+ * The picked captions: their Style Preset and their whole Caption Style, the clip editor's Preset bar
+ * and panel, each change one step of undo; and "Reset position".
+ */
+function CaptionsFields({
+  edits,
+  style,
+  error,
+  fonts,
+  onEdits,
+}: {
+  edits: AdvancedEdits;
+  style: StyleControls | null;
+  error: string | null;
+  fonts: FontInfo[] | null;
+  onEdits: (edits: AdvancedEdits, group?: string) => void;
+}) {
+  const [more, setMore] = useState(false);
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="font-semibold">Captions</h2>
+        <Hint more="Drag one to move them all, or a corner to resize them; arrow keys nudge them.">Double-click a line on the preview to correct its words.</Hint>
+      </div>
+      <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
+      <PresetBar style={style} error={error} />
+      {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector /> : !error && <StyleFieldsSkeleton />}
     </div>
   );
 }

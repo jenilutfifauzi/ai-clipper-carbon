@@ -1,10 +1,13 @@
 import { Pause, Play, Repeat, SkipForward } from "lucide-react";
 import { createRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
+  CUE_MAX_SCALE,
+  CUE_MIN_SCALE,
   logoUrl,
   type Box,
-  type CaptionEvent,
   type CaptionStyle,
+  type Cue,
+  type CueKey,
   type DropShadow,
   type Crop,
   type FontInfo,
@@ -38,6 +41,7 @@ import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
+import { cueLineMiddle, cueStageId, cueWordAt, cueWords } from "./cues";
 import type { GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 
@@ -557,7 +561,7 @@ function useWatermarkDrag(
  * click picks (with Shift, Cmd or Ctrl, `toggle`), where a move or resize puts one, and what
  * retyping one saves.
  */
-export type StageId = "hook" | "captions" | `text:${string}` | `shape:${string}` | `overlay:${string}` | `picture:${number}`;
+export type StageId = "hook" | "captions" | `cue:${string}` | `text:${string}` | `shape:${string}` | `overlay:${string}` | `picture:${number}`;
 
 // What is picked on the stage by its id: all but the picture behind, which says itself (PictureTarget).
 export type PickedOnStage = Exclude<StageId, `picture:${number}`>;
@@ -586,6 +590,9 @@ export interface StageControls {
   // Moved to (x, y) in output pixels: the middle of a caption line, the middle and the top of the
   // hook; and resized to `size` (null: kept). Each gesture is one `group` of changes.
   onPlace: (id: "hook" | "captions", place: Place, group: string) => void;
+  // With it, each Cue is picked, moved and resized on its own ("cue:<media>@<at>": cueStageId),
+  // unless the captions are picked: where a move or resize (from its size as shown) puts it.
+  cues?: { onPlace: (key: CueKey, place: Place, group: string) => void };
   // With it, a double-click (or Enter) retypes the hook, its Kicker, a caption line or a Text Layer.
   retype?: Retype;
   // The Text Layers (their Track unlocked), pictures with corners and a rotate handle: each one's
@@ -650,19 +657,43 @@ function stageItems(
   const items: StageItem[] = [];
   const middle = (area: Box) => ({ x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) });
   const captionFont = fontById.get(plan.caption_style.font);
-  if (plan.captions.length && captionFont && !controls.fixed?.includes("captions")) {
+  const cues = controls.cues;
+  if (plan.captions.length && captionFont && !controls.fixed?.includes("captions") && cues && !controls.selected.includes("captions")) {
+    // Each Cue on its own: its entries either side of a Layout change are one.
+    const style = plan.caption_style;
+    const ids = plan.captions.map((cue) => cueStageId(cue.key));
+    plan.captions.forEach((cue, index) => {
+      if (index > 0 && ids[index - 1] === ids[index]) return;
+      // Resized from its size as shown, which a line too wide for its area holds back as it grows.
+      const set = cue.size;
+      items.push({
+        id: ids[index],
+        label: `Caption: ${cue.plain.join(" ")}`,
+        shows: plan.captions.flatMap((other, i) => (ids[i] === ids[index] ? [{ start: other.start, end: other.end, area: captionGrab(other, captionFont, style) }] : [])),
+        size: { now: set, min: Math.min(set, style.size * CUE_MIN_SCALE), max: Math.max(set, style.size * CUE_MAX_SCALE) },
+        centreY: CAPTION_CENTRES,
+        onPlace: (area, size, group) => cues.onPlace(cue.key, { ...middle(area), size }, group),
+        onEdit:
+          edit &&
+          (() => {
+            const shown = plan.captions.findIndex((other, i) => ids[i] === ids[index] && other.start <= now() && now() < other.end);
+            edit({ kind: "captions", line: shown === -1 ? index : shown });
+          }),
+      });
+    });
+  } else if (plan.captions.length && captionFont && !controls.fixed?.includes("captions")) {
     const style = plan.caption_style;
     items.push({
       id: "captions",
       label: "Captions (every line moves together)",
-      shows: plan.captions.map((event) => ({ start: event.start, end: event.end, area: captionGrab(event, captionFont, style) })),
+      shows: plan.captions.map((cue) => ({ start: cue.start, end: cue.end, area: captionGrab(cue, captionFont, style) })),
       size: { now: style.size, ...CAPTION_SIZES },
       centreY: CAPTION_CENTRES,
       onPlace: (area, size, group) => controls.onPlace("captions", { ...middle(area), size }, group),
       onEdit:
         edit &&
         (() => {
-          const line = plan.captions.findIndex((event) => event.start <= now() && now() < event.end);
+          const line = plan.captions.findIndex((cue) => cue.start <= now() && now() < cue.end);
           if (line !== -1) edit({ kind: "captions", line });
         }),
     });
@@ -688,16 +719,17 @@ function stageItems(
   return items;
 }
 
-// What can be grabbed of a caption line: its letters (and outline and tracking) as set, padded, around its middle.
-function captionGrab(event: CaptionEvent, font: FontInfo, style: CaptionStyle): Box {
-  let width = event.area.width;
+// What can be grabbed of a Cue: its lines' letters (and outline and tracking) as set, padded, around its middle.
+function captionGrab(cue: Cue, font: FontInfo, style: CaptionStyle): Box {
+  let width = cue.area.width;
   if (measure) {
-    measure.font = `${cssFontSize(font, event.size)}px "${fontFamily(font.id)}"`;
-    const letters = trackedWidth(event.text, (text) => measure.measureText(text).width, style.tracking);
-    width = Math.min(letters + 2 * style.outline + 2 * CAPTION_GRAB_PAD, event.area.width);
+    measure.font = `${cssFontSize(font, cue.size)}px "${fontFamily(font.id)}"`;
+    const lines = cue.lines.map((line) => line.map((word) => word.text).join(" "));
+    const letters = Math.max(...lines.map((line) => trackedWidth(line, (text) => measure.measureText(text).width, style.tracking)));
+    width = Math.min(letters + 2 * style.outline + 2 * CAPTION_GRAB_PAD, cue.area.width);
   }
-  const height = event.size + 2 * CAPTION_GRAB_PAD;
-  const { x, y } = { x: event.area.x + event.area.width / 2, y: event.area.y + event.area.height / 2 };
+  const height = cue.lines.length * cue.size + 2 * CAPTION_GRAB_PAD;
+  const { x, y } = { x: cue.area.x + cue.area.width / 2, y: cue.area.y + cue.area.height / 2 };
   return { x: Math.round(x - width / 2), y: Math.round(y - height / 2), width: Math.round(width), height: Math.round(height) };
 }
 
@@ -923,35 +955,42 @@ function SlotVideo({
 }
 
 /**
- * The caption line on screen, with its spoken Word highlighted as the Caption Style says, moved
- * while it is.
+ * The Cue on screen, with its spoken Word highlighted as the Caption Style says, moved while it is.
  */
 function Captions({ plan, font, playback, edit }: { plan: RenderPlan; font: FontInfo | undefined; playback: Playback; edit: StageEdit }) {
   const key = useShown(playback, (time) => {
-    const event = plan.captions.findIndex((caption) => caption.start <= time && time < caption.end);
-    if (event === -1) return "";
-    const word = plan.captions[event].words.findIndex((w) => w.start <= time && time < w.end);
-    return `${event}:${word}`;
+    const index = plan.captions.findIndex((cue) => cue.start <= time && time < cue.end);
+    if (index === -1) return "";
+    const word = cueWords(plan.captions[index]).findIndex((w) => w.start <= time && time < w.end);
+    return `${index}:${word}`;
   });
   if (!key || !font) return null;
-  const [event, word] = key.split(":").map(Number);
-  const line = plan.captions[event];
+  const [index, word] = key.split(":").map(Number);
+  const cue = plan.captions[index];
   return (
-    <g transform={edit.transform("captions", line.area)}>
-      <CaptionLine event={line} active={word} plan={plan} font={font} />
+    <g transform={edit.transform(cueStageId(cue.key), cue.area) ?? edit.transform("captions", cue.area)}>
+      <CaptionLines cue={cue} active={word} plan={plan} font={font} />
     </g>
   );
 }
 
-function CaptionLine({ event, active, plan, font }: { event: CaptionEvent; active: number; plan: RenderPlan; font: FontInfo }) {
+/** A Cue's lines, one under another, its Word `active` (counted across them) highlighted. */
+function CaptionLines({ cue, active, plan, font }: { cue: Cue; active: number; plan: RenderPlan; font: FontInfo }) {
+  const [row, index] = cueWordAt(cue, active);
+  return cue.lines.map((_, i) => (
+    <CaptionLine key={i} cue={cue} row={i} active={i === row ? index : -1} plan={plan} font={font} />
+  ));
+}
+
+function CaptionLine({ cue, row, active, plan, font }: { cue: Cue; row: number; active: number; plan: RenderPlan; font: FontInfo }) {
   const style = plan.caption_style;
-  const { area, size } = event;
+  const { area, size } = cue;
   const centreX = area.x + area.width / 2;
-  // libass centres the line's ascent-plus-descent box, which is the font size, on its position.
-  const baseline = area.y + area.height / 2 - size / 2 + (font.ascent / font.units) * size;
+  // libass centres each line's ascent-plus-descent box, which is the font size, on its middle.
+  const baseline = cueLineMiddle(cue, row) - size / 2 + (font.ascent / font.units) * size;
   const fontSize = cssFontSize(font, size);
   const family = fontFamily(font.id);
-  const words = event.words.map((word) => word.text);
+  const words = cue.lines[row].map((word) => word.text);
   const tspans = (colours: boolean) =>
     words.map((text, i) => (
       <tspan key={i} fill={colours && i === active && style.highlight === "colour" ? style.active_colour : undefined}>

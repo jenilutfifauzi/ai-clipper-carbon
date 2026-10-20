@@ -126,6 +126,7 @@ export function SegmentFields({
   onDetach,
   onReattach,
   scene,
+  captions,
   playback,
   span,
   copy,
@@ -160,6 +161,8 @@ export function SegmentFields({
   onReattach?: () => void;
   // A Segment of the episode's: how its Scene at the playhead is framed.
   scene?: ReactNode;
+  // A video's Segment's captions: its Captions switch, its video's language and its Words status.
+  captions?: ReactNode;
   playback: Playback;
   // Where it plays on the Timeline (keying.ts' segmentSpan), which its Keyframes are set in.
   span: KeySpan | null;
@@ -240,6 +243,7 @@ export function SegmentFields({
             </>
           )}
           {!held && item?.has_audio !== false && <FadeFields segment={segment} onFade={onFade} />}
+          {!held && !segment.reverse && item?.has_audio !== false && captions}
         </>
       ) : (
         <>

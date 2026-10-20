@@ -10,6 +10,13 @@ The clip editor can also queue a Candidate to be prepared: its Words transcribed
 analysed as a render would, without an encode, so that its preview (app/editor.py) shows the Clip's
 own captions and Scenes. Preparations run before the queued Clips.
 
+A video from the Media Library placed as a Segment is captioned from its Media Words
+(app/media_words.py), unless its Captions switch is off: the item transcribed whole, once per language
+(its own, else the Job's) and Whisper model, on the same Whisper worker, by the first preparation or
+render that needs it, or by a Retry or "Transcribe again" queued for the Job (`transcribe_media`),
+which runs before its preparations. A failed transcription is remembered until a Retry, and fails the
+render of a Clip that shows the item, naming it.
+
 A Clip is captioned (unless its Job's captions are off) from a fresh transcription of its own range
 and CAPTION_MARGIN_SECS either side, so that Whisper hears its first and last Words whole, in the
 Job's language and under the watchdog. The Words are saved with the Job and reused while the Clip's
@@ -32,16 +39,18 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
-from app.candidates import Candidate, Framing, Layout, Segment
-from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, clip_files
+from app.candidates import Candidate, Framing, Layout, Segment, WordEdit
+from app.caption_files import CaptionFormat, caption_file
+from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.encoding import ExportSettings
 from app.export_presets import EXPORT_PRESETS_FILE, ExportPresetStore
-from app.jobs import Job, JobStatus, JobStore, JobWarning
+from app.jobs import Job, JobConflict, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
-from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaStore
-from app.planner import WORD_EDIT_REACH_SECS, Join, MediaInfo, SegmentInput, RenderPlan, plan_render, reframes
+from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
+from app.planner import Join, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
 from app.renderer import Renderer, RenderStopped, picture_layouts
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
@@ -101,6 +110,36 @@ def saved_words(job_dir: Path, start: float, end: float, language: str, model: s
     except ValidationError:
         return None
     return saved.words if (saved.start, saved.end, saved.language, saved.model) == (start, end, language, model) else None
+
+
+def media_language(job: Job, item: MediaItem) -> str:
+    """The language the item's Media Words are transcribed in for the Job: the item's own, else the Job's."""
+    return item.language or job.options.language
+
+
+def has_media_words(item: MediaItem) -> bool:
+    """Whether the item can have Media Words: a video with sound."""
+    return item.kind is MediaKind.VIDEO and item.has_audio
+
+
+def captioned_media(segment: Segment, item: MediaItem | None) -> bool:
+    """Whether the media Segment is captioned from its item's Media Words: its item's a video with
+    sound (`has_media_words`), played forwards, not held as a Freeze frame, and its Captions switch
+    not off."""
+    return (
+        segment.media is not None and item is not None and has_media_words(item)
+        and segment.hold is None and not segment.reverse and segment.captions is not False
+    )
+
+
+def media_segment_words(words: list[Word], segment: Segment) -> list[Word]:
+    """The Words of a media Segment from its item's Media Words (in seconds into the item), as a Source
+    Segment's are given: those within CAPTION_MARGIN_SECS either side of its range, in seconds into it."""
+    return [
+        Word(word.text, round(word.start - segment.start, 3), round(word.end - segment.start, 3))
+        for word in words
+        if word.end > segment.start - CAPTION_MARGIN_SECS and word.start < segment.end + CAPTION_MARGIN_SECS
+    ]
 
 
 class Analysis(StrEnum):
@@ -222,11 +261,13 @@ def candidate_plan(
     passed through), both in seconds into the Segment (a Freeze frame's analysis into its
     `analysed_range`); its Watermark's Logo from `logos`, and the
     songs of its music and the videos of its Segments from `media` (a video that isn't there is left
-    out, and so is a Transition into or out of it). A video's Segment has no captions. Its Word Edits
-    and Layout Overrides, on the Source's timeline, apply in every Segment that shows their time
-    (docs/adr/0002-segments-and-timeline-time.md). Not `captioned`, its `words` are heard but not
-    captioned: they and its Music Clips of the Source's (`music`, `music_words`) are speech, which
-    ducks its music (docs/adr/0016).
+    out, and so is a Transition into or out of it). A video's Segment is captioned with its item's
+    Media Words in `words` (`media_segment_words`; [] for none). Its Layout Overrides, on the Source's
+    timeline, apply in every Source Segment that shows their time
+    (docs/adr/0002-segments-and-timeline-time.md); its Word Edits and Cue Edits in every Segment that
+    shows their time of their timeline, the Source's or an item's (`edit_shown`, docs/adr/0020). Not `captioned`, its
+    `words` are heard but not captioned: they and its Music Clips of the Source's (`music`,
+    `music_words`) are speech, which ducks its music (docs/adr/0016).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
@@ -243,6 +284,7 @@ def candidate_plan(
         source_volume=candidate.source_volume,
         overlays=candidate.overlays,
         media_info=_info(media, candidate.media_ids()),
+        cue_edits=candidate.cue_edits,
         fps=fps,
         captioned=captioned,
         music_words=music,
@@ -253,7 +295,7 @@ def candidate_plan(
             candidate.start, candidate.end, source,
             scenes=analysis.scenes if analysis else None, faces=analysis.frames if analysis else None,
             words=None if words is None else words[0],
-            word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits],
+            word_edits=[replace(edit, at=edit.at - candidate.start) for edit in candidate.word_edits if edit.media is None],
             layout_overrides=[replace(o, at=o.at - candidate.start) for o in candidate.layout_overrides],
             **common,
         )
@@ -274,7 +316,8 @@ def candidate_plan(
             inputs.append(SegmentInput(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
                 framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
-                words=None if words is None else [], join=join, keys=segment.keys, id=segment.id,
+                words=None if words is None else words[i], word_edits=shown_edits(candidate.word_edits, segment),
+                join=join, keys=segment.keys, id=segment.id,
                 speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
                 fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted,
             ))
@@ -289,11 +332,7 @@ def candidate_plan(
             words=None if words is None else words[i],
             volume=segment.volume,
             keys=segment.keys,
-            word_edits=[
-                replace(edit, at=round(edit.at - segment.start, 3))
-                for edit in candidate.word_edits
-                if segment.start - WORD_EDIT_REACH_SECS <= edit.at <= segment.end + WORD_EDIT_REACH_SECS
-            ],
+            word_edits=shown_edits(candidate.word_edits, segment),
             join=join,
             id=segment.id,
             speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
@@ -301,6 +340,16 @@ def candidate_plan(
             analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
+
+
+def shown_edits(edits: list[WordEdit], segment: Segment) -> list[WordEdit]:
+    """The Word Edits that can apply in `segment`, in seconds into its range: those of its own timeline
+    (the Source's, or its item's) within WORD_EDIT_REACH_SECS of its range (`edit_shown`)."""
+    return [
+        replace(edit, at=round(edit.at - segment.start, 3))
+        for edit in edits
+        if edit_shown(edit, segment.media, segment.start, segment.end)
+    ]
 
 
 def played_files(
@@ -371,13 +420,17 @@ def drawing_inputs(
 
 
 class Renders:
-    def __init__(self, store: JobStore, settings: Settings, transcriber: Transcriber) -> None:
+    def __init__(
+        self, store: JobStore, settings: Settings, transcriber: Transcriber, media_words: MediaWordsStore | None = None
+    ) -> None:
         self.store = store
         self.settings = settings
         self.presets = PresetStore(settings.data_dir / PRESETS_FILE)
         self.export_presets = ExportPresetStore(settings.data_dir / EXPORT_PRESETS_FILE)
         self.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
         self.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
+        # Shared with the API, which reports what is queued.
+        self.media_words = media_words or MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
         self.analyzer = Analyzer(settings.ffmpeg_bin, BLAZE_FACE_MODEL, settings.analysis)
         self.transcriber = transcriber
@@ -421,8 +474,9 @@ class Renders:
 
     def prepare(self, job_id: str, candidate_id: str) -> bool:
         """Queue the Candidate to be prepared for the editor: its Words transcribed (unless the Job's
-        captions are off) and its range analysed, as its render would, without an encode. Nothing is
-        queued when both are saved already. Returns whether the Job has just started rendering, so
+        captions are off), the Media Words of its media Segments' items among them, and its range
+        analysed, as its render would, without an encode. Nothing is queued when all are saved
+        already. Returns whether the Job has just started rendering, so
         that it needs running. Raises JobConflict unless the Job is in review or rendering, and
         CandidateNotFound."""
 
@@ -432,6 +486,8 @@ class Renders:
                 raise CandidateNotFound(candidate_id)
             if candidate_id in job.preparing or self.prepared(job, candidate):
                 return clips, {}, False
+            for item in self.missing_media_words(job, candidate):
+                self.media_words.queue(item.id, media_language(job, item))
             changes: dict = {"preparing": [*job.preparing, candidate_id]}
             starting = job.status is JobStatus.REVIEW
             if starting:
@@ -441,8 +497,8 @@ class Renders:
         return self.store.change_clips(job_id, queue, expect=RENDERABLE)
 
     def prepared(self, job: Job, candidate: Candidate) -> bool:
-        """Whether the Candidate's Words (when its Job is captioned) and the analysis it needs
-        (`needed_analysis`) are saved for its range as it is."""
+        """Whether the Candidate's Words (when its Job is captioned), its media Segments' Media Words
+        among them, and the analysis it needs (`needed_analysis`) are saved for its range as it is."""
         assert job.source is not None
         job_dir = self.store.job_dir(job.id)
         segments = candidate.source_segments()
@@ -450,7 +506,7 @@ class Renders:
             saved_words(job_dir, segment.start, segment.end, job.options.language, self.settings.whisper_model) is not None
             for segment in segments
             if segment.hold is None and not segment.reverse
-        )
+        ) and not self.missing_media_words(job, candidate)
         tuning, model = self.analyzer.tuning, self.analyzer.model.name
         needed = [(segment, needed_analysis(candidate, segment, job.source.metadata)) for segment in segments]
         duration = job.source.metadata.duration
@@ -460,6 +516,47 @@ class Renders:
             if wanted is not Analysis.NONE
         )
         return words and analysed
+
+    def transcribe_media(self, job_id: str, media_id: str, again: bool = False) -> bool:
+        """Queue the item's Media Words in its language for the Job to be transcribed in the Job's
+        turn, before its preparations: a Retry, which forgets a failure; with `again`, Transcribe
+        again, which replaces those saved. Nothing is queued when they are saved (without `again`).
+        Returns whether the Job has just started rendering, so that it needs running. Raises
+        JobConflict unless the Job is in review or rendering, or when its captions are off, and
+        MediaNotFound unless the item is a video with sound."""
+
+        def queue(job: Job, clips: list[Clip]) -> tuple[list[Clip], dict, bool]:
+            if not job.options.captions:
+                raise JobConflict(f"Job {job_id}'s captions are off")
+            item = self.media.get(media_id)
+            if not has_media_words(item):
+                raise MediaNotFound(media_id)
+            language = media_language(job, item)
+            self.media_words.retry(item.id, language, again)
+            if self.media_words.status(item.id, language) is not MediaWordsStatus.PENDING:
+                return clips, {}, False
+            changes: dict = {"transcribing": list(dict.fromkeys([*job.transcribing, media_id]))}
+            starting = job.status is JobStatus.REVIEW
+            if starting:
+                changes |= {"status": JobStatus.RENDERING, "stage": JobStatus.RENDERING}
+            return clips, changes, starting
+
+        return self.store.change_clips(job_id, queue, expect=RENDERABLE)
+
+    def missing_media_words(self, job: Job, candidate: Candidate) -> list[MediaItem]:
+        """The items of the Candidate's captioned media Segments (`captioned_media`) whose Media Words
+        aren't saved in their language for the Job (or are to be transcribed again); none when its
+        captions are off. One whose transcription failed isn't missing: it waits for a Retry."""
+        if not job.options.captions:
+            return []
+        missing: dict[str, MediaItem] = {}
+        for segment in candidate.main_track():
+            item = self.media.find(segment.media) if segment.media else None
+            if item is not None and captioned_media(segment, item):
+                status = self.media_words.status(item.id, media_language(job, item))
+                if status not in (MediaWordsStatus.READY, MediaWordsStatus.FAILED):
+                    missing[item.id] = item
+        return list(missing.values())
 
     def run(self, job_id: str, rendered: Callable[[Clip, Candidate], None] = lambda clip, candidate: None) -> int:
         """Prepare the Job's queued Candidates, then render its queued Clips, one at a time, including
@@ -472,6 +569,9 @@ class Renders:
             try:
                 while (started := self._next(job_id, count)) is not None:
                     job, clip, candidate = started
+                    if isinstance(candidate, MediaItem):
+                        self._transcribe_media(job, candidate)
+                        continue
                     if clip is None:
                         self._prepare(job, candidate)
                         continue
@@ -500,13 +600,21 @@ class Renders:
         self.analyzer.stop()
         self.renderer.stop()
 
-    def _next(self, job_id: str, count: int) -> tuple[Job, Clip | None, Candidate] | None:
-        """The next thing to do: the first Candidate queued to be prepared, as it is now (with no
-        Clip; it stays queued until it is done); else the earliest queued Clip, started, with its
-        Candidate as it is now; or, with neither left, put the Job back in review. A Clip whose
-        Candidate is gone fails; a preparation whose Candidate is gone is dropped."""
+    def _next(self, job_id: str, count: int) -> tuple[Job, Clip | None, Candidate | MediaItem] | None:
+        """The next thing to do: the first item queued to have its Media Words transcribed (with no
+        Clip; it stays queued until it is done); else the first Candidate queued to be prepared, as
+        it is now (likewise); else the earliest queued Clip, started, with its Candidate as it is now;
+        or, with none left, put the Job back in review. A Clip whose Candidate is gone fails; a
+        preparation whose Candidate is gone, or a transcription whose item is, is dropped."""
 
-        def start(job: Job, clips: list[Clip]) -> tuple[list[Clip], dict, tuple[Job, Clip | None, Candidate] | None]:
+        def start(job: Job, clips: list[Clip]) -> tuple[list[Clip], dict, tuple[Job, Clip | None, Candidate | MediaItem] | None]:
+            items = [item for media_id in job.transcribing if (item := self.media.find(media_id)) is not None]
+            if items:
+                # Queued again in this process, for the editor, after a restart.
+                self.media_words.queue(items[0].id, media_language(job, items[0]))
+                message = f"Transcribing the video {items[0].name} for its captions"
+                changes = {"transcribing": [item.id for item in items], "progress": 0.0, "message": message}
+                return clips, changes, (job, None, items[0])
             candidates = {candidate.id: candidate for candidate in self.store.load_candidates(job_id) or []}
             preparing = [id for id in job.preparing if id in candidates]
             if preparing:
@@ -522,10 +630,24 @@ class Renders:
                 name = candidate.title or f"clip {candidate.id}"
                 message = f"Rendering clip {count + 1} of {count + len(queued)}: {name}"
                 return _put(clips, started), {"progress": 0.0, "message": message}, (job, started, candidate)
-            changes = {"status": JobStatus.REVIEW, "stage": None, "progress": None, "message": None, "preparing": []}
+            changes = {"status": JobStatus.REVIEW, "stage": None, "progress": None, "message": None, "preparing": [], "transcribing": []}
             return clips, changes, None
 
         return self.store.change_clips(job_id, start, expect={JobStatus.RENDERING})
+
+    def _transcribe_media(self, job: Job, item: MediaItem) -> None:
+        """Transcribe the item's Media Words in its language for the Job (a failure is remembered by
+        the store), and take it off the Job's queue."""
+        try:
+            if job.options.captions:
+                self._media_words(job, item)
+        except MediaWordsFailed:
+            logger.warning("Job %s: transcribing the video %s (%s) failed", job.id, item.id, item.name)
+
+        def done(now: Job, clips: list[Clip]) -> tuple[list[Clip], dict, None]:
+            return clips, {"transcribing": [id for id in now.transcribing if id != item.id]}, None
+
+        self.store.change_clips(job.id, done)
 
     def _prepare(self, job: Job, candidate: Candidate) -> None:
         """Transcribe and analyse the Candidate's range, as its render would, and take it off the
@@ -542,12 +664,16 @@ class Renders:
         warning = None
         try:
             if job.options.captions:
-                self._all_words(job, candidate, lambda done: progress(done / 2))
+                # A video whose transcription fails shows failed in the editor; its Segment goes uncaptioned here.
+                self._all_words(job, candidate, lambda done: progress(done / 2), failed=lambda item, exc: [])
             self._all_analyses(job, candidate, lambda done: progress(0.5 + done / 2))
         except RenderStopped:
             raise
         except Exception as exc:
             logger.exception("Job %s: preparing Candidate %s for the editor failed", job.id, candidate.id)
+            # What it didn't get to is no longer on its way.
+            for item in self.missing_media_words(job, candidate):
+                self.media_words.unqueue(item.id, media_language(job, item))
             warning = JobWarning(JobStatus.RENDERING, f"Preparing {candidate.title or f'clip {candidate.id}'} failed: {exc}")
 
         def done(now: Job, clips: list[Clip]) -> tuple[list[Clip], dict, None]:
@@ -608,6 +734,10 @@ class Renders:
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures, export,
             )
             duration = probe(self.settings.ffprobe_bin, job_dir / video).duration
+            # Its caption files, beside the MP4: the plan's Cues as subtitles (docs/adr/0020).
+            subtitles = caption_paths(candidate.id) if job.options.captions else {}
+            for format, file in subtitles.items():
+                write_atomic(job_dir / file, caption_file(plan.captions, format).encode())
         except RenderStopped:
             raise
         except Exception as exc:
@@ -648,6 +778,8 @@ class Renders:
                 overlays=candidate.overlays,
                 transitions=candidate.transitions,
                 revision=candidate.revision,
+                srt=subtitles.get(CaptionFormat.SRT),
+                vtt=subtitles.get(CaptionFormat.VTT),
                 export_preset_id=preset.id,
                 export=export,
                 bitrate_fallback=bitrate_fallback,
@@ -669,15 +801,37 @@ class Renders:
 
         return self.store.change_clips(job.id, finish)
 
-    def _all_words(self, job: Job, candidate: Candidate, progress: Callable[[float], None]) -> list[list[Word]]:
-        """Each of the Candidate's Segments' Words (`_words`; none for a video's, a Freeze frame's or
-        a reversed one's), the progress shared out by their lengths."""
-        total, done, found = sum(segment_time(p).length for p in candidate.source_segments()), 0.0, []
+    def _all_words(
+        self, job: Job, candidate: Candidate, progress: Callable[[float], None],
+        failed: Callable[[MediaItem, MediaWordsFailed], list[Word]] | None = None,
+    ) -> list[list[Word]]:
+        """Each of the Candidate's Segments' Words (`_words`, or a video's from its item's Media Words,
+        `_media_words`; none for a Freeze frame, a reversed one, or a video's with its Captions switch
+        off), the progress shared out by their lengths. A video whose transcription fails (now or
+        before a Retry) gives what `failed` makes of it, or, without `failed`, a RuntimeError naming it."""
+        total, done, found = sum(segment_time(p).length for p in candidate.main_track()), 0.0, []
         for segment in candidate.main_track():
-            if segment.media is not None or segment.hold is not None or segment.reverse:
+            share = segment_time(segment).length / total if total else 0.0
+            if segment.media is not None:
+                item = self.media.find(segment.media)
+                heard: list[Word] = []
+                if item is not None and captioned_media(segment, item):
+                    try:
+                        heard = media_segment_words(self._media_words(job, item), segment)
+                    except MediaWordsFailed as exc:
+                        if failed is None:
+                            raise RuntimeError(
+                                f"The video {item.name} couldn't be transcribed for its captions ({exc}): retry it in the "
+                                "editor, or turn its Segment's captions off"
+                            ) from exc
+                        heard = failed(item, exc)
+                found.append(heard)
+                done += share
+                progress(done)
+                continue
+            if segment.hold is not None or segment.reverse:
                 found.append([])
                 continue
-            share = segment_time(segment).length / total
             found.append(self._words(job, candidate, segment.start, segment.end, lambda d, done=done, share=share: progress(done + share * d)))
             done += share
         return found
@@ -720,19 +874,7 @@ class Renders:
         end = min(job.source.metadata.duration, clip_end + CAPTION_MARGIN_SECS)
         source = self.store.job_dir(job.id) / job.source.video
         began = time.monotonic()
-        self._transcribing = True
-        try:
-            if self._stopping.is_set():
-                raise RenderStopped("The app is stopping")
-            transcript = self.watchdog.transcribe(source, language, start, end)
-        except TranscriptionStopped as exc:
-            if self._stopping.is_set():
-                raise RenderStopped("The app is stopping") from exc
-            raise
-        except TranscriptionStalled as exc:
-            raise RuntimeError(f"Transcribing the Clip for its captions stalled twice; try again ({exc})") from exc
-        finally:
-            self._transcribing = False
+        transcript = self._transcribe(source, language, start, end, "the Clip")
         words = [
             Word(word.text, round(word.start - clip_start, 3), round(word.end - clip_start, 3))
             for word in transcript.words
@@ -745,6 +887,45 @@ class Renders:
         write_atomic(path, _WORDS.dump_json(ClipWords(clip_start, clip_end, language, model, words)))
         progress(1.0)
         return words
+
+    def _media_words(self, job: Job, item: MediaItem) -> list[Word]:
+        """The item's Media Words in its language for the Job, in seconds into it: as saved, or its
+        whole sound transcribed now on the Whisper worker (with a whole item's budget) and saved.
+        MediaWordsFailed when that fails, now or before a Retry."""
+        language = media_language(job, item)
+
+        def hear() -> list[Word]:
+            began = time.monotonic()
+            transcript = self._transcribe(
+                self.media.file(item.id), language, 0.0, item.duration or 0.0, f"the video {item.name}", whole=True
+            )
+            words = [Word(word.text, round(word.start, 3), round(word.end, 3)) for word in transcript.words]
+            logger.info(
+                "Job %s: transcribed the video %s (%s, %.1f s) in %.1f s: %d words",
+                job.id, item.id, item.name, item.duration or 0.0, time.monotonic() - began, len(words),
+            )
+            return words
+
+        return self.media_words.transcribe(item.id, language, hear, interrupted=(RenderStopped,))
+
+    def _transcribe(self, media: Path, language: str, start: float, end: float, what: str, whole: bool = False) -> Transcript:
+        """`media` from `start` to `end` seconds transcribed on the Whisper worker, under the watchdog;
+        with the budget of a Media Library item transcribed `whole` (TranscriptionTuning) when it is one."""
+        self._transcribing = True
+        tuning = self.settings.transcription
+        budget = tuning.media_budget_secs + tuning.media_budget_factor * (end - start) if whole else None
+        try:
+            if self._stopping.is_set():
+                raise RenderStopped("The app is stopping")
+            return self.watchdog.transcribe(media, language, start, end, budget)
+        except TranscriptionStopped as exc:
+            if self._stopping.is_set():
+                raise RenderStopped("The app is stopping") from exc
+            raise
+        except TranscriptionStalled as exc:
+            raise RuntimeError(f"Transcribing {what} for its captions stalled twice; try again ({exc})") from exc
+        finally:
+            self._transcribing = False
 
     def _analysis(
         self, job: Job, candidate: Candidate, start: float, end: float, progress: Callable[[float], None], faces: bool

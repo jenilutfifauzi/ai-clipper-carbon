@@ -58,6 +58,12 @@ class TranscriptionTuning:
     # takes about 160 s; its budget of 510 s also covers a model (re)load under memory pressure.
     budget_secs: float = 60
     budget_factor: float = 1.5
+    # The budget for a Media Library video transcribed whole (Media Words, 180 s at most):
+    # media_budget_secs + media_budget_factor x its length, 570 s for 180 s. Wider than a chunk's, as
+    # such a run is often the first after Whisper was stopped (a cold model load) on a Mac busy with
+    # the editor: a 150 s video was seen taking about 280 s so.
+    media_budget_secs: float = 120
+    media_budget_factor: float = 2.5
 
 
 @dataclass(frozen=True)

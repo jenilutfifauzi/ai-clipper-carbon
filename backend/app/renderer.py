@@ -139,7 +139,7 @@ from app.planner import (
     HOOK_LEADING,
     HOOK_PAD_Y,
     Box,
-    CaptionEvent,
+    Cue,
     HookEvent,
     Panel,
     PictureLayout,
@@ -1420,7 +1420,7 @@ def _faces(plan: RenderPlan) -> set[str]:
 
 def _ass(plan: RenderPlan) -> str:
     """The plan's captions and hook as an ASS script for libass, in output pixels: a Dialogue event
-    for each Word of each caption line, while that Word is highlighted, and the hook's (_hook_events).
+    for each Word of each Cue, while that Word is highlighted, and the hook's (_hook_events).
     A text Watermark comes first, under them."""
     caption, hook = plan.caption_style, plan.hook_style
     watermark = _text_watermark(plan)
@@ -1503,17 +1503,31 @@ def _watermark_event(event: WatermarkEvent, style: WatermarkStyle, duration: flo
     return f"Dialogue: 0,{ass_time(0)},{ass_time(duration)},Watermark,,0,0,0,,{{{place}}}{ass_text(event.text)}"
 
 
-def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
-    """A caption line's Dialogue events: one per Word, while it is highlighted, showing the whole line
-    with that Word in the active colour (Colour), the line as it is over a box of the active colour
-    behind the Word (Box), or the line as it is for the whole line's time (None). A shadow that isn't
-    the style's plain one (_drawn_shadow) is the line again under each of these, over the box."""
+def _caption_events(event: Cue, style: CaptionStyle) -> list[str]:
+    """A Cue's Dialogue events, its lines one under another: one per Word, while it is highlighted,
+    showing the whole Cue with that Word in the active colour (Colour), the Cue as it is over a box
+    of the active colour behind the Word (Box), or the Cue as it is for the whole Cue's time (None).
+    A shadow that isn't the style's plain one (_drawn_shadow) is the Cue again under each of these,
+    over the box."""
     area = event.area
     centre_x, centre_y = area.x + area.width / 2, area.y + area.height / 2
     sized = (f"\\fs{event.size:g}" if event.size != style.size else "") + spacing(style.tracking)
     place = f"\\pos({tracked(centre_x, style.tracking):g},{centre_y:g})" + sized
-    plain = " ".join(ass_text(word.text) for word in event.words)
     shadow = _drawn_shadow(style.shadow)
+
+    def shown(active: int | None = None) -> str:
+        # Its lines, the Word `active` (counted across them) in the active colour.
+        words = iter(range(len(event.words)))
+        return "\\N".join(
+            " ".join(
+                f"{{\\c{tag_colour(style.active_colour)}}}{ass_text(word.text)}{{\\c{tag_colour(style.colour)}}}"
+                if next(words) == active else ass_text(word.text)
+                for word in line
+            )
+            for line in event.lines
+        )
+
+    plain = shown()
 
     def shadowed(layer: int, start: str, end: str) -> list[str]:
         if shadow is None:
@@ -1535,31 +1549,32 @@ def _caption_events(event: CaptionEvent, style: CaptionStyle) -> list[str]:
             events.extend(shadowed(1, start, end))
             events.append(f"Dialogue: 1,{start},{end},Caption,,0,0,0,,{{{place}}}{plain}")
             continue
-        text = " ".join(
-            f"{{\\c{tag_colour(style.active_colour)}}}{ass_text(other.text)}{{\\c{tag_colour(style.colour)}}}"
-            if j == i else ass_text(other.text)
-            for j, other in enumerate(event.words)
-        )
         events.extend(shadowed(0, start, end))
-        events.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{text}")
+        events.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{{{place}}}{shown(i)}")
     return events
 
 
-def _highlight_box(event: CaptionEvent, index: int, style: CaptionStyle) -> str:
-    """An ASS drawing of the box behind the line's Word `index`: the Word's width (measured like the
-    line, from the centred line's left edge, with its tracking) and the capitals' height, padded,
-    with rounded corners (_highlight_shape)."""
+def _highlight_box(event: Cue, index: int, style: CaptionStyle) -> str:
+    """An ASS drawing of the box behind the Cue's Word `index` (counted across its lines): the Word's
+    width (measured like its line, from the centred line's left edge, with its tracking) and the
+    capitals' height, padded, with rounded corners (_highlight_shape)."""
     metrics, size, tracking = font_metrics(style.font), event.size, style.tracking
-    words = [word.text for word in event.words]
+    row = 0
+    while index >= len(event.lines[row]):
+        index -= len(event.lines[row])
+        row += 1
+    words = [word.text for word in event.lines[row]]
     line = metrics.width(" ".join(words), size, tracking)
     before = " ".join(words[:index]) + (" " if index else "")
     before = metrics.width(before, size) + tracking * len(before)
     word = metrics.width(words[index], size, tracking)
     pad_x, pad_y, radius = _highlight_shape(style, size)
     area = event.area
-    # The line is centred on the area's middle: its letters' vertical middle is where the middle of
-    # its ascent-plus-descent box is, and capitals sit on the baseline below the ascent's top.
-    baseline = area.y + area.height / 2 - size / 2 + metrics.ascent / metrics.units * size
+    # The lines are centred on the area's middle, each as tall as the font size: a line's letters'
+    # vertical middle is where the middle of its ascent-plus-descent box is, and capitals sit on the
+    # baseline below the ascent's top.
+    middle = area.y + area.height / 2 + (row - (len(event.lines) - 1) / 2) * size
+    baseline = middle - size / 2 + metrics.ascent / metrics.units * size
     cap = metrics.cap_height / metrics.units * size
     left = area.x + area.width / 2 - line / 2 + before - pad_x
     top = baseline - cap - pad_y

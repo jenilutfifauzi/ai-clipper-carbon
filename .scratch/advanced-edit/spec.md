@@ -169,7 +169,7 @@ Add these terms to `GLOSSARY.md`: **Advanced Edit**, **Media Library**, **Text L
 - Auto-ducking.
 - Keyframes, masks, rotation, stickers, filters and effects. (Keyframes and rotation overturned for Overlays and Segments by ADR 0007 and 0008, and for Text Layers by ADR 0010. Stickers overturned for Shapes only, not image stickers, by ADR 0011.)
 - Text styles in Style Presets (duplicate a layer instead).
-- Transcribing uploaded videos for captions.
+- Transcribing uploaded videos for captions. (Overturned for media Segments, not Overlays or Music Clips, by ADR 0020.)
 - Face tracking or Layouts on uploaded videos.
 - Speed changes (overturned by `.scratch/speed/spec.md`, ADR 0009), voiceover recording.
 

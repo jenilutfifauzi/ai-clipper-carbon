@@ -14,6 +14,7 @@ from app.renderer import _ass
 from app.styles import (
     BUILTIN_PRESETS,
     DEFAULT,
+    LINE_LIMITS,
     BuiltinPreset,
     CaptionStyle,
     DropShadow,
@@ -162,12 +163,18 @@ def preset_plan_view(preset, hook: str) -> dict:
 
     from pydantic import TypeAdapter
 
-    from app.planner import CaptionEvent, HookEvent
+    from app.planner import Box, CaptionWord, HookEvent
 
     text, kicker = PRESET_HOOKS[hook]
     planned = plan(caption_style=preset.caption, hook_style=preset.hook, hook=text, hook_kicker=kicker)
+    # Each Cue as the caption line it was then.
+    lines = [
+        {"text": cue.text, "start": cue.start, "end": cue.end, "words": TypeAdapter(list[CaptionWord]).dump_python(cue.words, mode="json"),
+         "area": TypeAdapter(Box).dump_python(cue.area, mode="json"), "size": cue.size}
+        for cue in planned.captions
+    ]
     return {
-        "captions": TypeAdapter(list[CaptionEvent]).dump_python(planned.captions, mode="json"),
+        "captions": lines,
         "hook": TypeAdapter(HookEvent | None).dump_python(planned.hook, mode="json"),
         "ass": sha256(_ass(planned).encode()).hexdigest(),
     }
@@ -574,3 +581,20 @@ def test_the_highlight_boxs_padding_and_radius_are_the_caption_styles():
         radius = round(0.12 * size)
         assert padded_path[1] == "0" and path[1] == str(radius)
         assert float(padded_path[4]) - (float(path[4]) + radius) == pytest.approx(2 * (across - 0.12 * size), abs=1)
+
+
+def test_phrase_and_sentence_are_the_shared_line_limits_and_phrase_is_the_default():
+    # The frontend's editor/lineLimits.ts is checked against the same file (lineLimits.test.ts).
+    assert LINE_LIMITS == json.loads((FIXTURES / "line_limits.json").read_text())
+    default = CaptionStyle()
+    assert {field: getattr(default, field) for field in LINE_LIMITS["phrase"]} == LINE_LIMITS["phrase"]
+    for limits in LINE_LIMITS.values():
+        TypeAdapter(CaptionStyle).validate_python(limits)
+
+
+def test_the_mcp_instructions_name_phrase_and_sentence_from_the_line_limits():
+    from app.mcp_server import INSTRUCTIONS
+
+    flat = " ".join(INSTRUCTIONS.split())
+    assert "The editor's Phrase is 1 line, 16 characters, no word limit, 1.4 s, 0.5 s pause;" in flat
+    assert "its Sentence 2 lines, 24 characters, no word limit, 5 s, 0.7 s pause." in flat

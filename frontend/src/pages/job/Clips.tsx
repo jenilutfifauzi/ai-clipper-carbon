@@ -217,6 +217,23 @@ function ClipCard({
             Download
           </a>
         )}
+        {/* Its caption files, beside the MP4: none with captions off, nor in a Clip rendered before them. */}
+        {output &&
+          ([["srt", output.srt], ["vtt", output.vtt]] as const).map(
+            ([format, file]) =>
+              file && (
+                <a
+                  key={format}
+                  href={mediaUrl(jobId, file, output.at)}
+                  download={downloadName(candidate?.title, clip.candidate_id, format)}
+                  className={buttonClass("secondary", "sm")}
+                  aria-label={`Download the captions as ${format.toUpperCase()}`}
+                >
+                  <Download aria-hidden size={16} />
+                  {format.toUpperCase()}
+                </a>
+              ),
+          )}
         {/* Rendered again with its Preset as it is now; another can be picked from its menu. */}
         {candidate && !busy && (
           <RenderButton

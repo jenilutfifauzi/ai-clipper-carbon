@@ -26,7 +26,7 @@ from app.planner import font_metrics
 from app.ports import Ports
 from app.rendering import Renders
 from app.transcript import Word
-from conftest import FIXTURES, wait_for
+from conftest import FIXTURES, cue_text, cue_words, wait_for
 from test_jobs_api import create_job, statuses
 from test_review import patch
 
@@ -231,7 +231,7 @@ def test_selected_candidates_render_into_clips_ranked_like_their_candidates(clie
     assert client.get(f"/media/{job['id']}/{clip['poster']}").headers["content-type"] == "image/jpeg"
     # Only the finished files are left.
     assert sorted(path.name for path in (job_dir / "clips").iterdir()) == sorted(
-        f"{c['id']}{suffix}" for c in (first, second) for suffix in (".mp4", ".jpg", ".plan.json")
+        f"{c['id']}{suffix}" for c in (first, second) for suffix in (".mp4", ".jpg", ".plan.json", ".srt", ".vtt")
     )
 
 
@@ -636,9 +636,9 @@ def test_captions_are_burned_from_the_clips_own_transcription(client, settings, 
     ]
     assert len(plan["captions"]) == len(expected)
     for event, (text, on, off, words) in zip(plan["captions"], expected):
-        assert (event["text"], event["area"]) == (text, lower)
+        assert (cue_text(event), event["area"]) == (text, lower)
         assert (event["start"], event["end"]) == (pytest.approx(on - start, abs=1e-3), pytest.approx(off - start, abs=1e-3))
-        assert [(w["text"], w["start"], w["end"]) for w in event["words"]] == [
+        assert [(w["text"], w["start"], w["end"]) for w in cue_words(event)] == [
             (word, pytest.approx(a - start, abs=1e-3), pytest.approx(b - start, abs=1e-3)) for word, a, b in words
         ]
 
@@ -702,7 +702,7 @@ def test_split_captions_are_on_the_seam_and_a_wide_line_is_set_smaller_to_fit(
     check_clip(settings, job_dir, clip, candidate)
 
     [event] = json.loads((job_dir / clip["output"]["plan"]).read_text())["captions"]
-    assert (event["text"], event["area"]) == ("W" * 15, {"x": 130, "y": 860, "width": 820, "height": 200})
+    assert (cue_text(event), event["area"]) == ("W" * 15, {"x": 130, "y": 860, "width": 820, "height": 200})
     frame = full_frame(settings, job_dir / clip["output"]["video"], 4.5 - candidate["start"])
     rows, columns = pixels(frame, ORANGE)
     assert len(rows) > 1000
@@ -856,9 +856,53 @@ def test_tracking_and_line_height_space_the_burned_hook_and_captions_as_planned(
     [caption] = [event for event in plan["captions"] if event["start"] <= 4.2 - start < event["end"]]
     area, size = caption["area"], caption["size"]
     _, left, right = ink(magenta, area["y"], area["y"] + area["height"])
-    width = metrics.width(caption["text"], size, 24)
+    width = metrics.width(cue_text(caption), size, 24)
     assert width - 20 < right - left + 1 <= width + 2
     assert (left + right) / 2 == pytest.approx(area["x"] + area["width"] / 2, abs=3)
+
+
+@pytest.mark.parametrize("font", ["montserrat-black", "anton", "bangers"])
+def test_a_two_line_cue_is_burned_on_two_rows_one_font_size_apart_with_the_box_on_the_second(
+    client, settings, video_source, transcriber, plain_video, font
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    start = candidate["start"]
+    # Sentence's line limits, with the box highlight.
+    candidate = patch(client, job, candidate, style_overrides={"caption": {
+        "max_lines": 2, "max_chars": 24, "max_secs": 5, "pause_secs": 0.7, "highlight": "box", "font": font,
+    }})
+    assert candidate["style_overrides"]["caption"]["max_lines"] == 2
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    [cue] = plan["captions"]
+    assert [" ".join(word["text"] for word in line) for line in cue["lines"]] == ["PODCAST INI", "SERU BANGET YA!"]
+    area, size = cue["area"], cue["size"]
+    middle = area["y"] + area["height"] / 2
+    metrics = font_metrics(font)
+    cap = metrics.cap_height / metrics.units * size
+
+    # "BANGET", the second line's second Word, is spoken: white text over an orange box.
+    frame = full_frame(settings, job_dir / clip["output"]["video"], 5.2 - start)
+    rows, columns = pixels(frame, WHITE)
+    above, below = rows[rows < middle], rows[rows >= middle]
+    assert len(above) > 500 and len(below) > 500
+    # Two rows of capitals, each a capital tall, one font size apart about the area's middle (libass
+    # sets a line as tall as the font size).
+    assert above.max() - above.min() == pytest.approx(cap, abs=4)
+    assert below.max() - below.min() == pytest.approx(cap, abs=4)
+    assert below.min() - above.min() == pytest.approx(size, abs=2)
+    assert (above.min() + below.max()) / 2 == pytest.approx(middle, abs=size / 4)
+    # The box is behind the second line, from the middle of its line rightwards, and not the first.
+    box_rows, box_columns = pixels(frame, ORANGE)
+    assert len(box_rows) > 500
+    assert above.max() < box_rows.min() < below.min() and below.max() < box_rows.max()
+    second = columns[rows >= middle]
+    assert second.min() < box_columns.min() and box_columns.max() < second.max()
 
 
 def test_the_hooks_soft_shadow_and_its_boxs_padding_and_radius_are_burned_as_planned(
@@ -1051,23 +1095,131 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
     candidate = patch(client, job, candidate, word_edits=edits)
     assert candidate["edited"] is True
     assert candidate["word_edits"] == [
-        {"at": at(words[1]), "text": "", "break_before": False},
-        {"at": at(seru), "text": "keren", "break_before": False},
-        {"at": at(banget), "text": None, "break_before": True},
+        {"at": at(words[1]), "text": "", "break_before": False, "media": None},
+        {"at": at(seru), "text": "keren", "break_before": False, "media": None},
+        {"at": at(banget), "text": None, "break_before": True, "media": None},
     ]
     # The preview gives each Word its edit, as saved.
     shown = preview(client, job, candidate)
     assert [w["edit"] for w in shown["words"]] == [None, candidate["word_edits"][0], candidate["word_edits"][1], candidate["word_edits"][2], None]
-    assert [event["text"] for event in shown["plan"]["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
+    assert [cue_text(event) for event in shown["plan"]["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
 
     render(client, job)
     [clip] = rendered(client, job)["clips"]
     plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
-    assert [event["text"] for event in plan["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
+    assert [cue_text(event) for event in plan["captions"]] == ["PODCAST KEREN", "BANGET YA!"]
 
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
     for bad in ([{"at": 1.0, "text": "x" * 41}], [{"at": "inf", "text": "x"}], [{"at": 1.0, "text": "x"}] * 501, [{"text": "x"}]):
         assert client.patch(url, json={"word_edits": bad}).status_code == 422
+
+
+# A Cue Edit's own place and size, unset.
+UNPLACED = {"x": None, "y": None, "scale": None}
+
+
+def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    render(client, job)
+    rendered(client, job)
+    before = preview(client, job, candidate)["plan"]["captions"]
+    first, second = before[0], before[1]
+    assert first["end"] - first["start"] > 0.5 and not first["edited"]
+    # The first Cue goes 0.2 s sooner, the second comes up when the first goes; keyed by any time in
+    # their first Words. Two of one Cue: the later.
+    edits = [
+        {"at": first["key"]["at"] + 0.01, "end_delta": -0.3},
+        {"at": second["key"]["at"], "start_delta": -9.0},
+        {"at": first["key"]["at"] + 0.01, "end_delta": -0.2},
+    ]
+    candidate = patch(client, job, candidate, cue_edits=edits)
+    assert candidate["edited"] is True
+    assert candidate["cue_edits"] == [
+        {"at": first["key"]["at"] + 0.01, "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": -0.2, **UNPLACED, "join": False},
+        {"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": -9.0, "end_delta": 0.0, **UNPLACED, "join": False},
+    ]
+    shown = preview(client, job, candidate)["plan"]
+    after = shown["captions"]
+    assert [cue["edited"] for cue in after[:2]] == [True, True] and shown["unused_cue_edits"] == []
+    assert (after[0]["start"], after[0]["end"]) == (first["start"], pytest.approx(first["end"] - 0.2, abs=1e-3))
+    assert after[1]["start"] == after[0]["end"]
+    assert [cue_text(cue) for cue in after] == [cue_text(cue) for cue in before]
+
+    # The render is planned as the preview was.
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    assert json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text()) == shown
+
+    # One whose Word the Clip doesn't show is unused, and kept.
+    away = patch(client, job, candidate, cue_edits=[*candidate["cue_edits"], {"at": 1.0, "shift": 1.0}])
+    assert [edit["at"] for edit in preview(client, job, away)["plan"]["unused_cue_edits"]] == [1.0]
+    assert [edit["at"] for edit in away["cue_edits"]] == [1.0, first["key"]["at"] + 0.01, second["key"]["at"]]
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    for bad in (
+        [{"at": 1.0, "shift": 10.5}], [{"at": 1.0, "start_delta": -11}], [{"at": 1.0, "end_delta": "inf"}],
+        [{"at": 1.0, "media": "nope"}], [{"shift": 1.0}], [{"at": 1.0}] * 501,
+        # A join sets nothing else.
+        [{"at": 1.0, "join": True, "shift": 0.5}], [{"at": 1.0, "join": True, "end_delta": -0.1}], [{"at": 1.0, "join": True, "y": 700}],
+    ):
+        assert client.patch(url, json={"cue_edits": bad}).status_code == 422
+    joined = patch(client, job, candidate, cue_edits=[{"at": second["key"]["at"], "join": True}])
+    assert joined["cue_edits"] == [{"at": second["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0, **UNPLACED, "join": True}]
+
+
+def test_a_cue_placed_and_scaled_alone_is_burned_at_its_place_and_the_next_at_the_styles(
+    client, settings, video_source, transcriber, plain_video
+):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    magenta = np.array([255, 0, 255])
+    candidate = patch(client, job, candidate, hook_text="", style_overrides={
+        "caption": {"colour": "#FF00FF", "highlight": "none", "outline": 0, "size": 80},
+    })
+    # Rendered once, its Cues are planned from the Clip's own Words.
+    render(client, job)
+    rendered(client, job)
+    first, second = preview(client, job, candidate)["plan"]["captions"][:2]
+    candidate = patch(client, job, candidate, cue_edits=[{"at": first["key"]["at"], "x": 360, "y": 600, "scale": 1.5}])
+    assert candidate["cue_edits"] == [{
+        "at": first["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0,
+        "x": 360, "y": 600, "scale": 1.5, "join": False,
+    }]
+    plan = preview(client, job, candidate)["plan"]
+    moved, after = plan["captions"][:2]
+    assert moved["size"] == 120 and after["size"] == 80 and after["area"] == second["area"]
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    assert json.loads((job_dir / clip["output"]["plan"]).read_text()) == plan
+    metrics = font_metrics()
+
+    def ink(cue: dict) -> tuple[float, float, int]:
+        """Where the cue's magenta ink is, mid-cue: its rows' and columns' middles, and its width."""
+        frame = full_frame(settings, job_dir / clip["output"]["video"], (cue["start"] + cue["end"]) / 2)
+        rows, columns = pixels(frame, magenta)
+        assert len(rows) > 300
+        return (rows.min() + rows.max()) / 2, (columns.min() + columns.max()) / 2, columns.max() - columns.min() + 1
+
+    # The moved Cue is centred at 600 px down, half as big again, and as near 360 px across as keeps
+    # its line in the frame; the next one is where the style puts it.
+    half = metrics.width(cue_text(moved), 120) / 2
+    assert half > 360 and moved["area"]["x"] + moved["area"]["width"] / 2 == round(half)
+    row, column, width = ink(moved)
+    assert row == pytest.approx(600, abs=30) and column == pytest.approx(half, abs=4)
+    assert width == pytest.approx(metrics.width(cue_text(moved), 120), abs=20)
+    row, column, width = ink(after)
+    assert after["area"]["y"] <= row <= after["area"]["y"] + after["area"]["height"] and column == pytest.approx(540, abs=4)
+    assert width == pytest.approx(metrics.width(cue_text(after), 80), abs=20)
+
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
+    for bad in ([{"at": 1.0, "scale": 4.5}], [{"at": 1.0, "scale": 0.1}], [{"at": 1.0, "x": 1081}], [{"at": 1.0, "y": -1}]):
+        assert client.patch(url, json={"cue_edits": bad}).status_code == 422
 
 
 def test_one_scene_is_rendered_in_its_overridden_layout(client, settings, video_source, face_then_two):
@@ -1133,3 +1285,104 @@ def test_a_kicker_and_emphasis_are_saved_previewed_rendered_and_recorded(client,
     plan = json.loads((settings.data_dir / "jobs" / job["id"] / clip["output"]["plan"]).read_text())
     assert plan["hook"]["kicker"]["text"] == "Terbongkar lho"
     assert (plan["hook"]["lines"], plan["hook"]["emphasis"]) == (["Halo semua"], [[[0, 4]]])
+
+
+# Caption files (captions-advanced ticket 10).
+
+
+def subtitle_time(secs: float, mark: str) -> str:
+    ms = round(secs * 1000)
+    return f"{ms // 3_600_000:02d}:{ms // 60_000 % 60:02d}:{ms // 1000 % 60:02d}{mark}{ms % 1000:03d}"
+
+
+def test_a_render_writes_srt_and_vtt_beside_the_mp4_in_the_words_own_case(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    # "ini" corrected; the Caption Style is in UPPERCASE and strips end punctuation.
+    candidate = patch(client, job, candidate, word_edits=[{"at": 4.5, "text": "Keren"}])
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+    output = clip["output"]
+    assert (output["srt"], output["vtt"]) == (f"clips/{candidate['id']}.srt", f"clips/{candidate['id']}.vtt")
+
+    plan = json.loads((job_dir / output["plan"]).read_text())
+    assert [cue_text(cue) for cue in plan["captions"]] == ["PODCAST KEREN", "SERU BANGET YA!"]
+    first, second = plan["captions"]
+    srt = (
+        f"1\n{subtitle_time(first['start'], ',')} --> {subtitle_time(first['end'], ',')}\npodcast Keren\n\n"
+        f"2\n{subtitle_time(second['start'], ',')} --> {subtitle_time(second['end'], ',')}\nseru banget, ya!\n"
+    )
+    vtt = (
+        "WEBVTT\n\n"
+        f"1\n{subtitle_time(first['start'], '.')} --> {subtitle_time(first['end'], '.')}\npodcast Keren\n\n"
+        f"2\n{subtitle_time(second['start'], '.')} --> {subtitle_time(second['end'], '.')}\nseru banget, ya!\n"
+    )
+    assert (job_dir / output["srt"]).read_text() == srt
+    assert (job_dir / output["vtt"]).read_text() == vtt
+    # Served from the Job's directory, as the MP4 is.
+    for file, text, kind in ((output["srt"], srt, "application/x-subrip"), (output["vtt"], vtt, "text/vtt")):
+        response = client.get(f"/media/{job['id']}/{file}")
+        assert response.status_code == 200 and response.text == text
+        assert response.headers["content-type"].startswith(kind)
+    # A Clip is deleted with its Job, and its caption files with it.
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+    assert not job_dir.exists()
+
+
+def test_with_captions_off_a_render_writes_no_caption_files(client, settings, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = wait_for(client, create_job(client, captions=False)["id"], "review")
+    candidate = add(client, job, "Podcast", "ya")
+    render(client, job)
+    [clip] = rendered(client, job)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+    assert (clip["output"]["srt"], clip["output"]["vtt"]) == (None, None)
+    assert sorted(path.suffix for path in (job_dir / "clips").iterdir()) == [".jpg", ".json", ".mp4"]
+    # Nor is there anything to download.
+    assert client.get(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/captions/srt").status_code == 409
+
+
+def subtitle_file(cues: list[dict], format: str) -> str:
+    """The caption file a plan's Cues (its JSON) make in `format`, as the writer's tests spell it."""
+    mark = "," if format == "srt" else "."
+    blocks = [
+        f"{number}\n{subtitle_time(cue['start'], mark)} --> {subtitle_time(cue['end'], mark)}\n" + "".join(f"{line}\n" for line in cue["plain"])
+        for number, cue in enumerate(cues, 1)
+    ]
+    return "\n".join(["WEBVTT\n"] * (format == "vtt") + blocks)
+
+
+def test_a_candidates_captions_are_downloaded_from_its_saved_state_without_a_render(client, video_source, transcriber, plain_video):
+    video_source.video = plain_video
+    transcriber.words = HEARD
+    job = reviewed(client)
+    candidate = add(client, job, "Podcast", "ya")
+    url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}/captions"
+    # Before a render: the episode Transcript's Words, as the Preview Plan has them, with the saved
+    # Word Edits (the one on "ya", keyed by its middle), in their own case.
+    ya = next(word for word in job["transcript"]["words"] if word["text"] == "ya")
+    patch(client, job, candidate, word_edits=[{"at": (ya["start"] + ya["end"]) / 2, "text": "Ya."}])
+    cues = preview(client, job, candidate)["plan"]["captions"]
+    assert cues and [line for cue in cues for line in cue["plain"]][-1].endswith("Ya.")
+    for format, kind in (("srt", "application/x-subrip"), ("vtt", "text/vtt")):
+        response = client.get(f"{url}/{format}")
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith(kind)
+        assert response.text == subtitle_file(cues, format)
+    assert "PODCAST" not in client.get(f"{url}/srt").text
+
+    # Once rendered, the Clip's own Words.
+    render(client, job)
+    rendered(client, job)
+    after = preview(client, job, candidate)["plan"]["captions"]
+    assert after != cues and client.get(f"{url}/srt").text == subtitle_file(after, "srt")
+
+    assert client.get(f"{url}/ass").status_code == 422
+    assert client.get(f"/api/jobs/{job['id']}/candidates/nope/captions/srt").status_code == 404
+    assert client.get("/api/jobs/nope/candidates/nope/captions/srt").status_code == 404

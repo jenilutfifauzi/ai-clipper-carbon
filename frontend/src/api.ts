@@ -115,13 +115,41 @@ export interface LayoutOverride {
   keys?: Keys;
 }
 
-// The owner's correction of one caption Word, keyed by a time on the Source's timeline (the Word
-// whose span holds it). `text` replaces the Word's (null keeps it; "" removes the Word).
+// The owner's correction of one caption Word, keyed by a time on the Source's timeline, or with
+// `media` on that Media Library item's (the Word whose span holds it, of that timeline's Words).
+// `text` replaces the Word's (null keeps it; "" removes the Word).
 export interface WordEdit {
   at: number;
   text: string | null;
   break_before: boolean;
+  media?: string | null;
 }
+
+// The owner's change to one Cue (GLOSSARY: Cue Edit), keyed as a Word Edit is: a time in its first
+// Word on the Source's timeline (with `media`, on that Media Library item's). That Word starts a Cue.
+// `shift` moves the Cue and its highlight, `start_delta` and `end_delta` one edge (negative: earlier),
+// in seconds of that timeline (so they scale with Speed), each within ±CUE_SHIFT_MAX_SECS. With
+// `join` (and every other field left 0), instead of starting a Cue its Word's Cue is kept with the
+// one before, where only a pause, a sentence's end or the longest-Cue limit would part them.
+export interface CueEdit {
+  at: number;
+  media: string | null;
+  shift: number;
+  start_delta: number;
+  end_delta: number;
+  // Its own place, the middle of its lines in output pixels (as the Caption Style's custom position,
+  // kept in the frame), and its size, times the Caption Style's; null or missing: the style's.
+  x?: number | null;
+  y?: number | null;
+  scale?: number | null;
+  join: boolean;
+}
+
+// The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
+export const CUE_SHIFT_MAX_SECS = 10;
+// The least and the most a Cue Edit scales its Cue (CUE_MIN_SCALE, CUE_MAX_SCALE in backend/app/candidates.py).
+export const CUE_MIN_SCALE = 0.25;
+export const CUE_MAX_SCALE = 4;
 
 export type Highlight = "colour" | "box" | "none";
 export type CaptionPosition = "auto" | "top" | "middle" | "bottom" | "custom";
@@ -154,6 +182,9 @@ export interface CaptionStyle {
   y: number;
   // Each line's centre, at any position (the backend keeps the line in the frame); null: centred.
   x: number | null;
+  // A Cue holds at most max_lines lines (1 to 3), each of at most max_chars characters and max_words
+  // Words, its lines balanced; it lasts at most max_secs and ends after a pause of pause_secs.
+  max_lines: number;
   max_chars: number;
   max_words: number | null;
   max_secs: number;
@@ -263,6 +294,19 @@ export interface MediaItem {
   height: number | null;
   has_audio: boolean;
   created: string;
+  // A video's Media Words are transcribed in this language in every Job; null: each Job's.
+  language?: string | null;
+}
+
+// A video's Media Words for a Job (backend/app/api.py's MediaWordsView): in its language (its own,
+// else the Job's), their status, the error of a failure, and the Words when ready. (Their status is
+// the item's, not a Segment's WordsStatus: a Segment of the video is "media" while they are "ready".)
+export interface MediaWords {
+  media_id: string;
+  language: string;
+  status: "ready" | "pending" | "failed" | "none";
+  error: string | null;
+  words: Word[] | null;
 }
 
 // A Candidate that uses a Media Library item, as a refused delete names it.
@@ -355,14 +399,39 @@ export interface ScenePlan {
   ignored?: Keys;
 }
 
-export interface CaptionEvent {
-  text: string;
+// What a Cue is known by (and a Cue Edit keys it by): the middle of its first Word on that Word's
+// timeline, seconds into the Source (or, with `media`, into that Media Library item).
+export interface CueKey {
+  at: number;
+  media: string | null;
+}
+
+// Captions shown at once (GLOSSARY: Cue). One moved at a Layout change is one of these in each place, keyed alike.
+export interface Cue {
   start: number;
   end: number;
-  // Each highlighted from its start to its end.
-  words: Word[];
+  // One under another; their Words, as captions show them, each highlighted from its start to its end.
+  lines: Word[][];
+  // Each line as its Words are written, with the Word Edits (not in the Caption Style's case, nor stripped).
+  plain: string[];
   area: Box;
   size: number;
+  key: CueKey;
+  // A Cue Edit applies to it.
+  edited: boolean;
+  // Merged into the Cue before, it would still fit the line limits.
+  joinable: boolean;
+  // A pause, a sentence's end or the longest-Cue limit parts it from the Cue before: merging takes a join.
+  needs_join: boolean;
+  // Where a Cue Edit keeps it (seconds into the Clip: its Segment, the Cue before's end, what the Cue
+  // after leaves it), and its Segment's Speed, which a Cue Edit's seconds are divided by.
+  low: number;
+  high: number;
+  speed: number;
+  // Each of its Words' middle on its timeline (the first's is `key.at`), and the `at`, as sent, of
+  // the Cue Edit matched to each: the first's starts it, another's is a join keeping it in.
+  word_ats: number[];
+  cue_edit_ats: (number | null)[];
 }
 
 export interface HookEvent {
@@ -865,7 +934,7 @@ export interface RenderPlan {
   source_height: number;
   fps: number;
   scenes: ScenePlan[];
-  captions: CaptionEvent[];
+  captions: Cue[];
   hook: HookEvent | null;
   caption_style: CaptionStyle;
   hook_style: HookStyle;
@@ -886,16 +955,29 @@ export interface RenderPlan {
   transitions: TransitionEvent[];
   // The Shapes that show, in drawing order, under the Text Layers.
   shapes: ShapeEvent[];
+  // The Cue Edits whose Word isn't shown, which do nothing (and are kept).
+  unused_cue_edits: CueEdit[];
+  // The shortest a Cue Edit leaves its Cue shown, where it has room.
+  cue_min_secs: number;
   // Its ducked sounds' ramps.
   ducking?: Ducking;
 }
 
-// A Word the captions are made of, as heard (in seconds into the Clip), with its middle on the
-// Source's timeline (what a Word Edit of it is keyed by) and its Word Edit.
+// A Word the captions are made of, as heard (in seconds into the Clip), with its middle on its
+// timeline (the Source's, or with `media` its Media Library item's: what a Word Edit of it is keyed
+// by) and its Word Edit.
 export interface PreviewWord extends Word {
   edit: WordEdit | null;
   at: number;
+  media?: string | null;
 }
+
+// Where a Segment's caption Words come from: "clip", transcribed for a Source Segment's range;
+// "transcript", the episode's until it is; "media", a video's Media Words; "pending", while they are
+// transcribed; "failed", when that failed (until a Retry); "off", a video's with its Captions switch
+// off; "none" (a Freeze frame, Reverse, a silent video, or the Job's captions off). A Segment's, not
+// its video's MediaWords status ("ready" there is "media" here).
+export type WordsStatus = "clip" | "transcript" | "media" | "pending" | "failed" | "off" | "none";
 
 /**
  * A saved Export file (a frame or a sound): its path on this Mac, its name, and the URL it downloads
@@ -912,6 +994,10 @@ export interface PreviewPlan {
   words: PreviewWord[];
   // "clip": transcribed for the Clip; "transcript": the episode's, until it is.
   words_source: "clip" | "transcript";
+  // Each Segment's, by its id.
+  words_status: Record<string, WordsStatus>;
+  // Why a "failed" Segment's video failed to be transcribed, by the Segment's id.
+  words_errors: Record<string, string>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
 }
@@ -973,6 +1059,8 @@ export interface ClipSegment extends Retiming {
   framing?: Framing | null;
   volume?: number;
   keys?: Keys;
+  // A video's Captions switch: false leaves it uncaptioned; empty means on. The Source's have none.
+  captions?: boolean | null;
   // Its sound's fades in and out, 0 to 10 s each (the plan fits them to its length).
   fade_in?: number;
   fade_out?: number;
@@ -1023,6 +1111,7 @@ export interface Candidate {
   preset_id: string;
   style_overrides: StyleOverrides;
   word_edits: WordEdit[];
+  cue_edits: CueEdit[];
   // When the hook comes on, in seconds into the Clip, and how long it stays.
   hook_start: number;
   hook_secs: number;
@@ -1067,6 +1156,8 @@ export interface CandidateChange {
   style_overrides?: StyleOverrides;
   // Replaces the Candidate's Word Edits as a whole.
   word_edits?: WordEdit[];
+  // Replaces the Candidate's Cue Edits as a whole.
+  cue_edits?: CueEdit[];
   hook_start?: number;
   hook_secs?: number;
   // Replaces the Candidate's Layout Overrides as a whole.
@@ -1195,6 +1286,10 @@ export interface RenderedClip {
   transitions: Transition[];
   // The Candidate's Revision it was rendered from; null in a Clip rendered before Revisions.
   revision: number | null;
+  // Its caption files, beside the MP4; null for a Job with captions off, and in a Clip rendered
+  // before caption files.
+  srt: string | null;
+  vtt: string | null;
   // The Export Preset it was asked for (perhaps deleted since) and the Export Settings it was made
   // with, for display only; null in a Clip rendered before Export Presets (1080p H.264).
   export_preset_id: string | null;
@@ -1204,6 +1299,10 @@ export interface RenderedClip {
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
+
+// A caption file's format (backend/app/caption_files.py): one subtitle cue per Cue, in the Words'
+// own case, with the Word Edits.
+export type CaptionFormat = "srt" | "vtt";
 
 export interface Clip {
   candidate_id: string;
@@ -1255,6 +1354,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await send(path, init);
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+// The API's answer to a request, or an ApiError with its reason for refusing it.
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`/api${path}`, {
     ...init,
     headers: {
@@ -1267,7 +1372,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const [message, detail] = await errorMessage(response);
     throw new ApiError(response.status, message, detail);
   }
-  return (response.status === 204 ? undefined : await response.json()) as T;
+  return response;
 }
 
 // The Candidate as it is now, when a save was refused for being made from an older Revision.
@@ -1389,6 +1494,10 @@ export const api = {
   },
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
+  // The Candidate's captions as an SRT or VTT file, from its saved state, without a render. Rejects
+  // (409) for a Job with captions off, and while a captioned Segment's Words are still being transcribed.
+  captionFile: (jobId: string, id: string, format: CaptionFormat) =>
+    send(`/jobs/${jobId}/candidates/${id}/captions/${format}`).then((response) => response.text()),
   listPresets: () => request<StylePreset[]>("/presets"),
   createPreset: (preset: NewPreset) => request<StylePreset>("/presets", { method: "POST", body: JSON.stringify(preset) }),
   updatePreset: (id: string, preset: NewPreset) =>
@@ -1412,6 +1521,15 @@ export const api = {
   },
   deleteLogo: (id: string) => request<void>(`/logos/${id}`, { method: "DELETE" }),
   listMedia: () => request<MediaItem[]>("/media"),
+  // A video's language for its Media Words, in every Job (null: each Job's).
+  setMediaLanguage: (id: string, language: string | null) =>
+    request<MediaItem>(`/media/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ language }) }),
+  // Retry a video's Media Words for the Job, or with `again`, transcribe them again.
+  transcribeMediaWords: (jobId: string, mediaId: string, again = false) =>
+    request<MediaWords>(`/jobs/${encodeURIComponent(jobId)}/media/${encodeURIComponent(mediaId)}/words`, {
+      method: "POST",
+      body: JSON.stringify({ again }),
+    }),
   // Asks for the preview Retimed copy of a video's range (made in the background), and how it is coming along: poll it until it has a `url`.
   retimedCopy: (mediaId: string, range: RetimedRange, signal?: AbortSignal) =>
     request<RetimedCopy>(`/media/${encodeURIComponent(mediaId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),

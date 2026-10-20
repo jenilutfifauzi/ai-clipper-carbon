@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 from pydantic import TypeAdapter
 
-from app.candidates import Layout, LayoutOverride, WordEdit
+from app.candidates import CueEdit, Layout, LayoutOverride, TransitionKind, WordEdit
 from app.config import CameraTuning
 from app.styles import CaptionPosition, CaptionStyle, Highlight, HookAlign, HookPosition, HookShape, HookStyle
 from app.planner import (
@@ -20,15 +20,17 @@ from app.planner import (
     SEAM_CAPTIONS,
     TOP_CAPTIONS,
     Box,
-    CaptionEvent,
     CaptionWord,
     CropPoint,
+    Cue,
     Face,
     FrameFaces,
     HookEvent,
+    Join,
     RenderPlan,
     Scene,
     SceneLayout,
+    SegmentInput,
     fit_hook,
     match_edits,
     font_metrics,
@@ -469,11 +471,11 @@ def said(text: str, start: float = 0.0, secs_per_char: float = 0.06, gap: float 
 
 
 def captioned(words: list[Word], secs: float, scenes: list[Scene] | None = None, faces: list[FrameFaces] | None = None,
-              layout: Layout = Layout.AUTO, width: int = 1920, height: int = 1080) -> list[CaptionEvent]:
+              layout: Layout = Layout.AUTO, width: int = 1920, height: int = 1080) -> list[Cue]:
     return plan_render(100, 100 + secs, source(width, height, fps=FPS), scenes, faces, layout, words).captions
 
 
-def shown(events: list[CaptionEvent]) -> list[str]:
+def shown(events: list[Cue]) -> list[str]:
     return [event.text for event in events]
 
 
@@ -683,7 +685,7 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
 # Caption and Hook Styles (clip editor ticket 01). The defaults are v1's, which the tests above check.
 
 
-def styled(words: list[Word], secs: float, style: CaptionStyle, **options) -> list[CaptionEvent]:
+def styled(words: list[Word], secs: float, style: CaptionStyle, **options) -> list[Cue]:
     return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, caption_style=style, **options).captions
 
 
@@ -776,7 +778,7 @@ def test_the_plan_keeps_its_styles():
 # Word Edits (clip editor ticket 06). Their times are in seconds into the Clip, as candidate_plan gives them.
 
 
-def edited(words: list[Word], edits: list, secs: float = 10, **options) -> list[CaptionEvent]:
+def edited(words: list[Word], edits: list, secs: float = 10, **options) -> list[Cue]:
     return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, word_edits=edits, **options).captions
 
 
@@ -825,6 +827,68 @@ def test_edited_text_is_shown_like_a_words_in_capitals_without_end_punctuation_u
     assert shown(edited(words, [edit])) == ["HALO KA-WAN!"]
     assert shown(edited(words, [edit], caption_style=CaptionStyle(uppercase=False))) == ["halo ka-wan!"]
     assert shown(edited(words, [WordEdit(at=words[1].start, text="...")])) == ["HALO"]
+
+
+# Cues (captions-advanced ticket 01): each caption of the plan is a Cue.
+
+
+def test_a_cue_is_one_line_keyed_by_the_middle_of_its_first_word_on_the_sources_timeline():
+    words = [Word("halo,", 1.0, 1.4), Word("semua.", 1.4, 2.0), Word("apa", 3.0, 3.2), Word("kabar", 3.2, 3.6)]
+    cues = captioned(words, 5)  # the Clip from 100 s of the Source
+    assert [[[(w.text, w.start, w.end) for w in line] for line in cue.lines] for cue in cues] == [
+        [[("HALO", 1.0, 1.4), ("SEMUA", 1.4, 2.3)]],
+        [[("APA", 3.0, 3.2), ("KABAR", 3.2, 3.9)]],
+    ]
+    assert [(cue.key.at, cue.key.media, cue.edited) for cue in cues] == [(101.2, None, False), (103.1, None, False)]
+    # A Word the Clip's start cuts into keys its Cue by its own middle.
+    [cut] = captioned([Word("halo", -0.1, 0.3)], 4)
+    assert cut.key.at == 100.1
+    # A Cue moved at a Layout change is shown in two places, keyed alike.
+    faces, scenes = caption_scenes()
+    before, after = captioned([Word("jadi", 3.4, 3.7), Word("begitu", 3.75, 4.1)], 6, scenes, faces)
+    assert before.area != after.area and before.key == after.key
+    assert before.key.at == 103.55
+
+
+def test_a_segments_cues_are_keyed_on_the_sources_timeline_whatever_its_speed():
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
+    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped]).captions
+    assert [(cue.text, cue.start, cue.key.at) for cue in cues] == [("SATU", 0.2, 10.4), ("DUA", 2.5, 51.2), ("TIGA", 3.3, 52.8)]
+
+
+def test_a_cues_plain_lines_keep_the_words_case_and_punctuation_with_word_edits_applied():
+    words = said('Halo, semua! "Kenapa?" gue😂 rugi lima')
+    rugi, lima = words[4], words[5]
+    cues = edited(words, [WordEdit(at=rugi.start, text="Hermanto,"), WordEdit(at=lima.start, text="")])
+    assert shown(cues) == ["HALO SEMUA!", "KENAPA?", "GUE HERMANTO"]
+    assert [cue.plain for cue in cues] == [["Halo, semua!"], ['"Kenapa?"'], ["gue😂 Hermanto,"]]
+    # The Caption Style's case doesn't change them.
+    kept = edited(words, [], caption_style=CaptionStyle(uppercase=False))
+    assert [cue.plain for cue in kept][:2] == [["Halo, semua!"], ['"Kenapa?"']]
+
+
+def test_a_cue_is_joinable_when_merging_it_into_the_one_before_would_fit_the_line_limits():
+    # Parted by a pause, and by a sentence's end, each fitting one line with the one before.
+    words = [Word("oke", 0.0, 0.3), Word("terus.", 1.0, 1.3), Word("ya", 1.4, 1.6), Word("ketidakberdayaannya", 2.5, 3.0)]
+    cues = captioned(words, 4)
+    assert shown(cues) == ["OKE", "TERUS", "YA", "KETIDAKBERDAYAANNYA"]
+    # The first has none before it; YA KETIDAKBERDAYAANNYA is longer than 16 characters.
+    assert [cue.joinable for cue in cues] == [False, True, True, False]
+    # Nor when together they hold more Words than the style's max_words.
+    one = styled(words[:2], 4, CaptionStyle(max_words=1))
+    assert [cue.joinable for cue in one] == [False, False]
+
+
+def test_cues_either_side_of_a_cut_or_a_layout_change_are_not_joinable():
+    parts = [SegmentInput(10.0, 11.0, words=[Word("satu", 0.2, 0.6)]), SegmentInput(20.0, 21.0, words=[Word("dua", 0.1, 0.4)])]
+    cues = plan_render(10, 21, source(1920, 1080, fps=FPS), main_track=parts).captions
+    assert shown(cues) == ["SATU", "DUA"]
+    assert [cue.joinable for cue in cues] == [False, False]
+    faces, scenes = caption_scenes()
+    cues = captioned([Word("jadi", 3.6, 3.9), Word("gitu", 4.05, 4.3)], 6, scenes, faces)
+    assert shown(cues) == ["JADI", "GITU"]
+    assert [cue.joinable for cue in cues] == [False, False]
 
 
 # Hook timing (clip editor ticket 07).
@@ -1296,3 +1360,319 @@ def test_a_wider_padding_leaves_less_room_for_the_hooks_lines():
     # A narrow padding leaves more.
     assert len(hooked("Setetes racun bisa bunuh").lines) == 2
     assert hooked("Setetes racun bisa bunuh", hook_style=HookStyle(padding_x=20)).lines == ["Setetes racun bisa bunuh"]
+
+
+# Cues of up to three lines (captions-advanced ticket 03).
+SENTENCE = CaptionStyle(max_lines=2, max_chars=24, max_secs=5, pause_secs=0.7)
+
+
+def rows(cues: list[Cue]) -> list[list[str]]:
+    return [[" ".join(word.text for word in line) for line in cue.lines] for cue in cues]
+
+
+def test_sentence_limits_give_two_balanced_lines_ending_at_a_sentences_end_or_a_pause():
+    talk = "satu dua tiga empat lima enam tujuh delapan. sembilan sepuluh"
+    cues = styled(said(talk) + said("oke lanjut", 6.0), 8, SENTENCE)
+    assert rows(cues) == [
+        # 43 characters in two lines of at most 24: the split whose longer line is shortest (19 and
+        # 23 characters, not the 24 and 18 of filling the first line).
+        ["SATU DUA TIGA EMPAT", "LIMA ENAM TUJUH DELAPAN"],
+        # After a sentence's end, a short sentence on one line; a pause of more than 0.7 s ends it.
+        ["SEMBILAN SEPULUH"],
+        ["OKE LANJUT"],
+    ]
+    assert cues[0].plain == ["satu dua tiga empat", "lima enam tujuh delapan."]
+    # The Cue is shown from its first Word to after its last, for as long as max_secs allows.
+    assert (cues[0].start, cues[0].words[-1].text) == (0.0, "DELAPAN")
+    # What doesn't fit two lines of 24 characters goes on in the next Cue. Of two splits as long,
+    # the one with the shorter first line.
+    long = styled(said("jadi waktu itu kita lagi ngobrol soal bisnis keluarga yang ternyata luar biasa ya"), 8, SENTENCE)
+    assert rows(long) == [["JADI WAKTU ITU KITA", "LAGI NGOBROL SOAL BISNIS"], ["KELUARGA YANG", "TERNYATA LUAR BIASA YA"]]
+
+
+def test_a_break_starts_a_line_inside_a_cue_and_a_cue_when_the_cue_has_all_its_lines():
+    words = said("satu dua tiga empat lima enam")
+    breaks = lambda *i: [WordEdit(at=words[n].start + 0.01, break_before=True) for n in i]  # noqa: E731
+    # Unbroken, balanced.
+    assert rows(styled(words, 8, SENTENCE)) == [["SATU DUA TIGA", "EMPAT LIMA ENAM"]]
+    # A break inside the Cue starts its second line, wherever balancing would have put it.
+    assert rows(edited(words, breaks(1), 8, caption_style=SENTENCE)) == [["SATU", "DUA TIGA EMPAT LIMA ENAM"]]
+    # A second break, with both lines taken, starts the next Cue.
+    assert rows(edited(words, breaks(1, 4), 8, caption_style=SENTENCE)) == [["SATU", "DUA TIGA EMPAT"], ["LIMA ENAM"]]
+    # On three lines, it is the third line.
+    three = replace(SENTENCE, max_lines=3)
+    assert rows(edited(words, breaks(1, 4), 8, caption_style=three)) == [["SATU", "DUA TIGA EMPAT", "LIMA ENAM"]]
+    # With one line, a break starts a Cue as before.
+    assert rows(edited(words, breaks(1), 8)) == [["SATU"], ["DUA TIGA EMPAT"], ["LIMA ENAM"]]
+
+
+def test_max_chars_and_max_words_count_per_line_and_the_widest_line_sizes_and_places_the_cue():
+    words = said("satu dua tiga empat lima enam tujuh")
+    # Two Words a line, three lines a Cue.
+    cues = styled(words, 8, CaptionStyle(max_lines=3, max_words=2, max_chars=40, max_secs=5))
+    assert rows(cues) == [["SATU DUA", "TIGA EMPAT", "LIMA ENAM"], ["TUJUH"]]
+    # Three lines a font size apart are taller than the area's 200 px: it grows about its middle.
+    big = styled(words, 8, CaptionStyle(max_lines=3, max_words=2, max_chars=40, max_secs=5, size=200))[0]
+    assert big.area.height == 2 * math.ceil(3 * big.size / 2) > LOWER_CAPTIONS.height
+    assert big.area.y + big.area.height / 2 == LOWER_CAPTIONS.y + LOWER_CAPTIONS.height / 2
+    assert cues[1].area == LOWER_CAPTIONS
+    # A line too wide for the area shrinks the whole Cue to fit it.
+    wide = styled(said("pendek ketidakberdayaannyaaaa"), 4, CaptionStyle(max_lines=2, max_chars=12, max_secs=5, size=200))
+    assert rows(wide) == [["PENDEK", "KETIDAKBERDAYAANNYAAAA"]]
+    assert wide[0].size == styled(said("ketidakberdayaannyaaaa"), 4, CaptionStyle(size=200))[0].size < 200
+
+
+def test_a_cue_is_joinable_when_both_fit_the_cues_lines():
+    # Parted by a sentence's end: "SATU DUA" and "TIGA EMPAT LIMA" fit two lines of 24 characters.
+    words = said("satu dua. tiga empat lima")
+    assert [(rows([cue]), cue.joinable) for cue in styled(words, 8, SENTENCE)] == [
+        ([["SATU DUA"]], False), ([["TIGA EMPAT LIMA"]], True),
+    ]
+    # On one line of 20 characters, they don't.
+    one = replace(SENTENCE, max_lines=1, max_chars=20)
+    assert [cue.joinable for cue in styled(words, 8, one)] == [False, False]
+    # A break before the later Cue's first Word doesn't stop it (merging lifts it); breaks inside
+    # them, needing a third line, do.
+    at = lambda n: WordEdit(at=words[n].start + 0.01, break_before=True)  # noqa: E731
+    assert [cue.joinable for cue in edited(words, [at(2)], 8, caption_style=SENTENCE)] == [False, True]
+    assert [cue.joinable for cue in edited(words, [at(1), at(3)], 8, caption_style=SENTENCE)] == [False, False]
+
+
+# Cue Edits (captions-advanced ticket 07). Their times are on the Source's timeline.
+
+
+def retimed(words: list[Word], cue_edits: list[CueEdit], secs: float = 5, **options) -> RenderPlan:
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, cue_edits=cue_edits, **options)
+
+
+def spans(cues: list[Cue]) -> list[tuple[float, float]]:
+    return [(cue.start, cue.end) for cue in cues]
+
+
+def highlights(cue: Cue) -> list[tuple[str, float, float]]:
+    return [(word.text, word.start, word.end) for word in cue.words]
+
+
+TALK = [Word("halo,", 1.0, 1.4), Word("semua.", 1.4, 2.0), Word("apa", 3.0, 3.2), Word("kabar", 3.2, 3.6)]
+
+
+def test_a_cue_edits_shift_moves_its_cue_and_highlight_and_its_deltas_move_only_its_edges():
+    assert spans(retimed(TALK, []).captions) == [(1.0, 2.3), (3.0, 3.9)]
+    moved = retimed(TALK, [CueEdit(at=103.1, shift=0.5)]).captions
+    assert spans(moved) == [(1.0, 2.3), (3.5, 4.4)]
+    assert highlights(moved[1]) == [("APA", 3.5, 3.7), ("KABAR", 3.7, 4.4)]
+    assert [cue.edited for cue in moved] == [False, True]
+    # Earlier at its start and later at its end: the Words are said when they were, the first
+    # highlighted from when the Cue comes up.
+    widened = retimed(TALK, [CueEdit(at=103.1, start_delta=-0.4, end_delta=0.5)]).captions
+    assert spans(widened) == [(1.0, 2.3), (2.6, 4.4)]
+    assert highlights(widened[1]) == [("APA", 2.6, 3.2), ("KABAR", 3.2, 4.4)]
+    # Any time within its first Word names it.
+    assert spans(retimed(TALK, [CueEdit(at=103.0, shift=0.5)]).captions) == spans(moved)
+
+
+def test_a_retimed_cue_is_clamped_by_its_neighbours_and_the_clip():
+    # Not before the Cue before ends: its start is cut there.
+    assert spans(retimed(TALK, [CueEdit(at=103.1, shift=-1.0)]).captions) == [(1.0, 2.3), (2.3, 2.9)]
+    # Not after the Cue after starts.
+    assert spans(retimed(TALK, [CueEdit(at=101.2, end_delta=2.0)]).captions) == [(1.0, 3.0), (3.0, 3.9)]
+    # Kept in the Clip, and shown CAPTION_MIN_SECS at least.
+    assert spans(retimed(TALK, [CueEdit(at=103.1, shift=10.0)]).captions) == [(1.0, 2.3), (4.8, 5.0)]
+    assert spans(retimed(TALK, [CueEdit(at=101.2, start_delta=-5.0)]).captions)[0] == (0.0, 2.3)
+    assert spans(retimed(TALK, [CueEdit(at=101.2, start_delta=2.0, end_delta=-2.0)]).captions)[0] == (2.8, 3.0)
+    # Of two edited Cues that reach for each other, the earlier keeps its place; one moved later
+    # leaves the earlier room up to it.
+    both = [CueEdit(at=101.2, end_delta=-0.3), CueEdit(at=103.1, start_delta=-9.0)]
+    assert spans(retimed(TALK, both).captions) == [(1.0, 2.0), (2.0, 3.9)]
+    later = [CueEdit(at=101.2, end_delta=2.0), CueEdit(at=103.1, shift=0.5)]
+    assert spans(retimed(TALK, later).captions) == [(1.0, 3.5), (3.5, 4.4)]
+
+
+def test_a_retimed_cue_short_of_room_keeps_the_minimum_and_isnt_dropped():
+    # Moved past the Clip's end while the Cue before reaches for it: it keeps CAPTION_MIN_SECS
+    # before the end, and the Cue before stops there.
+    reaching = [CueEdit(at=101.2, end_delta=5.0), CueEdit(at=103.1, shift=10.0)]
+    assert spans(retimed(TALK, reaching).captions) == [(1.0, 4.8), (4.8, 5.0)]
+    # Spoken right before the next Cue, with the Cue before shown up to it: the Cue before gives
+    # way, so it is shown CAPTION_MIN_SECS.
+    quick = [Word("satu", 1.0, 1.9), Word("dua", 2.0, 2.05), Word("tiga", 2.1, 2.5)]
+    one = CaptionStyle(max_words=1)
+    assert spans(retimed(quick, [], caption_style=one).captions) == [(1.0, 2.0), (2.0, 2.1), (2.1, 2.8)]
+    placed = retimed(quick, [CueEdit(at=102.025, x=300)], caption_style=one).captions
+    assert spans(placed) == [(1.0, 1.9), (1.9, 2.1), (2.1, 2.8)]
+    # With no more room than its Segment (shorter than the minimum), it fills it.
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    tiny = SegmentInput(50.0, 50.15, words=[Word("dua", 0.0, 0.15)])
+    cues = plan_render(10, 50.15, source(1920, 1080, fps=FPS), main_track=[first, tiny], cue_edits=[CueEdit(at=50.07, shift=0.5)]).captions
+    assert spans(cues) == [(0.2, 0.9), (2.0, 2.15)]
+
+
+def test_each_cue_says_where_a_cue_edit_keeps_it_and_which_cue_edits_it_has():
+    # Bounds: its Segment (here the Clip), the Cue before's end and the Cue after's start.
+    plain = retimed(TALK, []).captions
+    assert [(cue.low, cue.high, cue.speed) for cue in plain] == [(0.0, 3.0, 1.0), (2.3, 5.0, 1.0)]
+    assert [cue.word_ats for cue in plain] == [[101.2, 101.7], [103.1, 103.4]]
+    assert [cue.cue_edit_ats for cue in plain] == [[None, None], [None, None]]
+    # A Cue moved later leaves the one before room up to it; its own bounds are what it was kept in.
+    later = retimed(TALK, [CueEdit(at=101.2, end_delta=2.0), CueEdit(at=103.1, shift=0.5)]).captions
+    assert [(cue.low, cue.high) for cue in later] == [(0.0, 3.5), (3.5, 5.0)]
+    # A Cue Edit is named by its `at` as given: early in a long first Word, past WORD_EDIT_REACH_SECS
+    # of the Word's middle, it still applies, and the Cue says it is its own.
+    long = [Word("halooo", 1.0, 1.8), Word("apa", 3.0, 3.2)]
+    early = retimed(long, [CueEdit(at=101.05, shift=0.2)]).captions
+    assert early[0].edited and early[0].cue_edit_ats == [101.05]
+    # A join that took is named on its Word; one that didn't, on the Cue it starts.
+    join = CueEdit(at=103.15, join=True)
+    assert retimed(TALK, [join], caption_style=SENTENCE).captions[0].cue_edit_ats == [None, None, 103.15, None]
+    kept = retimed(TALK, [join], caption_style=replace(SENTENCE, max_lines=1, max_chars=12)).captions
+    assert kept[1].cue_edit_ats == [103.15, None] and not kept[1].edited
+    # In Segments: each between its cuts (a Transition's at its middle), at its Speed, keyed on
+    # its timeline.
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0, join=Join(TransitionKind.FADE, 0.4))
+    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped]).captions
+    assert [(cue.low, cue.high, cue.speed) for cue in cues] == [(0.0, 1.8, 1.0), (1.8, 2.9, 2.0), (2.6, 3.6, 2.0)]
+    assert [cue.word_ats for cue in cues] == [[10.4], [51.2], [52.8]]
+
+
+def test_cue_edits_are_divided_by_their_segments_speed_and_kept_in_their_segment():
+    first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
+    sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
+
+    def cues(*edits: CueEdit) -> list[Cue]:
+        return plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped], cue_edits=list(edits)).captions
+
+    assert spans(cues()) == [(0.2, 0.9), (2.5, 3.0), (3.3, 3.8)]
+    # 0.4 s of the Source is 0.2 s at 2x.
+    assert spans(cues(CueEdit(at=51.2, shift=0.4))) == [(0.2, 0.9), (2.7, 3.2), (3.3, 3.8)]
+    assert spans(cues(CueEdit(at=51.2, start_delta=-0.4))) == [(0.2, 0.9), (2.3, 3.0), (3.3, 3.8)]
+    # Not out of its Segment, at either end.
+    assert spans(cues(CueEdit(at=51.2, start_delta=-2.0)))[1] == (2.0, 3.0)
+    assert spans(cues(CueEdit(at=52.8, end_delta=4.0)))[2] == (3.3, 4.0)
+
+
+def test_a_cue_edits_word_starts_a_cue_whatever_the_line_limits():
+    words = said("satu dua tiga empat lima enam")
+    empat = words[3]
+    edit = CueEdit(at=100 + (empat.start + empat.end) / 2)
+    assert rows(styled(words, 8, SENTENCE)) == [["SATU DUA TIGA", "EMPAT LIMA ENAM"]]
+    assert rows(retimed(words, [edit], 8, caption_style=SENTENCE).captions) == [["SATU DUA TIGA"], ["EMPAT LIMA ENAM"]]
+    # Longer lines, or one short line a Cue: EMPAT still starts one, keyed by it.
+    for style in (replace(SENTENCE, max_chars=40), CaptionStyle(), CaptionStyle(max_chars=8)):
+        cues = retimed(words, [edit], 8, caption_style=style).captions
+        [started] = [cue for cue in cues if cue.edited]
+        assert started.words[0].text == "EMPAT" and started.key.at == edit.at
+
+
+def test_a_cue_edit_whose_word_isnt_shown_is_unused_and_applies_again_once_it_is():
+    edit = CueEdit(at=103.1, shift=0.5)
+    # Trimmed out of the Clip's range: unused, and nothing moves.
+    trimmed = retimed(TALK, [edit], 2.5)
+    assert (spans(trimmed.captions), trimmed.unused_cue_edits) == ([(1.0, 2.3)], [edit])
+    # The range restored: it applies again.
+    restored = retimed(TALK, [edit])
+    assert (spans(restored.captions)[1], restored.unused_cue_edits) == ((3.5, 4.4), [])
+    # So in a Segment of its range; a Word removed by a Word Edit isn't shown either.
+    part = lambda end: SegmentInput(100.0, end, words=[w for w in TALK if w.end <= end - 100])  # noqa: E731
+    plan = lambda end, **options: plan_render(100, end, source(1920, 1080, fps=FPS), main_track=[part(end)], cue_edits=[edit], **options)  # noqa: E731
+    assert plan(102.5).unused_cue_edits == [edit]
+    assert plan(105).unused_cue_edits == []
+    removed = SegmentInput(100.0, 105, words=TALK, word_edits=[WordEdit(at=3.1, text="")])
+    assert plan_render(100, 105, source(1920, 1080, fps=FPS), main_track=[removed], cue_edits=[edit]).unused_cue_edits == [edit]
+    # A Cue Edit of a Media Library item doesn't apply on the Source's timeline.
+    elsewhere = CueEdit(at=103.1, media="ab" * 16, shift=0.5)
+    assert retimed(TALK, [elsewhere]).unused_cue_edits == [elsewhere]
+
+
+def test_a_media_segments_cue_edits_are_on_its_items_timeline():
+    media = "ab" * 16
+    # A video's Segment from 0.5 s into it, saying "halo semua. apa" (in seconds into the Segment).
+    talking = SegmentInput(0.5, 4.0, media=media, width=720, height=1280, words=[Word("halo", 0.5, 0.9), Word("apa", 2.5, 2.9)])
+    plan = lambda *edits: plan_render(0, 10, source(1920, 1080, fps=FPS), main_track=[talking], cue_edits=list(edits))  # noqa: E731
+    assert [(cue.start, cue.key.at, cue.key.media) for cue in plan().captions] == [(0.5, 1.2, media), (2.5, 3.2, media)]
+    # Keyed at its Word's middle on the item's timeline: 3.2 s into the video.
+    moved = plan(CueEdit(at=3.2, media=media, shift=0.3))
+    assert [(cue.start, cue.edited) for cue in moved.captions] == [(0.5, False), (2.8, True)]
+    # The Source's Cue Edit at that time doesn't touch it.
+    source_edit = CueEdit(at=3.2, shift=0.3)
+    assert plan(source_edit).unused_cue_edits == [source_edit]
+
+
+# A Cue's own place and size (captions-advanced ticket 08).
+
+
+def test_a_cue_edits_place_moves_only_its_cue_and_keeps_it_in_the_frame():
+    plain = retimed(TALK, []).captions
+    assert {cue.area for cue in plain} == {LOWER_CAPTIONS}
+    # Centred on (300, 700), as a custom position puts captions; the Cue before stays put.
+    placed = retimed(TALK, [CueEdit(at=103.1, x=300, y=700)]).captions
+    assert placed[0].area == LOWER_CAPTIONS
+    assert placed[1].area == Box(300 - 410, 600, 820, 200)
+    assert placed[1].edited
+    # Only a height: the style's x (centred); only an x: the style's height.
+    assert retimed(TALK, [CueEdit(at=103.1, y=700)]).captions[1].area == Box(130, 600, 820, 200)
+    assert retimed(TALK, [CueEdit(at=103.1, x=600)]).captions[1].area == replace(LOWER_CAPTIONS, x=600 - 410)
+    # Off the frame, it is kept in the safe area's height and with its line in the frame's width.
+    [_, far] = retimed(TALK, [CueEdit(at=103.1, x=1080, y=1920)]).captions
+    assert far.area.y == SAFE_AREA.y + SAFE_AREA.height - 200
+    half = font_metrics().width("APA KABAR", far.size) / 2 + CaptionStyle().outline
+    assert far.area.x + far.area.width / 2 == round(1080 - half)
+
+
+def test_a_cue_edits_scale_multiplies_the_styles_size_and_follows_it():
+    edit = [CueEdit(at=103.1, scale=1.5)]
+    cues = retimed(TALK, edit).captions
+    assert [cue.size for cue in cues] == [110, 165]
+    # The style's size changed: the Cue stays 1.5 times as big.
+    bigger = retimed(TALK, edit, caption_style=CaptionStyle(size=120)).captions
+    assert [cue.size for cue in bigger] == [120, 180]
+    # Then a line too wide for its area is still set smaller.
+    long = [Word("halo", 1.0, 1.4), Word("W" * 14, 3.0, 3.6)]
+    [_, wide] = retimed(long, edit, caption_style=CaptionStyle(max_chars=30)).captions
+    assert wide.size < 165
+    assert wide.size == retimed(long, [], caption_style=CaptionStyle(max_chars=30)).captions[1].size
+
+
+# A `join` Cue Edit (captions-advanced ticket 09).
+
+
+def test_a_join_keeps_two_cues_parted_by_a_pause_together_but_not_past_the_line_limits():
+    # "halo, semua." and "apa kabar" are parted by a sentence's end and a pause of a second.
+    join = CueEdit(at=103.1, join=True)
+    apart = retimed(TALK, [], caption_style=SENTENCE).captions
+    assert rows(apart) == [["HALO SEMUA"], ["APA KABAR"]]
+    assert [(cue.joinable, cue.needs_join) for cue in apart] == [(False, False), (True, True)]
+    joined = retimed(TALK, [join], caption_style=SENTENCE)
+    assert rows(joined.captions) == [["HALO SEMUA APA KABAR"]]
+    assert spans(joined.captions) == [(1.0, 3.9)] and not joined.captions[0].edited and joined.unused_cue_edits == []
+    # A join cancels only the break before its own Word: the longest Cue still counts from the
+    # Cue's first Word, so the Words after it break off where max_secs would part them. The joined
+    # Word is shown to its end, but the Cue lingers no longer.
+    short = replace(SENTENCE, max_secs=1.5)
+    assert rows(retimed(TALK, [], caption_style=short).captions) == [["HALO SEMUA"], ["APA KABAR"]]
+    once = retimed(TALK, [join], caption_style=short).captions
+    assert rows(once) == [["HALO SEMUA APA"], ["KABAR"]]
+    assert spans(once) == [(1.0, 3.2), (3.2, 3.9)]
+    assert highlights(once[0]) == [("HALO", 1.0, 1.4), ("SEMUA", 1.4, 3.0), ("APA", 3.0, 3.2)]
+    # What is left still fits and needs a join of its own; merged again, it is one Cue.
+    assert (once[1].joinable, once[1].needs_join) == (True, True)
+    twice = retimed(TALK, [join, CueEdit(at=103.4, join=True)], caption_style=short).captions
+    assert rows(twice) == [["HALO SEMUA APA KABAR"]] and spans(twice) == [(1.0, 3.6)]
+    # Past max_chars times max_lines they stay two, not joinable, and the join moves nothing. (It
+    # keeps only its own Word with the Cue before: at 16 characters "HALO SEMUA APA" would fit.)
+    narrow = replace(SENTENCE, max_lines=1, max_chars=12)
+    kept = retimed(TALK, [join], caption_style=narrow).captions
+    assert rows(kept) == [["HALO SEMUA"], ["APA KABAR"]] and spans(kept) == spans(retimed(TALK, [], caption_style=narrow).captions)
+    assert [cue.joinable for cue in kept] == [False, False] and not kept[1].edited
+    # In two lines of 10 characters it fits again: joinable agrees.
+    two = replace(SENTENCE, max_lines=2, max_chars=10)
+    assert [cue.joinable for cue in retimed(TALK, [], caption_style=two).captions] == [False, True]
+    assert rows(retimed(TALK, [join], caption_style=two).captions) == [["HALO SEMUA", "APA KABAR"]]
+
+
+def test_a_cue_parted_only_by_a_cue_edit_needs_no_join():
+    words = said("satu dua tiga empat lima enam")
+    empat = words[3]
+    split = retimed(words, [CueEdit(at=100 + (empat.start + empat.end) / 2)], 8, caption_style=SENTENCE).captions
+    assert rows(split) == [["SATU DUA TIGA"], ["EMPAT LIMA ENAM"]]
+    assert [(cue.joinable, cue.needs_join) for cue in split] == [(False, False), (True, False)]

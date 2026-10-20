@@ -1,7 +1,7 @@
 """Candidates: proposed clips awaiting review."""
 
 import math
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from typing import Annotated, Any, NamedTuple
 
@@ -11,7 +11,7 @@ from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
 # Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
 from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
-from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
+from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, Height, HookShape, Padding, StyleOverrides, Tracking, Width
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -63,21 +63,26 @@ class Layout(StrEnum):
     MANUAL = "manual"
 
 
+# A Media Library item's id (app/media.py).
+MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+
+
 @dataclass(frozen=True)
 class WordEdit:
     """The owner's correction of one caption Word: the Word whose span holds `at` (seconds on the
-    Source's timeline), or failing that the nearest within WORD_EDIT_REACH_SECS (app/planner.py).
-    `text` replaces the Word's text (None keeps it; empty removes the Word), and `break_before`
-    starts a caption line at it. Keyed by time, not by the Word's place, since a Clip's Words are
-    transcribed again when its range changes."""
+    Source's timeline, or with `media` on that Media Library item's, of its Media Words), or failing
+    that the nearest within WORD_EDIT_REACH_SECS (app/planner.py), on that timeline only. It applies
+    in every Segment showing that time (docs/adr/0020). `text` replaces the Word's text (None keeps
+    it; empty removes the Word), and `break_before` starts a caption line at it. Keyed by time, not
+    by the Word's place, since a Clip's Words are transcribed again when its range changes; and by
+    `(media, at)`, two edits at one time of different timelines being apart."""
 
     at: FiniteFloat
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=WORD_EDIT_MAX_CHARS)] | None = None
     break_before: bool = False
+    media: MediaId | None = None
 
 
-# A Media Library item's id (app/media.py).
-MediaId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
 Volume = Annotated[FiniteFloat, Field(ge=0, le=2)]
 # How long a sound's linear fade in or out lasts, in seconds.
@@ -89,6 +94,44 @@ Speed = Annotated[FiniteFloat, Field(ge=MIN_SPEED, le=MAX_SPEED)]
 # far a song's added from now on is, unless the edit says (app/review.py).
 Duck = Annotated[FiniteFloat, Field(ge=-30, le=-1)]
 DEFAULT_DUCK = -12.0
+
+# The furthest a Cue Edit moves its Cue, or either of its edges, in seconds of its timeline.
+CUE_SHIFT_MAX_SECS = 10.0
+CueShift = Annotated[FiniteFloat, Field(ge=-CUE_SHIFT_MAX_SECS, le=CUE_SHIFT_MAX_SECS)]
+# The least and the most a Cue Edit scales its Cue, over the Caption Style's size.
+CUE_MIN_SCALE, CUE_MAX_SCALE = 0.25, 4.0
+CueScale = Annotated[FiniteFloat, Field(ge=CUE_MIN_SCALE, le=CUE_MAX_SCALE)]
+
+
+# docs/adr/0020-media-words-and-cue-edits.md; matched to its Word by app/planner.py's match_edits.
+@dataclass(frozen=True)
+class CueEdit:
+    """A change to one Cue, keyed as a Word Edit: `at`, any time in its first Word on the Source's
+    timeline (with `media`, that item's). That Word starts a Cue. `shift` moves the Cue and its
+    highlight, `start_delta` and `end_delta` one edge (negative: earlier), in seconds of that
+    timeline (so scaled by Speed); kept between its neighbours and in its Segment. `x` and `y`
+    (output pixels, as the Caption Style's custom position) place it, kept in the frame, and `scale`
+    multiplies the Caption Style's size for it (before a line too wide is set smaller); None keeps
+    the style's. While its Word isn't shown it does nothing, and is kept. With `join`, instead of
+    starting a Cue, its Word's Cue is kept with the one before where only a pause, a sentence's end
+    or the longest-Cue limit would part them (the line limits still do); it is refused with any
+    other field set."""
+
+    at: FiniteFloat
+    media: MediaId | None = None
+    shift: CueShift = 0.0
+    start_delta: CueShift = 0.0
+    end_delta: CueShift = 0.0
+    x: Width | None = None
+    y: Height | None = None
+    scale: CueScale | None = None
+    join: bool = False
+
+    def __post_init__(self) -> None:
+        if self.join:
+            others = [f.name for f in fields(self) if f.name not in ("at", "media", "join") and getattr(self, f.name) != f.default]
+            if others:
+                raise ValueError(f"A Cue Edit with join sets nothing else: it has {', '.join(others)}")
 
 
 # The least and the most a Transform scales a picture: a twentieth and eight times its fitted size.
@@ -679,6 +722,9 @@ class Segment:
     keys: Keys = field(default_factory=dict)
     # A Freeze frame's (docs/adr/0009): how long it holds the frame at `start`, silent; `end` is `start`.
     hold: TimelineSecs | None = None
+    # A video's Captions switch (docs/adr/0020): False leaves it uncaptioned and its item untranscribed;
+    # empty means on. A Segment of the Source has none: it is captioned whenever its Job is.
+    captions: bool | None = None
     # Its sound faded in from its start on the Timeline and out to its end (a Transition's overlap
     # included), linearly, as a Music Clip's; the planner fits them to its length. A Freeze frame has none.
     fade_in: Fade = 0.0
@@ -689,6 +735,8 @@ class Segment:
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
             raise ValueError(f"Segment {self.id} shows the episode, whose Layouts frame it: it has no {framed} Keyframes, only volume ones")
+        if self.media is None and self.captions is not None:
+            raise ValueError(f"Segment {self.id} shows the episode, which has no Captions switch: only a video's Segment has one")
         if self.hold is not None:
             _check_held(self)
         length = segment_time(self).length
@@ -783,6 +831,8 @@ class Candidate:
     style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
     # Corrections of its caption Words.
     word_edits: list[WordEdit] = field(default_factory=list)
+    # Changes to single Cues, by the time of their first Word; none in a Candidate saved before them.
+    cue_edits: list[CueEdit] = field(default_factory=list)
     # When the hook comes on, in seconds into the Clip, and how long it stays (both kept in the Clip).
     hook_start: float = 0.0
     hook_secs: float = 3.0

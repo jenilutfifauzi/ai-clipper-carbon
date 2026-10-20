@@ -14,6 +14,7 @@ from app.planner import FrameFaces, Scene, SceneLayout, SegmentInput, plan_rende
 from app.rendering import candidate_plan
 from app.styles import PresetStore
 from app.transcript import Word
+from conftest import cue_text, cue_words
 from test_keyed_scenes import by_hand
 from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
@@ -135,7 +136,7 @@ async def test_the_agent_slows_a_segment_of_the_episode_and_its_word_edit_stays_
     assert (sped["speed"], sped["end"]) == (0.5, round(2 * (candidate["end"] - candidate["start"]), 2))
     slowed = next(word for word in plan["words"] if word["text"] == "kabar")
     assert (slowed["start"], slowed["at"], slowed["edit"]["text"]) == (pytest.approx(2 * kabar["start"], abs=0.02), kabar["at"], "kabarnya")
-    assert any("KABARNYA" in caption["text"] for caption in plan["captions"])
+    assert any("KABARNYA" in line for caption in plan["captions"] for line in caption["lines"])
 
 
 # Seam A: the real ffmpeg
@@ -158,17 +159,17 @@ def test_a_source_segment_at_1_5x_burns_its_captions_in_time_with_its_speech(cli
     # The plan's Words are where they are said at 1.5×.
     plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
     said = [word for word in HEARD if start < (word.start + word.end) / 2 < end]
-    spoken = [word for event in plan["captions"] for word in event["words"]]
+    spoken = [word for event in plan["captions"] for word in cue_words(event)]
     assert [word["start"] for word in spoken] == [pytest.approx((word.start - start) / 1.5, abs=1e-3) for word in said]
     # Burned in: each Word in orange while it is said, the highlight moving along its line.
     for event in plan["captions"]:
         lefts = []
-        for word in event["words"]:
+        for word in cue_words(event):
             frame = full_frame(settings, video, (word["start"] + word["end"]) / 2)
             rows, columns = pixels(frame, ORANGE)
             assert len(rows) > 300, (word, len(rows))
             lefts.append(columns.mean())
-        assert lefts == sorted(lefts), (event["text"], lefts)
+        assert lefts == sorted(lefts), (cue_text(event), lefts)
 
 
 def test_a_2x_segments_crop_follows_its_face_at_its_speed(client, settings, video_source, moving_face):

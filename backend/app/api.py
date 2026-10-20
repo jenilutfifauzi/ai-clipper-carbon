@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -32,6 +32,7 @@ from app.candidates import (
     HOOK_MAX_CHARS,
     KICKER_MAX_CHARS,
     Candidate,
+    CueEdit,
     Framing,
     KeyProperty,
     Layout,
@@ -47,10 +48,11 @@ from app.candidates import (
     Volume,
     WordEdit,
 )
+from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
 from app.config import Settings
 from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION, frames_in, make_peaks, make_strip
-from app.editor import PreviewPlan, preview_plan
+from app.editor import PreviewPlan, captions_pending, preview_plan
 from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
 from app.export_files import SavedExport, save_audio, save_frame, saved_export
@@ -61,12 +63,13 @@ from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobSt
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.media_words import MediaWordsStatus, MediaWordsStore
 from app.migration import OLD_TEXT_LAYER
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.renderer import AudioFormat, available_codecs
-from app.rendering import NothingToRender, ranked_clips, source_copies
+from app.rendering import NothingToRender, has_media_words, media_language, ranked_clips, source_copies
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -86,7 +89,7 @@ from app.styles import (
     StylePreset,
     WatermarkStyle,
 )
-from app.transcript import Transcript
+from app.transcript import Language, Transcript, Word
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
 from app.worker import Worker
 
@@ -97,11 +100,14 @@ media = APIRouter(prefix="/media")
 # while it is analyzed again and its untouched Candidates are about to be replaced. Review goes on
 # while Clips render; each render takes its Candidate as it is when the render starts.
 EDITABLE = frozenset({JobStatus.REVIEW, JobStatus.RENDERING})
-# What /media serves from a Job's directory: its video (or preview proxy), and its Clips and their
-# posters. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
-MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".wav", ".jpg", ".png"})
+# What /media serves from a Job's directory: its video (or preview proxy), and its Clips with their
+# posters and caption files. An uploaded master the browser can play may be a QuickTime file (app/preview.py).
+MEDIA_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".m4a", ".wav", ".jpg", ".png", ".srt", ".vtt"})
+# The caption files' types (app/caption_files.py): not every system's MIME table knows them.
+SUBTITLE_TYPES = {".srt": "application/x-subrip", ".vtt": "text/vtt"}
 # The most Word Edits a Candidate holds: more than a 3-minute clip has Words.
 WORD_EDITS_MAX = 500
+CUE_EDITS_MAX = 500
 # The most Layout Overrides a Candidate holds: more than a clip has Scenes.
 LAYOUT_OVERRIDES_MAX = 200
 # The most Text Layers, Shapes, Music Clips and Segments a Candidate holds.
@@ -155,6 +161,10 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _media_words(request: Request) -> MediaWordsStore:
+    return request.app.state.media_words
+
+
 def _faces(request: Request) -> Faces:
     return request.app.state.faces
 
@@ -181,6 +191,7 @@ TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
 ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
+MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 EditBy = Annotated[Edit, Depends(_edit)]
 ExistingJob = Annotated[Job, Depends(_job)]
@@ -249,6 +260,8 @@ class CandidateUpdate(BaseModel):
     style_overrides: StyleOverrides | None = None
     # Replaces the Candidate's Word Edits as a whole.
     word_edits: Annotated[list[WordEdit], Field(max_length=WORD_EDITS_MAX)] | None = None
+    # Replaces the Candidate's Cue Edits as a whole.
+    cue_edits: Annotated[list[CueEdit], Field(max_length=CUE_EDITS_MAX)] | None = None
     # Seconds into the Clip; the planner keeps them in it.
     hook_start: Annotated[float, Field(ge=0, le=MAX_CLIP_SECS)] | None = None
     hook_secs: Annotated[float, Field(ge=0.5, le=30)] | None = None
@@ -289,6 +302,26 @@ class CandidateUpdate(BaseModel):
     def change(self) -> CandidateChange:
         """The edit, as `review.update` makes it."""
         return CandidateChange(**{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset)
+
+
+class MediaWordsRequest(BaseModel):
+    """A Retry of a video's Media Words, or with `again`, "Transcribe again"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    again: bool = False
+
+
+class MediaWordsView(BaseModel):
+    """A video's Media Words for a Job: in its language (its own, else the Job's), their status
+    (ready, pending, failed or none), the error of a failure, and the Words when ready, in seconds
+    into the video."""
+
+    media_id: str
+    language: str
+    status: MediaWordsStatus
+    error: str | None = None
+    words: list[Word] | None = None
 
 
 class RestoreBody(BaseModel):
@@ -846,12 +879,13 @@ def candidate_preview_plan(
     presets: Presets,
     logos: Logos,
     library: Media,
+    media_words: MediaWordsDep,
     body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
     edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
     edit; 409 for a Job without Candidates."""
-    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, body)
+    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body)
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/frame")
@@ -865,6 +899,7 @@ def save_candidate_frame(
     export_presets: ExportPresets,
     logos: Logos,
     library: Media,
+    media_words: MediaWordsDep,
 ) -> SavedExport:
     """Save the frame at `at` (Timeline time) of the Candidate, or of `draft` (as the Preview Plan
     plans it: from cached analysis only), drawn as its render would draw it at the Export Preset's
@@ -872,7 +907,7 @@ def save_candidate_frame(
     (`<candidate>-<mm.ss.ff>.png`, overwritten). Synchronous, outside the render queue: the Job's
     status doesn't change. 422 for an unknown Preset or a draft that isn't a valid edit."""
     export = _export_preset(export_presets, body.export_preset_id).settings
-    planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, body.draft, export.fps)
+    planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
     job, job_dir = store.get(job_id), store.job_dir(job_id)
     try:
         path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos)
@@ -889,6 +924,7 @@ def _draft_plan(
     presets: PresetStore,
     logos: LogoStore,
     library: MediaStore,
+    media_words: MediaWordsStore,
     body: CandidateUpdate | None,
     fps: float | None = None,
 ) -> PreviewPlan:
@@ -896,7 +932,7 @@ def _draft_plan(
     Source's when None)."""
     job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
     try:
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, fps)
+        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps)
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
     except InvalidStyle as exc:
@@ -1003,10 +1039,44 @@ def save_candidate_audio(
     return saved_export(job_id, job_dir, path)
 
 
+@router.get("/jobs/{job_id}/candidates/{candidate_id}/captions/{format}")
+def candidate_captions(
+    job_id: str,
+    candidate_id: str,
+    format: CaptionFormat,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    media_words: MediaWordsDep,
+) -> Response:
+    """The Candidate's captions as an SRT or VTT file (app/caption_files.py): the Cues of its Preview
+    Plan as saved, without a render. (A rendered Clip's are beside its MP4: its `srt` and `vtt`.)
+    409 for a Job with captions off or without Candidates, and while a captioned Segment's Words are
+    still being transcribed."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    transcript, candidates = store.load_transcript(job_id), store.load_candidates(job_id)
+    if job.source is None or transcript is None or candidates is None:
+        raise HTTPException(409, f"Job {job_id} has no Candidates yet")
+    if not job.options.captions:
+        raise HTTPException(409, f"Job {job_id} has captions off: it has no caption files")
+    candidate = next((c for c in candidates if c.id == candidate_id), None)
+    if candidate is None:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+    preview = preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words)
+    if captions_pending(preview):
+        raise HTTPException(409, "Its captions are still being transcribed: ask again once they are ready")
+    return Response(caption_file(preview.plan.captions, format), media_type=SUBTITLE_TYPES[f".{format}"])
+
+
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/prepare", status_code=202)
 def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobWorker) -> Job:
-    """Queue the Candidate to be prepared for the editor: its caption Words transcribed and its range
-    analysed, in the render queue, so that its Preview Plan shows the Clip's own captions and Scenes.
+    """Queue the Candidate to be prepared for the editor: its caption Words transcribed (its media
+    Segments' Media Words among them) and its range analysed, in the render queue, so that its Preview Plan shows the Clip's own captions and Scenes.
     The Job is `rendering` meanwhile. Nothing is queued when both are saved already. 409 unless the
     Job is in review or rendering."""
     try:
@@ -1018,6 +1088,45 @@ def prepare_candidate(job_id: str, candidate_id: str, store: Store, worker: JobW
         raise HTTPException(404, f"Job {job_id} has no Candidate {exc}") from None
     except JobConflict as exc:
         raise HTTPException(409, f"{exc}: Candidates can be prepared once it is in review") from None
+
+
+def _media_words_view(store: JobStore, library: MediaStore, media_words: MediaWordsStore, job_id: str, media_id: str) -> MediaWordsView:
+    try:
+        job = store.get(job_id)
+        item = library.get(media_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except MediaNotFound:
+        raise HTTPException(404, f"No media {media_id}") from None
+    if not has_media_words(item):
+        raise HTTPException(422, f"{item.name} isn't a video with sound: it has no Media Words")
+    language = media_language(job, item)
+    status = media_words.status(media_id, language)
+    words = media_words.saved(media_id, language) if status is MediaWordsStatus.READY else None
+    return MediaWordsView(media_id=media_id, language=language, status=status, error=media_words.error(media_id, language), words=words)
+
+
+@router.get("/jobs/{job_id}/media/{media_id}/words")
+def media_words_of(job_id: str, media_id: str, store: Store, library: Media, media_words: MediaWordsDep) -> MediaWordsView:
+    """A video's Media Words for the Job (`MediaWordsView`). 422 for an item that isn't a video with sound."""
+    return _media_words_view(store, library, media_words, job_id, media_id)
+
+
+@router.post("/jobs/{job_id}/media/{media_id}/words", status_code=202)
+def transcribe_media_words(
+    job_id: str, media_id: str, store: Store, library: Media, media_words: MediaWordsDep, worker: JobWorker,
+    body: MediaWordsRequest | None = None,
+) -> MediaWordsView:
+    """Retry a video's Media Words for the Job: a remembered failure is forgotten and the video
+    transcribed again in its language, in the render queue (the Job is `rendering` meanwhile).
+    Nothing is queued when they are ready, unless `again` ("Transcribe again"), which replaces them.
+    409 unless the Job is in review or rendering with its captions on."""
+    view = _media_words_view(store, library, media_words, job_id, media_id)
+    try:
+        worker.transcribe_media(job_id, media_id, body.again if body else False)
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: its videos' Media Words can't be transcribed") from None
+    return _media_words_view(store, library, media_words, job_id, view.media_id)
 
 
 @router.post("/jobs/{job_id}/candidates", status_code=201)
@@ -1384,6 +1493,15 @@ def delete_logo(logo_id: str, logos: Logos) -> None:
         raise HTTPException(404, f"No Logo {logo_id}") from None
 
 
+class MediaChange(BaseModel):
+    """A change to a Media Library item."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The language its Media Words are transcribed in, in every Job; null: each Job's.
+    language: Language | None
+
+
 class MediaUse(BaseModel):
     """A Candidate that uses a Media Library item."""
 
@@ -1407,6 +1525,18 @@ def upload_media(file: UploadFile, library: Media) -> MediaItem:
         return library.add(file.file, file.filename or "Media")
     except BadMedia as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+@router.patch("/media/{media_id}")
+def change_media(media_id: str, body: MediaChange, library: Media) -> MediaItem:
+    """Set a video's language (null: each Job's). Its Media Words in that language are transcribed by
+    the next preparation or render of a Candidate showing it; those of other languages are kept."""
+    try:
+        if library.get(media_id).kind is not MediaKind.VIDEO:
+            raise HTTPException(422, "Only a video has a language")
+        return library.set_language(media_id, body.language)
+    except MediaNotFound:
+        raise HTTPException(404, f"No media {media_id}") from None
 
 
 @router.get("/media/{media_id}")
@@ -1626,8 +1756,9 @@ def put_profile(profile: ChannelProfile, profiles: Profiles) -> ChannelProfile:
 
 @media.get("/{job_id}/{path:path}")
 def media_file(job_id: str, path: str, store: Store) -> FileResponse:
-    """A video or image from a Job's directory, with HTTP range support (206 Partial Content), so
-    the browser's player can seek in a long Source. Only files inside that directory are served."""
+    """A video, image or caption file from a Job's directory, with HTTP range support (206 Partial
+    Content), so the browser's player can seek in a long Source. Only files inside that directory
+    are served."""
     try:
         job_dir = store.job_dir(job_id).resolve()
     except JobNotFound:
@@ -1635,4 +1766,4 @@ def media_file(job_id: str, path: str, store: Store) -> FileResponse:
     file = (job_dir / path).resolve()
     if not (file.is_relative_to(job_dir) and file.suffix.lower() in MEDIA_SUFFIXES and file.is_file()):
         raise HTTPException(404, f"No media {path!r} in Job {job_id}")
-    return FileResponse(file)
+    return FileResponse(file, media_type=SUBTITLE_TYPES.get(file.suffix.lower()))

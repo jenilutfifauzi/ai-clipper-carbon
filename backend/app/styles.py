@@ -237,13 +237,25 @@ class CaptionStyle(_ReadsOldShadow):
     # Each line's centre, in output pixels, at any position (the planner keeps the line in the
     # frame); None centres it in the frame.
     x: Width | None = None
-    # A line ends before a Word that would make it longer than max_chars characters, counted as wide
-    # as its tracking makes them (a single longer Word stands alone), hold more than max_words Words,
-    # or last more than max_secs, and after a pause of pause_secs.
+    # A Cue holds at most max_lines lines, each of at most max_chars characters, counted as wide as
+    # its tracking makes them (a single longer Word stands alone on its line), and max_words Words. It
+    # ends before a Word that wouldn't fit them, or would make it last more than max_secs, and after
+    # a pause of pause_secs.
+    max_lines: Annotated[int, Field(ge=1, le=3)] = 1
     max_chars: Annotated[int, Field(ge=4, le=60)] = 16
     max_words: Annotated[int, Field(ge=1, le=12)] | None = None
     max_secs: Annotated[float, Field(ge=0.3, le=10)] = 1.4
     pause_secs: Annotated[float, Field(ge=0.1, le=5)] = 0.5
+
+
+# Phrase (one short line: CaptionStyle's defaults) and Sentence (up to two lines, to a sentence's
+# end): line limits the editor's Caption Style panel fills in one click, and the MCP's instructions
+# name. Not stored: a style is one when its values are. The frontend's editor/lineLimits.ts holds
+# them too, both checked against tests/fixtures/line_limits.json.
+LINE_LIMITS: dict[str, dict[str, int | float | None]] = {
+    "phrase": {"max_lines": 1, "max_chars": 16, "max_words": None, "max_secs": 1.4, "pause_secs": 0.5},
+    "sentence": {"max_lines": 2, "max_chars": 24, "max_words": None, "max_secs": 5, "pause_secs": 0.7},
+}
 
 
 @dataclass(frozen=True)

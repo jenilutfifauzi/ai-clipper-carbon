@@ -4,34 +4,38 @@ import type { PreviewPlan, PreviewWord, WordEdit } from "../../../api";
 import { Button } from "../../../components/Button";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, type Playback } from "./playback";
+import { keyText, sameKey } from "./timelineKey";
 import { editKey, withWordEdit, WORD_EDIT_MAX_CHARS } from "./wordEdits";
 
 /**
  * The captions' Words, as the plan breaks them into lines, for correcting: click a Word to hear it
  * and edit it. An edit gives it new text, removes it, or starts a line at it; each is saved at once
  * as the Candidate's Word Edits. `focus` (seconds into the Clip) opens the Word spoken then, e.g.
- * from the timeline.
+ * from the timeline. With `only` (a picked Cue's, in the Advanced Edit), just those Words, and
+ * Restore all restores just theirs.
  */
 export function CaptionTextEditor({
   preview,
   edits,
   playback,
   focus,
+  only,
   onChange,
 }: {
   preview: PreviewPlan;
   edits: WordEdit[];
   playback: Playback;
   focus?: { at: number } | null;
+  only?: PreviewWord[];
   onChange: (edits: WordEdit[]) => void;
 }) {
   const [open, setOpen] = useState<number | null>(null);
   // A long clip's lines start folded to their first few; the timeline focusing a Word unfolds them.
   const [expanded, setExpanded] = useState(false);
-  const words = preview.words;
+  const words = only ?? preview.words;
   const spoken = usePlayback(playback, (time) => words.findIndex((word) => word.start <= time && time < word.end));
-  // Where the plan starts its lines: the first Word of each caption event.
-  const lineStarts = new Set(preview.plan.captions.map((event) => event.words[0]?.start.toFixed(3)));
+  // Where the plan starts its lines: the first Word of each Cue.
+  const lineStarts = new Set(preview.plan.captions.map((event) => event.lines[0]?.[0]?.start.toFixed(3)));
 
   useEffect(() => {
     if (!focus) return;
@@ -46,7 +50,7 @@ export function CaptionTextEditor({
     onChange(withWordEdit(edits, word, change));
   }
 
-  if (words.length === 0) return <p className="text-sm text-muted">No words are heard in this clip.</p>;
+  if (words.length === 0) return <p className="text-sm text-muted">{only ? "Its words can't be listed yet." : "No words are heard in this clip."}</p>;
   const editedCount = words.filter((word) => word.edit).length;
   const grouped = lines(words, lineStarts);
   return (
@@ -54,10 +58,14 @@ export function CaptionTextEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">
           Click a word to correct it, remove it or start a new line there.
-          {preview.words_source === "transcript" && " These are the episode transcript's words until the clip is prepared."}
+          {!only && preview.words_source === "transcript" && " These are the episode transcript's words until the clip is prepared."}
         </p>
         {editedCount > 0 && (
-          <Button size="xs" variant="ghost" onClick={() => onChange([])}>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => onChange(only ? edits.filter((edit) => !words.some((word) => word.edit && sameKey(word.edit, edit))) : [])}
+          >
             <RotateCcw aria-hidden size={14} />
             Restore all {editedCount}
           </Button>
@@ -99,7 +107,7 @@ export function CaptionTextEditor({
       </Fold>
       {open !== null && words[open] && (
         <WordForm
-          key={editKey(words[open])}
+          key={keyText({ at: editKey(words[open]), media: words[open].media })}
           word={words[open]}
           onApply={(change) => apply(words[open], change)}
           onClose={() => setOpen(null)}
@@ -238,7 +246,7 @@ function WordForm({
     >
       <div className="flex flex-col gap-1">
         <label htmlFor={`${id}-text`} className="text-sm font-medium">
-          Word at {formatPrecise(word.at)}, heard as “{word.text}”
+          Word at {formatPrecise(word.at)}{word.media ? " of the video" : ""}, heard as “{word.text}”
         </label>
         <input
           ref={input}

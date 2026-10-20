@@ -28,6 +28,8 @@ export function commandsOf(
     move: ((delta: number, group: string) => void) | null;
     // Split at the playhead: the picked items, or with nothing picked, everything there.
     split: () => void;
+    // Delete without items picked: a picked Cue's Words; null when there is nothing of the kind.
+    removeCue?: (() => boolean | void) | null;
     // Freeze frame at the playhead; false where none can be made.
     freeze: () => boolean | void;
     // Reverse on or off for the one picked Segment or video Overlay; false where there is none.
@@ -98,7 +100,7 @@ export function commandsOf(
     cut: () => (actions ? actions.cut() : false),
     paste: () => (more.paste ? more.paste() : false),
     duplicate: () => (actions ? actions.duplicate() : false),
-    delete: () => (actions ? actions.remove() : false),
+    delete: () => (actions ? actions.remove() : more.removeCue ? more.removeCue() : false),
     "ripple-delete": () => (actions ? actions.rippleRemove() : false),
     "step-back": () => step(-1),
     "step-forward": () => step(1),

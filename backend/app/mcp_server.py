@@ -40,6 +40,8 @@ from app.api import (
     no_old_text_layers,
 )
 from app.candidates import (
+    CUE_MAX_SCALE,
+    CUE_MIN_SCALE,
     KICKER_MAX_CHARS,
     SWITCHED_THICKNESS,
     Ease,
@@ -53,6 +55,7 @@ from app.candidates import (
     ShapeStyle,
     TextLayer,
     TextStyle,
+    CueEdit,
     Transition,
     WordEdit,
     ease_name,
@@ -63,12 +66,12 @@ from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.media import BadMedia
-from app.planner import Box, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
+from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
-from app.styles import StyleOverrides
+from app.styles import LINE_LIMITS, StyleOverrides
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
 GLOSSARY = REPO_ROOT / "GLOSSARY.md"
@@ -78,6 +81,9 @@ TRANSCRIPT_PAGE_LINES = 400
 # How long `wait_for_job` waits by default, and at most, before it returns the Job as it is.
 WAIT_SECS = 120
 WAIT_MAX_SECS = 600
+# How long `get_media_words` waits by default for a video's Media Words, and how often it looks.
+MEDIA_WORDS_WAIT_SECS = 120
+MEDIA_WORDS_POLL_SECS = 0.25
 # How often merge_candidate_items and remove_candidate_items make their change again when another
 # edit saves first.
 STALE_RETRIES = 5
@@ -87,12 +93,25 @@ EDIT_SOURCE = {"X-Edit-Source": "agent"}
 ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts"}
 # The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
 # and remove_candidate_items change item by item: each list's item, and the field that identifies
-# one within its Candidate.
-ITEMS: dict[str, tuple[type, str]] = {
+# one within its Candidate (or the fields: a Word Edit's or Cue Edit's time and its timeline, None
+# for the Source's).
+ITEMS: dict[str, tuple[type, str | tuple[str, ...]]] = {
     "text_layers": (TextLayer, "id"), "shapes": (Shape, "id"), "music": (MusicClip, "id"), "overlays": (Overlay, "id"),
-    "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, "at"),
-    "layout_overrides": (LayoutOverride, "at"),
+    "segments": (Segment, "id"), "transitions": (Transition, "after"), "word_edits": (WordEdit, ("at", "media")),
+    "layout_overrides": (LayoutOverride, "at"), "cue_edits": (CueEdit, ("at", "media")),
 }
+
+
+
+def _line_limits(name: str) -> str:
+    """The editor's Phrase or Sentence (styles.py's LINE_LIMITS), as the instructions name it."""
+    limits = LINE_LIMITS[name]
+    lines, words = limits["max_lines"], limits["max_words"]
+    return (
+        f"{lines} line{'' if lines == 1 else 's'}, {limits['max_chars']} characters, "
+        f"{'no word limit' if words is None else f'{words} words'}, {limits['max_secs']:g} s, {limits['pause_secs']:g} s pause"
+    )
+
 
 INSTRUCTIONS = f"""\
 AI Clipper turns a long video (a podcast episode) into vertical short Clips. Words are those of
@@ -109,11 +128,16 @@ Workflow:
    Preset, Style Overrides and the rest. dry_run=true shows the Preview Plan (captions, hook, Words)
    without saving.
 5. render_clips renders the selected Candidates; wait_for_job until review again; list_clips gives
-   each Clip's video_path.
+   each Clip's video_path and its caption files (srt_path, vtt_path). get_captions gives a
+   Candidate's SRT or VTT without a render.
 
 Times:
 - A Candidate's start and end, Segments, the Transcript and Words are Source time: seconds into the
-  Source video. A Word Edit's `at` is a Word's start in Source time (dry run lists them).
+  Source video. A Word Edit's `at` is any time within its Word on that Word's timeline: Source time,
+  or with `media` (a video's id) seconds into that video, of its Media Words (the editor uses the
+  Word's middle; the dry run lists each Word's `at` and `media`). One with `media` applies in every
+  Segment showing that time of the video; a Source Word Edit never touches a video's Words, nor the
+  other way round.
 - Text Layers, Shapes, Music Clips, Overlays, hook_start and the Preview Plan's events are
   Timeline time: seconds into the Clip, from 0.
 
@@ -191,10 +215,48 @@ Edits:
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
   null is the default.
+- The captions are shown in Cues of up to the caption style's max_lines lines (1..3), each line of
+  at most max_chars characters and max_words Words, its lines balanced; a Cue lasts at most max_secs
+  and ends at a pause of pause_secs or a sentence's end. A Word Edit's break_before starts a line,
+  and a Cue when the Cue has all its lines. The editor's Phrase is {_line_limits("phrase")};
+  its Sentence {_line_limits("sentence")}.
+- The dry run's `captions` are the Cues: start and end (Timeline time), `lines` as shown, `plain`
+  (the Words as written, with the Word Edits), `key` (the {{at, media}} a Cue Edit of it names),
+  `edited` when a Cue Edit applies, `joinable` (whether it fits merged into the Cue before),
+  `needs_join` when merging it takes a `join` (below), `centre` and `size`.
+- A Cue Edit (cue_edits) changes one Cue. It is keyed as a Word Edit: `at`, any time within the
+  Cue's first Word on its timeline, with `media` for a video's (the Cue's `key`), and that Word then
+  always starts a Cue. `shift` moves the Cue and its highlight; `start_delta` and `end_delta` move
+  only its start or its end (negative: earlier). All are -10..10 seconds of that timeline, so a
+  Segment at 2x halves them.
+  The Cue is kept in its Segment, after the Cue before ends and before the Cue after starts, and
+  0.2 s long at least. Its `x` and `y` (output pixels, as the caption style's custom position)
+  centre that Cue alone, kept in the frame, and `scale` ({CUE_MIN_SCALE}..{CUE_MAX_SCALE}) times the
+  caption style's size sizes it (a line too wide is still set smaller); null keeps the style's. The
+  dry run gives each Cue's `centre` and `size`. One whose Word the Clip doesn't show does nothing and is kept: the dry run
+  lists it under `unused_cue_edits`, and a Cue it applies to says `edited`.
+  Instead, a Cue Edit with `join` (and no other field) keeps its Word in the Cue before, where only
+  a pause, a sentence's end or max_secs would part them; the line limits still do. It keeps only
+  its Word: the Words after it still break at max_secs from the Cue's first. To merge a Cue
+  into the one before: remove its own Cue Edit and its first Word's break_before, and add a join
+  when the dry run's Cue says `needs_join`; only a `joinable` Cue fits. To split a Cue, add a Cue
+  Edit with no field at the Word that should start the new one.
+  merge_candidate_items changes only the fields given; remove_candidate_items takes its `at`
+  ({{at, media}} for a video's).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
   "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
   Segment of the episode has no framing.
+- A Segment of a video with sound is captioned from its video's Media Words (the whole video
+  transcribed once, in the video's own language if set, else the Job's), unless its `captions` (its
+  Captions switch) is false: then it has no captions and its video isn't transcribed for it. null
+  means on. A Segment of the episode has no `captions`. Media Words are transcribed when a
+  Candidate showing the video is prepared or rendered, or by get_media_words, which queues them,
+  waits and gives them. set_media_language sets a video's language (null: the Job's); Words in
+  other languages are kept. The dry run gives each Segment's `words_status`: clip or transcript (the
+  episode's), media (ready), pending (no Cues yet: get_captions is refused meanwhile), failed (with
+  `words_error`; get_media_words retries), off (its Captions switch) or none (not queued, silent,
+  reversed, a Freeze frame or captions off).
 - A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
   lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
   into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
@@ -316,13 +378,15 @@ def build_mcp(app: FastAPI) -> MCPServer:
             annotations=ToolAnnotations(readOnlyHint=read_only, destructiveHint=destructive),
         )
 
-    async def api(method: str, path: str, *, json: Any = None, params: dict | None = None, files: dict | None = None) -> Any:
-        """The API route's response (None for 204), or a ToolError with its message."""
+    async def api(
+        method: str, path: str, *, json: Any = None, params: dict | None = None, files: dict | None = None, text: bool = False
+    ) -> Any:
+        """The API route's response (None for 204; with `text`, its body as text), or a ToolError with its message."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://ai-clipper") as client:
             response = await client.request(method, f"/api{path}", json=json, params=params, files=files, headers=EDIT_SOURCE)
         if response.is_success:
-            return None if response.status_code == 204 else response.json()
+            return None if response.status_code == 204 else response.text if text else response.json()
         if (current := _stale_candidate(response)) is not None:
             raise StaleCandidate(_message(response), current)
         raise ToolError(_message(response))
@@ -506,7 +570,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
         merge_candidate_items). With changes.revision (the `revision` you read), an edit made after
         someone else's is refused with the Candidate as it is now, instead of saved over it. With
         dry_run, nothing is saved: the Preview Plan of the changes comes back instead, its events in
-        Timeline time, and its Words with the `at` a Word Edit names."""
+        Timeline time, its Cues with the key a Cue Edit names, each Segment's words_status, and its
+        Words with the `at` (and `media`) a Word Edit names."""
         body = changes.model_dump(mode="json", exclude_unset=True)
         # A Music Clip given without `duck` is sent without it, so that a new song's ducks by default.
         for clip in body.get("music") or []:
@@ -539,11 +604,13 @@ def build_mcp(app: FastAPI) -> MCPServer:
         transitions: list[_PATCHES["transitions"]] | None = None,  # type: ignore[valid-type]
         word_edits: list[_PATCHES["word_edits"]] | None = None,  # type: ignore[valid-type]
         layout_overrides: list[_PATCHES["layout_overrides"]] | None = None,  # type: ignore[valid-type]
+        cue_edits: list[_PATCHES["cue_edits"]] | None = None,  # type: ignore[valid-type]
         style_overrides: StyleOverrides | None = None,
         framing: Annotated[_FRAMING_PATCH, BeforeValidator(no_framing_keys)] | None = None,  # type: ignore[valid-type]
     ) -> dict:
         """Add or change some of a Candidate's items, keeping the others. An item with the key of
-        one the Candidate has (id; a Transition's `after`; a Word Edit's or Layout Override's `at`)
+        one the Candidate has (id; a Transition's `after`; a Word Edit's or Cue Edit's `at` and
+        `media`; a Layout Override's `at`)
         changes only the fields given; another is added (Segments at the end of the Main Track), and
         needs the fields its kind requires. style_overrides are merged per section (caption, hook,
         watermark) and a shadow by its fields, and framing (the Candidate's, for Layout manual)
@@ -578,11 +645,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
         job_id: str,
         candidate_id: str,
         kind: Literal[*ITEMS, "style_overrides"],  # type: ignore[valid-type]
-        keys: list[str | float],
+        keys: list[str | float | CueKey],
     ) -> dict:
         """Remove some of a Candidate's items of one kind, by key: ids; a Transition's `after`; a
-        Word Edit's or Layout Override's `at`; for style_overrides, "section.field" (such as
-        "caption.size"), which then falls back to the Style Preset's."""
+        Word Edit's or Cue Edit's `at` ({at, media} for a video's) or a Layout Override's `at`; for
+        style_overrides, "section.field" (such as "caption.size"), which then falls back to the Style
+        Preset's."""
 
         def removed(current: dict) -> dict:
             if kind == "style_overrides":
@@ -594,10 +662,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
                 return {"style_overrides": overrides}
             key = _KEYS[kind]
             items = current[kind]
-            for wanted in keys:
-                if not any(_same(item[key], wanted) for item in items):
-                    raise ToolError(f"Candidate {candidate_id} has no {kind} item with {key} {wanted}")
-            return {kind: [item for item in items if not any(_same(item[key], wanted) for wanted in keys)]}
+            wanted_items = [_key_item(key, wanted) for wanted in keys]
+            for wanted, given in zip(wanted_items, keys):
+                if not any(_same_key(item, wanted, key) for item in items):
+                    shown = _key_shown(given)
+                    raise ToolError(f"Candidate {candidate_id} has no {kind} item with {_key_name(key)} {shown}")
+            return {kind: [item for item in items if not any(_same_key(item, wanted, key) for wanted in wanted_items)]}
 
         return await save_from_current(job_id, candidate_id, removed)
 
@@ -628,8 +698,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool(read_only=True)
     async def list_clips(job_id: str) -> dict:
-        """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path) and
-        poster on this Mac, and its Export Settings (these never make a Clip stale)."""
+        """The Job's Clips in their Candidates' order, each rendered one with its MP4 (video_path),
+        poster and caption files (srt_path, vtt_path; none with captions off) on this Mac, and its
+        Export Settings (these never make a Clip stale)."""
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
 
     @tool()
@@ -649,6 +720,41 @@ def build_mcp(app: FastAPI) -> MCPServer:
         body = {"format": format, "export_preset_id": export_preset_id}
         saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/audio", json=body)
         return {"path": saved["path"]}
+
+    # Captions
+
+    @tool()
+    async def set_media_language(media_id: str, language: str | None) -> dict:
+        """Set a video's language (ISO 639-1; null: each Job's), which its Media Words are heard in."""
+        return await api("PATCH", f"/media/{media_id}", json={"language": language})
+
+    @tool()
+    async def get_media_words(
+        media_id: str, job_id: str, again: bool = False, timeout_secs: int = Field(MEDIA_WORDS_WAIT_SECS, ge=5, le=WAIT_MAX_SECS)
+    ) -> dict:
+        """A video's Media Words for the Job (seconds into it), in its language. Queues them when
+        none or failed (`again`: even when ready), waits up to timeout_secs, and returns their
+        `status` (ready, pending: call again, failed with `error`, none) and `words` when ready."""
+        path = f"/jobs/{job_id}/media/{media_id}/words"
+        words = await api("GET", path)
+        if again or words["status"] in ("none", "failed"):
+            words = await api("POST", path, json={"again": again})
+        try:
+            async with asyncio.timeout(timeout_secs):
+                while words["status"] == "pending":
+                    await asyncio.sleep(MEDIA_WORDS_POLL_SECS)
+                    words = await api("GET", path)
+        except TimeoutError:
+            pass
+        if words["words"] is not None:
+            words["words"] = [_times(word, "text", "start", "end") for word in words["words"]]
+        return _compact(words)
+
+    @tool(read_only=True)
+    async def get_captions(job_id: str, candidate_id: str, format: Literal["srt", "vtt"]) -> dict:
+        """The Candidate's captions as SRT or VTT `text`: its saved Cues, without a render. Refused
+        while a Segment's Words are pending, and with captions off."""
+        return {"format": format, "text": await api("GET", f"/jobs/{job_id}/candidates/{candidate_id}/captions/{format}", text=True)}
 
     # Styles, assets and the Channel Profile
 
@@ -918,6 +1024,7 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
             "size_bytes": output["size_bytes"],
             "rendered_at": output["at"],
             "revision": output.get("revision"),
+            **{f"{format}_path": str(job_dir / output[format]) for format in ("srt", "vtt") if output.get(format)},
             "export_preset_id": output.get("export_preset_id"),
             "export": output.get("export"),
         }
@@ -981,7 +1088,8 @@ def _plan_view(
     plan's `ducked`), the Segment a Detached one is from, what a sound at a Speed or in Reverse
     reads (`_video_read`), and whether it is the Source's (`source`, a Music Clip's), each Shape's
     and each Text Layer's (with its lines) box and picture's URL (`picture_url`, by its name) as a
-    picture layer's (`_layer_view`), and the Words."""
+    picture layer's (`_layer_view`), each Segment's Words status (and a failed one's error), the
+    Cues (`_cue_view`), the unused Cue Edits and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
     return {
@@ -1002,6 +1110,7 @@ def _plan_view(
                 "reverse": segment["reverse"] or None, "muted": segment["muted"] or None,
                 "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
+                "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
         ],
@@ -1009,7 +1118,8 @@ def _plan_view(
             {"after": _ended(plan["segments"], event)["id"], **_times(event, "kind", "start", "end", "sound", "strength", "colour")}
             for event in plan["transitions"]
         ],
-        "captions": [_times(caption, "start", "end", "text") for caption in plan["captions"]],
+        "captions": [_cue_view(cue) for cue in plan["captions"]],
+        **_compact({"unused_cue_edits": [_cue_edit_view(edit) for edit in plan["unused_cue_edits"]]}),
         "hook": hook and {
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
@@ -1040,8 +1150,34 @@ def _plan_view(
             for event in plan["segments"] + plan["audio"]
             if not event.get("silent") and event.get("hold") is None
         ]}),
-        "words": [_compact({**_times(word, "text", "start", "end", "at"), "edit": word["edit"]}) for word in preview["words"]],
+        "words": [_compact({**_times(word, "text", "start", "end", "at"), "media": word["media"], "edit": word["edit"]}) for word in preview["words"]],
     }
+
+
+def _cue_view(cue: dict) -> dict:
+    """A Cue as an agent reads it: when it shows, its lines as shown, its lines as written (`plain`:
+    the Words' own case and punctuation, with the Word Edits), its key (the middle of its first
+    Word on its timeline, which a Cue Edit names), whether a Cue Edit applies (`edited`, only
+    when one does), whether it could be merged into the Cue before (`joinable`) and whether that
+    would take a `join` Cue Edit (`needs_join`, only when it would), and where its lines are centred
+    (output pixels) at what font size."""
+    area = cue["area"]
+    return {
+        **_times(cue, "start", "end"),
+        "lines": [" ".join(word["text"] for word in line) for line in cue["lines"]],
+        "plain": cue["plain"],
+        "centre": [round(area["x"] + area["width"] / 2), round(area["y"] + area["height"] / 2)],
+        "size": cue["size"],
+        "key": _compact({"at": round(cue["key"]["at"], 3), "media": cue["key"]["media"]}),
+        **({"edited": True} if cue["edited"] else {}),
+        "joinable": cue["joinable"],
+        **({"needs_join": True} if cue["needs_join"] else {}),
+    }
+
+
+def _cue_edit_view(edit: dict) -> dict:
+    """A Cue Edit with only the fields it sets."""
+    return {name: value for name, value in edit.items() if name == "at" or value not in (None, 0, 0.0)}
 
 
 def _ended(segments: list[dict], transition: dict) -> dict:
@@ -1079,22 +1215,49 @@ _SAME_SECS = 0.01
 
 
 def _same(a: Any, b: Any) -> bool:
+    if a is None or b is None:
+        return a is b
     if isinstance(a, int | float) and isinstance(b, int | float):
         return abs(a - b) < _SAME_SECS
     return str(a) == str(b)
 
 
-def _merge(items: list[dict], patches: list[dict], key: str) -> list[dict]:
+def _same_key(item: dict, other: dict, key: str | tuple[str, ...]) -> bool:
+    """Whether `item` and `other` (an item or a patch, a field it lacks being None) have one key."""
+    return all(_same(item.get(name), other.get(name)) for name in ((key,) if isinstance(key, str) else key))
+
+
+def _key_item(key: str | tuple[str, ...], wanted: str | float | CueKey) -> dict:
+    """A key `remove_candidate_items` is given (a Word Edit's or Cue Edit's {at, media} is a CueKey),
+    as the fields of the item it names."""
+    if isinstance(wanted, CueKey):
+        return dataclasses.asdict(wanted)
+    return {key if isinstance(key, str) else key[0]: wanted}
+
+
+def _key_shown(wanted: str | float | CueKey) -> object:
+    """A key `remove_candidate_items` is given, as a refusal names it."""
+    if isinstance(wanted, CueKey):
+        return {name: value for name, value in dataclasses.asdict(wanted).items() if value is not None}
+    return wanted
+
+
+def _key_name(key: str | tuple[str, ...]) -> str:
+    return key if isinstance(key, str) else "/".join(key)
+
+
+def _merge(items: list[dict], patches: list[dict], key: str | tuple[str, ...]) -> list[dict]:
     """`items` with each patch merged into the item with its key, or added after them."""
     merged = list(items)
     for patch in patches:
-        at = next((i for i, item in enumerate(merged) if _same(item[key], patch[key])), None)
+        at = next((i for i, item in enumerate(merged) if _same_key(item, patch, key)), None)
         if at is None:
             merged.append(patch)
         else:
             merged[at] = _merged_fields(merged[at], patch)
-    if key == "at":
-        merged.sort(key=lambda item: item["at"])
+    if "at" in ((key,) if isinstance(key, str) else key):
+        # In the order the backend saves them (review.py's _timeline_key).
+        merged.sort(key=lambda item: (item.get("media") or "", item["at"]))
     return merged
 
 
@@ -1106,8 +1269,9 @@ def _merged_fields(item: dict, patch: dict) -> dict:
     }
 
 
-def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
-    """A model of `kind` whose fields are all optional but its key: the fields of an item to change.
+def _patch_model(kind: type, key: str | tuple[str, ...] | None = None) -> type[BaseModel]:
+    """A model of `kind` whose fields are all optional but its key (the first of its key's fields):
+    the fields of an item to change.
     A field that is itself a dataclass, or one or None (an Overlay's `transform`, or its `border`, a
     Segment's `framing`), is such a patch too, merged into the item's value field by field
     (`_merge`); null turns one that may be None off."""
@@ -1119,7 +1283,8 @@ def _patch_model(kind: type, key: str | None = None) -> type[BaseModel]:
             hint = next((arg for arg in get_args(hint) if dataclasses.is_dataclass(arg)), hint)
         if dataclasses.is_dataclass(hint):
             hint = _patch_model(hint)
-        fields[field.name] = (hint, ...) if field.name == key else (hint | None, None)
+        required = key if isinstance(key, str | None) else key[0]
+        fields[field.name] = (hint, ...) if field.name == required else (hint | None, None)
     return create_model(f"{kind.__name__}Patch", __config__=ConfigDict(extra="forbid"), **fields)
 
 

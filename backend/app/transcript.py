@@ -2,9 +2,13 @@
 
 import json
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import Field
 
 TranscriptSource = Literal["youtube", "whisper"]
+# A language as Whisper and YouTube name it: "id", "en", "pt-BR".
+Language = Annotated[str, Field(pattern=r"^[A-Za-z]{2,3}(-[A-Za-z0-9]+)*$")]
 
 
 @dataclass(frozen=True)

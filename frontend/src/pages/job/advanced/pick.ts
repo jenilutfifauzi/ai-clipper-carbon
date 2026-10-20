@@ -1,6 +1,9 @@
+import type { CueKey, RenderPlan } from "../../../api";
 import type { PickedOnStage } from "../editor/ClipPreview";
+import { cueKeyOf, cueStageId } from "../editor/cues";
 import type { AdvancedEdits } from "./edits";
 import type { TrackKind } from "./trackState";
+import { sameKey } from "../editor/timelineKey";
 
 // The Pick (GLOSSARY.md): what is picked on the Advanced Edit's Timeline or preview, which its actions
 // and inspector act on. Kept in the editor only: never saved, never undone.
@@ -24,10 +27,22 @@ export interface ItemRef {
 }
 
 /**
- * One or more Segments, Text Layers, Shapes, Music Clips and Overlays, mixed; or the hook, the captions or
- * the join after a Segment (for its Transition), alone; or nothing.
+ * One or more Segments, Text Layers, Shapes, Music Clips and Overlays, mixed; or the hook, the captions,
+ * one Cue (by its key) or the join after a Segment (for its Transition), alone; or nothing.
  */
-export type Pick = { kind: "items"; items: ItemRef[] } | { kind: "hook" } | { kind: "captions" } | { kind: "join"; after: string } | null;
+export type Pick =
+  | { kind: "items"; items: ItemRef[] }
+  | { kind: "hook" }
+  | { kind: "captions" }
+  | { kind: "cue"; key: CueKey }
+  | { kind: "join"; after: string }
+  | null;
+
+/** `pick` without its Cue once `plan` (when there is one) has no Cue of its key: after an edit, an undo or a change from elsewhere. */
+export function prunedCue(pick: Pick, plan: RenderPlan | null): Pick {
+  if (pick?.kind !== "cue" || !plan) return pick;
+  return plan.captions.some((cue) => sameKey(cue.key, pick.key)) ? pick : null;
+}
 
 /** The Pick of `items`: nothing when there are none. */
 export const picked = (...items: ItemRef[]): Pick => (items.length ? { kind: "items", items } : null);
@@ -65,10 +80,11 @@ export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0,
 /** The Track each kind of item is on. */
 export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay" };
 
-/** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track. */
+/** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track, a Cue on the Captions Track. */
 export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {
   if (!locked.length || pick === null) return pick;
   if (pick.kind === "join") return locked.includes("video") ? null : pick;
+  if (pick.kind === "cue") return locked.includes("captions") ? null : pick;
   if (pick.kind !== "items") return locked.includes(pick.kind) ? null : pick;
   const kept = pick.items.filter((item) => !locked.includes(TRACK_OF[item.kind]));
   return kept.length === pick.items.length ? pick : picked(...kept);
@@ -85,15 +101,17 @@ export function prunedPick(pick: Pick, edits: AdvancedEdits): Pick {
   return kept.length === pick.items.length ? pick : picked(...kept);
 }
 
-/** The ids on the preview's stage (StageControls) of what is picked there: the hook, the captions, Text Layers, Shapes and Overlays. */
+/** The ids on the preview's stage (StageControls) of what is picked there: the hook, the captions, a Cue, Text Layers, Shapes and Overlays. */
 export function stageIdsOf(pick: Pick): PickedOnStage[] {
   if (pick?.kind === "hook" || pick?.kind === "captions") return [pick.kind];
+  if (pick?.kind === "cue") return [cueStageId(pick.key)];
   return itemsOf(pick).flatMap((item): PickedOnStage[] => (isPlaced(item.kind) ? [`${item.kind}:${item.id}`] : []));
 }
 
-/** What a stage id names: the hook, the captions, a Text Layer, a Shape or an Overlay. */
-export function stageItem(stageId: PickedOnStage): { kind: "hook" } | { kind: "captions" } | ItemRef {
+/** What a stage id names: the hook, the captions, a Cue, a Text Layer, a Shape or an Overlay. */
+export function stageItem(stageId: PickedOnStage): { kind: "hook" } | { kind: "captions" } | { kind: "cue"; key: CueKey } | ItemRef {
   if (stageId === "hook" || stageId === "captions") return { kind: stageId };
+  if (stageId.startsWith("cue:")) return { kind: "cue", key: cueKeyOf(stageId as `cue:${string}`) };
   const [kind, ...id] = stageId.split(":");
   return { kind: kind as PlacedKind, id: id.join(":") };
 }

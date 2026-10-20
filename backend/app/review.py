@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.candidates import (
     DEFAULT_DUCK,
     Candidate,
+    CueEdit,
     Framing,
     Keys,
     Layout,
@@ -68,6 +69,7 @@ class CandidateChange:
     preset_id: str | None = None
     style_overrides: StyleOverrides | None = None
     word_edits: list[WordEdit] | None = None
+    cue_edits: list[CueEdit] | None = None
     hook_start: float | None = None
     hook_secs: float | None = None
     layout_overrides: list[LayoutOverride] | None = None
@@ -241,6 +243,7 @@ def update(
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
         word_edits=old.word_edits if change.word_edits is None else _merged(change.word_edits),
+        cue_edits=old.cue_edits if change.cue_edits is None else _keyed(change.cue_edits),
         hook_start=_pick(change.hook_start, old.hook_start),
         hook_secs=_pick(change.hook_secs, old.hook_secs),
         layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
@@ -302,16 +305,31 @@ def _look(candidate: Candidate) -> tuple:
     """What the owner's edits change about a Candidate's Clip."""
     return (
         candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
-        candidate.style_overrides, candidate.word_edits, candidate.hook_start, candidate.hook_secs,
+        candidate.style_overrides, candidate.word_edits, candidate.cue_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.shapes, candidate.music,
         candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,
     )
 
 
+def _timeline_key(edit: WordEdit | CueEdit) -> tuple[str, float]:
+    """A Word Edit's or Cue Edit's key, its time to the millisecond on its timeline (the Source's, or
+    a Media Library item's), in the order they are kept: the Source's first, then each item's, each
+    in time order (as the frontend's timelineKey.ts byKey and the MCP's merge keep them)."""
+    return edit.media or "", round(edit.at, 3)
+
+
 def _merged(edits: list[WordEdit]) -> list[WordEdit]:
-    """The edits in time order, leaving out those that change nothing; of two at the same time, the later."""
-    by_time = {round(edit.at, 3): edit for edit in edits}
-    return [edit for _, edit in sorted(by_time.items()) if edit.text is not None or edit.break_before]
+    """The edits by their key (`_timeline_key`), leaving out those that change nothing; of two at the
+    same time of one timeline, the later."""
+    by_key = {_timeline_key(edit): edit for edit in edits}
+    return [edit for _, edit in sorted(by_key.items()) if edit.text is not None or edit.break_before]
+
+
+def _keyed(edits: list[CueEdit]) -> list[CueEdit]:
+    """The Cue Edits by their key (`_timeline_key`); of two at the same time on one timeline, the
+    later. One that changes nothing still starts its Cue."""
+    by_key = {_timeline_key(edit): edit for edit in edits}
+    return [edit for _, edit in sorted(by_key.items())]
 
 
 def _ducked_by_default(music: list[MusicClip], old: list[MusicClip], unset: frozenset[str]) -> list[MusicClip]:

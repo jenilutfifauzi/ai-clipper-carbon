@@ -18,6 +18,7 @@ from app.main import create_app
 from app.ports import Ports
 from app.transition_kinds import TransitionKind
 from fontfiles import RESTRICTED, font_file
+from app.transcript import Word
 from test_jobs_api import URL
 
 # tests/fixtures/captions.json3's Words "halo" to "kabar", and "kita" to "soal" (Source time).
@@ -39,7 +40,14 @@ KITA_SOAL = (1.6, 2.6)
 # schema (`_untitled`): 66_741 with both features.
 # Then merged with Export Settings (export-settings/04, 05, 07, 08): render_clips' `export_preset_id`, the
 # presets tools' kind "export" and save_preset's use_as_default, save_frame and export_audio: 68_636 with all three.
-TOOLS_BUDGET_BYTES = 69_400
+# Raised from 69_000 for Cue Edits (captions-advanced/07): `cue_edits` in edit_candidate and
+# merge_candidate_items; the Captions switch (captions-advanced/05): `segments[].captions` in each
+# editing tool's Segment schema; Word Edits of Media Words (captions-advanced/06): `word_edits[].media`
+# and remove_candidate_items' {at, media} keys; a Cue Edit's `x`, `y` and `scale` (captions-advanced/08);
+# and its join (captions-advanced/09). Raised from 73_700 for the captions tools (captions-advanced/11):
+# set_media_language, get_media_words and get_captions; the rest of what an agent needs is in the server's instructions.
+# Merged with captions-advanced, the two features' increases summed (+400 and +6_700 over 69_000).
+TOOLS_BUDGET_BYTES = 76_100
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -217,6 +225,92 @@ async def test_candidates_are_added_edited_and_dry_run_through_mcp(mcp):
 
 
 @pytest.mark.anyio
+async def test_a_dry_run_lists_each_cue_with_its_times_lines_plain_text_and_key(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    words = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["words"]
+    semua = next(word for word in words if word["text"] == "semua")
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={"word_edits": [{"at": semua["at"], "text": "Semua!"}]}, dry_run=True)
+    first = plan["captions"][0]
+    assert (first["lines"], first["plain"], first["key"]) == (["HALO SEMUA!"], ["halo Semua!"], {"at": words[0]["at"]})
+    assert first["start"] < first["end"]
+    # Every Word is in one Cue, keyed by the first's middle on the Source's timeline.
+    assert " ".join(line for cue in plan["captions"] for line in cue["plain"]) == " ".join(
+        "Semua!" if word is semua else word["text"] for word in words
+    )
+    assert all(cue["key"]["at"] in [word["at"] for word in words] for cue in plan["captions"])
+
+
+@pytest.mark.anyio
+async def test_cue_edits_are_set_merged_field_by_field_and_removed_by_their_key(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    before = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"]
+    first, second = before[0]["key"]["at"], before[1]["key"]["at"]
+    assert before[0].get("edited") is None and before[0]["joinable"] is False
+
+    # Retimed in a dry run: the Cue moves and says it is edited; one the Clip doesn't show is unused.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": second, "shift": 0.2}, {"at": 900.0, "shift": 1}]}, dry_run=True)
+    assert plan["captions"][1]["edited"] is True and plan["captions"][1]["start"] > before[1]["start"]
+    assert plan["unused_cue_edits"] == [{"at": 900.0, "shift": 1.0}]
+    assert "shift" in await fails(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": second, "shift": 11}]})
+
+    # Merged by key, field by field: an item's own Cue Edits are told apart by `media`.
+    await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "end_delta": -0.1}])
+    media = "ab" * 16
+    merged = await call(mcp, "merge_candidate_items", **ids, cue_edits=[
+        {"at": first, "shift": 0.1}, {"at": second, "start_delta": -0.2}, {"at": first, "media": media, "shift": 0.3},
+    ])
+    assert [(e["at"], e["media"], e["shift"], e["start_delta"], e["end_delta"]) for e in merged["cue_edits"]] == [
+        (first, None, 0.1, 0.0, -0.1), (second, None, 0.0, -0.2, 0.0), (first, media, 0.3, 0.0, 0.0),
+    ]
+    # Removed by `at`, or {at, media} for an item's.
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[{"at": first, "media": media}, second])
+    assert [(e["at"], e["media"]) for e in removed["cue_edits"]] == [(first, None)]
+    assert "no cue_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="cue_edits", keys=[second])
+
+    # A join keeps the second Cue with the first, where the line limits allow; with a field set too, refused.
+    semua = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["words"][1]
+    # "halo semua." and "apa kabar", parted by the sentence's end.
+    wide = {"style_overrides": {"caption": {"max_lines": 2, "max_chars": 24, "max_secs": 5}}, "cue_edits": [],
+            "word_edits": [{"at": semua["at"], "text": "semua."}]}
+    apart = (await call(mcp, "edit_candidate", **ids, changes=wide, dry_run=True))["captions"]
+    assert [cue["plain"] for cue in apart] == [["halo semua."], ["apa kabar"]]
+    assert (apart[1]["joinable"], apart[1]["needs_join"]) == (True, True)
+    joined = await call(mcp, "edit_candidate", **ids, changes={**wide, "cue_edits": [{"at": apart[1]["key"]["at"], "join": True}]}, dry_run=True)
+    assert [cue["plain"] for cue in joined["captions"]] == [["halo semua. apa kabar"]]
+    assert "join" in await fails(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "join": True}])
+
+
+@pytest.mark.anyio
+async def test_a_cue_edit_places_and_scales_its_cue_and_a_merge_changes_one_of_those_fields(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    before = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"]
+    first = before[0]["key"]["at"]
+    assert before[0]["size"] == before[1]["size"] and before[0]["centre"] == before[1]["centre"]
+
+    # In a dry run, the first Cue goes up, centred at 700 px down, bigger (up to half as big again, as
+    # its line fits the frame); the second stays.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": first, "y": 700, "scale": 1.5}]}, dry_run=True)
+    placed, after = plan["captions"][:2]
+    assert placed["centre"] == [540, 700] and placed["edited"] is True
+    assert before[0]["size"] < placed["size"] <= 1.5 * before[0]["size"]
+    assert (after["centre"], after["size"]) == (before[1]["centre"], before[1]["size"])
+    assert "scale" in await fails(mcp, "edit_candidate", **ids, changes={"cue_edits": [{"at": first, "scale": 5}]})
+
+    # Merged field by field: the x joins the place and scale, then a null clears the scale alone.
+    await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "y": 700, "scale": 1.5}])
+    await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "x": 300}])
+    merged = await call(mcp, "merge_candidate_items", **ids, cue_edits=[{"at": first, "scale": None}])
+    assert [(e["x"], e["y"], e["scale"]) for e in merged["cue_edits"]] == [(300, 700, None)]
+
+
+@pytest.mark.anyio
 async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry_run(mcp):
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)
@@ -234,6 +328,31 @@ async def test_tracking_and_line_height_are_style_overrides_that_show_in_the_dry
     assert (await call(mcp, "edit_candidate", **ids, changes=hook, dry_run=True))["hook"]["lines"] == ["Jangan", "lakukan ini"]
     assert "tracking" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"tracking": 500}})
     assert "line_height" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"hook": {"line_height": 0}})
+
+
+@pytest.mark.anyio
+async def test_max_lines_is_a_caption_style_override_and_a_preset_field(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    sentence = {"max_lines": 2, "max_chars": 24, "max_secs": 5, "pause_secs": 0.7}
+
+    one = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert all(len(cue["lines"]) == 1 for cue in one["captions"])
+    # "halo semua apa kabar" in two lines of 12 characters.
+    narrow = {**sentence, "max_chars": 12}
+    two = await call(mcp, "edit_candidate", **ids, changes={"style_overrides": {"caption": narrow}}, dry_run=True)
+    assert [(cue["lines"], cue["plain"]) for cue in two["captions"]] == [(["HALO SEMUA", "APA KABAR"], ["halo semua", "apa kabar"])]
+    merged = await call(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"max_lines": 2}})
+    assert merged["style_overrides"]["caption"] == {"max_lines": 2}
+    assert "max_lines" in await fails(mcp, "merge_candidate_items", **ids, style_overrides={"caption": {"max_lines": 4}})
+
+    # A Preset keeps it, and a Candidate on it plans two lines.
+    saved = await call(mcp, "save_preset", preset={"name": "Narrow", "caption": narrow})
+    assert saved["caption"]["max_lines"] == 2
+    await call(mcp, "edit_candidate", **ids, changes={"style_overrides": {}})
+    on_preset = await call(mcp, "edit_candidate", **ids, changes={"preset_id": saved["id"]}, dry_run=True)
+    assert [cue["lines"] for cue in on_preset["captions"]] == [["HALO SEMUA", "APA KABAR"]]
 
 
 @pytest.mark.anyio
@@ -539,6 +658,28 @@ async def test_items_are_merged_by_key_and_removed_keeping_the_others(mcp):
 
 
 @pytest.mark.anyio
+async def test_word_edits_of_media_words_are_keyed_by_their_item_and_time(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    video = "a" * 32
+    keyed = lambda saved: [(edit["at"], edit["media"], edit["text"]) for edit in saved["word_edits"]]  # noqa: E731
+
+    # 0.5 s of the Source and 0.5 s of the video: two edits.
+    saved = await call(mcp, "edit_candidate", **ids, changes={"word_edits": [{"at": 0.5, "text": "Semua"}, {"at": 0.5, "text": "dunia", "media": video}]})
+    assert keyed(saved) == [(0.5, None, "Semua"), (0.5, video, "dunia")]
+    merged = await call(mcp, "merge_candidate_items", **ids, word_edits=[{"at": 0.5, "media": video, "text": "Dunia"}, {"at": 0.9, "media": video, "text": "kawan"}])
+    assert keyed(merged) == [(0.5, None, "Semua"), (0.5, video, "Dunia"), (0.9, video, "kawan")]
+
+    # A number names a Source Word Edit; {at, media} one of a video's.
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[{"at": 0.5, "media": video}])
+    assert keyed(removed) == [(0.5, None, "Semua"), (0.9, video, "kawan")]
+    removed = await call(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.5])
+    assert keyed(removed) == [(0.9, video, "kawan")]
+    assert "no word_edits item" in await fails(mcp, "remove_candidate_items", **ids, kind="word_edits", keys=[0.9])
+
+
+@pytest.mark.anyio
 async def test_a_text_layers_style_and_transform_are_merged_field_by_field_and_the_dry_run_lists_its_picture(mcp, client):
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)
@@ -659,6 +800,28 @@ async def test_a_video_segments_framing_is_merged_field_by_field(mcp, tmp_path):
         "media", {"x": 388, "y": 690, "width": 304, "height": 540}, 90, 1,
     )
     assert video["crop"] == {"x": 0, "y": 0, "width": 320, "height": 180}
+
+
+@pytest.mark.anyio
+async def test_a_video_segments_captions_switch_is_set_by_merge_and_edit_and_refused_on_the_episodes(mcp, tmp_path):
+    video = make(tmp_path / "broll.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-c:v", "libx264")
+    item = await call(mcp, "add_asset", kind="media", path=str(video))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    episode = {"id": "e", "start": candidate["start"], "end": candidate["end"]}
+    await call(mcp, "merge_candidate_items", **ids, segments=[
+        episode, {"id": "v", "media": item["id"], "start": 0, "end": 1, "framing": {"transform": {"scale": 0.5}}},
+    ])
+
+    # Off by merge, keeping the rest of the Segment; on again (null) by edit_candidate.
+    merged = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "captions": False}])
+    assert (merged["segments"][1]["captions"], merged["segments"][1]["framing"]["transform"]["scale"]) == (False, 0.5)
+    edited = await call(mcp, "edit_candidate", **ids, changes={"segments": [
+        episode, {"id": "v", "media": item["id"], "start": 0, "end": 1, "framing": {}, "captions": None},
+    ]})
+    assert edited["segments"][1]["captions"] is None
+    assert "Captions switch" in await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "captions": False}])
 
 
 @pytest.mark.anyio
@@ -810,6 +973,112 @@ async def test_a_shape_the_model_refuses_is_a_clear_tool_error(mcp):
     assert kept["style"]["fill"] == "#112233" and kept["transform"]["stretch_x"] == 1
 
 
+# captions-advanced/11: the agent's captions tools
+
+
+async def talking(mcp: Client, transcriber, tmp_path: Path) -> tuple[dict, dict, dict]:
+    """A Job in review, a red video with sound heard saying "halo semua" (0.5 to 1.3 s into it), and a
+    Candidate showing its first 1.5 s and then "halo" to "kabar" of the episode."""
+    red = make(
+        tmp_path / "red.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-f", "lavfi", "-i",
+        "sine=frequency=1000:duration=2", "-c:v", "libx264", "-c:a", "aac", "-shortest",
+    )
+    item = await call(mcp, "add_asset", kind="media", path=str(red))
+    transcriber.heard[item["id"]] = [Word("halo", 0.5, 0.9), Word("semua", 0.9, 1.3)]
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    candidate = await call(mcp, "merge_candidate_items", job_id=job["id"], candidate_id=candidate["id"], segments=[
+        {"id": "i", "media": item["id"], "start": 0, "end": 1.5, "framing": {}},
+        {"id": "e", "start": candidate["start"], "end": candidate["end"]},
+    ])
+    return job, item, candidate
+
+
+@pytest.mark.anyio
+async def test_a_media_segments_words_are_got_and_the_dry_run_lists_its_cues_and_each_segments_status(mcp, transcriber, tmp_path):
+    job, item, candidate = await talking(mcp, transcriber, tmp_path)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    # Not yet queued: the video's Segment has no Cues, and says so.
+    before = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert [(segment["id"], segment["words_status"]) for segment in before["segments"]] == [("i", "none"), ("e", "transcript")]
+    assert all(cue["key"].get("media") is None for cue in before["captions"])
+
+    # get_media_words queues the video, waits for it and gives its Words in the Job's language.
+    words = await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+    assert (words["status"], words["language"]) == ("ready", "id")
+    assert [(word["text"], word["start"], word["end"]) for word in words["words"]] == [("halo", 0.5, 0.9), ("semua", 0.9, 1.3)]
+
+    plan = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    assert plan["segments"][0]["words_status"] == "media"
+    [intro, *_] = plan["captions"]
+    assert (intro["lines"], intro["key"]) == (["HALO SEMUA"], {"at": 0.7, "media": item["id"]})
+
+
+@pytest.mark.anyio
+async def test_a_failed_media_segment_says_why_in_the_dry_run_and_get_media_words_gives_the_status(mcp, transcriber, tmp_path):
+    job, item, candidate = await talking(mcp, transcriber, tmp_path)
+    transcriber.fails[item["id"]] = "Whisper fell over"
+
+    words = await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+    assert (words["status"], words.get("words")) == ("failed", None) and "Whisper fell over" in words["error"]
+    plan = await call(mcp, "edit_candidate", job_id=job["id"], candidate_id=candidate["id"], changes={}, dry_run=True)
+    assert plan["segments"][0]["words_status"] == "failed" and "Whisper fell over" in plan["segments"][0]["words_error"]
+
+    # Asked again, it is transcribed again (a Retry).
+    del transcriber.fails[item["id"]]
+    assert (await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"]))["status"] == "ready"
+
+
+@pytest.mark.anyio
+async def test_a_media_items_language_is_set_and_its_words_come_in_it(mcp, transcriber, tmp_path):
+    job, item, _ = await talking(mcp, transcriber, tmp_path)
+    await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+
+    assert (await call(mcp, "set_media_language", media_id=item["id"], language="en"))["language"] == "en"
+    words = await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"])
+    assert (words["status"], words["language"], len(words["words"])) == ("ready", "en", 2)
+    assert transcriber.calls[-1][0] == "en"
+
+    # Cleared, it is the Job's again, whose Words are kept.
+    assert (await call(mcp, "set_media_language", media_id=item["id"], language=None))["language"] is None
+    assert (await call(mcp, "get_media_words", media_id=item["id"], job_id=job["id"]))["language"] == "id"
+    assert [language for language, *_ in transcriber.calls] == ["id", "en"]  # the video's, once in each
+    assert "isn't a video with sound" in await fails(mcp, "get_media_words", media_id=(await call(mcp, "add_asset", kind="media", path=str(
+        make(tmp_path / "still.png", "-f", "lavfi", "-i", "color=c=red:size=8x8", "-frames:v", "1")
+    )))["id"], job_id=job["id"])
+
+
+@pytest.mark.anyio
+async def test_get_captions_gives_srt_and_vtt_of_the_dry_runs_cues_and_list_clips_their_files(mcp):
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR, selected=True)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    cues = (await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True))["captions"]
+
+    srt = (await call(mcp, "get_captions", **ids, format="srt"))["text"]
+    vtt = (await call(mcp, "get_captions", **ids, format="vtt"))["text"]
+    assert srt.startswith("1\n") and vtt.startswith("WEBVTT")
+    for number, cue in enumerate(cues, 1):
+        assert f"\n{number}\n" in f"\n{srt}" and all(line in srt and line in vtt for line in cue["plain"])
+    assert "-->" in srt and srt.count("-->") == vtt.count("-->") == len(cues)
+    assert "format" in await fails(mcp, "get_captions", **ids, format="ass")
+
+    await call(mcp, "render_clips", job_id=job["id"])
+    assert (await call(mcp, "wait_for_job", job_id=job["id"], timeout_secs=60))["reached"]
+    [clip] = (await call(mcp, "list_clips", job_id=job["id"]))["clips"]
+    # The rendered Clip's files beside its MP4 are those of its Candidate as rendered.
+    assert Path(clip["srt_path"]).read_text() == (await call(mcp, "get_captions", **ids, format="srt"))["text"]
+    assert Path(clip["vtt_path"]).read_text() == (await call(mcp, "get_captions", **ids, format="vtt"))["text"]
+
+
+@pytest.mark.anyio
+async def test_get_captions_is_refused_for_a_job_with_captions_off(mcp):
+    job = await reviewed(mcp, captions=False)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    assert "captions off" in await fails(mcp, "get_captions", job_id=job["id"], candidate_id=candidate["id"], format="srt")
+
+
 # 08: agent guidance
 
 
@@ -827,6 +1096,12 @@ async def test_the_tools_fit_their_budget_and_the_glossary_is_a_resource(mcp):
     shapes = mcp.instructions[mcp.instructions.index("- A Shape is a figure") :]
     assert "stroke_colour (#000000 by default)" in shapes
     assert "a stroke 12 px thick in its fill's colour" in shapes
+
+    # The captions: the Word Edit key on its Word's own timeline, the Cues and Cue Edits, Media Words.
+    assert "any time within its Word on that Word's timeline" in mcp.instructions
+    assert {"set_media_language", "get_media_words", "get_captions"} <= {tool.name for tool in tools}
+    for field in ("joinable", "needs_join", "`join`", "unused_cue_edits", "words_status", "words_error", "`captions`", "srt_path", "centre"):
+        assert field in mcp.instructions, field
 
     glossary = await mcp.read_resource("ai-clipper://glossary")
     assert "Candidate" in glossary.contents[0].text

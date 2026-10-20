@@ -12,6 +12,7 @@ from app.jobs import JobStore
 from app.logos import LOGOS_DIR, LogoStore
 from app.mcp_server import build_mcp
 from app.media import MEDIA_DIR, MediaStore
+from app.media_words import MediaWordsStore
 from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
@@ -31,7 +32,9 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
     store = JobStore(settings.data_dir / "jobs", media.sizes)
     ports = ports or real_ports(settings)
-    renders = Renders(store, settings, ports.transcriber)
+    # One for the app, so that what the render queue has queued shows in the editor.
+    media_words = MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
+    renders = Renders(store, settings, ports.transcriber, media_words)
     worker = Worker(store, Pipeline(store, ports, settings), renders)
 
     @asynccontextmanager
@@ -52,6 +55,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.export_presets = renders.export_presets
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media
+    app.state.media_words = media_words
     app.state.faces = fonts.use(settings.data_dir / fonts.IMPORTED_DIR)
     app.include_router(api.router)
     app.include_router(api.media)

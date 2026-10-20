@@ -211,6 +211,16 @@ def client(settings, video_source, transcriber, llm):
             transcriber.stop()
 
 
+def cue_text(cue: dict) -> str:
+    """What a Cue of a plan's JSON shows: its lines, one under the other."""
+    return "\n".join(" ".join(word["text"] for word in line) for line in cue["lines"])
+
+
+def cue_words(cue: dict) -> list[dict]:
+    """The Words of a Cue of a plan's JSON, line after line."""
+    return [word for line in cue["lines"] for word in line]
+
+
 def wait_for(client: TestClient, job_id: str, *statuses: str, timeout: float = 5) -> dict:
     """Poll the API until the Job reaches one of `statuses`, and return it."""
     deadline = time.monotonic() + timeout

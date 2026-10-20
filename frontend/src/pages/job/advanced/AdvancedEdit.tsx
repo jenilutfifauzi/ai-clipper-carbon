@@ -39,12 +39,14 @@ import { MagneticToggle } from "../editor/MagneticToggle";
 import { useMagnetic } from "../editor/magnetic";
 import { candidateDraft } from "../editor/draft";
 import { collidedParts, mergeEdits, rebaseHistory } from "../editor/merge";
-import { placedOverrides } from "../editor/placing";
+import { placedOverrides, type Place } from "../editor/placing";
 import { playable, playedFrom, Playback, type PlayedSegment } from "../editor/playback";
 import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
+import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   appliedToAll,
@@ -61,6 +63,7 @@ import {
   nudge,
   pickAll,
   placeAfter,
+  restyleCaptions,
   placeDropped,
   randomCardKind,
   randomisedTransitions,
@@ -106,6 +109,8 @@ import {
 import { commandsOf, type Commands } from "./commands";
 import { DRAG_SHAPE } from "./drag";
 import { changedItems, editsOf, newId, type AdvancedEdits } from "./edits";
+import { cueSplitter, deleteCue, retimeCue } from "./cueEdits";
+import { placedCaptions } from "./cuePlace";
 import { useControls, useFullscreen } from "./fullscreen";
 import { Inspector } from "./Inspector";
 import { ItemMenu, type MenuEntry } from "./ItemMenu";
@@ -116,6 +121,7 @@ import { activeKey, heldTransform, keyRows, keyAround, keyedItem, moveItemKeys, 
 import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
+import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
 import { Meters } from "./Meters";
 import { newMusicClip } from "./Music";
@@ -129,6 +135,7 @@ import {
   itemsOf,
   LISTS,
   picked,
+  prunedCue,
   prunedPick,
   samePick,
   stageIdsOf,
@@ -143,6 +150,7 @@ import { newTextLayer, type UntimedTextLayer } from "./TextLayers";
 import { fromPreset } from "./TextPresets";
 import { edgesOf, editPoints, keyMarks, zoomToFit } from "./timelineView";
 import { heardDraft, heardTrack, shownPlan, toggledTrack, TRACKS, type TrackControl, type TrackKind, type TrackState, UNTOUCHED } from "./trackState";
+import { Downloads } from "./Downloads";
 import { Tracks, TracksPanel, type DropTrack } from "./Tracks";
 import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
@@ -350,12 +358,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   const history = useEditHistory<AdvancedEdits>(editsOf(initial), save);
   const edits = history.value;
-  // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
-  // some of it away, and nothing on a locked Track is picked.
-  const pick = unlockedPick(prunedPick(pickState, edits), tracks.locked);
-  useEffect(() => {
-    if (pick !== pickState) setPickState(pick);
-  }, [pick, pickState]);
 
   // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once; the edits
   // waiting here are merged onto it and saved from it, mine winning where both changed the same item.
@@ -449,7 +451,31 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     onDeleted: () => end("deleted"),
   });
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
-  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), job.status);
+  // Counted up to plan again while a media Segment's Media Words are being transcribed.
+  const [replan, setReplan] = useState(0);
+  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), `${job.status} ${replan}`);
+  useReplanWhilePending(preview?.words_status, setReplan);
+  // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
+  // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
+  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
+  useEffect(() => {
+    if (pick !== pickState) setPickState(pick);
+  }, [pick, pickState]);
+  // The clip as saved, prepared when this editor opens and when a video is added to its Main Track
+  // (placed or pasted) or has its Captions switch turned on: its Source Segments transcribed and
+  // analysed, and its captioned videos' Media Words transcribed, in the render queue, so that its
+  // preview shows their own captions.
+  const savedVideos = [
+    ...new Set(candidate.segments.flatMap((segment) => (segment.media && segment.captions !== false ? [segment.media] : []))),
+  ]
+    .sort()
+    .join(" ");
+  useEffect(() => {
+    api.prepareCandidate(job.id, candidate.id).then(
+      () => setReplan((n) => n + 1),
+      () => {},
+    );
+  }, [job.id, candidate.id, savedVideos]);
   // A Timeline item's context menu (a desktop's), where it was asked for.
   const [itemMenu, setItemMenu] = useState<{ item: ItemRef; at: { x: number; y: number } } | null>(null);
   // Save sound as WAV: the item alone as heard, from the draft (the unsaved edits too, but not the
@@ -517,6 +543,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (!tracks.locked.includes(track)) return false;
     setNotice({ id: Date.now(), text: `The ${TRACKS[track].label} Track is locked.` });
     return true;
+  }
+  // The captions, or a Cue, put where its Grips on the preview leave it: one `group` a gesture.
+  function placeCaptions(target: Pick, place: Place, group: string) {
+    const outcome = placedCaptions({ edits, plan: preview?.plan ?? null, locked: tracks.locked }, target, place);
+    if (outcome) history.set(outcome.edits, group);
+    else refused("captions");
   }
   function toggleTrack(control: TrackControl, kind: TrackKind) {
     setTracks((old) => toggledTrack(old, control, kind));
@@ -621,6 +653,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const updateMusic = (clip: MusicClip, group?: string) => history.set(changeMusic({ edits, pick }, clip).edits, group);
   const updateOverlay = (overlay: Overlay, group?: string) => change({ overlays: replaced(edits.overlays, overlay) }, group);
   const updateSegment = (segment: ClipSegment, group?: string) => change({ segments: replaced(edits.segments, segment) }, group);
+  // A video's language set for every Job (null: each Job's): its Media Words in it are then
+  // transcribed for this clip, as saved, and the plan asked for again.
+  const setMediaLanguage = (item: MediaItem, language: string | null) =>
+    library.setLanguage(item, language).then(() =>
+      api.prepareCandidate(job.id, candidate.id).then(
+        () => setReplan((n) => n + 1),
+        () => setReplan((n) => n + 1),
+      ),
+    );
   // A notice told once while the change that makes it keeps coming (a drag), not at every step.
   const tellOnce = (text: string) => setNotice((old) => (old?.text === text ? old : { id: Date.now(), text }));
   // A Segment's, video Overlay's or Music Clip's Speed set from the inspector: one change of `group`, its ripple included.
@@ -650,6 +691,20 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
   const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join };
+  // The captions' look, from the inspector's Caption Style panel and Preset bar: each change a step of undo.
+  const presets = usePresets();
+  const captionStyle =
+    presets.presets &&
+    styleControls(
+      presets.presets,
+      edits,
+      (look, group) => {
+        const outcome = restyleCaptions(scene, look);
+        if (outcome) history.set(outcome.edits, group);
+        else refused("captions");
+      },
+      presets.setPresets,
+    );
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
   const clipboard = useClipboard();
@@ -667,7 +722,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   };
   const pasteHere = clipboard && (() => apply(paste(scene, clipboard, playback.time, here, job.transcript?.words ?? [])));
   const actions = itemActions(scene, () => playback.time, apply, clip);
-  const splits = splitter(scene, () => playback.time, apply);
+  // A picked Cue's actions (./cueEdits.ts): in the plan's Words, each one change, a field's run one of its group.
+  const cueScene = { edits, plan: preview?.plan ?? null, words: preview?.words, locked: tracks.locked };
+  function applyCue(outcome: Outcome, group?: string) {
+    if (outcome.edits !== edits) history.set(outcome.edits, group);
+    select(outcome.pick);
+  }
+  const splits = pick?.kind === "cue" ? cueSplitter(cueScene, pick.key, () => playback.time, apply) : splitter(scene, () => playback.time, apply);
   const freezes = freezer(scene, () => playback.time, apply, { longest });
   // Detach and Reattach (GLOSSARY.md), from a Segment's or a Music Clip's context menu and the inspector.
   const detaching = detacher(scene, track, (media) => mediaById.get(media)?.has_audio === true, apply);
@@ -769,6 +830,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     paste: pasteHere,
     move: itemsOf(pick).some((item) => item.kind !== "segment") ? moveLayers : null,
     split: splits.split,
+    removeCue:
+      pick?.kind === "cue"
+        ? () => {
+            const outcome = deleteCue(cueScene, pick.key);
+            if (!outcome) return false;
+            apply(outcome);
+          }
+        : null,
     freeze: () => (freezes.canFreeze(playback.time) ? freezes.freeze() : false),
     reverse: () => {
       if (!reversed) return false;
@@ -973,7 +1042,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           select("id" in item ? clicked(pick, item, toggle || picking) : item);
         },
         onPlace: (id, place, group) =>
-          change({ style_overrides: placedOverrides(edits.style_overrides, id === "hook" ? "hook" : "caption", place) }, group),
+          id === "hook"
+            ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
+            : placeCaptions({ kind: "captions" }, place, group),
+        // A Cue moved or scaled on its own: its Cue Edit.
+        cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
         retype: {
           textOf: (id) => (id === "hook" ? edits.hook_text : edits.hook_kicker),
           onText: (id, text) => {
@@ -1067,6 +1140,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           pick={pick}
           track={track}
           played={played}
+          pending={pendingSpans(played, edits.segments, preview?.words_status)}
+          failed={failedSegments(preview?.words_status)}
+          captioned={job.options.captions}
           playback={playback}
           mediaById={mediaById}
           mediaCache={mediaCache}
@@ -1096,6 +1172,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               select({ kind: "join", after });
               if (wide) setAssetTab("transitions");
             },
+            onCue: (key, range, group, from) => {
+              const outcome = retimeCue({ edits, plan: preview?.plan ?? null, locked: tracks.locked }, key, range, from);
+              if (outcome) history.set(outcome.edits, group);
+              else refused("captions");
+            },
             onTransition: (transition) => {
               if (!refused("video")) updateTransition(transition);
             },
@@ -1124,6 +1205,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         duration={duration}
         preview={preview}
         fonts={fonts}
+        captionStyle={captionStyle}
+        presetsError={presets.error}
         actions={actions}
         mediaById={mediaById}
         sourceLength={sourceLength}
@@ -1140,6 +1223,20 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         copyOf={copyOf}
         onHold={setFreezeHold}
         cropMode={cropMode}
+        locked={tracks.locked}
+        onCue={applyCue}
+        captionsOf={(segment, item) => (
+          <MediaCaptionFields
+            segment={segment}
+            item={item}
+            job={job.options}
+            status={preview?.words_status[segment.id]}
+            error={preview?.words_errors?.[segment.id]}
+            onChange={updateSegment}
+            onLanguage={(language) => setMediaLanguage(item, language)}
+            onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
+          />
+        )}
         detaching={detaching}
       />
     </KeyingContext.Provider>
@@ -1158,6 +1255,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onAddSource={(range) => addSegment({ id: newId(), ...range })}
       onAddVideo={(item) => addSegment(newMediaSegment(item, newId()))}
       onAddOverlay={(item) => addOverlay(item)}
+      languages={{ job: job.options.language, set: setMediaLanguage }}
     />
   );
   // The desktop Workspace's top controls: collapse the Asset Panel (A) or the Inspector (P), each lit
@@ -1214,6 +1312,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         actions={
           <>
             {layoutControls}
+            {job.options.captions && (
+              <Downloads jobId={job.id} candidateId={initial.id} title={candidate.title} saving={saving > 0} />
+            )}
             <SaveFrameButton
               jobId={job.id}
               candidateId={candidate.id}

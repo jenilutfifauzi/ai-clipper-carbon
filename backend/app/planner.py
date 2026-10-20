@@ -30,10 +30,11 @@ which the editors copy when it is switched to Manual, so that nothing jumps.
 A portrait Source is passed through whole.
 
 Captions come from the Clip's own Words (transcribed for it, on the Clip's timeline). They are
-short lines, broken by the Caption Style's limits (by default UPPERCASE, at most 16 characters or
-1.4 s long), each Word highlighted while it is spoken. With the style's Auto position a line sits on
-the seam between the panels in a Split Scene and in the lower third otherwise, and moves when the
-Layout changes under it; the other positions put every line in one place.
+Cues of one short line, broken by the Caption Style's limits (by default UPPERCASE, at most 16
+characters or 1.4 s long), each Word highlighted while it is spoken. With the style's Auto
+position a line sits on the seam between the panels in a Split Scene and in the lower third
+otherwise, and moves when the Layout changes under it; the other positions put every line in one
+place.
 
 The hook (the Candidate's hook text, as last edited) is shown for the Clip's first HOOK_SECS in a
 box, at the top of SAFE_AREA unless its Hook Style places it elsewhere: on one line if it fits,
@@ -109,8 +110,9 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from functools import cache
+from typing import Protocol, TypeVar
 
-from pydantic import computed_field
+from pydantic import ConfigDict, computed_field
 
 from app.candidates import (
     KEY_RANGES,
@@ -119,6 +121,7 @@ from app.candidates import (
     BackgroundKind,
     Border,
     Crop,
+    CueEdit,
     Ease,
     Framing,
     Keyframe,
@@ -435,17 +438,61 @@ class CaptionWord:
 
 
 @dataclass(frozen=True)
-class CaptionEvent:
-    """A caption line, on screen from `start` to `end` (seconds into the Clip), centred in `area` at
-    font `size`: the Caption Style's, or smaller for a line too wide for the area. Its `words` are
-    highlighted one after another, from its start to its end."""
+class CueKey:
+    """What a Cue is known by (and a Cue Edit keys it by): the middle of its first Word on that Word's
+    timeline, `at` seconds into the Source (or, with `media`, into that Media Library item)."""
 
-    text: str
+    # A Word Edit's or Cue Edit's key is one too, as the MCP's remove_candidate_items takes it: a
+    # tool's argument, which takes no other field.
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    at: float
+    media: str | None = None
+
+
+@dataclass(frozen=True)
+class Cue:
+    """A Cue: captions shown at once, from `start` to `end` (seconds into the Clip), centred in `area`
+    (its place's, made as tall as its lines when they are taller) at font `size` (the Caption Style's,
+    or smaller for a line too wide for the area). Its `lines` of Words (one font size apart, as
+    libass sets them), as captions show them, are highlighted one after another, from its start to
+    its end;
+    `plain` is each line as its Words are written, with the Word Edits (not in the Caption Style's
+    case, nor with its stripping), for subtitle files. `edited`: a Cue Edit applies to it;
+    `joinable`: merged into the Cue before, it would still fit the line limits; `needs_join`: a
+    pause, a sentence's end or the longest-Cue limit parts it from the Cue before, so merging it
+    takes a `join` Cue Edit. A Cue Edit of it is kept from `low` to `high` (seconds into the Clip:
+    its Segment, the Cue before's end and what the Cue after leaves it), its times divided by its
+    Segment's `speed`. `word_ats` is each of its Words' middle on its timeline (as `key.at` is its
+    first's), and `cue_edit_ats` the `at`, as given, of the Cue Edit matched to each: the first's
+    starts it, another's is a join keeping it in. A Cue moved at a Layout change is one of these in
+    each place, keyed alike."""
+
     start: float
     end: float
-    words: list[CaptionWord]
+    lines: list[list[CaptionWord]]
+    plain: list[str]
     area: Box
     size: float
+    key: CueKey
+    edited: bool = False
+    joinable: bool = False
+    needs_join: bool = False
+    low: float = 0.0
+    high: float = 0.0
+    speed: float = 1.0
+    word_ats: list[float] = field(default_factory=list)
+    cue_edit_ats: list[float | None] = field(default_factory=list)
+
+    @property
+    def words(self) -> list[CaptionWord]:
+        """Its Words, line after line."""
+        return [word for line in self.lines for word in line]
+
+    @property
+    def text(self) -> str:
+        """What it shows: its lines, one under the other."""
+        return "\n".join(" ".join(word.text for word in line) for line in self.lines)
 
 
 @dataclass(frozen=True)
@@ -856,7 +903,7 @@ class RenderPlan:
     source_fps: float
     # Back to back, covering the Clip from 0 to its duration.
     scenes: list[ScenePlan]
-    captions: list[CaptionEvent] = field(default_factory=list)
+    captions: list[Cue] = field(default_factory=list)
     hook: HookEvent | None = None
     # What the captions and the hook look like.
     caption_style: CaptionStyle = CaptionStyle()
@@ -878,6 +925,10 @@ class RenderPlan:
     transitions: list[TransitionEvent] = field(default_factory=list)
     # The Shapes that show, in drawing order, under the Text Layers.
     shapes: list[ShapeEvent] = field(default_factory=list)
+    # The Cue Edits given whose Word isn't shown, which do nothing (and are kept).
+    unused_cue_edits: list[CueEdit] = field(default_factory=list)
+    # The shortest a Cue Edit leaves its Cue shown, where it has room (CAPTION_MIN_SECS).
+    cue_min_secs: float = CAPTION_MIN_SECS
     # How its ducked sounds follow speech (docs/adr/0016): the render's and the preview's ramps.
     ducking: DuckTuning = DuckTuning()
 
@@ -925,6 +976,7 @@ def plan_render(
     media_info: dict[str, MediaInfo] | None = None,
     framing: Framing | None = None,
     shapes: list[Shape] | None = None,
+    cue_edits: list[CueEdit] | None = None,
     fps: float | None = None,
     captioned: bool = True,
     music_words: dict[str, list[Word]] | None = None,
@@ -948,6 +1000,11 @@ def plan_render(
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
     their items (whose videos' sound, when turned up, joins the music).
+
+    `cue_edits` change single Cues (`_captions`). Unlike the other times, theirs are on their own
+    timelines: the Source's, or with `media` that item's. Each applies in every Segment that shows
+    its time (in a Clip of one range, from `start`), its times divided by that Segment's Speed; those
+    whose Word isn't shown are listed in the plan's `unused_cue_edits`.
 
     With `main_track` (each Segment's SegmentInput), the Clip is cut into those Segments, back to back (`start` and `end` being the hull
     of what they show) but for their Transitions, each framed and captioned from its own (ignoring
@@ -1016,17 +1073,25 @@ def plan_render(
             )
             at, before = round(at + length, 3), length
         duration = at
-        words, word_edits = _segment_words(main_track, segments, cuts, duration)
+        words, keys, word_edits = _segment_words(main_track, segments, cuts, duration)
+        retimes = _segment_cue_edits(main_track, segments, cue_edits or [])
         # Speech is the Source's, not a Muted Segment's (docs/adr/0016).
         unheard = [given if given.media is None and not given.muted else replace(given, words=None) for given in main_track]
         heard = _segment_words(unheard, segments, cuts, duration)[0] or []
         plans = _keyed_manual(_frozen(plans, stills, showings, source), showings, rate)
     else:
         duration = round(SegmentTime(start, end).length, 3)
+        keys = [CueKey(round(start + (word.start + word.end) / 2, 3)) for word in words or []]
+        retimes = [(i, replace(edit, at=round(edit.at - start, 3))) for i, edit in enumerate(cue_edits or []) if edit.media is None]
         plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
         plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
         heard = heard_words(words or [], 0.0, duration)
     audio = audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {})
+    # Not captioned, the Words are heard only (they still duck the music above).
+    captions, used = _captions(
+        (words or []) if captioned else [], plans, duration, caption_style, word_edits or [], cuts,
+        keys if captioned else [], retimes, [segment.speed for segment in segments], [edit.at for edit in cue_edits or []],
+    )
     return RenderPlan(
         start=start,
         end=end,
@@ -1035,7 +1100,7 @@ def plan_render(
         fps=fps,
         source_fps=source.fps,
         scenes=plans,
-        captions=_captions((words or []) if captioned else [], plans, duration, caption_style, word_edits or [], cuts),
+        captions=captions,
         hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
@@ -1048,20 +1113,52 @@ def plan_render(
         overlays=overlay_events(overlays or [], duration, media_info or {}),
         transitions=transitions,
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
+        unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
         ducking=ducking,
     )
 
 
+def edit_shown(edit: "TimelineKeyed", media: str | None, start: float, end: float) -> bool:
+    """Whether a Word Edit or Cue Edit can apply in a Segment showing `start`-`end` of the timeline
+    `media` (None: the Source's): it is of that timeline, within WORD_EDIT_REACH_SECS of the range."""
+    return edit.media == media and start - WORD_EDIT_REACH_SECS <= edit.at <= end + WORD_EDIT_REACH_SECS
+
+
+def _segment_cue_edits(
+    main_track: list[SegmentInput], segments: list[SegmentPlan], cue_edits: list[CueEdit]
+) -> list[tuple[int, CueEdit]]:
+    """The Cue Edits each Segment shows, with their place in `cue_edits`: those of its timeline (the
+    Source's, or its item's) within WORD_EDIT_REACH_SECS of its range, as Word Edits are given, in
+    seconds into the Clip, their times divided by its Speed. A Freeze frame and a reversed Segment,
+    which have no Words, show none."""
+    shown = []
+    for given, segment in zip(main_track, segments):
+        if given.hold is not None or given.reverse or given.words is None:
+            continue
+        time = given.time
+        for i, edit in enumerate(cue_edits):
+            if edit_shown(edit, given.media, given.start, given.end):
+                shown.append((i, replace(
+                    edit,
+                    at=round(time.offset_of(edit.at - given.start) + segment.start, 3),
+                    shift=edit.shift / given.speed,
+                    start_delta=edit.start_delta / given.speed,
+                    end_delta=edit.end_delta / given.speed,
+                )))
+    return sorted(shown, key=lambda pair: pair[1].at)
+
+
 def _segment_words(
     main_track: list[SegmentInput], segments: list[SegmentPlan], cuts: list[float], duration: float
-) -> tuple[list[Word] | None, list[WordEdit]]:
+) -> tuple[list[Word] | None, list[CueKey], list[WordEdit]]:
     """The Segments' Words and Word Edits in seconds into the Clip: each Segment's Words whose middle
     is between the cuts either side of it (where the Segment before ends, or a Transition's middle),
-    kept between them. None when no Segment is captioned."""
+    kept between them; and each of those Words' middle on its own timeline: the Source's, or a media
+    Segment's item's (its Media Words). None when no Segment is captioned."""
     if all(given.words is None for given in main_track):
-        return None, []
+        return None, [], []
     edges = [0.0, *cuts, duration]
-    words, edits = [], []
+    words, at, edits = [], [], []
     for i, (given, segment) in enumerate(zip(main_track, segments)):
         low, high = edges[i], edges[i + 1]
         if given.hold is not None or given.reverse:
@@ -1072,8 +1169,9 @@ def _segment_words(
             on, off = time.offset_of(word.start) + segment.start, time.offset_of(word.end) + segment.start
             if low <= (on + off) / 2 < high:
                 words.append(Word(word.text, round(max(on, low), 3), round(min(off, high), 3)))
+                at.append(CueKey(round(given.start + (word.start + word.end) / 2, 3), given.media))
         edits += [replace(edit, at=round(time.offset_of(edit.at) + segment.start, 3)) for edit in given.word_edits]
-    return words, sorted(edits, key=lambda edit: edit.at)
+    return words, at, sorted(edits, key=lambda edit: edit.at)
 
 
 def _ducked(audio: list[AudioEvent], words: list[Word], music_words: dict[str, list[Word]], ducking: DuckTuning) -> list[AudioEvent]:
@@ -2347,7 +2445,9 @@ on_change(font_metrics.cache_clear)
 
 @dataclass(frozen=True)
 class _Spoken:
-    """A Word as captions show it, on the Clip's timeline."""
+    """A Word as captions show it, on the Clip's timeline; as it is written (`plain`, with its Word
+    Edit), and the middle of it on its own timeline (the Source's or a Media Library item's), which
+    keys a Cue it starts."""
 
     text: str
     start: float
@@ -2355,16 +2455,40 @@ class _Spoken:
     ends_sentence: bool
     # Edited to start a line.
     breaks_before: bool = False
+    plain: str = ""
+    key: CueKey = CueKey(0.0)
+    # Its Cue Edit (in seconds into the Clip), and its place among those given: of the Cue it starts,
+    # or, a `join`, keeping it with the Cue before.
+    cue_edit: CueEdit | None = None
+    cue_edit_index: int = -1
 
 
-def match_edits(words: list[Word], edits: list[WordEdit]) -> list[WordEdit | None]:
-    """Each Word's Word Edit, or None: the Words and the edits' times on the same timeline. An edit
-    applies to the Word whose span holds its time, else to the nearest Word within
-    WORD_EDIT_REACH_SECS; of two edits of one Word, the later in `edits`."""
-    matched: list[WordEdit | None] = [None] * len(words)
+class TimelineKeyed(Protocol):
+    """What is keyed to a Word as a Word Edit is: a time, on the Source's timeline or (with `media`)
+    on that Media Library item's (docs/adr/0020)."""
+
+    @property
+    def at(self) -> float: ...
+
+    @property
+    def media(self) -> str | None: ...
+
+
+Keyed = TypeVar("Keyed", bound=TimelineKeyed)
+
+
+def match_edits(words: list[Word], edits: list[Keyed], timelines: list[str | None] | None = None) -> list[Keyed | None]:
+    """Each Word's Word Edit or Cue Edit (anything keyed as one), or None: the Words and
+    the edits' times on the same clock. An edit applies to the Word whose span holds its time, else
+    to the nearest Word within WORD_EDIT_REACH_SECS; of two edits of one Word, the later in `edits`.
+    With `timelines` (each Word's: None for the Source's, else its Media Library item's), an edit
+    applies only to a Word of its own timeline, its `media`; without them, to any Word."""
+    matched: list[Keyed | None] = [None] * len(words)
     for edit in edits:
         best, distance = None, WORD_EDIT_REACH_SECS
         for i, word in enumerate(words):
+            if timelines is not None and timelines[i] != edit.media:
+                continue
             gap = max(word.start - edit.at, edit.at - word.end, 0.0)
             if gap < distance:
                 best, distance = i, gap
@@ -2382,31 +2506,74 @@ def _captions(
     style: CaptionStyle,
     edits: list[WordEdit],
     cuts: list[float] | None = None,
-) -> list[CaptionEvent]:
-    """The caption lines of `words` over the Clip, which lasts `duration` and is laid out in `scenes`,
-    in `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's
-    text (none, when it is empty) and a Word edited to break starts a line.
+    at: list[CueKey] | None = None,
+    cue_edits: list[tuple[int, CueEdit]] | None = None,
+    speeds: list[float] | None = None,
+    given_ats: list[float] | None = None,
+) -> tuple[list[Cue], set[int]]:
+    """The Cues of `words` over the Clip, which lasts `duration` and is laid out in `scenes`, in
+    `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's text
+    (none, when it is empty) and a Word edited to break starts a Cue. Each Word's middle on its own
+    timeline (the Source's, or its Media Library item's) is in `at` (in the same order; without it,
+    its middle into the Clip), which keys the Cue it starts.
 
-    The Words whose middle is in the Clip are taken in order into a line, in UPPERCASE (unless the
-    style keeps their case) and without the punctuation at their ends, until the next would make it
-    longer than the style's max_chars, max_words or max_secs, comes after a pause of its pause_secs,
-    follows the end of a sentence, or starts in a Scene whose captions go elsewhere. A line starts
-    with its first Word and ends CAPTION_LINGER_SECS after its last, when the next line starts if
-    that is sooner, and after max_secs at most. A Word is highlighted from when it is spoken until
-    the next one is.
-    A line still being spoken at a Layout change that moves the captions moves there with it (unless
+    The Words whose middle is in the Clip are taken in order into a Cue, in UPPERCASE (unless the
+    style keeps their case) and without the punctuation at their ends, until the next wouldn't fit
+    its lines (`_fits`: the style's max_lines lines of max_chars and max_words, a Word edited to
+    break starting a line of its own), would make it last more than max_secs, comes after a pause of
+    its pause_secs, follows the end of a sentence, or starts in a Scene whose captions go elsewhere.
+    The Cue's Words are then set on its lines (`_lines`), its widest line sizing and placing it. A
+    Cue starts with its first Word and ends CAPTION_LINGER_SECS after its last, when the next Cue
+    starts if that is sooner, and after max_secs at most. A Word is highlighted from when it is
+    spoken until the next one is.
+    A Cue still being spoken at a Layout change that moves the captions moves there with it (unless
     that would show it for less than CAPTION_MIN_SECS in one place); one whose Words are all spoken
-    goes at the change. At each of `cuts` (where a Segment ends and the next starts), a line ends and
-    the next starts."""
+    goes at the change. At each of `cuts` (where a Segment ends and the next starts), a Cue ends and
+    the next starts. A Cue is joinable when it and the one before, in one Scene's place and not
+    parted by a cut, would fit one Cue's lines (`_fits`, the break before its first Word lifted). It
+    needs a join when a pause, the sentence's end or max_secs (to its first Word: only that break is
+    what a join cancels) parts it from the one before.
+
+    `cue_edits` (in seconds into the Clip, their times already divided by their Segment's Speed, each
+    with its place among those given) are matched to the Words as Word Edits are. A Cue Edit's Word
+    always starts a Cue. Once planned, its Cue is moved by its `shift`, its edges by `start_delta`
+    and `end_delta`, then kept in its Segment (between the cuts either side of it), not before the
+    Cue before ends nor after the Cue after starts (where that is moved later, else its first Word;
+    the earlier of two Cues keeps its place), and CAPTION_MIN_SECS long at least: a Cue moved later
+    leaves itself that before what follows, and one spoken closer than that to what follows starts
+    earlier, the Cue before giving way (but for its own first CAPTION_MIN_SECS). Where its Segment
+    leaves less, it fills its room; it is never dropped. Its Words'
+    highlight moves with it, kept in it, the first from when it comes up. Its `x` and `y` place it as
+    the style's custom position and x would (at its own height, it stays put at a Layout change),
+    and its `scale` multiplies the style's size before a line too wide is set smaller. A `join` Cue
+    Edit's Word instead goes on in the Cue before, despite a pause, a sentence's end or max_secs,
+    when it fits its lines and isn't parted by a cut or a Layout change; else it starts a Cue
+    unmoved and in the style's place. It cancels only that break: max_secs still counts from the
+    Cue's first Word, so the Words after the joined one break off where it would part them, and the
+    Cue shows to the joined Word's end but lingers no longer. Each Cue carries its bounds, its
+    Segment's Speed (of `speeds`, one per Segment; without them, 1), its Words' keys and the `at` of
+    each one's Cue Edit (as given, of `given_ats` by its place; without them, as in `cue_edits`).
+    Also returned: the places of the Cue Edits whose Word is shown."""
     cuts = cuts or []
+    retimes = cue_edits or []
+    # Each Cue Edit's `at` as it was given, by its place, which names it on the Cue it applies to.
+    named = given_ats if given_ats is not None else {i: edit.at for i, edit in retimes}
+    keys = at if at is not None else [CueKey(round((word.start + word.end) / 2, 3)) for word in words]
     spoken = []
-    ordered = sorted(words, key=lambda word: word.start)
-    for word, edit in zip(ordered, match_edits(ordered, edits)):
+    heard = sorted(zip(words, keys), key=lambda pair: pair[0].start)
+    ordered = [word for word, _ in heard]
+    timelines = [key.media for _, key in heard]
+    retimed = match_edits(ordered, [edit for _, edit in retimes], timelines)
+    places = {id(edit): i for i, edit in retimes}
+    for (word, key), edit, retime in zip(heard, match_edits(ordered, edits, timelines), retimed):
         given = edit.text if edit is not None and edit.text is not None else word.text
         text, ends_sentence = _caption_text(given, style.uppercase)
         if text and 0 <= (word.start + word.end) / 2 < duration:
             breaks = edit is not None and edit.break_before
-            spoken.append(_Spoken(text, max(word.start, 0.0), min(max(word.end, word.start), duration), ends_sentence, breaks))
+            spoken.append(_Spoken(
+                text, max(word.start, 0.0), min(max(word.end, word.start), duration), ends_sentence, breaks, given.strip(), key,
+                retime, places[id(retime)] if retime is not None else -1,
+            ))
 
     areas = [_caption_area(style, scene.layout) for scene in scenes]
     # The Layout changes that move the captions.
@@ -2415,37 +2582,97 @@ def _captions(
     def area_at(at: float) -> Box:
         return next(area for scene, area in zip(reversed(scenes), reversed(areas)) if scene.start <= at or scene is scenes[0])
 
-    lines: list[list[_Spoken]] = []
-    for word in spoken:
-        line = lines[-1] if lines else None
-        if (
-            line is None
-            or word.breaks_before
-            or _caption_length(" ".join([*(w.text for w in line), word.text]), style) > style.max_chars
-            or (style.max_words is not None and len(line) >= style.max_words)
-            or word.end - line[0].start > style.max_secs
-            or word.start - line[-1].end >= style.pause_secs
-            or line[-1].ends_sentence
-            or area_at(word.start) != area_at(line[0].start)
-            or any(line[0].start < cut <= word.start for cut in cuts)
-        ):
-            lines.append([word])
-        else:
-            line.append(word)
+    def parted(before: list[_Spoken], word: _Spoken) -> bool:
+        # A Cue can't go on past a cut, nor into a Scene whose captions go elsewhere.
+        return area_at(word.start) != area_at(before[0].start) or any(before[0].start < cut <= word.start for cut in cuts)
 
+    def held(cue: list[_Spoken], word: _Spoken) -> bool:
+        # What a `join` cancels: a pause, a sentence's end, or the longest Cue (from its first Word).
+        return word.end - cue[0].start > style.max_secs or word.start - cue[-1].end >= style.pause_secs or cue[-1].ends_sentence
+
+    cues: list[list[_Spoken]] = []
+    for word in spoken:
+        cue = cues[-1] if cues else None
+        join = word.cue_edit is not None and word.cue_edit.join
+        if cue is not None and join and _fits([*cue, word], style) and not parted(cue, word):
+            cue.append(word)
+        elif (
+            cue is None
+            or word.cue_edit is not None
+            or not _fits([*cue, word], style)
+            or held(cue, word)
+            or parted(cue, word)
+        ):
+            cues.append([word])
+        else:
+            cue.append(word)
+
+    bounds = [0.0, *cuts, duration]
+
+    def segment_index(cue: list[_Spoken]) -> int:
+        # Its Segment's: between the cuts either side of its first Word.
+        return next(i for i, high in enumerate(bounds[1:]) if cue[0].start < high or i == len(bounds) - 2)
+
+    def segment_of(cue: list[_Spoken]) -> tuple[float, float]:
+        # Its Segment's span on the Timeline.
+        i = segment_index(cue)
+        return bounds[i], bounds[i + 1]
+
+    # What the Cue before each may not pass, from the last Cue back: its first Word's start; for an
+    # edited one, later where its Cue Edit moves its start later (moved earlier, it gives way to the
+    # Cue before), but leaving it CAPTION_MIN_SECS before what it may not pass in turn; and where its
+    # Words start closer to that than CAPTION_MIN_SECS, earlier, so that it is still shown that long
+    # (but not into the Cue before's first CAPTION_MIN_SECS, nor out of its Segment).
+    reaches = [0.0] * len(cues)
+    for i in reversed(range(len(cues))):
+        first, edit = cues[i][0].start, cues[i][0].cue_edit
+        if edit is None or edit.join:
+            reaches[i] = first
+            continue
+        low, high = segment_of(cues[i])
+        top = (min(high, reaches[i + 1]) if i + 1 < len(cues) else high) - CAPTION_MIN_SECS
+        if first <= top:
+            reaches[i] = min(max(first + edit.shift + edit.start_delta, first), top)
+        else:
+            reaches[i] = min(first, max(top, low, cues[i - 1][0].start + CAPTION_MIN_SECS if i else low))
+
+    metrics = font_metrics(style.font)
     events = []
-    for i, line in enumerate(lines):
-        start = line[0].start
-        end = min(line[-1].end + CAPTION_LINGER_SECS, start + style.max_secs, duration)
-        if i + 1 < len(lines):
-            end = min(end, lines[i + 1][0].start)
-        end = min([end, *(at for at in [*moves, *cuts] if line[-1].end <= at < end)])
+    shown_end = 0.0
+    for i, cue in enumerate(cues):
+        start = cue[0].start
+        # Shown max_secs at most, but to the end of a Word a join kept in it past that.
+        longest = max([cue[0].start + style.max_secs, *(word.end for word in cue[1:] if word.cue_edit is not None)])
+        end = min(cue[-1].end + CAPTION_LINGER_SECS, longest, duration)
+        if i + 1 < len(cues):
+            end = min(end, reaches[i + 1])
+        end = min([end, *(at for at in [*moves, *cuts] if cue[-1].end <= at < end)])
+        edit, shift = cue[0].cue_edit, 0.0
+        if edit is not None and edit.join:
+            edit = None
+        # Where a Cue Edit keeps it: in its Segment, after the Cue before ends, before the Cue after
+        # (reaches). Its room is never empty; it is CAPTION_MIN_SECS long but where its Segment, or
+        # the Cue before's first CAPTION_MIN_SECS, leaves it less, which it then fills.
+        part = segment_of(cue)
+        low, high = max(part[0], shown_end), min(part[1], reaches[i + 1]) if i + 1 < len(cues) else part[1]
+        if edit is not None:
+            shift = edit.shift
+            start = min(max(start + shift + edit.start_delta, low), high - CAPTION_MIN_SECS)
+            end = min(max(end + shift + edit.end_delta, start + CAPTION_MIN_SECS), high)
+            start = max(start, low)
         if end <= start:
             continue
-        text = " ".join(word.text for word in line)
-        starts = [max(word.start, start) for word in line]
-        highlights = list(zip(line, starts, [*starts[1:], end]))
-        edges = [start, *(at for at in moves if start < at < end), end]
+        shown_end = end
+        lines = _lines(cue, style) or [cue]
+        texts = [" ".join(word.text for word in line) for line in lines]
+        widest = max(texts, key=lambda text: metrics.width(text, style.size, style.tracking))
+        starts = [min(max(word.start + shift, start), end) for word in cue]
+        starts[0] = start
+        timed = iter(zip(starts, [*starts[1:], end]))
+        highlights = [[(word, *next(timed)) for word in line] for line in lines]
+        # Placed at its own height, it stays there at a Layout change.
+        placed = edit is not None and edit.y is not None
+        edges = [start, *(at for at in moves if start < at < end and not placed), end]
         # Each part of the line between Layout changes, where it is shown: one too short joins the next
         # (the last, the one before it), taking the next one's place.
         parts = [[a, b, area_at(a)] for a, b in zip(edges, edges[1:])]
@@ -2458,18 +2685,87 @@ def _captions(
             else:
                 parts[short - 1][1] = parts[short][1]
             del parts[short]
+        joined = [*cues[i - 1], replace(cue[0], breaks_before=False), *cue[1:]] if i > 0 else []
+        joinable = i > 0 and not parted(cues[i - 1], cue[0]) and _fits(joined, style)
+        needs_join = i > 0 and held(cues[i - 1], cue[0])
+        x = edit.x if edit is not None and edit.x is not None else style.x
+        scale = edit.scale if edit is not None and edit.scale is not None else 1.0
         for a, b, area in parts:
-            size = _caption_size(text, area, style)
-            events.append(CaptionEvent(
-                text=text,
+            if placed:
+                area = _custom_caption_area(edit.y)
+            size = _caption_size(widest, area, style, scale)
+            events.append(Cue(
                 start=round(a, 3),
                 end=round(b, 3),
-                words=[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
-                       for word, on, off in highlights],
-                area=_caption_placed(text, area, size, style),
+                lines=[[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
+                        for word, on, off in line] for line in highlights],
+                plain=[" ".join(word.plain for word in line) for line in lines],
+                area=_caption_placed(widest, _caption_box(area, len(lines), size), size, style, x),
                 size=size,
+                key=cue[0].key,
+                edited=edit is not None,
+                joinable=joinable,
+                needs_join=needs_join,
+                low=round(low, 3),
+                high=round(high, 3),
+                speed=speeds[segment_index(cue)] if speeds else 1.0,
+                word_ats=[word.key.at for word in cue],
+                cue_edit_ats=[named[word.cue_edit_index] if word.cue_edit is not None else None for word in cue],
             ))
-    return events
+    return events, {word.cue_edit_index for word in spoken if word.cue_edit is not None}
+
+
+def _fits(words: list[_Spoken], style: CaptionStyle) -> bool:
+    """Whether `words` fit the style's line limits as one Cue (`_lines`)."""
+    return _lines(words, style) is not None
+
+
+def _lines(words: list[_Spoken], style: CaptionStyle) -> list[list[_Spoken]] | None:
+    """`words` as a Cue's lines: the fewest, up to the style's max_lines, that fit its line limits
+    (each line of at most max_chars characters, as _caption_length counts them, unless it is one
+    Word, and of at most max_words Words), broken where the longest line is shortest (of equals, with
+    the earliest breaks) and before each Word edited to start a line; None when even max_lines lines
+    don't fit."""
+    starts = {i for i, word in enumerate(words) if word.breaks_before and i}
+    # Each run of words that can be one line, by its ends, and how long it counts.
+    lengths: dict[tuple[int, int], float] = {}
+    for i in range(len(words)):
+        for j in range(i + 1, len(words) + 1):
+            if (j - 1 > i and j - 1 in starts) or (style.max_words is not None and j - i > style.max_words):
+                break
+            length = _caption_length(" ".join(word.text for word in words[i:j]), style)
+            if j - i > 1 and length > style.max_chars:
+                break
+            lengths[i, j] = length
+    # best[k][j]: the shortest longest line of words[:j] on k + 1 lines, and where its last line starts.
+    best = [{j: (length, 0) for (i, j), length in lengths.items() if i == 0}]
+    for _ in range(1, style.max_lines):
+        if len(words) in best[-1]:
+            break
+        more: dict[int, tuple[float, int]] = {}
+        for (i, j), length in lengths.items():
+            if i in best[-1]:
+                option = (max(best[-1][i][0], length), i)
+                if j not in more or option < more[j]:
+                    more[j] = option
+        best.append(more)
+    if len(words) not in best[-1]:
+        return None
+    lines, j = [], len(words)
+    for k in range(len(best) - 1, -1, -1):
+        i = best[k][j][1]
+        lines.insert(0, words[i:j])
+        j = i
+    return lines
+
+
+def _caption_box(area: Box, count: int, size: float) -> Box:
+    """`area`, as tall as `count` lines set at `size` (one each) when they are taller than it, about
+    its middle."""
+    height = 2 * math.ceil(count * size / 2)
+    if height <= area.height:
+        return area
+    return replace(area, y=round(area.y + area.height / 2 - height / 2), height=height)
 
 
 def _caption_length(text: str, style: CaptionStyle) -> float:
@@ -2481,13 +2777,14 @@ def _caption_length(text: str, style: CaptionStyle) -> float:
     return len(text) * metrics.width(text, style.size, style.tracking) / metrics.width(text, style.size)
 
 
-def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle) -> Box:
-    """`area` moved to have its middle at the style's x, or as near as keeps the line set in it at
-    `size` (with its outline and tracking) in the frame. Without an x, it stays centred."""
-    if style.x is None:
+def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: float | None) -> Box:
+    """`area` moved to have its middle at `x` (the style's, or a Cue Edit's), or as near as keeps the
+    line set in it at `size` (with its outline and tracking) in the frame. Without an x, it stays
+    centred."""
+    if x is None:
         return area
     half = (font_metrics(style.font).width(text, size, style.tracking) + 2 * style.outline) / 2
-    centre = min(max(style.x, half), OUTPUT_WIDTH - half)
+    centre = min(max(x, half), OUTPUT_WIDTH - half)
     return _shifted(area, round(centre - area.width / 2) - area.x)
 
 
@@ -2503,19 +2800,26 @@ def _caption_area(style: CaptionStyle, layout: SceneLayout) -> Box:
         case CaptionPosition.BOTTOM:
             return LOWER_CAPTIONS
         case CaptionPosition.CUSTOM:
-            half = LOWER_CAPTIONS.height // 2
-            centre = min(max(style.y, SAFE_AREA.y + half), SAFE_AREA.y + SAFE_AREA.height - half)
-            return replace(LOWER_CAPTIONS, y=centre - half)
+            return _custom_caption_area(style.y)
 
 
-def _caption_size(text: str, area: Box, style: CaptionStyle) -> float:
-    """The font size for a caption line: the style's, or smaller if the line (with its outline and
-    tracking) would be wider than its area at that size. Its tracking stays as wide at any size."""
+def _custom_caption_area(y: float) -> Box:
+    """Where a caption line centred at height `y` goes, kept inside the safe area."""
+    half = LOWER_CAPTIONS.height // 2
+    centre = min(max(round(y), SAFE_AREA.y + half), SAFE_AREA.y + SAFE_AREA.height - half)
+    return replace(LOWER_CAPTIONS, y=centre - half)
+
+
+def _caption_size(text: str, area: Box, style: CaptionStyle, scale: float = 1.0) -> float:
+    """The font size for a caption line: the style's (times `scale`, a Cue Edit's), or smaller if the
+    line (with its outline and tracking) would be wider than its area at that size. Its tracking
+    stays as wide at any size."""
     outline, tracking = style.outline, style.tracking * (len(text) - 1)
-    width = font_metrics(style.font).width(text, style.size) + tracking + 2 * outline
+    wanted = round(style.size * scale, 1)
+    width = font_metrics(style.font).width(text, wanted) + tracking + 2 * outline
     if width <= area.width:
-        return style.size
-    size = math.floor(style.size * (area.width - 2 * outline - tracking) / (width - 2 * outline - tracking) * 10) / 10
+        return wanted
+    size = math.floor(wanted * (area.width - 2 * outline - tracking) / (width - 2 * outline - tracking) * 10) / 10
     return max(size, MIN_SIZE)
 
 

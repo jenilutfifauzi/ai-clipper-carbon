@@ -5,7 +5,8 @@ import { HOOK_MAX, KICKER_MAX } from "../HookEditor";
 import type { StageId } from "./ClipPreview";
 import { toggledEmphasis } from "./emphasis";
 import { layerStagePicture } from "./layerStage";
-import { lineWords, retypedLine } from "./wordEdits";
+import { cueWordsOf, retypedLine } from "./wordEdits";
+import { cueWords } from "./cues";
 
 // The longest a Text Layer can be (candidates.py's TEXT_LAYER_MAX_CHARS), and a caption line as typed.
 const TEXT_MAX_CHARS = 300;
@@ -101,7 +102,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
     case "captions": {
       const line = plan.captions[editing.line];
       if (!line) return null;
-      const shown = line.words.map((word) => word.text);
+      const shown = cueWords(line).map((word) => word.text);
       const initial = shown.join(" ");
       return {
         area: line.area,
@@ -113,7 +114,7 @@ function fieldFor(preview: PreviewPlan, fontById: Map<string, FontInfo>, editing
         label: "Caption line",
         save: (typed) => {
           if (typed.trim().split(/\s+/).join(" ") === initial) return;
-          const words = lineWords(line, preview.words);
+          const words = cueWordsOf(line, preview.words);
           retype.onWords((edits) => retypedLine(edits, words, shown, typed, plan.caption_style.uppercase));
         },
       };

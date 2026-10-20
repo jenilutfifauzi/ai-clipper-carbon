@@ -138,10 +138,11 @@ async def test_the_agent_speeds_a_segment_up_with_its_keys_and_moves_a_text_laye
 
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
     sped, played = plan["segments"]
-    assert sped == {"id": "v", "media": item["id"], "start": 0, "end": 1, "source_start": 0, "source_end": 2, "speed": 2, "pitch": True}
+    assert sped == {"id": "v", "media": item["id"], "start": 0, "end": 1, "source_start": 0, "source_end": 2, "speed": 2, "pitch": True,
+                    "words_status": "none"}  # a video without sound has no Media Words
     assert played == {
         "id": "e", "start": 1, "end": round(1 + shown["end"] - shown["start"], 2),
-        "source_start": round(shown["start"], 2), "source_end": round(shown["end"], 2),
+        "source_start": round(shown["start"], 2), "source_end": round(shown["end"], 2), "words_status": "transcript",
     }
     assert plan["scenes"][0]["keys"]["scale"][1]["at"] == 0.75
     # The Text Layer over the episode is moved to where it starts now, a second earlier.

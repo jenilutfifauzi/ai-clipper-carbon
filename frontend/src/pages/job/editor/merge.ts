@@ -1,4 +1,5 @@
 import type { Candidate, CandidateChange } from "../../../api";
+import { keyText, type TimelineKey } from "./timelineKey";
 
 /**
  * Merging an editor's unsaved edits onto a newer Revision of its Candidate (ADR 0003), three ways:
@@ -21,7 +22,11 @@ export interface Merged<T> {
   collisions: Collision[];
 }
 
-// Each list's items by this key: the MCP merge tool's keys.
+type Item = Record<string, unknown>;
+
+// Each list's items by this key (or these fields): the MCP merge tool's keys. A Word Edit's and a
+// Cue Edit's is its time on its timeline, the Source's or (with `media`) a Media Library item's
+// (ADR 0020), the time to the millisecond.
 const KEYS = {
   segments: "id",
   text_layers: "id",
@@ -29,12 +34,12 @@ const KEYS = {
   music: "id",
   overlays: "id",
   transitions: "after",
-  word_edits: "at",
+  word_edits: ["at", "media"],
   layout_overrides: "at",
-} as const;
+  cue_edits: ["at", "media"],
+} as const satisfies Partial<Record<keyof Edits, string | readonly string[]>>;
 
 type ListField = keyof typeof KEYS;
-type Item = Record<string, unknown>;
 
 export function mergeEdits<T extends Edits>(base: T, mine: T, theirs: T): Merged<T> {
   const [b, m, t] = [fields(base), fields(mine), fields(theirs)];
@@ -104,6 +109,7 @@ const PART_OF: Record<Collision["field"], string> = {
   preset_id: "Style",
   style_overrides: "Style",
   word_edits: "Word Edits",
+  cue_edits: "Cue Edits",
   layout: "Layout",
   framing: "Layout",
   layout_overrides: "Layout Overrides",
@@ -115,12 +121,17 @@ export function collidedParts(collisions: Collision[]): string {
   return [...new Set(collisions.map((collision) => PART_OF[collision.field]))].join(", ");
 }
 
+// An item's key: a timed item's (keyed by `at`, and `media` when it has one) its time on its
+// timeline to the millisecond, as the backend de-duplicates (keyText); another's its key field's.
+const keyOf = (item: Item, key: string | readonly string[]) =>
+  key === "at" || typeof key !== "string" ? keyText(item as unknown as TimelineKey) : String(item[key] ?? "");
+
 // Edits seen as plain JSON fields.
 const fields = (edits: Edits) => edits as Record<string, unknown>;
 
 function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[], collisions: Collision[]): Item[] {
   const key = KEYS[field];
-  const byKey = (items: Item[]) => new Map(items.map((item) => [String(item[key]), item]));
+  const byKey = (items: Item[]) => new Map(items.map((item) => [keyOf(item, key), item]));
   const [b, m, t] = [byKey(base), byKey(mine), byKey(theirs)];
   const kept = new Map<string, Item>();
   for (const id of new Set([...b.keys(), ...m.keys(), ...t.keys()])) {
@@ -129,7 +140,7 @@ function mergeList(field: ListField, base: Item[], mine: Item[], theirs: Item[],
     if (result.value) kept.set(id, result.value);
   }
   const order = ordered(
-    [base, mine, theirs].map((items) => items.map((item) => String(item[key]))) as [string[], string[], string[]],
+    [base, mine, theirs].map((items) => items.map((item) => keyOf(item, key))) as [string[], string[], string[]],
     kept,
   );
   return order.map((id) => kept.get(id)!);
