@@ -50,6 +50,7 @@ import { useStyleDraft } from "./editor/useStyleDraft";
 import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
 import { PreviewPlayer } from "./PreviewPlayer";
+import { useEffectedCopies } from "./editor/effectedCopy";
 import { SaveAudioButton } from "./SaveAudio";
 import { TranscriptPicker, type WordRange } from "./TranscriptPicker";
 
@@ -207,7 +208,9 @@ export function CandidateEditor({
     hook_secs: timing.hook_secs,
     grade,
   };
-  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
+  const { preview, error: previewError, planned } = usePreviewPlan(job.id, candidate.id, draft, progress.status);
+  // Its items with Audio Effects heard from their Effected copies, as they are made.
+  useEffectedCopies(job.id, candidate.id, planned, preview?.plan ?? null);
   // The preview in the Grade as drafted: a dial drag shows at once, before its plan comes (ADR 0013).
   const graded = useMemo(() => preview && { ...preview, plan: draftGrades(preview.plan, [], [], grade) }, [preview, grade]);
   if (cut) playback.setSegments(preview?.plan.segments.length ? playable(preview.plan.segments) : playedFrom(candidate.segments));

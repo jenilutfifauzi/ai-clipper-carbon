@@ -2,6 +2,7 @@
 
 import shutil
 import tempfile
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -61,6 +62,7 @@ from app.events import candidate_events, job_events
 from app.export_files import SavedExport, draw_frame, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
+from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
@@ -576,6 +578,14 @@ class RetimedCopy(BaseModel):
     error: str | None = None
 
 
+class EffectedCopy(BaseModel):
+    """An item's Effected copy (app/effected.py), served from its Job's directory at `url`; or, for an
+    item without one, no `url` and `why` not."""
+
+    url: str | None = None
+    why: str | None = None
+
+
 @dataclass(frozen=True)
 class JobDetail(Job):
     transcript: Transcript | None = None
@@ -828,9 +838,11 @@ def update_candidate(
     logos: Logos,
     library: Media,
     edit: EditBy,
+    background: BackgroundTasks,
 ) -> Candidate:
     """Change a Candidate's bounds (snapped to Words), hook text, layout, Style Preset, Style
-    Overrides or selected flag, and save it at once. 422 for a range that isn't a usable clip or
+    Overrides or selected flag, and save it at once; then, once it is sent, remove the Job's Effected
+    copies none of its Candidates uses (`sweep_unused_effected`). 422 for a range that isn't a usable clip or
     overrides that don't make a valid style; 404 for an unknown Preset; 409 unless the Job is in review."""
     if body.preset_id is not None:
         _preset(presets, body.preset_id)
@@ -848,7 +860,9 @@ def update_candidate(
             raise InvalidEdit(f"Invalid style overrides: {exc}") from None
         return candidates, candidate
 
-    return _review(store, settings, job_id, update, edit)
+    saved = _review(store, settings, job_id, update, edit)
+    background.add_task(sweep_unused_effected, store, settings, presets, logos, library, job_id, time.time())
+    return saved
 
 
 @router.get("/jobs/{job_id}/candidates/{candidate_id}/revisions")
@@ -1034,6 +1048,40 @@ def save_sound(
     return FileResponse(
         folder / "sound.wav", media_type="audio/wav", filename=name, background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True),
     )
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/effected/{kind}/{item_id}")
+def effected(
+    job_id: str,
+    candidate_id: str,
+    kind: SoundOf,
+    item_id: str,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    body: CandidateUpdate | None = None,
+) -> EffectedCopy:
+    """The Effected copy of the Candidate's Segment, Music Clip or Overlay `item_id`, or of that item
+    of `body` (a draft of edits, as the Preview Plan takes it): its sound before its volume, through
+    its Audio Effects (app/effected.py), a WAV served from the Job's directory
+    (`/media/<job>/effected/<name>`), made now unless it is there, or waited for while it is being
+    made. No `url` for an item without one (Muted, a Freeze frame, an image, no sound, no effect
+    switched on). 404 for an item the draft hasn't; 422 for a draft that isn't a valid edit."""
+    job, _, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    job_dir = store.job_dir(job_id)
+    try:
+        path = effected_copy(job, job_dir, candidate, kind, item_id, settings, presets, logos, library)
+    except NoItem as exc:
+        raise HTTPException(404, f"Candidate {candidate_id} has {exc}") from None
+    except NoCopy as exc:
+        return EffectedCopy(why=str(exc))
+    except InvalidStyle as exc:
+        raise HTTPException(422, f"Invalid style overrides: {exc}") from None
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from None
+    return EffectedCopy(url=f"/media/{job_id}/{EFFECTED_DIR}/{path.name}")
 
 
 def _drafted(
@@ -1781,6 +1829,21 @@ def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
     sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
     shutil.rmtree(store.job_dir(job_id) / OLD_PICTURES_DIR, ignore_errors=True)
+
+
+def sweep_unused_effected(
+    store: JobStore, settings: Settings, presets: PresetStore, logos: LogoStore, library: MediaStore, job_id: str, before: float
+) -> None:
+    """Remove the Job's Effected copies (app/effected.py) that none of its Candidates uses, made
+    `before` (a time.time()): one made since may be playing in a draft not saved yet."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        return
+    if job.source is None:
+        return
+    used = effected_used(job, store.load_candidates(job_id) or [], settings, presets, logos, library)
+    sweep_effected(store.job_dir(job_id) / EFFECTED_DIR, used, before)
 
 
 def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:

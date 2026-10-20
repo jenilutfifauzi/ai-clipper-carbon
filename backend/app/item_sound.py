@@ -61,12 +61,20 @@ def save_item_sound(
     segments = candidate.main_track()
     plan = candidate_plan(candidate, job.source.metadata, None, [None] * len(segments), presets, settings.camera, logos, media)
     alone, what = _alone(plan, candidate, kind, item_id, media)
+    sound_of(job, job_dir, alone, wav, settings, media)
+    return f"{_file_name(candidate.title) or f'clip-{candidate.id}'} - {_file_name(what)}.wav"
+
+
+def sound_of(job: Job, job_dir: Path, alone: RenderPlan, wav: Path, settings: Settings, media: MediaStore) -> None:
+    """Write the sound of `alone`, a plan of one item's sound (`_alone`), to `wav` with the render's
+    own sound chains (Renderer.save_sound); a reversed item read from its full-size Retimed copy,
+    made now if it isn't there."""
+    assert job.source is not None
     files = {item: media.file(item) for item in {*(event.media for event in alone.audio), *(segment.media for segment in alone.segments)} if item}
     alone, files = read_from_copies(alone, files, lambda media_id, played: (
         media.retimed(media_id) if media_id is not None else source_copies(job_dir, job.source)
     ).make(settings.ffmpeg_bin, CopySize.FULL, Retime(played.start, played.end)))
     Renderer(settings.ffmpeg_bin, settings.render).save_sound(job_dir / job.source.video, alone, wav, files)
-    return f"{_file_name(candidate.title) or f'clip-{candidate.id}'} - {_file_name(what)}.wav"
 
 
 def _alone(plan: RenderPlan, candidate: Candidate, kind: SoundOf, item_id: str, media: MediaStore) -> tuple[RenderPlan, str]:

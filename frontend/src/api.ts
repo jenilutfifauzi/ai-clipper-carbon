@@ -1278,6 +1278,13 @@ export const mainTrackOf = (candidate: Pick<Candidate, "start" | "end" | "segmen
 // The items whose sound can be saved as a WAV.
 export type SoundKind = "segment" | "music" | "overlay";
 
+// An item's Effected copy (ADR 0017): its sound before its volume, through its Audio Effects, at
+// `url`; or none (`url` null) for an item without one, and `why`.
+export interface EffectedCopy {
+  url: string | null;
+  why?: string | null;
+}
+
 // A review edit: fields left out stay as they are. The backend snaps start and end to Words.
 export interface CandidateChange {
   start?: number;
@@ -1638,6 +1645,14 @@ export const api = {
     }
     return { wav: await response.blob(), disposition: response.headers.get("Content-Disposition") };
   },
+  // The Effected copy of the Candidate's item of `kind` as an unsaved draft of its edits has it: made
+  // (or waited for while it is made) before it answers.
+  effectedCopy: (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange | null, signal?: AbortSignal) =>
+    request<EffectedCopy>(`/jobs/${jobId}/candidates/${id}/effected/${kind}/${encodeURIComponent(item)}`, {
+      method: "POST",
+      body: draft ? JSON.stringify(draft) : undefined,
+      signal,
+    }),
   prepareCandidate: (jobId: string, id: string) =>
     request<Job>(`/jobs/${jobId}/candidates/${id}/prepare`, { method: "POST" }),
   // The Candidate's captions as an SRT or VTT file, from its saved state, without a render. Rejects

@@ -22,14 +22,14 @@
 
 **Blocked by:** 01, 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A: a copy matches the item's rendered sound before volume, with the same length and a close spectrum, for a Source Segment, a media Segment, a Music Clip and an Overlay.
-- [ ] Seam A: unsaved draft edits are used.
-- [ ] Seam A: the same key returns the same file with no second ffmpeg run.
-- [ ] Seam A: unused copies are removed after a save.
-- [ ] Seam A: a Freeze frame, an image or an empty stack gets "no copy".
-- [ ] The preview plays copies in sync with the picture: playing, seeking, looping, over a Transition, and at Speeds other than 1×.
-- [ ] The preview falls back to the item's own sound until the copy is ready.
-- [ ] Volume, fade and duck changes stay instant over a copy.
-- [ ] The editor exposes which picked items are still waiting for a copy, for the Inspector's "Preparing effects…".
+- [x] Seam A: a copy matches the item's rendered sound before volume, with the same length and a close spectrum, for a Source Segment, a media Segment, a Music Clip and an Overlay.
+- [x] Seam A: unsaved draft edits are used.
+- [x] Seam A: the same key returns the same file with no second ffmpeg run.
+- [x] Seam A: unused copies are removed after a save.
+- [x] Seam A: a Freeze frame, an image or an empty stack gets "no copy".
+- [x] The preview plays copies in sync with the picture: playing, seeking, looping, over a Transition, and at Speeds other than 1×. (Checked in the app: playing, a seek, a Fade Transition and 1.5×; a Loop goes back through the same seek, not driven on its own.)
+- [x] The preview falls back to the item's own sound until the copy is ready.
+- [x] Volume, fade and duck changes stay instant over a copy.
+- [x] The editor exposes which picked items are still waiting for a copy, for the Inspector's "Preparing effects…".

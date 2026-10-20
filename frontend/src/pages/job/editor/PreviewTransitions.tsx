@@ -7,6 +7,7 @@ import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
 import { loudness, segmentSound } from "./loudness";
 import { setVolume } from "./PreviewMusic";
+import { silencedForCopy } from "./effectedCopy";
 import { MediaSegment, CopiedSourceSegment, segmentScene } from "./PreviewSegments";
 import { sceneAt } from "./ScenesTrack";
 import { TransitionFilters } from "./TransitionFilters";
@@ -113,7 +114,9 @@ function Ghost({
       ghost.setRate(playback.rate);
       const video = master.current;
       // Its sound (its Keyframes when keyed) through its fades, giving way along the Transition's sound.
-      if (video) setVolume(video, inside ? loudness(segmentSound(segment, plan.source_volume, transition), time) : 0);
+      // Unless it is heard from its Effected copy (PreviewEffected.tsx), over the overlap too.
+      const copied = silencedForCopy({ kind: "segment", id: segment.id }, playback);
+      if (video) setVolume(video, inside && !copied ? loudness(segmentSound(segment, plan.source_volume, transition), time) : 0);
       if (!inside) {
         if (ghost.playing) ghost.pause();
         // Ready on the Transition's first frame.

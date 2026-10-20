@@ -85,6 +85,7 @@ import {
   type SegmentDrag,
   type SpeedRef,
 } from "./actions";
+import { effectsPreparing, useEffectedCopies, useEffectedVersion } from "../editor/effectedCopy";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
 import { AssetPanel } from "./AssetPanel";
@@ -466,7 +467,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   // Counted up to plan again while a media Segment's Media Words are being transcribed.
   const [replan, setReplan] = useState(0);
-  const { preview, error: previewError } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), `${job.status} ${replan}`);
+  const { preview, error: previewError, planned: plannedDraft } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), `${job.status} ${replan}`);
+  // The plan's items with Audio Effects heard from their Effected copies, as they are made.
+  useEffectedCopies(job.id, candidate.id, plannedDraft, preview?.plan ?? null);
+  useEffectedVersion();
   useReplanWhilePending(preview?.words_status, setReplan);
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
@@ -1251,6 +1255,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const inspector = (
     <KeyingContext.Provider value={keying}>
       <Inspector
+        effectsPreparing={effectsPreparing}
         pick={pick}
         edits={edits}
         duration={duration}
