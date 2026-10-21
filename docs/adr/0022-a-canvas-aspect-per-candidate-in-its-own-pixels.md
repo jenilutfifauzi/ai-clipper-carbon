@@ -60,8 +60,9 @@ Each choice had genuine alternatives:
   - There is no new Layout.
 - **Captions on Auto follow the Layout's geometry:**
   - at the seam of a stacked Split
-  - under Blur's band when there is room
+  - under Blur's band when there is room: in the lower third, moved down to stay clear of a band that reaches into it
   - otherwise in the lower third, inside the Safe Area
+- **A centre off the Canvas is brought onto it,** as one off the 9:16 frame always was (0007). That covers a Transform's centre and a position Keyframe's. A Cue Edit off it is refused.
 - **One Safe Area per aspect, with no platform picker.** 9:16 keeps today's (y 232 to 1536, x up to 950). 4:5, 1:1 and 16:9 keep about 5% clear at each edge. Captions, the hook and the Watermark's places are clamped to it, and the stage shows its edges as guides.
 - **Export resolution is the Canvas's short side (revises 0021).**
   - 1080p on 16:9 is 1920×1080.
@@ -72,6 +73,8 @@ Each choice had genuine alternatives:
 - **MCP:** `edit_candidate` takes `aspect`, `dry_run`'s Preview Plan carries the Canvas's size, and the tools' documentation stops saying 1080×1920.
 
 ## Consequences
+
+- One 9:16 plan changes. On Blur, a Source whose shot reaches into the lower third has its Auto captions moved down below the band. For example, a 16:10 Source's band ends at y 1298, so its captions go from 1296 to 1330. Every 16:9 Source keeps today's captions.
 
 - Every hard-coded 1080 and 1920 goes through the Canvas, the Reference Space or the Safe Area. A forgotten one shows only on another aspect, so the planner and a real render are tested at 1:1 and 16:9 as well as 9:16.
 - Validators that capped positions at 1080 and 1920 now check the Canvas, so they need the Candidate's aspect.

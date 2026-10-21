@@ -88,7 +88,7 @@ Export resolution is the Canvas's short side, so "1080p" gives 1080Ã—1920, 1080Ã
 48. As an MCP agent, I want `dry_run` to give a Preview Plan with the Canvas's width, height and Safe Area, so that I can check a change before saving.
 49. As an MCP agent, I want `get_candidate` to show the aspect and the Canvas's size, so that I know which pixels I'm in.
 50. As an MCP agent, I want the tools' documentation to say that Candidate positions are in the Canvas's pixels and Style positions are in the Reference Space, so that I place things in the right space.
-51. As an MCP agent, I want a position outside the Canvas refused with a clear 422, so that I learn the frame's real size.
+51. As an MCP agent, I want a centre outside the Canvas brought onto its edge, as it is today on 9:16, and a Cue Edit outside it refused with a clear 422, so that I learn the frame's real size. (Revised at review, 2026-10-21: Transforms are clamped, not refused.)
 52. As an MCP agent, I want an aspect outside the four refused with a 422, so that I don't make an unsupported shape.
 53. As an MCP agent, I want `merge_candidate_items` to place new items in the Canvas's pixels, so that items I add land where I mean.
 54. As an editor, I want a new Overlay, Text Layer or Shape to start at a sensible place on the Canvas (the same fraction as on 9:16), so that adding things works on every shape.
@@ -127,7 +127,7 @@ Export resolution is the Canvas's short side, so "1080p" gives 1080Ã—1920, 1080Ã
 - **Caption and hook widths:** these come from the Canvas's Safe Area, capped at their 9:16 widths, so a 16:9 caption is not twice as long.
 - **Validators:**
   - Style validators keep their Reference Space limits.
-  - Candidate-owned positions and the Keyframe ranges are checked against the Candidate's Canvas, so validation needs the aspect.
+  - Candidate-owned positions and the Keyframe ranges are checked against the Candidate's Canvas, so validation needs the aspect. A Transform's or a position Keyframe's centre off the Canvas is brought onto it, as one off the 9:16 frame always was (ADR 0007). A Cue Edit off it is a 422.
   - An unknown aspect is a 422.
 
 **Rescale on an aspect change**
@@ -229,7 +229,7 @@ Good tests here check what comes out: plan geometry (panel boxes, crops, caption
     - Duplicate keeps it.
   - **Editing:**
     - changing `aspect` makes a new Revision and the Clip stale;
-    - a Transform outside the Canvas is a 422 (x 1500 is fine on 16:9 and refused on 9:16);
+    - a Transform's centre outside the Canvas is brought onto it (x 1500 is kept on 16:9 and saved as 1080 on 9:16), and a Cue Edit outside it is a 422;
     - `edit_candidate` with `aspect` rescales;
     - `dry_run` shows the Canvas and Safe Area.
 - **Editor (vitest; prior art: the Advanced Edit action tests and the picture helpers' tests):**
