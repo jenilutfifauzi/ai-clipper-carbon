@@ -1027,7 +1027,7 @@ def compare_frame(
     media_words: MediaWordsDep,
 ) -> Response:
     """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
-    the Preview Plan plans it), drawn by the render path as save_frame draws it, at 1080x1920 and the
+    the Preview Plan plans it), drawn by the render path as save_frame draws it, on its Canvas (1080 on its short side) at the
     frame rate its Clip renders at (its Clip's Export Preset as it is now, the default's when it has
     none or it was deleted: docs/adr/0021), as `image/png`. Never kept: drawn outside the Job, which
     doesn't change. Synchronous, outside the render queue. 422 for a draft that isn't a valid edit."""

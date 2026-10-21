@@ -821,8 +821,8 @@ export interface AdjustmentLayer {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the Reference
-  // Space's (1080x1920). Empty when missing.
+  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes in the
+  // Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
 }
 
@@ -836,7 +836,7 @@ export interface AdjustmentEvent {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the Reference Space's (1080x1920).
+  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes in the Canvas's pixels.
   video_effects?: VideoEffect[];
 }
 
@@ -995,7 +995,7 @@ export interface SegmentPlan extends Retiming {
   grade?: Grade;
   // Its sound's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];
-  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the Reference Space's (1080x1920).
+  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes in the Canvas's pixels.
   video_effects?: VideoEffect[];
 }
 
@@ -1150,7 +1150,7 @@ export interface ClipSegment extends Retiming {
   // Empty when missing.
   audio_effects?: AudioEffect[];
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
-  // the Reference Space's (1080x1920). Empty when missing.
+  // in the Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
 }
 

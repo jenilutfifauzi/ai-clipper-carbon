@@ -5,8 +5,9 @@ output's size, the target video bitrate, each encoder's codec arguments and a fi
 (docs/adr/0021-export-presets-and-a-plan-drawn-at-any-size.md).
 
 A quality tier is a target bitrate: 16, 8 or 4 Mb/s at 1080p and 30 fps (the platforms recommend 8
-there; YouTube asks for it), scaled by the output's pixels over 1080x1920's, by the frame rate over
-30, and by how much less the codec needs for the same picture. A bitrate of the settings' own
+there; YouTube asks for it), scaled by the output's pixels over 1080p's (the 9:16 Canvas's
+1080x1920, as many as 16:9's), by the frame rate over 30, and by how much less the codec needs for
+the same picture. A bitrate of the settings' own
 replaces it.
 """
 
@@ -89,7 +90,7 @@ class ExportSettings:
 TIER_CRF = {Quality.HIGH: 16, Quality.RECOMMENDED: 20, Quality.SMALLEST: 26}
 MAX_RATE_FACTOR = 1.5
 SVT_CRF_OFFSET = 8
-# Each tier's target at 1080p (1080x1920's pixels) and 30 fps, in Mb/s.
+# Each tier's target at 1080p (the 9:16 Canvas's 1080x1920 pixels) and 30 fps, in Mb/s.
 TIER_MBPS = {Quality.HIGH: 16, Quality.RECOMMENDED: 8, Quality.SMALLEST: 4}
 # The bitrate each codec needs for the picture H.264 gives at 1.
 CODEC_FACTORS = {Codec.H264: 1.0, Codec.HEVC: 0.6, Codec.AV1: 0.5}

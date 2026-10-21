@@ -622,7 +622,7 @@ class SegmentPlan:
     # its volume, Keyframes and fades.
     audio_effects: list[AudioEffect] = field(default_factory=list)
     # Its frame's enabled Video Effects (docs/adr/0014), in order, drawn after its Grade and before the
-    # joins; their sizes the 1080x1920 frame's (scale 1).
+    # joins; their sizes in the Canvas's pixels (scale 1).
     video_effects: list[VideoEffect] = field(default_factory=list)
 
     @property
@@ -708,7 +708,7 @@ class AdjustmentEvent:
     strength: float = 100.0
     fade_in: float = 0.0
     fade_out: float = 0.0
-    # Its enabled Video Effects, in order, after its Grade; their sizes the 1080x1920 frame's (scale 1).
+    # Its enabled Video Effects, in order, after its Grade; their sizes in the Canvas's pixels (scale 1).
     video_effects: list[VideoEffect] = field(default_factory=list)
 
 
