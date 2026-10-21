@@ -27,7 +27,7 @@ Today:
   - There is no audition step: Generate lands it and Picks it.
 - **Two kinds of engine**, each a list of built-in Voices.
   - **Cloud engines, configured apart from the LLM.**
-    - Gemini TTS is offered whenever `GEMINI_API_KEY` is set, whatever `LLM_PROVIDER` says.
+    - Gemini TTS is offered whenever `GEMINI_API_KEY` is set, whatever `LLM_PROVIDER` says. Its model is `TTS_GEMINI_MODEL`, by default `gemini-3.8-flash-lite-tts`, called through generateContent's REST API.
     - An OpenAI-compatible `/audio/speech` engine is offered when `TTS_BASE_URL`, `TTS_API_KEY` and `TTS_MODEL` are set.
     - Each is labelled with its service ("Gemini · cloud"), with no confirmation and no cost estimate.
   - **Kokoro on this Mac**, English Voices only, run through sherpa-onnx.
@@ -37,7 +37,7 @@ Today:
     - It can be removed from the same menu, except while a Narration is being made.
   - The default engine follows the Job's language: Indonesian gets the first configured cloud engine, English gets Kokoro. The browser then remembers the last choice.
 - **The backend splits every script into sentences**, for every engine.
-  - It splits at `.`, `!`, `?` and newlines, reads each sentence alone, and joins them with silence the length of the pause slider.
+  - It splits at `.`, `!`, `?` and `…` followed by a space or a line's end, and at newlines. It reads each sentence alone, and joins them with silence the length of the pause slider (None, Natural, Long, Longer: 0, 0.3, 0.8 and 1.5 s).
   - That gives every engine the same pause control, with progress and cancel at sentence boundaries.
   - A script is at most 5,000 characters.
 - **The joined sound is levelled to a fixed loudness before upload**, so every Voice sits alike. No Audio Effect is added.

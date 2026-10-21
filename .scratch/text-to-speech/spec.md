@@ -99,9 +99,9 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 **Engines.**
 - **The engine interface.** An engine names itself (id, label, service, cloud or local), says whether it is ready, lists its Voices, says whether it takes a Style, and reads one sentence into mono PCM at its own sample rate, given a Voice, a Speed and an optional Style. A Voice has an id, a display name, a detail line and a language tag.
 - **Gemini TTS** is offered whenever `GEMINI_API_KEY` is set, whatever `LLM_PROVIDER` says.
-  - Its model is a setting with a default (`TTS_GEMINI_MODEL`).
+  - Its model is a setting with a default (`TTS_GEMINI_MODEL`, `gemini-3.8-flash-lite-tts`: the cost-efficient TTS model, made for many short reads). It is called through generateContent's REST API with httpx, AUDIO as the response modality; the answer is raw 16-bit PCM, its rate in the MIME type (24 kHz).
   - Its prebuilt Voices are a fixed list in code. They are multilingual and read the script's language.
-  - It takes a Style, sent as the read's instruction.
+  - It takes a Style, sent as the read's instruction: "<style>: <sentence>".
   - Speed isn't native to it. Speed is applied after the read with a pitch-keeping tempo change, the same treatment Music Clip Speed uses.
 - **OpenAI-compatible speech** is offered when `TTS_BASE_URL`, `TTS_API_KEY` and `TTS_MODEL` are all set.
   - Voices are the service's standard list, overridable by `TTS_VOICES`.
@@ -118,7 +118,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 - **A small module of its own, not the Job Worker.** It runs one Narration at a time for the whole app, in a thread of its own. A second request while one runs is refused as busy (HTTP 409).
 - **Sentence splitting.**
   - The script is trimmed and refused when empty or longer than 5,000 characters (HTTP 422).
-  - It is split at `.`, `!`, `?`, `…` and newlines, keeping the mark with its sentence.
+  - It is split at `.`, `!`, `?`, `…` and newlines, keeping the mark with its sentence. A mark ends a sentence only when a space or the line's end follows it, so "3.5" and "example.com" stay whole.
   - A run of blank lines counts as one break, and a sentence with no letters or digits is dropped.
 - **Reading.**
   - Each sentence is read alone.
@@ -126,7 +126,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - Any other failure, or the retry failing, fails the Narration.
 - **Joining.**
   - Sentences are resampled to 48 kHz mono and joined with silence of the pause length.
-  - `pauses` is the silence in seconds, 0–1.5, 0.3 by default. The slider's labels are None / Natural / Long / Longer.
+  - `pauses` is the silence in seconds, 0–1.5, 0.3 by default. The slider's four stops are None / Natural / Long / Longer: 0, 0.3, 0.8 and 1.5 s.
   - No silence comes before the first sentence or after the last.
 - **Levelling.** The joined sound is levelled with ffmpeg `loudnorm` to a fixed target for speech (−16 LUFS integrated, −1.5 dBTP) before upload. No Audio Effect is added to the Music Clip.
 - **Output.** A WAV goes through the Media Library's normal add (AAC normalisation, Peaks). The runner reports the new item.

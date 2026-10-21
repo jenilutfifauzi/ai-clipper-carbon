@@ -11,16 +11,16 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A (`FakeVoiceEngine`, one second of tone per sentence): a three-sentence script becomes one audio item named "Narration …" with Peaks, three seconds plus two pauses long.
-- [ ] Seam A: the pause setting changes the silence between tones, with none before the first or after the last.
-- [ ] Seam A: splitting at `.` `!` `?` `…` and newlines, blank lines collapsed, a sentence with no letters or digits dropped; the engine is called once per sentence, mark kept.
-- [ ] Seam A: two engines with tones at different levels come out at the same integrated loudness within 1 LU.
-- [ ] Seam A: empty, 5,001 characters, unknown Voice and not-ready engine are 422; a second request while one runs is 409.
-- [ ] Seam A: the events stream ends in `done` with the item; a Music Clip laid from it with `speech: true` makes a ducked song's `dry_run` list speech spans from it.
-- [ ] Settings: Gemini TTS is offered with `GEMINI_API_KEY` set and `LLM_PROVIDER=openai`, and not without the key.
-- [ ] Gemini adapter through `httpx.MockTransport`: the request carries the Voice and text; the returned audio decodes to PCM at the stated rate; 401/403 give a message naming the key.
-- [ ] Vitest: Generate lands a Speech Music Clip at the playhead on a free lane, Picked, one undo step; Undo keeps the Media item.
-- [ ] Vitest: the tab shows in the phone bottom sheet.
-- [ ] GLOSSARY Narration/Voice and ADR 0019 match what was built.
+- [x] Seam A (`FakeVoiceEngine`, one second of tone per sentence): a three-sentence script becomes one audio item named "Narration …" with Peaks, three seconds plus two pauses long.
+- [x] Seam A: the pause setting changes the silence between tones, with none before the first or after the last.
+- [x] Seam A: splitting at `.` `!` `?` `…` and newlines, blank lines collapsed, a sentence with no letters or digits dropped; the engine is called once per sentence, mark kept.
+- [x] Seam A: two engines with tones at different levels come out at the same integrated loudness within 1 LU.
+- [x] Seam A: empty, 5,001 characters, unknown Voice and not-ready engine are 422; a second request while one runs is 409.
+- [x] Seam A: the events stream ends in `done` with the item; a Music Clip laid from it with `speech: true` makes a ducked song's `dry_run` list speech spans from it.
+- [x] Settings: Gemini TTS is offered with `GEMINI_API_KEY` set and `LLM_PROVIDER=openai`, and not without the key.
+- [x] Gemini adapter through `httpx.MockTransport`: the request carries the Voice and text; the returned audio decodes to PCM at the stated rate; 401/403 give a message naming the key.
+- [x] Vitest: Generate lands a Speech Music Clip at the playhead on a free lane, Picked, one undo step; Undo keeps the Media item.
+- [x] Vitest: the tab shows in the phone bottom sheet.
+- [x] GLOSSARY Narration/Voice and ADR 0019 match what was built.

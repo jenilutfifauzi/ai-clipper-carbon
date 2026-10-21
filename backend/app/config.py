@@ -32,6 +32,9 @@ REFERENCE_SET = REPO_ROOT / "eval" / "references.yaml"
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+# Gemini's speech model for Narrations (app/voices.py): the cost-efficient TTS model, made for dubbing
+# and many short reads, which is what a script read sentence by sentence is.
+DEFAULT_TTS_GEMINI_MODEL = "gemini-3.8-flash-lite-tts"
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 DEFAULT_LLM_MODEL = "deepseek-flash"
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
@@ -303,6 +306,9 @@ class Settings:
     data_dir: Path
     ytdlp_cookies_from_browser: str | None
     selection_audio_signal: bool
+    # Gemini TTS's model, offered for Narrations whenever gemini_api_key is set, whatever llm_provider
+    # says (docs/adr/0019).
+    tts_gemini_model: str = DEFAULT_TTS_GEMINI_MODEL
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -369,6 +375,7 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         data_dir=data_dir,
         ytdlp_cookies_from_browser=get("YTDLP_COOKIES_FROM_BROWSER") or None,
         selection_audio_signal=_parse_bool("SELECTION_AUDIO_SIGNAL", get("SELECTION_AUDIO_SIGNAL", "false")),
+        tts_gemini_model=get("TTS_GEMINI_MODEL", DEFAULT_TTS_GEMINI_MODEL),
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

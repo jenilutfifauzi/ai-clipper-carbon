@@ -19,6 +19,7 @@ KEYS = (
     "DATA_DIR",
     "YTDLP_COOKIES_FROM_BROWSER",
     "SELECTION_AUDIO_SIGNAL",
+    "TTS_GEMINI_MODEL",
 )
 
 
@@ -46,6 +47,7 @@ def test_defaults_without_env_file(tmp_path):
     assert settings.data_dir == REPO_ROOT / "data"
     assert settings.ytdlp_cookies_from_browser is None
     assert settings.selection_audio_signal is False
+    assert settings.tts_gemini_model == "gemini-3.8-flash-lite-tts"
 
 
 def test_env_file_is_read_and_environment_wins(tmp_path, monkeypatch):

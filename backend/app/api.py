@@ -72,6 +72,15 @@ from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
 from app.migration import OLD_TEXT_LAYER
+from app.narration import (
+    DEFAULT_PAUSE_SECS,
+    MAX_PAUSE_SECS,
+    NarrationBusy,
+    NarrationNotFound,
+    NarrationRefused,
+    NarrationRequest,
+    NarrationRunner,
+)
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
@@ -99,6 +108,7 @@ from app.styles import (
 )
 from app.transcript import Language, Transcript, Word
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
+from app.voices import default_engine
 from app.worker import Worker
 
 router = APIRouter(prefix="/api")
@@ -174,6 +184,10 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _narrations(request: Request) -> NarrationRunner:
+    return request.app.state.narrations
+
+
 def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
@@ -221,6 +235,7 @@ ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
+Narrations = Annotated[NarrationRunner, Depends(_narrations)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
@@ -1859,6 +1874,104 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
     if uses := media_uses(store, media_id):
         raise HTTPException(409, {"message": "Used by clips: remove it from them first", "uses": [use.model_dump() for use in uses]})
     library.delete(media_id)
+
+
+class VoiceInfo(BaseModel):
+    id: str
+    name: str
+    # Such as "Firm · female".
+    detail: str
+    # The language it speaks; null for one that reads any.
+    language: str | None
+
+
+class EngineInfo(BaseModel):
+    """A speech engine as the Narrate tab lists it (app/voices.py)."""
+
+    id: str
+    label: str
+    # The service the words go to; null for one on this Mac.
+    service: str | None
+    local: bool
+    ready: bool
+    takes_style: bool
+    voices: list[VoiceInfo]
+
+
+class VoicesList(BaseModel):
+    engines: list[EngineInfo]
+    # The engine a Job in the language asked for starts with; null when none is ready.
+    default: str | None
+
+
+class NarrationBody(BaseModel):
+    """A script to read aloud (GLOSSARY.md, Narration)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    engine: str
+    voice: str
+    # The silence between two sentences, in seconds.
+    pauses: Annotated[float, Field(ge=0, le=MAX_PAUSE_SECS)] = DEFAULT_PAUSE_SECS
+    style: Annotated[str, StringConstraints(max_length=200)] | None = None
+
+
+class NarrationStarted(BaseModel):
+    id: str
+
+
+@router.get("/voices")
+def list_voices(narrations: Narrations, language: Language | None = None) -> VoicesList:
+    """The speech engines set up, each with its Voices, and the one a Job in `language` starts with:
+    Indonesian the first ready cloud engine, English a ready one on this Mac first."""
+    engines = [
+        EngineInfo(
+            id=engine.id,
+            label=engine.label,
+            service=engine.service,
+            local=engine.local,
+            ready=engine.ready(),
+            takes_style=engine.takes_style,
+            voices=[VoiceInfo(id=v.id, name=v.name, detail=v.detail, language=v.language) for v in engine.voices()],
+        )
+        for engine in narrations.engines
+    ]
+    return VoicesList(engines=engines, default=default_engine(narrations.engines, language))
+
+
+@router.post("/narrations", status_code=202)
+def start_narration(body: NarrationBody, narrations: Narrations) -> NarrationStarted:
+    """Start reading `text` (at most 5,000 characters) aloud by `voice` of `engine`, into a Media
+    Library item; follow it at /api/narrations/{id}/events. 422 for an empty or too long script,
+    an unknown engine or Voice, or an engine that isn't ready; 409 while another Narration is being made,
+    anywhere in the app."""
+    try:
+        return NarrationStarted(id=narrations.start(NarrationRequest(body.text, body.engine, body.voice, body.pauses, body.style)))
+    except NarrationRefused as exc:
+        raise HTTPException(422, str(exc)) from None
+    except NarrationBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+def _narration(narration_id: str, narrations: Narrations) -> str:
+    """The Narration's id, or a 404 (before its stream starts)."""
+    if not narrations.exists(narration_id):
+        raise HTTPException(404, f"No Narration {narration_id}")
+    return narration_id
+
+
+@router.get("/narrations/{narration_id}/events", response_class=EventSourceResponse)
+async def stream_narration_events(
+    narration_id: Annotated[str, Depends(_narration)], narrations: Narrations
+) -> AsyncIterator[ServerSentEvent]:
+    """The Narration's outcome: `done` with its Media Library item, or `failed` with the message; then
+    the stream ends. Opened late, it still tells it."""
+    try:
+        async for event in narrations.events(narration_id):
+            yield event
+    except NarrationNotFound:
+        return
 
 
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:

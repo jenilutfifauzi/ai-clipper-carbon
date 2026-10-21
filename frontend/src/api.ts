@@ -298,6 +298,43 @@ export interface MediaItem {
   language?: string | null;
 }
 
+// A built-in speaker of a speech engine (GLOSSARY.md, Voice; backend/app/voices.py).
+export interface Voice {
+  id: string;
+  name: string;
+  // Such as "Firm · female".
+  detail: string;
+  // The language it speaks; null for one that reads any.
+  language: string | null;
+}
+
+// A speech engine set up on this Mac (backend/app/api.py's EngineInfo).
+export interface VoiceEngine {
+  id: string;
+  label: string;
+  // The service the words are sent to; null for one on this Mac.
+  service: string | null;
+  local: boolean;
+  ready: boolean;
+  takes_style: boolean;
+  voices: Voice[];
+}
+
+export interface VoicesList {
+  engines: VoiceEngine[];
+  // The engine a Job in the language asked for starts with; null when none is ready.
+  default: string | null;
+}
+
+// A script to read aloud (GLOSSARY.md, Narration): `pauses` seconds between its sentences.
+export interface NarrationRequest {
+  text: string;
+  engine: string;
+  voice: string;
+  pauses: number;
+  style?: string | null;
+}
+
 // A video's Media Words for a Job (backend/app/api.py's MediaWordsView): in its language (its own,
 // else the Job's), their status, the error of a failure, and the Words when ready. (Their status is
 // the item's, not a Segment's WordsStatus: a Segment of the video is "media" while they are "ready".)
@@ -1784,6 +1821,12 @@ export const api = {
     request<RetimedCopy>(`/jobs/${encodeURIComponent(jobId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),
   // Rejects with an ApiError of 409 whose detail lists the clips using it.
   deleteMedia: (id: string) => request<void>(`/media/${id}`, { method: "DELETE" }),
+  // The speech engines and their Voices, and the default engine for a Job in `language`.
+  listVoices: (language?: string) => request<VoicesList>(`/voices${language ? `?language=${encodeURIComponent(language)}` : ""}`),
+  // A Narration started: its id, whose events tell its outcome (narrationEventsUrl). Rejects with a 409
+  // while another is being made, a 422 for a script, engine or Voice that can't be narrated.
+  startNarration: (body: NarrationRequest) =>
+    request<{ id: string }>("/narrations", { method: "POST", body: JSON.stringify(body) }).then((answer) => answer.id),
 };
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
@@ -1863,6 +1906,8 @@ export function uploadJob(
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;
 export const candidateEventsUrl = (id: string) => `/api/jobs/${id}/candidates/events`;
+// A Narration's outcome: `done` with its Media Library item, or `failed` with `{message}`.
+export const narrationEventsUrl = (id: string) => `/api/narrations/${encodeURIComponent(id)}/events`;
 
 /**
  * Upload a video, song or image to the Media Library, with its upload progress (XHR, as uploadJob).
