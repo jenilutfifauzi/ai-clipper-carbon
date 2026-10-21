@@ -5,7 +5,8 @@ import pytest
 
 from app.candidates import Keyframe, KeyProperty, Layout, Overlay, Transform
 from app.canvas import CANVASES, PORTRAIT, REFERENCE, Aspect, Box, canvas_for
-from app.planner import Face, FrameFaces, MediaInfo, picture_at, plan_render
+from app.planner import Face, FrameFaces, MediaInfo, SceneLayout, picture_at, plan_render
+from app.transcript import Word
 from app.video_source import SourceMetadata
 
 
@@ -116,3 +117,113 @@ def test_a_keyed_centre_is_held_on_the_frame_it_is_drawn_on():
     assert picture_at(event.picture, 1.5, (plan.width, plan.height)).centre[0] == 1800
     # On 9:16 the same Keyframe is held at the frame's right edge.
     assert picture_at(event.picture, 1.5).centre[0] == 1080
+
+
+# Split, portrait Sources and captions on Auto on each Canvas (canvas-aspect/06): two speakers who
+# hold still, the right one detected first, their faces' centres at x 700 and 1220, y 600.
+PAIR = [FrameFaces(round(k * 0.12, 3), [Face(1070, 450, 300, 300, 0.95), Face(550, 450, 300, 300, 0.9)]) for k in range(40)]
+WORDS = [Word("halo", 0.2, 0.6), Word("semua", 0.6, 1.0)]
+
+
+@pytest.mark.parametrize(
+    ("aspect", "panels", "crop"),
+    [
+        (Aspect.PORTRAIT, (Box(0, 0, 1080, 960), Box(0, 960, 1080, 960)), (960, 854)),
+        (Aspect.FEED, (Box(0, 0, 1080, 675), Box(0, 675, 1080, 675)), (960, 600)),
+        (Aspect.SQUARE, (Box(0, 0, 540, 1080), Box(540, 0, 540, 1080)), (540, 1080)),
+        (Aspect.LANDSCAPE, (Box(0, 0, 960, 1080), Box(960, 0, 960, 1080)), (960, 1080)),
+    ],
+)
+def test_split_stacks_on_9_16_and_4_5_and_sets_its_panels_side_by_side_on_1_1_and_16_9(aspect, panels, crop):
+    plan = plan_render(100, 105, WIDE, faces=PAIR, layout=Layout.SPLIT, canvas=canvas_for(aspect))
+    [scene] = plan.scenes
+    first, second = scene.panels
+    assert (first.area, second.area) == panels
+    # Each crop has its panel's shape.
+    assert (first.crop_width, first.crop_height) == (second.crop_width, second.crop_height) == crop
+    # The left face is in the top or the left panel.
+    assert first.path[0].x + crop[0] / 2 == pytest.approx(700, abs=2)
+    assert second.path[0].x + crop[0] / 2 == pytest.approx(1220, abs=2)
+
+
+def test_the_face_rises_above_the_middle_only_of_a_stacked_panel():
+    # A 4:3 Source leaves Split's crops room to move up and down on 16:9 as well as on 4:5.
+    four_three = SourceMetadata(duration=3600, fps=25, width=1440, height=1080, codec="h264")
+    pair = [FrameFaces(round(k * 0.12, 3), [Face(210, 450, 300, 300, 0.95), Face(930, 450, 300, 300, 0.9)]) for k in range(40)]
+    stacked = plan_render(100, 105, four_three, faces=pair, layout=Layout.SPLIT, canvas=canvas_for(Aspect.FEED)).scenes[0].panels[0]
+    beside = plan_render(100, 105, four_three, faces=pair, layout=Layout.SPLIT, canvas=canvas_for(Aspect.LANDSCAPE)).scenes[0].panels[0]
+    # Stacked, the face's centre is at 40% of the crop; side by side, in its middle.
+    assert stacked.path[0].y + 0.4 * stacked.crop_height == pytest.approx(600, abs=2)
+    assert beside.path[0].y + 0.5 * beside.crop_height == pytest.approx(600, abs=2)
+
+
+@pytest.mark.parametrize("aspect", [Aspect.PORTRAIT, Aspect.LANDSCAPE])
+def test_split_with_fewer_than_two_faces_shows_the_sources_halves_in_the_same_panels(aspect):
+    canvas = canvas_for(aspect)
+    [scene] = plan_render(100, 105, WIDE, faces=GLIDE, layout=Layout.SPLIT, canvas=canvas).scenes
+    first, second = scene.panels
+    assert (first.area, second.area) == canvas.split_panels
+    assert first.path[0].x + first.crop_width / 2 == 480 and second.path[0].x + second.crop_width / 2 == 1440
+
+
+TALL = SourceMetadata(duration=3600, fps=25, width=1080, height=1920, codec="h264")
+
+
+@pytest.mark.parametrize("aspect", [Aspect.FEED, Aspect.SQUARE, Aspect.LANDSCAPE])
+def test_a_portrait_source_on_a_wider_canvas_is_shown_over_its_blur(aspect):
+    canvas = canvas_for(aspect)
+    [scene] = plan_render(100, 105, TALL, canvas=canvas).scenes
+    assert scene.layout is SceneLayout.BLUR
+    background, shot = scene.panels
+    # The blur fills the Canvas with a crop of its shape; the Source is whole, as tall as the Canvas.
+    assert background.blur and background.area == Box(0, 0, *canvas.size)
+    assert background.crop_width / background.crop_height == pytest.approx(canvas.width / canvas.height, abs=0.01)
+    assert (shot.crop_width, shot.crop_height, shot.area.height) == (1080, 1920, canvas.height)
+    assert shot.area.x + shot.area.width / 2 == canvas.width / 2
+
+
+def test_a_portrait_source_is_still_passed_through_on_9_16_and_on_a_canvas_its_own_shape():
+    [scene] = plan_render(100, 105, TALL).scenes
+    assert scene.layout is SceneLayout.PASSTHROUGH and scene.panels[0].area == Box(0, 0, 1080, 1920)
+    feed = SourceMetadata(duration=3600, fps=25, width=1080, height=1350, codec="h264")
+    assert plan_render(100, 105, feed, canvas=canvas_for(Aspect.FEED)).scenes[0].layout is SceneLayout.PASSTHROUGH
+
+
+@pytest.mark.parametrize("aspect", [Aspect.PORTRAIT, Aspect.FEED])
+def test_captions_on_auto_sit_on_the_seam_of_a_stacked_split(aspect):
+    canvas = canvas_for(aspect)
+    plan = plan_render(100, 105, WIDE, faces=PAIR, layout=Layout.SPLIT, words=WORDS, canvas=canvas)
+    [cue] = plan.captions
+    assert cue.area == canvas.seam_captions and cue.area.y + cue.area.height / 2 == canvas.height / 2
+
+
+@pytest.mark.parametrize("aspect", [Aspect.SQUARE, Aspect.LANDSCAPE])
+def test_captions_on_auto_sit_in_the_lower_third_of_a_side_by_side_split(aspect):
+    canvas = canvas_for(aspect)
+    [cue] = plan_render(100, 105, WIDE, faces=PAIR, layout=Layout.SPLIT, words=WORDS, canvas=canvas).captions
+    assert cue.area == canvas.lower_captions
+
+
+def test_captions_on_auto_sit_under_blurs_band_where_there_is_room_and_in_the_lower_third_where_not():
+    feed = plan_render(100, 105, WIDE, layout=Layout.BLUR, words=WORDS, canvas=canvas_for(Aspect.FEED))
+    band = feed.scenes[0].panels[-1].area
+    [cue] = feed.captions
+    assert cue.area.y >= band.y + band.height
+    # On 9:16 that is today's lower third, under the band.
+    [cue] = plan_render(100, 105, WIDE, layout=Layout.BLUR, words=WORDS).captions
+    assert cue.area == PORTRAIT.lower_captions == Box(130, 1296, 820, 200)
+    # On 1:1 the band leaves too little room below it in the Safe Area.
+    square = canvas_for(Aspect.SQUARE)
+    [cue] = plan_render(100, 105, WIDE, layout=Layout.BLUR, words=WORDS, canvas=square).captions
+    assert cue.area == square.lower_captions
+
+
+@pytest.mark.parametrize("aspect", list(Aspect))
+@pytest.mark.parametrize("layout", [Layout.TRACK, Layout.SPLIT, Layout.BLUR])
+@pytest.mark.parametrize("source", [WIDE, TALL])
+def test_captions_on_auto_stay_inside_the_safe_area(aspect, layout, source):
+    canvas = canvas_for(aspect)
+    safe = canvas.safe_area
+    [cue] = plan_render(100, 105, source, faces=PAIR, layout=layout, words=WORDS, canvas=canvas).captions
+    assert safe.y <= cue.area.y and cue.area.y + cue.area.height <= safe.y + safe.height
+    assert safe.x <= cue.area.x and cue.area.x + cue.area.width <= safe.x + safe.width

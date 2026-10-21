@@ -44,6 +44,9 @@ SAFE_MARGIN = 0.05
 CAPTION_HEIGHT = 200
 LOWER_CAPTIONS_ABOVE = 240
 TOP_CAPTIONS_BELOW = 198
+# Under Blur's band, a caption area starts at least this far below it: on 9:16 with a 16:9 Source,
+# the band ends at 1264 and the lower third's starts at 1296.
+CAPTIONS_BELOW_BAND = 32
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,23 @@ class Canvas:
     @property
     def centre(self) -> tuple[int, int]:
         return self.width // 2, self.height // 2
+
+    @property
+    def stacked(self) -> bool:
+        """Whether Split's two panels are stacked (on a Canvas taller than it is wide), or else side
+        by side."""
+        return self.height > self.width
+
+    @property
+    def split_panels(self) -> tuple[Box, Box]:
+        """Split's two panels, the left face's first: stacked, each of the full width and half the
+        height (1080×960 on 9:16, 1080×675 on 4:5), or side by side, each of half the width and the
+        full height (540×1080 on 1:1, 960×1080 on 16:9)."""
+        if self.stacked:
+            half = self.height // 2
+            return Box(0, 0, self.width, half), Box(0, half, self.width, half)
+        half = self.width // 2
+        return Box(0, 0, half, self.height), Box(half, 0, half, self.height)
 
     @property
     def split_height(self) -> int:
@@ -87,6 +107,16 @@ class Canvas:
         the bottom of the Safe Area."""
         bottom = self.safe_area.y + self.safe_area.height
         return Box(self.caption_x, bottom - LOWER_CAPTIONS_ABOVE, self.caption_width, CAPTION_HEIGHT)
+
+    def captions_below(self, band: Box) -> Box | None:
+        """Under Blur's `band` (the Source fitted over its blur): in the lower third, or lower to keep
+        CAPTIONS_BELOW_BAND under the band where it reaches into it, when the room between the band and
+        the Safe Area's bottom fits a caption area; None when it doesn't."""
+        lower = self.lower_captions
+        y = max(band.y + band.height + CAPTIONS_BELOW_BAND, lower.y)
+        if y + CAPTION_HEIGHT > self.safe_area.y + self.safe_area.height:
+            return None
+        return Box(lower.x, y, lower.width, CAPTION_HEIGHT)
 
     @property
     def top_captions(self) -> Box:

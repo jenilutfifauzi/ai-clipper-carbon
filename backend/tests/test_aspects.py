@@ -3,15 +3,22 @@ fakes at the ports: chosen with the Job, saved with each Revision, checked again
 its Canvas's shape by the real ffmpeg."""
 
 import json
+from pathlib import Path
 
+import numpy as np
 import pytest
 
+from app.candidates import Layout
+from app.canvas import Aspect, canvas_for
 from app.jobs import CANDIDATES_FILE
+from app.planner import plan_render
+from app.video_source import SourceMetadata
 from test_jobs_api import create_job
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, make, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from conftest import wait_for
 from test_render import add, probe, render, render_video, rendered  # noqa: F401 (fixtures)
 from test_review import candidate_url, candidates, patch
+from test_render_sizes import BLUE, RED, frame, rendered_at
 from test_selection import analyzed, clip
 
 
@@ -238,3 +245,33 @@ async def test_an_agents_change_of_aspect_alone_rescales_and_its_dry_run_shows_i
     changed = await call(mcp, "edit_candidate", **ids, changes={"aspect": "16:9"})
     transform = changed["overlays"][0]["transform"]
     assert (changed["aspect"], transform["x"], transform["y"], transform["scale"]) == ("16:9", 960, 540, 0.28125)
+
+
+# Split's panels in a real render (canvas-aspect/06)
+
+
+@pytest.fixture(scope="session")
+def two_colours(tmp_path_factory) -> Path:
+    """2 s of a 640x360 picture, its left half red and its right half blue, with a tone."""
+    path = tmp_path_factory.mktemp("two-colours") / "two.mp4"
+    make(
+        path, "-f", "lavfi", "-i", "color=c=0xff0000:size=320x360:rate=25:duration=2",
+        "-f", "lavfi", "-i", "color=c=0x0000ff:size=320x360:rate=25:duration=2",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=2",
+        "-filter_complex", "[0:v][1:v]hstack[v]", "-map", "[v]", "-map", "2:a",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+    )
+    return path
+
+
+def test_a_wide_split_renders_its_two_panels_side_by_side(settings, tmp_path, two_colours):
+    source = SourceMetadata(duration=2, fps=25, width=640, height=360, codec="h264")
+    # Without faces, Split shows the Source's left half in its first panel and its right half in the other.
+    plan = plan_render(0, 1.5, source, layout=Layout.SPLIT, canvas=canvas_for(Aspect.LANDSCAPE))
+    video = rendered_at(settings, tmp_path, two_colours, plan, 720)
+    picture = frame(settings, video, 0.5)
+    assert picture.shape[:2] == (720, 1280)
+    # The left panel red, the right one blue, each over the full height: side by side, not stacked.
+    for rows in (slice(20, 120), slice(600, 700)):
+        assert (np.abs(picture[rows, 40:600] - RED).max(axis=2) < 60).all()
+        assert (np.abs(picture[rows, 680:1240] - BLUE).max(axis=2) < 60).all()
