@@ -334,6 +334,16 @@ Edits:
   output pixels, or null for none; merge_candidate_items changes only the fields given. Its `grade`
   is a Segment's (above), on its picture alone: after it is scaled, before its corners, border,
   shadow and opacity, so those keep their colours. The dry run lists it likewise.
+- An Overlay's `video_effects` is its picture's ordered stack of Video Effects, each
+  {{id, params, enabled}}: id from list_assets kind "video_effects" (with each setting's range and
+  default; "gaussian-blur", radius 1..50 px, for now), params a setting's key to its value (one left
+  out takes its default), enabled false to keep it in the stack undrawn. They run in turn after its
+  Grade and before its corners, border, rotation, shadow and opacity. A size (a setting in px) is
+  output pixels at the picture's fitted size (scale 1): the render multiplies it by the larger of
+  scale x stretch_x and scale x stretch_y, so a bigger picture gets a bigger blur. An effect appears
+  once in a stack; an unknown id or setting, a value out of range or a second entry of an id is
+  refused. merge_candidate_items replaces an Overlay's stack as a whole. The dry run lists each
+  Overlay's enabled ones, their sizes as drawn (scaled).
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
@@ -894,12 +904,13 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return {"deleted": preset_id}
 
     @tool(read_only=True)
-    async def list_assets(kind: Literal["fonts", "logos", "media", "looks", "audio_effects"] | None = None) -> dict:
+    async def list_assets(kind: Literal["fonts", "logos", "media", "looks", "audio_effects", "video_effects"] | None = None) -> dict:
         """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, the
         Media Library (songs, videos and images for Music Clips, Overlays and Segments), the Looks
         a grade's `look` names (id, name, category, Adjust values; has_table for an Imported Look's
-        .cube) and the Audio Effects a sound's `audio_effects` name (id, name, group, settings with
-        their ranges and defaults): all, or one `kind`."""
+        .cube), the Audio Effects a sound's `audio_effects` name (id, name, group, settings with
+        their ranges and defaults) and the Video Effects a picture's `video_effects` name (id, name,
+        category, settings likewise): all, or one `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
             listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
@@ -911,6 +922,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
             listed["looks"] = [_look(look) for look in await api("GET", "/looks")]
         if kind in (None, "audio_effects"):
             listed["audio_effects"] = await api("GET", "/audio-effects")
+        if kind in (None, "video_effects"):
+            listed["video_effects"] = await api("GET", "/video-effects")
         return listed
 
     @tool()
@@ -1157,7 +1170,8 @@ def _plan_view(
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
     (`copied`), its fades, its Audio Effects (`_effects_view`), its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
-    video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade, each Adjustment
+    video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade and Video
+    Effects (`_effects_view`), each Adjustment
     Layer's span, strength, fades and Grade, what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
@@ -1213,7 +1227,7 @@ def _plan_view(
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
-                **_compact({"grade": _grade_view(event["grade"])}),
+                **_compact({"grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", []))}),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
                 **_animation_view(event),
@@ -1257,8 +1271,8 @@ def _plan_view(
 
 
 def _effects_view(stack: list[dict]) -> list[dict] | None:
-    """An item's planned Audio Effects as an agent reads them, in order, each its id and settings (the
-    plan's are the enabled ones); None for none."""
+    """An item's planned Audio or Video Effects as an agent reads them, in order, each its id and
+    settings (the plan's are the enabled ones, a Video Effect's sizes as drawn); None for none."""
     return [{"id": applied["id"], "params": applied["params"]} for applied in stack] or None
 
 

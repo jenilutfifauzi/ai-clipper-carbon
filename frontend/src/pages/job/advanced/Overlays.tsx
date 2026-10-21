@@ -104,6 +104,7 @@ export function OverlayFields({
   onDelete,
   onCropMode,
   color,
+  pictureEffects,
   effects,
 }: {
   overlay: Overlay;
@@ -123,6 +124,8 @@ export function OverlayFields({
   onCropMode?: () => void;
   // Its Color section (ColorFields: its Grade's dials).
   color?: ReactNode;
+  // Its picture's Video Effects section (VideoEffectsFields), after its Color section.
+  pictureEffects?: ReactNode;
   // A video's Audio Effects section (AudioEffectsFields), after its sound; none for an image or a video without sound.
   effects?: ReactNode;
 }) {
@@ -159,6 +162,7 @@ export function OverlayFields({
       <OverlayTransform overlay={overlay} item={item} playback={playback} onChange={onChange} onCropMode={onCropMode} />
       <DecorationFields overlay={overlay} onChange={onChange} />
       {color}
+      {pictureEffects}
       <MotionFields item={overlay} kind="overlay" onChange={onChange} />
       {video && (
         <Group title="Sound">

@@ -145,6 +145,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
+from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
@@ -736,7 +737,8 @@ class OverlayEvent:
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
     the Clip, coming on and going off by its Overlay's animations, its picture graded by `grade`
-    (docs/adr/0013; as given, folded by the renderer and the preview). `id` is the Overlay's."""
+    (docs/adr/0013; as given, folded by the renderer and the preview), then drawn through its
+    `video_effects` (docs/adr/0014). `id` is the Overlay's."""
 
     media: str
     picture: Picture
@@ -752,6 +754,9 @@ class OverlayEvent:
     animation_out: Animation = Animation.NONE
     animation_ms: int = 300
     grade: Grade = Grade()
+    # Its enabled Video Effects, in order, after its Grade; their sizes already times its scale
+    # (`overlay_scale`), as drawn.
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -1753,7 +1758,14 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
         overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
+        scaled_effects(enabled_video_effects(overlay.video_effects), overlay_scale(overlay.transform)),
     )
+
+
+def overlay_scale(transform: Transform) -> float:
+    """How many times its fitted size an Overlay is drawn, for its Video Effects' sizes (docs/adr/0014):
+    the larger of its scale times its stretch on each axis."""
+    return transform.scale * max(transform.stretch_x, transform.stretch_y)
 
 
 def with_motion(

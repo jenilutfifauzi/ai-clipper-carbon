@@ -18,7 +18,8 @@ voice and Normalize loudness. Normalize isn't a fixed fragment: the renderer mea
 sound up to it and gives it the gain that takes it to its target (MEASURED_GAIN,
 Renderer._levelled), before its chain is built; built unmeasured, it raises Unmeasured.
 
-Video effects (#12) will join the same registry under another kind.
+Video effects join the same registry under the video kind (app/video_effects.py, docs/adr/0014),
+sharing its Setting.
 """
 
 import math

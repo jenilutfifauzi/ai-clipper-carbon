@@ -11,6 +11,7 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect, checked_effects
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
+from app.video_effects import VIDEO_EFFECTS_MAX, VideoEffect, checked_video_effects
 # Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
 from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
 from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, Height, HookShape, Padding, StyleOverrides, Tracking, Width
@@ -707,10 +708,14 @@ class Overlay:
     # A video's sound's Audio Effects (docs/adr/0017), as a Music Clip's; an image has none (refused
     # with the Media Library at hand, app/api.py). Empty in one saved before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+    # Its picture's Video Effects (docs/adr/0014), in order: after its Grade, before its corners,
+    # border, rotation, shadow and opacity; sizes at its fitted size. Empty in one saved before them.
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Overlay {self.id}"))
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Overlay {self.id}"))
 
 
 @dataclass(frozen=True)

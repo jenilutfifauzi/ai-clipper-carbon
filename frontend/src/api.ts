@@ -793,6 +793,9 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   grade?: Grade;
   // A video's sound's Audio Effects (ADR 0017), as a Music Clip's; an image has none. Empty when missing.
   audio_effects?: AudioEffect[];
+  // Its picture's Video Effects (ADR 0014), in order, after its Grade and before its corners, border,
+  // rotation, shadow and opacity; sizes at its fitted size. Empty when missing.
+  video_effects?: VideoEffect[];
 }
 
 // A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; ADR 0013): its Grade laid over the Main
@@ -867,6 +870,8 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   image: boolean;
   // Its Overlay's Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
   grade?: Grade;
+  // Its Overlay's enabled Video Effects (ADR 0014), in order, their sizes times its scale (as drawn).
+  video_effects?: VideoEffect[];
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
@@ -1151,6 +1156,28 @@ export interface AudioEffectKind {
   id: string;
   name: string;
   group: "Clean" | "Voice" | "Tone" | "Space";
+  order: number;
+  description: string;
+  settings: AudioEffectSetting[];
+}
+
+// A Video Effect applied to a picture (GLOSSARY: Video Effect; ADR 0014): a catalogue effect's `id`,
+// its settings by key (the server fills in each one left out with its default), and whether it is
+// drawn; off, it stays in the stack. An id is at most once in a stack.
+export interface VideoEffect {
+  id: string;
+  params: Record<string, number>;
+  enabled: boolean;
+}
+
+// An entry of the Video Effects catalogue (backend/app/video_effects.py, the effects registry's video
+// kind), on its category's shelf at `order`. A setting in "px" is output pixels at the picture's
+// fitted size, times its scale when drawn.
+export interface VideoEffectKind {
+  id: string;
+  kind: "video";
+  name: string;
+  category: "Blur" | "Distort" | "Light" | "Stylize" | "Cutout";
   order: number;
   description: string;
   settings: AudioEffectSetting[];
@@ -1673,6 +1700,7 @@ export const api = {
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
+  listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),
   // Every Look, by its order.
   listLooks: () => request<Look[]>("/looks"),
   // A .cube file (a 3D table, 2 to 65 a side) as a new Imported Look; rejects naming its bad line.

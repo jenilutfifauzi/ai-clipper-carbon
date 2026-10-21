@@ -39,14 +39,33 @@ The registry starts with Gaussian blur alone (radius 1–50 px, default 10). The
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Overlays accept `video_effects`. Stored Candidates plan and render exactly as before (the existing command fixture is unchanged).
-- [ ] The registry lists Gaussian blur under the video kind. It validates, fills defaults and refuses duplicates, and a disabled entry adds nothing.
-- [ ] Seam B: the stack reaches the Overlay's plan with only its enabled entries, and the radius is scaled by the Overlay's scale.
-- [ ] Seam A: a blurred Overlay lowers edge contrast in the rendered frame, and a scaled-up Overlay is blurred proportionally more.
-- [ ] Refusals cover an unknown id, an unknown key, an out-of-range value and a duplicate, through the API and through MCP.
-- [ ] `list_assets(kind="video_effects")`, the `dry_run` stacks and the instructions text are in place.
-- [ ] The preview shows the blur on the Overlay and follows the slider live.
-- [ ] Vitest: add (skipping duplicates), move, toggle, remove, remove all and set by index, on a Pick of one and of several Overlays.
-- [ ] Gaussian blur's chain runs at its default, minimum and maximum over a 1 s 1080×1920 clip and keeps its size and length.
+- [x] Overlays accept `video_effects`. Stored Candidates plan and render exactly as before (the existing command fixture is unchanged).
+- [x] The registry lists Gaussian blur under the video kind. It validates, fills defaults and refuses duplicates, and a disabled entry adds nothing.
+- [x] Seam B: the stack reaches the Overlay's plan with only its enabled entries, and the radius is scaled by the Overlay's scale.
+- [x] Seam A: a blurred Overlay lowers edge contrast in the rendered frame, and a scaled-up Overlay is blurred proportionally more.
+- [x] Refusals cover an unknown id, an unknown key, an out-of-range value and a duplicate, through the API and through MCP.
+- [x] `list_assets(kind="video_effects")`, the `dry_run` stacks and the instructions text are in place.
+- [x] The preview shows the blur on the Overlay and follows the slider live.
+- [x] Vitest: add (skipping duplicates), move, toggle, remove, remove all and set by index, on a Pick of one and of several Overlays.
+- [x] Gaussian blur's chain runs at its default, minimum and maximum over a 1 s 1080×1920 clip and keeps its size and length.
+
+## Comments
+
+Built end to end for Overlays.
+- **Backend:** `app/video_effects.py` is the registry's video kind. It shares `Setting` with `app/audio_effects.py` and provides `Category`, `Effect`, `VideoEffect`, `checked_video_effects`, `enabled_video_effects`, `scaled_effects`, `video_effect_chain(stack, size)` and `catalogue()` (each entry has `"kind": "video"`).
+  - A builder takes `(params, drawn size)`. Its px params are already scaled: the planner scales them (`overlay_scale` = scale × max(stretch)), so the plan carries what is drawn.
+  - `scaled_plan` also scales them for 720p and 4K renders.
+  - `GET /api/video-effects`; MCP `list_assets(kind="video_effects")`; the dry run lists `video_effects` under each Overlay; the instructions have a paragraph on them.
+  - The MCP tools budget went up to 86_100.
+- **Frontend:**
+  - `src/videoEffects.ts`: catalogue store and `videoLibraryOf`.
+  - `editor/videoEffects.ts`: `scaledEffects`, `draftVideoEffects` for the live slider, the `IMITATIONS` table, `effectsFilterId` and `pictureBox`.
+  - `EffectFilters` in `GradeFilters.tsx`: one SVG filter per stack and size, `primitiveUnits="objectBoundingBox"`, so it holds at any stage size. It is chained after the Grade's filter on PicturePanel's inner element.
+  - Editor actions in `actions.ts`: `picturedItems`, `addVideoEffect`, `moveVideoEffect` and the rest.
+  - `VideoEffectsFields.tsx` reuses AudioEffectsFields' `EffectRow`, which is now exported. It is shown on a desktop only (`videoEffectsShown`).
+- **Deferred to 03:** a keyed or animated Overlay (one with a frame process) does not get its effects in the render yet. The preview still draws them.
+- **Near:** the SVG blur fades to transparent at the item's edges. ffmpeg's `gblur` extends them.
+- **Not done:** a picture with its own alpha is blurred without premultiplying.
+

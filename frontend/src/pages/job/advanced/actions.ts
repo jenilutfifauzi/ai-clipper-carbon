@@ -1,4 +1,4 @@
-import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
@@ -1358,7 +1358,7 @@ export function addAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, soun
 }
 
 // Whether two entries are the same effect, switched the same way, at the same settings.
-const sameEntry = (a: AudioEffect, b: AudioEffect) =>
+const sameEntry = (a: AudioEffect | VideoEffect, b: AudioEffect | VideoEffect) =>
   a.id === b.id &&
   a.enabled === b.enabled &&
   Object.keys(a.params).length === Object.keys(b.params).length &&
@@ -1499,4 +1499,102 @@ export function setCleanSetting(
 ): Outcome | null {
   const level = steppedSetting(setting, value);
   return restacked(scene, sounded, (stack) => stack.map((entry) => (entry.id === id ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
+}
+
+// A picture with a stack of Video Effects (ADR 0014): an Overlay (Segments and Adjustment Layers come
+// with tickets 02 and 03).
+export type PictureRef = { kind: "overlay"; id: string };
+type Pictured = { id: string; video_effects?: VideoEffect[] };
+
+/** The picked pictures, which the Video Effects section acts on: the Overlays (videos and images). */
+export function picturedItems({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): PictureRef[] {
+  return edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)).map((overlay) => ({ kind: "overlay" as const, id: overlay.id }));
+}
+
+// Every picked picture given `change` of its stack (an emptied one left without the field; one
+// `change` leaves as it was, untouched); null when none is picked or none changes.
+function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack: VideoEffect[]) => VideoEffect[]): Outcome | null {
+  const { edits, pick } = scene;
+  const refs = picturedItems(scene);
+  let changed = false;
+  const set = <T extends Pictured>(items: T[], kind: PictureRef["kind"]): T[] =>
+    items.map((item) => {
+      if (!refs.some((ref) => ref.kind === kind && ref.id === item.id)) return item;
+      const { video_effects, ...rest } = item;
+      const was = video_effects ?? [];
+      const next = change(was);
+      if (next === was) return item;
+      changed = true;
+      return (next.length ? { ...rest, video_effects: next } : rest) as T;
+    });
+  const overlays = set(edits.overlays, "overlay");
+  return changed ? { edits: { ...edits, overlays }, pick } : null;
+}
+
+/** A catalogue Video Effect's entry at its defaults, switched on. */
+export const videoEffectOf = (kind: VideoEffectKind): VideoEffect => ({
+  id: kind.id,
+  params: Object.fromEntries(kind.settings.map((setting) => [setting.key, setting.default])),
+  enabled: true,
+});
+
+/**
+ * Add effect: `kind` at its defaults, switched on, at the bottom of every picked picture's stack, as
+ * one change; one that has it already is skipped (an effect is once in a stack). Null when none is
+ * picked, or every one has it.
+ */
+export function addVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, kind: VideoEffectKind): Outcome | null {
+  return repictured(scene, (stack) => (stack.some((entry) => entry.id === kind.id) ? stack : [...stack, videoEffectOf(kind)]));
+}
+
+/** The stack of the picked pictures, when every one's is the same; "mixed" when they differ; null when none is picked. */
+export function sharedVideoStack(scene: { edits: AdvancedEdits; pick: Pick }): VideoEffect[] | "mixed" | null {
+  const { edits } = scene;
+  const stacks = picturedItems(scene).map((ref) => edits.overlays.find((item) => item.id === ref.id)?.video_effects ?? []);
+  const [first, ...rest] = stacks;
+  if (!first) return null;
+  return rest.every((other) => other.length === first.length && other.every((entry, index) => sameEntry(entry, first[index]))) ? first : "mixed";
+}
+
+// Entry `index` of the picked stacks given `change` (its stack made anew), on every picked picture:
+// only while their stacks are the same (sharedVideoStack) and the entry is there; else null.
+function videoEntryChanged(scene: { edits: AdvancedEdits; pick: Pick }, index: number, change: (stack: VideoEffect[]) => VideoEffect[] | null): Outcome | null {
+  const shown = sharedVideoStack(scene);
+  if (shown === null || shown === "mixed" || !shown[index] || !change(shown)) return null;
+  return repictured(scene, (stack) => change(stack)!);
+}
+
+/** Entry `index` swapped with the one above (`delta` −1) or below (+1) in every picked stack. Null past the first or last. */
+export function moveVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, index: number, delta: -1 | 1): Outcome | null {
+  return videoEntryChanged(scene, index, (stack) => {
+    const to = index + delta;
+    if (to < 0 || to >= stack.length) return null;
+    const moved = [...stack];
+    [moved[index], moved[to]] = [moved[to], moved[index]];
+    return moved;
+  });
+}
+
+/** Entry `index` switched on or off in every picked stack, staying in its place. */
+export function setVideoEffectEnabled(scene: { edits: AdvancedEdits; pick: Pick }, index: number, enabled: boolean): Outcome | null {
+  return videoEntryChanged(scene, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, enabled } : entry)));
+}
+
+/** Entry `index` taken out of every picked stack. */
+export function removeVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, index: number): Outcome | null {
+  return videoEntryChanged(scene, index, (stack) => stack.filter((_, at) => at !== index));
+}
+
+/**
+ * Entry `index`'s `setting` set to `value` in every picked stack, on the setting's steps and within
+ * its range (its other settings as they were). A slider's drag is one change of its group.
+ */
+export function setVideoEffectSetting(scene: { edits: AdvancedEdits; pick: Pick }, index: number, setting: AudioEffectSetting, value: number): Outcome | null {
+  const level = steppedSetting(setting, value);
+  return videoEntryChanged(scene, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
+}
+
+/** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none is picked or all are empty. */
+export function removeAllVideoEffects(scene: { edits: AdvancedEdits; pick: Pick }): Outcome | null {
+  return repictured(scene, (stack) => (stack.length ? [] : stack));
 }

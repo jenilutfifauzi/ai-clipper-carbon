@@ -1,6 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { Grade } from "../../../api";
+import type { Grade, VideoEffect } from "../../../api";
 import { foldGrade, gradeFilter, gradeFilterId, hasGradeFilter, sharpenKernel, vignetteBackground } from "./grading";
+import { effectPrimitives, effectsFilterId, type Box } from "./videoEffects";
 
 // Whether the player shows the original: every Grade dropped (the before view, while its button is held).
 const Original = createContext(false);
@@ -45,6 +46,34 @@ export function GradeFilters({ grades }: { grades: (Grade | null | undefined)[] 
       <defs>
         {[...filters].map(([id, grade]) => (
           <GradeFilter key={id} id={id} grade={grade} />
+        ))}
+      </defs>
+    </svg>
+  );
+}
+
+/**
+ * The SVG filters the preview's Video Effects are imitated with (ADR 0014; videoEffects.ts), one per
+ * distinct stack and element size of `items`, referenced by CSS after the Grade's filter on the same
+ * element (`effectsFilter`), so that they come after it, as in the render. Their units are fractions
+ * of the element's box, and they draw within it.
+ */
+export function EffectFilters({ items }: { items: { effects?: VideoEffect[]; box: Box }[] }) {
+  const filters = new Map<string, { effects: VideoEffect[]; box: Box }>();
+  for (const { effects, box } of items) {
+    const id = effectsFilterId(effects, box);
+    if (id && effects) filters.set(id, { effects, box });
+  }
+  if (!filters.size) return null;
+  return (
+    <svg aria-hidden width={0} height={0} className="pointer-events-none absolute">
+      <defs>
+        {[...filters].map(([id, { effects, box }]) => (
+          <filter key={id} id={id} colorInterpolationFilters="sRGB" primitiveUnits="objectBoundingBox" x="0" y="0" width="1" height="1">
+            {effectPrimitives(effects, box).map(({ element: Element, attributes }, i) => (
+              <Element key={i} {...attributes} />
+            ))}
+          </filter>
         ))}
       </defs>
     </svg>

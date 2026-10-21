@@ -49,6 +49,8 @@ import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
+import { draftVideoEffects } from "../editor/videoEffects";
+import { useVideoEffects } from "../../../videoEffects";
 import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
@@ -529,15 +531,21 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays, Adjustment
   // Layers and the Candidate in their Grades as edited (a dial drag shows before its plan comes).
-  // A Look auditioned is drawn on the Grades a click would give it to.
+  // A Look auditioned is drawn on the Grades a click would give it to. Its Overlays' Video Effects
+  // are drawn as edited too (a slider drag shows before its plan comes).
   const graded = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
+  const videoEffectKinds = useVideoEffects();
   const shown = useMemo(
     () =>
       preview && {
         ...preview,
-        plan: draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade, graded.adjustment_layers),
+        plan: draftVideoEffects(
+          draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade, graded.adjustment_layers),
+          graded.overlays,
+          videoEffectKinds,
+        ),
       },
-    [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers],
+    [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers, videoEffectKinds],
   );
   const playback = useMemo(() => new Playback(), []);
   // The player's checks of a Grade: the before view, held; and Compare render of the draft, on a
@@ -1341,6 +1349,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       <Inspector
         effectsPreparing={effectsPreparing}
         effectsElsewhere={!wide}
+        videoEffectsShown={wide}
         pick={pick}
         edits={edits}
         duration={duration}

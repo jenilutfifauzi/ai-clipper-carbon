@@ -12,6 +12,7 @@ crop and item size in its item's; and times, Eases, scales, rotations and opacit
   switch to Manual starts from) isn't drawn and stays as it is.
 - A Picture's drawn size (even), centre, bounds, corners, border, shadow and the Keyframes of its
   centre are scaled; its drawn size at scale 1 too, so that a keyed scale still gives its size.
+  An Overlay's Video Effects' sizes (docs/adr/0014) are scaled with it.
 - A picture layer's picture is rasterised at the output's size: its layout's scale is multiplied by
   the factor (under MAX_LAYER_PICTURE, as `picture_scale` keeps it), which names another picture
   (`PictureLayout.name` hashes the scale) of the same `picture_key`, so that a 4K picture and a
@@ -28,6 +29,7 @@ from dataclasses import replace
 
 from app.candidates import Keyframe, KeyProperty, Keys
 from app.pictures import turned_size
+from app.video_effects import scaled_effects
 from app.planner import (
     FRAME,
     MAX_LAYER_PICTURE,
@@ -55,7 +57,9 @@ def scaled_plan(plan: RenderPlan, size: tuple[int, int]) -> RenderPlan:
         captions=[replace(event, area=_scaled_box(event.area, k), size=event.size * k) for event in plan.captions],
         hook=None if plan.hook is None else _scaled_hook(plan.hook, k),
         watermark=None if watermark is None else replace(watermark, area=_scaled_box(watermark.area, k), size=watermark.size * k),
-        overlays=[replace(event, picture=_scaled_picture(event.picture, k)) for event in plan.overlays],
+        overlays=[
+            replace(event, picture=_scaled_picture(event.picture, k), video_effects=scaled_effects(event.video_effects, k)) for event in plan.overlays
+        ],
         texts=[_scaled_layer(event, k) for event in plan.texts],
         shapes=[_scaled_layer(event, k) for event in plan.shapes],
     )

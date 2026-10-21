@@ -135,6 +135,7 @@ from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, graded_image, read_image, shadow_room
 from app.grading import grade_filters
+from app.video_effects import video_effect_chain
 from app.ducking import duck_steps
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
@@ -1183,7 +1184,8 @@ def _overlay_inputs(
 def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
-    image's one picture held, graded after it is scaled and flipped. A keyed one's frames, drawn whole
+    image's one picture held, graded after it is scaled and flipped and then drawn through its Video
+    Effects (docs/adr/0014), at its drawn size. A keyed one's frames, drawn whole
     (and graded) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
     frames below being at n / fps exactly)."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
@@ -1194,7 +1196,8 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     timed = "" if event.image else f",setpts={played}+{event.start:.3f}/TB"
     ends = "repeat" if event.image else "pass"
     graded = grade_filters(event.grade, alpha=f"layer{number}g")
-    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", graded)
+    effected = ",".join([*([graded] if graded else []), *video_effect_chain(event.video_effects, (event.picture.width, event.picture.height))])
+    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected)
 
 
 def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int) -> str:
@@ -1479,7 +1482,8 @@ def _picture(
     picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = ""
 ) -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
-    order of docs/adr/0007: crop, scale, flip, the filters `graded` (an Overlay's Grade, docs/adr/0013),
+    order of docs/adr/0007: crop, scale, flip, the filters `graded` (an Overlay's Grade, docs/adr/0013,
+    then its Video Effects, docs/adr/0014),
     corners and border (`_corners`), rotate with a transparent fill, shadow (`_shadow`), opacity, then
     laid over at its centre. Steps that change nothing are left out. `after` is more filters of the
     picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`."""

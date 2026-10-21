@@ -37,7 +37,8 @@ import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from ".
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
-import { DecksGraded, GradeFilters } from "./GradeFilters";
+import { DecksGraded, EffectFilters, GradeFilters } from "./GradeFilters";
+import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
@@ -236,6 +237,7 @@ export function ClipPreview({
       }}
     >
       {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
+      {drawn && <EffectFilters items={drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture) }))} />}
       {/* The Main Track and the Overlays under the Adjustment Layers showing (ADR 0013). */}
       <PreviewAdjusted plan={drawn} playback={playback}>
         {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the

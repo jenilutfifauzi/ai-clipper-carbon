@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef } from "react";
-import type { Grade, Picture } from "../../../api";
+import type { Grade, Picture, VideoEffect } from "../../../api";
 import { animatedPicture, type Look } from "./animation";
 import { GradeVignette, useGradeFilter } from "./GradeFilters";
 import { isKeyed, pictureAt, pictureStyle } from "./picture";
 import type { Playback } from "./playback";
+import { effectsFilter, pictureBox } from "./videoEffects";
 
 /**
  * A Picture of the plan drawn on the stage (ADR 0007): a box at its centre as large as it is drawn,
@@ -11,6 +12,8 @@ import type { Playback } from "./playback";
  * cuts off and its rounded corners, under its border, at the picture's opacity, or at `faded`
  * instead. Its `grade` (an Overlay's, ADR 0013) is a filter on the media alone, its vignette a layer
  * over it, so that its border and shadow keep their colours, as the renderer grades it before them.
+ * Its Video Effects (an Overlay's, ADR 0014) are imitated by a filter after its Grade's on the same
+ * element (EffectFilters), as the renderer draws them after it.
  * Its shadow is a filter on a layer that isn't turned, so that it falls in screen space as the
  * renderer's does. It is only drawn: the Advanced Edit's stage lays its handle and Grips over it
  * (StageEdit.tsx).
@@ -30,6 +33,7 @@ export function PicturePanel({
   playback,
   look,
   grade,
+  effects,
 }: {
   picture: Picture;
   frame: { width: number; height: number };
@@ -39,6 +43,8 @@ export function PicturePanel({
   playback?: Playback;
   look?: (time: number) => Look;
   grade?: Grade;
+  // Planned: enabled, their sizes as drawn.
+  effects?: VideoEffect[];
 }) {
   const box = useRef<HTMLDivElement>(null);
   const shown = useRef<HTMLDivElement>(null);
@@ -47,7 +53,9 @@ export function PicturePanel({
   const drawn = moving ? drawnAt(picture, moving.shownTime, look) : picture;
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
   const visibility = hidden ? "hidden" : "visible";
-  const filter = useGradeFilter(grade);
+  const graded = useGradeFilter(grade);
+  const effected = effectsFilter(effects, pictureBox(picture));
+  const filter = [graded, effected].filter(Boolean).join(" ") || undefined;
 
   useLayoutEffect(() => {
     if (!moving) return;

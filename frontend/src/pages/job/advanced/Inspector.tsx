@@ -13,6 +13,7 @@ import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
 import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setSpeech, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
+import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
@@ -64,6 +65,7 @@ export function Inspector({
   detaching,
   effectsPreparing,
   effectsElsewhere = false,
+  videoEffectsShown = true,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -109,6 +111,8 @@ export function Inspector({
   effectsPreparing?: (items: StackRef[]) => boolean;
   // On a phone, the Audio Effects section is the toolbar's Audio effects sheet, not here.
   effectsElsewhere?: boolean;
+  // Whether the Video Effects section is shown: on a desktop only (a phone plays them, not edits them).
+  videoEffectsShown?: boolean;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -141,6 +145,13 @@ export function Inspector({
     if (effectsElsewhere) return null;
     const controls = audioEffectChanges({ edits, pick }, sounded, onEdits, effectsPreparing);
     return controls && <AudioEffectsFields {...controls} />;
+  };
+
+  // The picked pictures' (Overlays') Video Effects section, after their Color section: null without any, or on a phone.
+  const pictureEffectsOf = () => {
+    if (!videoEffectsShown) return null;
+    const controls = videoEffectChanges({ edits, pick }, onEdits);
+    return controls && <VideoEffectsFields {...controls} />;
   };
 
 
@@ -180,6 +191,7 @@ export function Inspector({
       <div className="flex flex-col gap-4">
         {summary}
         {graded && colorOf()}
+        {graded && pictureEffectsOf()}
         {effects}
       </div>
     );
@@ -327,6 +339,7 @@ export function Inspector({
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
         color={colorOf()}
+        pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
       />
     );

@@ -84,7 +84,7 @@ export function audioEffectChanges(
 }
 
 // A setting's value as its slider shows it: to its step's decimals, with its unit.
-function formatSetting({ step, unit }: AudioEffectSetting) {
+export function formatSetting({ step, unit }: AudioEffectSetting) {
   const decimals = Math.min(3, (String(step).split(".")[1] ?? "").length);
   return (value: number) => `${value.toFixed(decimals)}${unit ? (unit === "%" ? "%" : ` ${unit}`) : ""}`;
 }
@@ -205,9 +205,12 @@ function EffectRows({ stack, kinds, controls }: { stack: AudioEffect[]; kinds: A
   );
 }
 
+// What an effect stack's row does (an Audio Effect's, or a Video Effect's: VideoEffectsFields).
+export type RowControls = { [K in "onMove" | "onEnabled" | "onRemove" | "onSetting"]: AudioEffectControls[K] };
+
 // One entry of the stack: its name, on/off, up, down, remove; its intensity slider; and its other
-// settings in a "More" popover.
-function EffectRow({
+// settings in a "More" popover. Also a Video Effect's row (VideoEffectsFields).
+export function EffectRow({
   entry,
   kind,
   index,
@@ -217,7 +220,13 @@ function EffectRow({
   onEnabled,
   onRemove,
   onSetting,
-}: AudioEffectControls & { entry: AudioEffect; kind: AudioEffectKind | undefined; index: number; first: boolean; last: boolean }) {
+}: RowControls & {
+  entry: AudioEffect;
+  kind: { name: string; description: string; settings: AudioEffectSetting[] } | undefined;
+  index: number;
+  first: boolean;
+  last: boolean;
+}) {
   const name = kind?.name ?? entry.id;
   const nameId = useId();
   const intensity = kind?.settings.find((setting) => setting.intensity);
@@ -262,11 +271,11 @@ function EffectRow({
 }
 
 // A row's icon buttons (More, up, down, remove), a finger's size in the phone's sheet.
-const ROW_BUTTON = "in-data-sheet:min-h-11 in-data-sheet:min-w-11";
+export const ROW_BUTTON = "in-data-sheet:min-h-11 in-data-sheet:min-w-11";
 
 // Escape in a popover closes it (the browser's light dismiss), and goes no further: not to the
 // editor's "Pick nothing", which would take the Inspector away with it.
-const keepEscape = (event: KeyboardEvent) => {
+export const keepEscape = (event: KeyboardEvent) => {
   if (event.key === "Escape") event.stopPropagation();
 };
 
