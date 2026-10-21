@@ -6,8 +6,10 @@ Each Scene of a landscape Source gets its own Layout, from its number of faces i
 its sampled frames (scenes shorter than MIN_SCENE_SECS are first merged into a neighbour, so that the
 layout doesn't flicker). The Candidate's layout override, unless Auto, replaces the choice in every Scene.
 - One face: Track, a full-height 9:16 crop that follows the speaker's face.
-- Two faces: Split, two 1080×960 panels stacked, the left face's on top, each with its own camera
-  following its face. Forced with fewer than two faces, Split shows the frame's left and right halves.
+- Two faces: Split, two panels, each with its own camera following its face: stacked on 9:16 and 4:5
+  (1080×960 and 1080×675), the left face's on top, and side by side on 1:1 and 16:9 (540×1080 and
+  960×1080), the left face's on the left. Forced with fewer than two faces, Split shows the frame's
+  left and right halves in the same panels.
 - None, or three or more: Blur, the whole shot as wide as the output, centred over a blurred copy
   of itself that fills it.
 
@@ -27,13 +29,13 @@ Segment's Scene is (`framed_scene`): still for the whole Scene, its faces not ne
 chooses it. Every other Scene offers the Framing that draws its first frame (`_first_framing`),
 which the editors copy when it is switched to Manual, so that nothing jumps.
 
-A portrait Source is passed through whole.
+A portrait Source is passed through whole, or on a Canvas wider than it, shown as Blur shows a shot.
 
 Captions come from the Clip's own Words (transcribed for it, on the Clip's timeline). They are
 Cues of one short line, broken by the Caption Style's limits (by default UPPERCASE, at most 16
 characters or 1.4 s long), each Word highlighted while it is spoken. With the style's Auto
-position a line sits on the seam between the panels in a Split Scene and in the lower third
-otherwise, and moves when the Layout changes under it; the other positions put every line in one
+position a line sits on the seam between the panels in a stacked Split Scene, under the shot in a
+Blur Scene when there is room for it below it in the Safe Area, and in the lower third otherwise, and moves when the Layout changes under it; the other positions put every line in one
 place.
 
 The hook (the Candidate's hook text, as last edited) is shown for the Clip's first HOOK_SECS in a
@@ -146,7 +148,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
-from app.canvas import PORTRAIT, Box, Canvas
+from app.canvas import PORTRAIT, Aspect, Box, Canvas
 from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
@@ -176,8 +178,9 @@ from app.video_source import SourceMetadata
 LAYOUT_SAMPLES = 5
 # A Scene shorter than this is merged into a neighbour before Layouts are chosen.
 MIN_SCENE_SECS = 1.0
-# In a Split panel, the face's centre is put this far down the panel (as a share of its height),
-# where the frame allows: a little above the middle, leaving the seam between the panels clear.
+# In a stacked Split panel, the face's centre is put this far down the panel (as a share of its
+# height), where the frame allows: a little above the middle, leaving the seam between the panels
+# clear. Side by side, it is in the middle.
 SPLIT_FACE_AT = 0.4
 # A caption line stays on screen this long after its last Word, unless the next line comes sooner.
 # (How lines are broken is the Caption Style's.)
@@ -1280,7 +1283,7 @@ def _framed(
     Manual Scene: as one Scene, unless one is Manual."""
     held_here = [o for o in layout_overrides or [] if 0 <= o.at <= duration]
     if not reframes(source) and layout is not Layout.MANUAL and all(o.layout is not Layout.MANUAL for o in held_here):
-        return [_passed_through(0.0, duration, source, canvas)]
+        return [_portrait(0.0, duration, source, canvas)]
     cuts = sorted({round(scene.start, 3) for scene in scenes or []} - {0.0})
     edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
     plans = []
@@ -1293,7 +1296,7 @@ def _framed(
             plans.append(framed_scene(a, b, SceneLayout.MANUAL, source.width, source.height, by_hand, canvas))
             continue
         if not reframes(source):
-            plans.append(_passed_through(a, b, source, canvas))
+            plans.append(_portrait(a, b, source, canvas))
             continue
         seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
         count = None if seen is None else _face_count(seen)
@@ -1459,6 +1462,16 @@ def _keys_backwards(keys: list[Keyframe], until: float, speed: float) -> list[Ke
         x1, y1, x2, y2 = turned[i - 1].ease
         turned[i] = replace(turned[i], ease=Ease(*(round(1 - value, 6) for value in (x2, y2, x1, y1))))
     return [replace(turned[0], ease=LINEAR), *turned[1:]] if turned else turned
+
+
+def _portrait(start: float, end: float, source: SourceMetadata, canvas: Canvas) -> ScenePlan:
+    """A Scene of a portrait `source` from `start` to `end`: passed through, or on a Canvas wider than
+    it (1:1 or 16:9, say), whole over its blur, as Blur shows a shot, rather than over black. On 9:16
+    it is always passed through, as before Canvas Aspects."""
+    if canvas.aspect is not Aspect.PORTRAIT and canvas.width * source.height > source.width * canvas.height:
+        panels = _blur(start, source, canvas)
+        return ScenePlan(start, end, SceneLayout.BLUR, panels, framing=_first_framing(SceneLayout.BLUR, panels, source, canvas))
+    return _passed_through(start, end, source, canvas)
 
 
 def _passed_through(start: float, end: float, source: SourceMetadata, canvas: Canvas) -> ScenePlan:
@@ -2673,7 +2686,7 @@ def _captions(
                 retime, places[id(retime)] if retime is not None else -1,
             ))
 
-    areas = [_caption_area(style, scene.layout, canvas) for scene in scenes]
+    areas = [_caption_area(style, scene, canvas) for scene in scenes]
     # The Layout changes that move the captions.
     moves = [scene.start for scene, area, before in zip(scenes[1:], areas[1:], areas) if area != before]
 
@@ -2886,11 +2899,17 @@ def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: f
     return _shifted(area, round(centre - area.width / 2) - area.x)
 
 
-def _caption_area(style: CaptionStyle, layout: SceneLayout, canvas: Canvas) -> Box:
-    """Where a caption line is centred on `canvas` in a Scene in `layout` (its places are the Canvas's)."""
+def _caption_area(style: CaptionStyle, scene: ScenePlan, canvas: Canvas) -> Box:
+    """Where a caption line is centred on `canvas` in `scene` (its places are the Canvas's). On Auto:
+    on the seam of a stacked Split, under Blur's shot when there is room below it in the Safe Area,
+    and otherwise in the lower third."""
     match style.position:
         case CaptionPosition.AUTO:
-            return canvas.seam_captions if layout is SceneLayout.SPLIT else canvas.lower_captions
+            if scene.layout is SceneLayout.SPLIT and canvas.stacked:
+                return canvas.seam_captions
+            if scene.layout is SceneLayout.BLUR and (below := canvas.captions_below(scene.panels[-1].area)) is not None:
+                return below
+            return canvas.lower_captions
         case CaptionPosition.TOP:
             return canvas.top_captions
         case CaptionPosition.MIDDLE:
@@ -2991,11 +3010,13 @@ def _track(
 def _split(
     start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
 ) -> list[Panel]:
-    """Two crops (9:8 on 9:16), each half as wide as the frame, for the panels stacked top and bottom: the
-    two faces seen most in the Scene's sampled frames `faces`, each followed by its own camera, the
-    left one's on top. Without `faces`, the frame's left half on top and its right half below."""
+    """Two crops, each about half as wide as the frame and of its panel's shape (9:8 on 9:16), for the
+    Canvas's two panels (`Canvas.split_panels`: stacked, or side by side on 1:1 and 16:9): the two faces
+    seen most in the Scene's sampled frames `faces`, each followed by its own camera, the left one's on
+    top or on the left. Without `faces`, the frame's left half there and its right half in the other."""
     width, height = source.width, source.height
-    panel_width, panel_height = canvas.width, canvas.split_height
+    boxes = canvas.split_panels
+    panel_width, panel_height = boxes[0].width, boxes[0].height
     crop_width = _even_floor(width / 2)
     crop_height = _even(crop_width * panel_height / panel_width)
     if crop_height > _even_floor(height):
@@ -3003,9 +3024,8 @@ def _split(
         crop_width = _even(crop_height * panel_width / panel_height)
     y = _centred(height, crop_height)
     halves = [
-        Panel(Box(0, i * panel_height, panel_width, panel_height), crop_width, crop_height,
-              [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
-        for i, centre in enumerate((width / 4, width * 3 / 4))
+        Panel(box, crop_width, crop_height, [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
+        for box, centre in zip(boxes, (width / 4, width * 3 / 4))
     ]
     if not faces:
         return halves
@@ -3020,7 +3040,8 @@ def _split(
         return halves
     centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in pair}
     pair.sort(key=centre.__getitem__)
-    rise = (0.5 - SPLIT_FACE_AT) * crop_height
+    # Side by side, a panel is tall enough for the face to sit in its middle.
+    rise = (0.5 - SPLIT_FACE_AT) * crop_height if canvas.stacked else 0.0
     return [
         _follow(panel, [(frame.at, frame.faces.get(id)) for frame in tracked], start, end, source, camera, rise)
         for panel, id in zip(halves, pair)
@@ -3028,10 +3049,9 @@ def _split(
 
 
 def _blur(start: float, source: SourceMetadata, canvas: Canvas) -> list[Panel]:
-    """The whole frame as large as fits on `canvas`, centred over the full-height crop of the Canvas's
+    """The whole frame as large as fits on `canvas`, centred over the largest crop of the Canvas's
     shape from its middle, blurred, which fills it."""
-    background = _centre_crop(source.width, source.height, canvas)
-    background = replace(background, path=[replace(background.path[0], at=start)], blur=True)
+    background = replace(_filled(source.width, source.height, start, canvas), blur=True)
     return [background, _fitted(source.width, source.height, start, canvas)]
 
 

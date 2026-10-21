@@ -95,8 +95,8 @@ const LAYOUTS = [
 
 const LAYOUT_HINTS: Record<Layout, string> = {
   auto: "Chosen per scene from the faces in it.",
-  track: "A 9:16 crop following the speaker, in every scene.",
-  split: "Two stacked panels, left person on top, in every scene.",
+  track: "A crop of the frame's shape following the speaker, in every scene.",
+  split: "Two panels, left person on top (on the left on 1:1 and 16:9), in every scene.",
   blur: "The wide shot over a blurred background, in every scene.",
   manual: "Framed by hand, in every scene: drag the picture on the preview to pan it, its corners to zoom.",
 };
