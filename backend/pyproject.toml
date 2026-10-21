@@ -21,6 +21,11 @@ dependencies = [
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
+    # Kokoro on this Mac (app/kokoro.py). Its native library comes in sherpa-onnx-core, which
+    # sherpa-onnx's wheels require but uv doesn't see in its published metadata: named here so that a
+    # sync installs it too.
+    "sherpa-onnx>=1.13.8,<1.14",
+    "sherpa-onnx-core>=1.13.8,<1.14",
     "uvicorn[standard]>=0.54.0",
     "yt-dlp[default]>=2026.8.19",
 ]

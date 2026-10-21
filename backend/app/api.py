@@ -64,6 +64,7 @@ from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNo
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
+from app.kokoro import KokoroBusy, KokoroModel
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
@@ -72,6 +73,19 @@ from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
 from app.migration import OLD_TEXT_LAYER
+from app.narration import (
+    DEFAULT_PAUSE_SECS,
+    DEFAULT_SPEED,
+    MAX_PAUSE_SECS,
+    MAX_SPEED,
+    MIN_SPEED,
+    NarrationBusy,
+    NarrationFinished,
+    NarrationNotFound,
+    NarrationRefused,
+    NarrationRequest,
+    NarrationRunner,
+)
 from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
@@ -99,6 +113,7 @@ from app.styles import (
 )
 from app.transcript import Language, Transcript, Word
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
+from app.voices import SpeechError, default_engine
 from app.worker import Worker
 
 router = APIRouter(prefix="/api")
@@ -174,6 +189,18 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _narrations(request: Request) -> NarrationRunner:
+    return request.app.state.narrations
+
+
+def _kokoro(request: Request) -> KokoroModel:
+    """Kokoro's model, or a 404 when this app doesn't offer Kokoro."""
+    model = request.app.state.kokoro
+    if model is None:
+        raise HTTPException(404, "Kokoro isn't offered here")
+    return model
+
+
 def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
@@ -221,6 +248,8 @@ ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
+Narrations = Annotated[NarrationRunner, Depends(_narrations)]
+Kokoro = Annotated[KokoroModel, Depends(_kokoro)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
@@ -1859,6 +1888,188 @@ def delete_media(media_id: str, library: Media, store: Store) -> None:
     if uses := media_uses(store, media_id):
         raise HTTPException(409, {"message": "Used by clips: remove it from them first", "uses": [use.model_dump() for use in uses]})
     library.delete(media_id)
+
+
+class VoiceInfo(BaseModel):
+    id: str
+    name: str
+    # Such as "Firm · female".
+    detail: str
+    # The language it speaks; null for one that reads any.
+    language: str | None
+
+
+class EngineInfo(BaseModel):
+    """A speech engine as the Narrate tab lists it (app/voices.py)."""
+
+    id: str
+    label: str
+    # The service the words go to; null for one on this Mac.
+    service: str | None
+    local: bool
+    ready: bool
+    takes_style: bool
+    voices: list[VoiceInfo]
+
+
+class KokoroInfo(BaseModel):
+    """Kokoro's model on this Mac (app/kokoro.py): absent, downloading (`done` bytes of `total`), ready
+    (installed) or failed (`message`). `total` is the archive's size whatever the state."""
+
+    state: Literal["absent", "downloading", "ready", "failed"]
+    done: int
+    total: int
+    message: str | None
+
+
+class VoicesList(BaseModel):
+    engines: list[EngineInfo]
+    # The engine a Job in the language asked for starts with; null when none is ready.
+    default: str | None
+    # Kokoro's download; null when Kokoro isn't offered.
+    kokoro: KokoroInfo | None
+
+
+class NarrationBody(BaseModel):
+    """A script to read aloud (GLOSSARY.md, Narration)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    engine: str
+    voice: str
+    # The silence between two sentences, in seconds.
+    pauses: Annotated[float, Field(ge=0, le=MAX_PAUSE_SECS)] = DEFAULT_PAUSE_SECS
+    # Its Speed, 0.5–2×.
+    speed: Annotated[float, Field(ge=MIN_SPEED, le=MAX_SPEED)] = DEFAULT_SPEED
+    # A one-line instruction ("warm, unhurried"), for an engine that takes one.
+    style: Annotated[str, StringConstraints(max_length=200)] | None = None
+
+
+class NarrationStarted(BaseModel):
+    id: str
+
+
+@router.get("/voices")
+def list_voices(request: Request, narrations: Narrations, language: Language | None = None) -> VoicesList:
+    """The speech engines set up, each with its Voices, the one a Job in `language` starts with
+    (Indonesian the first ready cloud engine, English a ready one on this Mac first), and Kokoro's
+    download state: polled while it downloads."""
+    engines = [
+        EngineInfo(
+            id=engine.id,
+            label=engine.label,
+            service=engine.service,
+            local=engine.local,
+            ready=engine.ready(),
+            takes_style=engine.takes_style,
+            voices=[VoiceInfo(id=v.id, name=v.name, detail=v.detail, language=v.language) for v in engine.voices()],
+        )
+        for engine in narrations.engines
+    ]
+    kokoro: KokoroModel | None = request.app.state.kokoro
+    return VoicesList(
+        engines=engines, default=default_engine(narrations.engines, language), kokoro=KokoroInfo(**kokoro.state()) if kokoro else None
+    )
+
+
+@router.post("/voices/kokoro/download", status_code=202)
+def download_kokoro(kokoro: Kokoro) -> KokoroInfo:
+    """Start downloading Kokoro's model (about 132 MB), in the background, taken up from what an earlier
+    download left; nothing when it is installed or being downloaded. 409 while a cancelled download is
+    still stopping. Its progress is in /api/voices."""
+    try:
+        kokoro.download()
+    except KokoroBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+    return KokoroInfo(**kokoro.state())
+
+
+@router.delete("/voices/kokoro/download", status_code=204)
+def cancel_kokoro_download(kokoro: Kokoro) -> None:
+    """Cancel the download: it is told absent at once and stops at its next chunk, what it fetched kept
+    for the next download (which is refused, 409, until it has stopped)."""
+    kokoro.cancel()
+
+
+@router.delete("/voices/kokoro", status_code=204)
+def remove_kokoro(kokoro: Kokoro, narrations: Narrations) -> None:
+    """Remove Kokoro's model from this Mac, its loaded engine and its Voices' samples. 409 while a
+    Narration or a sample is being made, or the model is being downloaded."""
+    try:
+        with narrations.idle("A Narration is being made: remove Kokoro once it is done"):
+            kokoro.remove()
+            narrations.forget_samples("kokoro")
+    except (NarrationBusy, KokoroBusy) as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.get("/voices/{engine}/{voice}/sample", response_class=FileResponse)
+def voice_sample(engine: str, voice: str, narrations: Narrations, lang: Language | None = None) -> FileResponse:
+    """The Voice reading a fixed sentence in `lang` (English for a language with none), as WAV: made the
+    first time, through the one-at-a-time runner, and kept on this Mac per engine, Voice and language.
+    422 for an unknown engine or Voice or an engine that isn't ready; 409 while a Narration or another
+    sample is being made; 502 when the engine fails."""
+    try:
+        path = narrations.sample(engine, voice, lang)
+    except NarrationRefused as exc:
+        raise HTTPException(422, str(exc)) from None
+    except NarrationBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+    except SpeechError as exc:
+        raise HTTPException(502, str(exc)) from None
+    return FileResponse(path, media_type="audio/wav")
+
+
+@router.post("/narrations", status_code=202)
+def start_narration(body: NarrationBody, narrations: Narrations) -> NarrationStarted:
+    """Start reading `text` (at most 5,000 characters) aloud by `voice` of `engine`, into a Media
+    Library item, at `speed` (0.5–2×) and with `style` for an engine that takes one; follow it at
+    /api/narrations/{id}/events. 422 for an empty or too long script, an unknown engine or Voice, an
+    engine that isn't ready, a Speed outside 0.5–2 or a Style for an engine that takes none; 409 while another Narration is being made,
+    anywhere in the app."""
+    try:
+        request = NarrationRequest(
+            text=body.text, engine=body.engine, voice=body.voice, pauses=body.pauses, style=body.style, speed=body.speed
+        )
+        return NarrationStarted(id=narrations.start(request))
+    except NarrationRefused as exc:
+        raise HTTPException(422, str(exc)) from None
+    except NarrationBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+def _narration(narration_id: str, narrations: Narrations) -> str:
+    """The Narration's id, or a 404 (before its stream starts)."""
+    if not narrations.exists(narration_id):
+        raise HTTPException(404, f"No Narration {narration_id}")
+    return narration_id
+
+
+@router.get("/narrations/{narration_id}/events", response_class=EventSourceResponse)
+async def stream_narration_events(
+    narration_id: Annotated[str, Depends(_narration)], narrations: Narrations
+) -> AsyncIterator[ServerSentEvent]:
+    """The Narration's progress (`progress`: its stage, "Loading the voice", "Reading", "Levelling" or
+    "Saving", and `done` sentences read of `of`), then its outcome: `done` with its Media Library item,
+    `failed` with the message, or `cancelled`; then the stream ends. Opened late, it still tells it all."""
+    try:
+        async for event in narrations.events(narration_id):
+            yield event
+    except NarrationNotFound:
+        return
+
+
+@router.delete("/narrations/{narration_id}", status_code=204)
+def cancel_narration(narration_id: str, narrations: Narrations) -> None:
+    """Cancel the Narration being made: it stops before its next sentence and leaves nothing, no item and
+    no file. 404 for an unknown one, 409 for one that has ended."""
+    try:
+        narrations.cancel(narration_id)
+    except NarrationNotFound:
+        raise HTTPException(404, f"No Narration {narration_id}") from None
+    except NarrationFinished as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:

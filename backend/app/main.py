@@ -9,10 +9,12 @@ from fastapi.responses import FileResponse
 from app import api, fonts, looks
 from app.config import Settings, load_settings
 from app.jobs import JobStore
+from app.kokoro import KokoroSpeech
 from app.logos import LOGOS_DIR, LogoStore
 from app.mcp_server import build_mcp
 from app.media import MEDIA_DIR, MediaStore
 from app.media_words import MediaWordsStore
+from app.narration import NARRATIONS_DIR, VOICE_SAMPLES_DIR, NarrationRunner
 from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
@@ -30,6 +32,8 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     # What is there is left from uploads cut short when the app last stopped: none was complete.
     shutil.rmtree(settings.data_dir / UPLOADS_DIR, ignore_errors=True)
+    # And from Narrations being made: none was added.
+    shutil.rmtree(settings.data_dir / NARRATIONS_DIR, ignore_errors=True)
     media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
     store = JobStore(settings.data_dir / "jobs", media.sizes)
     ports = ports or real_ports(settings)
@@ -57,6 +61,13 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.starred = StarredStore(settings.data_dir / STARRED_FILE)
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media
+    # One for the app: a Narration is made one at a time, whichever tab or agent asks. Kokoro, on this
+    # Mac, after the cloud engines; its model downloaded one at a time, apart from the runner.
+    app.state.kokoro = ports.kokoro
+    engines = [*ports.voices, *([KokoroSpeech(ports.kokoro)] if ports.kokoro else [])]
+    app.state.narrations = NarrationRunner(
+        media, engines, settings.ffmpeg_bin, settings.data_dir / NARRATIONS_DIR, samples_dir=settings.data_dir / VOICE_SAMPLES_DIR
+    )
     app.state.media_words = media_words
     app.state.faces = fonts.use(settings.data_dir / fonts.IMPORTED_DIR)
     app.state.looks = looks.use(settings.data_dir / looks.IMPORTED_DIR)

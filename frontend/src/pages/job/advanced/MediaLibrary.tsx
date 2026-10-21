@@ -47,6 +47,8 @@ export interface MediaLibrary {
   remove: (item: MediaItem) => Promise<MediaUse[] | null>;
   // A video's language for its Media Words, in every Job (null: each Job's).
   setLanguage: (item: MediaItem, language: string | null) => Promise<void>;
+  // An item the backend made (a Narration), listed with the uploaded ones.
+  added: (item: MediaItem) => void;
 }
 
 // What a video's card needs to set its language: the Job's (its first choice), and what setting it does.
@@ -92,6 +94,7 @@ export function useMediaLibrary(): MediaLibrary {
       return done;
     },
     dismiss: (key) => setUploads((old) => old.filter((item) => item.key !== key)),
+    added: (item) => setItems((old) => [...(old ?? []).filter((other) => other.id !== item.id), item]),
     async setLanguage(item, language) {
       const changed = await api.setMediaLanguage(item.id, language);
       setItems((old) => (old ?? []).map((other) => (other.id === changed.id ? changed : other)));
