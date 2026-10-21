@@ -1,6 +1,6 @@
-// .scratch/video-effects/issues/01-gaussian-blur-on-an-overlay.md, 02-effects-on-segments.md and
-// 03-effects-on-adjustment-layers-and-keyed-pictures.md: an Overlay's, a Segment's and an Adjustment
-// Layer's stack of Video Effects (ADR 0014), edited from the Inspector on a Pick of
+// .scratch/video-effects/issues/01-gaussian-blur-on-an-overlay.md, 02-effects-on-segments.md,
+// 03-effects-on-adjustment-layers-and-keyed-pictures.md and 05-light-and-time-effects.md: an Overlay's,
+// a Segment's and an Adjustment Layer's stack of Video Effects (ADR 0014), edited from the Inspector on a Pick of
 // one picture or several, each change one step of undo; carried by Split, Duplicate, the Clipboard and
 // the Revision merge; and drawn by the preview.
 import { describe, expect, test } from "vitest";
@@ -8,14 +8,25 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import type { AdjustmentEvent, AdjustmentLayer, ClipSegment, Overlay, OverlayEvent, RenderPlan, SegmentPlan, VideoEffect, VideoEffectKind } from "../../../api";
 import { adjustmentFilters } from "../editor/adjustments";
-import { GradeFilter } from "../editor/GradeFilters";
+import { EffectFilters, EffectsClock, GradeFilter } from "../editor/GradeFilters";
 import { NEUTRAL_GRADE } from "../editor/grading";
 import { FRAME } from "../editor/picture";
 import { videoLibraryOf } from "../../../videoEffects";
 import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
-import { playedFrom } from "../editor/playback";
-import { displacementMap, draftVideoEffects, effectPrimitives, effectsFilterId, fisheyeOffset, IMITATIONS, overlayScale, pictureBox, scaledEffects } from "../editor/videoEffects";
+import { Playback, playedFrom } from "../editor/playback";
+import {
+  bloomStrength,
+  displacementMap,
+  draftVideoEffects,
+  effectPrimitives,
+  effectsFilterId,
+  fisheyeOffset,
+  IMITATIONS,
+  overlayScale,
+  pictureBox,
+  scaledEffects,
+} from "../editor/videoEffects";
 import catalogue from "../../../../../backend/tests/fixtures/video_effects.json";
 import {
   addVideoEffect,
@@ -369,5 +380,60 @@ describe("an Adjustment Layer's stack", () => {
     const drawn = draftVideoEffects(plan, [], [], [blurKind], [layer("l1", { video_effects: [{ ...blur, params: { radius: 30 } }] })]);
     expect(drawn.adjustment_layers![0].video_effects).toEqual([{ ...blur, params: { radius: 30 } }]);
     expect(draftVideoEffects(plan, [], [], [blurKind], [layer("l1")])).toBe(plan);
+  });
+});
+
+// .scratch/video-effects/issues/05-light-and-time-effects.md
+describe("Glow, Bloom pulse and Film grain in the preview", () => {
+  const frame = { width: 1080, height: 1920 };
+  const effect = (id: string, params: Record<string, number>): VideoEffect => ({ id, params, enabled: true });
+  const pulse = effect("bloom-pulse", { amount: 80, speed: 2 });
+  const fine = effect("film-grain", { amount: 12 });
+
+  test("Glow blurs the picture by its spread, screens it over and mixes that by its amount", () => {
+    const primitives = effectPrimitives([effect("glow", { amount: 45 })], frame);
+    expect(primitives.find((primitive) => primitive.element === "feGaussianBlur")!.attributes.stdDeviation).toBe("0.014815 0.008333");
+    expect(primitives.find((primitive) => primitive.element === "feBlend")!.attributes.mode).toBe("screen");
+    expect(primitives.at(-1)!.attributes).toMatchObject({ operator: "arithmetic", k2: "0.45", k3: "0.55" });
+    // A picture drawn at half the frame's size glows half as wide, in pixels.
+    const half = effectPrimitives([effect("glow", { amount: 45 })], { width: 540, height: 960 });
+    expect(half.find((primitive) => primitive.element === "feGaussianBlur")!.attributes.stdDeviation).toBe("0.014815 0.008333");
+  });
+
+  test("Bloom pulse's strength breathes as the render's, from its item's start", () => {
+    expect(bloomStrength(80, 2, 0)).toBeCloseTo(0.48);
+    expect(bloomStrength(80, 2, Math.PI / 4)).toBeCloseTo(0.8);
+    expect(bloomStrength(80, 2, (3 * Math.PI) / 4)).toBeCloseTo(0.16);
+    const [mixed] = effectPrimitives([pulse], frame).filter((primitive) => primitive.timed);
+    expect(mixed.timed!(Math.PI / 4)).toEqual({ k2: "0.8", k3: "0.2" });
+  });
+
+  test("Film grain's turbulence is reseeded as the time shown moves, the same at the same time", () => {
+    const [noise] = effectPrimitives([fine], frame).filter((primitive) => primitive.timed);
+    expect(noise.element).toBe("feTurbulence");
+    expect(noise.timed!(1)).not.toEqual(noise.timed!(1 + 1 / 30));
+    expect(noise.timed!(1)).toEqual(noise.timed!(1));
+  });
+
+  test("a stack that changes with time has a filter of its item's own, by its start", () => {
+    expect(effectsFilterId([fine], frame, 1)).not.toBe(effectsFilterId([fine], frame, 2));
+    expect(effectsFilterId([blur], frame, 1)).toBe(effectsFilterId([blur], frame, 2));
+  });
+
+  test("the filters are drawn at the time shown less their item's start, still while paused", () => {
+    const playback = new Playback();
+    playback.setSegments(playedFrom([{ start: 0, end: 10 }]));
+    const drawn = (at: number, start: number) => {
+      playback.seek(at);
+      const filters = createElement(EffectFilters, { items: [{ effects: [fine, pulse], box: frame, start }] });
+      return renderToStaticMarkup(createElement(EffectsClock, { playback, children: filters }));
+    };
+    const seed = (markup: string) => markup.match(/<feTurbulence[^>]*seed="(\d+)"/)![1];
+    expect(seed(drawn(2, 0))).toBe("60");
+    expect(seed(drawn(2, 0))).toBe(seed(drawn(2, 0)));
+    expect(seed(drawn(2.5, 0))).not.toBe(seed(drawn(2, 0)));
+    // An item starting 0.5 s later shows at 2.5 s what one from 0 shows at 2 s.
+    expect(seed(drawn(2.5, 0.5))).toBe("60");
+    expect(drawn(2.5, 0.5)).toContain(`k2="${String(Math.round(bloomStrength(80, 2, 2) * 1e6) / 1e6)}"`);
   });
 });

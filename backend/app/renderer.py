@@ -135,7 +135,7 @@ from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, graded_image, read_image, shadow_room
 from app.grading import grade_filters
-from app.video_effects import video_effect_chain
+from app.video_effects import Clock, changes_with_time, video_effect_chain
 from app.ducking import duck_steps
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
@@ -1167,7 +1167,8 @@ def _overlay_inputs(
     plan: RenderPlan, files: dict[str, Path], first: int, feeds: "Feeds"
 ) -> tuple[list[str], list[tuple[OverlayEvent, int, FrameFeed | None]]]:
     """The input options of the plan's Overlays, one each, numbered from `first` (a video read from its
-    offset for as long as it shows times its Speed; an image's one picture; a keyed one's frames,
+    offset for as long as it shows times its Speed; an image's one picture, or for as long as it shows
+    at the Clip's frame rate when an effect of it changes with time (`_looped`); a keyed one's frames,
     from the pipe of its frame process in `feeds`, by its place among them), and each Overlay drawn
     with its input's number and its frame process. One whose file isn't in `files` isn't drawn."""
     inputs: list[str] = []
@@ -1181,6 +1182,8 @@ def _overlay_inputs(
         else:
             if not event.image:
                 inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}"]
+            elif _looped(event):
+                inputs += ["-loop", "1", "-framerate", _rate(plan), "-t", f"{event.end - event.start:.3f}"]
             inputs += ["-i", str(files[event.media])]
         drawn.append((event, first + len(drawn), feed))
     return inputs, drawn
@@ -1189,7 +1192,7 @@ def _overlay_inputs(
 def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
-    image's one picture held, graded after it is scaled and flipped and then drawn through its Video
+    image's one picture held (or its looped frames moved to start when it does, `_looped`), graded after it is scaled and flipped and then drawn through its Video
     Effects (docs/adr/0014), at its drawn size. A keyed one's frames, drawn whole
     (graded and effected) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
     frames below being at n / fps exactly)."""
@@ -1197,12 +1200,23 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     if feed is not None:
         name = f"[layer{number}]"
         return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}{name};{below}{name}overlay=0:0:{shows}:eof_action=pass{out}"
-    played = "PTS-STARTPTS" if event.speed == 1 else f"(PTS-STARTPTS)/{event.speed:.6g}"
-    timed = "" if event.image else f",setpts={played}+{event.start:.3f}/TB"
-    ends = "repeat" if event.image else "pass"
+    held = event.image and not _looped(event)
+    played = "PTS-STARTPTS" if event.speed == 1 or event.image else f"(PTS-STARTPTS)/{event.speed:.6g}"
+    timed = "" if held else f",setpts={played}+{event.start:.3f}/TB"
+    ends = "repeat" if held else "pass"
     graded = grade_filters(event.grade, alpha=f"layer{number}g")
-    effected = ",".join([*([graded] if graded else []), *video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx")])
+    # Its effects come before its frames are moved onto the Timeline: a video's are its video's, from
+    # its offset, before its Speed.
+    clock = Clock(rate=1 if event.image else 1 / event.speed)
+    chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock)
+    effected = ",".join([*([graded] if graded else []), *chain])
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected)
+
+
+def _looped(event: OverlayEvent) -> bool:
+    """Whether an image Overlay is read as a stream of its frames over its span rather than once: an
+    effect of it changes with time (docs/adr/0014), so that its grain moves."""
+    return event.image and changes_with_time(event.video_effects)
 
 
 def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: tuple[int, int]) -> str:
@@ -1215,7 +1229,7 @@ def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: 
     untouched (`enable`). "" when it changes nothing (a neutral Grade and no enabled effects, or
     strength 0)."""
     span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
-    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx")])
+    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx", clock=Clock(event.start))])
     if not graded or event.strength <= 0:
         return ""
     name = f"adjust{index}"
@@ -1392,14 +1406,14 @@ def _keyed_items(
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
     a keyed or animated Overlay's image's pixels (graded once by `ffmpeg` by its Grade and drawn
-    through its Video Effects), or a
-    video's file (such an Overlay's or a keyed Segment's), or the `source` for a Manual Scene; and a
+    through its Video Effects), or a video's file (such an Overlay's or a keyed Segment's, or an
+    Overlay's image whose effect changes with time, `_looped`), or the `source` for a Manual Scene; and a
     keyed or animated picture layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {}
     for i, event in enumerate(plan.overlays):
         if not (_comes_animated(event) or event.picture.motion) or event.media not in files:
             continue
-        if not event.image:
+        if not event.image or _looped(event):
             items[("overlay", i)] = files[event.media]
             continue
         image = read_image(files[event.media])
@@ -1474,10 +1488,12 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
         event = plan.overlays[i]
         sampled = partial(overlay_at, event, drawn=drawn)
         if isinstance(item, Path):
-            # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
+            # An Overlay's video plays forwards from its offset at its Speed for as long as it shows; a
+            # looped image's one picture is read over its span.
             frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
             video = VideoDecode(
                 ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
+                looped=event.image,
             )
         else:
             frames, video = PictureFrames(event.picture, item, frame, sampled), None

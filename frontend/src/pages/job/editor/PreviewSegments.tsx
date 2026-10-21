@@ -109,7 +109,7 @@ export function MediaSegment({
     return playback.subscribe(sync);
   }, [playback, segment, end, fade, into, span]);
 
-  const filter = useFrameFilter(segment.grade, segment.video_effects);
+  const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
   const picture = scene?.picture;
   const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
   return (
@@ -201,7 +201,7 @@ export function CopiedSourceSegment({
     return playback.subscribe(sync);
   }, [playback, segment, fade, into, span, plan.source_volume]);
 
-  const filter = useFrameFilter(segment.grade, segment.video_effects);
+  const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
       {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014), its vignette over it. */}

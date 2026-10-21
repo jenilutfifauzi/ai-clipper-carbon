@@ -26,6 +26,8 @@ export interface AdjustmentFilter {
   // Null while the original is shown (its effects drawn alone).
   grade: Grade | null;
   effects: VideoEffect[];
+  // Its start on the Timeline, which its effects that change with time count from.
+  start: number;
   weight: number;
   filterId: string | null;
 }
@@ -39,10 +41,10 @@ export function adjustmentFilters(plan: RenderPlan | null, time: number): Adjust
   return (plan?.adjustment_layers ?? []).flatMap((event) => {
     const weight = Math.round(adjustmentWeight(event, time) * 200) / 200;
     const effects = event.video_effects ?? [];
-    const effected = effectsFilterId(effects, FRAME);
+    const effected = effectsFilterId(effects, FRAME, event.start);
     if (weight <= 0 || (!foldGrade(event.grade) && !effected)) return [];
     const graded = hasGradeFilter(event.grade) ? gradeFilterId(event.grade) : null;
     const filterId = graded || effected ? `adjust-${event.id}-${graded ?? "n"}-${effected ?? "n"}` : null;
-    return [{ id: event.id, grade: event.grade, effects, weight, filterId }];
+    return [{ id: event.id, grade: event.grade, effects, start: event.start, weight, filterId }];
   });
 }

@@ -21,7 +21,9 @@ by the rule the preview samples them by (`picture_at`, app/keyframes.py), and `P
 The alpha is straight: ffmpeg's overlay of a premultiplied picture over yuv420p darkens it.
 
 An image is read once, and graded and drawn through its Video Effects once by ffmpeg when its
-Overlay has a Grade or effects (`graded_image`). A video is decoded by an ffmpeg process of its own
+Overlay has a Grade or effects (`graded_image`), unless an effect of it changes with time (Film
+grain, Bloom pulse): then it is read as a looping stream, as a video is (`VideoDecode`'s `looped`). A
+video is decoded by an ffmpeg process of its own
 (`VideoDecode`), which crops and flips it, brings it down to the largest size it is drawn at, grades
 it, draws it through its Video Effects, and sends a frame for each of the Clip's, timed as the still
 chain times a video Overlay. Either way the effects come before the sampled scale (docs/adr/0014):
@@ -47,7 +49,7 @@ import numpy as np
 from app.candidates import Border, Shadow
 from app.planner import FRAME, Picture, picture_at
 from app.segment_time import SegmentTime
-from app.video_effects import VideoEffect, scaled_effects, video_effect_chain
+from app.video_effects import Clock, VideoEffect, scaled_effects, video_effect_chain
 
 # The transparent margin round a picture before it is turned, in output pixels.
 MARGIN = 2
@@ -286,10 +288,11 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
     return cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGBA)
 
 
-def _effects_at(picture: Picture, effects: list[VideoEffect], size: tuple[int, int]) -> list[str]:
+def _effects_at(picture: Picture, effects: list[VideoEffect], size: tuple[int, int], clock: Clock = Clock()) -> list[str]:
     """The filters of `effects` (an Overlay's, their sizes as `picture` is drawn at its constants) on
-    its pixels at `size` (width, height): their sizes times `size`'s width over the drawn one's."""
-    return video_effect_chain(scaled_effects(effects, size[0] / picture.width), size) if effects else []
+    its pixels at `size` (width, height), its time by `clock`: their sizes times `size`'s width over
+    the drawn one's."""
+    return video_effect_chain(scaled_effects(effects, size[0] / picture.width), size, clock=clock) if effects else []
 
 
 def graded_image(ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str, effects: list[VideoEffect] | None = None) -> np.ndarray:
@@ -329,13 +332,16 @@ class VideoDecode:
     frame's) is its first frame throughout. Each is graded by the ffmpeg filters `graded` (an
     Overlay's Grade, app/grading.py), after it is scaled and flipped, as the still chain grades it,
     then drawn through its Video Effects `effects` (docs/adr/0014) at the size it is sent at, before
-    the sampled scale."""
+    the sampled scale, their time from the Overlay's start. With `looped`, `video` is an image, read
+    as a stream of its one picture over the whole span (`shown` unused), so that an effect that
+    changes with time moves on it."""
 
     def __init__(
         self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float, graded: str = "",
-        effects: list[VideoEffect] | None = None,
+        effects: list[VideoEffect] | None = None, looped: bool = False,
     ) -> None:
         self.ffmpeg, self.video, self.picture, self.graded, self.effects = ffmpeg, video, picture, graded, effects or []
+        self.looped = looped
         self.start, self.end, self.shown, self.fps = start, end, shown, fps
         self.numbers = frame_numbers(start, end, fps)
         # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
@@ -349,20 +355,24 @@ class VideoDecode:
         """Each of its frames in turn, in one of two reused arrays: the one after next overwrites it."""
         crop = self.picture.crop
         width, height = self.size
-        still = self.shown.hold is not None
+        still = self.shown.hold is not None and not self.looped
+        speed = 1 if self.looped else self.shown.speed
         steps = [
-            f"setpts=(PTS-STARTPTS)/{self.shown.speed:.6g}+{self.start:.3f}/TB",
+            f"setpts=(PTS-STARTPTS)/{speed:.6g}+{self.start:.3f}/TB",
             f"fps={self.fps:.6g}:start_time={self.numbers.start / self.fps:.6f}:round=up",
             f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1",
             *([] if (width, height) == (crop.width, crop.height) else [f"scale={width}:{height}:flags=lanczos"]),
             *["hflip"] * self.picture.flip_h, *["vflip"] * self.picture.flip_v,
             *([self.graded] if self.graded else []),
-            *_effects_at(self.picture, self.effects, self.size),
+            *_effects_at(self.picture, self.effects, self.size, Clock(self.start)),
             "format=rgba",
         ]
+        if self.looped:
+            read = ["-loop", "1", "-framerate", f"{self.fps:.6g}", "-t", f"{self.end - self.start:.3f}"]
+        else:
+            read = ["-ss", f"{self.shown.start:.3f}", "-t", f"{_HELD_READ_SECS if still else self.shown.span:.3f}"]
         command = [
-            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
-            "-ss", f"{self.shown.start:.3f}", "-t", f"{_HELD_READ_SECS if still else self.shown.span:.3f}", "-i", str(self.video),
+            str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", *read, "-i", str(self.video),
             "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(1 if still else len(self.numbers)),
             # Its frames as the steps time them: a frame rate kept by the muxer would fill the time
             # before the first (from 0, when the video has sound) with copies of it.

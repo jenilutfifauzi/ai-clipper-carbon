@@ -34,6 +34,7 @@ export function PicturePanel({
   look,
   grade,
   effects,
+  start,
 }: {
   picture: Picture;
   frame: { width: number; height: number };
@@ -45,6 +46,8 @@ export function PicturePanel({
   grade?: Grade;
   // Planned: enabled, their sizes as drawn.
   effects?: VideoEffect[];
+  // Its item's start on the Timeline, which its effects that change with time count from.
+  start?: number;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const shown = useRef<HTMLDivElement>(null);
@@ -54,7 +57,7 @@ export function PicturePanel({
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
   const visibility = hidden ? "hidden" : "visible";
   const graded = useGradeFilter(grade);
-  const effected = effectsFilter(effects, pictureBox(picture));
+  const effected = effectsFilter(effects, pictureBox(picture), start);
   const filter = [graded, effected].filter(Boolean).join(" ") || undefined;
 
   useLayoutEffect(() => {

@@ -77,9 +77,15 @@ export interface Primitive {
     | "feComponentTransfer"
     | "feFuncR"
     | "feFuncG"
-    | "feFuncB";
+    | "feFuncB"
+    | "feBlend"
+    | "feTurbulence";
   attributes: Record<string, string>;
   children?: Primitive[];
+  // For an effect that changes with time (Bloom pulse, Film grain): the attributes it changes, at
+  // `time` seconds into its item (from its start on the Timeline, as the render counts it), which
+  // the preview writes on Playback's frame (GradeFilters' TimedPrimitive). `attributes` hold them at 0.
+  timed?: (time: number) => Record<string, string>;
 }
 
 // The size, in output pixels, of the element an effect's filter is on: an Overlay's whole item as
@@ -159,6 +165,36 @@ function displaced(input: string, offset: (u: number, v: number) => [number, num
     },
   ];
 }
+
+// The spread of Glow's and Bloom pulse's light, a Gaussian's sigma in output pixels at the fitted size (backend's GLOW_SIGMA, BLOOM_SIGMA).
+const GLOW_SIGMA = 16;
+const BLOOM_SIGMA = 12;
+// How many new grain patterns the preview draws each second while playing.
+const GRAIN_RATE = 30;
+
+// A Gaussian of `sigma` output pixels at the fitted size, grown with the element's box as the
+// render's grows with the picture's drawn size (its scale: the larger of its sides over the frame's).
+const lightBlur = (sigma: number, box: Box, result: string): Primitive => {
+  const drawn = sigma * Math.max(box.width / FRAME.width, box.height / FRAME.height);
+  return { element: "feGaussianBlur", attributes: { stdDeviation: `${number(drawn / box.width)} ${number(drawn / box.height)}`, result } };
+};
+
+// `light` screened over `input`, and the result mixed over `input` by `strength` (0..1): the
+// render's screen of the light times the strength (screen(a, s b) = a + s (screen(a, b) - a)).
+const screenedBy = (input: string, light: string, strength: number): Primitive[] => [
+  { element: "feBlend", attributes: { in: input, in2: light, mode: "screen", result: `${light}-screen` } },
+  added(`${light}-screen`, input, strength, 1 - strength),
+];
+
+/** Bloom pulse's strength (0..1) at `time` seconds into its item: `amount` × (0.6 + 0.4 sin(time × `speed`)), as the render's. */
+export const bloomStrength = (amount: number, speed: number, time: number): number =>
+  Math.max(0, (amount / 100) * (0.6 + 0.4 * Math.sin(time * speed)));
+
+// The highlights' weight at a luma of `level` (0..1): past 0.55, smoothed and to the 2.4th power, as the render's.
+const highlight = (level: number) => {
+  const knee = Math.max(0, Math.min((level - 0.55) / 0.45, 1));
+  return (knee * knee * (3 - 2 * knee)) ** 2.4;
+};
 
 /** Each picture point's offset under the render's Fisheye of `strength` (%), as a fraction of a box `width` x `height`: its two stages of (1 - s) + s r². */
 export function fisheyeOffset(strength: number, box: Box): (u: number, v: number) => [number, number] {
@@ -260,6 +296,29 @@ export const IMITATIONS: Record<string, (params: Record<string, number>, box: Bo
   fisheye: ({ strength }, box) => {
     return [kept("vfx-fisheye"), ...displaced("vfx-fisheye", fisheyeOffset(strength, box), box, 1)];
   },
+  // Near: the render blurs at a quarter of the picture's size; the box here is its whole item.
+  glow: ({ amount }, box) => [kept("vfx-glow"), lightBlur(GLOW_SIGMA, box, "vfx-glow-light"), ...screenedBy("vfx-glow", "vfx-glow-light", amount / 100)],
+  // Near: the highlights by a table of the luma, blurred and screened; its strength breathes with
+  // the time shown (`timed`), still while paused.
+  "bloom-pulse": ({ amount, speed }, box) => {
+    const weights = Array.from({ length: 33 }, (_, i) => number(highlight(i / 32))).join(" ");
+    const func = (element: "feFuncR" | "feFuncG" | "feFuncB"): Primitive => ({ element, attributes: { type: "table", tableValues: weights } });
+    const luma = "0.2126 0.7152 0.0722 0 0";
+    const [screen, mixed] = screenedBy("vfx-bloom", "vfx-bloom-light", bloomStrength(amount, speed, 0));
+    const at = (time: number) => {
+      const strength = bloomStrength(amount, speed, time);
+      return { k2: number(strength), k3: number(1 - strength) };
+    };
+    return [
+      kept("vfx-bloom"),
+      { element: "feColorMatrix", attributes: { type: "matrix", values: `${luma} ${luma} ${luma} 0 0 0 1 0` } },
+      { element: "feComponentTransfer", attributes: { result: "vfx-bloom-weight" }, children: [func("feFuncR"), func("feFuncG"), func("feFuncB")] },
+      { element: "feComposite", attributes: { in: "vfx-bloom", in2: "vfx-bloom-weight", operator: "arithmetic", k1: "1", k2: "0", k3: "0", k4: "0" } },
+      lightBlur(BLOOM_SIGMA, box, "vfx-bloom-light"),
+      screen,
+      { ...mixed, timed: at },
+    ];
+  },
   // Exact: each channel's value rounded to the nearest of `levels` steps.
   posterize: ({ levels }) => {
     const steps = Math.max(2, Math.round(levels));
@@ -267,6 +326,24 @@ export const IMITATIONS: Record<string, (params: Record<string, number>, box: Bo
     const table = Array.from({ length: 2 * (steps - 1) }, (_, i) => number(Math.ceil(i / 2) / (steps - 1))).join(" ");
     const func = (element: "feFuncR" | "feFuncG" | "feFuncB"): Primitive => ({ element, attributes: { type: "discrete", tableValues: table } });
     return [{ element: "feComponentTransfer", attributes: {}, children: [func("feFuncR"), func("feFuncG"), func("feFuncB")] }];
+  },
+  // Near: grey noise of about the render's size, a fine turbulence (its frequency, in Chrome, per CSS
+  // pixel of the element, whatever its units) reseeded GRAIN_RATE times a second of the time shown, so
+  // that it moves while playing and is still while paused. The alpha kept.
+  "film-grain": ({ amount }) => {
+    const spread = (4 * amount) / 255;
+    return [
+      kept("vfx-grain"),
+      {
+        element: "feTurbulence",
+        attributes: { type: "fractalNoise", baseFrequency: "0.8", numOctaves: "1", seed: "0", result: "vfx-grain-noise" },
+        timed: (time) => ({ seed: String(Math.max(0, Math.floor(time * GRAIN_RATE))) }),
+      },
+      // Its red as grey, at an alpha of a half, which the sum below takes back out.
+      { element: "feColorMatrix", attributes: { in: "vfx-grain-noise", type: "matrix", values: "1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 0.5", result: "vfx-grain-grey" } },
+      { element: "feComposite", attributes: { in: "vfx-grain", in2: "vfx-grain-grey", operator: "arithmetic", k1: "0", k2: "1", k3: number(2 * spread), k4: number(-spread) } },
+      { element: "feComposite", attributes: { in2: "vfx-grain", operator: "in" } },
+    ];
   },
 };
 
@@ -280,20 +357,30 @@ export const pictureBox = (picture: Picture): Box => ({
   height: (picture.height * picture.item_size[1]) / picture.crop.height,
 });
 
-/** The id of the SVG filter that imitates `effects` on an element of `box` (EffectFilters defines one per distinct pair), or null when they draw nothing. */
-export function effectsFilterId(effects: VideoEffect[] | undefined, box: Box): string | null {
+/** Whether `primitives` change with time (an effect's `timed` ones, a child's included). */
+export const changesWithTime = (primitives: Primitive[]): boolean =>
+  primitives.some((primitive) => !!primitive.timed || changesWithTime(primitive.children ?? []));
+
+/**
+ * The id of the SVG filter that imitates `effects` on an element of `box` (EffectFilters defines one
+ * per distinct pair), or null when they draw nothing. One that changes with time is its item's own:
+ * its time counts from the item's `start` on the Timeline.
+ */
+export function effectsFilterId(effects: VideoEffect[] | undefined, box: Box, start = 0): string | null {
   const drawn = (effects ?? []).filter((effect) => effect.enabled && IMITATIONS[effect.id]);
-  if (!effectPrimitives(drawn, box).length) return null;
+  const primitives = effectPrimitives(drawn, box);
+  if (!primitives.length) return null;
   // Its effects and the box, which the primitives follow from (a map's data URL is too long for an id).
   const parts = drawn.flatMap(({ id, params }) => [id, ...Object.entries(params).flat()]);
-  return `vfx-${[...parts, box.width, box.height].join("-").replace(/[^0-9a-z]/gi, "_")}`;
+  const timed = changesWithTime(primitives) ? ["at", start] : [];
+  return `vfx-${[...parts, box.width, box.height, ...timed].join("-").replace(/[^0-9a-z]/gi, "_")}`;
 }
 
-/** The CSS `filter` that imitates `effects` on an element of `box`, or undefined when they draw nothing. */
-export function effectsFilter(effects: VideoEffect[] | undefined, box: Box): string | undefined {
-  const id = effectsFilterId(effects, box);
+/** The CSS `filter` that imitates `effects` on an element of `box` (of an item from `start`), or undefined when they draw nothing. */
+export function effectsFilter(effects: VideoEffect[] | undefined, box: Box, start = 0): string | undefined {
+  const id = effectsFilterId(effects, box, start);
   return id ? `url(#${id})` : undefined;
 }
 
-/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (1080x1920, scale 1), or undefined when they draw nothing. */
-export const frameEffectsFilter = (effects: VideoEffect[] | undefined): string | undefined => effectsFilter(effects, FRAME);
+/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (1080x1920, scale 1), from its `start`, or undefined when they draw nothing. */
+export const frameEffectsFilter = (effects: VideoEffect[] | undefined, start = 0): string | undefined => effectsFilter(effects, FRAME, start);

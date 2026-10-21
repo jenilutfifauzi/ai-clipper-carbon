@@ -58,7 +58,8 @@ def test_the_registry_lists_its_effects_under_the_video_kind_by_category(client)
     assert [(effect["category"], effect["id"]) for effect in listed] == [
         ("Blur", "gaussian-blur"), ("Blur", "motion-blur"),
         ("Distort", "pixelate"), ("Distort", "chromatic-aberration"), ("Distort", "fisheye"),
-        ("Stylize", "posterize"),
+        ("Light", "glow"), ("Light", "bloom-pulse"),
+        ("Stylize", "posterize"), ("Stylize", "film-grain"),
     ]
     assert all(effect["kind"] == "video" for effect in listed)
     blur = listed[0]

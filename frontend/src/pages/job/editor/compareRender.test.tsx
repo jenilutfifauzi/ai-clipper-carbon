@@ -144,7 +144,7 @@ describe("the before view", () => {
     renderToStaticMarkup(
       <ShowOriginal on={original}>
         <GradeFilters grades={[grade]} />
-        <AdjustedStack filters={[{ id: "a1", grade, effects: [], weight: 0.5, filterId: "adjust-a1" }]}>
+        <AdjustedStack filters={[{ id: "a1", grade, effects: [], start: 0, weight: 0.5, filterId: "adjust-a1" }]}>
           <DecksGraded grade={grade}>
             <DecksGraded grade={grade}>
               <video />

@@ -18,6 +18,9 @@ Sizes (a setting in "px") are output pixels at the picture's fitted size, scale 
 where effects come before the transform: `scaled_effects` multiplies them by the picture's scale,
 as the planner does, so that the plan carries what is drawn. `video_effect_chain` is the stack's
 enabled entries in order, built at the picture's drawn size.
+
+Time (Film grain, Bloom pulse) is the picture's own, from its start on the Timeline, as a Keyframe's
+`at` is: moving an item takes its pulse with it. A `Clock` says where that is on its frames' times.
 """
 
 import math
@@ -51,9 +54,24 @@ class Category(StrEnum):
     CUTOUT = "Cutout"
 
 
-# An effect's filters from its settings (each one given, sizes at the drawn size) and the picture's
-# drawn size (width, height).
-Build = Callable[[dict[str, float], tuple[int, int]], list[str]]
+@dataclass(frozen=True)
+class Clock:
+    """Where a picture's own time (seconds from its start on the Timeline, docs/adr/0014) is on the
+    timestamps of the frames its stack is drawn on: `start` is its start on them, and `rate` how many
+    of its seconds pass in one of theirs (a video Overlay's frames are its video's, before its Speed)."""
+
+    start: float = 0.0
+    rate: float = 1.0
+
+    def of(self, t: str = "t") -> str:
+        """An ffmpeg expression of the picture's own time from `t`, the filter's name for a frame's time."""
+        time = f"({t}-{self.start:.6g})" if self.start else t
+        return time if self.rate == 1 else f"{time}*{self.rate:.6g}"
+
+
+# An effect's filters from its settings (each one given, sizes at the drawn size), the picture's
+# drawn size (width, height) and its Clock.
+Build = Callable[[dict[str, float], tuple[int, int], Clock], list[str]]
 
 
 @dataclass(frozen=True)
@@ -67,6 +85,8 @@ class Effect:
     description: str
     settings: tuple[Setting, ...]
     build: Build = field(repr=False, compare=False)
+    # Whether it changes with time (its picture differs from frame to frame of a still).
+    timed: bool = False
 
     def setting(self, key: str) -> Setting | None:
         return next((setting for setting in self.settings if setting.key == key), None)
@@ -92,12 +112,12 @@ class EffectNotFound(LookupError):
 # Blur
 
 
-def _gaussian_blur(params: dict[str, float], size: tuple[int, int]) -> list[str]:
+def _gaussian_blur(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
     """A Gaussian of sigma `radius` drawn pixels, as Concat's is (the picture's edges extended)."""
     return [f"gblur=sigma={params['radius']:.3f}"]
 
 
-def _motion_blur(params: dict[str, float], size: tuple[int, int]) -> list[str]:
+def _motion_blur(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
     """A blur along one line only, of about a Gaussian's sigma `length` drawn pixels, as Concat's
     streak is. The line is turned `angle` degrees from the horizontal, upwards on the right for a
     positive one (dblur turns the other way)."""
@@ -107,13 +127,13 @@ def _motion_blur(params: dict[str, float], size: tuple[int, int]) -> list[str]:
 # Distort
 
 
-def _pixelate(params: dict[str, float], size: tuple[int, int]) -> list[str]:
+def _pixelate(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
     """Blocks `size` drawn pixels square, each the mean of its pixels, counted from the top left."""
     block = min(max(round(params["size"]), 1), 1024)
     return [f"pixelize=w={block}:h={block}:mode=avg"]
 
 
-def _chromatic_aberration(params: dict[str, float], size: tuple[int, int]) -> list[str]:
+def _chromatic_aberration(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
     """Red scaled up and blue scaled down about the centre, each by `shift` drawn pixels at the
     picture's side edges, as Concat's are; green and the alpha kept. Planes taken apart and merged
     (a per-pixel expression is several times slower); blue's border, uncovered, takes its edge's
@@ -135,7 +155,7 @@ def _chromatic_aberration(params: dict[str, float], size: tuple[int, int]) -> li
     ]
 
 
-def _fisheye(params: dict[str, float], size: tuple[int, int]) -> list[str]:
+def _fisheye(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
     """The middle swollen and the corners kept, as Concat's, whose point at `r` (its distance from the
     centre over the corner's) shows the picture's point `(1 - s) + s r²` times as far out. Here twice
     over with `s` up to 0.3 at 100 % (each a lens correction, then the part whose samples stay on the
@@ -151,15 +171,69 @@ def _fisheye(params: dict[str, float], size: tuple[int, int]) -> list[str]:
     return [f"{stage},{stage}"]
 
 
+# Light
+
+# The spread of Glow's and Bloom pulse's light, a Gaussian's sigma in output pixels at the fitted
+# size (Concat's are 16 and 12 of its picture's pixels).
+GLOW_SIGMA = 16.0
+BLOOM_SIGMA = 12.0
+# The frame a fitted picture fits, whose size a picture's light spreads with.
+_FRAME = (1080, 1920)
+
+
+def _screened(size: tuple[int, int], sigma: float, light: str, over: str) -> list[str]:
+    """The picture with its own light, `light` (filters of a planar RGB copy of it, a quarter its size
+    each way), blurred by a Gaussian of `sigma` drawn pixels at that quarter size, scaled back and
+    screened over it, as two projectors add light: the blend's `over` options for red, green and blue
+    (its strength), its alpha kept. A picture's own sigma grows with its size, as its fitted size's
+    scale (the larger of its width and height over the frame's). One part: its labels run it on every
+    frame."""
+    width, height = size
+    spread = sigma * max(width / _FRAME[0], height / _FRAME[1]) / 4
+    quarter = f"{max(1, round(width / 4))}:{max(1, round(height / 4))}"
+    return [
+        f"format=gbrap,setsar=1,split[base][light];"
+        f"[light]scale={quarter},{light}{',' if light else ''}gblur=sigma={spread:.3f},scale={width}:{height},setsar=1[glow];"
+        f"[base][glow]blend=c0_mode=screen:c1_mode=screen:c2_mode=screen:{over}c3_mode=normal,format={EFFECTS_FORMAT}"
+    ]
+
+
+def _glow(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
+    """The picture's light spread wide and screened back over it by `amount`, as Concat's."""
+    amount = params["amount"] / 100
+    over = "".join(f"c{plane}_opacity={amount:.4f}:" for plane in range(3))
+    return _screened(size, GLOW_SIGMA, "", over)
+
+
+def _bloom_pulse(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
+    """The highlights' light (each pixel weighted by how far its luma is past 0.55, smoothed and taken
+    to the 2.4th power, as Concat's) spread and screened back over the picture, at a strength
+    `amount` × (0.6 + 0.4 sin(time × `speed`)) of its own time: it breathes, a full breath every
+    2π / `speed` seconds from its start."""
+    luma = "(0.2126*r(X,Y)+0.7152*g(X,Y)+0.0722*b(X,Y))/255"
+    knee = f"clip(({luma}-0.55)/0.45,0,1)"
+    strength = f"{params['amount'] / 100:.4f}*(0.6+0.4*sin({clock.of('T')}*{params['speed']:g}))"
+    weight = f"max({strength},0)*pow({knee}*{knee}*(3-2*{knee}),2.4)"
+    light = f"geq=r='r(X,Y)*{weight}':g='g(X,Y)*{weight}':b='b(X,Y)*{weight}'"
+    return _screened(size, BLOOM_SIGMA, light, "")
+
+
 # Stylize
 
 
-def _posterize(params: dict[str, float], size: tuple[int, int]) -> list[str]:
+def _posterize(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
     """Each of red, green and blue rounded to the nearest of `levels` evenly spaced values, black and
     white among them, as Concat's (on the display's values, as here). The alpha kept."""
     steps = round(params["levels"]) - 1
     table = f"round(val*{steps}/255)*255/{steps}"
     return [f"format=gbrap,lutrgb=r='{table}':g='{table}':b='{table}',format={EFFECTS_FORMAT}"]
+
+
+def _film_grain(params: dict[str, float], size: tuple[int, int], clock: Clock) -> list[str]:
+    """Grain in the brightness alone, as Concat's (the same in red, green and blue): each pixel moved
+    up or down by up to `amount` of 255, evenly, in a new pattern every frame (counted from the first
+    frame the stack draws)."""
+    return [f"noise=c0s={min(100, round(2 * params['amount']))}:c0f=t+u"]
 
 
 _EFFECTS = (
@@ -186,8 +260,21 @@ _EFFECTS = (
         (Setting("strength", "Strength", 5, 100, 50, 1, "%", intensity=True),), _fisheye,
     ),
     Effect(
+        "glow", "Glow", Category.LIGHT, 10, "A soft bloom around the bright parts of the picture.",
+        (Setting("amount", "Amount", 10, 100, 45, 1, "%", intensity=True),), _glow,
+    ),
+    Effect(
+        "bloom-pulse", "Bloom pulse", Category.LIGHT, 20, "A soft bloom over the highlights that breathes in and out.",
+        (Setting("amount", "Amount", 0, 100, 50, 1, "%", intensity=True), Setting("speed", "Speed", 0.5, 5, 2, 0.1)),
+        _bloom_pulse, timed=True,
+    ),
+    Effect(
         "posterize", "Posterize", Category.STYLIZE, 10, "Flat bands of colour, like a screen print.",
         (Setting("levels", "Levels", 2, 8, 4, 1, intensity=True),), _posterize,
+    ),
+    Effect(
+        "film-grain", "Film grain", Category.STYLIZE, 20, "Dancing grain, the texture of film stock.",
+        (Setting("amount", "Amount", 2, 40, 12, 1, intensity=True),), _film_grain, timed=True,
     ),
 )
 _BY_ID = {effect.id: effect for effect in _EFFECTS}
@@ -264,8 +351,14 @@ def scaled_effects(stack: list[VideoEffect], scale: float) -> list[VideoEffect]:
     return scaled
 
 
+def changes_with_time(stack: list[VideoEffect]) -> bool:
+    """Whether a drawn entry of `stack` changes the picture from frame to frame (Film grain, Bloom
+    pulse), so that a still image with it is read as a looping stream rather than drawn once."""
+    return any(_BY_ID[applied.id].timed for applied in enabled_video_effects(stack) if applied.id in _BY_ID)
+
+
 def video_effect_chain(
-    stack: list[VideoEffect], size: tuple[int, int], enable: str | None = None, label: str = "vfx"
+    stack: list[VideoEffect], size: tuple[int, int], enable: str | None = None, label: str = "vfx", clock: Clock = Clock()
 ) -> list[str]:
     """The filters `stack` (checked, its sizes as drawn) is drawn through on a picture of `size`
     (width, height): its enabled entries in order, on `EFFECTS_FORMAT`. Nothing for a stack with
@@ -274,11 +367,11 @@ def video_effect_chain(
     only while it holds and passes the other frames through untouched; a part with labels of its own
     works throughout, which costs time but draws the same once laid over within the span. A builder's
     own labels are prefixed with `label` and the entry's place, which the caller makes unique in its
-    filtergraph."""
+    filtergraph. An effect that changes with time counts the picture's own time by `clock`."""
     parts = [
         _labelled(part, f"{label}{i}_")
         for i, applied in enumerate(enabled_video_effects(stack))
-        for part in get_effect(applied.id).build(applied.params, size)
+        for part in get_effect(applied.id).build(applied.params, size, clock)
     ]
     if not parts:
         return []

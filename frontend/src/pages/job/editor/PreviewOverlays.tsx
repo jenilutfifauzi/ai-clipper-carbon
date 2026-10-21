@@ -88,6 +88,7 @@ function OverlayView({
         look={look}
         grade={event.grade}
         effects={event.video_effects}
+        start={start}
         media={
           image ? (
             <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" />

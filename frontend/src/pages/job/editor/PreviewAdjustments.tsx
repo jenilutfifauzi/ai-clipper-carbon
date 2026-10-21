@@ -43,8 +43,8 @@ export function AdjustedStack({ filters: layers, children }: { filters: Adjustme
         <svg aria-hidden width={0} height={0} className="pointer-events-none absolute">
           <defs>
             {filters.map(
-              ({ filterId, grade, effects, weight }) =>
-                filterId && <GradeFilter key={filterId} id={filterId} grade={grade} mix={weight} effects={effects} box={FRAME} />,
+              ({ filterId, grade, effects, start, weight }) =>
+                filterId && <GradeFilter key={filterId} id={filterId} grade={grade} mix={weight} effects={effects} box={FRAME} start={start} />,
             )}
           </defs>
         </svg>

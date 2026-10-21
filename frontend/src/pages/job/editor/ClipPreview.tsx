@@ -37,7 +37,7 @@ import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from ".
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
-import { DecksGraded, EffectFilters, GradeFilters } from "./GradeFilters";
+import { DecksGraded, EffectFilters, EffectsClock, GradeFilters } from "./GradeFilters";
 import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
@@ -209,7 +209,7 @@ export function ClipPreview({
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
   const scene = drawn?.scenes[sceneIndex];
 
-  const frame = (
+  const stageFrame = (
     <div
       ref={stage}
       className={cx(
@@ -240,8 +240,8 @@ export function ClipPreview({
       {drawn && (
         <EffectFilters
           items={[
-            ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: FRAME })),
-            ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture) })),
+            ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: FRAME, start: segment.start })),
+            ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
           ]}
         />
       )}
@@ -254,7 +254,11 @@ export function ClipPreview({
             {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
             <div ref={incoming} className="absolute inset-0">
               {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included. */}
-              <DecksGraded grade={drawn?.segments[shownSegment]?.grade} effects={drawn?.segments[shownSegment]?.video_effects}>
+              <DecksGraded
+                grade={drawn?.segments[shownSegment]?.grade}
+                effects={drawn?.segments[shownSegment]?.video_effects}
+                start={drawn?.segments[shownSegment]?.start}
+              >
                 {decks.map((refs, deck) =>
                   refs.map((ref, slot) => (
                     <PanelView
@@ -342,6 +346,8 @@ export function ClipPreview({
       <PreviewEffected plan={plan} playback={playback} />
     </div>
   );
+  // Its Video Effects that change with time follow the playback.
+  const frame = <EffectsClock playback={playback}>{stageFrame}</EffectsClock>;
   if (fit) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2">

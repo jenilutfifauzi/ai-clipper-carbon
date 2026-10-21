@@ -110,6 +110,56 @@
     ]
   },
   {
+    "id": "glow",
+    "kind": "video",
+    "name": "Glow",
+    "category": "Light",
+    "order": 10,
+    "description": "A soft bloom around the bright parts of the picture.",
+    "settings": [
+      {
+        "key": "amount",
+        "label": "Amount",
+        "min": 10,
+        "max": 100,
+        "default": 45,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "bloom-pulse",
+    "kind": "video",
+    "name": "Bloom pulse",
+    "category": "Light",
+    "order": 20,
+    "description": "A soft bloom over the highlights that breathes in and out.",
+    "settings": [
+      {
+        "key": "amount",
+        "label": "Amount",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      },
+      {
+        "key": "speed",
+        "label": "Speed",
+        "min": 0.5,
+        "max": 5,
+        "default": 2,
+        "step": 0.1,
+        "unit": "",
+        "intensity": false
+      }
+    ]
+  },
+  {
     "id": "posterize",
     "kind": "video",
     "name": "Posterize",
@@ -123,6 +173,26 @@
         "min": 2,
         "max": 8,
         "default": 4,
+        "step": 1,
+        "unit": "",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "film-grain",
+    "kind": "video",
+    "name": "Film grain",
+    "category": "Stylize",
+    "order": 20,
+    "description": "Dancing grain, the texture of film stock.",
+    "settings": [
+      {
+        "key": "amount",
+        "label": "Amount",
+        "min": 2,
+        "max": 40,
+        "default": 12,
         "step": 1,
         "unit": "",
         "intensity": true

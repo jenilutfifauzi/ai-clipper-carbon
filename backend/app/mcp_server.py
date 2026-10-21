@@ -337,14 +337,16 @@ Edits:
 - An Overlay's `video_effects` is its picture's ordered stack of Video Effects, each
   {{id, params, enabled}}: id from list_assets kind "video_effects" (with each setting's range and
   default: e.g. "gaussian-blur", "motion-blur", "pixelate", "chromatic-aberration", "fisheye",
-  "posterize"), params a setting's key to its value (one left
+  "glow", "bloom-pulse", "posterize", "film-grain"), params a setting's key to its value (one left
   out takes its default), enabled false to keep it in the stack undrawn. They run in turn after its
   Grade and before its corners, border, rotation, shadow and opacity. A size (a setting in px) is
   output pixels at the picture's fitted size (scale 1): the render multiplies it by the larger of
   scale x stretch_x and scale x stretch_y, so a bigger picture gets a bigger blur. An effect appears
   once in a stack; an unknown id or setting, a value out of range or a second entry of an id is
   refused. merge_candidate_items replaces an Overlay's stack as a whole. The dry run lists each
-  Overlay's enabled ones, their sizes as drawn (scaled).
+  Overlay's enabled ones, their sizes as drawn (scaled). Film grain moves every frame and Bloom
+  pulse breathes, both in seconds from the item's own start, so moving an item moves its pulse; an
+  image Overlay with either is drawn as a moving picture.
 - A Segment's `video_effects` (of the episode or a video, a Freeze frame too) is the same stack over
   its whole frame (panels, picture and Background): after its Grade and before the joins, so a
   Transition crossfades pictures that already carry them. Its frame is 1080x1920 at scale 1, so its
