@@ -1840,6 +1840,12 @@ export const api = {
   // Cancels a Narration being made: it stops before its next sentence and leaves nothing. Rejects with a
   // 409 when it has ended already.
   cancelNarration: (id: string) => request<void>(`/narrations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // A Voice reading a fixed sentence in `language` (a WAV), made once and kept on this Mac. Rejects with
+  // a 409 while a Narration or another sample is being made, a 422 for an engine that isn't ready.
+  voiceSample: (engine: string, voice: string, language: string) =>
+    send(`/voices/${encodeURIComponent(engine)}/${encodeURIComponent(voice)}/sample?lang=${encodeURIComponent(language)}`).then((response) =>
+      response.blob(),
+    ),
 };
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;

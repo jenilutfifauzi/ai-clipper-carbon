@@ -53,7 +53,7 @@ Today:
   - Speed goes to an engine that takes one natively (OpenAI's `speed`). Gemini's read is retimed after, its pitch kept (`atempo`, as a Music Clip's Speed), sentence by sentence so the pauses keep their length.
   - Gemini always takes a Style; an OpenAI-compatible engine when `TTS_STYLE` says so, by default when its model takes instructions (`gpt-4o-mini-tts`). A Style sent to an engine that takes none is refused.
   - Under the script, an estimate of its length from a characters-per-second pace per language, scaled by Speed.
-  - A sample is a fixed sentence in the Job's language, made on first play and kept on this Mac per engine, Voice and language.
+  - A sample is a fixed sentence in the Job's language (Indonesian or English; English for any other), made on first play and kept on this Mac per engine, Voice and language. It is read at 1× with no Style and levelled as a Narration is, so it sounds like the result, and it takes the one-at-a-time runner's turn: a sample and a Narration refuse each other as busy. Kept samples are WAV files under `DATA_DIR/voice-samples`.
 - **The Narrate tab sits in the asset panel and works on phones too**, since nothing needs the microphone.
 - **MCP:**
   - `list_assets(kind="voices")` lists the ready engines and Voices.

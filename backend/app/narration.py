@@ -13,9 +13,16 @@ speech with loudnorm's two passes, and the WAV is added through the Media Librar
 or `cancelled`; its work folder goes whichever. A cloud engine's passing failure (TransientSpeechError:
 a 429, a 5xx, the network) on a sentence is read again once, after the service's Retry-After or
 RETRY_WAIT_SECS. A cancel is heard between sentences, and before levelling and saving.
+
+A Voice's sample is a fixed sentence or two in the Job's language (SAMPLE_TEXTS; English for a language
+with none) read at 1× with no Style and levelled as a Narration is, so it sounds like the result. It is
+made through the same one-at-a-time lock (NarrationBusy while a Narration or another sample is being
+made) and kept in `samples_dir` per engine, Voice and language, served from there afterwards without
+the engine.
 """
 
 import asyncio
+import hashlib
 import json
 import math
 import re
@@ -37,8 +44,15 @@ from app.media import MediaItem, MediaStore
 from app.renderer import last_lines, speed_filters
 from app.voices import Pcm, SpeechError, TransientSpeechError, Voice, VoiceEngine
 
-# In DATA_DIR: a folder per Narration being made.
+# In DATA_DIR: a folder per Narration being made; and the Voice samples kept, a folder per engine.
 NARRATIONS_DIR = "narrations"
+VOICE_SAMPLES_DIR = "voice-samples"
+# What a Voice's sample reads, per language; a language with none is read the English one.
+SAMPLE_TEXTS = {
+    "id": "Halo, ini suara saya. Beginilah narasi Anda akan terdengar.",
+    "en": "Hi, this is my voice. This is how your narration will sound.",
+}
+SAMPLE_FALLBACK = "en"
 # The longest script, in characters once trimmed: a runaway paste doesn't run for minutes or burn quota.
 MAX_CHARS = 5_000
 # The silence between two sentences, in seconds: the pause slider's None (0) to Longer.
@@ -127,11 +141,13 @@ class NarrationRunner:
         ffmpeg: Path,
         work_dir: Path,
         now: Callable[[], datetime] = datetime.now,
+        samples_dir: Path | None = None,
     ) -> None:
         self.media = media
         self.engines = list(engines)
         self.ffmpeg = ffmpeg
         self.work_dir = work_dir
+        self.samples_dir = samples_dir or work_dir.parent / VOICE_SAMPLES_DIR
         self._now = now
         self._busy = threading.Lock()
         self._lock = threading.Lock()
@@ -139,6 +155,48 @@ class NarrationRunner:
 
     def engine(self, engine_id: str) -> VoiceEngine | None:
         return next((engine for engine in self.engines if engine.id == engine_id), None)
+
+    def _ready_voice(self, engine_id: str, voice_id: str) -> tuple[VoiceEngine, Voice]:
+        engine = self.engine(engine_id)
+        if engine is None:
+            raise NarrationRefused(f"No speech engine {engine_id!r} is set up")
+        voice = next((voice for voice in engine.voices() if voice.id == voice_id), None)
+        if voice is None:
+            raise NarrationRefused(f"{engine.label} has no Voice {voice_id!r}")
+        if not engine.ready():
+            raise NarrationRefused(f"{engine.label} isn't ready")
+        return engine, voice
+
+    def sample(self, engine_id: str, voice_id: str, language: str | None) -> Path:
+        """The WAV of the Voice reading SAMPLE_TEXTS in `language` (its first part: "pt-BR" is "pt"),
+        made the first time and kept. NarrationRefused for an unknown engine or Voice or an engine that
+        isn't ready; NarrationBusy while a Narration or another sample is being made; SpeechError when
+        the engine fails."""
+        engine, voice = self._ready_voice(engine_id, voice_id)
+        lang = (language or "").split("-")[0].lower()
+        lang = lang if lang in SAMPLE_TEXTS else SAMPLE_FALLBACK
+        kept = self.samples_dir / _safe(engine.id) / f"{_safe(voice.id)}.{lang}.wav"
+        if kept.is_file():
+            return kept
+        if not self._busy.acquire(blocking=False):
+            raise NarrationBusy("A Narration is being made: play the sample once it is done")
+        folder = self.work_dir / f"sample-{uuid4().hex}"
+        try:
+            if kept.is_file():  # made by the request that held the lock just before
+                return kept
+            folder.mkdir(parents=True, exist_ok=True)
+            parts, lengths = [], []
+            for i, sentence in enumerate(sentences(SAMPLE_TEXTS[lang])):
+                pcm = self._read(threading.Event(), engine, sentence, voice.id, None, DEFAULT_SPEED)
+                parts.append(_write_wav(folder / f"{i}.wav", pcm))
+                lengths.append(pcm.secs)
+            made = self._join(parts, lengths, DEFAULT_PAUSE_SECS, DEFAULT_SPEED, folder / "sample.wav")
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            made.replace(kept)
+            return kept
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+            self._busy.release()
 
     def start(self, request: NarrationRequest) -> str:
         """Start making a Narration; its id. NarrationRefused for an empty or too long script, an unknown
@@ -149,14 +207,7 @@ class NarrationRunner:
             raise NarrationRefused("Type a script to narrate")
         if len(text) > MAX_CHARS:
             raise NarrationRefused(f"A script can be {MAX_CHARS:,} characters at most; this one has {len(text):,}")
-        engine = self.engine(request.engine)
-        if engine is None:
-            raise NarrationRefused(f"No speech engine {request.engine!r} is set up")
-        voice = next((voice for voice in engine.voices() if voice.id == request.voice), None)
-        if voice is None:
-            raise NarrationRefused(f"{engine.label} has no Voice {request.voice!r}")
-        if not engine.ready():
-            raise NarrationRefused(f"{engine.label} isn't ready")
+        engine, voice = self._ready_voice(request.engine, request.voice)
         if not MIN_SPEED <= request.speed <= MAX_SPEED:
             raise NarrationRefused(f"The Speed can be {MIN_SPEED:g}–{MAX_SPEED:g}×; this one is {request.speed:g}×")
         style = (request.style or "").strip() or None
@@ -241,7 +292,7 @@ class NarrationRunner:
             stage(READING, 0)
             parts, lengths = [], []
             for i, sentence in enumerate(read):
-                pcm = self._read(narration, engine, sentence, voice.id, style, speed)
+                pcm = self._read(narration.cancelled, engine, sentence, voice.id, style, speed)
                 parts.append(_write_wav(folder / f"{i}.wav", pcm))
                 lengths.append(pcm.secs)
                 stage(READING, i + 1)
@@ -263,7 +314,7 @@ class NarrationRunner:
             shutil.rmtree(folder, ignore_errors=True)
             self._busy.release()
 
-    def _read(self, narration: _Narration, engine: VoiceEngine, sentence: str, voice: str, style: str | None, speed: float) -> Pcm:
+    def _read(self, cancelled: threading.Event, engine: VoiceEngine, sentence: str, voice: str, style: str | None, speed: float) -> Pcm:
         """The sentence read (at `speed` by an engine that takes one), once more after a passing
         failure: after its Retry-After, or RETRY_WAIT_SECS, unless a cancel comes meanwhile."""
 
@@ -274,7 +325,7 @@ class NarrationRunner:
             return read()
         except TransientSpeechError as exc:
             wait = RETRY_WAIT_SECS if exc.retry_after is None else exc.retry_after
-            if narration.cancelled.wait(wait):
+            if cancelled.wait(wait):
                 raise _Cancelled from None
             return read()
 
@@ -306,6 +357,13 @@ class NarrationRunner:
         )
         _run([*base, "-v", "error", "-y", "-filter_complex", f"{joined},{level}", "-ac", "1", "-c:a", "pcm_s16le", str(out)])
         return out
+
+
+def _safe(name: str) -> str:
+    """`name` as a file name: kept when it is plain letters, digits, - and _, else made so and told apart
+    from another made the same by a short hash of it."""
+    plain = re.sub(r"[^A-Za-z0-9_-]", "_", name)
+    return plain if plain == name and name else f"{plain}-{hashlib.sha256(name.encode()).hexdigest()[:8]}"
 
 
 def _write_wav(path: Path, pcm: Pcm) -> Path:

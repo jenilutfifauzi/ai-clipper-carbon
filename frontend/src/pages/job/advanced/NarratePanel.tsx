@@ -1,4 +1,4 @@
-import { Speech, X } from "lucide-react";
+import { LoaderCircle, Play, Speech, Square, X } from "lucide-react";
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { api, type NarrationRequest, type VoicesList } from "../../../api";
 import { Button } from "../../../components/Button";
@@ -20,7 +20,10 @@ import {
   PAUSE_STOPS,
   rememberChoice,
   rememberedVoice,
+  playSound,
   scriptTooLong,
+  VoiceSamples,
+  type SampleState,
   type NarrateDraft,
   type NarratedTitle,
   type NarrateFlow,
@@ -37,7 +40,8 @@ import { speedLabel } from "./speed";
  * `prefill`). The engines and Voices are loaded once, with the default engine for the Job's
  * `language`; the browser remembers the last engine and Voice chosen, which win over it. While it is
  * made, its progress and Cancel take Generate's place; the draft is the flow's, so it outlives the tab.
- * Generate is off with the start `atEnd` of the Clip, and past 5,000 characters.
+ * Generate is off with the start `atEnd` of the Clip, and past 5,000 characters. Each Voice has Play
+ * sample (VoiceSamples), in the Job's language; it says busy when a Narration elsewhere holds the runner.
  */
 export function NarratePanel({ flow, language, atEnd, title }: { flow: NarrateFlow; language: string; atEnd: boolean; title: NarratedTitle | null }) {
   const [voices, setVoices] = useState<VoicesList | null>(null);
@@ -48,6 +52,9 @@ export function NarratePanel({ flow, language, atEnd, title }: { flow: NarrateFl
   const state = useSyncExternalStore(flow.subscribe, () => flow.state, () => flow.state);
   const draft = useSyncExternalStore(flow.subscribe, () => flow.draft, () => flow.draft);
   const remembered = rememberedVoice.use();
+  const [samples] = useState(() => new VoiceSamples({ fetch: api.voiceSample, play: playSound }));
+  const sample = useSyncExternalStore(samples.subscribe, () => samples.state, () => samples.state);
+  useEffect(() => samples.stop, [samples]);
   // Its words in the script on opening the tab, and again when another title is picked while it shows.
   const words = title?.script ?? null;
   useEffect(() => flow.prefill(words), [flow, words]);
@@ -68,6 +75,8 @@ export function NarratePanel({ flow, language, atEnd, title }: { flow: NarrateFl
       }}
       onGenerate={(body) => void flow.generate(body, title?.start)}
       onCancel={flow.cancel}
+      sample={sample}
+      onSample={(engine, voice) => void samples.play(engine, voice, language)}
     />
   );
 }
@@ -85,6 +94,8 @@ export function NarrateFields({
   onDraft,
   onGenerate,
   onCancel,
+  sample = null,
+  onSample = () => {},
 }: {
   voices: VoicesList;
   language?: string;
@@ -96,6 +107,9 @@ export function NarrateFields({
   onDraft: (change: Partial<NarrateDraft>) => void;
   onGenerate: (body: NarrationRequest) => void;
   onCancel: () => void;
+  // The Play sample loading, playing or refused, and Play sample pressed (engine and Voice ids).
+  sample?: SampleState;
+  onSample?: (engine: string, voice: string) => void;
 }) {
   const id = useId();
   const ready = voices.engines.filter((engine) => engine.ready);
@@ -135,23 +149,35 @@ export function NarrateFields({
         disabled={making}
       />
       <div role="radiogroup" aria-label="Voice" className="flex max-h-56 flex-col gap-1 overflow-y-auto">
-        {engine.voices.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            role="radio"
-            aria-checked={option.id === chosen?.id}
-            onClick={() => onDraft({ engine: engine.id, voice: option.id })}
-            className={cx(
-              "flex min-h-11 flex-col items-start justify-center rounded-[10px] px-3 py-1.5 text-left",
-              "focus-visible:outline-2 focus-visible:outline-focus",
-              option.id === chosen?.id ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
-            )}
-          >
-            <span className="text-sm font-medium">{option.name}</span>
-            <span className="text-xs">{option.detail}</span>
-          </button>
-        ))}
+        {engine.voices.map((option) => {
+          const playing = sample?.engine === engine.id && sample.voice === option.id ? sample : null;
+          return (
+            <div key={option.id} className="flex flex-col">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={option.id === chosen?.id}
+                  onClick={() => onDraft({ engine: engine.id, voice: option.id })}
+                  className={cx(
+                    "flex min-h-11 flex-1 flex-col items-start justify-center rounded-[10px] px-3 py-1.5 text-left",
+                    "focus-visible:outline-2 focus-visible:outline-focus",
+                    option.id === chosen?.id ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
+                  )}
+                >
+                  <span className="text-sm font-medium">{option.name}</span>
+                  <span className="text-xs">{option.detail}</span>
+                </button>
+                <SampleButton voice={option.name} state={playing} disabled={!engine.ready || making} onPlay={() => onSample(engine.id, option.id)} />
+              </div>
+              {playing && (playing.phase === "busy" || playing.phase === "failed") && (
+                <p role="status" className={cx("px-3 text-xs", playing.phase === "busy" ? "text-muted" : "text-danger")}>
+                  {playing.message}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
       <Slider
         label="Speed"
@@ -220,6 +246,24 @@ export function NarrateFields({
         </div>
       )}
     </div>
+  );
+}
+
+/** A Voice's Play sample: a spinner while it is made, Stop while it plays. Off for an engine that isn't
+ * ready (Kokoro before its download) and while a Narration is being made. */
+function SampleButton({ voice, state, disabled, onPlay }: { voice: string; state: SampleState; disabled: boolean; onPlay: () => void }) {
+  const phase = state?.phase;
+  const label = phase === "playing" ? `Stop the sample of ${voice}` : phase === "loading" ? `Making the sample of ${voice}` : `Play sample of ${voice}`;
+  return (
+    <Button variant="ghost" size="icon" aria-label={label} title={label} disabled={disabled} onClick={onPlay}>
+      {phase === "loading" ? (
+        <LoaderCircle aria-hidden size={18} className="motion-safe:animate-spin" />
+      ) : phase === "playing" ? (
+        <Square aria-hidden size={16} />
+      ) : (
+        <Play aria-hidden size={18} />
+      )}
+    </Button>
   );
 }
 

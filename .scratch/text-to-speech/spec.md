@@ -144,9 +144,9 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - It answers 409 when busy and 422 when the text is empty or too long, or the engine or Voice is unknown or not ready.
 - `GET /api/narrations/{id}/events` is an SSE stream of `progress` (`{stage, done, of}`), then `done` with the Media item, `failed` with the message, or `cancelled`. It follows the existing job events style, and opened late it replays everything.
 - `DELETE /api/narrations/{id}` cancels: 204, 404 for an unknown one, 409 for one that has ended.
-- `GET /api/voices/{engine}/{voice}/sample?lang=` returns the sample sound.
-  - It is made on first request from a fixed sentence per language (Indonesian and English) and kept on this Mac per engine, Voice and language.
-  - It is refused when the engine isn't ready. Samples share the one-at-a-time runner, so a sample is refused as busy while a Narration is being made.
+- `GET /api/voices/{engine}/{voice}/sample?lang=` returns the sample sound, a WAV.
+  - It is made on first request from a fixed sentence per language (Indonesian and English; English for any other language), read at 1× with no Style and levelled as a Narration is, and kept on this Mac per engine, Voice and language (under `DATA_DIR/voice-samples`).
+  - It is refused (422) when the engine isn't ready or the Voice is unknown. Samples share the one-at-a-time runner, so a sample is refused as busy (409) while a Narration is being made, and a Narration while a sample is being read. A kept sample is served whatever is running. An engine's failure answers 502 with its message, and nothing is kept.
 - `POST /api/voices/kokoro/download` starts the download, `DELETE` on the same path cancels it, and `DELETE /api/voices/kokoro` removes the model. Removal answers 409 while a Narration or sample is being made.
 - Download progress shows in `GET /api/voices`, which the tab polls while downloading.
 

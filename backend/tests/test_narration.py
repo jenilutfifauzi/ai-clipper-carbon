@@ -1,10 +1,11 @@
 """A Narration read by a Voice (.scratch/text-to-speech/issues/01-narration-with-gemini.md and
-02-progress-cancel-and-failures.md, 04-speed-style-and-estimate.md, docs/adr/0019).
+02-progress-cancel-and-failures.md, 04-speed-style-and-estimate.md, 06-voice-samples.md, docs/adr/0019).
 Seam A: the HTTP API, MCP's dry run and the real ffmpeg, with FakeVoiceEngine (a second of tone per
 sentence) in place of the cloud."""
 
 import json
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -438,3 +439,88 @@ def test_a_narration_whose_stream_nobody_reads_still_adds_its_item(client):
     # Opened late, its stream still tells it.
     [(name, told)] = ending(client, started.json()["id"])
     assert (name, told["id"]) == ("done", item["id"])
+
+
+def sample(client, voice: str = "ana", lang: str | None = "id", engine: str = "fake"):
+    return client.get(f"/api/voices/{engine}/{voice}/sample", params={} if lang is None else {"lang": lang})
+
+
+def test_the_first_sample_reads_the_languages_sentence_once_and_the_second_is_kept(client, settings, tmp_path, engine):
+    first = sample(client)
+    assert first.status_code == 200, first.text
+    assert first.headers["content-type"] == "audio/wav"
+    # Read at 1× and with no Style, one sentence at a time, in Indonesian.
+    assert engine.reads == [(sentence, "ana", None) for sentence in sentences(narration.SAMPLE_TEXTS["id"])]
+    assert set(engine.speeds) == {1.0}
+    path = tmp_path / "sample.wav"
+    path.write_bytes(first.content)
+    # Levelled as a Narration is.
+    command = [str(settings.ffmpeg_bin), "-hide_banner", "-nostats", "-i", str(path), "-af", "loudnorm=print_format=json", "-f", "null", "-"]
+    output = subprocess.run(command, capture_output=True, text=True, check=True).stderr
+    assert float(json.loads(output[output.rindex("{") : output.rindex("}") + 1])["input_i"]) == pytest.approx(narration.LUFS, abs=1.5)
+    reads = len(engine.reads)
+    second = sample(client)
+    assert second.status_code == 200 and second.content == first.content
+    assert len(engine.reads) == reads
+    assert list((settings.data_dir / narration.VOICE_SAMPLES_DIR).rglob("*.wav"))
+    # Nothing was added to the Media Library.
+    assert client.get("/api/media").json() == []
+
+
+def test_a_different_language_or_voice_makes_a_new_sample_and_a_language_without_a_sentence_reads_english(client, engine):
+    assert sample(client, lang="id").status_code == 200
+    assert sample(client, lang="en").status_code == 200
+    assert sample(client, voice="budi", lang="id").status_code == 200
+    english = sentences(narration.SAMPLE_TEXTS["en"])
+    indonesian = sentences(narration.SAMPLE_TEXTS["id"])
+    assert engine.reads == [
+        *[(s, "ana", None) for s in indonesian],
+        *[(s, "ana", None) for s in english],
+        *[(s, "budi", None) for s in indonesian],
+    ]
+    reads = len(engine.reads)
+    # French has no sentence of its own: the English sample, kept already.
+    assert sample(client, lang="fr").status_code == 200
+    assert sample(client, lang=None).status_code == 200
+    assert len(engine.reads) == reads
+
+
+def test_a_sample_while_a_narration_is_being_made_is_busy_and_a_narration_while_a_sample_is_read_too(client, engine):
+    engine.hold()
+    first = narrate(client, "Halo.")
+    assert first.status_code == 202
+    busy = sample(client)
+    assert busy.status_code == 409 and "A Narration is being made" in busy.json()["detail"]
+    engine.release()
+    [(name, _)] = ending(client, first.json()["id"])
+    assert name == "done"
+
+    engine.hold(after=len(engine.reads))
+    reads = len(engine.reads)
+    answer = {}
+    reading = threading.Thread(target=lambda: answer.update(response=sample(client, voice="budi")))
+    reading.start()
+    until(lambda: len(engine.reads) > reads)
+    assert narrate(client, "Lagi.").status_code == 409
+    engine.release()
+    reading.join(timeout=10)
+    assert answer["response"].status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("engine_id", "voice", "message"),
+    [("asleep", "ana", "isn't ready"), ("fake", "nobody", "has no Voice"), ("nope", "ana", "No speech engine")],
+)
+def test_a_sample_for_an_engine_that_isnt_ready_or_an_unknown_voice_is_refused(client, engine, engine_id, voice, message):
+    refused = sample(client, voice=voice, engine=engine_id)
+    assert refused.status_code == 422 and message in refused.json()["detail"]
+    assert engine.reads == []
+
+
+def test_a_failed_sample_is_502_with_the_engines_message_and_nothing_is_kept(client, settings, engine):
+    engine.fail_with("Fake ran out of quota")
+    failed = sample(client)
+    assert failed.status_code == 502 and "Fake ran out of quota" in failed.json()["detail"]
+    assert not list((settings.data_dir / narration.VOICE_SAMPLES_DIR).rglob("*.wav"))
+    engine.fail_with(None)
+    assert sample(client).status_code == 200

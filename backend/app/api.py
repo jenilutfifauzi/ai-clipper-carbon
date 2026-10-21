@@ -112,7 +112,7 @@ from app.styles import (
 )
 from app.transcript import Language, Transcript, Word
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
-from app.voices import default_engine
+from app.voices import SpeechError, default_engine
 from app.worker import Worker
 
 router = APIRouter(prefix="/api")
@@ -1945,6 +1945,23 @@ def list_voices(narrations: Narrations, language: Language | None = None) -> Voi
         for engine in narrations.engines
     ]
     return VoicesList(engines=engines, default=default_engine(narrations.engines, language))
+
+
+@router.get("/voices/{engine}/{voice}/sample", response_class=FileResponse)
+def voice_sample(engine: str, voice: str, narrations: Narrations, lang: Language | None = None) -> FileResponse:
+    """The Voice reading a fixed sentence in `lang` (English for a language with none), as WAV: made the
+    first time, through the one-at-a-time runner, and kept on this Mac per engine, Voice and language.
+    422 for an unknown engine or Voice or an engine that isn't ready; 409 while a Narration or another
+    sample is being made; 502 when the engine fails."""
+    try:
+        path = narrations.sample(engine, voice, lang)
+    except NarrationRefused as exc:
+        raise HTTPException(422, str(exc)) from None
+    except NarrationBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+    except SpeechError as exc:
+        raise HTTPException(502, str(exc)) from None
+    return FileResponse(path, media_type="audio/wav")
 
 
 @router.post("/narrations", status_code=202)

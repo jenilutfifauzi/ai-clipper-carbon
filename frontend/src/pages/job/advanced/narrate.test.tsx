@@ -11,9 +11,11 @@
 // carrying them, and the estimate of the read's length with the 5,000-character limit.
 // And 05-narrate-a-picked-title.md: a picked Text Layer or the hook fills the script and fixes the start
 // at its start, the earliest of several winning; an edited script is sent, from the item's start.
+// And 06-voice-samples.md: Play sample on each Voice plays the sound the backend returns, once at a
+// time, and tells busy when the backend refuses it.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { MediaItem, MusicClip, NarrationRequest, TextLayer, VoicesList } from "../../../api";
+import { ApiError, type MediaItem, type MusicClip, type NarrationRequest, type TextLayer, type VoicesList } from "../../../api";
 import { landTake } from "./actions";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, PHONE_ASSET_TABS } from "./Chrome";
@@ -36,7 +38,10 @@ import {
   PAUSE_STOPS,
   rememberChoice,
   rememberedVoice,
+  SAMPLE_BUSY,
+  VoiceSamples,
   type NarrateDraft,
+  type SampleState,
   type NarratedTitle,
   type NarrateState,
   type NarrationListener,
@@ -258,7 +263,9 @@ function Fields({
   remembered = null,
   atEnd = false,
   title = null,
+  sample = null,
 }: {
+  sample?: SampleState;
   voices?: VoicesList;
   language?: string;
   state?: NarrateState;
@@ -279,6 +286,7 @@ function Fields({
       onDraft={() => {}}
       onGenerate={() => {}}
       onCancel={() => {}}
+      sample={sample}
     />
   );
 }
@@ -648,5 +656,84 @@ describe("a picked title", () => {
     const html = renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "Halo" }} atEnd title={narratedTitle(TITLES, { kind: "hook" })} />);
     expect(html).toContain(`title="${NARRATE_TITLE_AT_END_HINT}"`);
     expect(html).toMatch(/<button type="button"[^>]*disabled=""[^>]*>.*?Generate<\/button>/);
+  });
+});
+
+describe("Play sample", () => {
+  const SOUND = new Blob(["RIFF"], { type: "audio/wav" });
+
+  function setUp(refuse: Error | null = null) {
+    const asked: [string, string, string][] = [];
+    const played: Blob[] = [];
+    const stopped: Blob[] = [];
+    let end: (() => void) | null = null;
+    const samples = new VoiceSamples({
+      fetch: async (engine, voice, language) => {
+        asked.push([engine, voice, language]);
+        if (refuse) throw refuse;
+        return SOUND;
+      },
+      play: (sound, ended) => {
+        played.push(sound);
+        end = ended;
+        return () => void stopped.push(sound);
+      },
+    });
+    return { samples, asked, played, stopped, end: () => end?.() };
+  }
+
+  test("plays the sound returned for the Voice in the Job's language, then is idle again", async () => {
+    const { samples, asked, played, end } = setUp();
+    const loading = samples.play("gemini", "Kore", "id");
+    expect(samples.state).toEqual({ engine: "gemini", voice: "Kore", phase: "loading" });
+    await loading;
+    expect(asked).toEqual([["gemini", "Kore", "id"]]);
+    expect(played).toEqual([SOUND]);
+    expect(samples.state).toEqual({ engine: "gemini", voice: "Kore", phase: "playing" });
+    end();
+    expect(samples.state).toBeNull();
+  });
+
+  test("one plays at a time: another Voice stops the first, and the same one pressed again stops it", async () => {
+    const { samples, stopped } = setUp();
+    await samples.play("gemini", "Kore", "id");
+    await samples.play("gemini", "Puck", "id");
+    expect(stopped).toHaveLength(1);
+    expect(samples.state).toMatchObject({ voice: "Puck", phase: "playing" });
+    await samples.play("gemini", "Puck", "id");
+    expect(stopped).toHaveLength(2);
+    expect(samples.state).toBeNull();
+  });
+
+  test("a busy refusal shows busy on the Voice's row, and plays nothing", async () => {
+    const { samples, played } = setUp(new ApiError(409, "A Narration is being made: play the sample once it is done"));
+    await samples.play("gemini", "Kore", "id");
+    expect(played).toEqual([]);
+    expect(samples.state).toEqual({ engine: "gemini", voice: "Kore", phase: "busy", message: SAMPLE_BUSY });
+    const html = renderToStaticMarkup(<Fields sample={samples.state} />);
+    expect(html).toMatch(/Kore<\/span>.*?aria-label="Play sample of Kore".*?<p role="status"[^>]*>Busy: a Narration is being made/);
+  });
+
+  test("another failure tells its message", async () => {
+    const { samples } = setUp(new ApiError(502, "Gemini TTS failed (500): boom"));
+    await samples.play("gemini", "Kore", "id");
+    expect(samples.state).toMatchObject({ phase: "failed", message: "Couldn't play the sample: Gemini TTS failed (500): boom" });
+  });
+
+  test("each Voice has Play sample, on for a ready engine and off while a Narration is made", () => {
+    const button = (html: string, voice: string) => html.match(new RegExp(`<button[^>]*aria-label="Play sample of ${voice}"[^>]*>`))![0];
+    const html = renderToStaticMarkup(<Fields />);
+    expect(button(html, "Kore")).not.toContain('disabled=""');
+    expect(button(html, "Puck")).not.toContain('disabled=""');
+    const making = renderToStaticMarkup(<Fields state={{ phase: "making", start: 0, progress: null }} />);
+    expect(button(making, "Kore")).toContain('disabled=""');
+    // An engine that isn't ready isn't offered, its samples with it (ticket 08 lists Kokoro before its download).
+    const asleep: VoicesList = { ...VOICES, engines: [{ ...VOICES.engines[0], ready: false }] };
+    expect(renderToStaticMarkup(<Fields voices={asleep} />)).not.toContain("Play sample");
+  });
+
+  test("while its sample loads or plays, the button says so", () => {
+    expect(renderToStaticMarkup(<Fields sample={{ engine: "gemini", voice: "Kore", phase: "loading" }} />)).toContain('aria-label="Making the sample of Kore"');
+    expect(renderToStaticMarkup(<Fields sample={{ engine: "gemini", voice: "Kore", phase: "playing" }} />)).toContain('aria-label="Stop the sample of Kore"');
   });
 });

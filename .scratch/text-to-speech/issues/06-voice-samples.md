@@ -6,9 +6,9 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A: the first sample calls the engine once; the second is served without calling it.
-- [ ] Seam A: a different language or Voice makes a new sample.
-- [ ] Seam A: a sample while a Narration runs is 409; for an engine that isn't ready, 422.
-- [ ] Vitest: Play sample plays the returned sound, and shows busy when refused.
+- [x] Seam A: the first sample calls the engine once; the second is served without calling it.
+- [x] Seam A: a different language or Voice makes a new sample.
+- [x] Seam A: a sample while a Narration runs is 409; for an engine that isn't ready, 422.
+- [x] Vitest: Play sample plays the returned sound, and shows busy when refused.

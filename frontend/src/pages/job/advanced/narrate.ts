@@ -1,4 +1,4 @@
-import { narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
+import { ApiError, narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
 import { formatClock } from "../../../format";
 import { rememberedValue } from "../../../remembered";
 import type { AdvancedEdits } from "./edits";
@@ -337,4 +337,104 @@ export function listenNarration(id: string, on: NarrationListener): () => void {
     on.failed(JSON.parse((event as MessageEvent).data).message);
   });
   return () => source.close();
+}
+
+/**
+ * A Voice's Play sample (.scratch/text-to-speech/issues/06-voice-samples.md): the backend reads a fixed
+ * sentence in the Job's language the first time and keeps it, so a replay is instant. One plays at a
+ * time; Play sample again stops it. A refusal (busy while a Narration is being made, anywhere in the
+ * app) is told on the Voice's row until another is played.
+ *
+ *   null → loading → playing → null (ended, or stopped)
+ *               ↘ busy | failed (its message)
+ */
+export type SampleState =
+  | { engine: string; voice: string; phase: "loading" | "playing" }
+  | { engine: string; voice: string; phase: "busy" | "failed"; message: string }
+  | null;
+
+export interface SampleDeps {
+  // The sample's sound, or rejects with an ApiError (409 busy, 422 not ready).
+  fetch: (engine: string, voice: string, language: string) => Promise<Blob>;
+  // Plays `sound`, calling `ended` when it has; returns what stops it.
+  play: (sound: Blob, ended: () => void) => () => void;
+}
+
+/** Plays a Blob through an Audio element, its object URL let go of once it ends or is stopped. */
+export function playSound(sound: Blob, ended: () => void): () => void {
+  const url = URL.createObjectURL(sound);
+  const audio = new Audio(url);
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    audio.pause();
+    URL.revokeObjectURL(url);
+  };
+  audio.onended = () => {
+    finish();
+    ended();
+  };
+  audio.play().catch(() => {
+    finish();
+    ended();
+  });
+  return finish;
+}
+
+export const SAMPLE_BUSY = "Busy: a Narration is being made. Play the sample once it is done.";
+
+/** The tab's Play sample: `subscribe` and `state` are for the tab (useSyncExternalStore). */
+export class VoiceSamples {
+  state: SampleState = null;
+  private listeners = new Set<() => void>();
+  private stopPlaying: (() => void) | null = null;
+  // Bumped by every play and stop: an answer for an older one is dropped.
+  private asked = 0;
+
+  constructor(private deps: SampleDeps) {}
+
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => void this.listeners.delete(listener);
+  };
+
+  /** Play sample of `voice`; pressed again while it loads or plays, it stops. */
+  play = async (engine: string, voice: string, language: string): Promise<void> => {
+    const again = this.state?.engine === engine && this.state.voice === voice && (this.state.phase === "loading" || this.state.phase === "playing");
+    this.stop();
+    if (again) return;
+    const asked = this.asked;
+    this.set({ engine, voice, phase: "loading" });
+    let sound: Blob;
+    try {
+      sound = await this.deps.fetch(engine, voice, language);
+    } catch (reason) {
+      if (asked !== this.asked) return;
+      const busy = reason instanceof ApiError && reason.status === 409;
+      const message = busy ? SAMPLE_BUSY : `Couldn't play the sample: ${reason instanceof Error ? reason.message : String(reason)}`;
+      this.set({ engine, voice, phase: busy ? "busy" : "failed", message });
+      return;
+    }
+    if (asked !== this.asked) return;
+    this.set({ engine, voice, phase: "playing" });
+    this.stopPlaying = this.deps.play(sound, () => {
+      if (asked !== this.asked) return;
+      this.stopPlaying = null;
+      this.set(null);
+    });
+  };
+
+  /** Stops the sample playing (the tab closed, or another pressed). */
+  stop = () => {
+    this.asked += 1;
+    this.stopPlaying?.();
+    this.stopPlaying = null;
+    if (this.state) this.set(null);
+  };
+
+  private set(state: SampleState) {
+    this.state = state;
+    for (const listener of this.listeners) listener();
+  }
 }
