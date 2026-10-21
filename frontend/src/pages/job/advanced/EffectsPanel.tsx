@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { VideoEffectKind } from "../../../api";
 import { Hint } from "../../../components/InfoTip";
 import { cx } from "../../../format";
+import { starredOnly, useStarredEffects } from "../../../starredEffects";
 import { useVideoEffects, videoLibraryOf } from "../../../videoEffects";
 import { EffectFilters } from "../editor/GradeFilters";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -10,6 +11,7 @@ import { effectsFilter, type Box } from "../editor/videoEffects";
 import { isKey, videoEffectOf } from "./actions";
 import { DRAG_EFFECT } from "./drag";
 import { frameStyle, type LookFrame } from "./LookPanel";
+import { NO_STARRED, StarButton, StarredChip } from "./Stars";
 
 /** What an effect goes on, told when a click finds nothing it can go on. */
 export const EFFECT_GOES_ON = "An effect goes on Segments, Overlays and Adjustment Layers: select some, or drag it onto the Timeline for an Adjustment Layer";
@@ -44,7 +46,7 @@ export function EffectsPanel({
  * drawn by its imitation (as at time 0: no EffectsClock here). The keys (Cutout) are left out unless
  * `keys` (an Overlay is picked). A mouse over a card auditions it (`onAudition`, null when it leaves),
  * a click adds it to the Pick's stacks (`onPick`), and one but a key drags onto the Timeline for an
- * Adjustment Layer.
+ * Adjustment Layer. Each card has a star, and the Starred chip keeps the cards to the starred ones.
  */
 export function EffectCards({
   frame,
@@ -52,6 +54,7 @@ export function EffectCards({
   onPick,
   onAudition,
   kinds: given,
+  starred: givenStars,
 }: {
   frame: LookFrame | null;
   keys: boolean;
@@ -59,18 +62,24 @@ export function EffectCards({
   onAudition: (kind: VideoEffectKind | null) => void;
   // The catalogue's by default.
   kinds?: VideoEffectKind[] | null;
+  // The starred ids, the server's by default.
+  starred?: string[] | null;
 }) {
   const listed = useVideoEffects();
+  const listedStars = useStarredEffects();
   const kinds = given ?? listed;
+  const stars = givenStars ?? listedStars;
   const [query, setQuery] = useState("");
+  const [starredShown, setStarredShown] = useState(false);
   if (!kinds) return <Hint>Loading the effects…</Hint>;
   const picture = frameStyle(frame);
-  const categories = videoLibraryOf(kinds, query, keys);
+  const categories = videoLibraryOf(starredOnly(kinds, stars, starredShown), query, keys);
   return (
     <div className="flex flex-col gap-4">
       <Hint more="Its settings, order and switch are in the Effects section of the inspector.">
         Hover to try an effect on the preview; click to add it to the selection; drag it onto the Timeline for an Adjustment Layer.
       </Hint>
+      <StarredChip on={starredShown} onChange={setStarredShown} />
       <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-border bg-fill px-2">
         <Search aria-hidden size={15} className="shrink-0 text-muted" />
         <input
@@ -84,7 +93,7 @@ export function EffectCards({
         />
       </label>
       <EffectFilters items={kinds.map((kind) => ({ effects: [videoEffectOf(kind)], box: CARD_BOX }))} />
-      {categories.length === 0 && <p className="text-sm text-muted">No effect matches “{query.trim()}”.</p>}
+      {categories.length === 0 && <p className="text-sm text-muted">{starredShown && !query.trim() ? NO_STARRED : `No effect matches “${query.trim()}”.`}</p>}
       {categories.map(({ category, effects }) => {
         const heading = `effects-${category.toLowerCase()}`;
         return (
@@ -94,7 +103,7 @@ export function EffectCards({
             </h3>
             <div className="grid grid-cols-2 gap-2">
               {effects.map((kind) => (
-                <EffectCard key={kind.id} kind={kind} picture={picture} onPick={() => onPick(kind)} onAudition={onAudition} />
+                <EffectCard key={kind.id} kind={kind} picture={picture} starred={!!stars?.includes(kind.id)} onPick={() => onPick(kind)} onAudition={onAudition} />
               ))}
             </div>
           </section>
@@ -104,48 +113,54 @@ export function EffectCards({
   );
 }
 
-// An effect's card: the picture under its effect's imitation at its defaults, its name under it.
+// An effect's card: the picture under its effect's imitation at its defaults, its name under it, and
+// its star over the picture's corner.
 function EffectCard({
   kind,
   picture,
+  starred,
   onPick,
   onAudition,
 }: {
   kind: VideoEffectKind;
   picture: CSSProperties;
+  starred: boolean;
   onPick: () => void;
   onAudition: (kind: VideoEffectKind | null) => void;
 }) {
   // A key makes no Adjustment Layer: it is an Overlay's only.
   const droppable = !isKey(kind);
   return (
-    <button
-      type="button"
-      data-effect={kind.id}
-      title={kind.description || undefined}
-      draggable={droppable}
-      onDragStart={(event) => {
-        onAudition(null);
-        if (!droppable) return event.preventDefault();
-        event.dataTransfer.setData(DRAG_EFFECT, kind.id);
-        event.dataTransfer.effectAllowed = "copy";
-      }}
-      onClick={() => {
-        onAudition(null);
-        onPick();
-      }}
-      // Hover is a mouse's: a touch's pointer leaves as it lifts.
-      onPointerEnter={(event) => event.pointerType === "mouse" && onAudition(kind)}
-      onPointerLeave={() => onAudition(null)}
-      className={cx(
-        "raised flex min-h-11 w-full flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
-        "focus-visible:outline-2 focus-visible:outline-focus",
-      )}
-    >
-      <div aria-hidden className="relative isolate aspect-video w-full overflow-hidden rounded-md bg-black">
-        <div data-picture className="absolute inset-0" style={{ ...picture, filter: effectsFilter([videoEffectOf(kind)], CARD_BOX) }} />
-      </div>
-      <span className="truncate px-0.5">{kind.name}</span>
-    </button>
+    <div className="relative">
+      <button
+        type="button"
+        data-effect={kind.id}
+        title={kind.description || undefined}
+        draggable={droppable}
+        onDragStart={(event) => {
+          onAudition(null);
+          if (!droppable) return event.preventDefault();
+          event.dataTransfer.setData(DRAG_EFFECT, kind.id);
+          event.dataTransfer.effectAllowed = "copy";
+        }}
+        onClick={() => {
+          onAudition(null);
+          onPick();
+        }}
+        // Hover is a mouse's: a touch's pointer leaves as it lifts.
+        onPointerEnter={(event) => event.pointerType === "mouse" && onAudition(kind)}
+        onPointerLeave={() => onAudition(null)}
+        className={cx(
+          "raised flex min-h-11 w-full flex-col gap-1.5 rounded-[10px] p-1.5 text-left text-xs font-medium hover:bg-fill",
+          "focus-visible:outline-2 focus-visible:outline-focus",
+        )}
+      >
+        <div aria-hidden className="relative isolate aspect-video w-full overflow-hidden rounded-md bg-black">
+          <div data-picture className="absolute inset-0" style={{ ...picture, filter: effectsFilter([videoEffectOf(kind)], CARD_BOX) }} />
+        </div>
+        <span className="truncate px-0.5">{kind.name}</span>
+      </button>
+      <StarButton id={kind.id} name={kind.name} starred={starred} onPicture className="absolute top-2.5 right-2.5" />
+    </div>
   );
 }

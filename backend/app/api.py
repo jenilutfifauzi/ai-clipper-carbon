@@ -82,6 +82,7 @@ from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
+from app.starred_effects import Starred, StarredStore
 from app.storage import DiskUsage, disk_usage
 from app.styles import (
     BuiltinPreset,
@@ -149,6 +150,10 @@ def _profiles(request: Request) -> ProfileStore:
     return request.app.state.profiles
 
 
+def _starred(request: Request) -> StarredStore:
+    return request.app.state.starred
+
+
 def _presets(request: Request) -> PresetStore:
     return request.app.state.presets
 
@@ -209,6 +214,7 @@ AppSettings = Annotated[Settings, Depends(_settings)]
 Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
+StarredEffects = Annotated[StarredStore, Depends(_starred)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
 ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
@@ -1451,6 +1457,20 @@ def list_video_effects() -> list[dict]:
     by category and order: its id, kind, name, category, order, description and settings (key, label,
     min, max, default, step, unit, and whether it is the intensity its stack row shows)."""
     return video_effects.catalogue()
+
+
+@router.get("/starred-effects")
+def get_starred_effects(starred: StarredEffects) -> list[str]:
+    """The ids of the starred Video and Audio Effects, for every Job (app/starred_effects.py). An id
+    the catalogues no longer have is kept here; the libraries don't show it."""
+    return starred.load()
+
+
+@router.put("/starred-effects")
+def put_starred_effects(ids: Starred, starred: StarredEffects) -> list[str]:
+    """Replace the starred list: catalogue ids, each at most once."""
+    starred.save(ids)
+    return ids
 
 
 @router.get("/looks")

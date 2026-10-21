@@ -1737,6 +1737,9 @@ export const api = {
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
   listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),
+  // The starred Video and Audio Effects' ids, one list for every Job; a PUT replaces it.
+  listStarredEffects: () => request<string[]>("/starred-effects"),
+  setStarredEffects: (ids: string[]) => request<string[]>("/starred-effects", { method: "PUT", body: JSON.stringify(ids) }),
   // Every Look, by its order.
   listLooks: () => request<Look[]>("/looks"),
   // A .cube file (a 3D table, 2 to 65 a side) as a new Imported Look; rejects naming its bad line.

@@ -5,6 +5,7 @@ import { Button, buttonClass } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { useMenu } from "../../../components/Menu";
 import { cx } from "../../../format";
+import { starredOnly, useStarredEffects } from "../../../starredEffects";
 import { useVideoEffects, videoLibraryOf } from "../../../videoEffects";
 import { eyedropper, useEyedropper } from "../editor/eyedropper";
 import { Mixed } from "../editor/StyleFields";
@@ -23,6 +24,7 @@ import {
 import { EffectRow, keepEscape, ROW_BUTTON } from "./AudioEffectsFields";
 import type { AdvancedEdits } from "./edits";
 import type { Pick } from "./pick";
+import { NO_STARRED, StarButton, StarredChip } from "./Stars";
 
 /** What the Video Effects section shows and does (VideoEffectsFields' props but the catalogue). */
 export interface VideoEffectControls {
@@ -162,7 +164,8 @@ function KeyColourField({ setting, value, overlays, onChange }: { setting: Colou
 
 // Add effect: a popover of the library by category (videoLibraryOf), searched as it is typed; an
 // effect already in the stack is greyed out, and the keys (Cutout) are left out unless an Overlay is
-// picked (`keys`). A click on another adds it at the bottom of the stack and closes the popover.
+// picked (`keys`). A click on another adds it at the bottom of the stack and closes the popover. Each
+// has a star, and the Starred chip keeps the library to the starred ones.
 function AddVideoEffect({
   kinds,
   applied,
@@ -176,8 +179,10 @@ function AddVideoEffect({
 }) {
   const { buttonRef, menuRef, open, hide, toggle } = useMenu();
   const [query, setQuery] = useState("");
+  const stars = useStarredEffects();
+  const [starredShown, setStarredShown] = useState(false);
   const id = useId();
-  const categories = kinds ? videoLibraryOf(kinds, query, keys) : [];
+  const categories = kinds ? videoLibraryOf(starredOnly(kinds, stars, starredShown), query, keys) : [];
   return (
     <>
       <button ref={buttonRef} type="button" className={buttonClass("ghost", "sm")} onClick={toggle} aria-expanded={open} aria-controls={id} aria-haspopup="dialog">
@@ -193,6 +198,7 @@ function AddVideoEffect({
         onKeyDown={keepEscape}
         className="glass fixed inset-auto m-0 max-h-[min(28rem,calc(100vh-1rem))] w-72 max-w-[calc(100vw-1rem)] flex-col gap-2 overflow-y-auto rounded-[10px] bg-bg/90! p-2 text-text [&:popover-open]:flex"
       >
+        <StarredChip on={starredShown} onChange={setStarredShown} />
         <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-border bg-fill px-2">
           <Search aria-hidden size={15} className="shrink-0 text-muted" />
           <input
@@ -208,7 +214,7 @@ function AddVideoEffect({
         {kinds === null ? (
           <p className="px-2 py-1 text-sm text-muted">Loading the effects…</p>
         ) : categories.length === 0 ? (
-          <p className="px-2 py-1 text-sm text-muted">No effect matches “{query.trim()}”.</p>
+          <p className="px-2 py-1 text-sm text-muted">{starredShown && !query.trim() ? NO_STARRED : `No effect matches “${query.trim()}”.`}</p>
         ) : (
           categories.map(({ category, effects }) => (
             <div key={category} role="group" aria-label={category} className="flex flex-col">
@@ -216,25 +222,27 @@ function AddVideoEffect({
               {effects.map((kind) => {
                 const added = applied.some((entry) => entry.id === kind.id);
                 return (
-                  <button
-                    key={kind.id}
-                    type="button"
-                    disabled={added}
-                    onClick={() => {
-                      onAdd(kind);
-                      hide();
-                    }}
-                    className={cx(
-                      "flex min-h-9 flex-col items-start rounded-md px-2 py-1 text-left focus-visible:outline-2 focus-visible:outline-focus",
-                      added ? "cursor-default opacity-50" : "hover:bg-fill",
-                    )}
-                  >
-                    <span className="text-sm">
-                      {kind.name}
-                      {added && <span className="text-muted"> · added</span>}
-                    </span>
-                    {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
-                  </button>
+                  <div key={kind.id} className="flex items-start gap-1">
+                    <button
+                      type="button"
+                      disabled={added}
+                      onClick={() => {
+                        onAdd(kind);
+                        hide();
+                      }}
+                      className={cx(
+                        "flex min-h-9 flex-1 flex-col items-start rounded-md px-2 py-1 text-left focus-visible:outline-2 focus-visible:outline-focus",
+                        added ? "cursor-default opacity-50" : "hover:bg-fill",
+                      )}
+                    >
+                      <span className="text-sm">
+                        {kind.name}
+                        {added && <span className="text-muted"> · added</span>}
+                      </span>
+                      {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
+                    </button>
+                    <StarButton id={kind.id} name={kind.name} starred={!!stars?.includes(kind.id)} />
+                  </div>
                 );
               })}
             </div>

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 /**
  * A list the backend keeps for every Job (the Faces, the Text Presets), loaded once for the page and
  * shared by every component: `load` lists it the first time, `reload` lists it again (after a change
- * here or elsewhere), and `useList` gives a component the list, null until it is loaded, and again
+ * here or elsewhere), `set` puts a list in its place without asking (one this page changed), and `useList` gives a component the list, null until it is loaded, and again
  * whenever it is listed. A failed listing is retried next time.
  */
 export function listStore<T>(list: () => Promise<T[]>) {
@@ -25,6 +25,11 @@ export function listStore<T>(list: () => Promise<T[]>) {
 
   const load = (): Promise<T[]> => (loading ??= fetched());
   const reload = (): Promise<T[]> => (loading = fetched());
+  function set(items: T[]): void {
+    listed = items;
+    loading = Promise.resolve(items);
+    for (const listener of listeners) listener(items);
+  }
 
   function useList(): T[] | null {
     const [items, setItems] = useState(listed);
@@ -38,5 +43,5 @@ export function listStore<T>(list: () => Promise<T[]>) {
     return items;
   }
 
-  return { load, reload, useList };
+  return { load, reload, set, useList };
 }

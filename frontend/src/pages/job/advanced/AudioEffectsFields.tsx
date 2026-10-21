@@ -7,6 +7,7 @@ import { useMenu } from "../../../components/Menu";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
+import { starredOnly, useStarredEffects } from "../../../starredEffects";
 import { Mixed } from "../editor/StyleFields";
 import {
   addAudioEffect,
@@ -26,6 +27,7 @@ import {
 } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import type { Pick } from "./pick";
+import { NO_STARRED, StarButton, StarredChip } from "./Stars";
 
 /** What the Audio Effects section shows and does (AudioEffectsFields' props but the catalogue). */
 export interface AudioEffectControls {
@@ -321,12 +323,15 @@ function MoreSettings({ name, settings, field }: { name: string; settings: Video
 }
 
 // Add effect: a popover of the library (libraryOf), searched as it is typed; a click on an effect
-// adds it at the bottom of the stack and closes the popover.
+// adds it at the bottom of the stack and closes the popover. Each has a star, and the Starred chip
+// keeps the library to the starred ones.
 function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (kind: AudioEffectKind) => void }) {
   const { buttonRef, menuRef, open, hide, toggle } = useMenu();
   const [query, setQuery] = useState("");
+  const stars = useStarredEffects();
+  const [starredShown, setStarredShown] = useState(false);
   const id = useId();
-  const groups = kinds ? libraryOf(kinds, query) : [];
+  const groups = kinds ? libraryOf(starredOnly(kinds, stars, starredShown), query) : [];
   return (
     <>
       <button ref={buttonRef} type="button" className={cx(buttonClass("ghost", "sm"), "in-data-sheet:min-h-11")} onClick={toggle} aria-expanded={open} aria-controls={id} aria-haspopup="dialog">
@@ -342,6 +347,7 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
         onKeyDown={keepEscape}
         className="glass fixed inset-auto m-0 max-h-[min(28rem,calc(100vh-1rem))] w-72 max-w-[calc(100vw-1rem)] flex-col gap-2 overflow-y-auto rounded-[10px] bg-bg/90! p-2 text-text [&:popover-open]:flex"
       >
+        <StarredChip on={starredShown} onChange={setStarredShown} />
         <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-border bg-fill px-2 in-data-sheet:min-h-11">
           <Search aria-hidden size={15} className="shrink-0 text-muted" />
           <input
@@ -357,24 +363,26 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
         {kinds === null ? (
           <p className="px-2 py-1 text-sm text-muted">Loading the effects…</p>
         ) : groups.length === 0 ? (
-          <p className="px-2 py-1 text-sm text-muted">No effect matches “{query.trim()}”.</p>
+          <p className="px-2 py-1 text-sm text-muted">{starredShown && !query.trim() ? NO_STARRED : `No effect matches “${query.trim()}”.`}</p>
         ) : (
           groups.map(({ group, effects }) => (
             <div key={group} role="group" aria-label={group} className="flex flex-col">
               <p className="px-2 pt-1 pb-0.5 text-xs font-semibold text-muted">{group}</p>
               {effects.map((kind) => (
-                <button
-                  key={kind.id}
-                  type="button"
-                  onClick={() => {
-                    onAdd(kind);
-                    hide();
-                  }}
-                  className="flex min-h-9 flex-col items-start rounded-md px-2 py-1 text-left in-data-sheet:min-h-11 in-data-sheet:justify-center hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
-                >
-                  <span className="text-sm">{kind.name}</span>
-                  {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
-                </button>
+                <div key={kind.id} className="flex items-start gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAdd(kind);
+                      hide();
+                    }}
+                    className="flex min-h-9 flex-1 flex-col items-start rounded-md px-2 py-1 text-left in-data-sheet:min-h-11 in-data-sheet:justify-center hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
+                  >
+                    <span className="text-sm">{kind.name}</span>
+                    {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
+                  </button>
+                  <StarButton id={kind.id} name={kind.name} starred={!!stars?.includes(kind.id)} />
+                </div>
               ))}
             </div>
           ))
