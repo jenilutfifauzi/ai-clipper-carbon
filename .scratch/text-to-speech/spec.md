@@ -164,8 +164,8 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 - **One download at a time.** It runs in its own thread, separate from the runner.
 
 **MCP.**
-- `list_assets(kind="voices")` returns what `GET /api/voices` does, without the download progress.
-- `generate_speech(text, engine, voice, speed=1, pauses=0.3, style=None)` runs a Narration through the same runner. It waits for it to finish, and returns the Media item's id, name and duration, or the runner's error.
+- `list_assets(kind="voices")` returns what `GET /api/voices` does, without the download progress: the ready engines only (so without `ready`), each with its id, label, service, `local`, `takes_style` and Voices, and the `default` engine. There is no Job in an MCP call, so `list_assets` takes an optional `language` (the Job's), passed to `GET /api/voices` for the default; without it, the default is that of a language other than English (the first ready cloud engine).
+- `generate_speech(text, engine, voice, speed=1, pauses=0.3, style=None)` starts a Narration through `POST /api/narrations` and so the same runner. It follows the runner's events to the end, and returns the Media item's id, name and duration, or the runner's error as a tool error: the route's refusals (busy, too long, engine not ready) and a failed Narration's message (engine error).
 - Laying the Narration is the agent's job, through `merge_candidate_items` with a Music Clip `{media, start, speech: true}`. No new edit field exists, so `edit_candidate`, `merge_candidate_items` and `dry_run` need no change.
 
 **Frontend.**

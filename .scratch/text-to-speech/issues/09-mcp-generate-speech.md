@@ -10,9 +10,9 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] MCP (prior art `test_mcp.py`): `list_assets(kind="voices")` lists the fake engine and its Voices.
-- [ ] MCP: `generate_speech` returns the item's id, name and duration, and the item is in the Media Library.
-- [ ] MCP: busy, too long and not-ready errors come back with the runner's messages.
-- [ ] MCP: `merge_candidate_items` lays it with `speech: true`, and `dry_run` lists a ducked song's speech spans from it.
+- [x] MCP (prior art `test_mcp.py`): `list_assets(kind="voices")` lists the fake engine and its Voices.
+- [x] MCP: `generate_speech` returns the item's id, name and duration, and the item is in the Media Library.
+- [x] MCP: busy, too long and not-ready errors come back with the runner's messages.
+- [x] MCP: `merge_candidate_items` lays it with `speech: true`, and `dry_run` lists a ducked song's speech spans from it.

@@ -57,8 +57,8 @@ Today:
   - A sample is a fixed sentence in the Job's language (Indonesian or English; English for any other), made on first play and kept on this Mac per engine, Voice and language. It is read at 1× with no Style and levelled as a Narration is, so it sounds like the result, and it takes the one-at-a-time runner's turn: a sample and a Narration refuse each other as busy. Kept samples are WAV files under `DATA_DIR/voice-samples`.
 - **The Narrate tab sits in the asset panel and works on phones too**, since nothing needs the microphone.
 - **MCP:**
-  - `list_assets(kind="voices")` lists the ready engines and Voices.
-  - `generate_speech(text, engine, voice, speed, pauses, style)` adds the item and returns its id.
+  - `list_assets(kind="voices")` lists the ready engines and Voices, and the default engine for an optional `language`.
+  - `generate_speech(text, engine, voice, speed, pauses, style)` runs it through the same runner, waits for it, and returns the item's id, name and duration, or the runner's message.
   - The agent lays it with `merge_candidate_items` (`speech: true`).
 
 ## Considered options

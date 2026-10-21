@@ -4,8 +4,9 @@ the app itself (streamable HTTP), in the same process as the API and its Worker.
 A tool calls the API's route in this process, so the API's rules and messages are the tools': a
 failed call is a tool error carrying the API's `detail`. Three tools call services directly, where no
 route fits: `wait_for_job` follows the Job's changes as its events route does, `create_job_from_file`
-stages a file on this Mac as an upload, and `add_asset` gives one to the Logo or Media store (a font
-it posts to the fonts route).
+stages a file on this Mac as an upload, `add_asset` gives one to the Logo or Media store (a font
+it posts to the fonts route), and `generate_speech` follows the Narration it starts to its end as its
+events route does.
 """
 
 import asyncio
@@ -71,13 +72,15 @@ from app.jobs import Job, JobNotFound, JobOptions, JobStatus
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES
 from app.logos import MAX_UPLOAD_BYTES, BadLogo
 from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES
-from app.media import BadMedia
+from app.media import BadMedia, MediaItem
+from app.narration import DEFAULT_PAUSE_SECS, DEFAULT_SPEED
 from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, key_times, picture_at
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
+from app.transcript import Language
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
 GLOSSARY = REPO_ROOT / "GLOSSARY.md"
@@ -399,6 +402,10 @@ Edits:
   sounds go down under it as under Words. It is never ducked, so it refuses a `duck`: give
   `duck` null with it on one that has one (one added with `speech` gets no -12). One without media
   refuses `speech` (its Words are its speech). The dry run marks it `speech` in `sounds`.
+- A Narration is typed words read aloud by a Voice into a Media Library song: list_assets kind
+  "voices" (with the Job's `language` for the engine it starts with, `default`) lists the ready
+  engines and their Voices, generate_speech makes one and gives its id and duration, and a Music
+  Clip of it with `speech` true (secs its duration) lays it, ducking the songs under it.
 - Detach moves a Segment's sound onto a Music Clip of its own, to slide it apart from its picture (a
   J-cut or an L-cut). In one merge_candidate_items call, add a Music Clip with `detached_from` the
   Segment's id, its media (none for one of the episode), offset its `start`, its speed, pitch,
@@ -926,13 +933,17 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return {"deleted": preset_id}
 
     @tool(read_only=True)
-    async def list_assets(kind: Literal["fonts", "logos", "media", "looks", "audio_effects", "video_effects"] | None = None) -> dict:
+    async def list_assets(
+        kind: Literal["fonts", "logos", "media", "looks", "audio_effects", "video_effects", "voices"] | None = None,
+        language: Language | None = None,
+    ) -> dict:
         """The fonts' Faces (a style's font is a Face's id), the Logos a Watermark can show, the
         Media Library (songs, videos and images for Music Clips, Overlays and Segments), the Looks
         a grade's `look` names (id, name, category, Adjust values; has_table for an Imported Look's
         .cube), the Audio Effects a sound's `audio_effects` name (id, name, group, settings with
         their ranges and defaults) and the Video Effects a picture's `video_effects` name (id, name,
-        category, settings likewise): all, or one `kind`."""
+        category, settings likewise), and the ready speech engines with their Voices and the
+        `default` one for a Job in `language` (generate_speech): all, or one `kind`."""
         listed: dict[str, Any] = {}
         if kind in (None, "fonts"):
             listed["fonts"] = [_face(face) for face in await api("GET", "/fonts")]
@@ -946,6 +957,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
             listed["audio_effects"] = await api("GET", "/audio-effects")
         if kind in (None, "video_effects"):
             listed["video_effects"] = await api("GET", "/video-effects")
+        if kind in (None, "voices"):
+            voices = await api("GET", "/voices", params={"language": language} if language else None)
+            engines = [_engine(engine) for engine in voices["engines"] if engine["ready"]]
+            listed["voices"] = {"engines": engines, "default": voices["default"]}
         return listed
 
     @tool()
@@ -979,6 +994,26 @@ def build_mcp(app: FastAPI) -> MCPServer:
         except (BadLogo, BadMedia) as exc:
             raise ToolError(str(exc)) from None
         return TypeAdapter(type(item)).dump_python(item, mode="json")
+
+    @tool()
+    async def generate_speech(
+        text: str, engine: str, voice: str, speed: float = DEFAULT_SPEED, pauses: float = DEFAULT_PAUSE_SECS, style: str | None = None
+    ) -> dict:
+        """Make a Narration (`text` read by a Voice, list_assets kind "voices") at `speed` 0.5..2,
+        `pauses` s 0..1.5 between sentences, a `style` if its engine takes_style. Waits for it; gives
+        the Media Library item's id, name, duration. One at a time."""
+        body = {"text": text, "engine": engine, "voice": voice, "speed": speed, "pauses": pauses, "style": style}
+        started = await api("POST", "/narrations", json=body)
+        async with aclosing(app.state.narrations.events(started["id"])) as events:
+            async for event in events:
+                if event.event == "done":
+                    item = _dump(MediaItem, event.data)
+                    return {key: item[key] for key in ("id", "name", "duration")}
+                if event.event == "failed":
+                    raise ToolError(event.data["message"])
+                if event.event == "cancelled":
+                    raise ToolError("The Narration was cancelled")
+        raise ToolError("The Narration ended without an item")
 
     @tool(destructive=True)
     async def delete_asset(kind: Literal["logo", "media", "font", "look"], asset_id: str) -> dict:
@@ -1078,6 +1113,11 @@ def _face(face: dict) -> dict:
     """A Face as the tools list it: without its measures and URL, and without licence fields its font leaves empty."""
     keys = ("id", "label", "typographic_family", "weight", "italic", "bundled", "restricted", "copyright", "licence", "licence_url")
     return {key: face[key] for key in keys if face[key] != ""}
+
+
+def _engine(engine: dict) -> dict:
+    """A ready speech engine as list_assets lists it: what /api/voices says but `ready`."""
+    return {key: value for key, value in engine.items() if key != "ready"}
 
 
 def _look(look: dict) -> dict:

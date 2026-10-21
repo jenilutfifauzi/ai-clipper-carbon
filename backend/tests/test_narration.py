@@ -1,5 +1,6 @@
 """A Narration read by a Voice (.scratch/text-to-speech/issues/01-narration-with-gemini.md and
-02-progress-cancel-and-failures.md, 04-speed-style-and-estimate.md, 06-voice-samples.md, docs/adr/0019).
+02-progress-cancel-and-failures.md, 04-speed-style-and-estimate.md, 06-voice-samples.md,
+09-mcp-generate-speech.md, docs/adr/0019).
 Seam A: the HTTP API, MCP's dry run and the real ffmpeg, with FakeVoiceEngine (a second of tone per
 sentence) in place of the cloud."""
 
@@ -21,7 +22,7 @@ from app.ports import Ports
 from app.voices import GeminiSpeech, OpenAiSpeech, voice_engines
 from fakes import FakeVoiceEngine
 from test_events import events
-from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp  # noqa: F401
+from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
 from test_media_library import make
 
@@ -524,3 +525,75 @@ def test_a_failed_sample_is_502_with_the_engines_message_and_nothing_is_kept(cli
     assert not list((settings.data_dir / narration.VOICE_SAMPLES_DIR).rglob("*.wav"))
     engine.fail_with(None)
     assert sample(client).status_code == 200
+
+
+# 09: Narrations through MCP
+
+
+@pytest.mark.anyio
+async def test_list_assets_voices_lists_the_ready_engines_their_voices_and_the_default(mcp):
+    listed = await call(mcp, "list_assets", kind="voices")
+    assert set(listed) == {"voices"}
+    voices = listed["voices"]
+    assert set(voices) == {"engines", "default"}
+    assert [engine["id"] for engine in voices["engines"]] == ["fake", "quiet", "native"]
+    assert voices["engines"][0] == {
+        "id": "fake", "label": "Fake fake", "service": "Fake", "local": False, "takes_style": True,
+        "voices": [
+            {"id": "ana", "name": "Ana", "detail": "Bright · female", "language": None},
+            {"id": "budi", "name": "Budi", "detail": "Calm · male", "language": None},
+        ],
+    }
+    assert voices["engines"][2]["takes_style"] is False
+    assert voices["default"] == "fake"
+    assert (await call(mcp, "list_assets", kind="voices", language="en"))["voices"]["default"] == "fake"
+
+
+@pytest.mark.anyio
+async def test_generate_speech_returns_the_items_id_name_and_duration_and_it_is_in_the_media_library(mcp, engine):
+    made = await call(mcp, "generate_speech", text="Halo semua. Apa kabar?", engine="fake", voice="ana", style="hangat", pauses=0.5)
+    assert set(made) == {"id", "name", "duration"}
+    assert made["name"].startswith("Narration Ana ")
+    assert made["duration"] == pytest.approx(2 * TONE_SECS + 0.5, abs=0.1)
+    assert engine.reads == [("Halo semua.", "ana", "hangat"), ("Apa kabar?", "ana", "hangat")]
+    [item] = (await call(mcp, "list_assets", kind="media"))["media"]
+    assert item["id"] == made["id"] and item["kind"] == "audio"
+
+
+@pytest.mark.anyio
+async def test_generate_speech_fails_with_the_runners_messages(mcp, client, engine):
+    too_long = await fails(mcp, "generate_speech", text="a" * 5_001, engine="fake", voice="ana")
+    assert "A script can be 5,000 characters at most" in too_long
+    assert "Fake asleep isn't ready" in await fails(mcp, "generate_speech", text="Halo.", engine="asleep", voice="ana")
+    engine.hold()
+    first = narrate(client, "Halo.")
+    assert first.status_code == 202
+    assert "Another Narration is being made" in await fails(mcp, "generate_speech", text="Lagi.", engine="quiet", voice="ana")
+    engine.release()
+    assert [name for name, _ in ending(client, first.json()["id"])] == ["done"]
+    engine.fail_with("Fake refused the key")
+    assert "Fake refused the key" in await fails(mcp, "generate_speech", text="Halo.", engine="fake", voice="ana")
+    assert len((await call(mcp, "list_assets", kind="media"))["media"]) == 1
+
+
+@pytest.mark.anyio
+async def test_merge_candidate_items_lays_a_generated_narration_as_speech_and_the_dry_run_ducks_a_song_under_it(mcp, tmp_path):
+    made = await call(mcp, "generate_speech", text="Halo.", engine="fake", voice="ana")
+    song_file = tmp_path / "song.wav"
+    make(song_file, "-f", "lavfi", "-i", "sine=frequency=330:duration=3")
+    song = await call(mcp, "add_asset", kind="media", path=str(song_file))
+    job = await reviewed_by_mcp(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    segments = [{"id": "e", "start": candidate["start"], "end": candidate["end"], "muted": True}]
+    await call(mcp, "edit_candidate", **ids, changes={"segments": segments})
+    music = [
+        {"id": "m", "media": song["id"], "start": 0.0, "secs": 1.5, "duck": -12},
+        {"id": "n", "media": made["id"], "start": 0.2, "secs": made["duration"], "speech": True},
+    ]
+    saved = await call(mcp, "merge_candidate_items", **ids, music=music)
+    assert {clip["id"]: clip["speech"] for clip in saved["music"]} == {"m": False, "n": True}
+    plan = await call(mcp, "edit_candidate", **ids, changes={}, dry_run=True)
+    sounds = {sound["id"]: sound for sound in plan["sounds"]}
+    assert sounds["n"].get("speech") is True and "duck" not in sounds["n"]
+    assert sounds["m"]["speech_spans"] == [[0.2, round(0.2 + made["duration"], 2)]]
