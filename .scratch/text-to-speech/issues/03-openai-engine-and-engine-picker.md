@@ -11,11 +11,11 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Settings: the OpenAI-compatible engine is offered only when all three `TTS_*` settings are set; `TTS_VOICES` replaces its Voice list.
-- [ ] Seam A: `GET /api/voices` gives the default engine for an Indonesian and an English Job.
-- [ ] OpenAI adapter through `httpx.MockTransport`: the request carries the model, Voice and text; the audio decodes to PCM; 429/5xx are transient; 401/403 name the key.
-- [ ] Vitest: the default engine follows the Job's language; a remembered choice wins; storage that throws falls back to the default.
-- [ ] Vitest: the labels read "<service> · cloud"; switching engine swaps the Voices.
-- [ ] Vitest: with no ready engine, the hint shows and Generate is off.
+- [x] Settings: the OpenAI-compatible engine is offered only when all three `TTS_*` settings are set; `TTS_VOICES` replaces its Voice list.
+- [x] Seam A: `GET /api/voices` gives the default engine for an Indonesian and an English Job.
+- [x] OpenAI adapter through `httpx.MockTransport`: the request carries the model, Voice and text; the audio decodes to PCM; 429/5xx are transient; 401/403 name the key.
+- [x] Vitest: the default engine follows the Job's language; a remembered choice wins; storage that throws falls back to the default.
+- [x] Vitest: the labels read "<service> · cloud"; switching engine swaps the Voices.
+- [x] Vitest: with no ready engine, the hint shows and Generate is off.

@@ -6,13 +6,16 @@ reads one sentence into mono 16-bit PCM at its own sample rate. The Narration ru
 splits the script, joins and levels the sentences, so an engine only ever reads one sentence.
 
 The cloud engines are configured apart from the LLM: Gemini TTS is offered whenever GEMINI_API_KEY is
-set, whatever LLM_PROVIDER says.
+set, whatever LLM_PROVIDER says; an OpenAI-compatible /audio/speech service when TTS_BASE_URL,
+TTS_API_KEY and TTS_MODEL are.
 """
 
 import base64
 import re
+import struct
 from dataclasses import dataclass, field
 from typing import Protocol
+from urllib.parse import urlsplit
 
 import httpx
 import numpy as np
@@ -25,6 +28,8 @@ _TIMEOUT_SECS = 60
 # Gemini TTS answers raw 16-bit PCM, its rate in the MIME type ("audio/L16;codec=pcm;rate=24000").
 _GEMINI_RATE = 24_000
 _RATE = re.compile(r"rate=(\d+)")
+# OpenAI's raw "pcm" answer: 24 kHz 16-bit mono, little-endian.
+_OPENAI_PCM_RATE = 24_000
 
 
 @dataclass(frozen=True)
@@ -204,12 +209,127 @@ def _gemini_audio(answer: dict) -> Pcm:
     return Pcm(np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2"), int(rate.group(1)) if rate else _GEMINI_RATE)
 
 
+# OpenAI's standard Voices, with the character OpenAI's voice gallery gives each. Not every model has
+# every one (tts-1 lacks ballad, verse, marin and cedar); TTS_VOICES replaces the list.
+_OPENAI_VOICES = [
+    ("alloy", "Neutral, balanced"),
+    ("ash", "Warm, clear"),
+    ("ballad", "Soft, melodic"),
+    ("coral", "Bright, friendly"),
+    ("echo", "Calm, even"),
+    ("fable", "Expressive, storytelling"),
+    ("nova", "Bright, youthful"),
+    ("onyx", "Deep, steady"),
+    ("sage", "Calm, thoughtful"),
+    ("shimmer", "Clear, light"),
+    ("verse", "Versatile, lively"),
+    ("marin", "Natural, smooth"),
+    ("cedar", "Natural, grounded"),
+]
+OPENAI_VOICES = [Voice(id, id.capitalize(), detail) for id, detail in _OPENAI_VOICES]
+OPENAI_HOST = "api.openai.com"
+
+
+class OpenAiSpeech:
+    """An OpenAI-compatible speech service: POST {TTS_BASE_URL}/audio/speech with the model, the Voice
+    and the sentence, answered as WAV (the format compatible services most often share), decoded by its
+    header. A raw "pcm" answer is read as OpenAI's, 24 kHz. Its service is OpenAI, or the base URL's host.
+    Style and Speed aren't sent yet: they go in `_body`."""
+
+    id = "openai"
+    local = False
+    takes_style = False
+
+    def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
+        self.settings = settings
+        self._http = http_client
+        host = urlsplit(settings.tts_base_url or "").hostname or settings.tts_base_url or "OpenAI-compatible"
+        self.service = "OpenAI" if host == OPENAI_HOST else host
+        self.label = self.service
+        # How messages name it: "OpenAI TTS", "localhost TTS".
+        self._name = f"{self.service} TTS"
+
+    def ready(self) -> bool:
+        return bool(self.settings.tts_base_url and self.settings.tts_api_key and self.settings.tts_model)
+
+    def voices(self) -> list[Voice]:
+        if self.settings.tts_voices:
+            return [Voice(voice, voice, "") for voice in self.settings.tts_voices]
+        return OPENAI_VOICES
+
+    def _body(self, text: str, voice: str, style: str | None) -> dict:
+        return {"model": self.settings.tts_model, "input": text, "voice": voice, "response_format": "wav"}
+
+    def read(self, text: str, voice: str, style: str | None = None) -> Pcm:
+        url = f"{self.settings.tts_base_url}/audio/speech"
+        headers = {"Authorization": f"Bearer {self.settings.tts_api_key or ''}"}
+        try:
+            response = self._client().post(url, json=self._body(text, voice, style), headers=headers, timeout=_TIMEOUT_SECS)
+        except httpx.TransportError as exc:
+            raise TransientSpeechError(f"Couldn't reach {self._name}: {exc}") from exc
+        if response.status_code != 200:
+            raise self._error(response)
+        data = response.content
+        if data[:4] == b"RIFF":
+            return _wav(data, self._name)
+        kind = response.headers.get("content-type", "")
+        if "pcm" in kind or "L16" in kind:
+            rate = _RATE.search(kind)
+            return Pcm(np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2"), int(rate.group(1)) if rate else _OPENAI_PCM_RATE)
+        raise SpeechError(f"{self._name} gave audio that isn't WAV ({kind or 'no content type'})")
+
+    def _error(self, response: httpx.Response) -> SpeechError:
+        try:
+            message = response.json()["error"]["message"]
+        except (ValueError, KeyError, TypeError):
+            message = response.text[:200] or response.reason_phrase
+        code = response.status_code
+        if code in (401, 403):
+            return SpeechError(f"{self._name} refused TTS_API_KEY: check the key in .env and restart ({message})")
+        if code == 429 or code >= 500:
+            return TransientSpeechError(f"{self._name} is busy ({code}): {message}", _retry_after(response))
+        return SpeechError(f"{self._name} failed ({code}): {message}")
+
+    def _client(self) -> httpx.Client:
+        if self._http is None:
+            self._http = httpx.Client()
+        return self._http
+
+
+def _wav(data: bytes, name: str) -> Pcm:
+    """The mono PCM in a 16-bit WAV file, its channels averaged. A streamed file's sizes may be unknown
+    (0xFFFFFFFF), so the data chunk is read to the end of what was sent, whatever its size says."""
+    rate = channels = bits = None
+    at = 12
+    while at + 8 <= len(data):
+        chunk, size = struct.unpack_from("<4sI", data, at)
+        body = at + 8
+        if chunk == b"fmt ":
+            _format, channels, rate, _byte_rate, _align, bits = struct.unpack_from("<HHIIHH", data, body)
+        elif chunk == b"data":
+            if rate is None or channels is None:
+                break
+            if bits != 16:
+                raise SpeechError(f"{name} gave {bits}-bit WAV audio; only 16-bit is read")
+            frames = data[body : body + min(size, len(data) - body)]
+            frames = frames[: len(frames) // (2 * channels) * (2 * channels)]
+            samples = np.frombuffer(frames, dtype="<i2")
+            if channels > 1:
+                samples = samples.reshape(-1, channels).mean(axis=1).round().astype("<i2")
+            return Pcm(samples, rate)
+        at = body + size + (size & 1)
+    raise SpeechError(f"{name} gave a WAV file without audio")
+
+
 def voice_engines(settings: Settings, http_client: httpx.Client | None = None) -> list[VoiceEngine]:
     """The engines this Mac offers, in the engine picker's order: the cloud ones set up in .env, then
     the local ones."""
     engines: list[VoiceEngine] = []
     if settings.gemini_api_key:
         engines.append(GeminiSpeech(settings, http_client))
+    openai = OpenAiSpeech(settings, http_client)
+    if openai.ready():
+        engines.append(openai)
     return engines
 
 

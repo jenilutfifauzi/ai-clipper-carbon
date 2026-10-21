@@ -309,6 +309,13 @@ class Settings:
     # Gemini TTS's model, offered for Narrations whenever gemini_api_key is set, whatever llm_provider
     # says (docs/adr/0019).
     tts_gemini_model: str = DEFAULT_TTS_GEMINI_MODEL
+    # An OpenAI-compatible /audio/speech service for Narrations, offered when all three are set; apart
+    # from llm_base_url and llm_api_key, which may point at a service with no speech (DeepSeek's).
+    tts_base_url: str | None = None
+    tts_api_key: str | None = field(default=None, repr=False)
+    tts_model: str | None = None
+    # Its Voices, replacing the standard list; empty: the standard list.
+    tts_voices: tuple[str, ...] = ()
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -376,6 +383,10 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         ytdlp_cookies_from_browser=get("YTDLP_COOKIES_FROM_BROWSER") or None,
         selection_audio_signal=_parse_bool("SELECTION_AUDIO_SIGNAL", get("SELECTION_AUDIO_SIGNAL", "false")),
         tts_gemini_model=get("TTS_GEMINI_MODEL", DEFAULT_TTS_GEMINI_MODEL),
+        tts_base_url=get("TTS_BASE_URL").rstrip("/") or None,
+        tts_api_key=get("TTS_API_KEY") or None,
+        tts_model=get("TTS_MODEL") or None,
+        tts_voices=tuple(voice.strip() for voice in get("TTS_VOICES").split(",") if voice.strip()),
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

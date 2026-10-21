@@ -5,8 +5,10 @@
 // phone's toolbar. No jsdom: the markup is checked with renderToStaticMarkup.
 // And 02-progress-cancel-and-failures.md: progress and Cancel in Generate's place, the draft kept
 // through a failure, a busy refusal or a cancel, and Generate off at the Clip's end.
+// And 03-openai-engine-and-engine-picker.md: the engine picker, its labels, the default engine from the
+// Job's language, the browser's remembered engine and Voice, and the hint with no ready engine.
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { MediaItem, MusicClip, NarrationRequest, VoicesList } from "../../../api";
 import { landTake } from "./actions";
 import { AssetPanel } from "./AssetPanel";
@@ -14,16 +16,21 @@ import { ASSET_TABS, AssetTabs, PHONE_ASSET_TABS } from "./Chrome";
 import { trackLanes, type AdvancedEdits } from "./edits";
 import type { MediaLibrary } from "./MediaLibrary";
 import {
+  chosenVoice,
   DEFAULT_PAUSE,
   engineLabel,
+  engineOption,
   NARRATE_AT_END_HINT,
   NARRATION_IN_LIBRARY,
   NARRATION_MADE_BEFORE_CANCEL,
   NarrateFlow,
   PAUSE_STOPS,
+  rememberChoice,
+  rememberedVoice,
   type NarrateDraft,
   type NarrateState,
   type NarrationListener,
+  type RememberedVoice,
 } from "./narrate";
 import { NarrateFields } from "./NarratePanel";
 import { picked, type Pick } from "./pick";
@@ -175,13 +182,13 @@ describe("Generate", () => {
 
   test("Cancel asks the backend to discard it, lands nothing and keeps the draft", async () => {
     const { world, flow, cancelled, told, settle, progress, done, listening } = setUp();
-    flow.edit({ script: "Halo semua. Apa kabar?", voice: "Puck", pause: 2 });
+    flow.edit({ script: "Halo semua. Apa kabar?", engine: "gemini", voice: "Puck", pause: 2 });
     await flow.generate(BODY);
     progress("Reading", 1, 2);
     flow.cancel();
     expect(cancelled).toEqual(["n1"]);
     expect(flow.state).toEqual({ phase: "idle" });
-    expect(flow.draft).toEqual({ script: "Halo semua. Apa kabar?", voice: "Puck", pause: 2 });
+    expect(flow.draft).toEqual({ script: "Halo semua. Apa kabar?", engine: "gemini", voice: "Puck", pause: 2 });
     // Progress after the cancel isn't told; a cancel that came too late keeps the item, unlaid.
     progress("Reading", 2, 2);
     expect(flow.state).toEqual({ phase: "idle" });
@@ -205,7 +212,7 @@ describe("Generate", () => {
 
   test("a failure or a busy refusal keeps the draft for Generate again", async () => {
     const { flow, refuse, failed } = setUp();
-    const draft: NarrateDraft = { script: "Halo semua.", voice: "Puck", pause: 0 };
+    const draft: NarrateDraft = { script: "Halo semua.", engine: "gemini", voice: "Puck", pause: 0 };
     flow.edit(draft);
     await flow.generate(BODY);
     failed("Gemini TTS failed (500): boom");
@@ -231,10 +238,24 @@ describe("Generate", () => {
   });
 });
 
-const DRAFT: NarrateDraft = { script: "", voice: null, pause: DEFAULT_PAUSE };
+const DRAFT: NarrateDraft = { script: "", engine: null, voice: null, pause: DEFAULT_PAUSE };
 
-function Fields({ voices = VOICES, state = { phase: "idle" }, draft = DRAFT, atEnd = false }: { voices?: VoicesList; state?: NarrateState; draft?: NarrateDraft; atEnd?: boolean }) {
-  return <NarrateFields voices={voices} state={state} draft={draft} atEnd={atEnd} onDraft={() => {}} onGenerate={() => {}} onCancel={() => {}} />;
+function Fields({
+  voices = VOICES,
+  state = { phase: "idle" },
+  draft = DRAFT,
+  remembered = null,
+  atEnd = false,
+}: {
+  voices?: VoicesList;
+  state?: NarrateState;
+  draft?: NarrateDraft;
+  remembered?: RememberedVoice | null;
+  atEnd?: boolean;
+}) {
+  return (
+    <NarrateFields voices={voices} state={state} draft={draft} remembered={remembered} atEnd={atEnd} onDraft={() => {}} onGenerate={() => {}} onCancel={() => {}} />
+  );
 }
 
 describe("the Narrate tab", () => {
@@ -253,10 +274,13 @@ describe("the Narrate tab", () => {
     expect(PAUSE_STOPS[1].secs).toBe(0.3);
   });
 
-  test("names what to set up when no engine is", () => {
-    const html = fields({ engines: [], default: null });
-    expect(html).toContain("GEMINI_API_KEY");
-    expect(html).not.toContain("Generate");
+  test("names the .env settings, with Generate off, when no engine is ready", () => {
+    for (const voices of [{ engines: [], default: null }, { engines: [{ ...VOICES.engines[0], ready: false }], default: null }]) {
+      const html = fields(voices);
+      for (const key of ["GEMINI_API_KEY", "TTS_BASE_URL", "TTS_API_KEY", "TTS_MODEL"]) expect(html).toContain(`<code>${key}</code>`);
+      expect(html.match(generate)![0]).toContain('disabled=""');
+      expect(html).not.toContain('role="radiogroup"');
+    }
   });
 
   test("labels a cloud engine with its service and a local one as on this Mac", () => {
@@ -310,7 +334,7 @@ describe("the Narrate tab", () => {
   });
 
   test("keeps the script, Voice and pause after a failure, with its message", () => {
-    const draft = { script: "Halo semua.", voice: "Puck", pause: 3 };
+    const draft = { script: "Halo semua.", engine: null, voice: "Puck", pause: 3 };
     const html = renderToStaticMarkup(<Fields state={{ phase: "failed", message: "Gemini TTS failed (500): boom" }} draft={draft} />);
     expect(html).toContain(">Halo semua.</textarea>");
     expect(html).toMatch(/aria-checked="true"[^>]*>.*?Puck</);
@@ -326,5 +350,107 @@ describe("the Narrate tab", () => {
     expect(atEnd).toContain(`title="${NARRATE_AT_END_HINT}"`);
     expect(renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "   " }} />).match(generate)![0]).toContain('disabled=""');
     expect(renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "Halo semua." }} />).match(generate)![0]).not.toContain('disabled=""');
+  });
+});
+
+// Two cloud engines set up, Gemini and OpenAI, as GET /api/voices lists them; `default` is the backend's
+// for the Job's language.
+const OPENAI: VoicesList["engines"][number] = {
+  id: "openai",
+  label: "OpenAI",
+  service: "OpenAI",
+  local: false,
+  ready: true,
+  takes_style: false,
+  voices: [
+    { id: "coral", name: "Coral", detail: "Bright, friendly", language: null },
+    { id: "onyx", name: "Onyx", detail: "Deep, steady", language: null },
+  ],
+};
+const TWO: VoicesList = { engines: [VOICES.engines[0], OPENAI], default: "gemini" };
+
+// A fake localStorage over a map; `blocked` makes every access throw, as blocked site data does.
+function stubStorage(blocked = false) {
+  const map = new Map<string, string>();
+  const fail = () => {
+    throw new DOMException("The operation is insecure.", "SecurityError");
+  };
+  vi.stubGlobal("window", { addEventListener: () => {}, removeEventListener: () => {} });
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => (blocked ? fail() : (map.get(key) ?? null)),
+    setItem: (key: string, value: string) => (blocked ? fail() : void map.set(key, value)),
+    removeItem: (key: string) => void map.delete(key),
+  });
+}
+
+describe("the engine picker", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const chosen = (voices: VoicesList, remembered: RememberedVoice | null = null, draft = DRAFT) => {
+    const choice = chosenVoice(voices, draft, remembered);
+    return choice && [choice.engine.id, choice.voice?.id];
+  };
+  const selected = (html: string) => html.match(/<option value="([^"]*)" selected="">/)?.[1];
+
+  test("labels each engine with where its words go", () => {
+    const html = renderToStaticMarkup(<Fields voices={TWO} />);
+    expect(html).toContain(">Engine</label>");
+    expect(html).toContain('<option value="gemini" selected="">Gemini · cloud</option>');
+    expect(html).toContain('<option value="openai">OpenAI · cloud</option>');
+    expect(engineOption({ ...OPENAI, id: "kokoro", label: "Kokoro", service: null, local: true })).toBe("Kokoro · On this Mac");
+    // An engine that isn't ready isn't offered.
+    expect(renderToStaticMarkup(<Fields voices={{ ...TWO, engines: [TWO.engines[0], { ...OPENAI, ready: false }] }} />)).not.toContain("OpenAI · cloud");
+  });
+
+  test("starts on the default engine for the Job's language, its first Voice", () => {
+    // The backend's default: Indonesian the first ready cloud engine, English a local one else the first cloud one.
+    expect(chosen(TWO)).toEqual(["gemini", "Kore"]);
+    expect(chosen({ ...TWO, default: "openai" })).toEqual(["openai", "coral"]);
+    expect(selected(renderToStaticMarkup(<Fields voices={{ ...TWO, default: "openai" }} />))).toBe("openai");
+    // A default that isn't ready (or none) falls to the first ready engine.
+    expect(chosen({ ...TWO, default: null })).toEqual(["gemini", "Kore"]);
+    expect(chosen({ engines: [], default: null })).toBeNull();
+  });
+
+  test("a remembered engine and Voice win over the default; the draft's choice over both", () => {
+    expect(chosen(TWO, { engine: "openai", voice: "onyx" })).toEqual(["openai", "onyx"]);
+    const html = renderToStaticMarkup(<Fields voices={TWO} remembered={{ engine: "openai", voice: "onyx" }} />);
+    expect(selected(html)).toBe("openai");
+    expect(html).toMatch(/aria-checked="true"[^>]*>.*?Onyx</);
+    // A remembered engine no longer ready, or a Voice it no longer has, gives way.
+    expect(chosen(TWO, { engine: "kokoro", voice: "af_bella" })).toEqual(["gemini", "Kore"]);
+    expect(chosen(TWO, { engine: "openai", voice: "gone" })).toEqual(["openai", "coral"]);
+    expect(chosen(TWO, { engine: "openai", voice: "onyx" }, { ...DRAFT, engine: "gemini", voice: "Puck" })).toEqual(["gemini", "Puck"]);
+  });
+
+  test("the browser remembers the engine and Voice chosen", () => {
+    stubStorage();
+    expect(rememberedVoice.read()).toBeNull();
+    rememberChoice({ script: "Halo." });
+    expect(rememberedVoice.read()).toBeNull();
+    rememberChoice({ engine: "openai", voice: "onyx" });
+    expect(rememberedVoice.read()).toEqual({ engine: "openai", voice: "onyx" });
+    expect(chosen(TWO, rememberedVoice.read())).toEqual(["openai", "onyx"]);
+    rememberChoice({ engine: "gemini", voice: null });
+    expect(chosen(TWO, rememberedVoice.read())).toEqual(["gemini", "Kore"]);
+  });
+
+  test("storage that throws falls back to the default", () => {
+    stubStorage(true);
+    expect(chosen(TWO, rememberedVoice.read())).toEqual(["gemini", "Kore"]);
+    // Choosing still works, for the page's life.
+    expect(() => rememberChoice({ engine: "openai", voice: "onyx" })).not.toThrow();
+  });
+
+  test("switching engine swaps the Voices", () => {
+    const gemini = renderToStaticMarkup(<Fields voices={TWO} />);
+    expect(gemini).toContain("Firm · female");
+    expect(gemini).not.toContain("Coral");
+    const openai = renderToStaticMarkup(<Fields voices={TWO} draft={{ ...DRAFT, engine: "openai", voice: null }} />);
+    expect(selected(openai)).toBe("openai");
+    expect(openai).toMatch(/aria-checked="true"[^>]*>.*?Coral<\/span><span[^>]*>Bright, friendly</);
+    expect(openai).toMatch(/aria-checked="false"[^>]*>.*?Onyx</);
+    expect(openai).not.toContain("Kore");
   });
 });

@@ -104,7 +104,8 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - It takes a Style, sent as the read's instruction: "<style>: <sentence>".
   - Speed isn't native to it. Speed is applied after the read with a pitch-keeping tempo change, the same treatment Music Clip Speed uses.
 - **OpenAI-compatible speech** is offered when `TTS_BASE_URL`, `TTS_API_KEY` and `TTS_MODEL` are all set.
-  - Voices are the service's standard list, overridable by `TTS_VOICES`.
+  - Voices are the service's standard list, overridable by `TTS_VOICES` (comma-separated).
+  - It asks for `response_format: "wav"` and decodes the WAV by its header (mono or mixed down, 16-bit; a streamed file's unknown sizes are read to the end). A raw `pcm` answer is read at 24 kHz. Its service is "OpenAI" for `api.openai.com`, else the host of `TTS_BASE_URL`; failures name it ("OpenAI TTS is busy (429)", "… refused TTS_API_KEY").
   - It takes a Style when the model accepts instructions. That is a setting (`TTS_STYLE`, on by default for `gpt-4o-mini-tts`-style models).
   - Speed goes to the service's own `speed` field.
 - **Kokoro on this Mac**, run through sherpa-onnx with its int8 multi-language v1.0 archive.
@@ -112,7 +113,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - Only its English Voices (American and British, female and male) are offered.
   - The loaded engine stays in memory until removed.
 - **The engines are configured apart from the LLM settings.** They are read in the same settings loader, and none of the LLM code paths change.
-- **The default engine** follows the Job's language. Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible); English gets Kokoro if ready, else the first cloud engine. The frontend then remembers the last choice (localStorage, wrapped in try/catch).
+- **The default engine** follows the Job's language. Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible); English gets Kokoro if ready, else the first cloud engine. The frontend then remembers the last engine and Voice chosen (localStorage, wrapped in try/catch), which win over the default while that engine is ready.
 
 **The Narration runner.**
 - **A small module of its own, not the Job Worker.** It runs one Narration at a time for the whole app, in a thread of its own. A second request while one runs is refused as busy (HTTP 409).

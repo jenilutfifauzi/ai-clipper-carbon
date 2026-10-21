@@ -1,11 +1,12 @@
-import { narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type VoiceEngine } from "../../../api";
+import { narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
+import { rememberedValue } from "../../../remembered";
 import type { LandedTake } from "./takeFlow";
 
 /**
  * The Narrate tab's flow (.scratch/text-to-speech/spec.md, ADR 0019): from Generate to a Music Clip
  * marked Speech on the Timeline. The backend reads the script (app/narration.py); `NarrateFlow` starts
  * it, follows its progress and lands the item through the same action that lands a Take, at the start
- * fixed when Generate was pressed (the playhead then). It keeps the tab's draft (script, Voice, pause),
+ * fixed when Generate was pressed (the playhead then). It keeps the tab's draft (script, engine, Voice, pause),
  * so that a failure, a cancel or a tab switch never loses it. No React.
  *
  *   idle → making (progress; Cancel → idle) → idle (landed, or kept in the Media tab when refused)
@@ -17,11 +18,25 @@ export type NarrateState =
   | { phase: "making"; start: number; progress: NarrationProgress | null }
   | { phase: "failed"; message: string };
 
-// What the owner has set in the tab: the script, the Voice (null: the engine's first) and the pause stop.
+// What the owner has set in the tab: the script, the engine and Voice (null: the remembered or the
+// default one, chosenVoice) and the pause stop.
 export interface NarrateDraft {
   script: string;
+  engine: string | null;
   voice: string | null;
   pause: number;
+}
+
+// The last engine and Voice chosen, remembered by the browser for every Job.
+export interface RememberedVoice {
+  engine: string;
+  voice: string | null;
+}
+export const rememberedVoice = rememberedValue<RememberedVoice | null>("narrate.voice", null);
+
+/** Remembers the engine and Voice of a change to the draft that chose one (one that names its engine). */
+export function rememberChoice(change: Partial<NarrateDraft>) {
+  if (change.engine) rememberedVoice.set({ engine: change.engine, voice: change.voice ?? null });
 }
 
 // The longest script the backend reads (app/narration.py's MAX_CHARS).
@@ -54,6 +69,30 @@ export interface NarrationListener {
 /** How an engine is labelled in the tab: where its words go. */
 export const engineLabel = (engine: VoiceEngine) => (engine.local ? "On this Mac" : `${engine.service ?? engine.label} · cloud`);
 
+/** An engine in the engine picker: a cloud one by its service ("Gemini · cloud"), a local one by its
+ * name too ("Kokoro · On this Mac"). */
+export const engineOption = (engine: VoiceEngine) => (engine.local ? `${engine.label} · ${engineLabel(engine)}` : engineLabel(engine));
+
+/**
+ * The engine and Voice the tab reads with, of the ready engines: the draft's choice, else the one the
+ * browser remembers, else the default for the Job's language (VoicesList.default), else the first ready.
+ * The Voice is the draft's or the remembered one when that engine has it, else the engine's first.
+ * Null when no engine is ready.
+ */
+export function chosenVoice(
+  voices: VoicesList,
+  draft: Pick<NarrateDraft, "engine" | "voice">,
+  remembered: RememberedVoice | null,
+): { engine: VoiceEngine; voice: Voice | null } | null {
+  const ready = voices.engines.filter((engine) => engine.ready);
+  const find = (id: string | null | undefined) => (id ? ready.find((engine) => engine.id === id) : undefined);
+  const engine = find(draft.engine) ?? find(remembered?.engine) ?? find(voices.default) ?? ready[0];
+  if (!engine) return null;
+  const has = (id: string | null | undefined) => (id ? engine.voices.find((voice) => voice.id === id) : undefined);
+  const voice = has(draft.voice) ?? (remembered?.engine === engine.id ? has(remembered.voice) : undefined) ?? engine.voices[0] ?? null;
+  return { engine, voice };
+}
+
 /** What the flow runs on: the backend, the edit that lands the item, and the Media Library's list. */
 export interface NarrateDeps {
   // Starts a Narration: its id, or rejects (busy, a script that can't be narrated) with the reason.
@@ -81,7 +120,7 @@ interface Run {
  * tab (useSyncExternalStore). */
 export class NarrateFlow {
   state: NarrateState = { phase: "idle" };
-  draft: NarrateDraft = { script: "", voice: null, pause: DEFAULT_PAUSE };
+  draft: NarrateDraft = { script: "", engine: null, voice: null, pause: DEFAULT_PAUSE };
   private listeners = new Set<() => void>();
   // The run being made (null once it ends or is cancelled), and what stops following each run still
   // followed: a cancelled one is followed to its end, for a cancel that came too late.
@@ -95,7 +134,7 @@ export class NarrateFlow {
     return () => void this.listeners.delete(listener);
   };
 
-  /** The owner changed the tab's script, Voice or pause. */
+  /** The owner changed the tab's script, engine, Voice or pause. */
   edit = (change: Partial<NarrateDraft>) => {
     this.draft = { ...this.draft, ...change };
     this.notify();

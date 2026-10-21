@@ -17,7 +17,7 @@ from app.main import create_app
 from app import narration
 from app.narration import sentences
 from app.ports import Ports
-from app.voices import GeminiSpeech, voice_engines
+from app.voices import GeminiSpeech, OpenAiSpeech, voice_engines
 from fakes import FakeVoiceEngine
 from test_events import events
 from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp  # noqa: F401
@@ -233,6 +233,59 @@ def test_gemini_tts_is_offered_with_its_key_whatever_the_llm_provider_and_not_wi
     assert "Kore" in [voice.id for voice in gemini.voices()]
     env_file.write_text("LLM_PROVIDER=gemini\n")
     assert voice_engines(load_settings(env_file=env_file)) == []
+
+
+@pytest.mark.parametrize(
+    ("engines", "language", "default"),
+    [
+        # Indonesian: the first ready cloud engine, even with a local one ready.
+        (("gemini", "openai", "local"), "id", "gemini"),
+        (("asleep-cloud", "openai", "local"), "id", "openai"),
+        # English: a ready local engine first, else the first ready cloud one.
+        (("gemini", "openai", "local"), "en", "local"),
+        (("gemini", "openai", "asleep-local"), "en", "gemini"),
+        (("asleep-local",), "en", None),
+    ],
+)
+def test_the_default_engine_follows_the_jobs_language(settings, video_source, transcriber, llm, engines, language, default):
+    fakes = {
+        "gemini": FakeVoiceEngine("gemini"),
+        "openai": FakeVoiceEngine("openai"),
+        "local": FakeVoiceEngine("local", local=True),
+        "asleep-cloud": FakeVoiceEngine("asleep-cloud", ready=False),
+        "asleep-local": FakeVoiceEngine("asleep-local", ready=False, local=True),
+    }
+    ports = Ports(video_source, transcriber, llm, voices=tuple(fakes[id] for id in engines))
+    with TestClient(create_app(settings, ports)) as client:
+        assert client.get("/api/voices", params={"language": language}).json()["default"] == default
+
+
+TTS = ("TTS_BASE_URL", "TTS_API_KEY", "TTS_MODEL", "TTS_VOICES")
+
+
+@pytest.mark.parametrize("missing", ["TTS_BASE_URL", "TTS_API_KEY", "TTS_MODEL"])
+def test_openai_compatible_speech_is_offered_only_with_its_three_settings(tmp_path, monkeypatch, missing):
+    for key in ("LLM_PROVIDER", "GEMINI_API_KEY", *TTS):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    complete = {"TTS_BASE_URL": "https://api.openai.com/v1", "TTS_API_KEY": "sk-speech", "TTS_MODEL": "gpt-4o-mini-tts"}
+    env_file.write_text("".join(f"{key}={value}\n" for key, value in complete.items()) + "GEMINI_API_KEY=gemini-secret\n")
+    gemini, openai = voice_engines(load_settings(env_file=env_file))
+    assert isinstance(gemini, GeminiSpeech) and isinstance(openai, OpenAiSpeech) and openai.ready()
+    assert (openai.id, openai.service, openai.local) == ("openai", "OpenAI", False)
+
+    env_file.write_text("".join(f"{key}={value}\n" for key, value in complete.items() if key != missing))
+    assert voice_engines(load_settings(env_file=env_file)) == []
+
+
+def test_tts_voices_replaces_the_openai_compatible_voice_list(tmp_path, monkeypatch):
+    for key in ("GEMINI_API_KEY", *TTS):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("TTS_BASE_URL=http://localhost:8880/v1\nTTS_API_KEY=none\nTTS_MODEL=kokoro\nTTS_VOICES=af_bella,am_adam\n")
+    [openai] = voice_engines(load_settings(env_file=env_file))
+    assert [voice.id for voice in openai.voices()] == ["af_bella", "am_adam"]
+    assert openai.service == "localhost"
 
 
 @pytest.mark.anyio

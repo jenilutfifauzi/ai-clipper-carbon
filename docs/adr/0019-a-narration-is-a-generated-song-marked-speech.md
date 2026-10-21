@@ -28,14 +28,14 @@ Today:
 - **Two kinds of engine**, each a list of built-in Voices.
   - **Cloud engines, configured apart from the LLM.**
     - Gemini TTS is offered whenever `GEMINI_API_KEY` is set, whatever `LLM_PROVIDER` says. Its model is `TTS_GEMINI_MODEL`, by default `gemini-3.8-flash-lite-tts`, called through generateContent's REST API.
-    - An OpenAI-compatible `/audio/speech` engine is offered when `TTS_BASE_URL`, `TTS_API_KEY` and `TTS_MODEL` are set.
+    - An OpenAI-compatible `/audio/speech` engine is offered when `TTS_BASE_URL`, `TTS_API_KEY` and `TTS_MODEL` are set. Its Voices are OpenAI's standard list, replaced by a comma-separated `TTS_VOICES`. It asks for WAV, which compatible services most often share, and decodes it by its header (a streamed file's unknown sizes included); a raw `pcm` answer is read as OpenAI's 24 kHz. Its service is "OpenAI", or the host of `TTS_BASE_URL`.
     - Each is labelled with its service ("Gemini · cloud"), with no confirmation and no cost estimate.
   - **Kokoro on this Mac**, English Voices only, run through sherpa-onnx.
     - Its int8 model archive brings its own espeak-ng data, so no system package is needed.
     - It is downloaded from the Narrate tab on first use, with progress and cancel, resumed from a `.part` file.
     - It is checked against a pinned SHA-256 and moved into `DATA_DIR/models` atomically.
     - It can be removed from the same menu, except while a Narration is being made.
-  - The default engine follows the Job's language: Indonesian gets the first configured cloud engine, English gets Kokoro. The browser then remembers the last choice.
+  - The default engine follows the Job's language: Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible), English gets Kokoro when ready, else the first cloud engine. The browser then remembers the last engine and Voice chosen, which win over the default.
 - **The backend splits every script into sentences**, for every engine.
   - It splits at `.`, `!`, `?` and `…` followed by a space or a line's end, and at newlines. It reads each sentence alone, and joins them with silence the length of the pause slider (None, Natural, Long, Longer: 0, 0.3, 0.8 and 1.5 s).
   - That gives every engine the same pause control, with progress and cancel at sentence boundaries.

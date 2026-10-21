@@ -2,14 +2,17 @@
 httpx mock transport: the requests and the handling of answers and failures are real, no network is used."""
 
 import base64
+import io
 import json
+import struct
+import wave
 from dataclasses import replace
 
 import httpx
 import numpy as np
 import pytest
 
-from app.voices import GeminiSpeech, SpeechError, TransientSpeechError
+from app.voices import OPENAI_VOICES, GeminiSpeech, OpenAiSpeech, SpeechError, TransientSpeechError
 
 
 def pcm_answer(samples: np.ndarray, rate: int = 24_000) -> httpx.Response:
@@ -101,3 +104,116 @@ def test_a_network_failure_is_transient(settings):
     engine = GeminiSpeech(replace(settings, gemini_api_key="key"), httpx.Client(transport=httpx.MockTransport(handle)))
     with pytest.raises(TransientSpeechError, match="Couldn't reach Gemini TTS"):
         engine.read("Halo.", "Kore")
+
+
+def wav_answer(samples: np.ndarray, rate: int = 24_000, channels: int = 1, streamed: bool = False) -> httpx.Response:
+    """/audio/speech's answer as a WAV file; `streamed` writes the sizes a streaming service can't know
+    yet (0xFFFFFFFF), as OpenAI's does."""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as file:
+        file.setnchannels(channels)
+        file.setsampwidth(2)
+        file.setframerate(rate)
+        file.writeframes(samples.astype("<i2").tobytes())
+    data = out.getvalue()
+    if streamed:
+        data = data[:4] + struct.pack("<I", 0xFFFFFFFF) + data[8:40] + struct.pack("<I", 0xFFFFFFFF) + data[44:]
+    return httpx.Response(200, headers={"content-type": "audio/wav"}, content=data)
+
+
+def openai(settings, answer: httpx.Response, **changes) -> tuple[OpenAiSpeech, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return answer
+
+    configured = replace(settings, **{"tts_base_url": "https://speech.example/v1", "tts_api_key": "sk-speech", "tts_model": "tts-model", **changes})
+    return OpenAiSpeech(configured, httpx.Client(transport=httpx.MockTransport(handle))), requests
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_openai_is_sent_the_model_voice_and_sentence_and_its_wav_decodes_to_pcm_at_its_rate(settings, streamed):
+    tone = (np.sin(np.arange(2400) / 10) * 8000).astype("<i2")
+    engine, requests = openai(settings, wav_answer(tone, rate=22_050, streamed=streamed))
+    pcm = engine.read("Halo semua.", "coral")
+    assert pcm.rate == 22_050 and np.array_equal(pcm.samples, tone)
+
+    [request] = requests
+    assert (request.method, str(request.url)) == ("POST", "https://speech.example/v1/audio/speech")
+    assert request.headers["authorization"] == "Bearer sk-speech"
+    assert json.loads(request.content) == {"model": "tts-model", "input": "Halo semua.", "voice": "coral", "response_format": "wav"}
+
+
+def test_openai_stereo_wav_is_mixed_down_to_mono(settings):
+    left, right = np.full(100, 1000), np.full(100, 3000)
+    engine, _ = openai(settings, wav_answer(np.column_stack([left, right]).ravel(), channels=2))
+    pcm = engine.read("Halo.", "coral")
+    assert len(pcm.samples) == 100 and set(pcm.samples.tolist()) == {2000}
+
+
+def test_openai_raw_pcm_is_read_at_24_khz(settings):
+    tone = np.arange(-50, 50).astype("<i2")
+    engine, _ = openai(settings, httpx.Response(200, headers={"content-type": "audio/pcm"}, content=tone.tobytes()))
+    pcm = engine.read("Halo.", "coral")
+    assert pcm.rate == 24_000 and np.array_equal(pcm.samples, tone)
+
+
+def test_openai_audio_it_cant_decode_fails_naming_the_service(settings):
+    engine, _ = openai(settings, httpx.Response(200, headers={"content-type": "audio/mpeg"}, content=b"ID3\x04nope"))
+    with pytest.raises(SpeechError, match="speech.example TTS gave audio that isn't WAV \\(audio/mpeg\\)"):
+        engine.read("Halo.", "coral")
+
+
+def openai_error(code: int, message: str, headers: dict | None = None) -> httpx.Response:
+    return httpx.Response(code, headers=headers, json={"error": {"message": message, "type": "invalid_request_error"}})
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_openai_refused_key_says_to_check_tts_api_key(settings, code):
+    engine, _ = openai(settings, openai_error(code, "Incorrect API key provided."))
+    with pytest.raises(SpeechError, match="speech.example TTS refused TTS_API_KEY: check the key in .env and restart") as raised:
+        engine.read("Halo.", "coral")
+    assert not isinstance(raised.value, TransientSpeechError)
+
+
+@pytest.mark.parametrize(
+    ("answer", "retry_after"),
+    [
+        (openai_error(429, "Rate limit reached.", headers={"Retry-After": "7"}), 7.0),
+        (openai_error(500, "The server had an error."), None),
+        (httpx.Response(502, text="Bad Gateway"), None),
+    ],
+)
+def test_openai_rate_limit_or_server_error_is_transient_with_its_retry_after(settings, answer, retry_after):
+    engine, _ = openai(settings, answer)
+    with pytest.raises(TransientSpeechError, match=f"speech.example TTS is busy \\({answer.status_code}\\)") as raised:
+        engine.read("Halo.", "coral")
+    assert raised.value.retry_after == retry_after
+
+
+def test_openai_other_refusal_fails_with_its_message(settings):
+    engine, _ = openai(settings, openai_error(400, "Invalid voice: zoe"))
+    with pytest.raises(SpeechError, match="speech.example TTS failed \\(400\\): Invalid voice: zoe") as raised:
+        engine.read("Halo.", "zoe")
+    assert not isinstance(raised.value, TransientSpeechError)
+
+
+def test_openai_network_failure_is_transient(settings):
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    configured = replace(settings, tts_base_url="https://speech.example/v1", tts_api_key="k", tts_model="m")
+    engine = OpenAiSpeech(configured, httpx.Client(transport=httpx.MockTransport(handle)))
+    with pytest.raises(TransientSpeechError, match="Couldn't reach speech.example TTS"):
+        engine.read("Halo.", "coral")
+
+
+def test_openai_names_its_service_and_lists_the_standard_voices_or_tts_voices(settings):
+    engine, _ = openai(settings, wav_answer(np.zeros(1)))
+    assert (engine.id, engine.label, engine.service, engine.local, engine.takes_style) == ("openai", "speech.example", "speech.example", False, False)
+    assert engine.voices() == OPENAI_VOICES
+    assert {"alloy", "coral", "nova", "onyx", "shimmer"} <= {voice.id for voice in engine.voices()}
+    official, _ = openai(replace(settings, tts_voices=("Coral", "my-clone")), wav_answer(np.zeros(1)), tts_base_url="https://api.openai.com/v1")
+    assert (official.label, official.service) == ("OpenAI", "OpenAI")
+    assert [(voice.id, voice.name) for voice in official.voices()] == [("Coral", "Coral"), ("my-clone", "my-clone")]
