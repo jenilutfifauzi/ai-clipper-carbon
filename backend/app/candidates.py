@@ -160,7 +160,8 @@ class Transform:
     bottom (`flip_v`), at `opacity`. The same for its item's whole length, but for the fields its
     item's Keyframes move (docs/adr/0008). A centre given off the
     frame is brought onto it: here onto the largest Canvas, and onto its Candidate's by `on_canvas`.
-    Left out, the centre is the 9:16 Canvas's."""
+    Left out, the centre is the 9:16 Canvas's; an edit that leaves it out puts it at its Candidate's
+    Canvas's centre (app/review.py's `Unplaced`)."""
 
     x: FiniteFloat = PORTRAIT.width // 2
     y: FiniteFloat = PORTRAIT.height // 2

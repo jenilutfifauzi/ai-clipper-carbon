@@ -239,6 +239,29 @@ async def test_an_agent_makes_a_wide_job_and_reads_and_changes_a_candidates_aspe
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(("aspect", "centre"), [("16:9", (960, 540)), ("9:16", (540, 960))])
+async def test_an_item_an_agent_adds_without_its_centre_lands_at_the_canvass_centre(mcp, tmp_path, aspect, centre):
+    picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
+    item = await call(mcp, "add_asset", kind="media", path=str(picture))
+    job = await reviewed(mcp, aspect=aspect)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+
+    merged = await call(mcp, "merge_candidate_items", **ids, overlays=[{"id": "o1", "media": item["id"], "start": 0, "secs": 1}])
+    transform = merged["overlays"][0]["transform"]
+    assert (transform["x"], transform["y"], transform["scale"]) == (*centre, 0.5)
+    # A centre given on one axis keeps it; one given whole, even 9:16's, is kept as it is.
+    edited = await call(mcp, "edit_candidate", **ids, changes={"text_layers": [
+        {"id": "t1", "text": "Judul", "start": 0, "secs": 1, "transform": {"x": 100}},
+        {"id": "t2", "text": "Dua", "start": 0, "secs": 1, "transform": {"x": 540, "y": 960}},
+    ]})
+    first, second = (layer["transform"] for layer in edited["text_layers"])
+    assert ((first["x"], first["y"]), (second["x"], second["y"])) == ((100, centre[1]), (540, 960))
+    # The overlay added before keeps where it was.
+    assert (edited["overlays"][0]["transform"]["x"], edited["overlays"][0]["transform"]["y"]) == centre
+
+
+@pytest.mark.anyio
 async def test_an_agents_change_of_aspect_alone_rescales_and_its_dry_run_shows_it_without_saving(mcp, tmp_path):
     picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
     item = await call(mcp, "add_asset", kind="media", path=str(picture))

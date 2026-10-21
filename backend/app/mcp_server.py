@@ -77,6 +77,7 @@ from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, 
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
+from app.review import PLACED_BY
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
@@ -183,7 +184,7 @@ Edits:
   imports a TTF, OTF or TTC file from this Mac for every Job (a variable font as a Face per named
   instance), with a warning when its licence says it may not be embedded.
 - An Overlay is placed by its transform. x, y: its centre in the Canvas's pixels (kept on it; the
-  picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
+  picture may go past the frame's edges; left out, the Canvas's centre). scale: times its fitted size, the largest that fits the
   Canvas keeping its aspect (1 fits; a 16:9 picture at 0.5 on 9:16 is 540 px wide). stretch_x,
   stretch_y: times its fitted width and height on top of scale. rotation: degrees clockwise. flip_h,
   flip_v, opacity 0..1. Its crop: left, top, right, bottom, each the fraction 0..0.9 of its
@@ -684,6 +685,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
         for clip in body.get("music") or []:
             if clip["id"] in changes._duck_unset:
                 del clip["duck"]
+        # A centre given without x or y is sent without it, so that it lands at the Canvas's centre.
+        for name, index, axis in changes._unplaced:
+            item = body["framing"] if index is None else body[name][index]
+            for step in ("transform",) if index is None else PLACED_BY[name]:
+                item = item[step]
+            item.pop(axis, None)
         if dry_run:
             return _plan_view(
                 await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),

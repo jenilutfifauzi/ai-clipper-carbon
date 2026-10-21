@@ -30,7 +30,7 @@ from app.candidates import (
     timeline_length,
     with_join_transition,
 )
-from app.canvas import Aspect, canvas_for
+from app.canvas import Aspect, Canvas, canvas_for
 from app.config import SelectionTuning
 from app.keyframes import rewindow
 from app.rescale import Sizes, rescaled
@@ -104,6 +104,8 @@ class CandidateChange:
     # The Music Clips of `music` (by id) whose `duck` the edit didn't set: a new song's ducks by
     # default (docs/adr/0016).
     duck_unset: frozenset[str] = frozenset()
+    # The centres the edit's items left out (`Unplaced`): at the Candidate's Canvas's centre.
+    unplaced: "Unplaced" = frozenset()
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,46 @@ class Episode:
             raise InvalidEdit(f"A clip can last at most {longest:g} s; its Segments would last {length:.0f} s")
 
 
+# A centre an edit's item left out, as (field, index in its list, axis "x" or "y"): of the
+# Transform of the item (`PLACED_BY`), of its Framing's (a None Framing is centred already), or with
+# index None of the Candidate's own Framing's.
+type Unplaced = frozenset[tuple[str, int | None, str]]
+# Where each list's items keep their Transform: under these fields.
+PLACED_BY = {
+    "overlays": ("transform",),
+    "text_layers": ("transform",),
+    "shapes": ("transform",),
+    "segments": ("framing", "transform"),
+    "layout_overrides": ("framing", "transform"),
+}
+
+
+def _centred(change: CandidateChange, canvas: Canvas) -> CandidateChange:
+    """`change` with the centres it left out (`change.unplaced`) at `canvas`'s centre, as a new item's
+    is on every aspect (its Transform's default is 9:16's, docs/adr/0022)."""
+    if not change.unplaced:
+        return change
+    centre = dict(zip("xy", canvas.centre))
+
+    def placed[T](item: T, path: tuple[str, ...], axes: set[str]) -> T:
+        name, *rest = path
+        inner = getattr(item, name)
+        now = placed(inner, tuple(rest), axes) if rest else replace(inner, **{axis: centre[axis] for axis in axes})
+        return replace(item, **{name: now})  # type: ignore[type-var]
+
+    lists = {name: list(getattr(change, name)) for name in PLACED_BY if getattr(change, name) is not None}
+    framing = change.framing
+    by_item: dict[tuple[str, int | None], set[str]] = {}
+    for name, index, axis in change.unplaced:
+        by_item.setdefault((name, index), set()).add(axis)
+    for (name, index), axes in by_item.items():
+        if index is None:
+            framing = placed(framing, ("transform",), axes) if framing is not None else None
+        elif name in lists and index < len(lists[name]):
+            lists[name][index] = placed(lists[name][index], PLACED_BY[name], axes)
+    return replace(change, framing=framing, **lists)
+
+
 def update(
     candidates: list[Candidate],
     candidate_id: str,
@@ -206,6 +248,7 @@ def update(
     if change.revision is not None and change.revision != old.revision:
         raise StaleRevision(old)
     aspect = _pick(change.aspect, old.aspect)
+    change = _centred(change, canvas_for(aspect))
     # What the change doesn't send is kept as it looks: rescaled onto the new Canvas (docs/adr/0022).
     kept = old if aspect == old.aspect else rescaled(old, aspect, episode.sizes, episode.source)
     start, end, segments = old.start, old.end, kept.segments

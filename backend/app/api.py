@@ -81,7 +81,7 @@ from app.rendering import NothingToRender, has_media_words, media_language, rank
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
-from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
+from app.review import MAX_CLIP_SECS, PLACED_BY, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision, Unplaced
 from app.revisions import Edit, HistoryEntry
 from app.starred_effects import Starred, StarredStore
 from app.storage import DiskUsage, disk_usage
@@ -275,6 +275,32 @@ def no_framing_keys(framing: Any) -> Any:
     return framing
 
 
+def unplaced(given: dict) -> Unplaced:
+    """The centres an edit as sent (`given`, its JSON) leaves out: each axis of a Transform without it,
+    and both of a Transform left out where its item would take the 9:16 default (not under a Framing
+    left out, which is centred on any Canvas)."""
+    found: set[tuple[str, int | None, str]] = set()
+
+    def look(name: str, index: int | None, item: Any, path: tuple[str, ...]) -> None:
+        if not isinstance(item, dict):
+            return
+        *outer, last = path
+        for step in outer:
+            item = item.get(step)
+            if not isinstance(item, dict):
+                return
+        transform = item.get(last, {})
+        if isinstance(transform, dict):
+            found.update((name, index, axis) for axis in "xy" if axis not in transform)
+
+    for name, path in PLACED_BY.items():
+        if isinstance(items := given.get(name), list):
+            for index, item in enumerate(items):
+                look(name, index, item, path)
+    look("framing", None, given.get("framing"), ("transform",))
+    return frozenset(found)
+
+
 class CandidateUpdate(BaseModel):
     """A review edit; a field left out stays as it is. `start` and `end` are snapped to Words."""
 
@@ -326,6 +352,9 @@ class CandidateUpdate(BaseModel):
     # The Music Clips (by id) sent without `duck`: a new song's then ducks by default (docs/adr/0016).
     # Read from what was sent, so that an explicit null keeps it off.
     _duck_unset: frozenset[str] = PrivateAttr(default=frozenset())
+    # The centres its items were sent without (review.Unplaced): at the Candidate's Canvas's centre,
+    # which only the Candidate knows. Read from what was sent, so that a 540 or 960 sent stays.
+    _unplaced: Unplaced = PrivateAttr(default=frozenset())
 
     @model_validator(mode="wrap")
     @classmethod
@@ -334,12 +363,16 @@ class CandidateUpdate(BaseModel):
         music = given.get("music") if isinstance(given, dict) else None
         if isinstance(music, list):
             update._duck_unset = frozenset(str(clip.get("id")) for clip in music if isinstance(clip, dict) and "duck" not in clip)
+        if isinstance(given, dict):
+            update._unplaced = unplaced(given)
         return update
 
     @property
     def change(self) -> CandidateChange:
         """The edit, as `review.update` makes it."""
-        return CandidateChange(**{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset)
+        return CandidateChange(
+            **{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset, unplaced=self._unplaced
+        )
 
 
 class MediaWordsRequest(BaseModel):
