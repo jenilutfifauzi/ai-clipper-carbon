@@ -796,7 +796,13 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   // Its picture's Video Effects (ADR 0014), in order, after its Grade and before its corners, border,
   // rotation, shadow and opacity; sizes at its fitted size. Empty when missing.
   video_effects?: VideoEffect[];
+  // How it is laid over what is under it (ADR 0014). Normal when missing.
+  blend?: BlendMode;
 }
+
+// How an Overlay is laid over what is under it (GLOSSARY.md, Blend Mode; ADR 0014): covering it by its
+// alpha (Normal), or its colour mixed with what is under it by the mode, then laid by its alpha.
+export type BlendMode = "normal" | "multiply" | "screen" | "add" | "lighten" | "darken";
 
 // A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; ADR 0013): its Grade laid over the Main
 // Track and the Overlays from `start` for `secs` (Timeline time), mixed over the picture as it was by
@@ -877,6 +883,8 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   grade?: Grade;
   // Its Overlay's enabled Video Effects (ADR 0014), in order, their sizes times its scale (as drawn).
   video_effects?: VideoEffect[];
+  // Its Overlay's Blend Mode (ADR 0014). Normal when missing.
+  blend?: BlendMode;
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.

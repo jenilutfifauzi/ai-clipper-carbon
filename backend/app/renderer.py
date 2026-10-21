@@ -162,13 +162,19 @@ from app.planner import (
     own_volume,
     picture_at,
 )
-from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.candidates import BlendMode, Keyframe, Shadow, Shape, TextLayer
 from app.scaled_plan import drawn_scale, scaled_plan
 from app.transition_kinds import TransitionSound
 from app.transitions import RECIPES, Side
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
+
+# The `blend` filter's mode of each Blend Mode but Normal (docs/adr/0014).
+BLEND_MODES = {
+    BlendMode.MULTIPLY: "multiply", BlendMode.SCREEN: "screen", BlendMode.ADD: "addition",
+    BlendMode.LIGHTEN: "lighten", BlendMode.DARKEN: "darken",
+}
 
 # The highlight box's padding around its Word, in sizes of the line's font, and its corners' radius,
 # unless its Caption Style gives its own.
@@ -1198,8 +1204,8 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     frames below being at n / fps exactly)."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
     if feed is not None:
-        name = f"[layer{number}]"
-        return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}{name};{below}{name}overlay=0:0:{shows}:eof_action=pass{out}"
+        name = f"layer{number}"
+        return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}[{name}];" + _laid(below, name, "0:0", f"{shows}:eof_action=pass", out, event.blend, shows)
     held = event.image and not _looped(event)
     played = "PTS-STARTPTS" if event.speed == 1 or event.image else f"(PTS-STARTPTS)/{event.speed:.6g}"
     timed = "" if held else f",setpts={played}+{event.start:.3f}/TB"
@@ -1210,7 +1216,9 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     clock = Clock(rate=1 if event.image else 1 / event.speed)
     chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock)
     effected = ",".join([*([graded] if graded else []), *chain])
-    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected)
+    return _picture(
+        event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected, event.blend, shows
+    )
 
 
 def _looped(event: OverlayEvent) -> bool:
@@ -1507,14 +1515,16 @@ def _later(picture: Picture, by: float) -> Picture:
 
 
 def _picture(
-    picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = ""
+    picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = "",
+    blend: BlendMode = BlendMode.NORMAL, shows: str = "",
 ) -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
     order of docs/adr/0007: crop, scale, flip, the filters `graded` (an Overlay's Grade, docs/adr/0013,
     then its Video Effects, docs/adr/0014),
     corners and border (`_corners`), rotate with a transparent fill, shadow (`_shadow`), opacity, then
     laid over at its centre. Steps that change nothing are left out. `after` is more filters of the
-    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`."""
+    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`.
+    An Overlay's `blend` other than Normal lays it by its Blend Mode while it `shows` (`_laid`)."""
     crop = picture.crop
     steps = [] if (crop.width, crop.height) == picture.item_size else [f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1"]
     steps.append(f"scale={picture.width}:{picture.height}:flags=lanczos")
@@ -1536,7 +1546,26 @@ def _picture(
         steps.append(f"colorchannelmixer=aa={picture.opacity:g}")
     x, y = picture.centre
     at = f"x={x:g}-overlay_w/2:y={y:g}-overlay_h/2"
-    return f"{source}{','.join(steps)}{after}[{name}];{below}[{name}]overlay={at}{':' if laid else ''}{laid}{out}"
+    return f"{source}{','.join(steps)}{after}[{name}];" + _laid(below, name, at, laid, out, blend, shows)
+
+
+def _laid(below: str, name: str, at: str, laid: str, out: str, blend: BlendMode = BlendMode.NORMAL, shows: str = "") -> str:
+    """Filters that lay the frames `name` over the frames `below` at `at`, with more options `laid` of
+    the overlay, into `out`. Normal covers what is under them by their alpha. Another Blend Mode
+    (docs/adr/0014): they are padded to the frame with transparency (laid over a transparent copy of
+    `below`), their colour is blended over `below` by the mode in planar RGB while they `shows`, and
+    that is masked by their alpha and laid over `below`, so that the frame outside their alpha and
+    span stays as it was. A `scale` before each change of format keeps `below`'s own format: `split`
+    gives every branch the same one."""
+    if blend is BlendMode.NORMAL:
+        return f"{below}[{name}]overlay={at}{':' if laid else ''}{laid}{out}"
+    return (
+        f"{below}split=3[{name}under][{name}base][{name}clear];[{name}clear]scale,format=rgba,colorchannelmixer=aa=0[{name}canvas]"
+        f";[{name}canvas][{name}]overlay={at}:format=rgb{':' if laid else ''}{laid},format=gbrap,split[{name}top][{name}cut]"
+        f";[{name}base]scale,format=gbrap[{name}bottom];[{name}bottom][{name}top]blend=all_mode={BLEND_MODES[blend]}:{shows}[{name}mixed]"
+        f";[{name}cut]alphaextract[{name}mask];[{name}mixed][{name}mask]alphamerge[{name}blended]"
+        f";[{name}under][{name}blended]overlay=0:0:{shows}{out}"
+    )
 
 
 def _corners(picture: Picture, name: str) -> str:

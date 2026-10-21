@@ -1,4 +1,5 @@
-import { isColourSetting, type Picture, type RenderPlan, type Transform, type VideoEffect, type VideoEffectKind } from "../../../api";
+import type { CSSProperties } from "react";
+import { isColourSetting, type BlendMode, type Picture, type RenderPlan, type Transform, type VideoEffect, type VideoEffectKind } from "../../../api";
 import { FRAME } from "./picture";
 
 /*
@@ -61,6 +62,15 @@ export function draftVideoEffects(
   const shownLayers = redrawn(adjustments, layerStacks);
   if (shownSegments === plan.segments && shownOverlays === plan.overlays && shownLayers === adjustments) return plan;
   return { ...plan, segments: shownSegments, overlays: shownOverlays, ...(shownLayers !== adjustments && { adjustment_layers: shownLayers }) };
+}
+
+/**
+ * The CSS `mix-blend-mode` an Overlay's Blend Mode (ADR 0014) is drawn with on its outer element, as
+ * the render blends it: Add is `plus-lighter`. Undefined for Normal (or none).
+ */
+export function mixBlendMode(blend: BlendMode | undefined): CSSProperties["mixBlendMode"] {
+  if (!blend || blend === "normal") return undefined;
+  return blend === "add" ? "plus-lighter" : blend;
 }
 
 /** An SVG filter primitive: its element's name, its attributes and its own child elements (an feComponentTransfer's functions). */

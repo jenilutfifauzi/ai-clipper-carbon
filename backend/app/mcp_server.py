@@ -351,6 +351,12 @@ Edits:
   to take out the light instead of the dark) are for Overlays only, refused on a Segment or an
   Adjustment Layer: the part they take out shows what is under the Overlay, through its corners,
   border, rotation, shadow and opacity. The key colour is matched after the Overlay's Grade.
+- An Overlay's `blend` is its Blend Mode, how it is laid over what is under it: "normal" (the
+  default: it covers it), "multiply" (darkens: white leaves it as it was, as a paper texture),
+  "screen" (lightens: black leaves it as it was, as a light leak on black), "add", "lighten" or
+  "darken". Its colour, after its corners, border, rotation, shadow and opacity, is mixed with what
+  is under it by the mode and laid by its alpha, keyed or not. An unknown mode is refused. The dry
+  run lists one that isn't normal.
 - A Segment's `video_effects` (of the episode or a video, a Freeze frame too) is the same stack over
   its whole frame (panels, picture and Background): after its Grade and before the joins, so a
   Transition crossfades pictures that already carry them. Its frame is 1080x1920 at scale 1, so its
@@ -1243,7 +1249,10 @@ def _plan_view(
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
                 **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
-                **_compact({"grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", []))}),
+                **_compact({
+                    "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
+                    "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
+                }),
                 **({} if event["image"] else _video_read(event, copied)),
                 **_motion_view(event["picture"]),
                 **_animation_view(event),

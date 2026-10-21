@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setSpeech, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setBlend, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
@@ -22,7 +22,7 @@ import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from ".
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
-import { OverlayFields } from "./Overlays";
+import { BlendModeField, OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
@@ -182,14 +182,26 @@ export function Inspector({
       );
     }
     const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
+    // The picked Overlays' Blend Mode, set on them all.
+    const blend = sharedBlend({ edits, pick });
+    const blendField = blend && (
+      <BlendModeField
+        value={blend}
+        onChange={(mode) => {
+          const outcome = setBlend({ edits, pick }, mode);
+          if (outcome) onEdits(outcome.edits, "overlays:blend");
+        }}
+      />
+    );
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
     const graded = items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment");
     // Those with sound: their Audio Effects edited together.
     const effects = effectsOf();
-    if (!graded && !effects) return summary;
+    if (!graded && !effects && !blendField) return summary;
     return (
       <div className="flex flex-col gap-4">
         {summary}
+        {blendField}
         {graded && colorOf()}
         {graded && pictureEffectsOf()}
         {effects}

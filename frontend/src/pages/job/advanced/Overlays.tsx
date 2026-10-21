@@ -1,12 +1,13 @@
 import { Copy, Layers, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { MediaItem, Overlay } from "../../../api";
+import type { BlendMode, MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
+import { Select } from "../../../components/Select";
 import { NO_CROP } from "../editor/cropGestures";
 import { mediaSize, overlayPlacement } from "../editor/picture";
 import type { Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
-import { Group } from "../editor/StyleFields";
+import { Group, Mixed } from "../editor/StyleFields";
 import { DecorationFields } from "./DecorationFields";
 import { newId, round } from "./edits";
 import { tooManyKeys, writeKey } from "./keyActions";
@@ -45,7 +46,35 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
   };
 }
 
+// `overlay` laid by `blend`: Normal leaves it without the field, as one saved before Blend Modes.
+const reblended = ({ blend: _was, ...overlay }: Overlay, blend: BlendMode): Overlay => (blend === "normal" ? overlay : { ...overlay, blend });
+
 const percent = (value: number) => `${Math.round(value * 100)}%`;
+
+const BLEND_OPTIONS: readonly { value: BlendMode; label: string }[] = [
+  { value: "normal", label: "Normal" },
+  { value: "multiply", label: "Multiply" },
+  { value: "screen", label: "Screen" },
+  { value: "add", label: "Add" },
+  { value: "lighten", label: "Lighten" },
+  { value: "darken", label: "Darken" },
+];
+
+/**
+ * The Blend Mode menu of one Overlay or of several (ADR 0014): how it is laid over what is under it.
+ * Several that differ show Normal, marked Mixed, until one is chosen for all.
+ */
+export function BlendModeField({ value, onChange }: { value: BlendMode | "mixed"; onChange: (blend: BlendMode) => void }) {
+  return (
+    <Select
+      label="Blend Mode"
+      value={value === "mixed" ? "normal" : value}
+      options={BLEND_OPTIONS}
+      onChange={onChange}
+      marker={value === "mixed" ? <Mixed /> : undefined}
+    />
+  );
+}
 
 /**
  * An Overlay's Transform and Crop in the inspector and the phone's Transform sheet, keyed (ADR 0008):
@@ -59,12 +88,15 @@ export function OverlayTransform({
   playback,
   onChange,
   onCropMode,
+  blend,
 }: {
   overlay: Overlay;
   item: MediaItem | undefined;
   playback: Playback;
   onChange: (overlay: Overlay, group: string) => void;
   onCropMode?: () => void;
+  // Its Blend Mode menu, next to its opacity.
+  blend?: ReactNode;
 }) {
   const fields = useKeyedTransform({
     item: { kind: "overlay", id: overlay.id },
@@ -86,11 +118,12 @@ export function OverlayTransform({
         onChange(transform ? resetOverlay(overlay, transform) : { ...overlay, crop }, `overlay:${overlay.id}:crop.${field}`)
       }
       onCropMode={onCropMode}
+      blend={blend}
     />
   );
 }
 
-/** The selected Overlay's Transform, corners, border and shadow, sound, a video's Speed, and time. */
+/** The selected Overlay's Transform and Blend Mode, corners, border and shadow, sound, a video's Speed, and time. */
 export function OverlayFields({
   overlay,
   item,
@@ -159,7 +192,14 @@ export function OverlayFields({
       <p className="text-sm text-pretty text-muted">
         Drag it on the video to place it: its corners scale it, its edges stretch it and the handle above turns it. Double-click it to crop it.
       </p>
-      <OverlayTransform overlay={overlay} item={item} playback={playback} onChange={onChange} onCropMode={onCropMode} />
+      <OverlayTransform
+        overlay={overlay}
+        item={item}
+        playback={playback}
+        onChange={onChange}
+        onCropMode={onCropMode}
+        blend={<BlendModeField value={overlay.blend ?? "normal"} onChange={(blend) => onChange(reblended(overlay, blend), `overlay:${overlay.id}:blend`)} />}
+      />
       <DecorationFields overlay={overlay} onChange={onChange} />
       {color}
       {pictureEffects}

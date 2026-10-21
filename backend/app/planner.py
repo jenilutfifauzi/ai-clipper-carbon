@@ -120,6 +120,7 @@ from app.candidates import (
     PICTURE_KEYS,
     Background,
     BackgroundKind,
+    BlendMode,
     Border,
     Crop,
     CueEdit,
@@ -747,7 +748,8 @@ class OverlayEvent:
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
     the Clip, coming on and going off by its Overlay's animations, its picture graded by `grade`
     (docs/adr/0013; as given, folded by the renderer and the preview), then drawn through its
-    `video_effects` (docs/adr/0014). `id` is the Overlay's."""
+    `video_effects` (docs/adr/0014), and laid over what is under it by its `blend`. `id` is the
+    Overlay's."""
 
     media: str
     picture: Picture
@@ -766,6 +768,7 @@ class OverlayEvent:
     # Its enabled Video Effects, in order, after its Grade; their sizes already times its scale
     # (`overlay_scale`), as drawn.
     video_effects: list[VideoEffect] = field(default_factory=list)
+    blend: BlendMode = BlendMode.NORMAL
 
     @property
     def time(self) -> SegmentTime:
@@ -1767,7 +1770,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
         overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
-        scaled_effects(enabled_video_effects(overlay.video_effects), overlay_scale(overlay.transform)),
+        scaled_effects(enabled_video_effects(overlay.video_effects), overlay_scale(overlay.transform)), overlay.blend,
     )
 
 

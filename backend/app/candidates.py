@@ -666,6 +666,18 @@ class Grade:
         return self.adjust == Adjust() and self.look is None
 
 
+class BlendMode(StrEnum):
+    """How an Overlay is laid over what is under it (docs/adr/0014): covering it by its alpha
+    (Normal), or its colour mixed with what is under it by its mode, then laid by its alpha."""
+
+    NORMAL = "normal"
+    MULTIPLY = "multiply"
+    SCREEN = "screen"
+    ADD = "add"
+    LIGHTEN = "lighten"
+    DARKEN = "darken"
+
+
 @dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
@@ -711,6 +723,9 @@ class Overlay:
     # Its picture's Video Effects (docs/adr/0014), in order: after its Grade, before its corners,
     # border, rotation, shadow and opacity; sizes at its fitted size. Empty in one saved before them.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # How it is laid over what is under it, after its opacity (docs/adr/0014). Normal in one saved
+    # before Blend Modes.
+    blend: BlendMode = BlendMode.NORMAL
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))

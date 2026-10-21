@@ -1,4 +1,4 @@
-import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
+import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
@@ -1631,4 +1631,27 @@ export function setVideoEffectColour(scene: { edits: AdvancedEdits; pick: Pick }
 /** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none is picked or all are empty. */
 export function removeAllVideoEffects(scene: { edits: AdvancedEdits; pick: Pick }): Outcome | null {
   return repictured(scene, (stack) => (stack.length ? [] : stack));
+}
+
+// The picked Overlays, which a Blend Mode is set on (ADR 0014).
+const blendedOverlays = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }) => edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id));
+
+/** The picked Overlays' Blend Mode, when every one's is the same (Normal when missing); "mixed" when they differ; null when no Overlay is picked. */
+export function sharedBlend(scene: { edits: AdvancedEdits; pick: Pick }): BlendMode | "mixed" | null {
+  const [first, ...rest] = blendedOverlays(scene).map((overlay) => overlay.blend ?? "normal");
+  if (!first) return null;
+  return rest.every((blend) => blend === first) ? first : "mixed";
+}
+
+/** Every picked Overlay laid by `blend`, as one change (Normal leaves one without the field); null when no Overlay is picked or none changes. */
+export function setBlend(scene: { edits: AdvancedEdits; pick: Pick }, blend: BlendMode): Outcome | null {
+  const { edits, pick } = scene;
+  const picked = blendedOverlays(scene);
+  if (picked.every((overlay) => (overlay.blend ?? "normal") === blend)) return null;
+  const overlays = edits.overlays.map((overlay) => {
+    if (!picked.includes(overlay) || (overlay.blend ?? "normal") === blend) return overlay;
+    const { blend: _was, ...rest } = overlay;
+    return blend === "normal" ? rest : { ...rest, blend };
+  });
+  return { edits: { ...edits, overlays }, pick };
 }

@@ -1,10 +1,10 @@
 import { useLayoutEffect, useRef } from "react";
-import type { Grade, Picture, VideoEffect } from "../../../api";
+import type { BlendMode, Grade, Picture, VideoEffect } from "../../../api";
 import { animatedPicture, type Look } from "./animation";
 import { GradeVignette, useGradeFilter } from "./GradeFilters";
 import { isKeyed, pictureAt, pictureStyle } from "./picture";
 import type { Playback } from "./playback";
-import { effectsFilter, pictureBox } from "./videoEffects";
+import { effectsFilter, mixBlendMode, pictureBox } from "./videoEffects";
 
 /**
  * A Picture of the plan drawn on the stage (ADR 0007): a box at its centre as large as it is drawn,
@@ -13,7 +13,9 @@ import { effectsFilter, pictureBox } from "./videoEffects";
  * instead. Its `grade` (an Overlay's, ADR 0013) is a filter on the media alone, its vignette a layer
  * over it, so that its border and shadow keep their colours, as the renderer grades it before them.
  * Its Video Effects (an Overlay's, ADR 0014) are imitated by a filter after its Grade's on the same
- * element (EffectFilters), as the renderer draws them after it.
+ * element (EffectFilters), as the renderer draws them after it. Its `blend` (an Overlay's Blend Mode)
+ * is a `mix-blend-mode` on its outer element, so that its shadow and opacity are blended too, as the
+ * renderer blends the picture drawn with them over what is under it.
  * Its shadow is a filter on a layer that isn't turned, so that it falls in screen space as the
  * renderer's does. It is only drawn: the Advanced Edit's stage lays its handle and Grips over it
  * (StageEdit.tsx).
@@ -35,6 +37,7 @@ export function PicturePanel({
   grade,
   effects,
   start,
+  blend,
 }: {
   picture: Picture;
   frame: { width: number; height: number };
@@ -48,6 +51,7 @@ export function PicturePanel({
   effects?: VideoEffect[];
   // Its item's start on the Timeline, which its effects that change with time count from.
   start?: number;
+  blend?: BlendMode;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const shown = useRef<HTMLDivElement>(null);
@@ -76,7 +80,7 @@ export function PicturePanel({
   }, [moving, picture, frame, faded, look]);
 
   return (
-    <div className="pointer-events-none absolute inset-0" style={{ filter: shadow, visibility }}>
+    <div className="pointer-events-none absolute inset-0" style={{ filter: shadow, visibility, mixBlendMode: mixBlendMode(blend) }}>
       <div ref={box} className="absolute" style={place}>
         <div ref={shown} className="absolute inset-0 overflow-hidden" style={{ opacity: faded ?? opacity, borderRadius: radius }}>
           <div className="absolute" style={{ ...inner, filter }}>
