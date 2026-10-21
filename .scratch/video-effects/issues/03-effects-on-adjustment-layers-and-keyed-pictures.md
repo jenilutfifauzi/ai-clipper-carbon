@@ -24,12 +24,40 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Adjustment Layers accept `video_effects`. Stored Candidates are unchanged.
-- [ ] Seam B: an Adjustment Layer's enabled stack reaches its plan.
-- [ ] Seam A: a blur on an Adjustment Layer blurs the Main Track and an Overlay only within the layer's span, and not the captions or a Text Layer.
-- [ ] Seam A: the layer's strength at 0 leaves the frame unchanged, and a fade blends in the blur.
-- [ ] Seam A: an Overlay with Keyframes and Gaussian blur renders like the same Overlay unkeyed at the frame where they are equal.
-- [ ] The preview shows an Adjustment Layer's blur over its span, mixed by strength and fades.
-- [ ] MCP and `dry_run` cover Adjustment Layer stacks.
+- [x] Adjustment Layers accept `video_effects`. Stored Candidates are unchanged.
+- [x] Seam B: an Adjustment Layer's enabled stack reaches its plan.
+- [x] Seam A: a blur on an Adjustment Layer blurs the Main Track and an Overlay only within the layer's span, and not the captions or a Text Layer.
+- [x] Seam A: the layer's strength at 0 leaves the frame unchanged, and a fade blends in the blur.
+- [x] Seam A: an Overlay with Keyframes and Gaussian blur renders like the same Overlay unkeyed at the frame where they are equal.
+- [x] The preview shows an Adjustment Layer's blur over its span, mixed by strength and fades.
+- [x] MCP and `dry_run` cover Adjustment Layer stacks.
+
+## Comments
+
+Built for Adjustment Layers and for keyed (or animated) Overlays; keyed media Segments and Manual Scenes already had their effects from 02, through their Segment's whole-frame chain.
+- **Backend:**
+  - `AdjustmentLayer.video_effects` (checked as an Overlay's), `AdjustmentEvent.video_effects` (enabled, scale 1). `scaled_plan` scales them with the frame.
+  - `_adjustment` (renderer) takes the frame size and chains the stack after `grade_filters` on the split branch, before the strength and fades. A neutral Grade with effects is no longer skipped.
+  - `video_effect_chain(stack, size, enable=None)`: with `enable`, each lone filter gets `enable='…'`, so a layer's blur costs nothing outside its span. A part with labels (`[`, `;` or `,`) is left without it: correct, only slower. Later builders that use `split`/`blend` fall into that case.
+  - `EFFECTS_FORMAT = "yuva444p"`: a non-empty chain now starts with `format=yuva444p`.
+    - Without it, `gblur` on 4:2:0 spread colour twice as far as brightness, so the still chain and the frame process (RGBA) differed.
+    - RGB (`gbrap`) was tried and broke a Transition's xfade (range), so the format is YUV with full-resolution planes.
+    - This changes how 01 and 02 blur, slightly, for the better.
+  - Frame process (`frames.py`):
+    - `VideoDecode(..., graded, effects)` runs the stack after the Grade at its decode size.
+    - `graded_image(..., effects)` runs it on the item's own pixels.
+    - `_effects_at` scales the planned sizes by (pixels worked on / planned drawn width), so the sampled scale shrinks them as an unkeyed picture's would.
+  - MCP: the dry run lists `video_effects` under `adjustment_layers`, and the instructions have a short paragraph on them. The tools budget went to 86_700.
+- **Frontend:**
+  - `PictureRef` includes `"adjustment"`, as do `picturedItems`, `pictureOf` and `repictured`.
+  - `AdjustmentLayerFields` takes `pictureEffects`.
+  - `draftVideoEffects(plan, segments, overlays, kinds, layers = [])`.
+  - `AdjustmentFilter` has `effects`, and `grade` may be null: in the original view only the effects are drawn, as a Segment's stay.
+  - `GradeFilter` takes `effects` and `box`. It switches to `primitiveUnits="objectBoundingBox"` when it has any, and draws them after the Grade and before the mix composite.
+- **Deferred to 05:** a still image whose effect changes with time (grain, pulse) taking the looping route in the frame process. No such effect exists yet.
+- **Near:**
+  - The Seam A test checks a Text Layer only; the captions are burned later in the same chain.
+  - The preview's layer blur fades at the frame's edges, as 01 noted for Overlays.
+- **Not verified in a browser:** the preview's blur on the wrapper. vitest and tsc cover the code paths only.

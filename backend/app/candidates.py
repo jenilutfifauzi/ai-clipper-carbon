@@ -724,7 +724,8 @@ class AdjustmentLayer:
     over the Main Track and the Overlays from `start` for `secs` in Timeline time, mixed over the
     picture as it was by `strength` percent times its fade ramp, which comes up over `fade_in`
     seconds from its start and goes down over `fade_out` to its end, each at most half its length.
-    It never touches the Watermark, captions, Shapes, Text Layers or hook."""
+    Its `video_effects` (docs/adr/0014) are drawn after its Grade and mixed with it. It never touches
+    the Watermark, captions, Shapes, Text Layers or hook."""
 
     id: ItemId
     start: TimelineStart
@@ -733,8 +734,12 @@ class AdjustmentLayer:
     strength: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
     fade_in: Fade = 0.0
     fade_out: Fade = 0.0
+    # Its Video Effects (docs/adr/0014), in order, after its Grade over the 1080x1920 frame (scale 1),
+    # mixed back with it by its strength and fades. Empty in one saved before them.
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Adjustment Layer {self.id}"))
         half = self.secs / 2
         for name in ("fade_in", "fade_out"):
             if getattr(self, name) > half + 1e-9:

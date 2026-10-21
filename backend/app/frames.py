@@ -20,10 +20,13 @@ by the rule the preview samples them by (`picture_at`, app/keyframes.py), and `P
 
 The alpha is straight: ffmpeg's overlay of a premultiplied picture over yuv420p darkens it.
 
-An image is read once, and graded once by ffmpeg when its Overlay has a Grade (`graded_image`). A
-video is decoded by an ffmpeg process of its own (`VideoDecode`), which crops and flips it, brings
-it down to the largest size it is drawn at, grades it, and sends a frame for each of the Clip's,
-timed as the still chain times a video Overlay.
+An image is read once, and graded and drawn through its Video Effects once by ffmpeg when its
+Overlay has a Grade or effects (`graded_image`). A video is decoded by an ffmpeg process of its own
+(`VideoDecode`), which crops and flips it, brings it down to the largest size it is drawn at, grades
+it, draws it through its Video Effects, and sends a frame for each of the Clip's, timed as the still
+chain times a video Overlay. Either way the effects come before the sampled scale (docs/adr/0014):
+their sizes are made those of the pixels they work on (`_effects_at`), so a keyed picture shows the
+effects of an unkeyed one at the same scale.
 
 `FrameFeed` writes one picture's frames to its pipe from a thread of its own, so that ffmpeg, reading
 every input as it needs it, never waits on another. A feed whose ffmpeg has gone (failed or stopped)
@@ -44,6 +47,7 @@ import numpy as np
 from app.candidates import Border, Shadow
 from app.planner import FRAME, Picture, picture_at
 from app.segment_time import SegmentTime
+from app.video_effects import VideoEffect, scaled_effects, video_effect_chain
 
 # The transparent margin round a picture before it is turned, in output pixels.
 MARGIN = 2
@@ -282,16 +286,24 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
     return cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGBA)
 
 
-def graded_image(ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str) -> np.ndarray:
+def _effects_at(picture: Picture, effects: list[VideoEffect], size: tuple[int, int]) -> list[str]:
+    """The filters of `effects` (an Overlay's, their sizes as `picture` is drawn at its constants) on
+    its pixels at `size` (width, height): their sizes times `size`'s width over the drawn one's."""
+    return video_effect_chain(scaled_effects(effects, size[0] / picture.width), size) if effects else []
+
+
+def graded_image(ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str, effects: list[VideoEffect] | None = None) -> np.ndarray:
     """`image` (RGBA, its whole size) with the part `picture`'s crop keeps graded by the ffmpeg filters
     `graded` (an Overlay's Grade, keeping its alpha: app/grading.py), as the still chain grades it
-    after its crop; the rest, which isn't drawn, as it was."""
+    after its crop, then drawn through its Video Effects `effects` at the item's own pixels; the rest,
+    which isn't drawn, as it was."""
     crop = picture.crop
     cut = np.ascontiguousarray(image[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width])
+    filters = ",".join([*filter(None, [graded]), *_effects_at(picture, effects or [], (crop.width, crop.height))])
     command = [
         str(ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{crop.width}x{crop.height}", "-i", "pipe:0",
-        "-vf", graded, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
+        "-vf", filters, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
     ]
     done = subprocess.run(command, input=cut.tobytes(), capture_output=True)
     if done.returncode or len(done.stdout) != cut.nbytes:
@@ -315,12 +327,15 @@ class VideoDecode:
     Overlay's start, as the still chain lays a video Overlay over the frames (renderer.py's
     `_overlay`). When the video ends early, its last frame is held, and a held `shown` (a Freeze
     frame's) is its first frame throughout. Each is graded by the ffmpeg filters `graded` (an
-    Overlay's Grade, app/grading.py), after it is scaled and flipped, as the still chain grades it."""
+    Overlay's Grade, app/grading.py), after it is scaled and flipped, as the still chain grades it,
+    then drawn through its Video Effects `effects` (docs/adr/0014) at the size it is sent at, before
+    the sampled scale."""
 
     def __init__(
-        self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float, graded: str = ""
+        self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float, graded: str = "",
+        effects: list[VideoEffect] | None = None,
     ) -> None:
-        self.ffmpeg, self.video, self.picture, self.graded = ffmpeg, video, picture, graded
+        self.ffmpeg, self.video, self.picture, self.graded, self.effects = ffmpeg, video, picture, graded, effects or []
         self.start, self.end, self.shown, self.fps = start, end, shown, fps
         self.numbers = frame_numbers(start, end, fps)
         # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
@@ -342,6 +357,7 @@ class VideoDecode:
             *([] if (width, height) == (crop.width, crop.height) else [f"scale={width}:{height}:flags=lanczos"]),
             *["hflip"] * self.picture.flip_h, *["vflip"] * self.picture.flip_v,
             *([self.graded] if self.graded else []),
+            *_effects_at(self.picture, self.effects, self.size),
             "format=rgba",
         ]
         command = [

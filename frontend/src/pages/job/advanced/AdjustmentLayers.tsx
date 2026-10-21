@@ -11,13 +11,14 @@ import { TimingFields } from "./TimingFields";
 
 /**
  * The picked Adjustment Layer (ADR 0013): its strength and fades (`onMix`, each a change of its field;
- * a fade at most half its length), its Color section (`color`: its own Grade, as an Overlay's), and
- * its times, a trim keeping its fades within half of it.
+ * a fade at most half its length), its Color section (`color`: its own Grade, as an Overlay's), its
+ * Effects section (`pictureEffects`: its Video Effects, after its Grade, ADR 0014), and its times, a trim keeping its fades within half of it.
  */
 export function AdjustmentLayerFields({
   layer,
   duration,
   color,
+  pictureEffects,
   onChange,
   onMix,
   onDuplicate,
@@ -26,6 +27,8 @@ export function AdjustmentLayerFields({
   layer: AdjustmentLayer;
   duration: number;
   color: ReactNode;
+  // Its Video Effects section (VideoEffectsFields), after its Color section; none on a phone.
+  pictureEffects?: ReactNode;
   // `group` names the field being changed, so that its changes are undone as one.
   onChange: (layer: AdjustmentLayer, group: string) => void;
   onMix: (change: { strength?: number; fade_in?: number; fade_out?: number }, group: string) => void;
@@ -50,7 +53,7 @@ export function AdjustmentLayerFields({
           </Button>
         </div>
       </div>
-      <Hint>Grades the video and the overlays under it; never the captions, text, shapes, hook or watermark.</Hint>
+      <Hint>Grades and adds effects to the video and the overlays under it; never the captions, text, shapes, hook or watermark.</Hint>
       <Group title="Mix">
         <Slider
           label="Strength"
@@ -81,6 +84,7 @@ export function AdjustmentLayerFields({
         />
       </Group>
       {color}
+      {pictureEffects}
       <TimingFields
         item={layer}
         duration={duration}

@@ -1,5 +1,7 @@
-import type { AdjustmentEvent, Grade, RenderPlan } from "../../../api";
+import type { AdjustmentEvent, Grade, RenderPlan, VideoEffect } from "../../../api";
 import { foldGrade, gradeFilterId, hasGradeFilter } from "./grading";
+import { effectsFilterId } from "./videoEffects";
+import { FRAME } from "./picture";
 
 /**
  * How much of an Adjustment Layer's Grade shows at `time` (ADR 0013), 0..1: its strength times its
@@ -14,10 +16,16 @@ export function adjustmentWeight(event: AdjustmentEvent, time: number): number {
   return (Math.max(0, Math.min(event.strength, 100)) / 100) * Math.max(0, Math.min(ramp, 1));
 }
 
-/** An Adjustment Layer as the preview draws it at a time: its Grade, how much of it shows, and its SVG filter's id (none for a vignette alone). */
+/**
+ * An Adjustment Layer as the preview draws it at a time: its Grade, its Video Effects (planned: the
+ * enabled ones, sizes the frame's), how much of them shows, and its SVG filter's id (none for a
+ * vignette alone).
+ */
 export interface AdjustmentFilter {
   id: string;
-  grade: Grade;
+  // Null while the original is shown (its effects drawn alone).
+  grade: Grade | null;
+  effects: VideoEffect[];
   weight: number;
   filterId: string | null;
 }
@@ -25,13 +33,16 @@ export interface AdjustmentFilter {
 /**
  * The plan's Adjustment Layers showing at `time`, in the order they are applied (the plan's), each
  * with its weight rounded to a 200th (so that a fade redraws the preview at most that often); none
- * neutral or at weight 0, which change nothing.
+ * at weight 0, nor one with a neutral Grade and no effect drawn, which change nothing.
  */
 export function adjustmentFilters(plan: RenderPlan | null, time: number): AdjustmentFilter[] {
   return (plan?.adjustment_layers ?? []).flatMap((event) => {
     const weight = Math.round(adjustmentWeight(event, time) * 200) / 200;
-    if (weight <= 0 || !foldGrade(event.grade)) return [];
-    const filterId = hasGradeFilter(event.grade) ? `adjust-${event.id}-${gradeFilterId(event.grade)}` : null;
-    return [{ id: event.id, grade: event.grade, weight, filterId }];
+    const effects = event.video_effects ?? [];
+    const effected = effectsFilterId(effects, FRAME);
+    if (weight <= 0 || (!foldGrade(event.grade) && !effected)) return [];
+    const graded = hasGradeFilter(event.grade) ? gradeFilterId(event.grade) : null;
+    const filterId = graded || effected ? `adjust-${event.id}-${graded ?? "n"}-${effected ?? "n"}` : null;
+    return [{ id: event.id, grade: event.grade, effects, weight, filterId }];
   });
 }

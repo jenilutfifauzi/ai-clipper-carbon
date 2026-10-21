@@ -712,7 +712,8 @@ class AdjustmentEvent:
     """An Adjustment Layer as drawn (docs/adr/0013): its `grade` (as given, folded by the renderer and
     the preview) laid over the Main Track and the Overlays from `start` to `end` seconds into the
     Clip, mixed over the picture as it was by `strength` percent times its ramp, up over `fade_in`
-    from its start and down over `fade_out` to its end. `id` is the layer's."""
+    from its start and down over `fade_out` to its end. Its `video_effects` (docs/adr/0014) are drawn
+    after its Grade and mixed with it. `id` is the layer's."""
 
     id: str
     start: float
@@ -721,6 +722,8 @@ class AdjustmentEvent:
     strength: float = 100.0
     fade_in: float = 0.0
     fade_out: float = 0.0
+    # Its enabled Video Effects, in order, after its Grade; their sizes the 1080x1920 frame's (scale 1).
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
 
 def adjustment_event(layer: AdjustmentLayer, duration: float) -> AdjustmentEvent | None:
@@ -732,7 +735,8 @@ def adjustment_event(layer: AdjustmentLayer, duration: float) -> AdjustmentEvent
     end = round(min(layer.start + layer.secs, duration), 3)
     half = (end - start) / 2
     return AdjustmentEvent(
-        layer.id, start, end, layer.grade, layer.strength, round(min(layer.fade_in, half), 3), round(min(layer.fade_out, half), 3)
+        layer.id, start, end, layer.grade, layer.strength, round(min(layer.fade_in, half), 3), round(min(layer.fade_out, half), 3),
+        enabled_video_effects(layer.video_effects),
     )
 
 

@@ -1501,22 +1501,25 @@ export function setCleanSetting(
   return restacked(scene, sounded, (stack) => stack.map((entry) => (entry.id === id ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
 }
 
-// A picture with a stack of Video Effects (ADR 0014): a Segment (its whole frame) or an Overlay
-// (Adjustment Layers come with ticket 03).
-export type PictureRef = { kind: "segment" | "overlay"; id: string };
+// A picture with a stack of Video Effects (ADR 0014): a Segment (its whole frame), an Overlay or an
+// Adjustment Layer (what is under it).
+export type PictureRef = { kind: "segment" | "overlay" | "adjustment"; id: string };
 type Pictured = { id: string; video_effects?: VideoEffect[] };
 
-/** The picked pictures, which the Video Effects section acts on: the Segments, then the Overlays (videos and images). */
+/** The picked pictures, which the Video Effects section acts on: the Segments, then the Overlays (videos and images), then the Adjustment Layers. */
 export function picturedItems({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): PictureRef[] {
   return [
     ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)).map((segment) => ({ kind: "segment" as const, id: segment.id })),
     ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)).map((overlay) => ({ kind: "overlay" as const, id: overlay.id })),
+    ...listOf(edits, "adjustment")
+      .filter((layer) => isPicked(pick, "adjustment", layer.id))
+      .map((layer) => ({ kind: "adjustment" as const, id: layer.id })),
   ];
 }
 
 // The picture `ref` names in `edits`.
 const pictureOf = (edits: AdvancedEdits, ref: PictureRef): Pictured | undefined =>
-  (ref.kind === "segment" ? edits.segments : edits.overlays).find((item) => item.id === ref.id);
+  (ref.kind === "segment" ? edits.segments : ref.kind === "overlay" ? edits.overlays : listOf(edits, "adjustment")).find((item) => item.id === ref.id);
 
 // Every picked picture given `change` of its stack (an emptied one left without the field; one
 // `change` leaves as it was, untouched, and a list with none changed kept as it was); null when none
@@ -1539,8 +1542,10 @@ function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack:
   };
   const segments = set(edits.segments, "segment");
   const overlays = set(edits.overlays, "overlay");
-  if (segments === edits.segments && overlays === edits.overlays) return null;
-  return { edits: { ...edits, segments, overlays }, pick };
+  const layers = listOf(edits, "adjustment");
+  const adjustments = set(layers, "adjustment");
+  if (segments === edits.segments && overlays === edits.overlays && adjustments === layers) return null;
+  return { edits: { ...edits, segments, overlays, ...(adjustments !== layers && { adjustment_layers: adjustments }) }, pick };
 }
 
 /** A catalogue Video Effect's entry at its defaults, switched on. */

@@ -93,16 +93,27 @@ export function EffectFilters({ items }: { items: { effects?: VideoEffect[]; box
 /**
  * The filter `id` that draws `grade` (none when it has nothing for one to do). With `mix` (0..1, an
  * Adjustment Layer's strength times its fade), the graded picture is mixed over the picture as it was
- * by that much, as the render lays its graded branch back at that alpha.
+ * by that much, as the render lays its graded branch back at that alpha. An Adjustment Layer's Video
+ * Effects (`effects` on an element of `box`, ADR 0014) come after its Grade and before the mix; the
+ * filter's units are then fractions of the element's box, as EffectFilters' are.
  */
-export function GradeFilter({ id, grade, mix = 1 }: { id: string; grade: Grade; mix?: number }) {
-  const folded = foldGrade(grade);
-  if (!folded || !hasGradeFilter(grade)) return null;
-  const { tables, matrix, sharpen, lut } = folded;
+export function GradeFilter({ id, grade, mix = 1, effects = [], box }: { id: string; grade: Grade | null; mix?: number; effects?: VideoEffect[]; box?: Box }) {
+  const folded = hasGradeFilter(grade) ? foldGrade(grade) : null;
+  const effected = box ? effectPrimitives(effects, box) : [];
+  if (!folded && !effected.length) return null;
+  const { tables, matrix, sharpen, lut } = folded ?? { tables: null, matrix: null, sharpen: 0, lut: null };
   // The picture before the Look's table, which its intensity mixes the table's over.
   const graded = tables || matrix ? "graded" : "SourceGraphic";
   return (
-    <filter id={id} colorInterpolationFilters="sRGB" x="0" y="0" width="1" height="1">
+    <filter
+      id={id}
+      colorInterpolationFilters="sRGB"
+      x="0"
+      y="0"
+      width="1"
+      height="1"
+      {...(effected.length ? { primitiveUnits: "objectBoundingBox" } : {})}
+    >
       {tables && <Tables tables={tables} result={matrix ? undefined : graded} />}
       {matrix && <Mixer matrix={matrix} result={graded} />}
       {lut && (
@@ -117,6 +128,9 @@ export function GradeFilter({ id, grade, mix = 1 }: { id: string; grade: Grade; 
       {sharpen > 0 && (
         <feConvolveMatrix order="3" kernelMatrix={sharpenKernel(sharpen).map(number).join(" ")} divisor="1" edgeMode="duplicate" preserveAlpha="true" />
       )}
+      {effected.map(({ element: Element, attributes }, i) => (
+        <Element key={i} {...attributes} />
+      ))}
       {mix < 1 && <feComposite in2="SourceGraphic" operator="arithmetic" k1="0" k2={number(mix)} k3={number(1 - mix)} k4="0" />}
     </filter>
   );

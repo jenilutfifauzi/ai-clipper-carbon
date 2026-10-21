@@ -810,6 +810,9 @@ export interface AdjustmentLayer {
   strength: number;
   fade_in: number;
   fade_out: number;
+  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the 1080x1920
+  // frame's. Empty when missing.
+  video_effects?: VideoEffect[];
 }
 
 // An Adjustment Layer as the plan draws it: from `start` to `end` seconds into the Clip (cut at its
@@ -822,6 +825,8 @@ export interface AdjustmentEvent {
   strength: number;
   fade_in: number;
   fade_out: number;
+  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  video_effects?: VideoEffect[];
 }
 
 // How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).

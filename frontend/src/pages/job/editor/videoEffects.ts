@@ -33,28 +33,33 @@ export function scaledEffects(stack: VideoEffect[] | undefined, scale: number, k
 }
 
 /**
- * `plan` with its Segments' and Overlays' Video Effects as the draft's `segments` and `overlays` give
- * them now (by id), a Segment's at the frame's size (scale 1) and an Overlay's scaled by its scale, so
- * that a slider dragged shows at once, before the Preview Plan of the change comes. `plan` itself
- * when none differs, or while the catalogue (`kinds`) isn't loaded.
+ * `plan` with its Segments', Overlays' and Adjustment Layers' Video Effects as the draft's `segments`,
+ * `overlays` and `layers` give them now (by id), a Segment's and a layer's at the frame's size (scale
+ * 1) and an Overlay's scaled by its scale, so that a slider dragged shows at once, before the Preview
+ * Plan of the change comes. `plan` itself when none differs, or while the catalogue (`kinds`) isn't
+ * loaded.
  */
 export function draftVideoEffects(
   plan: RenderPlan,
   segments: { id: string; video_effects?: VideoEffect[] }[],
   overlays: { id: string; transform: Transform; video_effects?: VideoEffect[] }[],
   kinds: VideoEffectKind[] | null,
+  layers: { id: string; video_effects?: VideoEffect[] }[] = [],
 ): RenderPlan {
   if (!kinds) return plan;
   const segmentStacks = new Map(segments.map((segment) => [segment.id, scaledEffects(segment.video_effects, 1, kinds)]));
   const overlayStacks = new Map(overlays.map((overlay) => [overlay.id, scaledEffects(overlay.video_effects, overlayScale(overlay.transform), kinds)]));
+  const layerStacks = new Map(layers.map((layer) => [layer.id, scaledEffects(layer.video_effects, 1, kinds)]));
   const redrawn = <T extends { id: string; video_effects?: VideoEffect[] }>(events: T[], stacks: Map<string, VideoEffect[]>): T[] => {
     const differs = (event: T) => stacks.has(event.id) && JSON.stringify(stacks.get(event.id)) !== JSON.stringify(event.video_effects ?? []);
     return events.some(differs) ? events.map((event) => (differs(event) ? { ...event, video_effects: stacks.get(event.id) } : event)) : events;
   };
   const shownSegments = redrawn(plan.segments, segmentStacks);
   const shownOverlays = redrawn(plan.overlays, overlayStacks);
-  if (shownSegments === plan.segments && shownOverlays === plan.overlays) return plan;
-  return { ...plan, segments: shownSegments, overlays: shownOverlays };
+  const adjustments = plan.adjustment_layers ?? [];
+  const shownLayers = redrawn(adjustments, layerStacks);
+  if (shownSegments === plan.segments && shownOverlays === plan.overlays && shownLayers === adjustments) return plan;
+  return { ...plan, segments: shownSegments, overlays: shownOverlays, ...(shownLayers !== adjustments && { adjustment_layers: shownLayers }) };
 }
 
 /** An SVG filter primitive: its element's name and attributes. */

@@ -98,7 +98,7 @@ def test_adjustment_layers_are_saved_validated_and_planned(client):
     saved = patch(client, job, candidate, adjustment_layers=[layer])
     assert saved["adjustment_layers"] == [{
         "id": "a", "start": 0.5, "secs": 1.0, "grade": {"adjust": asdict(Adjust(saturation=-100)), "look": None, "intensity": 100},
-        "strength": 50, "fade_in": 0.25, "fade_out": 0,
+        "strength": 50, "fade_in": 0.25, "fade_out": 0, "video_effects": [],
     }]
     assert saved["edited"] and saved["revision"] == candidate["revision"] + 1
     [event] = preview(client, job, saved)["plan"]["adjustment_layers"]

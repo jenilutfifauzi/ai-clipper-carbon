@@ -36,7 +36,7 @@ export interface VideoEffectControls {
 
 /**
  * The Video Effects section's controls for the Pick's pictures (actions.ts' picturedItems: its
- * Overlays), each change one step of undo (a slider's drag one, by its group); null when none is picked.
+ * Segments, Overlays and Adjustment Layers), each change one step of undo (a slider's drag one, by its group); null when none is picked.
  */
 export function videoEffectChanges(scene: { edits: AdvancedEdits; pick: Pick }, onEdits: (edits: AdvancedEdits, group?: string) => void): VideoEffectControls | null {
   const stack = sharedVideoStack(scene);

@@ -531,8 +531,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays, Adjustment
   // Layers and the Candidate in their Grades as edited (a dial drag shows before its plan comes).
-  // A Look auditioned is drawn on the Grades a click would give it to. Its Segments' and Overlays'
-  // Video Effects are drawn as edited too (a slider drag shows before its plan comes).
+  // A Look auditioned is drawn on the Grades a click would give it to. Its Segments', Overlays' and
+  // Adjustment Layers' Video Effects are drawn as edited too (a slider drag shows before its plan comes).
   const graded = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
   const videoEffectKinds = useVideoEffects();
   const shown = useMemo(
@@ -544,6 +544,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           graded.segments,
           graded.overlays,
           videoEffectKinds,
+          graded.adjustment_layers,
         ),
       },
     [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers, videoEffectKinds],

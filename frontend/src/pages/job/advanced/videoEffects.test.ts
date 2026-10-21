@@ -1,9 +1,16 @@
-// .scratch/video-effects/issues/01-gaussian-blur-on-an-overlay.md and 02-effects-on-segments.md: an
-// Overlay's and a Segment's stack of Video Effects (ADR 0014), edited from the Inspector on a Pick of
+// .scratch/video-effects/issues/01-gaussian-blur-on-an-overlay.md, 02-effects-on-segments.md and
+// 03-effects-on-adjustment-layers-and-keyed-pictures.md: an Overlay's, a Segment's and an Adjustment
+// Layer's stack of Video Effects (ADR 0014), edited from the Inspector on a Pick of
 // one picture or several, each change one step of undo; carried by Split, Duplicate, the Clipboard and
 // the Revision merge; and drawn by the preview.
 import { describe, expect, test } from "vitest";
-import type { ClipSegment, Overlay, OverlayEvent, RenderPlan, SegmentPlan, VideoEffect, VideoEffectKind } from "../../../api";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import type { AdjustmentEvent, AdjustmentLayer, ClipSegment, Overlay, OverlayEvent, RenderPlan, SegmentPlan, VideoEffect, VideoEffectKind } from "../../../api";
+import { adjustmentFilters } from "../editor/adjustments";
+import { GradeFilter } from "../editor/GradeFilters";
+import { NEUTRAL_GRADE } from "../editor/grading";
+import { FRAME } from "../editor/picture";
 import { videoLibraryOf } from "../../../videoEffects";
 import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
@@ -248,5 +255,54 @@ describe("a Segment's stack", () => {
     const drawn = draftVideoEffects(plan, [segment("s1", { video_effects: [{ ...blur, params: { radius: 30 } }] })], [], [blurKind]);
     expect(drawn.segments[0].video_effects).toEqual([{ ...blur, params: { radius: 30 } }]);
     expect(draftVideoEffects(plan, [segment("s1")], [], [blurKind])).toBe(plan);
+  });
+});
+
+describe("an Adjustment Layer's stack", () => {
+  const layer = (id: string, changes: Partial<AdjustmentLayer> = {}): AdjustmentLayer => ({
+    id, start: 1, secs: 2, grade: NEUTRAL_GRADE, strength: 100, fade_in: 0, fade_out: 0, ...changes,
+  });
+  const layerStacks = (state: AdvancedEdits) => (state.adjustment_layers ?? []).map((each) => each.video_effects);
+
+  test("the Inspector's actions take a picked layer, with an Overlay in a mixed Pick", () => {
+    const state = { ...edits([overlay("a")]), adjustment_layers: [layer("l1"), layer("l2")] };
+    const added = addVideoEffect({ edits: state, pick: picked({ kind: "adjustment", id: "l1" }) }, blurKind)!.edits;
+    expect(layerStacks(added)).toEqual([[blur], undefined]);
+    expect(added.overlays).toBe(state.overlays);
+    const mixed = picked({ kind: "adjustment", id: "l1" }, { kind: "overlay", id: "a" });
+    const both = addVideoEffect({ edits: added, pick: mixed }, blurKind)!.edits;
+    expect([...layerStacks(both), ...stacks(both)]).toEqual([[blur], undefined, [blur]]);
+    expect(sharedVideoStack({ edits: both, pick: mixed })).toEqual([blur]);
+    expect(layerStacks(removeAllVideoEffects({ edits: both, pick: mixed })!.edits)).toEqual([undefined, undefined]);
+  });
+
+  const event = (changes: Partial<AdjustmentEvent> = {}): AdjustmentEvent => ({
+    id: "l1", start: 1, end: 3, grade: NEUTRAL_GRADE, strength: 100, fade_in: 0, fade_out: 0, video_effects: [blur], ...changes,
+  });
+  const planOf = (...layers: AdjustmentEvent[]) => ({ segments: [], overlays: [], adjustment_layers: layers }) as unknown as RenderPlan;
+
+  test("a neutral layer with effects shows over its span, mixed by its strength and fades", () => {
+    expect(adjustmentFilters(planOf(event()), 0.5)).toEqual([]);
+    const [shown] = adjustmentFilters(planOf(event({ strength: 50 })), 2);
+    expect(shown).toMatchObject({ id: "l1", effects: [blur], weight: 0.5 });
+    expect(shown.filterId).toBeTruthy();
+    expect(adjustmentFilters(planOf(event({ fade_in: 1 })), 1.25)[0].weight).toBe(0.25);
+    // Neither a neutral Grade nor an effect drawn: nothing.
+    expect(adjustmentFilters(planOf(event({ video_effects: [] })), 2)).toEqual([]);
+
+    // Its filter blurs over the frame's box, then mixes the blurred picture over the picture as it was.
+    const markup = renderToStaticMarkup(
+      createElement("svg", null, createElement(GradeFilter, { id: "f", grade: shown.grade, mix: shown.weight, effects: shown.effects, box: FRAME })),
+    );
+    expect(markup).toContain('primitiveUnits="objectBoundingBox"');
+    expect(markup.indexOf("feGaussianBlur")).toBeLessThan(markup.indexOf("feComposite"));
+    expect(markup).toContain('k2="0.5"');
+  });
+
+  test("a stack dragged shows at once on its layer, at the frame's size", () => {
+    const plan = planOf(event({ video_effects: [] }));
+    const drawn = draftVideoEffects(plan, [], [], [blurKind], [layer("l1", { video_effects: [{ ...blur, params: { radius: 30 } }] })]);
+    expect(drawn.adjustment_layers![0].video_effects).toEqual([{ ...blur, params: { radius: 30 } }]);
+    expect(draftVideoEffects(plan, [], [], [blurKind], [layer("l1")])).toBe(plan);
   });
 });

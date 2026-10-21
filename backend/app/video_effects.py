@@ -33,6 +33,11 @@ VIDEO_EFFECTS_MAX = 20
 KIND = "video"
 # The unit of a size setting, which `scaled_effects` scales with the picture.
 PIXELS = "px"
+# What a stack works on: every plane at full resolution, so that a size in pixels is the same in
+# every channel (on 4:2:0 a blur's colour would spread twice as far as its brightness), with an alpha,
+# so that an Overlay's is kept. YUV rather than RGB keeps a frame's range as it was, which a
+# Transition's xfade mixes it with another's in.
+EFFECTS_FORMAT = "yuva444p"
 
 
 class Category(StrEnum):
@@ -171,7 +176,22 @@ def scaled_effects(stack: list[VideoEffect], scale: float) -> list[VideoEffect]:
     return scaled
 
 
-def video_effect_chain(stack: list[VideoEffect], size: tuple[int, int]) -> list[str]:
+def video_effect_chain(stack: list[VideoEffect], size: tuple[int, int], enable: str | None = None) -> list[str]:
     """The filters `stack` (checked, its sizes as drawn) is drawn through on a picture of `size`
-    (width, height): its enabled entries in order. Nothing for a stack with nothing enabled."""
-    return [part for applied in enabled_video_effects(stack) for part in get_effect(applied.id).build(applied.params, size)]
+    (width, height): its enabled entries in order, on `EFFECTS_FORMAT`. Nothing for a stack with
+    nothing enabled. With
+    `enable` (an ffmpeg expression of `t`, an Adjustment Layer's span), each lone filter does its work
+    only while it holds and passes the other frames through untouched; a part with labels of its own
+    works throughout, which costs time but draws the same once laid over within the span."""
+    parts = [part for applied in enabled_video_effects(stack) for part in get_effect(applied.id).build(applied.params, size)]
+    if not parts:
+        return []
+    return [f"format={EFFECTS_FORMAT}", *(parts if enable is None else [_enabled(part, enable) for part in parts])]
+
+
+def _enabled(part: str, enable: str) -> str:
+    """The filter `part` working only while `enable` holds, when it is one filter (every filter a
+    builder uses alone supports ffmpeg's timeline)."""
+    if "[" in part or ";" in part or "," in part:
+        return part
+    return f"{part}{':' if '=' in part else '='}enable='{enable}'"

@@ -350,6 +350,9 @@ Edits:
   sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
   merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
   `segments`.
+- An Adjustment Layer's `video_effects`: the same stack over what its Grade covers, after it, mixed
+  by its strength and fades (its grade may be neutral); sizes as a Segment's. Merged and listed as
+  a Segment's. A keyed Overlay shows the effects it would unkeyed at the same scale.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
@@ -1178,7 +1181,7 @@ def _plan_view(
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade and Video
     Effects (`_effects_view`), each Adjustment
-    Layer's span, strength, fades and Grade, what of its video an Overlay shows
+    Layer's span, strength, fades, Grade and Video Effects, what of its video an Overlay shows
     (`_video_read`), a keyed one's Keyframes and its bounds at each (`_motion_view`) and an
     animated one's animations (`_animation_view`), a Manual Scene's Keyframes past its end
     (`ignored`), each Transition's kind, span, sound, knobs (null when unset) and the Segment it
@@ -1247,7 +1250,7 @@ def _plan_view(
                 **_compact({
                     "strength": event["strength"] if event["strength"] != 100 else None,
                     "fade_in": event["fade_in"] or None, "fade_out": event["fade_out"] or None,
-                    "grade": _grade_view(event["grade"]),
+                    "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
                 }),
             }
             for event in plan["adjustment_layers"]

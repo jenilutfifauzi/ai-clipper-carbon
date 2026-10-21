@@ -528,7 +528,7 @@ class Renderer:
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
             joined = f"[over{i}]"
         for i, event in enumerate(plan.adjustment_layers):
-            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i):
+            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i, (plan.width, plan.height)):
                 frame += f";{adjusted}"
                 joined = f"[adjusted{i}]"
         if logo is not None and plan.watermark is not None:
@@ -1191,7 +1191,7 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
     image's one picture held, graded after it is scaled and flipped and then drawn through its Video
     Effects (docs/adr/0014), at its drawn size. A keyed one's frames, drawn whole
-    (and graded) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
+    (graded and effected) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
     frames below being at n / fps exactly)."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
     if feed is not None:
@@ -1205,15 +1205,17 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected)
 
 
-def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int) -> str:
-    """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays)
-    into `out` (docs/adr/0013): the stream split, its frames graded, given an alpha of its strength
-    times its fade ramp (`fade` on the alpha alone, its times those of the Clip) and laid back over the
-    ungraded frames, only within its span. Both branches keep every frame at its time, so neither
-    waits on the other and no frame is held back; outside its span the grade and the alpha pass the
-    frames through untouched (`enable`). "" when it changes nothing (a neutral Grade, or strength 0)."""
+def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: tuple[int, int]) -> str:
+    """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays,
+    `size` large) into `out` (docs/adr/0013): the stream split, its frames graded and drawn through
+    its Video Effects (docs/adr/0014), given an alpha of its strength times its fade ramp (`fade` on
+    the alpha alone, its times those of the Clip) and laid back over the frames as they were, only
+    within its span. Both branches keep every frame at its time, so neither waits on the other and no
+    frame is held back; outside its span the grade, the effects and the alpha pass the frames through
+    untouched (`enable`). "" when it changes nothing (a neutral Grade and no enabled effects, or
+    strength 0)."""
     span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
-    graded = grade_filters(event.grade, enable=span)
+    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *video_effect_chain(event.video_effects, size, enable=span)])
     if not graded or event.strength <= 0:
         return ""
     name = f"adjust{index}"
@@ -1389,7 +1391,8 @@ def _keyed_items(
     plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None, ffmpeg: Path | None = None
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
-    a keyed or animated Overlay's image's pixels (graded once by `ffmpeg` by its Grade), or a
+    a keyed or animated Overlay's image's pixels (graded once by `ffmpeg` by its Grade and drawn
+    through its Video Effects), or a
     video's file (such an Overlay's or a keyed Segment's), or the `source` for a Manual Scene; and a
     keyed or animated picture layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {}
@@ -1400,8 +1403,9 @@ def _keyed_items(
             items[("overlay", i)] = files[event.media]
             continue
         image = read_image(files[event.media])
-        if (graded := grade_filters(event.grade, alpha="g")) and ffmpeg is not None:
-            image = graded_image(ffmpeg, image, event.picture, graded)
+        graded = grade_filters(event.grade, alpha="g")
+        if (graded or event.video_effects) and ffmpeg is not None:
+            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects)
         items[("overlay", i)] = image
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
@@ -1444,7 +1448,8 @@ def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]
 def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
     """A frame process for each keyed picture whose item is in `items`, over its span, drawing frames
     of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`,
-    an Overlay's graded by its Grade; a Segment's is graded with its whole frame, `_segmented`) and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
+    an Overlay's graded by its Grade and drawn through its Video Effects; a Segment's is graded and
+    effected with its whole frame, `_segmented`) and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
     as the Scene's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
     rate = _rate_value(plan)
     frame, drawn = (plan.width, plan.height), drawn_scale(plan)
@@ -1471,7 +1476,9 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
             frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
-            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"))
+            video = VideoDecode(
+                ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
+            )
         else:
             frames, video = PictureFrames(event.picture, item, frame, sampled), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)

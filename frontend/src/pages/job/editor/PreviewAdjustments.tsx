@@ -2,16 +2,18 @@ import type { ReactNode } from "react";
 import type { RenderPlan } from "../../../api";
 import { adjustmentFilters, type AdjustmentFilter } from "./adjustments";
 import { GradeFilter, GradeVignette, useOriginal } from "./GradeFilters";
+import { FRAME } from "./picture";
 import { useShown, type Playback } from "./playback";
 
 /**
  * The Main Track and the Overlays (`children`) under the plan's Adjustment Layers showing at the time
- * shown (ADR 0013), and nothing else: the Watermark, captions, picture layers and hook are drawn
+ * shown (ADR 0013), their Grades and then their Video Effects (ADR 0014), and nothing else: the Watermark, captions, picture layers and hook are drawn
  * after it, ungraded.
  *
  * Not a second copy of the videos, which would decode them twice: one wrapper, always there (so its
  * videos never remount), whose CSS `filter` lists one SVG filter per layer showing, in the order they
- * apply. Each filter grades the picture and mixes it back over the picture as it was by the layer's
+ * apply. Each filter grades the picture, draws its effects (in fractions of the wrapper's box, which
+ * is the frame's, so they hold at any stage size) and mixes it back over the picture as it was by the layer's
  * strength times its fade (an feComposite, as the render's alpha), so the wrapper is a filtered copy
  * at that opacity over an unfiltered one. The weights are redrawn as the playhead moves, at most each
  * 200th of a change, and only this wrapper redraws: its children are the caller's. A layer's vignette
@@ -26,17 +28,24 @@ export function PreviewAdjusted({ plan, playback, children }: { plan: RenderPlan
 
 /**
  * `children` under the Adjustment Layers `filters` (adjustmentFilters'), as PreviewAdjusted draws them;
- * under none while the original is shown (ShowOriginal), the wrapper kept.
+ * while the original is shown (ShowOriginal), under their Video Effects alone (as a Segment's stay),
+ * the wrapper kept.
  */
 export function AdjustedStack({ filters: layers, children }: { filters: AdjustmentFilter[]; children: ReactNode }) {
-  const filters = useOriginal() ? [] : layers;
+  const original = useOriginal();
+  const filters = original
+    ? layers.flatMap((layer) => (layer.effects.length && layer.filterId ? [{ ...layer, grade: null, filterId: `${layer.filterId}-o` }] : []))
+    : layers;
   const filter = filters.flatMap(({ filterId }) => (filterId ? [`url(#${filterId})`] : [])).join(" ");
   return (
     <>
       {filter && (
         <svg aria-hidden width={0} height={0} className="pointer-events-none absolute">
           <defs>
-            {filters.map(({ filterId, grade, weight }) => filterId && <GradeFilter key={filterId} id={filterId} grade={grade} mix={weight} />)}
+            {filters.map(
+              ({ filterId, grade, effects, weight }) =>
+                filterId && <GradeFilter key={filterId} id={filterId} grade={grade} mix={weight} effects={effects} box={FRAME} />,
+            )}
           </defs>
         </svg>
       )}

@@ -147,7 +147,7 @@ export function Inspector({
     return controls && <AudioEffectsFields {...controls} />;
   };
 
-  // The picked pictures' (Segments' and Overlays') Video Effects section, after their Color section: null without any, or on a phone.
+  // The picked pictures' (Segments', Overlays' and Adjustment Layers') Video Effects section, after their Color section: null without any, or on a phone.
   const pictureEffectsOf = () => {
     if (!videoEffectsShown) return null;
     const controls = videoEffectChanges({ edits, pick }, onEdits);
@@ -279,6 +279,7 @@ export function Inspector({
         layer={adjustment}
         duration={duration}
         color={colorOf()}
+        pictureEffects={pictureEffectsOf()}
         onChange={onAdjustment}
         onMix={(change, group) => {
           const outcome = setAdjustment({ edits, pick }, adjustment.id, change);

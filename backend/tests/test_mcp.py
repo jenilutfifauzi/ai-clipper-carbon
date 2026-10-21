@@ -60,7 +60,8 @@ KITA_SOAL = (1.6, 2.6)
 # Raised for audio-effects/02: `music[].audio_effects` and `overlays[].audio_effects` there (84_288).
 # Raised from 84_700 for Video Effects (video-effects/01): `overlays[].video_effects` in edit_candidate's
 # and merge_candidate_items' schemas, and list_assets' kind "video_effects" (85_738).
-TOOLS_BUDGET_BYTES = 86_100
+# Raised for video-effects/03: `adjustment_layers[].video_effects` there (86_358).
+TOOLS_BUDGET_BYTES = 86_700
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
