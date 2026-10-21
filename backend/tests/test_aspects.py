@@ -8,7 +8,7 @@ import pytest
 
 from app.jobs import CANDIDATES_FILE
 from test_jobs_api import create_job
-from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp, reviewed  # noqa: F401 (fixtures)
+from test_mcp import HALO_KABAR, anyio_backend, call, fails, make, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from conftest import wait_for
 from test_render import add, probe, render, render_video, rendered  # noqa: F401 (fixtures)
 from test_review import candidate_url, candidates, patch
@@ -127,6 +127,54 @@ def test_the_preview_plan_is_on_the_candidates_canvas(client, short):
     assert candidates(client, job)[0]["aspect"] == "16:9"
 
 
+# Rescaling what the Candidate owns (app/rescale.py)
+
+
+@pytest.fixture
+def wide_picture(client, tmp_path) -> dict:
+    """A 320x180 PNG in the Media Library: fitted 1080x607.5 on 9:16 and 1920x1080 on 16:9."""
+    picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
+    response = client.post("/api/media", files={"file": ("wide.png", picture.read_bytes(), "application/octet-stream")})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def placed(candidate: dict) -> dict:
+    layer, overlay, cue = candidate["text_layers"][0]["transform"], candidate["overlays"][0]["transform"], candidate["cue_edits"][0]
+    return {
+        "layer": (layer["x"], layer["y"]),
+        "overlay": (overlay["x"], overlay["y"], round(overlay["scale"], 5)),
+        "cue": (cue["x"], cue["y"]),
+    }
+
+
+def test_changing_the_aspect_rescales_what_the_candidate_owns_and_a_restore_undoes_it(client, short, wide_picture):
+    job = reviewed_job(client)
+    candidate = add(client, job, "halo", "kabar", selected=False)
+    layer = {"id": "t", "text": "Judul", "start": 0, "secs": 1, "transform": {"x": 270, "y": 480}}
+    overlay = {"id": "o", "media": wide_picture["id"], "start": 0, "secs": 1, "transform": {"x": 540, "y": 960, "scale": 0.5}}
+    before = patch(client, job, candidate, text_layers=[layer], overlays=[overlay], cue_edits=[{"at": 0.5, "x": 270, "y": 480}])
+
+    # Centres keep their fraction of the Canvas; the Overlay its 540 px width (0.5 × 1080 ÷ 1920 of 1920).
+    # From another editor, so that the Revision History keeps the earlier Revision as its own entry.
+    response = client.patch(candidate_url(job, candidate), json={"aspect": "16:9"}, headers={"X-Edit-Source": "advanced-edit"})
+    assert response.status_code == 200, response.text
+    wide = response.json()
+    assert (wide["aspect"], wide["revision"]) == ("16:9", before["revision"] + 1)
+    assert placed(wide) == {"layer": (480, 270), "overlay": (960, 540, 0.28125), "cue": (480, 270)}
+
+    # Restoring the earlier Revision gives back its aspect and its positions as they were.
+    response = client.post(f"{candidate_url(job, candidate)}/revisions/{before['revision']}/restore")
+    assert response.status_code == 200, response.text
+    restored = response.json()
+    assert restored["aspect"] == "9:16"
+    assert placed(restored) == placed(before)
+
+    # What an edit sends with the aspect is taken as on the new Canvas already; the rest is rescaled.
+    square = patch(client, job, restored, aspect="1:1", overlays=[overlay | {"transform": {"x": 100, "y": 100, "scale": 0.5}}])
+    assert placed(square) == {"layer": (270, 270), "overlay": (100, 100, 0.5), "cue": (270, 270)}
+
+
 # The render: the Canvas's shape at the Export Preset's short side
 
 
@@ -168,3 +216,25 @@ async def test_an_agent_makes_a_wide_job_and_reads_and_changes_a_candidates_aspe
     changed = await call(mcp, "edit_candidate", job_id=job["id"], candidate_id=candidate["id"], changes={"aspect": "1:1"})
     assert (changed["aspect"], changed["revision"]) == ("1:1", candidate["revision"] + 1)
     assert "aspect" in await fails(mcp, "edit_candidate", job_id=job["id"], candidate_id=candidate["id"], changes={"aspect": "3:2"})
+
+
+@pytest.mark.anyio
+async def test_an_agents_change_of_aspect_alone_rescales_and_its_dry_run_shows_it_without_saving(mcp, tmp_path):
+    picture = make(tmp_path / "wide.png", "-f", "lavfi", "-i", "color=c=red:size=320x180", "-frames:v", "1")
+    item = await call(mcp, "add_asset", kind="media", path=str(picture))
+    job = await reviewed(mcp)
+    candidate = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    candidate = await call(mcp, "merge_candidate_items", **ids, overlays=[
+        {"id": "o1", "media": item["id"], "start": 0, "secs": 1, "transform": {"x": 540, "y": 960, "scale": 0.5}},
+    ])
+
+    # 540x304 about the centre of each Canvas.
+    plan = await call(mcp, "edit_candidate", **ids, changes={"aspect": "16:9"}, dry_run=True)
+    assert plan["overlays"][0]["bounds"] == {"x": 690, "y": 388, "width": 540, "height": 304}
+    saved = await call(mcp, "get_candidate", **ids)
+    assert (saved["aspect"], saved["overlays"][0]["transform"]["x"]) == ("9:16", 540)
+
+    changed = await call(mcp, "edit_candidate", **ids, changes={"aspect": "16:9"})
+    transform = changed["overlays"][0]["transform"]
+    assert (changed["aspect"], transform["x"], transform["y"], transform["scale"]) == ("16:9", 960, 540, 0.28125)

@@ -156,7 +156,9 @@ Canvas:
   Area too). A Candidate's own positions (Transforms, their Keyframes, Cue Edits) are in its Canvas's
   pixels: a centre off it is brought onto it, a Cue Edit off it refused. Style positions (caption,
   hook and Watermark x, y) are in the 1080x1920 Reference Space, mapped onto the Canvas in
-  proportion. Changing `aspect` keeps positions where they are, in pixels. A Clip renders at the
+  proportion. Changing `aspect` rescales the Candidate's own positions: centres keep their fraction
+  of the Canvas, Framings their scale relative to covering it, Overlays, Text Layers and Shapes their
+  size in pixels; those sent in the same edit are taken as on the new Canvas. A Clip renders at the
   Canvas's shape, its short side the Export Preset's resolution.
 
 Edits:

@@ -1093,8 +1093,8 @@ def grades_of(
 def on_canvas(candidate: Candidate) -> Candidate:
     """`candidate` with every centre it owns brought onto its Canvas, as a Transform's is onto the
     frame: its Transforms' (of its Framing, Segments, Overlays, Text Layers, Shapes and Layout
-    Overrides), their position Keyframes' and its Cue Edits'. (Changing its aspect leaves them where
-    they were, in pixels.)"""
+    Overrides), their position Keyframes' and its Cue Edits'. (Changing its aspect first rescales
+    them onto its new Canvas, app/rescale.py.)"""
     width, height = candidate.canvas.size
 
     def placed(transform: Transform) -> Transform:
