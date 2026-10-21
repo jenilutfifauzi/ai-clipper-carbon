@@ -192,21 +192,34 @@ class FakeLlm:
 
 class FakeVoiceEngine:
     """A speech engine that reads each sentence as one second of a 660 Hz tone at `level` (of full
-    scale), at `rate` Hz, and records each read as (text, voice, style). `ready` says whether it is.
+    scale), at `rate` Hz, and records each read as (text, voice, style), and its speed in `speeds`.
+    `ready` says whether it is; `takes_style` and `takes_speed` what it takes: one that takes a Speed
+    reads its tone in 1/speed seconds, one that doesn't is never asked one (its speeds are all 1).
     `fail_with(message)` makes every read raise SpeechError; with `times`, only that many reads, after
     `after` that don't; `transient` raises TransientSpeechError instead, with `retry_after`.
     `hold(after=n)` makes the reads after the first `n` wait for `release()`."""
 
-    def __init__(self, id: str = "fake", level: float = 0.5, rate: int = 24_000, ready: bool = True, local: bool = False) -> None:
+    def __init__(
+        self,
+        id: str = "fake",
+        level: float = 0.5,
+        rate: int = 24_000,
+        ready: bool = True,
+        local: bool = False,
+        takes_style: bool = True,
+        takes_speed: bool = False,
+    ) -> None:
         self.id = id
         self.label = f"Fake {id}"
         self.service = None if local else "Fake"
         self.local = local
-        self.takes_style = True
+        self.takes_style = takes_style
+        self.takes_speed = takes_speed
         self.level = level
         self.rate = rate
         self.is_ready = ready
         self.reads: list[tuple[str, str, str | None]] = []
+        self.speeds: list[float] = []
         self.error: SpeechError | None = None
         self._failures: list[SpeechError | None] = []
         self._hold_after = 0
@@ -235,13 +248,14 @@ class FakeVoiceEngine:
     def release(self) -> None:
         self._released.set()
 
-    def read(self, text: str, voice: str, style: str | None = None) -> Pcm:
+    def read(self, text: str, voice: str, style: str | None = None, speed: float = 1.0) -> Pcm:
         self.reads.append((text, voice, style))
+        self.speeds.append(speed)
         if len(self.reads) > self._hold_after and not self._released.wait(timeout=10):
             raise TimeoutError("FakeVoiceEngine was held and never released")
         if self._failures and (failure := self._failures.pop(0)):
             raise failure
         if self.error:
             raise self.error
-        times = np.arange(self.rate) / self.rate
+        times = np.arange(round(self.rate / speed)) / self.rate
         return Pcm((np.sin(2 * np.pi * 660 * times) * self.level * 32767).astype("<i2"), self.rate)

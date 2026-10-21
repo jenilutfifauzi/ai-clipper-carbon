@@ -10,10 +10,10 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A: Speed 2 with the fake engine (no native speed) gives a Narration about half as long, pitch kept (the tone's frequency unchanged).
-- [ ] Adapters: OpenAI sends `speed` and, when allowed, the instructions; Gemini sends the Style and no speed.
-- [ ] Seam A: a Style sent to an engine that doesn't take one is refused (422).
-- [ ] Vitest: the Style line shows only for engines that take one.
-- [ ] Vitest: the estimate follows the script, language and Speed; past 5,000 characters Generate is off with the message.
+- [x] Seam A: Speed 2 with the fake engine (no native speed) gives a Narration about half as long, pitch kept (the tone's frequency unchanged).
+- [x] Adapters: OpenAI sends `speed` and, when allowed, the instructions; Gemini sends the Style and no speed.
+- [x] Seam A: a Style sent to an engine that doesn't take one is refused (422).
+- [x] Vitest: the Style line shows only for engines that take one.
+- [x] Vitest: the estimate follows the script, language and Speed; past 5,000 characters Generate is off with the message.

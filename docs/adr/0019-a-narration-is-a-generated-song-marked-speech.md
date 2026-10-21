@@ -49,6 +49,9 @@ Today:
   - If the tab is gone or the Music Track is locked when it is ready, the item stays in the Media tab, unlaid.
   - Generate is off at the Clip's end.
 - **Controls:** engine, Voice (with a sample), Speed 0.5–2×, pause, and a Style line for cloud engines that take one.
+  - Speed goes to an engine that takes one natively (OpenAI's `speed`). Gemini's read is retimed after, its pitch kept (`atempo`, as a Music Clip's Speed), sentence by sentence so the pauses keep their length.
+  - Gemini always takes a Style; an OpenAI-compatible engine when `TTS_STYLE` says so, by default when its model takes instructions (`gpt-4o-mini-tts`). A Style sent to an engine that takes none is refused.
+  - Under the script, an estimate of its length from a characters-per-second pace per language, scaled by Speed.
   - A sample is a fixed sentence in the Job's language, made on first play and kept on this Mac per engine, Voice and language.
 - **The Narrate tab sits in the asset panel and works on phones too**, since nothing needs the microphone.
 - **MCP:**

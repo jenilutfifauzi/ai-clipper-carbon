@@ -1,8 +1,9 @@
 """The speech engines a Narration is read by (GLOSSARY.md, Narration and Voice; docs/adr/0019), behind
 one small interface, and the engines this Mac offers.
 
-An engine names itself, says whether it is ready, lists its Voices, says whether it takes a Style, and
-reads one sentence into mono 16-bit PCM at its own sample rate. The Narration runner (app/narration.py)
+An engine names itself, says whether it is ready, lists its Voices, says whether it takes a Style and
+a Speed, and reads one sentence into mono 16-bit PCM at its own sample rate. An engine without a
+native Speed reads at 1×; the runner retimes it, its pitch kept. The Narration runner (app/narration.py)
 splits the script, joins and levels the sentences, so an engine only ever reads one sentence.
 
 The cloud engines are configured apart from the LLM: Gemini TTS is offered whenever GEMINI_API_KEY is
@@ -30,6 +31,8 @@ _GEMINI_RATE = 24_000
 _RATE = re.compile(r"rate=(\d+)")
 # OpenAI's raw "pcm" answer: 24 kHz 16-bit mono, little-endian.
 _OPENAI_PCM_RATE = 24_000
+# OpenAI's speech models that take `instructions` (a Style): gpt-4o-mini-tts and its kind, not tts-1.
+_INSTRUCTED_MODEL = re.compile(r"^gpt-.*tts", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -76,15 +79,18 @@ class VoiceEngine(Protocol):
     label: str
     service: str | None
     local: bool
-    # Whether it takes a Style line, sent as the read's instruction.
+    # Whether it takes a Style line, sent as the read's instruction; and a Speed of its own (else the
+    # runner retimes what it reads at 1×).
     takes_style: bool
+    takes_speed: bool
 
     def ready(self) -> bool: ...
 
     def voices(self) -> list[Voice]: ...
 
-    def read(self, text: str, voice: str, style: str | None = None) -> Pcm:
-        """`text`, one sentence, read by Voice `voice`. SpeechError (or TransientSpeechError) when it fails."""
+    def read(self, text: str, voice: str, style: str | None = None, speed: float = 1.0) -> Pcm:
+        """`text`, one sentence, read by Voice `voice`, at `speed` (0.5–2, asked only of an engine that
+        takes_speed). SpeechError (or TransientSpeechError) when it fails."""
         ...
 
 
@@ -128,13 +134,14 @@ GEMINI_VOICES = [Voice(name, name, f"{character} · {gender}") for name, charact
 class GeminiSpeech:
     """Gemini TTS through generateContent's REST API, with AUDIO as the response modality and a prebuilt
     Voice. A Style goes before the sentence as the read's instruction ("warm, unhurried: …"). Speed isn't
-    native to it."""
+    native to it: it reads at 1×, and the runner retimes it."""
 
     id = "gemini"
     label = "Gemini"
     service = "Gemini"
     local = False
     takes_style = True
+    takes_speed = False
 
     def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
         self.settings = settings
@@ -234,11 +241,12 @@ class OpenAiSpeech:
     """An OpenAI-compatible speech service: POST {TTS_BASE_URL}/audio/speech with the model, the Voice
     and the sentence, answered as WAV (the format compatible services most often share), decoded by its
     header. A raw "pcm" answer is read as OpenAI's, 24 kHz. Its service is OpenAI, or the base URL's host.
-    Style and Speed aren't sent yet: they go in `_body`."""
+    Speed goes in its `speed` field (left out at 1×, its default); a Style in `instructions`, when it
+    takes one: TTS_STYLE, else whether the model takes instructions (gpt-4o-mini-tts does, tts-1 doesn't)."""
 
     id = "openai"
     local = False
-    takes_style = False
+    takes_speed = True
 
     def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
         self.settings = settings
@@ -248,6 +256,8 @@ class OpenAiSpeech:
         self.label = self.service
         # How messages name it: "OpenAI TTS", "localhost TTS".
         self._name = f"{self.service} TTS"
+        instructed = bool(_INSTRUCTED_MODEL.match(settings.tts_model or ""))
+        self.takes_style = instructed if settings.tts_style is None else settings.tts_style
 
     def ready(self) -> bool:
         return bool(self.settings.tts_base_url and self.settings.tts_api_key and self.settings.tts_model)
@@ -257,14 +267,20 @@ class OpenAiSpeech:
             return [Voice(voice, voice, "") for voice in self.settings.tts_voices]
         return OPENAI_VOICES
 
-    def _body(self, text: str, voice: str, style: str | None) -> dict:
-        return {"model": self.settings.tts_model, "input": text, "voice": voice, "response_format": "wav"}
+    def _body(self, text: str, voice: str, style: str | None, speed: float) -> dict:
+        body: dict = {"model": self.settings.tts_model, "input": text, "voice": voice, "response_format": "wav"}
+        if self.takes_style and style and style.strip():
+            body["instructions"] = style.strip()
+        if speed != 1:
+            body["speed"] = speed
+        return body
 
-    def read(self, text: str, voice: str, style: str | None = None) -> Pcm:
+    def read(self, text: str, voice: str, style: str | None = None, speed: float = 1.0) -> Pcm:
         url = f"{self.settings.tts_base_url}/audio/speech"
         headers = {"Authorization": f"Bearer {self.settings.tts_api_key or ''}"}
+        body = self._body(text, voice, style, speed)
         try:
-            response = self._client().post(url, json=self._body(text, voice, style), headers=headers, timeout=_TIMEOUT_SECS)
+            response = self._client().post(url, json=body, headers=headers, timeout=_TIMEOUT_SECS)
         except httpx.TransportError as exc:
             raise TransientSpeechError(f"Couldn't reach {self._name}: {exc}") from exc
         if response.status_code != 200:

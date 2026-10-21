@@ -1,6 +1,6 @@
 import { Speech, X } from "lucide-react";
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { api, type VoicesList } from "../../../api";
+import { api, type NarrationRequest, type VoicesList } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { ProgressBar } from "../../../components/ProgressBar";
@@ -11,24 +11,29 @@ import { cx } from "../../../format";
 import {
   chosenVoice,
   engineOption,
-  MAX_SCRIPT_CHARS,
   NARRATE_AT_END_HINT,
+  NARRATION_SPEED_STEP,
+  NARRATION_SPEEDS,
+  narrationBody,
+  narrationEstimate,
   PAUSE_STOPS,
   rememberChoice,
   rememberedVoice,
+  scriptTooLong,
   type NarrateDraft,
   type NarrateFlow,
   type NarrateState,
   type RememberedVoice,
 } from "./narrate";
+import { speedLabel } from "./speed";
 
 /**
- * The Narrate tab (GLOSSARY.md, Narration; ADR 0019): an engine, a Voice, the pause between sentences
- * and a script, read aloud by Generate into a Media Library item that lands as a Music Clip marked
+ * The Narrate tab (GLOSSARY.md, Narration; ADR 0019): an engine, a Voice, the Speed, the pause between
+ * sentences, a Style line for an engine that takes one, and a script with the estimate of its length, read aloud by Generate into a Media Library item that lands as a Music Clip marked
  * Speech at the playhead. The engines and Voices are loaded once, with the default engine for the Job's
  * `language`; the browser remembers the last engine and Voice chosen, which win over it. While it is
  * made, its progress and Cancel take Generate's place; the draft is the flow's, so it outlives the tab.
- * Generate is off with the playhead `atEnd` of the Clip.
+ * Generate is off with the playhead `atEnd` of the Clip, and past 5,000 characters.
  */
 export function NarratePanel({ flow, language, atEnd }: { flow: NarrateFlow; language: string; atEnd: boolean }) {
   const [voices, setVoices] = useState<VoicesList | null>(null);
@@ -44,6 +49,7 @@ export function NarratePanel({ flow, language, atEnd }: { flow: NarrateFlow; lan
   return (
     <NarrateFields
       voices={voices}
+      language={language}
       state={state}
       draft={draft}
       remembered={remembered}
@@ -58,9 +64,11 @@ export function NarratePanel({ flow, language, atEnd }: { flow: NarrateFlow; lan
   );
 }
 
-/** The tab's fields, given the engines, the flow's state, the draft and the remembered engine and Voice. */
+/** The tab's fields, given the engines, the Job's language (the estimate's pace), the flow's state, the
+ * draft and the remembered engine and Voice. */
 export function NarrateFields({
   voices,
+  language = "id",
   state,
   draft,
   remembered = null,
@@ -70,18 +78,19 @@ export function NarrateFields({
   onCancel,
 }: {
   voices: VoicesList;
+  language?: string;
   state: NarrateState;
   draft: NarrateDraft;
   remembered?: RememberedVoice | null;
   atEnd?: boolean;
   onDraft: (change: Partial<NarrateDraft>) => void;
-  onGenerate: (body: { text: string; engine: string; voice: string; pauses: number }) => void;
+  onGenerate: (body: NarrationRequest) => void;
   onCancel: () => void;
 }) {
   const id = useId();
   const ready = voices.engines.filter((engine) => engine.ready);
   const choice = chosenVoice(voices, draft, remembered);
-  const { script, pause } = draft;
+  const { script, speed, pause, style } = draft;
   if (!choice) {
     return (
       <div className="flex flex-col gap-4">
@@ -100,7 +109,9 @@ export function NarrateFields({
   const { engine, voice: chosen } = choice;
   const making = state.phase === "making";
   const text = script.trim();
-  const canGenerate = !making && !atEnd && !!text && text.length <= MAX_SCRIPT_CHARS && !!chosen;
+  const tooLong = scriptTooLong(script);
+  const estimate = narrationEstimate(script, language, speed);
+  const canGenerate = !making && !atEnd && !!text && !tooLong && !!chosen;
   return (
     <div className="flex flex-col gap-4">
       <Hint more="Each sentence is read alone and joined with the pause. The Narration is kept in the Media tab; Undo removes the clip and keeps it.">
@@ -133,6 +144,15 @@ export function NarrateFields({
         ))}
       </div>
       <Slider
+        label="Speed"
+        value={speed}
+        min={NARRATION_SPEEDS[0]}
+        max={NARRATION_SPEEDS[1]}
+        step={NARRATION_SPEED_STEP}
+        format={speedLabel}
+        onChange={(value) => onDraft({ speed: value })}
+      />
+      <Slider
         label="Pause between sentences"
         value={pause}
         min={0}
@@ -140,6 +160,22 @@ export function NarrateFields({
         format={(stop) => PAUSE_STOPS[stop].label}
         onChange={(stop) => onDraft({ pause: stop })}
       />
+      {engine.takes_style && (
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`${id}-style`} className="text-sm font-medium">
+            Style
+          </label>
+          <input
+            id={`${id}-style`}
+            type="text"
+            value={style}
+            maxLength={200}
+            placeholder="warm, unhurried"
+            onChange={(event) => onDraft({ style: event.target.value })}
+            className="min-h-11 w-full rounded-[10px] border border-border bg-fill px-3 text-base"
+          />
+        </div>
+      )}
       <div className="flex flex-col gap-1">
         <label htmlFor={`${id}-script`} className="text-sm font-medium">
           Script
@@ -151,8 +187,10 @@ export function NarrateFields({
           onChange={(event) => onDraft({ script: event.target.value })}
           className="min-h-28 w-full resize-y rounded-[10px] border border-border bg-fill px-3 py-2 text-base"
         />
-        {text.length > MAX_SCRIPT_CHARS && (
-          <p className="text-sm text-danger">A script can be {MAX_SCRIPT_CHARS.toLocaleString("en")} characters at most.</p>
+        {tooLong ? (
+          <p className="text-sm text-danger">{tooLong}</p>
+        ) : (
+          estimate && <p className="text-sm text-muted tabular-nums">{estimate}</p>
         )}
       </div>
       {state.phase === "failed" && <p className="text-sm text-danger">{state.message}</p>}
@@ -164,7 +202,7 @@ export function NarrateFields({
           <Button
             variant="primary"
             disabled={!canGenerate}
-            onClick={() => chosen && onGenerate({ text, engine: engine.id, voice: chosen.id, pauses: PAUSE_STOPS[pause].secs })}
+            onClick={() => chosen && onGenerate(narrationBody(engine, chosen.id, draft))}
           >
             <Speech aria-hidden size={18} />
             Generate

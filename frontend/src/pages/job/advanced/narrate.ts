@@ -1,4 +1,5 @@
 import { narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
+import { formatClock } from "../../../format";
 import { rememberedValue } from "../../../remembered";
 import type { LandedTake } from "./takeFlow";
 
@@ -6,7 +7,8 @@ import type { LandedTake } from "./takeFlow";
  * The Narrate tab's flow (.scratch/text-to-speech/spec.md, ADR 0019): from Generate to a Music Clip
  * marked Speech on the Timeline. The backend reads the script (app/narration.py); `NarrateFlow` starts
  * it, follows its progress and lands the item through the same action that lands a Take, at the start
- * fixed when Generate was pressed (the playhead then). It keeps the tab's draft (script, engine, Voice, pause),
+ * fixed when Generate was pressed (the playhead then). It keeps the tab's draft (script, engine, Voice,
+ * Speed, pause and Style),
  * so that a failure, a cancel or a tab switch never loses it. No React.
  *
  *   idle → making (progress; Cancel → idle) → idle (landed, or kept in the Media tab when refused)
@@ -19,12 +21,15 @@ export type NarrateState =
   | { phase: "failed"; message: string };
 
 // What the owner has set in the tab: the script, the engine and Voice (null: the remembered or the
-// default one, chosenVoice) and the pause stop.
+// default one, chosenVoice), the Speed, the pause stop and the Style line (sent only to an engine that
+// takes one).
 export interface NarrateDraft {
   script: string;
   engine: string | null;
   voice: string | null;
+  speed: number;
   pause: number;
+  style: string;
 }
 
 // The last engine and Voice chosen, remembered by the browser for every Job.
@@ -50,6 +55,43 @@ export const PAUSE_STOPS = [
   { label: "Longer", secs: 1.5 },
 ] as const;
 export const DEFAULT_PAUSE = 1;
+
+// The Speed a Narration is read at (app/narration.py's MIN_SPEED and MAX_SPEED), and its slider's step.
+export const NARRATION_SPEEDS = [0.5, 2] as const;
+export const NARRATION_SPEED_STEP = 0.05;
+export const DEFAULT_SPEED = 1;
+
+export const EMPTY_DRAFT: NarrateDraft = { script: "", engine: null, voice: null, speed: DEFAULT_SPEED, pause: DEFAULT_PAUSE, style: "" };
+
+// How many characters a Voice reads a second at 1×, by the Job's language; others read at the default.
+// Indonesian's longer words take a little longer to say than English's.
+export const CHARS_PER_SECOND: Record<string, number> = { en: 15, id: 14 };
+export const DEFAULT_CHARS_PER_SECOND = 14;
+
+/** What the script will take to read, for the line under it: "About 0:42 · 590 characters", from the
+ * characters of the trimmed script at the language's pace (CHARS_PER_SECOND) times `speed`. Null for
+ * an empty script. The pauses aren't counted. */
+export function narrationEstimate(script: string, language: string, speed: number): string | null {
+  const chars = script.trim().length;
+  if (!chars) return null;
+  const secs = Math.round(chars / (CHARS_PER_SECOND[language] ?? DEFAULT_CHARS_PER_SECOND) / speed);
+  return `About ${formatClock(secs)} · ${chars.toLocaleString("en")} ${chars === 1 ? "character" : "characters"}`;
+}
+
+/** What Generate asks the backend for, of the draft read by `voice` of `engine`: the trimmed script, the
+ * Speed, the pause stop's seconds, and the trimmed Style only when the engine takes one and it isn't blank. */
+export function narrationBody(engine: VoiceEngine, voice: string, draft: NarrateDraft): NarrationRequest {
+  const style = engine.takes_style ? draft.style.trim() : "";
+  const body: NarrationRequest = { text: draft.script.trim(), engine: engine.id, voice, speed: draft.speed, pauses: PAUSE_STOPS[draft.pause].secs };
+  return style ? { ...body, style } : body;
+}
+
+/** Why a script can't be read for its length, in the estimate's place: null within MAX_SCRIPT_CHARS. */
+export function scriptTooLong(script: string): string | null {
+  const chars = script.trim().length;
+  if (chars <= MAX_SCRIPT_CHARS) return null;
+  return `A script can be ${MAX_SCRIPT_CHARS.toLocaleString("en")} characters at most: this one has ${chars.toLocaleString("en")}`;
+}
 
 // Told when the Narration is made but can't land (a locked Music Track): it waits in the Media tab.
 export const NARRATION_IN_LIBRARY = "The Narration is in the Media tab: the Music Track is locked";
@@ -120,7 +162,7 @@ interface Run {
  * tab (useSyncExternalStore). */
 export class NarrateFlow {
   state: NarrateState = { phase: "idle" };
-  draft: NarrateDraft = { script: "", engine: null, voice: null, pause: DEFAULT_PAUSE };
+  draft: NarrateDraft = EMPTY_DRAFT;
   private listeners = new Set<() => void>();
   // The run being made (null once it ends or is cancelled), and what stops following each run still
   // followed: a cancelled one is followed to its end, for a cancel that came too late.
@@ -134,7 +176,7 @@ export class NarrateFlow {
     return () => void this.listeners.delete(listener);
   };
 
-  /** The owner changed the tab's script, engine, Voice or pause. */
+  /** The owner changed the tab's script, engine, Voice, Speed, pause or Style. */
   edit = (change: Partial<NarrateDraft>) => {
     this.draft = { ...this.draft, ...change };
     this.notify();

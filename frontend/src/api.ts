@@ -326,11 +326,13 @@ export interface VoicesList {
   default: string | null;
 }
 
-// A script to read aloud (GLOSSARY.md, Narration): `pauses` seconds between its sentences.
+// A script to read aloud (GLOSSARY.md, Narration): at `speed` (0.5–2×), `pauses` seconds between its
+// sentences, and `style` ("warm, unhurried") only for an engine that takes one (VoiceEngine.takes_style).
 export interface NarrationRequest {
   text: string;
   engine: string;
   voice: string;
+  speed?: number;
   pauses: number;
   style?: string | null;
 }

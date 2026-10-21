@@ -316,6 +316,9 @@ class Settings:
     tts_model: str | None = None
     # Its Voices, replacing the standard list; empty: the standard list.
     tts_voices: tuple[str, ...] = ()
+    # Whether it takes a Style, sent as its `instructions`; None: on for a model that takes them
+    # (gpt-4o-mini-tts and its kind, app/voices.py), off for others (tts-1, most compatible services).
+    tts_style: bool | None = None
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -387,6 +390,7 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         tts_api_key=get("TTS_API_KEY") or None,
         tts_model=get("TTS_MODEL") or None,
         tts_voices=tuple(voice.strip() for voice in get("TTS_VOICES").split(",") if voice.strip()),
+        tts_style=_parse_bool("TTS_STYLE", get("TTS_STYLE")) if get("TTS_STYLE") else None,
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

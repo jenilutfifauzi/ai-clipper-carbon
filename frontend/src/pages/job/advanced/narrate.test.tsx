@@ -7,6 +7,8 @@
 // through a failure, a busy refusal or a cancel, and Generate off at the Clip's end.
 // And 03-openai-engine-and-engine-picker.md: the engine picker, its labels, the default engine from the
 // Job's language, the browser's remembered engine and Voice, and the hint with no ready engine.
+// And 04-speed-style-and-estimate.md: Speed, the Style line for an engine that takes one, the request
+// carrying them, and the estimate of the read's length with the 5,000-character limit.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { MediaItem, MusicClip, NarrationRequest, VoicesList } from "../../../api";
@@ -17,13 +19,16 @@ import { trackLanes, type AdvancedEdits } from "./edits";
 import type { MediaLibrary } from "./MediaLibrary";
 import {
   chosenVoice,
-  DEFAULT_PAUSE,
+  CHARS_PER_SECOND,
+  EMPTY_DRAFT,
   engineLabel,
   engineOption,
   NARRATE_AT_END_HINT,
   NARRATION_IN_LIBRARY,
   NARRATION_MADE_BEFORE_CANCEL,
   NarrateFlow,
+  narrationBody,
+  narrationEstimate,
   PAUSE_STOPS,
   rememberChoice,
   rememberedVoice,
@@ -188,7 +193,7 @@ describe("Generate", () => {
     flow.cancel();
     expect(cancelled).toEqual(["n1"]);
     expect(flow.state).toEqual({ phase: "idle" });
-    expect(flow.draft).toEqual({ script: "Halo semua. Apa kabar?", engine: "gemini", voice: "Puck", pause: 2 });
+    expect(flow.draft).toEqual({ ...EMPTY_DRAFT, script: "Halo semua. Apa kabar?", engine: "gemini", voice: "Puck", pause: 2 });
     // Progress after the cancel isn't told; a cancel that came too late keeps the item, unlaid.
     progress("Reading", 2, 2);
     expect(flow.state).toEqual({ phase: "idle" });
@@ -212,7 +217,7 @@ describe("Generate", () => {
 
   test("a failure or a busy refusal keeps the draft for Generate again", async () => {
     const { flow, refuse, failed } = setUp();
-    const draft: NarrateDraft = { script: "Halo semua.", engine: "gemini", voice: "Puck", pause: 0 };
+    const draft: NarrateDraft = { script: "Halo semua.", engine: "gemini", voice: "Puck", speed: 1.5, pause: 0, style: "calm" };
     flow.edit(draft);
     await flow.generate(BODY);
     failed("Gemini TTS failed (500): boom");
@@ -238,23 +243,25 @@ describe("Generate", () => {
   });
 });
 
-const DRAFT: NarrateDraft = { script: "", engine: null, voice: null, pause: DEFAULT_PAUSE };
+const DRAFT: NarrateDraft = EMPTY_DRAFT;
 
 function Fields({
   voices = VOICES,
+  language = "id",
   state = { phase: "idle" },
   draft = DRAFT,
   remembered = null,
   atEnd = false,
 }: {
   voices?: VoicesList;
+  language?: string;
   state?: NarrateState;
   draft?: NarrateDraft;
   remembered?: RememberedVoice | null;
   atEnd?: boolean;
 }) {
   return (
-    <NarrateFields voices={voices} state={state} draft={draft} remembered={remembered} atEnd={atEnd} onDraft={() => {}} onGenerate={() => {}} onCancel={() => {}} />
+    <NarrateFields voices={voices} language={language} state={state} draft={draft} remembered={remembered} atEnd={atEnd} onDraft={() => {}} onGenerate={() => {}} onCancel={() => {}} />
   );
 }
 
@@ -334,7 +341,7 @@ describe("the Narrate tab", () => {
   });
 
   test("keeps the script, Voice and pause after a failure, with its message", () => {
-    const draft = { script: "Halo semua.", engine: null, voice: "Puck", pause: 3 };
+    const draft = { ...DRAFT, script: "Halo semua.", voice: "Puck", pause: 3 };
     const html = renderToStaticMarkup(<Fields state={{ phase: "failed", message: "Gemini TTS failed (500): boom" }} draft={draft} />);
     expect(html).toContain(">Halo semua.</textarea>");
     expect(html).toMatch(/aria-checked="true"[^>]*>.*?Puck</);
@@ -452,5 +459,70 @@ describe("the engine picker", () => {
     expect(openai).toMatch(/aria-checked="true"[^>]*>.*?Coral<\/span><span[^>]*>Bright, friendly</);
     expect(openai).toMatch(/aria-checked="false"[^>]*>.*?Onyx</);
     expect(openai).not.toContain("Kore");
+  });
+});
+
+describe("Speed, Style and the estimate", () => {
+  const generate = /<button type="button"[^>]*>(?:(?!<\/button>).)*Generate<\/button>/;
+  const styleLine = /<label[^>]*>Style<\/label><input[^>]*type="text"/;
+
+  test("Speed is a slider from 0.5× to 2×, at 1× by default", () => {
+    const html = renderToStaticMarkup(<Fields />);
+    expect(html).toMatch(/Speed<\/label><output[^>]*>1×<\/output>/);
+    expect(html).toMatch(/type="range" min="0.5" max="2" step="0.05"[^>]*value="1"/);
+    expect(renderToStaticMarkup(<Fields draft={{ ...DRAFT, speed: 1.5 }} />)).toMatch(/Speed<\/label><output[^>]*>1.5×<\/output>/);
+  });
+
+  test("the Style line shows only for an engine that takes one", () => {
+    const gemini = renderToStaticMarkup(<Fields voices={TWO} draft={{ ...DRAFT, style: "warm, unhurried" }} />);
+    expect(gemini).toMatch(styleLine);
+    expect(gemini).toContain('value="warm, unhurried"');
+    const openai = renderToStaticMarkup(<Fields voices={TWO} draft={{ ...DRAFT, engine: "openai", style: "warm, unhurried" }} />);
+    expect(openai).not.toMatch(styleLine);
+    // An OpenAI-compatible engine whose model takes instructions (TTS_STYLE) shows it.
+    const instructed = { ...TWO, engines: [VOICES.engines[0], { ...OPENAI, takes_style: true }] };
+    expect(renderToStaticMarkup(<Fields voices={instructed} draft={{ ...DRAFT, engine: "openai" }} />)).toMatch(styleLine);
+  });
+
+  test("Generate sends the Speed, the pause's seconds and the Style only to an engine that takes one", () => {
+    const draft: NarrateDraft = { ...DRAFT, script: "  Halo semua.  ", speed: 1.5, pause: 2, style: "  warm, unhurried " };
+    expect(narrationBody(VOICES.engines[0], "Kore", draft)).toEqual({
+      text: "Halo semua.",
+      engine: "gemini",
+      voice: "Kore",
+      speed: 1.5,
+      pauses: PAUSE_STOPS[2].secs,
+      style: "warm, unhurried",
+    });
+    expect(narrationBody(OPENAI, "coral", draft)).not.toHaveProperty("style");
+    expect(narrationBody(VOICES.engines[0], "Kore", { ...draft, style: "   " })).not.toHaveProperty("style");
+  });
+
+  test("the estimate follows the script, the language's pace and the Speed", () => {
+    const script = "a".repeat(420);
+    expect(narrationEstimate(script, "id", 1)).toBe(`About 0:30 · 420 characters`);
+    expect(420 / CHARS_PER_SECOND.id).toBe(30);
+    expect(narrationEstimate(script, "en", 1)).toBe("About 0:28 · 420 characters");
+    expect(narrationEstimate(script, "id", 2)).toBe("About 0:15 · 420 characters");
+    expect(narrationEstimate(script, "id", 0.5)).toBe("About 1:00 · 420 characters");
+    // Trimmed, and a language without a pace of its own reads at the default.
+    expect(narrationEstimate(`  ${"b".repeat(1400)}\n`, "ja", 1)).toBe("About 1:40 · 1,400 characters");
+    expect(narrationEstimate("   ", "id", 1)).toBeNull();
+    expect(narrationEstimate("Hi", "id", 1)).toBe("About 0:00 · 2 characters");
+
+    const html = renderToStaticMarkup(<Fields language="en" draft={{ ...DRAFT, script, speed: 2 }} />);
+    expect(html).toContain("About 0:14 · 420 characters");
+    expect(renderToStaticMarkup(<Fields />)).not.toContain("About ");
+  });
+
+  test("past 5,000 characters the count turns into the limit message and Generate is off", () => {
+    const at = renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "a".repeat(5000) }} />);
+    expect(at).toContain("5,000 characters");
+    expect(at).not.toContain("at most");
+    expect(at.match(generate)![0]).not.toContain('disabled=""');
+    const past = renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "a".repeat(5001) }} />);
+    expect(past).toContain("A script can be 5,000 characters at most: this one has 5,001");
+    expect(past).not.toContain("About ");
+    expect(past.match(generate)![0]).toContain('disabled=""');
   });
 });

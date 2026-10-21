@@ -3,7 +3,9 @@ a Media Library item.
 
 A module of its own, not the Job Worker: it makes one Narration at a time for the whole app, in a
 thread of its own, and refuses a second while one runs (NarrationBusy). The script is split into
-sentences, each read alone by the engine (app/voices.py); they are resampled to 48 kHz mono, joined
+sentences, each read alone by the engine (app/voices.py) at the Speed asked, natively by an engine that
+takes one, else read at 1× and retimed with `atempo`, its pitch kept, as a Music Clip's Speed is (each
+sentence alone, so that the pauses keep their length); they are resampled to 48 kHz mono, joined
 with the pause's silence (none before the first or after the last), levelled to a fixed loudness for
 speech with loudnorm's two passes, and the WAV is added through the Media Library's normal add, named
 "Narration <voice> <date time>". What the runner made of a Narration is told as events: `progress`
@@ -32,7 +34,7 @@ from uuid import uuid4
 from fastapi.sse import ServerSentEvent
 
 from app.media import MediaItem, MediaStore
-from app.renderer import last_lines
+from app.renderer import last_lines, speed_filters
 from app.voices import Pcm, SpeechError, TransientSpeechError, Voice, VoiceEngine
 
 # In DATA_DIR: a folder per Narration being made.
@@ -42,6 +44,8 @@ MAX_CHARS = 5_000
 # The silence between two sentences, in seconds: the pause slider's None (0) to Longer.
 DEFAULT_PAUSE_SECS = 0.3
 MAX_PAUSE_SECS = 1.5
+# The Speed a Narration is read at: 0.5–2×.
+MIN_SPEED, MAX_SPEED, DEFAULT_SPEED = 0.5, 2.0, 1.0
 # Every Voice comes out at this loudness: a fixed target for speech (integrated LUFS, true peak dBTP).
 LUFS = -16.0
 TRUE_PEAK_DB = -1.5
@@ -62,7 +66,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
 class NarrationRefused(ValueError):
-    """The request can't be narrated: its script, engine or Voice."""
+    """The request can't be narrated: its script, engine, Voice, Speed or Style."""
 
 
 class NarrationBusy(RuntimeError):
@@ -88,6 +92,7 @@ class NarrationRequest:
     voice: str
     pauses: float = DEFAULT_PAUSE_SECS
     style: str | None = None
+    speed: float = DEFAULT_SPEED
 
 
 def sentences(text: str) -> list[str]:
@@ -137,7 +142,8 @@ class NarrationRunner:
 
     def start(self, request: NarrationRequest) -> str:
         """Start making a Narration; its id. NarrationRefused for an empty or too long script, an unknown
-        engine or Voice, or an engine that isn't ready; NarrationBusy while another is being made."""
+        engine or Voice, an engine that isn't ready, a Speed outside 0.5–2, or a Style for an engine that
+        takes none (a blank one is none); NarrationBusy while another is being made."""
         text = request.text.strip()
         if not text:
             raise NarrationRefused("Type a script to narrate")
@@ -151,6 +157,11 @@ class NarrationRunner:
             raise NarrationRefused(f"{engine.label} has no Voice {request.voice!r}")
         if not engine.ready():
             raise NarrationRefused(f"{engine.label} isn't ready")
+        if not MIN_SPEED <= request.speed <= MAX_SPEED:
+            raise NarrationRefused(f"The Speed can be {MIN_SPEED:g}–{MAX_SPEED:g}×; this one is {request.speed:g}×")
+        style = (request.style or "").strip() or None
+        if style and not engine.takes_style:
+            raise NarrationRefused(f"{engine.label} takes no Style")
         read = sentences(text)
         if not read:
             raise NarrationRefused("The script has no words to read")
@@ -161,7 +172,7 @@ class NarrationRunner:
             self._narrations[narration.id] = narration
             for old in [n for n in self._narrations.values() if n.finished][:-_KEPT]:
                 del self._narrations[old.id]
-        args = (narration, engine, voice, read, request.pauses, request.style)
+        args = (narration, engine, voice, read, request.pauses, style, request.speed)
         threading.Thread(target=self._run, args=args, name=f"narration-{narration.id}", daemon=True).start()
         return narration.id
 
@@ -214,7 +225,9 @@ class NarrationRunner:
         for listener in listeners:
             listener((name, data))
 
-    def _run(self, narration: _Narration, engine: VoiceEngine, voice: Voice, read: list[str], pauses: float, style: str | None) -> None:
+    def _run(
+        self, narration: _Narration, engine: VoiceEngine, voice: Voice, read: list[str], pauses: float, style: str | None, speed: float
+    ) -> None:
         folder = self.work_dir / narration.id
 
         def stage(name: str, done: int) -> None:
@@ -226,12 +239,14 @@ class NarrationRunner:
             folder.mkdir(parents=True, exist_ok=True)
             stage(LOADING, 0)
             stage(READING, 0)
-            parts = []
+            parts, lengths = [], []
             for i, sentence in enumerate(read):
-                parts.append(_write_wav(folder / f"{i}.wav", self._read(narration, engine, sentence, voice.id, style)))
+                pcm = self._read(narration, engine, sentence, voice.id, style, speed)
+                parts.append(_write_wav(folder / f"{i}.wav", pcm))
+                lengths.append(pcm.secs)
                 stage(READING, i + 1)
             stage(LEVELLING, len(read))
-            narrated = self._join(parts, pauses, folder / "narration.wav")
+            narrated = self._join(parts, lengths, pauses, 1.0 if engine.takes_speed else speed, folder / "narration.wav")
             stage(SAVING, len(read))
             name = f"Narration {voice.name} {self._now().strftime('%Y-%m-%d %H.%M.%S')}.wav"
             with narrated.open("rb") as file:
@@ -248,25 +263,35 @@ class NarrationRunner:
             shutil.rmtree(folder, ignore_errors=True)
             self._busy.release()
 
-    def _read(self, narration: _Narration, engine: VoiceEngine, sentence: str, voice: str, style: str | None) -> Pcm:
-        """The sentence read, once more after a passing failure: after its Retry-After, or
-        RETRY_WAIT_SECS, unless a cancel comes meanwhile."""
+    def _read(self, narration: _Narration, engine: VoiceEngine, sentence: str, voice: str, style: str | None, speed: float) -> Pcm:
+        """The sentence read (at `speed` by an engine that takes one), once more after a passing
+        failure: after its Retry-After, or RETRY_WAIT_SECS, unless a cancel comes meanwhile."""
+
+        def read() -> Pcm:
+            return engine.read(sentence, voice, style, speed) if engine.takes_speed else engine.read(sentence, voice, style)
+
         try:
-            return engine.read(sentence, voice, style)
+            return read()
         except TransientSpeechError as exc:
             wait = RETRY_WAIT_SECS if exc.retry_after is None else exc.retry_after
             if narration.cancelled.wait(wait):
                 raise _Cancelled from None
-            return engine.read(sentence, voice, style)
+            return read()
 
-    def _join(self, parts: list[Path], pauses: float, out: Path) -> Path:
-        """The sentences at 48 kHz mono, joined with `pauses` seconds of silence and levelled to LUFS."""
+    def _join(self, parts: list[Path], lengths: list[float], pauses: float, speed: float, out: Path) -> Path:
+        """The sentences (`lengths` seconds long) at 48 kHz mono, each retimed to `speed` with its pitch
+        kept and padded or cut to its length at it (`atempo` drops a little of a sound's end), joined
+        with `pauses` seconds of silence and levelled to LUFS."""
         inputs = [arg for part in parts for arg in ("-i", str(part))]
-        pad = f",apad=pad_dur={pauses:.3f}" if pauses > 0 else ""
-        graph = "".join(
-            f"[{i}:a]aresample={RATE},aformat=sample_fmts=fltp:channel_layouts=mono{pad if i < len(parts) - 1 else ''}[s{i}];"
-            for i in range(len(parts))
-        )
+        tempo = "".join(f",{stage}" for stage in speed_filters(speed, False, RATE))
+        last = len(parts) - 1
+        graph = ""
+        for i, secs in enumerate(lengths):
+            whole = secs / speed + (pauses if i < last else 0)
+            graph += (
+                f"[{i}:a]aresample={RATE},aformat=sample_fmts=fltp:channel_layouts=mono{tempo}"
+                f",apad=whole_dur={whole:.6f},atrim=duration={whole:.6f}[s{i}];"
+            )
         joined = f"{graph}{''.join(f'[s{i}]' for i in range(len(parts)))}concat=n={len(parts)}:v=0:a=1"
         target = f"loudnorm=I={LUFS}:TP={TRUE_PEAK_DB}:LRA={LOUDNESS_RANGE}"
         base = [str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", *inputs]

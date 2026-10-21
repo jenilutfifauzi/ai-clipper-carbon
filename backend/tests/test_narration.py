@@ -1,5 +1,5 @@
 """A Narration read by a Voice (.scratch/text-to-speech/issues/01-narration-with-gemini.md and
-02-progress-cancel-and-failures.md, docs/adr/0019).
+02-progress-cancel-and-failures.md, 04-speed-style-and-estimate.md, docs/adr/0019).
 Seam A: the HTTP API, MCP's dry run and the real ffmpeg, with FakeVoiceEngine (a second of tone per
 sentence) in place of the cloud."""
 
@@ -45,9 +45,15 @@ def asleep() -> FakeVoiceEngine:
 
 
 @pytest.fixture
-def client(settings, video_source, transcriber, llm, engine, quiet, asleep):
+def native() -> FakeVoiceEngine:
+    """An engine that takes a Speed of its own (as OpenAI's) and no Style (as tts-1)."""
+    return FakeVoiceEngine("native", takes_style=False, takes_speed=True)
+
+
+@pytest.fixture
+def client(settings, video_source, transcriber, llm, engine, quiet, asleep, native):
     """The app, its speech engines the fakes."""
-    ports = Ports(video_source, transcriber, llm, voices=(engine, quiet, asleep))
+    ports = Ports(video_source, transcriber, llm, voices=(engine, quiet, asleep, native))
     with TestClient(create_app(settings, ports)) as client:
         try:
             yield client
@@ -173,12 +179,55 @@ def test_two_engines_at_different_levels_come_out_equally_loud(client, settings,
         ({"engine": "nobody"}, "No speech engine 'nobody' is set up"),
         ({"engine": "asleep"}, "Fake asleep isn't ready"),
         ({"text": "... !!"}, "The script has no words to read"),
+        ({"engine": "native", "style": "warm, unhurried"}, "Fake native takes no Style"),
     ],
 )
 def test_a_script_that_cant_be_narrated_is_refused(client, engine, fields, message):
     response = client.post("/api/narrations", json={"text": "Halo.", "engine": "fake", "voice": "ana", **fields})
     assert response.status_code == 422 and message in response.json()["detail"], response.text
     assert engine.reads == [] and client.get("/api/media").json() == []
+
+
+@pytest.mark.parametrize("speed", [0.49, 2.01, 0])
+def test_a_speed_outside_half_to_twice_is_refused(client, engine, speed):
+    response = narrate(client, "Halo.", speed=speed)
+    assert response.status_code == 422, response.text
+    assert engine.reads == [] and client.get("/api/media").json() == []
+
+
+def pitch(samples: np.ndarray, rate: int = 48_000) -> float:
+    """The loudest frequency of the sound, in Hz."""
+    spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples))))
+    return float(np.fft.rfftfreq(len(samples), 1 / rate)[np.argmax(spectrum)])
+
+
+@pytest.mark.parametrize("speed", [2, 0.5])
+def test_an_engine_without_a_speed_is_retimed_its_pitch_kept_and_the_pauses_their_length(client, settings, engine, speed):
+    item = narrated(client, "Satu. Dua. Tiga.", speed=speed)
+    # Each tone 1/speed long; the two pauses of 0.3 s untouched.
+    assert item["duration"] == pytest.approx(3 * TONE_SECS / speed + 2 * 0.3, abs=0.06)
+    samples = samples_of(client, settings, item)
+    spans = sounding(samples)
+    assert [end - start for start, end in spans] == [pytest.approx(TONE_SECS / speed, abs=0.04)] * 3
+    start, end = spans[0]
+    assert pitch(samples[int(start * 48_000) : int(end * 48_000)]) == pytest.approx(660, abs=5)
+    # Read at 1×: the engine is never asked a Speed.
+    assert engine.speeds == [1.0] * 3
+
+
+def test_an_engine_with_a_speed_reads_at_it_and_is_not_retimed(client, settings, native):
+    item = narrated(client, "Satu. Dua.", engine="native", speed=2)
+    assert native.speeds == [2.0, 2.0]
+    # Its tones, read in half a second, kept so: not halved again.
+    assert item["duration"] == pytest.approx(2 * TONE_SECS / 2 + 0.3, abs=0.06)
+
+
+def test_the_style_is_sent_with_each_sentence_and_a_blank_one_is_none(client, engine, native):
+    narrated(client, "Satu. Dua.", style="  warm, unhurried ")
+    assert [style for _, _, style in engine.reads] == ["warm, unhurried"] * 2
+    # A blank Style is none, so an engine that takes none takes it.
+    narrated(client, "Satu.", engine="native", style="  ")
+    assert [style for _, _, style in native.reads] == [None]
 
 
 def test_a_script_of_5000_characters_is_taken(client, engine):
@@ -218,7 +267,8 @@ def test_voices_lists_the_engines_and_the_default_for_a_jobs_language(client):
         "id": "fake", "label": "Fake fake", "service": "Fake", "local": False, "ready": True, "takes_style": True,
     }
     assert fake["voices"][0] == {"id": "ana", "name": "Ana", "detail": "Bright · female", "language": None}
-    assert [engine["ready"] for engine in voices["engines"]] == [True, True, False]
+    assert [engine["ready"] for engine in voices["engines"]] == [True, True, False, True]
+    assert [engine["takes_style"] for engine in voices["engines"]] == [True, True, True, False]
     assert voices["default"] == "fake"
 
 

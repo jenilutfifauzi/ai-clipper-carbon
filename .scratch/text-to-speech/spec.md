@@ -102,12 +102,12 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - Its model is a setting with a default (`TTS_GEMINI_MODEL`, `gemini-3.8-flash-lite-tts`: the cost-efficient TTS model, made for many short reads). It is called through generateContent's REST API with httpx, AUDIO as the response modality; the answer is raw 16-bit PCM, its rate in the MIME type (24 kHz).
   - Its prebuilt Voices are a fixed list in code. They are multilingual and read the script's language.
   - It takes a Style, sent as the read's instruction: "<style>: <sentence>".
-  - Speed isn't native to it. Speed is applied after the read with a pitch-keeping tempo change, the same treatment Music Clip Speed uses.
+  - Speed isn't native to it. Speed is applied after the read with a pitch-keeping tempo change, the same treatment Music Clip Speed uses (`atempo`). Each sentence is retimed alone, padded or cut to its length at the Speed, so the pauses keep their length. An engine says whether it takes a Speed of its own; only one that does is asked for it.
 - **OpenAI-compatible speech** is offered when `TTS_BASE_URL`, `TTS_API_KEY` and `TTS_MODEL` are all set.
   - Voices are the service's standard list, overridable by `TTS_VOICES` (comma-separated).
   - It asks for `response_format: "wav"` and decodes the WAV by its header (mono or mixed down, 16-bit; a streamed file's unknown sizes are read to the end). A raw `pcm` answer is read at 24 kHz. Its service is "OpenAI" for `api.openai.com`, else the host of `TTS_BASE_URL`; failures name it ("OpenAI TTS is busy (429)", "… refused TTS_API_KEY").
-  - It takes a Style when the model accepts instructions. That is a setting (`TTS_STYLE`, on by default for `gpt-4o-mini-tts`-style models).
-  - Speed goes to the service's own `speed` field.
+  - It takes a Style when the model accepts instructions, sent as `instructions`. That is a setting (`TTS_STYLE`, true or false). Left empty, it is on for `gpt-…tts` models such as `gpt-4o-mini-tts`, and off for others (`tts-1`, most compatible services).
+  - Speed goes to the service's own `speed` field, left out at 1×.
 - **Kokoro on this Mac**, run through sherpa-onnx with its int8 multi-language v1.0 archive.
   - The archive brings espeak-ng data and lexicons, so no brew package is needed.
   - Only its English Voices (American and British, female and male) are offered.
@@ -140,7 +140,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - the engines, each with id, label, service, cloud/local, ready, takes-style and its Voices;
   - Kokoro's download state (absent, downloading with bytes done and total, ready, failed with message);
   - the default engine for a given Job language.
-- `POST /api/narrations` takes `{text, engine, voice, speed, pauses, style}` and returns a narration id.
+- `POST /api/narrations` takes `{text, engine, voice, speed, pauses, style}` and returns a narration id. A Speed outside 0.5–2 is refused (422), and so is a Style for an engine that takes none (a blank Style is none).
   - It answers 409 when busy and 422 when the text is empty or too long, or the engine or Voice is unknown or not ready.
 - `GET /api/narrations/{id}/events` is an SSE stream of `progress` (`{stage, done, of}`), then `done` with the Media item, `failed` with the message, or `cancelled`. It follows the existing job events style, and opened late it replays everything.
 - `DELETE /api/narrations/{id}` cancels: 204, 404 for an unknown one, 409 for one that has ended.
@@ -169,7 +169,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - the engine picker, with labels "<service> · cloud" and "On this Mac", and a Download / Remove item for Kokoro;
   - the Voice list, with name, detail line and Play sample;
   - Speed, the pause slider, and the Style line (shown only when the engine takes one);
-  - the script textarea, with an estimate "About m:ss · N characters" from a characters-per-second constant per language, scaled by Speed;
+  - the script textarea, with an estimate "About m:ss · N characters" from a characters-per-second constant per language (Indonesian 14, English 15, others 14), scaled by Speed, the pauses not counted. Past 5,000 characters the estimate turns into the limit message and Generate is off;
   - Generate, which shows progress and Cancel while running.
 - **The script, Voice and pause are kept by the editor's Narrate flow**, not the tab, so a failure, a busy refusal, a cancel or a tab switch keeps them.
 - **Cancel** frees the tab at once. If the Narration was made before the cancel reached it, the item is added to the Media tab, unlaid, and the tab says so.

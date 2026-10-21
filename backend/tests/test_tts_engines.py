@@ -60,6 +60,14 @@ def test_gemini_is_sent_the_style_before_the_sentence(settings):
     assert json.loads(requests[0].content)["contents"][0]["parts"] == [{"text": "warm, unhurried: Halo semua."}]
 
 
+def test_gemini_takes_a_style_and_no_speed_of_its_own(settings):
+    engine, requests = gemini(settings, pcm_answer(np.zeros(10)))
+    assert (engine.takes_style, engine.takes_speed) == (True, False)
+    engine.read("Halo semua.", "Puck", style="calm")
+    # No speed anywhere in its request: the runner retimes what it reads.
+    assert "speed" not in requests[0].content.decode().lower()
+
+
 @pytest.mark.parametrize(
     "answer",
     [
@@ -143,6 +151,43 @@ def test_openai_is_sent_the_model_voice_and_sentence_and_its_wav_decodes_to_pcm_
     assert (request.method, str(request.url)) == ("POST", "https://speech.example/v1/audio/speech")
     assert request.headers["authorization"] == "Bearer sk-speech"
     assert json.loads(request.content) == {"model": "tts-model", "input": "Halo semua.", "voice": "coral", "response_format": "wav"}
+
+
+@pytest.mark.parametrize(
+    ("model", "tts_style", "takes_style"),
+    [
+        ("gpt-4o-mini-tts", None, True),
+        ("tts-1", None, False),
+        ("kokoro", None, False),
+        ("kokoro", True, True),
+        ("gpt-4o-mini-tts", False, False),
+    ],
+)
+def test_openai_takes_a_style_by_tts_style_else_by_whether_the_model_takes_instructions(settings, model, tts_style, takes_style):
+    engine, _ = openai(settings, wav_answer(np.zeros(1)), tts_model=model, tts_style=tts_style)
+    assert (engine.takes_style, engine.takes_speed) == (takes_style, True)
+
+
+def test_openai_is_sent_its_speed_and_the_style_as_instructions(settings):
+    engine, requests = openai(settings, wav_answer(np.zeros(10)), tts_model="gpt-4o-mini-tts")
+    engine.read("Halo semua.", "coral", style=" warm, unhurried ", speed=1.5)
+    assert json.loads(requests[0].content) == {
+        "model": "gpt-4o-mini-tts",
+        "input": "Halo semua.",
+        "voice": "coral",
+        "response_format": "wav",
+        "instructions": "warm, unhurried",
+        "speed": 1.5,
+    }
+
+
+def test_openai_is_sent_no_instructions_when_it_takes_no_style_and_no_speed_at_1x(settings):
+    engine, requests = openai(settings, wav_answer(np.zeros(10)), tts_model="tts-1")
+    engine.read("Halo semua.", "coral", style="warm", speed=1.0)
+    body = json.loads(requests[0].content)
+    assert "instructions" not in body and "speed" not in body
+    engine.read("Halo semua.", "coral", speed=0.5)
+    assert json.loads(requests[1].content)["speed"] == 0.5
 
 
 def test_openai_stereo_wav_is_mixed_down_to_mono(settings):

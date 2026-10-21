@@ -74,7 +74,10 @@ from app.media_words import MediaWordsStatus, MediaWordsStore
 from app.migration import OLD_TEXT_LAYER
 from app.narration import (
     DEFAULT_PAUSE_SECS,
+    DEFAULT_SPEED,
     MAX_PAUSE_SECS,
+    MAX_SPEED,
+    MIN_SPEED,
     NarrationBusy,
     NarrationFinished,
     NarrationNotFound,
@@ -1915,6 +1918,9 @@ class NarrationBody(BaseModel):
     voice: str
     # The silence between two sentences, in seconds.
     pauses: Annotated[float, Field(ge=0, le=MAX_PAUSE_SECS)] = DEFAULT_PAUSE_SECS
+    # Its Speed, 0.5–2×.
+    speed: Annotated[float, Field(ge=MIN_SPEED, le=MAX_SPEED)] = DEFAULT_SPEED
+    # A one-line instruction ("warm, unhurried"), for an engine that takes one.
     style: Annotated[str, StringConstraints(max_length=200)] | None = None
 
 
@@ -1944,11 +1950,12 @@ def list_voices(narrations: Narrations, language: Language | None = None) -> Voi
 @router.post("/narrations", status_code=202)
 def start_narration(body: NarrationBody, narrations: Narrations) -> NarrationStarted:
     """Start reading `text` (at most 5,000 characters) aloud by `voice` of `engine`, into a Media
-    Library item; follow it at /api/narrations/{id}/events. 422 for an empty or too long script,
-    an unknown engine or Voice, or an engine that isn't ready; 409 while another Narration is being made,
+    Library item, at `speed` (0.5–2×) and with `style` for an engine that takes one; follow it at
+    /api/narrations/{id}/events. 422 for an empty or too long script, an unknown engine or Voice, an
+    engine that isn't ready, a Speed outside 0.5–2 or a Style for an engine that takes none; 409 while another Narration is being made,
     anywhere in the app."""
     try:
-        return NarrationStarted(id=narrations.start(NarrationRequest(body.text, body.engine, body.voice, body.pauses, body.style)))
+        return NarrationStarted(id=narrations.start(NarrationRequest(body.text, body.engine, body.voice, body.pauses, body.style, body.speed)))
     except NarrationRefused as exc:
         raise HTTPException(422, str(exc)) from None
     except NarrationBusy as exc:
