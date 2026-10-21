@@ -22,15 +22,15 @@ export function layerStagePicture(event: PictureLayerEvent): { picture: Picture;
 }
 
 /**
- * The event of a picture layer as its Keyframes have it at `time` seconds into the Clip: its picture
- * sampled there (pictureAt) and still, its Transform's centre, scale, rotation and opacity as sampled,
+ * The event of a picture layer as its Keyframes have it at `time` seconds into the Clip on the Canvas
+ * `frame`: its picture sampled there (pictureAt) and still, its Transform's centre, scale, rotation and opacity as sampled,
  * and its bounds its area's then, scaled and turned about its picture's sampled centre and rounded as
  * a picture's are (backend/app/planner.py's bounds_at). Unkeyed, the event itself.
  */
-export function layerEventAt<Event extends PictureLayerEvent>(event: Event, time: number): Event {
+export function layerEventAt<Event extends PictureLayerEvent>(event: Event, time: number, frame: Size): Event {
   const { picture, area, layer } = event;
   if (!isKeyed(picture)) return event;
-  const drawn = pictureAt(picture, time);
+  const drawn = pictureAt(picture, time, frame);
   const scale = picture.motion?.scale?.length && picture.unscaled ? drawn.width / picture.unscaled[0] : layer.transform.scale;
   const [x, y] = drawn.centre;
   const angle = (drawn.rotation * Math.PI) / 180;
@@ -46,8 +46,8 @@ export function layerEventAt<Event extends PictureLayerEvent>(event: Event, time
 
 /** The plan's picture layers as they are at `time` (`layerEventAt`), by kind. */
 export const layersAt = (plan: RenderPlan, time: number): Pick<RenderPlan, "shapes" | "texts"> => ({
-  shapes: plan.shapes.map((event) => layerEventAt(event, time)),
-  texts: plan.texts.map((event) => layerEventAt(event, time)),
+  shapes: plan.shapes.map((event) => layerEventAt(event, time, plan)),
+  texts: plan.texts.map((event) => layerEventAt(event, time, plan)),
 });
 
 /**

@@ -13,6 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import TextLayer
+from app.canvas import PORTRAIT
 from app.config import load_settings
 from app.layer_pictures import rasterised
 from app.planner import TextEvent, TextRun, emoji_square, font_metrics, text_event
@@ -74,7 +75,7 @@ def quarters(pixels: np.ndarray, left: float, top: float, side: float) -> list[n
 
 
 def test_an_emoji_is_a_run_of_its_own_one_em_wide_followed_by_the_text():
-    event = text_event(layer("🔥 WAJIB TONTON"), 10)
+    event = text_event(layer("🔥 WAJIB TONTON"), 10, canvas=PORTRAIT)
     assert event.lines == ["🔥 WAJIB TONTON"]
     assert runs(event) == [[("🔥", FIRE), ("WAJIB TONTON", None)]]
     [[fire, text]] = event.layout.runs
@@ -102,47 +103,47 @@ def test_an_emoji_is_a_run_of_its_own_one_em_wide_followed_by_the_text():
     ("#️⃣", "emoji_u0023_20e3.png"),
 ])
 def test_a_sequence_is_one_emoji_drawn_from_one_image(text, image):
-    event = text_event(layer(f"A{text}B"), 10)
+    event = text_event(layer(f"A{text}B"), 10, canvas=PORTRAIT)
     assert runs(event) == [[("A", None), (text, image), ("B", None)]]
     assert event.layout.runs[0][1].width == pytest.approx(em(), abs=0.01)
 
 
 def test_a_sequence_without_an_image_falls_back_to_its_first_emoji_or_is_left_out():
     # A bald man has no image here: his sequence is drawn as its first codepoint, a man.
-    bald = text_event(layer("A👨‍🦲B"), 10)
+    bald = text_event(layer("A👨‍🦲B"), 10, canvas=PORTRAIT)
     assert runs(bald) == [[("A", None), ("👨‍🦲", "emoji_u1f468.png"), ("B", None)]]
     # One with neither is left out, as a character no Face has, and the line closes up.
-    plain = text_event(layer("AB CD"), 10)
-    closed = text_event(layer("AB 🫨 CD"), 10)
+    plain = text_event(layer("AB CD"), 10, canvas=PORTRAIT)
+    closed = text_event(layer("AB 🫨 CD"), 10, canvas=PORTRAIT)
     assert closed.lines == ["AB CD"] and closed.layout.runs == plain.layout.runs
     # As are a joiner or a variation selector on their own.
-    assert text_event(layer("AB‍️ CD"), 10).lines == ["AB CD"]
+    assert text_event(layer("AB‍️ CD"), 10, canvas=PORTRAIT).lines == ["AB CD"]
 
 
 def test_a_layer_of_only_emoji_shows_them_and_one_of_only_unknown_characters_shows_nothing():
-    event = text_event(layer("🔥🔥 👍🏽"), 10)
+    event = text_event(layer("🔥🔥 👍🏽"), 10, canvas=PORTRAIT)
     assert runs(event) == [[("🔥", FIRE), ("🔥", FIRE), ("👍🏽", "emoji_u1f44d_1f3fd.png")]]
     [[first, second, third]] = event.layout.runs
     assert second.x == pytest.approx(first.x + em(), abs=0.01)
     assert third.x == pytest.approx(second.x + em() + font_metrics(STYLE_FONT).width(" ", 100), abs=0.01)
-    assert text_event(layer("🫨 한"), 10) is None
+    assert text_event(layer("🫨 한"), 10, canvas=PORTRAIT) is None
 
 
 def test_lines_wrap_around_an_emoji_but_never_inside_its_sequence():
     # Two emoji fit the wrap width, not three: a break may come between any two.
-    assert text_event(layer("🔥🔥🔥🔥🔥", wrap_width=2.5 * em()), 10).lines == ["🔥🔥", "🔥🔥", "🔥"]
+    assert text_event(layer("🔥🔥🔥🔥🔥", wrap_width=2.5 * em()), 10, canvas=PORTRAIT).lines == ["🔥🔥", "🔥🔥", "🔥"]
     # Each sequence stays whole however narrow the width, a ZWJ family, a flag pair, a skin tone, a
     # subdivision's flag and a keycap among them.
     england = "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"
     sequences = [FAMILY, "🇮🇩", "🇮🇩", "👍🏽", england, "#️⃣"]
-    narrow = text_event(layer("".join(sequences), wrap_width=20), 10)
+    narrow = text_event(layer("".join(sequences), wrap_width=20), 10, canvas=PORTRAIT)
     assert narrow.lines == [sequence for sequence in sequences if sequence != england]
     # Between an emoji and a word, as between ideographs.
     metrics = font_metrics(STYLE_FONT)
     width = metrics.width("WAJIB", 100) + em() + 1
-    assert text_event(layer("WAJIB🔥TONTON", wrap_width=width), 10).lines == ["WAJIB🔥", "TONTON"]
+    assert text_event(layer("WAJIB🔥TONTON", wrap_width=width), 10, canvas=PORTRAIT).lines == ["WAJIB🔥", "TONTON"]
     # But not before a closing mark.
-    assert text_event(layer("WAJIB🔥!", wrap_width=width), 10).lines == ["WAJIB", "🔥!"]
+    assert text_event(layer("WAJIB🔥!", wrap_width=width), 10, canvas=PORTRAIT).lines == ["WAJIB", "🔥!"]
 
 
 def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
@@ -150,7 +151,7 @@ def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
     # colours over them.
     event = text_event(layer("🔥 HALO 🇮🇩", colour="#FFFFFF", stroke_width=8, stroke_colour="#FF00FF",
                              shadow={"colour": "#00FFFF", "opacity": 1.0, "distance": 12, "angle": 0},
-                             plate={"shape": "block", "colour": "#404040", "opacity": 1.0, "padding_x": 60, "padding_y": 60}), 10)
+                             plate={"shape": "block", "colour": "#404040", "opacity": 1.0, "padding_x": 60, "padding_y": 60}), 10, canvas=PORTRAIT)
     pixels = rasterised(load_settings().ffmpeg_bin, event.layout)
     scale = event.layout.raster[0] / event.layout.width
     [(fire, (x, top, side)), (flag, (fx, ftop, fside))] = squares(event)
@@ -180,7 +181,7 @@ def test_the_picture_shows_each_emoji_in_its_own_colours_where_it_is_planned():
 
 def test_a_picture_made_larger_draws_its_emoji_as_large_as_its_text():
     # A layer scaled 3 times has its picture made 3 times as large (the scale is the Transform's).
-    layout = replace(text_event(layer("🔥"), 10).layout, scale=3.0)
+    layout = replace(text_event(layer("🔥"), 10, canvas=PORTRAIT).layout, scale=3.0)
     pixels = rasterised(load_settings().ffmpeg_bin, layout)
     [[run]] = layout.runs
     _, top, side = emoji_square(run, layout.anchors[0][1], layout.style.size)

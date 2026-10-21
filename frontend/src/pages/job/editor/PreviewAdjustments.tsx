@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import type { RenderPlan } from "../../../api";
 import { adjustmentFilters, type AdjustmentFilter } from "./adjustments";
+import { useCanvas } from "./canvas";
 import { GradeFilter, GradeVignette, useOriginal } from "./GradeFilters";
-import { FRAME } from "./picture";
 import { useShown, type Playback } from "./playback";
 
 /**
@@ -37,6 +37,7 @@ export function AdjustedStack({ filters: layers, children }: { filters: Adjustme
     ? layers.flatMap((layer) => (layer.effects.length && layer.filterId ? [{ ...layer, grade: null, filterId: `${layer.filterId}-o` }] : []))
     : layers;
   const filter = filters.flatMap(({ filterId }) => (filterId ? [`url(#${filterId})`] : [])).join(" ");
+  const canvas = useCanvas();
   return (
     <>
       {filter && (
@@ -44,7 +45,7 @@ export function AdjustedStack({ filters: layers, children }: { filters: Adjustme
           <defs>
             {filters.map(
               ({ filterId, grade, effects, start, weight }) =>
-                filterId && <GradeFilter key={filterId} id={filterId} grade={grade} mix={weight} effects={effects} box={FRAME} start={start} />,
+                filterId && <GradeFilter key={filterId} id={filterId} grade={grade} mix={weight} effects={effects} box={canvas} start={start} />,
             )}
           </defs>
         </svg>

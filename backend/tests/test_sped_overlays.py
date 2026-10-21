@@ -10,7 +10,8 @@ import pytest
 
 from app.candidates import KeyProperty, Overlay
 from app.pictures import cover_scale
-from app.planner import FRAME, MediaInfo, overlay_events, overlay_sound
+from app.canvas import PORTRAIT
+from app.planner import MediaInfo, overlay_events, overlay_sound
 from test_keyed_volume import tone_level
 from test_media_library import make, upload
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -21,7 +22,7 @@ from test_sped_media_segments import FPS, TONE, centre_luma, from_source_at_30, 
 
 VIDEO, STILL = "ab" * 16, "cd" * 16
 ITEMS = {VIDEO: MediaInfo(640, 360, 10.0, True), STILL: MediaInfo(200, 100, None, False)}
-COVER = {"scale": cover_scale(640, 360, FRAME)}
+COVER = {"scale": cover_scale(640, 360, PORTRAIT.size)}
 
 
 def overlay(**fields) -> Overlay:
@@ -32,19 +33,19 @@ def overlay(**fields) -> Overlay:
 
 
 def test_a_sped_overlay_keeps_its_place_and_reads_its_span_times_its_speed_picture_and_sound():
-    [event] = overlay_events([overlay(speed=2, pitch=True)], 6, ITEMS)
+    [event] = overlay_events([overlay(speed=2, pitch=True)], 6, ITEMS, canvas=PORTRAIT)
     assert (event.start, event.end, event.offset, event.speed, event.pitch) == (0.5, 4.5, 1.0, 2, True)
-    [sound] = overlay_sound([overlay(speed=2, pitch=True)], 6, ITEMS)
+    [sound] = overlay_sound([overlay(speed=2, pitch=True)], 6, ITEMS, canvas=PORTRAIT)
     assert (sound.start, sound.end, sound.offset, sound.speed, sound.pitch) == (0.5, 4.5, 1.0, 2, True)
-    assert overlay_events([overlay()], 6, ITEMS)[0].speed == 1
+    assert overlay_events([overlay()], 6, ITEMS, canvas=PORTRAIT)[0].speed == 1
 
 
 def test_a_sped_overlay_is_cut_where_its_video_ends_at_its_speed():
     # 9 s of its video are left from 1 s: 4.5 s at 2×, 18 s at 0.5× (cut by the Clip at 10 s).
-    assert overlay_events([overlay(secs=6, speed=2)], 20, ITEMS)[0].end == 5.0
-    assert overlay_sound([overlay(secs=6, speed=2)], 20, ITEMS)[0].end == 5.0
-    assert overlay_events([overlay(secs=19, speed=0.5)], 10, ITEMS)[0].end == 10
-    assert overlay_events([overlay(secs=19, speed=0.5)], 30, ITEMS)[0].end == 18.5
+    assert overlay_events([overlay(secs=6, speed=2)], 20, ITEMS, canvas=PORTRAIT)[0].end == 5.0
+    assert overlay_sound([overlay(secs=6, speed=2)], 20, ITEMS, canvas=PORTRAIT)[0].end == 5.0
+    assert overlay_events([overlay(secs=19, speed=0.5)], 10, ITEMS, canvas=PORTRAIT)[0].end == 10
+    assert overlay_events([overlay(secs=19, speed=0.5)], 30, ITEMS, canvas=PORTRAIT)[0].end == 18.5
 
 
 # Seam A: the API and MCP

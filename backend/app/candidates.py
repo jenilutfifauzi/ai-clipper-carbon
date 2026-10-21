@@ -9,12 +9,13 @@ from typing import Annotated, Any, NamedTuple
 from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
 
 from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect, checked_effects
+from app.canvas import LONGEST, PORTRAIT, Aspect, Canvas, canvas_for
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
 from app.video_effects import VIDEO_EFFECTS_MAX, VideoEffect, checked_video_effects
 # Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
 from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
-from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, Height, HookShape, Padding, StyleOverrides, Tracking, Width
+from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, HookShape, Padding, StyleOverrides, Tracking
 
 # The longest text a Word Edit gives a Word.
 WORD_EDIT_MAX_CHARS = 40
@@ -33,6 +34,10 @@ TEXT_LAYER_MAX_CHARS = 300
 ItemId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
 # Where an item of the Advanced Edit starts in Timeline time (seconds into the output), how long it
 # lasts, and how far into its file a song's or a video's starts.
+# A distance from the Canvas's left or top edge in its pixels (docs/adr/0022), for what a Candidate
+# owns: up to any Canvas's longest side here, and checked against its own Canvas by the Candidate
+# (`on_canvas`, `check_cue_edits`).
+CanvasPixels = Annotated[int, Field(ge=0, le=LONGEST)]
 TimelineStart = Annotated[FiniteFloat, Field(ge=0, le=3600)]
 TimelineSecs = Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
 FileOffset = Annotated[FiniteFloat, Field(ge=0, le=3600)]
@@ -113,7 +118,7 @@ class CueEdit:
     timeline (with `media`, that item's). That Word starts a Cue. `shift` moves the Cue and its
     highlight, `start_delta` and `end_delta` one edge (negative: earlier), in seconds of that
     timeline (so scaled by Speed); kept between its neighbours and in its Segment. `x` and `y`
-    (output pixels, as the Caption Style's custom position) place it, kept in the frame, and `scale`
+    (the Canvas's pixels, docs/adr/0022; on it, `check_cue_edits`) place it, kept in the frame, and `scale`
     multiplies the Caption Style's size for it (before a line too wide is set smaller); None keeps
     the style's. While its Word isn't shown it does nothing, and is kept. With `join`, instead of
     starting a Cue, its Word's Cue is kept with the one before where only a pause, a sentence's end
@@ -125,8 +130,8 @@ class CueEdit:
     shift: CueShift = 0.0
     start_delta: CueShift = 0.0
     end_delta: CueShift = 0.0
-    x: Width | None = None
-    y: Height | None = None
+    x: CanvasPixels | None = None
+    y: CanvasPixels | None = None
     scale: CueScale | None = None
     join: bool = False
 
@@ -148,16 +153,18 @@ def _cut(value: float, most: float) -> float:
 
 @dataclass(frozen=True)
 class Transform:
-    """Where and how a picture sits on the 1080×1920 frame (docs/adr/0007): centred on (x, y) in
+    """Where and how a picture sits on the Canvas (docs/adr/0007, 0022): centred on (x, y) in
     output pixels, which stays on the frame though the picture may go past its edges; `scale` times its fitted size (the largest that fits the frame keeping its aspect: 1
     fits), stretched `stretch_x` across and `stretch_y` down on top of that (1 keeps its aspect);
     turned `rotation` degrees clockwise about its centre, mirrored left to right (`flip_h`) or top to
     bottom (`flip_v`), at `opacity`. The same for its item's whole length, but for the fields its
     item's Keyframes move (docs/adr/0008). A centre given off the
-    frame is brought onto it."""
+    frame is brought onto it: here onto the largest Canvas, and onto its Candidate's by `on_canvas`.
+    Left out, the centre is the 9:16 Canvas's; an edit that leaves it out puts it at its Candidate's
+    Canvas's centre (app/review.py's `Unplaced`)."""
 
-    x: FiniteFloat = 540
-    y: FiniteFloat = 960
+    x: FiniteFloat = PORTRAIT.width // 2
+    y: FiniteFloat = PORTRAIT.height // 2
     scale: Annotated[FiniteFloat, Field(ge=MIN_SCALE, le=MAX_SCALE)] = 1.0
     stretch_x: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
     stretch_y: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
@@ -167,8 +174,8 @@ class Transform:
     opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 1.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "x", _cut(self.x, 1080))
-        object.__setattr__(self, "y", _cut(self.y, 1920))
+        object.__setattr__(self, "x", _cut(self.x, LONGEST))
+        object.__setattr__(self, "y", _cut(self.y, LONGEST))
 
 
 # A new Overlay's: half its fitted size at the frame's centre, 540 px wide for any item wider than
@@ -461,16 +468,28 @@ class KeyProperty(StrEnum):
 PICTURE_KEYS = (KeyProperty.X, KeyProperty.Y, KeyProperty.SCALE, KeyProperty.ROTATION, KeyProperty.OPACITY)
 SOUND_KEYS = (KeyProperty.VOLUME,)
 # Each property's range, in its own units. A centre beyond the frame is brought onto it, as a
-# Transform's is; any other value outside its range is refused. A picture may turn several times.
+# Transform's is (here onto the largest Canvas: `key_range` gives a Canvas's); any other value
+# outside its range is refused. A picture may turn several times.
 KEY_RANGES = {
-    KeyProperty.X: (0.0, 1080.0),
-    KeyProperty.Y: (0.0, 1920.0),
+    KeyProperty.X: (0.0, float(LONGEST)),
+    KeyProperty.Y: (0.0, float(LONGEST)),
     KeyProperty.SCALE: (MIN_SCALE, MAX_SCALE),
     KeyProperty.ROTATION: (-3600.0, 3600.0),
     KeyProperty.OPACITY: (0.0, 1.0),
     KeyProperty.VOLUME: (0.0, 2.0),
 }
 _CLAMPED = {KeyProperty.X, KeyProperty.Y}
+
+
+def key_range(prop: KeyProperty, frame: tuple[int, int]) -> tuple[float, float]:
+    """`prop`'s range on a frame `frame` (width, height) large: a centre's on it."""
+    if prop is KeyProperty.X:
+        return 0.0, float(frame[0])
+    if prop is KeyProperty.Y:
+        return 0.0, float(frame[1])
+    return KEY_RANGES[prop]
+
+
 # At most this many Keyframes on one property of an item, and at least a frame (at 30 fps) between
 # two of them (less half a millisecond, for times sent rounded).
 MAX_KEYS = 100
@@ -749,7 +768,7 @@ class AdjustmentLayer:
     strength: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
     fade_in: Fade = 0.0
     fade_out: Fade = 0.0
-    # Its Video Effects (docs/adr/0014), in order, after its Grade over the 1080x1920 frame (scale 1),
+    # Its Video Effects (docs/adr/0014), in order, after its Grade over the Canvas (scale 1),
     # mixed back with it by its strength and fades. Empty in one saved before them.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
@@ -858,7 +877,7 @@ class Segment:
     # volume, Keyframes and fades; each setting filled in once checked. Empty in one saved before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
     # Its whole frame's Video Effects (docs/adr/0014), in order, after its Grade and before the joins,
-    # so that a Transition blends pictures that carry them; sizes at the 1080x1920 frame's. Empty in
+    # so that a Transition blends pictures that carry them; sizes at the Canvas's. Empty in
     # one saved before them. A Freeze frame takes them too.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
@@ -956,6 +975,9 @@ class Candidate:
     window_score: int | None
     origin: Origin = Origin.AI
     layout: Layout = Layout.AUTO
+    # Its Canvas Aspect (docs/adr/0022), whose Canvas everything it owns is placed on in pixels; 9:16
+    # in one saved before them.
+    aspect: Aspect = Aspect.PORTRAIT
     # Chosen for rendering.
     selected: bool = False
     # The owner has changed its bounds, hook text, layout or style.
@@ -999,6 +1021,10 @@ class Candidate:
     # Its saved state's number (ADR 0003): each save that changes it makes the next; choosing it for
     # rendering doesn't. One saved before Revisions is at 1.
     revision: int = 1
+
+    @property
+    def canvas(self) -> Canvas:
+        return canvas_for(self.aspect)
 
     def main_track(self) -> list[Segment]:
         """Its Main Track: its Segments, or the one from `start` to `end`."""
@@ -1065,7 +1091,72 @@ def grades_of(
         yield f"Adjustment Layer {layer.id}", layer.grade
 
 
-def manual_candidate(id: str, start: float, end: float) -> Candidate:
+def on_canvas(candidate: Candidate) -> Candidate:
+    """`candidate` with every centre it owns brought onto its Canvas, as a Transform's is onto the
+    frame: its Transforms' (of its Framing, Segments, Overlays, Text Layers, Shapes and Layout
+    Overrides), their position Keyframes' and its Cue Edits'. (Changing its aspect first rescales
+    them onto its new Canvas, app/rescale.py.)"""
+    width, height = candidate.canvas.size
+
+    def placed(transform: Transform) -> Transform:
+        x, y = _cut(transform.x, width), _cut(transform.y, height)
+        return transform if (x, y) == (transform.x, transform.y) else replace(transform, x=x, y=y)
+
+    def framed(framing: Framing | None) -> Framing | None:
+        if framing is None:
+            return None
+        transform = placed(framing.transform)
+        return framing if transform is framing.transform else replace(framing, transform=transform)
+
+    def keyed(keys: Keys) -> Keys:
+        def on(prop: KeyProperty, given: list[Keyframe]) -> list[Keyframe]:
+            if prop not in _CLAMPED:
+                return given
+            low, high = key_range(prop, (width, height))
+            return [key if low <= key.value <= high else replace(key, value=min(max(key.value, low), high)) for key in given]
+
+        moved = {prop: on(prop, given) for prop, given in keys.items()}
+        return keys if moved == keys else moved
+
+    def item[T](item: T) -> T:
+        changes: dict[str, Any] = {}
+        if isinstance(transform := getattr(item, "transform", None), Transform) and (now := placed(transform)) is not transform:
+            changes["transform"] = now
+        if (framing := getattr(item, "framing", None)) is not None and (now := framed(framing)) is not framing:
+            changes["framing"] = now
+        if (keys := getattr(item, "keys", None)) and (now := keyed(keys)) is not keys:
+            changes["keys"] = now
+        return replace(item, **changes) if changes else item  # type: ignore[type-var]
+
+    def cue(edit: CueEdit) -> CueEdit:
+        x = None if edit.x is None else min(edit.x, width)
+        y = None if edit.y is None else min(edit.y, height)
+        return edit if (x, y) == (edit.x, edit.y) else replace(edit, x=x, y=y)
+
+    return replace(
+        candidate,
+        framing=framed(candidate.framing),
+        segments=[item(segment) for segment in candidate.segments],
+        overlays=[item(overlay) for overlay in candidate.overlays],
+        text_layers=[item(layer) for layer in candidate.text_layers],
+        shapes=[item(shape) for shape in candidate.shapes],
+        layout_overrides=[item(override) for override in candidate.layout_overrides],
+        cue_edits=[cue(edit) for edit in candidate.cue_edits],
+    )
+
+
+def check_cue_edits(edits: list[CueEdit], canvas: Canvas) -> None:
+    """ValueError for a Cue Edit placed off `canvas`."""
+    for edit in edits:
+        for axis, value, most in (("x", edit.x, canvas.width), ("y", edit.y, canvas.height)):
+            if value is not None and value > most:
+                raise ValueError(
+                    f"The Cue Edit at {edit.at:g} s has {axis} {value}: the {canvas.aspect} Canvas is "
+                    f"{canvas.width} wide and {canvas.height} tall"
+                )
+
+
+def manual_candidate(id: str, start: float, end: float, aspect: Aspect = Aspect.PORTRAIT) -> Candidate:
     return Candidate(
         id=id,
         start=start,
@@ -1082,4 +1173,5 @@ def manual_candidate(id: str, start: float, end: float) -> Candidate:
         window_id=None,
         window_score=None,
         origin=Origin.MANUAL,
+        aspect=aspect,
     )

@@ -11,7 +11,8 @@ import pytest
 
 from app.candidates import Framing, KeyProperty
 from app.pictures import cover_scale
-from app.planner import FRAME, SegmentInput, plan_render
+from app.canvas import PORTRAIT
+from app.planner import SegmentInput, plan_render
 from app.renderer import tempo_stages
 from test_keyed_volume import tone_level
 from test_keyframes import clip_of
@@ -25,7 +26,7 @@ from test_review import candidate_url, patch
 VIDEO = "ab" * 16
 # The counter video at 30 fps (the Media Library's rate), its luma STEP more each frame, and its tone.
 FPS, STEP, TONE = 30, 3, 1000
-COVER = {"transform": {"scale": cover_scale(640, 360, FRAME)}}
+COVER = {"transform": {"scale": cover_scale(640, 360, PORTRAIT.size)}}
 
 
 @pytest.fixture(scope="session")
@@ -65,7 +66,7 @@ def test_a_sped_media_segment_lasts_its_range_divided_by_its_speed_and_the_next_
         main_track=[
             SegmentInput(0, 3, media=VIDEO, width=640, height=360, framing=Framing(), speed=2, pitch=True, id="v"),
             SegmentInput(10, 12, id="e"),
-        ],
+        ], canvas=PORTRAIT,
     )
     sped, episode = planned.segments
     assert (sped.start, sped.end, sped.source_start, sped.source_end, sped.speed, sped.pitch) == (0, 1.5, 0, 3, 2, True)

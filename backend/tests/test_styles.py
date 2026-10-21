@@ -9,6 +9,7 @@ import pytest
 
 from pydantic import TypeAdapter
 
+from app.canvas import PORTRAIT
 from app.planner import Box, Face, FrameFaces, Scene, plan_render
 from app.renderer import _ass
 from app.styles import (
@@ -50,7 +51,7 @@ def plan(**styles):
         FrameFaces(t / 2, [Face(400, 300, 200, 200, 0.9), Face(1300, 300, 200, 200, 0.9)] if t > 6 else [Face(900, 300, 200, 200, 0.9)])
         for t in range(20)
     ]
-    return plan_render(100, 110, SOURCE, [Scene(0, 3), Scene(3, 10)], faces, words=WORDS, **{"hook": HOOK, **styles})
+    return plan_render(100, 110, SOURCE, [Scene(0, 3), Scene(3, 10)], faces, words=WORDS, **{"hook": HOOK, "canvas": PORTRAIT, **styles})
 
 
 def test_the_default_styles_write_v1s_ass_byte_for_byte():
@@ -244,12 +245,12 @@ def test_another_fonts_metrics_set_the_caption_size_and_the_hook():
     anton, montserrat = font_metrics("anton"), font_metrics()
     assert anton.width("HALO", 110) != montserrat.width("HALO", 110)
     caption = CaptionStyle(font="anton", size=130)
-    [event] = plan_render(0, 2, SOURCE, words=[Word("W" * 18, 0.0, 0.5)], caption_style=caption).captions
+    [event] = plan_render(0, 2, SOURCE, words=[Word("W" * 18, 0.0, 0.5)], caption_style=caption, canvas=PORTRAIT).captions
     assert event.size < 130 and anton.width(event.text, event.size) + 2 * caption.outline <= event.area.width
-    hook = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(font="bebas-neue")).hook
+    hook = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(font="bebas-neue"), canvas=PORTRAIT).hook
     bebas = font_metrics("bebas-neue")
     assert 740 < max(bebas.width(line, hook.size) for line in hook.lines) <= 748
-    assert hook.size != plan_render(0, 5, SOURCE, hook=HOOK).hook.size
+    assert hook.size != plan_render(0, 5, SOURCE, hook=HOOK, canvas=PORTRAIT).hook.size
 
 
 def hook_lines(**style) -> list[str]:
@@ -292,7 +293,7 @@ def test_a_sliding_hook_comes_up_from_60_px_below_and_fades_out_with_fad():
 
 def test_the_hooks_animations_take_at_most_half_its_time():
     plan_ = plan_render(100, 110, SOURCE, words=WORDS, hook=HOOK, hook_secs=0.6,
-                        hook_style=HookStyle(animation_in="pop", animation_out="slide", animation_ms=1000))
+                        hook_style=HookStyle(animation_in="pop", animation_out="slide", animation_ms=1000), canvas=PORTRAIT)
     lines = [line for line in _ass(plan_).splitlines() if ",Hook," in line and line.startswith("Dialogue")]
     assert sorted({line.split(",")[1] for line in lines}) == ["0:00:00.00", "0:00:00.30"]
 
@@ -334,7 +335,7 @@ def test_an_outlined_hooks_box_has_no_outline_or_shadow_of_its_own():
 
 
 def test_emphasised_runs_switch_to_the_emphasis_colour_and_back():
-    hook = plan_render(0, 5, SOURCE, hook="Ini *pasti iri!* ya", hook_style=HookStyle(colour="#000000", emphasis_colour="#E11D2E"))
+    hook = plan_render(0, 5, SOURCE, hook="Ini *pasti iri!* ya", hook_style=HookStyle(colour="#000000", emphasis_colour="#E11D2E"), canvas=PORTRAIT)
     texts = [line.split("}", 1)[1] for line in _ass(hook).splitlines() if line.startswith("Dialogue: 2,") and ",Hook," in line]
     assert texts == ["Ini {\\c&H2E1DE1&}pasti iri!{\\c&H000000&} ya"]
 
@@ -345,7 +346,7 @@ def test_emphasised_runs_switch_to_the_emphasis_colour_and_back():
 def test_a_kicker_is_a_pill_of_its_colour_with_its_text_over_it():
     planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_kicker="Fakta", hook_style=HookStyle(
         kicker_colour="#112233", kicker_box_colour="#FFE600", outline=3,
-    ))
+    ), canvas=PORTRAIT)
     kicker = planned.hook.kicker
     lines = [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
     pill = [line for line in lines if "\\c&H00E6FF&" in line]
@@ -362,7 +363,7 @@ def test_a_kicker_is_a_pill_of_its_colour_with_its_text_over_it():
 
 
 def test_a_quote_mark_is_a_badge_of_its_colour_with_white_quote_marks_over_the_box():
-    planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(quote=True, quote_colour="#22C55E"))
+    planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(quote=True, quote_colour="#22C55E"), canvas=PORTRAIT)
     badge = planned.hook.quote
     lines = [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
     [drawn] = [line for line in lines if "\\c&H5EC522&" in line]
@@ -372,7 +373,7 @@ def test_a_quote_mark_is_a_badge_of_its_colour_with_white_quote_marks_over_the_b
     [marks] = [line for line in lines if line.startswith("Dialogue: 4,")]
     assert "\\c&HFFFFFF&" in marks and corner in marks
     # Popping, they grow together from that corner.
-    popping = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(quote=True, animation_in="pop"))
+    popping = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=HookStyle(quote=True, animation_in="pop"), canvas=PORTRAIT)
     grown = [line for line in _ass(popping).splitlines() if line.startswith(("Dialogue: 3,0:00:00.00", "Dialogue: 4,0:00:00.00"))]
     assert len(grown) == 2 and all(corner in line and "\\fscx70" in line for line in grown)
     # Two marks, each a round dot and its tail: four closed shapes.
@@ -384,7 +385,7 @@ def test_a_quote_mark_is_a_badge_of_its_colour_with_white_quote_marks_over_the_b
 
 
 def hook_events(hook: str, kicker: str = "", secs: float = 3.0, **style) -> list[str]:
-    planned = plan_render(0, 10, SOURCE, hook=hook, hook_kicker=kicker, hook_secs=secs, hook_style=HookStyle(**style))
+    planned = plan_render(0, 10, SOURCE, hook=hook, hook_kicker=kicker, hook_secs=secs, hook_style=HookStyle(**style), canvas=PORTRAIT)
     return [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
 
 
@@ -398,7 +399,7 @@ THREE = "Alhamdulillah modal AI aja bisa dapat komisi dari si oren"
 def test_the_entrance_comes_kicker_first_then_line_by_line_80_ms_apart_and_leaves_together():
     for animation in ("fade", "pop", "slide"):
         events = hook_events(THREE, "Fakta", shape="strips", max_lines=4, animation_in=animation, animation_ms=200)
-        lines = plan_render(0, 10, SOURCE, hook=THREE, hook_style=HookStyle(shape="strips", max_lines=4)).hook.lines
+        lines = plan_render(0, 10, SOURCE, hook=THREE, hook_style=HookStyle(shape="strips", max_lines=4), canvas=PORTRAIT).hook.lines
         assert len(lines) == 3
         firsts = [starts(events, "Fakta")[0]] + [starts(events, line)[0] for line in lines]
         assert firsts == ["0:00:00.00", "0:00:00.08", "0:00:00.16", "0:00:00.24"], animation
@@ -425,7 +426,7 @@ def test_without_an_entrance_or_with_one_element_nothing_is_staggered():
 def test_a_short_hook_staggers_less_so_that_everything_is_on_before_it_goes():
     events = hook_events(THREE, "Fakta", secs=0.6, shape="strips", max_lines=4, animation_in="pop", animation_out="pop", animation_ms=250)
     # 0.6 s: 0.25 on and 0.25 off leave 0.1 s for three steps.
-    lines = plan_render(0, 10, SOURCE, hook=THREE, hook_style=HookStyle(shape="strips", max_lines=4)).hook.lines
+    lines = plan_render(0, 10, SOURCE, hook=THREE, hook_style=HookStyle(shape="strips", max_lines=4), canvas=PORTRAIT).hook.lines
     assert starts(events, lines[-1])[0] <= "0:00:00.10"
     # Every element has popped in by the time they all pop out, at 0.35 s.
     entrances = [line for line in events if "\\fscx70\\fscy70\\alpha&HFF&\\t(" in line]

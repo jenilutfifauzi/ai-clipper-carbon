@@ -4,7 +4,9 @@ import type { BlendMode, MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Select } from "../../../components/Select";
 import { NO_CROP } from "../editor/cropGestures";
+import { useCanvas } from "../editor/canvas";
 import { mediaSize, overlayPlacement } from "../editor/picture";
+import type { Size } from "../editor/pictureGestures";
 import type { Playback } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { Group, Mixed } from "../editor/StyleFields";
@@ -22,11 +24,11 @@ import { TransformFields, useKeyedTransform } from "./TransformFields";
 const STILL_SECS = 3;
 
 /**
- * An Overlay of `item` at `at` (the playhead, or where it was dropped): placed as `overlayPlacement`
- * says (half the frame wide, in its upper middle); a video as long as it is (and fits), its sound at
- * full volume and Muted, so that unmuting it gives its sound at once.
+ * An Overlay of `item` at `at` (the playhead, or where it was dropped) on the Canvas `frame`: placed
+ * as `overlayPlacement` says (half the frame wide, in its upper middle); a video as long as it is
+ * (and fits), its sound at full volume and Muted, so that unmuting it gives its sound at once.
  */
-export function newOverlay(item: MediaItem, at: number, duration: number): Overlay {
+export function newOverlay(item: MediaItem, at: number, duration: number, frame: Size): Overlay {
   const length = item.duration ?? STILL_SECS;
   const start = Math.max(0, Math.min(at, duration - Math.min(length, duration)));
   const sound = item.kind === "video" ? { volume: 1, muted: true } : { volume: 0 };
@@ -36,7 +38,7 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     start: round(start),
     secs: round(Math.min(length, duration - start)),
     offset: 0,
-    transform: overlayPlacement(mediaSize(item)),
+    transform: overlayPlacement(mediaSize(item), frame),
     crop: NO_CROP,
     ...sound,
     radius: 0,
@@ -98,6 +100,7 @@ export function OverlayTransform({
   // Its Blend Mode menu, next to its opacity.
   blend?: ReactNode;
 }) {
+  const canvas = useCanvas();
   const fields = useKeyedTransform({
     item: { kind: "overlay", id: overlay.id },
     span: overlay,
@@ -113,7 +116,7 @@ export function OverlayTransform({
       {...fields}
       crop={overlay.crop}
       size={size}
-      defaults={overlayPlacement(size)}
+      defaults={overlayPlacement(size, canvas)}
       onCrop={(crop, field, transform) =>
         onChange(transform ? resetOverlay(overlay, transform) : { ...overlay, crop }, `overlay:${overlay.id}:crop.${field}`)
       }
@@ -167,9 +170,10 @@ export function OverlayFields({
   // Its sound at the playhead, and set there once it is keyed.
   const touch = useTouch();
   const notify = useKeyNotice();
+  const canvas = useCanvas();
   const setVolume = (value: number, at: number | null) => {
     touch("volume");
-    const { keys, constant, full } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume);
+    const { keys, constant, full } = writeKey(overlay.keys, "volume", at ?? 0, value, overlay.volume, canvas);
     if (full) return notify(tooManyKeys(full));
     onChange({ ...overlay, keys, volume: constant }, keyedGroup(`overlay:${overlay.id}:volume`, keys !== overlay.keys, at));
   };

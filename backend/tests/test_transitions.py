@@ -11,6 +11,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from app.canvas import PORTRAIT
 from app.planner import Join, SegmentInput, SegmentPlan, TransitionEvent, plan_render
 from app.transcript import Word
 from app.transition_kinds import TransitionKind, TransitionSound
@@ -43,7 +44,7 @@ def test_a_transition_overlaps_the_segments_either_side_and_shortens_the_clip():
             SegmentInput(10, 12, words=[Word("satu", 1.5, 1.9)]),
             SegmentInput(20, 23, join=Join(TransitionKind.FADE, 0.5), words=[Word("dua", 0.1, 0.4)]),
             SegmentInput(30, 32),
-        ],
+        ], canvas=PORTRAIT,
     )
     assert planned.segments == [
         SegmentPlan(0, 2, 10, 12, scenes=1), SegmentPlan(1.5, 4.5, 20, 23, scenes=1), SegmentPlan(4.5, 6.5, 30, 32, scenes=1),
@@ -56,7 +57,7 @@ def test_a_transition_overlaps_the_segments_either_side_and_shortens_the_clip():
 
 
 def test_a_transition_is_at_most_half_the_shorter_segment():
-    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 11), SegmentInput(20, 23, join=Join(TransitionKind.SLIDELEFT, 1.5))])
+    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 11), SegmentInput(20, 23, join=Join(TransitionKind.SLIDELEFT, 1.5))], canvas=PORTRAIT)
     assert planned.transitions == [TransitionEvent(TransitionKind.SLIDELEFT, 0.5, 1.0)]
     assert planned.duration == 3.5
 
@@ -68,7 +69,7 @@ def test_a_transitions_sound_is_drawn_with_it_and_linear_by_default():
             SegmentInput(10, 12),
             SegmentInput(20, 23, join=Join(TransitionKind.FADEBLACK, 0.5, TransitionSound.CUT)),
             SegmentInput(30, 32, join=Join(TransitionKind.FADE, 0.4)),
-        ],
+        ], canvas=PORTRAIT,
     )
     assert planned.transitions == [
         TransitionEvent(TransitionKind.FADEBLACK, 1.5, 2.0, TransitionSound.CUT),
@@ -143,7 +144,7 @@ def test_a_crossfade_renders_shorter_with_both_pieces_mixed_in_its_middle(client
 
 
 def test_a_three_second_transition_overlaps_long_segments_by_three_seconds():
-    planned = plan_render(10, 40, SOURCE, main_track=[SegmentInput(10, 20), SegmentInput(30, 40, join=Join(TransitionKind.COVERLEFT, 3.0))])
+    planned = plan_render(10, 40, SOURCE, main_track=[SegmentInput(10, 20), SegmentInput(30, 40, join=Join(TransitionKind.COVERLEFT, 3.0))], canvas=PORTRAIT)
     assert planned.transitions == [TransitionEvent(TransitionKind.COVERLEFT, 7.0, 10.0)]
     assert planned.duration == 17.0
 
@@ -303,7 +304,7 @@ def test_a_transitions_strength_and_colour_are_drawn_with_it_and_unset_by_defaul
             SegmentInput(10, 12),
             SegmentInput(20, 23, join=Join(TransitionKind.DIPCOLOUR, 0.5, colour="#FF8800")),
             SegmentInput(30, 32, join=Join(TransitionKind.FILMBURN, 0.4, TransitionSound.CUT, strength=0.25)),
-        ],
+        ], canvas=PORTRAIT,
     )
     assert planned.transitions == [
         TransitionEvent(TransitionKind.DIPCOLOUR, 1.5, 2.0, colour="#FF8800"),

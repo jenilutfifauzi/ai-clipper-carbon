@@ -19,6 +19,7 @@ from uuid import uuid4
 from pydantic import Field, TypeAdapter, ValidationError
 
 from app.candidates import Candidate
+from app.canvas import Aspect
 from app.clips import Clip
 from app.llm import ScoreResponse
 from app.migration import Sizes, migrated_candidate, migrated_clip
@@ -81,6 +82,8 @@ class JobOptions:
     brief: str | None = None
     # Ignore YouTube's captions and transcribe the whole Source with Whisper.
     transcribe_locally: bool = False
+    # The Canvas Aspect (docs/adr/0022) of its Candidates, Selection's and those added by hand.
+    aspect: Aspect = Aspect.PORTRAIT
 
     def __post_init__(self) -> None:
         if self.min_secs >= self.max_secs:

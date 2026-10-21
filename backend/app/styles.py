@@ -31,6 +31,7 @@ from pydantic import (
 )
 from pydantic_core import core_schema
 
+from app.canvas import REFERENCE
 from app.fonts import DEFAULT_FONT, registry
 from app.storage import write_atomic
 from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
@@ -53,10 +54,12 @@ FontId = Annotated[str, AfterValidator(_known_font)]
 Colour = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$", to_upper=True)]
 # A Logo's id (app/logos.py), which names its file.
 LogoId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,32}$")]
-# A height in output pixels, which the planner keeps inside the safe area.
-Height = Annotated[int, Field(ge=0, le=1920)]
-# A distance from the frame's left edge in output pixels.
-Width = Annotated[int, Field(ge=0, le=1080)]
+# A height in the Reference Space's pixels (app/canvas.py), which the planner keeps inside the Safe Area.
+# Whole on 9:16; a place dragged on another Canvas keeps its fraction of a pixel, so that the planner
+# maps it back onto the pixel it was dropped on.
+Height = Annotated[int | float, Field(ge=0, le=REFERENCE[1])]
+# A distance from the frame's left edge in the Reference Space's pixels, as Height.
+Width = Annotated[int | float, Field(ge=0, le=REFERENCE[0])]
 # Space between letters in output pixels, as libass's \fsp sets it: the captions', the hook's and
 # a Text Style's.
 Tracking = Annotated[FiniteFloat, Field(ge=-50, le=200)]

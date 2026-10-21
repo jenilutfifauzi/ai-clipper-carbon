@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { layerPictureUrl, type Picture, type PictureLayerEvent } from "../../../api";
 import { animatedPicture, type Look } from "./animation";
+import type { Size } from "./pictureGestures";
 
 // A picture layer's picture as the preview draws it (docs/adr/0010): its URL, and the size it is drawn
 // at, in output pixels, Transform scale included.
@@ -67,12 +68,12 @@ export interface PlacedLayer {
 }
 
 /**
- * A picture layer's `picture` as drawn at `time` seconds into the Clip, its animations' `look` there
+ * A picture layer's `picture` as drawn at `time` seconds into the Clip on the Canvas `frame`, its animations' `look` there
  * being its opacity, scale and drop (hookLook): as an Overlay's is (animatedPicture), as the
  * renderer's layer_at draws it.
  */
-export function placedLayer(picture: Picture, time: number, look: Look): PlacedLayer {
-  const drawn = animatedPicture(picture, time, look);
+export function placedLayer(picture: Picture, time: number, look: Look, frame: Size): PlacedLayer {
+  const drawn = animatedPicture(picture, time, look, frame);
   const [x, y] = drawn.centre;
   return { x, y, width: drawn.width, height: drawn.height, rotation: drawn.rotation, opacity: drawn.opacity };
 }

@@ -18,6 +18,8 @@ export interface JobOptions {
   captions: boolean;
   brief: string | null;
   transcribe_locally: boolean;
+  // The Canvas Aspect of its Candidates (docs/adr/0022).
+  aspect: Aspect;
 }
 
 export interface JobWarning {
@@ -102,6 +104,9 @@ export interface Transcript {
 
 // Auto chooses per Scene by its faces (never Manual); Manual frames the Source by hand with a Framing.
 export type Layout = "auto" | "track" | "split" | "blur" | "manual";
+
+// A Candidate's Canvas Aspect, width to height (docs/adr/0022): its Canvas is 1080 on the short side.
+export type Aspect = "9:16" | "4:5" | "1:1" | "16:9";
 
 // The Layout of the one Scene that holds `at` (seconds on the Source's timeline), in place of the
 // Candidate's there. Auto chooses that Scene's by its faces. A Manual one has its Framing, and no
@@ -414,7 +419,7 @@ export interface StyleOverrides {
   watermark: Partial<Record<keyof WatermarkStyle, StyleValue>>;
 }
 
-// The Render Plan (backend/app/planner.py), in output pixels (1080x1920) and seconds into the Clip.
+// The Render Plan (backend/app/planner.py), in the Canvas's pixels (its width and height) and seconds into the Clip.
 export interface Box {
   x: number;
   y: number;
@@ -751,8 +756,8 @@ export interface Ducking {
   bridge_secs: number;
 }
 
-// Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
-// centre (x, y) in output pixels, on the frame; `scale` times its fitted size (the largest that fits
+// Where and how a picture sits on the Canvas (backend/app/candidates.py, ADR 0007, 0022): its
+// centre (x, y) in the Canvas's pixels, on the frame; `scale` times its fitted size (the largest that fits
 // the frame keeping its aspect: 1 fits, 0.05 to 8); `stretch_x` and `stretch_y` on top of that (0.1
 // to 10); `rotation` in degrees clockwise (-360 to 360); its flips and its opacity.
 export interface Transform {
@@ -874,8 +879,8 @@ export interface AdjustmentLayer {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the 1080x1920
-  // frame's. Empty when missing.
+  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes in the
+  // Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
 }
 
@@ -889,7 +894,7 @@ export interface AdjustmentEvent {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes in the Canvas's pixels.
   video_effects?: VideoEffect[];
 }
 
@@ -1048,7 +1053,7 @@ export interface SegmentPlan extends Retiming {
   grade?: Grade;
   // Its sound's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];
-  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes in the Canvas's pixels.
   video_effects?: VideoEffect[];
 }
 
@@ -1063,8 +1068,10 @@ export interface RenderPlan {
   hook: HookEvent | null;
   caption_style: CaptionStyle;
   hook_style: HookStyle;
+  // The Canvas (docs/adr/0022): the frame's size, and its Safe Area, in its pixels.
   width: number;
   height: number;
+  safe_area: Box;
   watermark: WatermarkEvent | null;
   watermark_style: WatermarkStyle;
   // The Text Layers that show, in drawing order.
@@ -1201,7 +1208,7 @@ export interface ClipSegment extends Retiming {
   // Empty when missing.
   audio_effects?: AudioEffect[];
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
-  // the 1080x1920 frame's. Empty when missing.
+  // in the Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
 }
 
@@ -1360,6 +1367,8 @@ export interface Candidate {
   window_score: number | null;
   origin: "ai" | "manual";
   layout: Layout;
+  // Its Canvas Aspect: everything it owns is placed in its Canvas's pixels (the Preview Plan's width and height).
+  aspect: Aspect;
   // How its Manual Layout frames every Scene without an override; null for another Layout.
   framing: Framing | null;
   // Chosen for rendering.
@@ -1418,6 +1427,8 @@ export interface CandidateChange {
   end?: number;
   hook_text?: string;
   layout?: Layout;
+  // Positions are kept where they are, in pixels.
+  aspect?: Aspect;
   // The Manual Layout's, needed with it and refused with another; null leaves it (dropped with Manual).
   framing?: Framing | null;
   selected?: boolean;
@@ -1570,6 +1581,8 @@ export interface RenderedClip {
   export: ExportSettings | null;
   // CBR was asked for and the encoder did VBR.
   bitrate_fallback: boolean;
+  // Its Candidate's Canvas Aspect as rendered: the Clip's shape ("9:16" in a Clip rendered before aspects).
+  aspect: Aspect;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -1723,9 +1736,9 @@ export const api = {
   useExportPresetAsDefault: (id: string) =>
     request<ExportPreset>("/export-presets/default", { method: "PUT", body: JSON.stringify({ preset_id: id }) }),
   // The bytes Clips `secs` long in all come to as `settings` say, at the Source's frame rate `fps`
-  // when they keep it: the formula is the backend's alone.
-  estimateExport: (settings: ExportSettings, secs: number, fps: number) =>
-    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
+  // when they keep it, of the Canvas Aspect `aspect`: the formula is the backend's alone.
+  estimateExport: (settings: ExportSettings, secs: number, fps: number, aspect: Aspect = "9:16") =>
+    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps, aspect }) }).then(
       (answer) => answer.bytes,
     ),
   // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).
@@ -1752,7 +1765,7 @@ export const api = {
   // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
   saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
     request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
-  // Compare render: the frame at `at` (Timeline time) as the render draws it at 1080x1920, of the
+  // Compare render: the frame at `at` (Timeline time) as the render draws it at its Canvas's size, of the
   // Candidate or of an unsaved draft, as a PNG; never kept in the Job.
   compareFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange }, signal?: AbortSignal) =>
     send(`/jobs/${jobId}/candidates/${id}/compare-frame`, { method: "POST", body: JSON.stringify(frame), signal }).then((response) =>

@@ -32,7 +32,7 @@ PARTS: dict[str, tuple[str, ...]] = {
     "Style": ("preset_id", "style_overrides"),
     "Word Edits": ("word_edits",),
     "Cue Edits": ("cue_edits",),
-    "Layout": ("layout", "framing"),
+    "Layout": ("layout", "framing", "aspect"),
     "Layout Overrides": ("layout_overrides",),
     "Source volume": ("source_volume",),
     "Color": ("grade",),

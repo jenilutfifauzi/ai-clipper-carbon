@@ -2,18 +2,33 @@
 // it is moved or scaled on the stage, worked out from numbers alone: the targets at the playhead,
 // and the snap of the picture's bounds (its box after rotation) with the lines that mark it.
 import type { Box, Picture, RenderPlan, Transform } from "../../../api";
+import type { Canvas } from "./canvas";
 import { layerEventAt, layerStagePicture } from "./layerStage";
 import { pictureAt, SCALE_RANGE } from "./picture";
 import { boundsOf, placed, type Size } from "./pictureGestures";
 
 // How near, in CSS pixels on screen, an edge or middle comes to a guide before it snaps to it.
 export const SNAP_CSS_PX = 6;
-// The platforms' safe area's top and bottom (planner.py's SAFE_AREA, y 232–1536 and x 0–950).
-export const SAFE_TOP = 232;
-export const SAFE_BOTTOM = 1536;
-// The fixed guides: the frame's middle, and the safe area's top, bottom and right edges.
-export const GUIDES_X = { middle: 540, end: 950 };
-export const GUIDES_Y = { start: SAFE_TOP, middle: 960, end: SAFE_BOTTOM };
+
+// Guides along one axis: a start (none where it would be the frame's own edge), a middle and an end.
+export interface GuideLines {
+  start?: number;
+  middle: number;
+  end: number;
+}
+
+/**
+ * The fixed guides on a Canvas, across (`x`) and down (`y`): its centre, and its Safe Area's edges
+ * (the plan's, canvas.py's), but a left edge on the frame's own (9:16's, x 0–950 and y 232–1536).
+ */
+export function fixedGuides({ width, height, safe_area: safe }: Canvas): { x: GuideLines; y: GuideLines } {
+  return {
+    x: { ...(safe.x > 0 && { start: safe.x }), middle: width / 2, end: safe.x + safe.width },
+    y: { start: safe.y, middle: height / 2, end: safe.y + safe.height },
+  };
+}
+
+const values = (guides: GuideLines) => [guides.start, guides.middle, guides.end].filter((line) => line !== undefined);
 
 /**
  * Lines down and across the frame, by the x of each down it and the y of each across: the Smart
@@ -54,23 +69,24 @@ export function picturesAt(plan: RenderPlan, time: number, scene: number | null)
   const behind = scene === null ? null : plan.scenes[scene]?.picture;
   const showing = <T extends { start: number; end: number }>(events: T[]) => events.filter((event) => event.start <= time && time < event.end);
   return [
-    ...(behind ? [{ id: `picture:${scene}`, picture: pictureAt(behind, time) }] : []),
-    ...showing(plan.overlays).map((event) => ({ id: `overlay:${event.id}`, picture: pictureAt(event.picture, time) })),
-    ...showing(plan.shapes).map((event) => ({ id: `shape:${event.layer.id}`, picture: layerStagePicture(layerEventAt(event, time)).picture })),
+    ...(behind ? [{ id: `picture:${scene}`, picture: pictureAt(behind, time, plan) }] : []),
+    ...showing(plan.overlays).map((event) => ({ id: `overlay:${event.id}`, picture: pictureAt(event.picture, time, plan) })),
+    ...showing(plan.shapes).map((event) => ({ id: `shape:${event.layer.id}`, picture: layerStagePicture(layerEventAt(event, time, plan)).picture })),
   ];
 }
 
 /**
- * What a picture dragged on the stage snaps to: the frame's edges and centre, the fixed guides, and
- * the edges and centres of the other pictures shown at the playhead by their `bounds` (all but the
- * `dragged` one). Text is not a target; a Shape is.
+ * What a picture dragged on the stage snaps to: the `canvas`'s edges and centre, its fixed guides,
+ * and the edges and centres of the other pictures shown at the playhead by their `bounds` (all but
+ * the `dragged` one). Text is not a target; a Shape is.
  */
-export function guideTargets(frame: Size, pictures: { id: string; bounds: Box }[], dragged: string): SmartGuides {
+export function guideTargets(canvas: Canvas, pictures: { id: string; bounds: Box }[], dragged: string): SmartGuides {
   const others = pictures.filter((picture) => picture.id !== dragged).map((picture) => picture.bounds);
-  const whole = { x: 0, y: 0, ...frame };
+  const whole = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+  const fixed = fixedGuides(canvas);
   return {
-    x: lines([...across(whole), ...Object.values(GUIDES_X), ...others.flatMap(across)]),
-    y: lines([...down(whole), ...Object.values(GUIDES_Y), ...others.flatMap(down)]),
+    x: lines([...across(whole), ...values(fixed.x), ...others.flatMap(across)]),
+    y: lines([...down(whole), ...values(fixed.y), ...others.flatMap(down)]),
   };
 }
 

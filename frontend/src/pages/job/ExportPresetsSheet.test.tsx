@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { Candidate, ExportPresetList, ExportSettings } from "../../api";
-import { batchSecs, sourceHeight } from "./exportPresets";
+import { batchParts, batchSecs, sourceHeight } from "./exportPresets";
 import { ExportPresetsSheet } from "./ExportPresetsSheet";
 import { RenderButton } from "./RenderButton";
 
@@ -85,6 +85,15 @@ describe("the batch", () => {
       { id: "b", start: 20, end: 30 },
     ];
     expect(batchSecs([candidate({ segments, transitions: [{ after: "a", kind: "fade", secs: 1 }] as Candidate["transitions"] })])).toBe(14);
+  });
+
+  test("is estimated per Canvas Aspect, each lasting its own Candidates", () => {
+    const batch = [candidate({ aspect: "16:9" }), candidate({ aspect: "9:16", start: 0, end: 15 }), candidate({ aspect: "16:9", start: 0, end: 5 })];
+    expect(batchParts(batch)).toEqual([
+      { aspect: "16:9", secs: 35 },
+      { aspect: "9:16", secs: 15 },
+    ]);
+    expect(batchParts([])).toEqual([]);
   });
 
   test("is drawn against the Source's short side", () => {

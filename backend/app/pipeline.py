@@ -294,7 +294,9 @@ class Pipeline:
             progress=progress,
             window_audio=audio,
         )
-        selection = replace(selection, llm=self.settings.llm)
+        # Its Candidates take the Job's Canvas Aspect (docs/adr/0022).
+        candidates = [replace(candidate, aspect=job.options.aspect) for candidate in selection.candidates]
+        selection = replace(selection, llm=self.settings.llm, candidates=candidates)
         self.store.save_selection(job.id, selection)
         if selection.audio_signal and (left_out := [w for w in selection.shortlist if w not in selection.audio_windows]):
             warning = JobWarning(

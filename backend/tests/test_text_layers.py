@@ -22,7 +22,8 @@ from app.jobs import CANDIDATES_FILE, REVISIONS_DIR
 from app.layer_pictures import rasterised
 from app.migration import migrated_candidate, migrated_clip, migrated_text_layer
 from app.config import FONTS_DIR, load_settings
-from app.planner import MAX_LAYER_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
+from app.canvas import PORTRAIT
+from app.planner import MAX_LAYER_PICTURE, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
 from app.renderer import _ass
 from app.video_source import SourceMetadata
 from conftest import FIXTURES
@@ -66,7 +67,7 @@ def as_before(event: dict, before: dict, keys: tuple[str, ...]) -> None:
 def old_look(at: float) -> np.ndarray:
     """What the Text Layers' ASS lines from before Text Styles drew over GREY at `at` seconds into
     the Clip: 1080x1920 RGB."""
-    header = _ass(plan_render(0, 7, SOURCE)).split("[Events]")[0]
+    header = _ass(plan_render(0, 7, SOURCE, canvas=PORTRAIT)).split("[Events]")[0]
     styles, events = [], []
     for line in BEFORE_ASS.splitlines():
         (styles if line.startswith("Style:") else events).append(line)
@@ -76,18 +77,18 @@ def old_look(at: float) -> np.ndarray:
         path = Path(work, "old.ass")
         path.write_text(script)
         command = [
-            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", f"color=c=0x4a5560:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:r=10:d=7",
+            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", f"color=c=0x4a5560:s={PORTRAIT.width}x{PORTRAIT.height}:r=10:d=7",
             "-vf", f"format=rgb24,ass=filename={path}:fontsdir={FONTS_DIR}", "-ss", f"{at}", "-frames:v", "1",
             "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
         ]
         data = subprocess.run(command, capture_output=True, check=True).stdout
-    return np.frombuffer(data, np.uint8).reshape(OUTPUT_HEIGHT, OUTPUT_WIDTH, 3).astype(float)
+    return np.frombuffer(data, np.uint8).reshape(PORTRAIT.height, PORTRAIT.width, 3).astype(float)
 
 
 def new_look(events: list[TextEvent], at: float) -> np.ndarray:
     """The pictures of the Text Layers shown at `at` (none coming on or going off then) laid over
     GREY, each at its picture's place, as the render lays them."""
-    frame = np.tile(GREY.astype(float), (OUTPUT_HEIGHT, OUTPUT_WIDTH, 1))
+    frame = np.tile(GREY.astype(float), (PORTRAIT.height, PORTRAIT.width, 1))
     for event in events:
         if not event.start <= at < event.end:
             continue
@@ -95,7 +96,7 @@ def new_look(events: list[TextEvent], at: float) -> np.ndarray:
         x, y = (round(c - size / 2) for c, size in zip(event.picture.centre, (event.picture.width, event.picture.height)))
         # Only what is on the frame.
         left, top = max(x, 0), max(y, 0)
-        right, bottom = min(x + pixels.shape[1], OUTPUT_WIDTH), min(y + pixels.shape[0], OUTPUT_HEIGHT)
+        right, bottom = min(x + pixels.shape[1], PORTRAIT.width), min(y + pixels.shape[0], PORTRAIT.height)
         shown = pixels[top - y : bottom - y, left - x : right - x]
         alpha = shown[..., 3:] / 255
         frame[top:bottom, left:right] = shown[..., :3] * alpha + frame[top:bottom, left:right] * (1 - alpha)
@@ -103,7 +104,7 @@ def new_look(events: list[TextEvent], at: float) -> np.ndarray:
 
 
 def test_without_text_layers_the_plan_and_the_script_are_unchanged():
-    planned = plan_render(0, 5, SOURCE, hook="Halo")
+    planned = plan_render(0, 5, SOURCE, hook="Halo", canvas=PORTRAIT)
     assert planned.texts == []
     script = _ass(planned)
     assert "Style: Text" not in script
@@ -112,7 +113,7 @@ def test_without_text_layers_the_plan_and_the_script_are_unchanged():
 
 
 def test_a_text_layer_is_centred_on_its_transform_and_measured_in_its_face():
-    event = text_event(layer({"x": 400, "y": 700}, {"size": 80}, text="Halo dunia"), 10)
+    event = text_event(layer({"x": 400, "y": 700}, {"size": 80}, text="Halo dunia"), 10, canvas=PORTRAIT)
     width = font_metrics(event.layer.style.font).width("Halo dunia", 80)
     assert event.layout.style.size == 80 and event.lines == ["Halo dunia"]
     assert event.area.width == pytest.approx(width, abs=1)
@@ -124,71 +125,71 @@ def test_a_text_layer_is_centred_on_its_transform_and_measured_in_its_face():
 
 def test_lines_are_split_at_newlines_aligned_and_spaced_by_the_line_height():
     text = "Satu\nDua yang lebih panjang"
-    centred = text_event(layer(style={"size": 60}, text=text), 10)
+    centred = text_event(layer(style={"size": 60}, text=text), 10, canvas=PORTRAIT)
     assert centred.lines == ["Satu", "Dua yang lebih panjang"]
     [first, second] = centred.anchors
     assert first[0] == second[0] == pytest.approx(centred.area.x + centred.area.width / 2)
     assert second[1] - first[1] == pytest.approx(1.1 * 60)
-    spaced = text_event(layer(style={"size": 60, "line_height": 2}, text=text), 10)
+    spaced = text_event(layer(style={"size": 60, "line_height": 2}, text=text), 10, canvas=PORTRAIT)
     assert spaced.anchors[1][1] - spaced.anchors[0][1] == pytest.approx(2 * 60)
-    left = text_event(layer(style={"size": 60, "align": "left"}, text=text), 10)
+    left = text_event(layer(style={"size": 60, "align": "left"}, text=text), 10, canvas=PORTRAIT)
     metrics = font_metrics(left.layer.style.font)
     assert left.anchors[0][0] - metrics.width("Satu", 60) / 2 == pytest.approx(left.area.x, abs=0.5)
-    right = text_event(layer(style={"size": 60, "align": TextAlign.RIGHT}, text=text), 10)
+    right = text_event(layer(style={"size": 60, "align": TextAlign.RIGHT}, text=text), 10, canvas=PORTRAIT)
     assert right.anchors[0][0] + metrics.width("Satu", 60) / 2 == pytest.approx(right.area.x + right.area.width, abs=0.5)
 
 
 def test_a_block_plate_pads_the_text_by_its_pixels():
-    plain = text_event(layer(style={"size": 80}), 10)
+    plain = text_event(layer(style={"size": 80}), 10, canvas=PORTRAIT)
     block = {"shape": "block", "padding_x": 30, "padding_y": 10, "radius": 12}
-    boxed = text_event(layer(style={"size": 80, "plate": block}), 10)
+    boxed = text_event(layer(style={"size": 80, "plate": block}), 10, canvas=PORTRAIT)
     assert boxed.box == boxed.area and boxed.layout.radius == 12
     assert boxed.area.width - plain.area.width in (60, 61) and boxed.area.height - plain.area.height in (20, 21)
 
 
 def test_a_sentence_wider_than_the_frame_breaks_between_words_at_its_size_inside_the_frame():
     text = "Ini adalah kalimat yang sangat panjang sekali"
-    wide = text_event(layer(style={"size": 200, "plate": {"shape": "block", "padding_x": 30}}, text=text), 10)
+    wide = text_event(layer(style={"size": 200, "plate": {"shape": "block", "padding_x": 30}}, text=text), 10, canvas=PORTRAIT)
     metrics = font_metrics(wide.layer.style.font)
     assert len(wide.lines) > 1
     assert " ".join(wide.lines) == text
     # Each line as long as fits the frame less TEXT_MARGIN and the padding either side: the next
     # word would not.
-    room = OUTPUT_WIDTH - 2 * TEXT_MARGIN - 2 * 30
+    room = PORTRAIT.width - 2 * TEXT_MARGIN - 2 * 30
     for line, after in zip(wide.lines, wide.lines[1:]):
         assert metrics.width(line, 200) <= room < metrics.width(f"{line} {after.split()[0]}", 200)
     widest = max(metrics.width(line, 200) for line in wide.lines)
-    assert wide.area.width == pytest.approx(widest + 60, abs=1) and wide.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN
+    assert wide.area.width == pytest.approx(widest + 60, abs=1) and wide.area.width <= PORTRAIT.width - 2 * TEXT_MARGIN
     assert [y for _, y in wide.anchors] == pytest.approx([wide.anchors[0][1] + i * 1.1 * 200 for i in range(len(wide.lines))])
 
 
 def test_a_wrap_width_breaks_lines_at_it_keeps_newlines_and_breaks_an_over_long_word_between_characters():
     style = {"size": 60, "wrap_width": 400}
-    wrapped = text_event(layer(style=style, text="Satu dua tiga empat lima enam\nTujuh"), 10)
+    wrapped = text_event(layer(style=style, text="Satu dua tiga empat lima enam\nTujuh"), 10, canvas=PORTRAIT)
     metrics = font_metrics(wrapped.layer.style.font)
     assert len(wrapped.lines) > 2 and wrapped.lines[-1] == "Tujuh"
     assert " ".join(wrapped.lines[:-1]) == "Satu dua tiga empat lima enam"
     assert all(metrics.width(line, 60) <= 400 for line in wrapped.lines)
     # The box is the wrap width wide, its lines aligned inside it.
     assert wrapped.area.width == 400
-    left = text_event(layer(style=style | {"align": "left"}, text="Satu"), 10)
+    left = text_event(layer(style=style | {"align": "left"}, text="Satu"), 10, canvas=PORTRAIT)
     assert left.area.width == 400 and left.anchors[0][0] - metrics.width("Satu", 60) / 2 == pytest.approx(left.area.x)
     # With a Block plate, it holds the plate's padding too: the lines break that much narrower.
-    plated = text_event(layer(style=style | {"plate": {"shape": "block", "padding_x": 50}}, text="Satu dua tiga empat lima enam"), 10)
+    plated = text_event(layer(style=style | {"plate": {"shape": "block", "padding_x": 50}}, text="Satu dua tiga empat lima enam"), 10, canvas=PORTRAIT)
     assert plated.area.width == 400 and all(metrics.width(line, 60) <= 300 for line in plated.lines)
     # A word wider than the wrap width breaks between its characters, each line as full as fits.
     word = "Supercalifragilisticexpialidocious"
-    long = text_event(layer(style=style, text=f"A {word}"), 10)
+    long = text_event(layer(style=style, text=f"A {word}"), 10, canvas=PORTRAIT)
     assert long.lines[0] == "A" and "".join(long.lines[1:]) == word and len(long.lines) > 2
     for line, after in zip(long.lines[1:], long.lines[2:]):
         assert metrics.width(line, 60) <= 400 < metrics.width(line + after[0], 60)
     # A wrap width wider than the words is the box's width.
-    assert text_event(layer(style={"size": 60, "wrap_width": 900}, text="Satu"), 10).area.width == 900
+    assert text_event(layer(style={"size": 60, "wrap_width": 900}, text="Satu"), 10, canvas=PORTRAIT).area.width == 900
 
 
 def test_a_fixed_height_taller_than_the_words_centres_them_and_a_shorter_one_grows_to_hold_them():
-    words = text_event(layer(style={"size": 60, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10)
-    tall = text_event(layer(style={"size": 60, "fixed_height": 400, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10)
+    words = text_event(layer(style={"size": 60, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10, canvas=PORTRAIT)
+    tall = text_event(layer(style={"size": 60, "fixed_height": 400, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10, canvas=PORTRAIT)
     assert tall.area.height == 400 and tall.box == tall.area
     assert tall.area.y + tall.area.height / 2 == pytest.approx(960, abs=1)
     # The words, as tall as they are without it, centred down it.
@@ -197,36 +198,36 @@ def test_a_fixed_height_taller_than_the_words_centres_them_and_a_shorter_one_gro
     middle = (tall.anchors[0][1] - letters_top + 10 + tall.anchors[-1][1] + letters_bottom - 10) / 2
     assert middle == pytest.approx(tall.area.y + 200, abs=0.5)
     assert tall.anchors[1][1] - tall.anchors[0][1] == pytest.approx(66)
-    short = text_event(layer(style={"size": 60, "fixed_height": 30, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10)
+    short = text_event(layer(style={"size": 60, "fixed_height": 30, "plate": {"shape": "block", "padding_y": 10}}, text="Satu\nDua"), 10, canvas=PORTRAIT)
     assert short.area.height == words.area.height and short.anchors == words.anchors
 
 
 def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_wraps():
     text = "Satu\nDua yang lebih panjang"
-    plain = text_event(layer(style={"size": 60}, text=text), 10)
-    spaced = text_event(layer(style={"size": 60, "tracking": 8}, text=text), 10)
-    tight = text_event(layer(style={"size": 60, "tracking": -3}, text=text), 10)
+    plain = text_event(layer(style={"size": 60}, text=text), 10, canvas=PORTRAIT)
+    spaced = text_event(layer(style={"size": 60, "tracking": 8}, text=text), 10, canvas=PORTRAIT)
+    tight = text_event(layer(style={"size": 60, "tracking": -3}, text=text), 10, canvas=PORTRAIT)
     # The widest line has 22 characters: 21 gaps.
     assert spaced.area.width - plain.area.width == pytest.approx(21 * 8, abs=1)
     assert tight.area.width - plain.area.width == pytest.approx(-21 * 3, abs=1)
     # A left-aligned line's middle moves by half its own tracking.
-    left = text_event(layer(style={"size": 60, "tracking": 8, "align": "left"}, text=text), 10)
+    left = text_event(layer(style={"size": 60, "tracking": 8, "align": "left"}, text=text), 10, canvas=PORTRAIT)
     metrics = font_metrics(left.layer.style.font)
     assert left.anchors[0][0] - (metrics.width("Satu", 60) + 3 * 8) / 2 == pytest.approx(left.area.x, abs=0.5)
     # It wraps only once its tracked width is too wide for the frame, never set smaller.
     words = "Kalimat yang cukup panjang"
-    fits = text_event(layer(style={"size": 70}, text=words), 10)
+    fits = text_event(layer(style={"size": 70}, text=words), 10, canvas=PORTRAIT)
     assert fits.lines == [words]
-    wrapped = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10)
+    wrapped = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10, canvas=PORTRAIT)
     assert len(wrapped.lines) == 2 and " ".join(wrapped.lines) == words
-    assert all(metrics.width(line, 70, 20) <= OUTPUT_WIDTH - 2 * TEXT_MARGIN for line in wrapped.lines)
+    assert all(metrics.width(line, 70, 20) <= PORTRAIT.width - 2 * TEXT_MARGIN for line in wrapped.lines)
     assert wrapped.layout.style.tracking == 20
 
 
 def test_line_height_sets_the_pitch_of_the_anchors_and_the_box_grows_with_it():
     text = "Satu\nDua\nTiga"
-    tight = text_event(layer(style={"size": 60, "line_height": 0.9}, text=text), 10)
-    airy = text_event(layer(style={"size": 60, "line_height": 1.8}, text=text), 10)
+    tight = text_event(layer(style={"size": 60, "line_height": 0.9}, text=text), 10, canvas=PORTRAIT)
+    airy = text_event(layer(style={"size": 60, "line_height": 1.8}, text=text), 10, canvas=PORTRAIT)
     for event, pitch in ((tight, 0.9 * 60), (airy, 1.8 * 60)):
         [first, second, third] = event.anchors
         assert second[1] - first[1] == pytest.approx(pitch) and third[1] - second[1] == pytest.approx(pitch)
@@ -237,7 +238,7 @@ def test_strips_put_a_plate_behind_each_line_as_wide_as_it_and_a_block_one_behin
     text = "Satu\nDua yang lebih panjang"
     plate = {"padding_x": 20, "padding_y": 10, "radius": 200}
     for align in ("center", "left", "right"):
-        strips = text_event(layer(style={"size": 60, "align": align, "tracking": 4, "plate": plate | {"shape": "strips"}}, text=text), 10)
+        strips = text_event(layer(style={"size": 60, "align": align, "tracking": 4, "plate": plate | {"shape": "strips"}}, text=text), 10, canvas=PORTRAIT)
         layout = strips.layout
         assert len(layout.plates) == 2
         metrics = font_metrics(strips.layer.style.font)
@@ -254,25 +255,25 @@ def test_strips_put_a_plate_behind_each_line_as_wide_as_it_and_a_block_one_behin
         assert layout.plates[1].width == pytest.approx(strips.area.width, abs=1)
         # Corners at most half a strip's height round.
         assert layout.radius == layout.plates[0].height // 2
-    block = text_event(layer(style={"size": 60, "plate": plate | {"shape": "block", "radius": 12}}, text=text), 10)
+    block = text_event(layer(style={"size": 60, "plate": plate | {"shape": "block", "radius": 12}}, text=text), 10, canvas=PORTRAIT)
     [only] = block.layout.plates
     assert (only.width, only.height) == (block.area.width, block.area.height) and block.box == block.area
-    assert text_event(layer(style={"size": 60}, text=text), 10).layout.plates == []
+    assert text_event(layer(style={"size": 60}, text=text), 10, canvas=PORTRAIT).layout.plates == []
 
 
 def test_a_shadow_is_moved_by_its_distance_towards_its_angle_and_its_picture_grows_to_hold_it():
-    plain = text_event(layer(style={"size": 80}), 10)
+    plain = text_event(layer(style={"size": 80}), 10, canvas=PORTRAIT)
     for angle, offset in ((0, (12, 0)), (90, (0, 12)), (180, (-12, 0)), (-90, (0, -12)), (45, (8.4853, 8.4853))):
-        shadowed = text_event(layer(style={"size": 80, "shadow": {"distance": 12, "angle": angle, "blur": 6}}), 10)
+        shadowed = text_event(layer(style={"size": 80, "shadow": {"distance": 12, "angle": angle, "blur": 6}}), 10, canvas=PORTRAIT)
         assert shadowed.layout.shadow == pytest.approx(offset, abs=1e-3)
         # Room for its distance and its blur's reach on every side, the layer's area and centre as they were.
         assert shadowed.layout.width - plain.layout.width in (2 * (12 + 9), 2 * (12 + 9) + 2)
         assert shadowed.area == plain.area and shadowed.picture.centre == plain.picture.centre
-    halo = text_event(layer(style={"size": 80, "shadow": {"blur": 10}}), 10)
+    halo = text_event(layer(style={"size": 80, "shadow": {"blur": 10}}), 10, canvas=PORTRAIT)
     assert halo.layout.shadow == (0, 0) and halo.layout.width > plain.layout.width
     # Off: transparent, or neither moved nor blurred.
     for off in ({"opacity": 0, "distance": 12, "blur": 6}, {"distance": 0, "blur": 0, "opacity": 1}):
-        event = text_event(layer(style={"size": 80, "shadow": off}), 10)
+        event = text_event(layer(style={"size": 80, "shadow": off}), 10, canvas=PORTRAIT)
         assert event.layout.shadow is None and event.layout.width == plain.layout.width
 
 
@@ -289,25 +290,25 @@ def test_a_text_styles_shadow_and_plate_refuse_values_out_of_range():
 
 
 def test_a_text_layer_is_kept_in_the_clip_and_blank_or_late_ones_show_nothing():
-    assert text_event(layer(start=4.0, secs=5.0), 6).end == 6
-    assert text_event(layer(start=6.0), 6) is None
-    assert text_event(layer(text="  \n "), 6) is None
+    assert text_event(layer(start=4.0, secs=5.0), 6, canvas=PORTRAIT).end == 6
+    assert text_event(layer(start=6.0), 6, canvas=PORTRAIT) is None
+    assert text_event(layer(text="  \n "), 6, canvas=PORTRAIT) is None
     # An emoji is kept, drawn from its image (test_emoji_text.py); a character no Face nor image has
     # is left out.
-    assert text_event(layer(text="Halo 🔥"), 6).lines == ["Halo 🔥"]
-    assert text_event(layer(text="Halo 🫨"), 6).lines == ["Halo"]
+    assert text_event(layer(text="Halo 🔥"), 6, canvas=PORTRAIT).lines == ["Halo 🔥"]
+    assert text_event(layer(text="Halo 🫨"), 6, canvas=PORTRAIT).lines == ["Halo"]
 
 
 def test_text_layers_leave_the_ass_script_in_their_order():
     planned = plan_render(
         0, 5, SOURCE, hook="Halo",
-        text_layers=[layer(id="a", style={"colour": "#00FF00", "plate": {"shape": "block"}}), layer(id="b", text="Dua")],
+        text_layers=[layer(id="a", style={"colour": "#00FF00", "plate": {"shape": "block"}}), layer(id="b", text="Dua")], canvas=PORTRAIT,
     )
     assert [event.layer.id for event in planned.texts] == ["a", "b"]
     # Pictures of their own (test_layer_pictures.py), and the hook's layers as they are without them.
     script = _ass(planned)
     assert "Dua" not in script and "Style: Text" not in script
-    assert script == _ass(plan_render(0, 5, SOURCE, hook="Halo"))
+    assert script == _ass(plan_render(0, 5, SOURCE, hook="Halo", canvas=PORTRAIT))
 
 
 def test_an_old_text_layer_moves_its_centre_into_its_transform_and_its_look_into_its_style():
@@ -353,17 +354,17 @@ def test_an_old_text_layer_the_planner_kept_inside_the_frame_is_centred_where_it
     old = next(layer for layer in BEFORE["layers"] if layer["id"] == "corner")
     area = next(event for layer, event in zip(BEFORE["layers"], BEFORE["events"]) if layer["id"] == "corner")["area"]
     # Centred on the frame's corner, it was drawn inside the frame.
-    assert (old["x"], old["y"]) == (OUTPUT_WIDTH, OUTPUT_HEIGHT)
-    assert area["x"] + area["width"] == OUTPUT_WIDTH and area["y"] + area["height"] == OUTPUT_HEIGHT
+    assert (old["x"], old["y"]) == (PORTRAIT.width, PORTRAIT.height)
+    assert area["x"] + area["width"] == PORTRAIT.width and area["y"] + area["height"] == PORTRAIT.height
     new = migrated_text_layer(old)
     assert new["transform"] == {"x": area["x"] + area["width"] / 2, "y": area["y"] + area["height"] / 2}
-    assert drawn(text_event(_LAYER.validate_python(new), 10))["area"] == area
+    assert drawn(text_event(_LAYER.validate_python(new), 10, canvas=PORTRAIT))["area"] == area
     assert migrated_text_layer(new) == new
 
 
 def test_migrated_text_layers_plan_and_look_as_they_did():
     layers = _LAYERS.validate_python([migrated_text_layer(old) for old in BEFORE["layers"]])
-    planned = plan_render(0, 7, SOURCE, text_layers=layers)
+    planned = plan_render(0, 7, SOURCE, text_layers=layers, canvas=PORTRAIT)
     for event, before in zip(planned.texts, BEFORE["events"], strict=True):
         as_before(drawn(event), before, tuple(before))
     # Their pictures, laid where the plan puts them, show what their ASS events drew, at two moments
@@ -388,18 +389,18 @@ def test_a_text_layer_is_never_stretched_nor_flipped():
 
 
 def test_a_text_layer_is_centred_on_its_transform_past_the_frames_edges():
-    corner = text_event(layer({"x": OUTPUT_WIDTH, "y": OUTPUT_HEIGHT}, {"size": 120}), 10)
-    assert corner.area.x + corner.area.width / 2 == pytest.approx(OUTPUT_WIDTH, abs=1)
-    assert corner.area.y + corner.area.height / 2 == pytest.approx(OUTPUT_HEIGHT, abs=1)
-    assert corner.picture.centre == pytest.approx((OUTPUT_WIDTH, OUTPUT_HEIGHT), abs=1)
+    corner = text_event(layer({"x": PORTRAIT.width, "y": PORTRAIT.height}, {"size": 120}), 10, canvas=PORTRAIT)
+    assert corner.area.x + corner.area.width / 2 == pytest.approx(PORTRAIT.width, abs=1)
+    assert corner.area.y + corner.area.height / 2 == pytest.approx(PORTRAIT.height, abs=1)
+    assert corner.picture.centre == pytest.approx((PORTRAIT.width, PORTRAIT.height), abs=1)
     # Its centre is kept on the frame.
-    off = text_event(layer({"x": -400, "y": 5000}), 10)
-    assert off.picture.centre == pytest.approx((0, OUTPUT_HEIGHT), abs=1)
+    off = text_event(layer({"x": -400, "y": 5000}), 10, canvas=PORTRAIT)
+    assert off.picture.centre == pytest.approx((0, PORTRAIT.height), abs=1)
 
 
 def test_a_scaled_and_turned_text_layer_keeps_its_layout_and_turns_its_bounds_about_its_centre():
-    plain = text_event(layer({"x": 500, "y": 900}, text="Halo dunia"), 10)
-    turned = text_event(layer({"x": 500, "y": 900, "scale": 2, "rotation": 90, "opacity": 0.4}, text="Halo dunia"), 10)
+    plain = text_event(layer({"x": 500, "y": 900}, text="Halo dunia"), 10, canvas=PORTRAIT)
+    turned = text_event(layer({"x": 500, "y": 900, "scale": 2, "rotation": 90, "opacity": 0.4}, text="Halo dunia"), 10, canvas=PORTRAIT)
     # The same lines, size and area: scaling neither rewraps nor resizes it.
     assert (turned.lines, turned.area) == (plain.lines, plain.area)
     assert turned.layout.anchors == plain.layout.anchors
@@ -415,7 +416,7 @@ def test_a_scaled_and_turned_text_layer_keeps_its_layout_and_turns_its_bounds_ab
 
 
 def test_a_text_layers_bounds_are_rounded_to_the_pixel_as_a_pictures_are():
-    turned = text_event(layer({"x": 500, "y": 900, "scale": 1.37, "rotation": 30}, text="Halo dunia"), 10)
+    turned = text_event(layer({"x": 500, "y": 900, "scale": 1.37, "rotation": 30}, text="Halo dunia"), 10, canvas=PORTRAIT)
     # Its area's corners, scaled and turned about its picture's centre, in fractions of a pixel.
     area, (x, y) = turned.area, turned.picture.centre
     angle = math.radians(30)
@@ -431,18 +432,18 @@ def test_a_text_layers_bounds_are_rounded_to_the_pixel_as_a_pictures_are():
 
 def test_a_text_layers_picture_is_made_at_the_next_scale_up_and_is_one_picture_within_it():
     def made(scale: float) -> TextEvent:
-        return text_event(layer({"scale": scale}, {"size": 60}), 10)
+        return text_event(layer({"scale": scale}, {"size": 60}), 10, canvas=PORTRAIT)
 
     assert [made(scale).layout.scale for scale in (0.3, 1, 1.2, 1.5, 2.5, 3, 5, 8)] == [1, 1, 1.5, 1.5, 3, 3, 6, 8]
     # Scaled within one step, it is the same picture; past it, another of the same key.
     assert made(2.2).image == made(2.9).image != made(3.1).image
     assert made(2.2).picture_key == made(3.1).picture_key == made(0.5).picture_key
-    assert text_event(layer({"scale": 2.2}, {"size": 61}), 10).picture_key != made(2.2).picture_key
+    assert text_event(layer({"scale": 2.2}, {"size": 61}), 10, canvas=PORTRAIT).picture_key != made(2.2).picture_key
     # Drawn at its own scale whatever its picture's.
     assert made(2.2).picture.width == pytest.approx(2.2 * made(1).picture.width, abs=2)
     assert made(2.2).picture.item_size == made(2.9).picture.item_size
     # Never more than MAX_LAYER_PICTURE on its longest side.
-    huge = text_event(layer({"scale": 8}, {"size": 300}, text="Kalimat yang panjang"), 10)
+    huge = text_event(layer({"scale": 8}, {"size": 300}, text="Kalimat yang panjang"), 10, canvas=PORTRAIT)
     assert max(huge.picture.item_size) <= MAX_LAYER_PICTURE
 
 

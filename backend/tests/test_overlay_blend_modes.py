@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import BlendMode, Overlay
+from app.canvas import PORTRAIT
 from app.config import load_settings
 from app.planner import MediaInfo, overlay_events
 from app.renderer import _laid
@@ -93,11 +94,11 @@ def test_a_modes_work_runs_on_its_spans_frames_alone_and_draws_them_as_on_every_
 
 
 def test_an_overlays_blend_mode_reaches_its_event_and_one_stored_without_it_is_normal():
-    events = overlay_events([Overlay("s", IMAGE, 0.0, 1.0, blend=BlendMode.SCREEN), Overlay("m", IMAGE, 0.0, 1.0, blend=BlendMode.MULTIPLY)], 10, ITEMS)
+    events = overlay_events([Overlay("s", IMAGE, 0.0, 1.0, blend=BlendMode.SCREEN), Overlay("m", IMAGE, 0.0, 1.0, blend=BlendMode.MULTIPLY)], 10, ITEMS, canvas=PORTRAIT)
     assert [event.blend for event in events] == [BlendMode.SCREEN, BlendMode.MULTIPLY]
     stored = TypeAdapter(Overlay).validate_python({"id": "o", "media": IMAGE, "start": 0.0, "secs": 1.0})
     assert stored.blend is BlendMode.NORMAL
-    [event] = overlay_events([stored], 10, ITEMS)
+    [event] = overlay_events([stored], 10, ITEMS, canvas=PORTRAIT)
     assert event.blend is BlendMode.NORMAL
 
 

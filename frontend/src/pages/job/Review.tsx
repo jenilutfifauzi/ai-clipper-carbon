@@ -21,7 +21,7 @@ import { ChangeNotice, type Notice } from "./editor/ChangeNotice";
 import { collidedParts, fieldsOf, mergeEdits, type Collision } from "./editor/merge";
 import { entryToRestore } from "./editor/RevisionHistory";
 import { changedText, useCandidateEvents } from "./editor/useCandidateEvents";
-import { batchSecs, pickedPreset } from "./exportPresets";
+import { batchParts, pickedPreset } from "./exportPresets";
 import { RenderButton } from "./RenderButton";
 
 /**
@@ -321,7 +321,7 @@ export function Review({
                   void render(undefined, exportPresetId);
                 }}
                 disabled={selected === 0 || queueing}
-                batch={{ secs: batchSecs(candidates.filter((candidate) => candidate.selected)), fps: sourceFps }}
+                batch={{ parts: batchParts(candidates.filter((candidate) => candidate.selected)), fps: sourceFps }}
                 onManage={onManageExport}
               />
             </div>

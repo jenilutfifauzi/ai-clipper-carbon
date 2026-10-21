@@ -48,7 +48,7 @@ export function EyedropperLayer({ plan, playback, stage }: { plan: RenderPlan | 
         // The topmost of the Overlays armed for, showing now and under the point.
         const hit = plan.overlays
           .filter((overlay) => request.overlays.includes(overlay.id) && overlay.start <= time && time < overlay.end)
-          .map((overlay) => ({ overlay, at: mediaPointOf(pictureAt(overlay.picture, time), point) }))
+          .map((overlay) => ({ overlay, at: mediaPointOf(pictureAt(overlay.picture, time, plan), point) }))
           .findLast(({ at }) => at !== null);
         const media = hit && element.querySelector<HTMLImageElement | HTMLVideoElement>(`[data-overlay-media="${CSS.escape(hit.overlay.id)}"]`);
         const colour = hit && media ? pickedColour(media, hit.overlay.picture.item_size, hit.at!, hit.overlay.grade) : null;

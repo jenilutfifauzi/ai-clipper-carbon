@@ -52,6 +52,7 @@ from app.candidates import (
     WordEdit,
     grades_of,
 )
+from app.canvas import Aspect, canvas_for
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
 from app.config import Settings
@@ -94,7 +95,7 @@ from app.rendering import NothingToRender, has_media_words, media_language, rank
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
-from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
+from app.review import MAX_CLIP_SECS, PLACED_BY, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision, Unplaced
 from app.revisions import Edit, HistoryEntry
 from app.starred_effects import Starred, StarredStore
 from app.storage import DiskUsage, disk_usage
@@ -303,6 +304,32 @@ def no_framing_keys(framing: Any) -> Any:
     return framing
 
 
+def unplaced(given: dict) -> Unplaced:
+    """The centres an edit as sent (`given`, its JSON) leaves out: each axis of a Transform without it,
+    and both of a Transform left out where its item would take the 9:16 default (not under a Framing
+    left out, which is centred on any Canvas)."""
+    found: set[tuple[str, int | None, str]] = set()
+
+    def look(name: str, index: int | None, item: Any, path: tuple[str, ...]) -> None:
+        if not isinstance(item, dict):
+            return
+        *outer, last = path
+        for step in outer:
+            item = item.get(step)
+            if not isinstance(item, dict):
+                return
+        transform = item.get(last, {})
+        if isinstance(transform, dict):
+            found.update((name, index, axis) for axis in "xy" if axis not in transform)
+
+    for name, path in PLACED_BY.items():
+        if isinstance(items := given.get(name), list):
+            for index, item in enumerate(items):
+                look(name, index, item, path)
+    look("framing", None, given.get("framing"), ("transform",))
+    return frozenset(found)
+
+
 class CandidateUpdate(BaseModel):
     """A review edit; a field left out stays as it is. `start` and `end` are snapped to Words."""
 
@@ -312,6 +339,8 @@ class CandidateUpdate(BaseModel):
     end: FiniteFloat | None = None
     hook_text: Annotated[str, StringConstraints(max_length=HOOK_MAX_CHARS)] | None = None
     layout: Layout | None = None
+    # Its Canvas Aspect (docs/adr/0022): its positions are on that Canvas, in its pixels.
+    aspect: Aspect | None = None
     # The Manual Layout's, which only it has; dropped when the Layout becomes another.
     framing: Annotated[Framing | None, BeforeValidator(no_framing_keys)] = None
     selected: bool | None = None
@@ -352,6 +381,9 @@ class CandidateUpdate(BaseModel):
     # The Music Clips (by id) sent without `duck`: a new song's then ducks by default (docs/adr/0016).
     # Read from what was sent, so that an explicit null keeps it off.
     _duck_unset: frozenset[str] = PrivateAttr(default=frozenset())
+    # The centres its items were sent without (review.Unplaced): at the Candidate's Canvas's centre,
+    # which only the Candidate knows. Read from what was sent, so that a 540 or 960 sent stays.
+    _unplaced: Unplaced = PrivateAttr(default=frozenset())
 
     @model_validator(mode="wrap")
     @classmethod
@@ -360,12 +392,16 @@ class CandidateUpdate(BaseModel):
         music = given.get("music") if isinstance(given, dict) else None
         if isinstance(music, list):
             update._duck_unset = frozenset(str(clip.get("id")) for clip in music if isinstance(clip, dict) and "duck" not in clip)
+        if isinstance(given, dict):
+            update._unplaced = unplaced(given)
         return update
 
     @property
     def change(self) -> CandidateChange:
         """The edit, as `review.update` makes it."""
-        return CandidateChange(**{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset)
+        return CandidateChange(
+            **{name: getattr(self, name) for name in CandidateUpdate.model_fields}, duck_unset=self._duck_unset, unplaced=self._unplaced
+        )
 
 
 class MediaWordsRequest(BaseModel):
@@ -476,13 +512,14 @@ class ExportPresetChoice(BaseModel):
 
 class ExportEstimate(BaseModel):
     """A batch of Clips `secs` long in all, made as `settings` say; at the Source's frame rate `fps`
-    when they keep it."""
+    when they keep it, and of the Canvas Aspect `aspect` (a batch of mixed shapes asks once per aspect)."""
 
     model_config = ConfigDict(extra="forbid")
 
     settings: ExportSettings
     secs: Annotated[float, Field(ge=0, le=86_400)]
     fps: Annotated[float, Field(gt=0, le=240)]
+    aspect: Aspect = Aspect.PORTRAIT
 
 
 class ManualCandidate(BaseModel):
@@ -900,6 +937,9 @@ def update_candidate(
     change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
+        if change.aspect is not None:
+            # A change of aspect rescales the Overlays and media Segments by their pictures' sizes.
+            episode = replace(episode, sizes=library.sizes())
         candidates, candidate = review.update(candidates, candidate_id, change, episode, presets.join_transition)
         try:
             presets.styles(candidate.preset_id, candidate.style_overrides)
@@ -1016,7 +1056,7 @@ def compare_frame(
     media_words: MediaWordsDep,
 ) -> Response:
     """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
-    the Preview Plan plans it), drawn by the render path as save_frame draws it, at 1080x1920 and the
+    the Preview Plan plans it), drawn by the render path as save_frame draws it, on its Canvas (1080 on its short side) at the
     frame rate its Clip renders at (its Clip's Export Preset as it is now, the default's when it has
     none or it was deleted: docs/adr/0021), as `image/png`. Never kept: drawn outside the Job, which
     doesn't change. Synchronous, outside the render queue. 422 for a draft that isn't a valid edit."""
@@ -1148,7 +1188,9 @@ def _drafted(
     if body is not None:
         _check_media_of(library, body)
         _check_looks_of(body)
-    episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
+    episode = _episode(job, transcript, settings)
+    if body is not None and body.aspect is not None:
+        episode = replace(episode, sizes=library.sizes())
     change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
@@ -1305,6 +1347,15 @@ def _entry(store: JobStore, job: Job, candidate_id: str, revision: int) -> Histo
     return entry
 
 
+def _episode(job: Job, transcript: Transcript, settings: Settings) -> Episode:
+    """What a Job's edits are checked against (`review.Episode`), but the Media Library's sizes."""
+    assert job.source is not None  # a Job with a Transcript has its Source
+    metadata = job.source.metadata
+    return Episode(
+        transcript, metadata.duration, job.options.max_secs, settings.selection, job.options.aspect, (metadata.width, metadata.height)
+    )
+
+
 def _review(
     store: JobStore,
     settings: Settings,
@@ -1320,8 +1371,7 @@ def _review(
     def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
         transcript = store.load_transcript(job.id)
         assert job.source is not None and transcript is not None  # a Job in review has both
-        episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
-        return change(candidates, episode)
+        return change(candidates, _episode(job, transcript, settings))
 
     try:
         saved = store.change_candidates(job_id, changed, expect=EDITABLE, edit=edit)
@@ -1617,7 +1667,8 @@ def create_export_preset(body: ExportPresetBody, export_presets: ExportPresets) 
 def estimate_export(body: ExportEstimate) -> dict[str, int]:
     """The bytes Clips `secs` long in all come to as `settings` say: what the encoders aim for, video
     and sound (app/encoding.py). The sheet's MB per minute and the Render menu's total both ask here."""
-    return {"bytes": estimated_bytes(body.settings, body.settings.fps or body.fps, body.secs)}
+    frame = canvas_for(body.aspect).size
+    return {"bytes": estimated_bytes(body.settings, body.settings.fps or body.fps, body.secs, frame)}
 
 
 @router.put("/export-presets/default")

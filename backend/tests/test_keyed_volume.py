@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from app.candidates import EASE_IN, EASE_IN_OUT, Ease, Keyframe, MusicClip, Overlay
+from app.canvas import PORTRAIT
 from app.keyframes import linear_steps, value_at
 from app.planner import MediaInfo, audio_events, overlay_events, overlay_sound
 from test_keyframes import clip_of, stills  # noqa: F401
@@ -63,11 +64,11 @@ def test_an_overlay_videos_volume_keyframes_are_its_sounds_gain_track_and_not_it
     items = {CLIP: MediaInfo(640, 360, 10.0, True)}
     # Muted but for its Keyframes, which bring it up.
     overlay = Overlay("o", CLIP, 2.0, 3.0, keys={"volume": DIP})
-    [sound] = overlay_sound([overlay], 10, items)
+    [sound] = overlay_sound([overlay], 10, items, canvas=PORTRAIT)
     assert (sound.id, sound.start, sound.end, sound.gain) == ("o", 2.0, 5.0, DIP)
-    [event] = overlay_events([overlay], 10, items)
+    [event] = overlay_events([overlay], 10, items, canvas=PORTRAIT)
     assert event.picture.motion == {}
-    assert overlay_sound([Overlay("o", CLIP, 2.0, 3.0)], 10, items) == []
+    assert overlay_sound([Overlay("o", CLIP, 2.0, 3.0)], 10, items, canvas=PORTRAIT) == []
 
 
 # Seam A: the API and MCP

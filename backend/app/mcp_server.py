@@ -66,6 +66,7 @@ from app.candidates import (
     WordEdit,
     ease_name,
 )
+from app.canvas import canvas_for
 from app.config import REPO_ROOT
 from app.events import SETTLED, JobProgress, job_events
 from app.jobs import Job, JobNotFound, JobOptions, JobStatus
@@ -78,6 +79,7 @@ from app.planner import Box, CueKey, Picture, ShapeEvent, TextEvent, bounds_at, 
 from app.profile import ChannelProfile
 from app.rendering import source_copies
 from app.retimed import CopySize, Retime
+from app.review import PLACED_BY
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
 from app.transcript import Language
@@ -151,6 +153,22 @@ Times:
 - Text Layers, Shapes, Music Clips, Overlays, Adjustment Layers, hook_start and the Preview Plan's events are
   Timeline time: seconds into the Clip, from 0.
 
+Canvas:
+- A Candidate's `aspect` (9:16, the default, 4:5, 1:1 or 16:9) sets its Canvas, its frame in pixels
+  with a short side of 1080: 1080x1920, 1080x1350, 1080x1080 or 1920x1080. A Job's options.aspect
+  is its new Candidates'. get_candidate and the dry run give the Canvas's size (the dry run its Safe
+  Area too). A Candidate's own positions (Transforms, their Keyframes, Cue Edits) are in its Canvas's
+  pixels: a centre off it is brought onto it, a Cue Edit off it refused. Style positions (the
+  caption, hook and Watermark Styles' x and y, of Style Presets and style_overrides) are in the
+  Reference Space, 1080x1920 on every aspect, so one Preset serves them all: the Canvas maps them in
+  proportion, x*width/1080 and y*height/1920 (a caption y of 1440 is 810 on 16:9). Sizes (fonts,
+  the Watermark's size, outlines, padding) aren't mapped. Top, Middle, Bottom and the Watermark's
+  nine places are in the Canvas's Safe Area; captions and the hook are at most 820 px wide on every
+  aspect, centred. Changing `aspect` rescales the Candidate's own positions: centres keep their
+  fraction of the Canvas, Framings their scale relative to covering it, Overlays, Text Layers and
+  Shapes their size in pixels; those sent in the same edit are taken as on the new Canvas. A Clip
+  renders at the Canvas's shape, its short side the Export Preset's resolution.
+
 Edits:
 - Candidates can be changed only while the Job is in review or rendering.
 - In edit_candidate, a list and style_overrides replace the Candidate's whole list (the lists:
@@ -168,9 +186,9 @@ Edits:
   kind "fonts" lists them, with their family, weight, italic and licence. add_asset kind "font"
   imports a TTF, OTF or TTC file from this Mac for every Job (a variable font as a Face per named
   instance), with a warning when its licence says it may not be embedded.
-- An Overlay is placed by its transform. x, y: its centre in output pixels (clamped to 0..1080,
-  0..1920; the picture may go past the frame's edges). scale: times its fitted size, the largest that fits the
-  1080x1920 frame keeping its aspect (1 fits; a 16:9 picture at 0.5 is 540 px wide). stretch_x,
+- An Overlay is placed by its transform. x, y: its centre in the Canvas's pixels (kept on it; the
+  picture may go past the frame's edges; left out, the Canvas's centre). scale: times its fitted size, the largest that fits the
+  Canvas keeping its aspect (1 fits; a 16:9 picture at 0.5 on 9:16 is 540 px wide). stretch_x,
   stretch_y: times its fitted width and height on top of scale. rotation: degrees clockwise. flip_h,
   flip_v, opacity 0..1. Its crop: left, top, right, bottom, each the fraction 0..0.9 of its
   width or height cut off before it is fitted (a tenth is always kept). merge_candidate_items
@@ -240,8 +258,7 @@ Edits:
   only its start or its end (negative: earlier). All are -10..10 seconds of that timeline, so a
   Segment at 2x halves them.
   The Cue is kept in its Segment, after the Cue before ends and before the Cue after starts, and
-  0.2 s long at least. Its `x` and `y` (output pixels, as the caption style's custom position)
-  centre that Cue alone, kept in the frame, and `scale` ({CUE_MIN_SCALE}..{CUE_MAX_SCALE}) times the
+  0.2 s long at least. Its `x` and `y` (the Canvas's pixels) centre that Cue alone, kept in the frame, and `scale` ({CUE_MIN_SCALE}..{CUE_MAX_SCALE}) times the
   caption style's size sizes it (a line too wide is still set smaller); null keeps the style's. The
   dry run gives each Cue's `centre` and `size`. One whose Word the Clip doesn't show does nothing and is kept: the dry run
   lists it under `unused_cue_edits`, and a Cue it applies to says `edited`.
@@ -255,7 +272,7 @@ Edits:
   ({{at, media}} for a video's).
 - A Segment of a video needs its framing: a transform and a crop as an Overlay's, and a background
   shown where it doesn't cover the frame ({{"kind": "blur"}}, itself blurred, or {{"kind": "colour",
-  "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9: 3.16). A
+  "colour": "#rrggbb"}}). Its scale 1 fits the frame; filling it takes a larger one (16:9 on 9:16: 3.16). A
   Segment of the episode has no framing.
 - A Segment of a video with sound is captioned from its video's Media Words (the whole video
   transcribed once, in the video's own language if set, else the Job's), unless its `captions` (its
@@ -362,7 +379,7 @@ Edits:
   run lists one that isn't normal.
 - A Segment's `video_effects` (of the episode or a video, a Freeze frame too) is the same stack over
   its whole frame (panels, picture and Background): after its Grade and before the joins, so a
-  Transition crossfades pictures that already carry them. Its frame is 1080x1920 at scale 1, so its
+  Transition crossfades pictures that already carry them. Its frame is the Canvas at scale 1, so its
   sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
   merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
   `segments`.
@@ -653,8 +670,11 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool(read_only=True)
     async def get_candidate(job_id: str, candidate_id: str) -> dict:
-        """A Candidate whole: its range, hook, titles and descriptions, and every edit made to it."""
-        return await candidate(job_id, candidate_id)
+        """A Candidate whole: its range, hook, titles and descriptions, and every edit made to it; its
+        aspect and its Canvas's size (`canvas`), in whose pixels its positions are."""
+        found = await candidate(job_id, candidate_id)
+        width, height = canvas_for(found["aspect"]).size
+        return found | {"canvas": {"width": width, "height": height}}
 
     @tool()
     async def edit_candidate(
@@ -672,6 +692,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
         for clip in body.get("music") or []:
             if clip["id"] in changes._duck_unset:
                 del clip["duck"]
+        # A centre given without x or y is sent without it, so that it lands at the Canvas's centre.
+        for name, index, axis in changes._unplaced:
+            item = body["framing"] if index is None else body[name][index]
+            for step in ("transform",) if index is None else PLACED_BY[name]:
+                item = item[step]
+            item.pop(axis, None)
         if dry_run:
             return _plan_view(
                 await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/preview-plan", json=body),
@@ -1159,7 +1185,7 @@ def _candidate_view(candidate: dict) -> dict:
     """A Candidate without its descriptions and edits."""
     keys = (
         "id", "title", "origin", "start", "end", "predicted_score", "hook_strength", "emotion", "reason",
-        "hook_text", "hook_kicker", "layout", "preset_id", "selected", "edited", "revision",
+        "hook_text", "hook_kicker", "layout", "aspect", "preset_id", "selected", "edited", "revision",
     )
     view = {key: candidate[key] for key in keys}
     view["segments"] = len(candidate["segments"]) or None
@@ -1201,34 +1227,35 @@ def _keys_view(keys: dict, start: float = 0.0) -> dict:
     }
 
 
-def _motion_view(picture: dict) -> dict:
+def _motion_view(picture: dict, frame: tuple[int, int]) -> dict:
     """A keyed picture's Keyframes in Timeline time (`_keys_view`), and its bounds at each time any
-    property has one (`picture_at`); nothing for an unkeyed one."""
+    property has one (`picture_at`, on the plan's `frame`); nothing for an unkeyed one."""
     if not picture["motion"]:
         return {}
     keys = _keys_view(picture["motion"])
     drawn = _PICTURE.validate_python(picture)
-    bounds = [{"at": round(at, 3), "bounds": _dump(Box, picture_at(drawn, at).bounds)} for at in key_times(drawn)]
+    bounds = [{"at": round(at, 3), "bounds": _dump(Box, picture_at(drawn, at, frame).bounds)} for at in key_times(drawn)]
     return {"keys": keys, "bounds_at_keys": bounds}
 
 
-def _layer_view(event: dict, kind: TypeAdapter, picture_url: Callable[[str], str], *shown: str) -> dict:
+def _layer_view(event: dict, kind: TypeAdapter, frame: tuple[int, int], picture_url: Callable[[str], str], *shown: str) -> dict:
     """A picture layer as an agent reads it (`kind` reads its event): its item's id, its times and
     the fields `shown` of its kind, its area once turned and scaled (`bounds`), its picture's URL
     (`picture_url`, by its name), and a keyed one's Keyframes in Timeline time (`_keys_view`) with
-    its area's bounds at each time any property has one (`bounds_at`)."""
+    its area's bounds at each time any property has one (`bounds_at`, on the plan's `frame`)."""
     view = {"id": event["layer"]["id"], **_times(event, "start", "end", *shown), "bounds": event["bounds"], "picture": picture_url(event["image"])}
     if not event["picture"]["motion"]:
         return view
     drawn = kind.validate_python(event)
-    bounds = [{"at": round(at, 3), "bounds": _dump(Box, bounds_at(drawn, at))} for at in key_times(drawn.picture)]
+    bounds = [{"at": round(at, 3), "bounds": _dump(Box, bounds_at(drawn, at, frame))} for at in key_times(drawn.picture)]
     return view | {"keys": _keys_view(event["picture"]["motion"]), "bounds_at_keys": bounds}
 
 
 def _plan_view(
     preview: dict, copied: Callable[[dict], bool] = lambda segment: False, picture_url: Callable[[str], str] = lambda name: name
 ) -> dict:
-    """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
+    """A Preview Plan as an agent reads it: its Canvas (width, height and Safe Area, in whose pixels
+    everything is placed), what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
     (`copied`), its fades, its Audio Effects (`_effects_view`), its Grade (`_grade_view`) and Video Effects), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
@@ -1247,7 +1274,9 @@ def _plan_view(
     Cues (`_cue_view`), the unused Cue Edits and the Words."""
     plan = preview["plan"]
     hook = plan["hook"]
+    frame = (plan["width"], plan["height"])
     return {
+        "canvas": {"width": plan["width"], "height": plan["height"], "safe_area": plan["safe_area"]},
         "duration": round(plan["segments"][-1]["end"] if plan["segments"] else SegmentTime(plan["start"], plan["end"]).length, 2),
         "words_source": preview["words_source"],
         # The Candidate's Grade, over the whole Main Track; left out when neutral.
@@ -1255,7 +1284,7 @@ def _plan_view(
         "scenes": [
             {
                 **_times(scene, "start", "end", "layout", "framing"),
-                **(_picture_view(scene["picture"]) | _motion_view(scene["picture"]) if scene["picture"] else {}),
+                **(_picture_view(scene["picture"]) | _motion_view(scene["picture"], frame) if scene["picture"] else {}),
                 **({"ignored": _keys_view(scene["ignored"])} if scene["ignored"] else {}),
             }
             for scene in plan["scenes"]
@@ -1283,8 +1312,8 @@ def _plan_view(
             **_times(hook, "start", "end", "lines"),
             "kicker": hook["kicker"] and hook["kicker"]["text"],
         },
-        "shapes": [_layer_view(shape, _SHAPE, picture_url) for shape in plan["shapes"]],
-        "text_layers": [_layer_view(text, _TEXT, picture_url, "lines") for text in plan["texts"]],
+        "shapes": [_layer_view(shape, _SHAPE, frame, picture_url) for shape in plan["shapes"]],
+        "text_layers": [_layer_view(text, _TEXT, frame, picture_url, "lines") for text in plan["texts"]],
         "overlays": [
             {
                 "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
@@ -1294,7 +1323,7 @@ def _plan_view(
                     "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
                 }),
                 **({} if event["image"] else _video_read(event, copied)),
-                **_motion_view(event["picture"]),
+                **_motion_view(event["picture"], frame),
                 **_animation_view(event),
             }
             for event in plan["overlays"]

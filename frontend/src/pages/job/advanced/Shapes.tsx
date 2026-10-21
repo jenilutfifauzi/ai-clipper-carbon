@@ -7,7 +7,8 @@ import { Hint } from "../../../components/InfoTip";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { allStroke, FRAME, SHAPE_SIZE_RANGE } from "../editor/picture";
+import { allStroke, SHAPE_SIZE_RANGE } from "../editor/picture";
+import type { Size } from "../editor/pictureGestures";
 import { shadowControls, type ShadowAccess } from "../editor/ShadowFields";
 import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
@@ -84,11 +85,14 @@ export function ShapeFields({
   shape,
   duration,
   onChange,
+  frame,
   onDuplicate,
   onDelete,
 }: {
   shape: Shape;
   duration: number;
+  // The Canvas, whose sides its size goes up to.
+  frame: Size;
   // `group` names the field being changed, so that its changes are undone as one.
   onChange: (shape: Shape, group: string) => void;
   onDuplicate: () => void;
@@ -107,7 +111,7 @@ export function ShapeFields({
     any: (test) => test(style.shadow),
     change: (change, field) => setStyle("shadow", change(style.shadow), field ? `shadow.${field}` : "shadow"),
   };
-  // Whole pixels, up to the frame's side (or more, where it is already larger).
+  // Whole pixels, up to the Canvas's side (or more, where it is already larger).
   const size = (value: number, frame: number) => ({ min: SHAPE_SIZE_RANGE[0], max: Math.max(frame, value), format: (v: number) => `${Math.round(v)} px` });
   return (
     <div className="flex flex-col gap-4">
@@ -127,12 +131,12 @@ export function ShapeFields({
         <Slider
           label={line ? "Length" : "Width"}
           value={style.width}
-          {...size(style.width, FRAME.width)}
+          {...size(style.width, frame.width)}
           onChange={(width) => setStyle("width", Math.round(width))}
         />
         {!line && (
           <>
-            <Slider label="Height" value={style.height} {...size(style.height, FRAME.height)} onChange={(height) => setStyle("height", Math.round(height))} />
+            <Slider label="Height" value={style.height} {...size(style.height, frame.height)} onChange={(height) => setStyle("height", Math.round(height))} />
             <Switch checked={filled} disabled={filled && !style.stroke_width} onChange={(on) => setStyle("fill", on ? NEW_FILL : null)}>
               <span className="text-sm font-medium">Fill</span>
             </Switch>
@@ -185,10 +189,13 @@ export function ShapesFields({
   shapes,
   onChange,
   onDuplicate,
+  frame,
   onCopy,
   onDelete,
 }: {
   shapes: Shape[];
+  // The Canvas, whose sides their size goes up to.
+  frame: Size;
   // `change` made to them all; `group` names the field, so that its changes are undone as one.
   onChange: (change: (shape: Shape) => Shape, group: string) => void;
   onDuplicate: () => void;
@@ -257,7 +264,7 @@ export function ShapesFields({
         <Slider
           label={lines ? "Length" : "Width"}
           value={value("width")}
-          {...size("width", FRAME.width)}
+          {...size("width", frame.width)}
           onChange={(width) => setStyle("width", Math.round(width))}
         />
         {!lines && (
@@ -265,7 +272,7 @@ export function ShapesFields({
             <Slider
               label="Height"
               value={value("height", figures)}
-              {...size("height", FRAME.height, figures)}
+              {...size("height", frame.height, figures)}
               onChange={(height) => setUsed((style) => !allStroke(style.kind), "height", Math.round(height))}
             />
             <Switch

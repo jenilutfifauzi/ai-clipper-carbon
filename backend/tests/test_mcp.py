@@ -62,9 +62,12 @@ KITA_SOAL = (1.6, 2.6)
 # and merge_candidate_items' schemas, and list_assets' kind "video_effects" (85_738).
 # Raised for video-effects/03: `adjustment_layers[].video_effects` there (86_358).
 # Raised for video-effects/07: `overlays[].blend` (the Blend Mode enum) there (87_169).
-# Raised from 87_500 for Narrations (text-to-speech/09): generate_speech, and list_assets' kind
-# "voices" and `language` (88_152); how to lay one is in the server's instructions.
-TOOLS_BUDGET_BYTES = 88_500
+# Raised from 87_500 for Canvas Aspects (canvas-aspect/03): `aspect` (its four values) in edit_candidate's
+# changes and in create_job_from_url's and create_job_from_file's options, and get_candidate saying it
+# gives the Canvas's size (88_010).
+# Raised for Narrations (text-to-speech/09): generate_speech, and list_assets' kind "voices" and
+# `language`; how to lay one is in the server's instructions (89_232 with both).
+TOOLS_BUDGET_BYTES = 89_700
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

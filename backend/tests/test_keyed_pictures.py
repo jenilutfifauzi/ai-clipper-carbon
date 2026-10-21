@@ -11,6 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Keyframe, Overlay, Transform
+from app.canvas import PORTRAIT
 from app.config import RenderTuning
 from app.keyframes import value_at
 from app.planner import MediaInfo, Picture, picture_at, plan_render
@@ -135,7 +136,7 @@ def test_a_keyed_pictures_corners_are_rounded_in_step_with_its_size():
     picture = TypeAdapter(Picture).validate_python(keyed["picture"])
     assert picture.radius > 0
     for at in keyed["at"]:
-        drawn = picture_at(picture, at["time"])
+        drawn = picture_at(picture, at["time"], frame=PORTRAIT.size)
         assert drawn.radius == pytest.approx(picture.radius * min(drawn.width, drawn.height) / min(picture.width, picture.height))
         assert drawn.radius == pytest.approx(at["radius"], abs=1e-6)
 
@@ -145,7 +146,7 @@ def test_a_keyed_video_that_cant_be_decoded_stops_the_encode_and_says_why(settin
     broken.write_bytes(b"not a video")
     keys = {"x": [Keyframe(0.0, 200.0), Keyframe(1.0, 800.0)]}
     overlay = Overlay("o", "v", 0.0, 1.0, transform=Transform(scale=0.25), keys=keys)
-    plan = plan_render(0.0, 2.0, SourceMetadata(10.0, 25.0, 640, 360, "h264"), overlays=[overlay], media_info={"v": MediaInfo(320, 180, 4.0, False)})
+    plan = plan_render(0.0, 2.0, SourceMetadata(10.0, 25.0, 640, 360, "h264"), overlays=[overlay], media_info={"v": MediaInfo(320, 180, 4.0, False)}, canvas=PORTRAIT)
     renderer = Renderer(settings.ffmpeg_bin, RenderTuning(encoders=("libx264",)))
     with pytest.raises(RuntimeError, match="A keyed picture couldn't be drawn: The video broken.mp4 couldn't be decoded"):
         renderer.render(plain_video, plan, tmp_path / "clip.mp4", tmp_path / "clip.jpg", files={"v": broken})

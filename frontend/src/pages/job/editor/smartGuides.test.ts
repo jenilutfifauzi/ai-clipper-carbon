@@ -2,9 +2,9 @@
 // examples of the pictures at the playhead and a Transform in, and the Transform and lines out.
 import { describe, expect, test } from "vitest";
 import type { OverlayEvent, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
-import { guideTargets, picturesAt, snapMoved, snapScaled } from "./smartGuides";
+import { fixedGuides, guideTargets, picturesAt, snapMoved, snapScaled } from "./smartGuides";
+import { PORTRAIT } from "./canvas";
 
-const FRAME = { width: 1080, height: 1920 };
 // A stage 540 CSS px wide: a CSS pixel is 2 frame pixels, and 6 of them, 12.
 const UNIT = 2;
 // A 200×100 picture (at scale 1, before stretch).
@@ -19,7 +19,7 @@ const others = [
   { id: "overlay:o2", bounds: { x: 100, y: 200, width: 300, height: 200 } },
   { id: "overlay:o1", bounds: { x: 700, y: 1300, width: 200, height: 100 } },
 ];
-const targets = guideTargets(FRAME, others, "overlay:o1");
+const targets = guideTargets(PORTRAIT, others, "overlay:o1");
 
 describe("the targets", () => {
   test("are the frame's edges and centre, the fixed guides, and the other pictures' edges and centres", () => {
@@ -30,9 +30,26 @@ describe("the targets", () => {
   });
 
   test("the picture being dragged is not its own target", () => {
-    expect(guideTargets(FRAME, others, "overlay:o2")).toEqual({
+    expect(guideTargets(PORTRAIT, others, "overlay:o2")).toEqual({
       x: [0, 540, 700, 800, 900, 950, 1080],
       y: [0, 232, 960, 1300, 1350, 1400, 1536, 1920],
+    });
+  });
+});
+
+describe("the fixed guides", () => {
+  // canvas.py's 16:9 Canvas, as its plan carries it.
+  const LANDSCAPE = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
+
+  test("are 9:16's centre and its Safe Area's top, bottom and right edge", () => {
+    expect(fixedGuides(PORTRAIT)).toEqual({ x: { middle: 540, end: 950 }, y: { start: 232, middle: 960, end: 1536 } });
+  });
+
+  test("are built from the plan's Safe Area and the Canvas's centre on any other aspect", () => {
+    expect(fixedGuides(LANDSCAPE)).toEqual({ x: { start: 96, middle: 960, end: 1824 }, y: { start: 54, middle: 540, end: 1026 } });
+    expect(guideTargets(LANDSCAPE, others, "overlay:o1")).toEqual({
+      x: [0, 96, 100, 250, 400, 960, 1824, 1920],
+      y: [0, 54, 200, 300, 400, 540, 1026, 1080],
     });
   });
 });
@@ -89,7 +106,7 @@ describe("moving snaps the picture's edges and centre", () => {
 
 describe("a corner scale snaps the moving edges", () => {
   // Another picture 650..850 across at the playhead.
-  const near = guideTargets(FRAME, [{ id: "overlay:o2", bounds: { x: 650, y: 100, width: 200, height: 100 } }], "overlay:o1");
+  const near = guideTargets(PORTRAIT, [{ id: "overlay:o2", bounds: { x: 650, y: 100, width: 200, height: 100 } }], "overlay:o1");
 
   test("an edge 3 CSS px short of a target scales out to meet it, about the centre", () => {
     // At 1.04 it is 208 across: its right edge at 644, 6 frame pixels from 650.
@@ -148,7 +165,7 @@ describe("the pictures at the playhead", () => {
     image: true,
   });
   const plan = {
-    ...FRAME,
+    ...PORTRAIT,
     scenes: [scene(0, 4, null), scene(4, 8, picture(10))],
     overlays: [overlay("o1", 0, 5, 20), overlay("o2", 3, 6, 30), overlay("o3", 6, 9, 40)],
     shapes: [],

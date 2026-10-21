@@ -24,7 +24,7 @@ import {
   type Sized,
 } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
-import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
+import { fixedGuides, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type GuideLines, type SmartGuides } from "./smartGuides";
 import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, pressTogglesPick, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 import { TextBoxGrips } from "./TextBoxGrips";
@@ -280,7 +280,7 @@ export function useStageEdit(
     const snapped: { x: number | null; y: number | null } = { x: null, y: null };
     if (reach !== null) {
       // The guide nearest an edge or the middle, and how far that has to move to meet it.
-      const nearest = (start: number, length: number, lines: { start?: number; middle: number; end: number }) => {
+      const nearest = (start: number, length: number, lines: GuideLines) => {
         let best: { line: number; by: number } | null = null;
         const pairs: [number | undefined, number][] = [
           [lines.start, start],
@@ -293,8 +293,10 @@ export function useStageEdit(
         }
         return best;
       };
-      const sx = nearest(x, from.width, GUIDES_X);
-      const sy = nearest(y, from.height, GUIDES_Y);
+      // The plan's Canvas's centre and Safe Area.
+      const guides = fixedGuides(plan);
+      const sx = nearest(x, from.width, guides.x);
+      const sy = nearest(y, from.height, guides.y);
       if (sx) [x, snapped.x] = [x + sx.by, sx.line];
       if (sy && keepY(y + sy.by) === y + sy.by) [y, snapped.y] = [y + sy.by, sy.line];
     }

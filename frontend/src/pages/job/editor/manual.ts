@@ -1,6 +1,8 @@
 import type { Candidate, Framing, Layout, LayoutOverride, RenderPlan } from "../../../api";
 import { NO_CROP } from "./cropGestures";
-import { BLURRED, IDENTITY } from "./picture";
+import { canvasOf } from "./canvas";
+import { BLURRED, identity } from "./picture";
+import type { Size } from "./pictureGestures";
 import { sceneAt, sceneOverride, sourceTime } from "./ScenesTrack";
 
 /**
@@ -14,8 +16,8 @@ import { sceneAt, sceneOverride, sourceTime } from "./ScenesTrack";
 export type LayoutEdits = Pick<Candidate, "layout" | "framing" | "layout_overrides">;
 
 // The Framing a Scene starts from when the plan has none for it, and a new video Segment's: its
-// picture fitted over its blur.
-export const FITTED: Framing = { transform: IDENTITY, crop: NO_CROP, background: BLURRED };
+// picture fitted over its blur, centred on the Canvas `frame`.
+export const fitted = (frame: Size): Framing => ({ transform: identity(frame), crop: NO_CROP, background: BLURRED });
 
 /**
  * The plan's Scene under `time` (Timeline time) when it is one of the Main Track's Segment `index`,
@@ -47,7 +49,7 @@ export function sceneLayoutOverrides(overrides: LayoutOverride[], plan: RenderPl
   if (at === null) return null;
   const others = overrides.filter((override) => sceneOverride([override], plan, index) === null);
   if (layout === "default") return others;
-  const own: LayoutOverride = layout === "manual" ? { at, layout, framing: plan.scenes[index].framing ?? FITTED } : { at, layout };
+  const own: LayoutOverride = layout === "manual" ? { at, layout, framing: plan.scenes[index].framing ?? fitted(canvasOf(plan)) } : { at, layout };
   return [...others, own].sort((a, b) => a.at - b.at);
 }
 
@@ -63,7 +65,7 @@ export function reframed(edits: LayoutEdits, plan: RenderPlan, index: number): L
  */
 export function withClipLayout(edits: LayoutEdits, plan: RenderPlan, index: number, layout: Layout): LayoutEdits {
   if (layout !== "manual") return { ...edits, layout, framing: null };
-  return { ...edits, layout, framing: plan.scenes[index]?.framing ?? edits.framing ?? FITTED };
+  return { ...edits, layout, framing: plan.scenes[index]?.framing ?? edits.framing ?? fitted(canvasOf(plan)) };
 }
 
 /**
@@ -73,7 +75,7 @@ export function withClipLayout(edits: LayoutEdits, plan: RenderPlan, index: numb
 export function forAllScenes(edits: LayoutEdits, plan: RenderPlan, index: number): LayoutEdits | null {
   const layout_overrides = sceneLayoutOverrides(edits.layout_overrides, plan, index, "default");
   if (!layout_overrides) return null;
-  const framing = sceneOverride(edits.layout_overrides, plan, index)?.framing ?? plan.scenes[index].framing ?? FITTED;
+  const framing = sceneOverride(edits.layout_overrides, plan, index)?.framing ?? plan.scenes[index].framing ?? fitted(canvasOf(plan));
   return { ...edits, layout: "manual", framing, layout_overrides };
 }
 

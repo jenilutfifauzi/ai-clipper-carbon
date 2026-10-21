@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 from app.config import load_settings
-from app.planner import OUTPUT_HEIGHT, OUTPUT_WIDTH, SAFE_AREA, WATERMARK_MARGIN, Box, font_metrics, plan_render, watermark
+from app.canvas import PORTRAIT
+from app.planner import WATERMARK_MARGIN, Box, font_metrics, plan_render, watermark
 from app.renderer import _ass
 from app.styles import (
     DEFAULT,
@@ -39,23 +40,23 @@ def inside(box: Box, area: Box) -> bool:
 
 
 def test_no_watermark_by_default_and_the_default_script_is_unchanged():
-    planned = plan_render(0, 5, SOURCE, hook="Halo")
+    planned = plan_render(0, 5, SOURCE, hook="Halo", canvas=PORTRAIT)
     assert planned.watermark is None
     assert "Watermark" not in _ass(planned)
     # Blank text, a Logo kind without a Logo, or a Logo that is missing (deleted): nothing.
-    assert watermark(WatermarkStyle(kind=WatermarkKind.TEXT, text="  ")) is None
-    assert watermark(WatermarkStyle(kind=WatermarkKind.LOGO)) is None
-    assert watermark(WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34"), None) is None
+    assert watermark(WatermarkStyle(kind=WatermarkKind.TEXT, text="  "), canvas=PORTRAIT) is None
+    assert watermark(WatermarkStyle(kind=WatermarkKind.LOGO), canvas=PORTRAIT) is None
+    assert watermark(WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34"), None, canvas=PORTRAIT) is None
 
 
 def test_the_nine_positions_sit_inside_the_safe_area_by_its_margin():
-    margin = Box(SAFE_AREA.x + WATERMARK_MARGIN, SAFE_AREA.y + WATERMARK_MARGIN,
-                 SAFE_AREA.width - 2 * WATERMARK_MARGIN, SAFE_AREA.height - 2 * WATERMARK_MARGIN)
+    margin = Box(PORTRAIT.safe_area.x + WATERMARK_MARGIN, PORTRAIT.safe_area.y + WATERMARK_MARGIN,
+                 PORTRAIT.safe_area.width - 2 * WATERMARK_MARGIN, PORTRAIT.safe_area.height - 2 * WATERMARK_MARGIN)
     areas = {}
     for position in WatermarkPosition:
         if position is WatermarkPosition.CUSTOM:
             continue
-        event = watermark(WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34", position=position, size=100), (400, 200))
+        event = watermark(WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34", position=position, size=100), (400, 200), canvas=PORTRAIT)
         assert event is not None and (event.area.width, event.area.height) == (200, 100)
         assert inside(event.area, margin), position
         areas[position.value] = event.area
@@ -63,27 +64,27 @@ def test_the_nine_positions_sit_inside_the_safe_area_by_its_margin():
     assert areas["bottom_right"].x + 200 == margin.x + margin.width
     assert areas["bottom_right"].y + 100 == margin.y + margin.height
     # The middle column is centred in the frame, like the captions and the hook.
-    assert areas["top"].x == areas["middle"].x == areas["bottom"].x == (OUTPUT_WIDTH - 200) // 2
+    assert areas["top"].x == areas["middle"].x == areas["bottom"].x == (PORTRAIT.width - 200) // 2
     assert areas["left"].y == areas["middle"].y == areas["right"].y
 
 
 def test_a_custom_watermark_is_centred_where_it_was_dragged_and_kept_in_the_frame():
     style = WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34", position=WatermarkPosition.CUSTOM, x=300, y=700, size=100)
-    assert watermark(style, (100, 100)).area == Box(250, 650, 100, 100)
+    assert watermark(style, (100, 100), canvas=PORTRAIT).area == Box(250, 650, 100, 100)
     corner = WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34", position=WatermarkPosition.CUSTOM, x=1080, y=1920, size=100)
-    assert watermark(corner, (100, 100)).area == Box(OUTPUT_WIDTH - 100, OUTPUT_HEIGHT - 100, 100, 100)
+    assert watermark(corner, (100, 100), canvas=PORTRAIT).area == Box(PORTRAIT.width - 100, PORTRAIT.height - 100, 100, 100)
 
 
 def test_a_text_watermark_is_measured_in_its_font_and_set_smaller_when_wider_than_the_frame():
-    event = watermark(TEXT)
+    event = watermark(TEXT, canvas=PORTRAIT)
     assert (event.size, event.area.height) == (60, 60)
     assert event.area.width == pytest.approx(font_metrics(TEXT.font).width("@kanal", 60), abs=1)
-    wide = watermark(WatermarkStyle(kind=WatermarkKind.TEXT, text="W" * 60, size=200))
-    assert wide.size < 200 and wide.area.width <= OUTPUT_WIDTH
+    wide = watermark(WatermarkStyle(kind=WatermarkKind.TEXT, text="W" * 60, size=200), canvas=PORTRAIT)
+    assert wide.size < 200 and wide.area.width <= PORTRAIT.width
 
 
 def test_a_text_watermark_is_the_first_event_of_the_script_for_the_whole_clip():
-    planned = plan_render(0, 5, SOURCE, hook="Halo", watermark_style=replace(TEXT, opacity=0.5, colour="#FF0000"))
+    planned = plan_render(0, 5, SOURCE, hook="Halo", watermark_style=replace(TEXT, opacity=0.5, colour="#FF0000"), canvas=PORTRAIT)
     script = _ass(planned)
     style = next(line for line in script.splitlines() if line.startswith("Style: Watermark,"))
     assert ",60,&H000000FF,&H000000FF," in style
@@ -92,7 +93,7 @@ def test_a_text_watermark_is_the_first_event_of_the_script_for_the_whole_clip():
     centre = f"\\pos({area.x + area.width / 2:g},{area.y + area.height / 2:g})"
     assert events[0] == f"Dialogue: 0,0:00:00.00,0:00:05.00,Watermark,,0,0,0,,{{{centre}\\alpha&H80&}}@kanal"
     # Without an outline, none.
-    plain = _ass(plan_render(0, 5, SOURCE, watermark_style=WatermarkStyle(kind=WatermarkKind.TEXT, text="x", outline=False)))
+    plain = _ass(plan_render(0, 5, SOURCE, watermark_style=WatermarkStyle(kind=WatermarkKind.TEXT, text="x", outline=False), canvas=PORTRAIT))
     assert next(line for line in plain.splitlines() if line.startswith("Style: Watermark,")).endswith(",1,0,0,5,0,0,0,1")
 
 

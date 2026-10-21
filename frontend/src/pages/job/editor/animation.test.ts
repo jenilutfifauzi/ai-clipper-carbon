@@ -4,6 +4,7 @@
 import { describe, expect, test } from "vitest";
 import type { OverlayEvent, Picture } from "../../../api";
 import { animatedPicture, overlayLook } from "./animation";
+import { PORTRAIT } from "./canvas";
 
 // A 200x100 image fitted as 1080x540, drawn at 0.5 (540x270) about (540, 900), its corners rounded 135 px.
 const picture = (changes: Partial<Picture> = {}): Picture => ({
@@ -50,7 +51,7 @@ const near = (value: number) => expect.closeTo(value, 6);
 
 const drawnAt = (event: OverlayEvent, time: number) => {
   const look = overlayLook(event, time);
-  return look && animatedPicture(event.picture, time, look);
+  return look && animatedPicture(event.picture, time, look, PORTRAIT);
 };
 
 describe("an Overlay's animations", () => {

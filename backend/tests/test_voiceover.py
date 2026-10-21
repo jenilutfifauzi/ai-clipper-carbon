@@ -13,6 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Candidate, MusicClip, Segment
+from app.canvas import PORTRAIT
 from app.planner import MediaInfo, SegmentInput, gain_at, plan_render
 from app.transcript import Word
 from test_keyed_volume import tone_level
@@ -48,7 +49,7 @@ def take(id: str, start: float, secs: float, **fields) -> MusicClip:
 
 
 def planned(main_track: list[SegmentInput], *music: MusicClip):
-    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(), *music], media_info=ITEMS)
+    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(), *music], media_info=ITEMS, canvas=PORTRAIT)
     return {event.id: event for event in plan.audio}, plan
 
 
@@ -109,7 +110,7 @@ def test_a_stored_candidate_without_speech_reads_as_not_speech_and_plans_as_befo
     assert read == candidate
 
     def plan(music: list[MusicClip]):
-        return plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 14, words=said((0.2, 0.6)))], music=music, media_info=ITEMS)
+        return plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 14, words=said((0.2, 0.6)))], music=music, media_info=ITEMS, canvas=PORTRAIT)
 
     assert plan(read.music) == plan(candidate.music)
     # The other Music Clip, not marked, makes no speech: the song ducks under the Words alone.

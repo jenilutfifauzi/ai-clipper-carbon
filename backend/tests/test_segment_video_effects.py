@@ -12,6 +12,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Candidate, Segment, manual_candidate
+from app.canvas import PORTRAIT
 from app.config import CameraTuning, RenderTuning
 from app.planner import SegmentInput, plan_render
 from app.renderer import Renderer
@@ -44,7 +45,7 @@ def test_a_segments_enabled_effects_reach_its_plan_at_the_frames_own_size():
         SegmentInput(20, 23, video_effects=[OFF]),
         SegmentInput(25, 25, hold=1.0, video_effects=[BLUR]),
         SegmentInput(30, 31),
-    ])
+    ], canvas=PORTRAIT)
     # A Segment's frame is 1080x1920 at scale 1: its sizes are as given. A Freeze frame takes them too.
     assert [segment.video_effects for segment in planned.segments] == [[BLUR], [], [BLUR], []]
 
@@ -73,7 +74,7 @@ def test_a_segments_stack_is_checked_with_its_defaults_filled():
 
 def audio_filters(*segments: SegmentInput) -> str:
     """The filtergraph the renderer writes for a Clip of `segments` of the Source."""
-    plan = plan_render(10, 31, SOURCE, main_track=list(segments))
+    plan = plan_render(10, 31, SOURCE, main_track=list(segments), canvas=PORTRAIT)
     out = Path("/out")
     command = Renderer(Path("/usr/bin/ffmpeg"), RenderTuning())._command(
         Path("/jobs/source.mp4"), plan, None, "libx264", out / "v.mp4", out / "p.jpg", out / "s.ass", None, {}

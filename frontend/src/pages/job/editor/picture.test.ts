@@ -2,8 +2,9 @@
 // Fit and Fill and a new Overlay go by (backend/app/pictures.py's, on the same worked examples).
 import { describe, expect, test } from "vitest";
 import keyed from "../../../../../backend/tests/fixtures/keyed_picture.json";
-import type { Panel, Picture } from "../../../api";
-import { coverScale, fillScale, fittedSize, IDENTITY, overlayPlacement, panelStyle, pictureAt, pictureStyle, scaleForWidth, slotView } from "./picture";
+import type { Ease, Panel, Picture } from "../../../api";
+import { coverScale, fillScale, fittedSize, identity, IDENTITY, overlayPlacement, panelStyle, pictureAt, pictureStyle, scaleForWidth, slotView } from "./picture";
+import { PORTRAIT, type Canvas } from "./canvas";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -110,42 +111,77 @@ describe("a Source deck's two videos", () => {
 describe("a media Segment's Framing", () => {
   test("is filled once turned a quarter: a sideways phone video stands up to cover the frame", () => {
     // 1920x1080 fits as 1080x607.5; turned 90°, it is 607.5 wide and 1080 tall at scale 1.
-    expect(fillScale(1920, 1080, 0)).toBeCloseTo(1920 / 607.5);
-    expect(fillScale(1920, 1080, 90)).toBeCloseTo(1080 / 607.5);
-    expect(fillScale(1920, 1080, -270)).toBeCloseTo(1080 / 607.5);
-    expect(fillScale(1920, 1080, 180)).toBeCloseTo(1920 / 607.5);
+    expect(fillScale(1920, 1080, 0, PORTRAIT)).toBeCloseTo(1920 / 607.5);
+    expect(fillScale(1920, 1080, 90, PORTRAIT)).toBeCloseTo(1080 / 607.5);
+    expect(fillScale(1920, 1080, -270, PORTRAIT)).toBeCloseTo(1080 / 607.5);
+    expect(fillScale(1920, 1080, 180, PORTRAIT)).toBeCloseTo(1920 / 607.5);
   });
 });
 
 describe("the fitted size", () => {
   test("is the largest that fits the frame, and the cover scale fills it", () => {
-    expect(fittedSize({ width: 1920, height: 1080 })).toEqual({ width: 1080, height: 607.5 });
-    expect(fittedSize({ width: 540, height: 1080 })).toEqual({ width: 960, height: 1920 });
-    expect(fittedSize({ width: 1080, height: 2400 })).toEqual({ width: 864, height: 1920 });
+    expect(fittedSize({ width: 1920, height: 1080 }, PORTRAIT)).toEqual({ width: 1080, height: 607.5 });
+    expect(fittedSize({ width: 540, height: 1080 }, PORTRAIT)).toEqual({ width: 960, height: 1920 });
+    expect(fittedSize({ width: 1080, height: 2400 }, PORTRAIT)).toEqual({ width: 864, height: 1920 });
     // In another frame.
     expect(fittedSize({ width: 200, height: 100 }, { width: 100, height: 100 })).toEqual({ width: 100, height: 50 });
-    expect(coverScale(1920, 1080)).toBeCloseTo(1920 / 607.5);
-    expect(coverScale(540, 960)).toBeCloseTo(1);
+    expect(coverScale(1920, 1080, PORTRAIT)).toBeCloseTo(1920 / 607.5);
+    expect(coverScale(540, 960, PORTRAIT)).toBeCloseTo(1);
   });
 
   test("gives the scale that draws a picture so many pixels wide", () => {
-    expect(scaleForWidth(1920, 1080, 540)).toBe(0.5);
-    expect(scaleForWidth(200, 100, 540)).toBe(0.5);
-    expect(scaleForWidth(540, 1080, 540)).toBeCloseTo(540 / 960);
+    expect(scaleForWidth(1920, 1080, 540, PORTRAIT)).toBe(0.5);
+    expect(scaleForWidth(200, 100, 540, PORTRAIT)).toBe(0.5);
+    expect(scaleForWidth(540, 1080, 540, PORTRAIT)).toBeCloseTo(540 / 960);
     // Kept within the Transform's range.
-    expect(scaleForWidth(1920, 1080, 10)).toBe(0.05);
+    expect(scaleForWidth(1920, 1080, 10, PORTRAIT)).toBe(0.05);
+  });
+});
+
+describe("on a 16:9 Canvas", () => {
+  // canvas.py's 16:9 Canvas, as its plan carries it.
+  const LANDSCAPE: Canvas = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
+
+  test("a picture is fitted to it, and covers it at the cover scale", () => {
+    // A 16:9 Source fills it at scale 1; a portrait phone video stands in its middle.
+    expect(fittedSize({ width: 1920, height: 1080 }, LANDSCAPE)).toEqual({ width: 1920, height: 1080 });
+    expect(coverScale(1920, 1080, LANDSCAPE)).toBeCloseTo(1);
+    expect(fittedSize({ width: 1080, height: 1920 }, LANDSCAPE)).toEqual({ width: 607.5, height: 1080 });
+    expect(coverScale(1080, 1920, LANDSCAPE)).toBeCloseTo(1920 / 607.5);
+    // A square one is as tall as the frame, and covers it at its width over its height.
+    expect(coverScale(1000, 1000, LANDSCAPE)).toBeCloseTo(1920 / 1080);
+  });
+
+  test("Fill turned a quarter covers it with the picture stood up", () => {
+    // 1920x1080 turned 90° is 1080 wide and 1920 tall at scale 1: 1920 / 1080 covers the width.
+    expect(fillScale(1920, 1080, 0, LANDSCAPE)).toBeCloseTo(1);
+    expect(fillScale(1920, 1080, 90, LANDSCAPE)).toBeCloseTo(1920 / 1080);
+  });
+
+  test("the identity and a new Overlay take the same places as on 9:16", () => {
+    expect(identity(LANDSCAPE)).toMatchObject({ x: 960, y: 540, scale: 1 });
+    // Half the frame wide (960 px) and as far down as 760 of 1920.
+    expect(overlayPlacement({ width: 1920, height: 1080 }, LANDSCAPE)).toEqual({ ...identity(LANDSCAPE), y: 428, scale: 0.5 });
+    expect(overlayPlacement(undefined, LANDSCAPE)).toMatchObject({ x: 960, y: 428, scale: 0.5 });
+    expect(scaleForWidth(1080, 1920, 960, LANDSCAPE)).toBeCloseTo(960 / 607.5);
+  });
+
+  test("a keyed centre is held to it, not to 9:16's frame", () => {
+    const moving = { ...picture(), motion: { x: [{ at: 0, value: 1500, ease: [0, 0, 1, 1] as Ease }] } };
+    expect(pictureAt(moving, 0, LANDSCAPE).centre[0]).toBe(1500);
+    expect(pictureAt(moving, 0, PORTRAIT).centre[0]).toBe(1080);
   });
 });
 
 describe("a new Overlay's placement", () => {
   test("is 540 px wide in the frame's upper middle, which Reset puts it back to", () => {
-    expect(overlayPlacement({ width: 1920, height: 1080 })).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
-    expect(overlayPlacement({ width: 540, height: 1080 })).toEqual({ ...IDENTITY, y: 760, scale: 0.5625 });
-    expect(overlayPlacement({ width: 1000, height: 3000 }).scale).toBe(Number((540 / 640).toFixed(4)));
+    expect(overlayPlacement({ width: 1920, height: 1080 }, PORTRAIT)).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
+    expect(overlayPlacement({ width: 540, height: 1080 }, PORTRAIT)).toEqual({ ...IDENTITY, y: 760, scale: 0.5625 });
+    expect(overlayPlacement({ width: 1000, height: 3000 }, PORTRAIT).scale).toBe(Number((540 / 640).toFixed(4)));
   });
 
   test("is half the frame's scale while its item's size isn't known", () => {
-    expect(overlayPlacement(undefined)).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
+    expect(overlayPlacement(undefined, PORTRAIT)).toEqual({ ...IDENTITY, y: 760, scale: 0.5 });
   });
 });
 
@@ -156,7 +192,7 @@ describe("a keyed Picture at a time", () => {
 
   for (const at of keyed.at) {
     test(`is where the renderer draws it at ${at.time} s`, () => {
-      const drawn = pictureAt(planned, at.time);
+      const drawn = pictureAt(planned, at.time, PORTRAIT);
       for (const [mine, theirs] of [
         [drawn.centre[0], at.centre[0]],
         [drawn.centre[1], at.centre[1]],
@@ -174,11 +210,11 @@ describe("a keyed Picture at a time", () => {
 
   test("is itself, unkeyed", () => {
     const still = picture();
-    expect(pictureAt(still, 1)).toBe(still);
+    expect(pictureAt(still, 1, PORTRAIT)).toBe(still);
   });
 
   test("is drawn as CSS from its sampled values", () => {
-    const style = pictureStyle(pictureAt(planned, 1.7), FRAME);
+    const style = pictureStyle(pictureAt(planned, 1.7, PORTRAIT), FRAME);
     const at = keyed.at.find((sample) => sample.time === 1.7)!;
     expect(parseFloat(style.width)).toBeCloseTo((at.width / 1080) * 100, 9);
     expect(style.transform).toBe(`translate(-50%, -50%) rotate(${at.rotation}deg) scale(-1, 1)`);

@@ -99,6 +99,7 @@ def test_job_reaches_review_with_candidates_ranked_by_predicted_score(client, fr
         "window_score": 50,
         "origin": "ai",
         "layout": "auto",
+        "aspect": "9:16",
         "selected": False,
         "edited": False,
         "preset_id": "default",

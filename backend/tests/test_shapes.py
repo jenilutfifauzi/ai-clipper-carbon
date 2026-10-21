@@ -13,6 +13,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Shape
+from app.canvas import PORTRAIT
 from app.jobs import CANDIDATES_FILE
 from app.layer_pictures import PICTURES_DIR
 from app.planner import MAX_LAYER_PICTURE, Box, ShapeEvent, plan_render, shape_event, text_event
@@ -80,13 +81,13 @@ def test_a_shapes_picture_is_made_at_the_scale_it_reaches_and_never_larger_than_
 
 def test_shapes_are_picture_layers_drawn_after_the_captions_and_before_the_text_layers():
     title = text_layer()
-    planned = plan_render(10.0, 20.0, SOURCE, text_layers=[title], shapes=[shape(id="a"), shape(id="b", start=12)])
+    planned = plan_render(10.0, 20.0, SOURCE, text_layers=[title], shapes=[shape(id="a"), shape(id="b", start=12)], canvas=PORTRAIT)
     # A Shape that starts after the Clip ends isn't shown.
     assert [event.layer.id for event in planned.shapes] == ["a"]
     assert [event.layer.id for event in planned.picture_layers] == ["a", "t1"]
-    assert planned.picture_layers[1] == text_event(title, 10.0)
+    assert planned.picture_layers[1] == text_event(title, 10.0, canvas=PORTRAIT)
     # Without Shapes, the plan is as it was.
-    assert plan_render(10.0, 20.0, SOURCE, text_layers=[title]).picture_layers == [text_event(title, 10.0)]
+    assert plan_render(10.0, 20.0, SOURCE, text_layers=[title], canvas=PORTRAIT).picture_layers == [text_event(title, 10.0, canvas=PORTRAIT)]
 
 
 def test_a_shape_is_never_stretched_nor_flipped_nor_left_with_nothing_to_draw():

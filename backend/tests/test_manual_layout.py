@@ -13,7 +13,8 @@ import pytest
 from app.analysis import Analyzer
 from app.candidates import Background, BackgroundKind, Crop, Framing, Layout, LayoutOverride, Transform
 from app.pictures import cover_scale
-from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, Box, FrameFaces, Scene, SceneLayout, on_frame, picture_of, plan_render
+from app.canvas import PORTRAIT as NINE_SIXTEEN
+from app.planner import Box, FrameFaces, Scene, SceneLayout, on_frame, picture_of, plan_render
 from app.video_source import SourceMetadata
 from test_mcp import HALO_KABAR, call, fails, manual
 # The MCP client the MCP tests use.
@@ -52,72 +53,72 @@ def within_a_pixel(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
 def test_a_manual_override_plans_its_picture_over_its_background_and_needs_no_faces():
     override = LayoutOverride(4.0, Layout.MANUAL, BY_HAND)
     for seen in (faces(), None):
-        plan = plan_render(100, 106, SOURCE, SCENES, seen, layout_overrides=[override])
+        plan = plan_render(100, 106, SOURCE, SCENES, seen, layout_overrides=[override], canvas=NINE_SIXTEEN)
         first, second = plan.scenes
         assert first.layout is SceneLayout.TRACK
         # The Source, placed by the override's Framing, still for the whole Scene, over its colour.
         assert second.layout is SceneLayout.MANUAL
-        assert second.picture == picture_of(1920, 1080, BY_HAND.transform)
+        assert second.picture == picture_of(1920, 1080, BY_HAND.transform, canvas=NINE_SIXTEEN)
         assert (second.panels, second.colour, second.framing) == ([], "#123456", BY_HAND)
         assert (second.picture.width, second.picture.height, second.picture.centre) == (1620, 912, (500, 960))
     # Over its blur: the blurred cover of what its Crop keeps, under it.
     blurred = Framing(crop=Crop(right=0.5))
-    [scene] = plan_render(100, 103, SOURCE, layout_overrides=[LayoutOverride(1.0, Layout.MANUAL, blurred)]).scenes
+    [scene] = plan_render(100, 103, SOURCE, layout_overrides=[LayoutOverride(1.0, Layout.MANUAL, blurred)], canvas=NINE_SIXTEEN).scenes
     [background] = scene.panels
     assert background.blur and (background.path[0].x, background.crop_width, background.crop_height) == (176, 608, 1080)
     assert scene.colour is None and scene.picture.crop == Box(0, 0, 960, 1080)
 
 
 def test_a_candidate_layout_of_manual_applies_to_the_scenes_without_an_override():
-    plan = plan_render(100, 106, SOURCE, SCENES, faces(), Layout.MANUAL, framing=BY_HAND, layout_overrides=[LayoutOverride(4.0, Layout.AUTO)])
+    plan = plan_render(100, 106, SOURCE, SCENES, faces(), Layout.MANUAL, framing=BY_HAND, layout_overrides=[LayoutOverride(4.0, Layout.AUTO)], canvas=NINE_SIXTEEN)
     manual, chosen = plan.scenes
     assert (manual.layout, manual.framing) == (SceneLayout.MANUAL, BY_HAND)
     # Auto chooses by the faces, and never Manual.
     assert chosen.layout is SceneLayout.SPLIT
-    assert [scene.layout for scene in plan_render(100, 106, SOURCE, SCENES, faces()).scenes] == ["track", "split"]
+    assert [scene.layout for scene in plan_render(100, 106, SOURCE, SCENES, faces(), canvas=NINE_SIXTEEN).scenes] == ["track", "split"]
 
 
 def test_a_portrait_source_is_framed_by_hand_where_manual_and_passed_through_elsewhere():
     # The Candidate's Layout of Manual: its Framing, over its colour.
-    [scene] = plan_render(100, 106, PORTRAIT, layout=Layout.MANUAL, framing=BY_HAND).scenes
+    [scene] = plan_render(100, 106, PORTRAIT, layout=Layout.MANUAL, framing=BY_HAND, canvas=NINE_SIXTEEN).scenes
     assert (scene.layout, scene.framing, scene.colour) == (SceneLayout.MANUAL, BY_HAND, "#123456")
-    assert scene.picture == picture_of(1080, 1440, BY_HAND.transform)
+    assert scene.picture == picture_of(1080, 1440, BY_HAND.transform, canvas=NINE_SIXTEEN)
     # A Manual override frames its Scene; the other is passed through, as under an automatic Layout.
-    passed, by_hand = plan_render(100, 106, PORTRAIT, SCENES, layout_overrides=[LayoutOverride(4.0, Layout.MANUAL, BY_HAND)]).scenes
+    passed, by_hand = plan_render(100, 106, PORTRAIT, SCENES, layout_overrides=[LayoutOverride(4.0, Layout.MANUAL, BY_HAND)], canvas=NINE_SIXTEEN).scenes
     assert (passed.layout, passed.start, passed.end) == (SceneLayout.PASSTHROUGH, 0, 3)
     assert [panel.area for panel in passed.panels] == [Box(0, 240, 1080, 1440)]
     assert (by_hand.layout, by_hand.start, by_hand.end, by_hand.framing) == (SceneLayout.MANUAL, 3, 6, BY_HAND)
     # Automatic Layouts pass it through whole, as one Scene, which starts Manual from scale 1 over black.
     for layout in (Layout.AUTO, Layout.TRACK):
-        [scene] = plan_render(100, 106, PORTRAIT, SCENES, layout=layout, layout_overrides=[LayoutOverride(4.0, Layout.BLUR)]).scenes
+        [scene] = plan_render(100, 106, PORTRAIT, SCENES, layout=layout, layout_overrides=[LayoutOverride(4.0, Layout.BLUR)], canvas=NINE_SIXTEEN).scenes
         assert (scene.layout, scene.start, scene.end) == (SceneLayout.PASSTHROUGH, 0, 6)
         assert scene.framing == Framing(background=Background(BackgroundKind.COLOUR, "#000000"))
-        assert box(picture_of(1080, 1440, scene.framing.transform).bounds) == (0, 240, 1080, 1440)
+        assert box(picture_of(1080, 1440, scene.framing.transform, canvas=NINE_SIXTEEN).bounds) == (0, 240, 1080, 1440)
 
 
 def test_a_track_scenes_framing_draws_its_first_crop():
     # A face left, in the middle and right of the frame, and none.
     for centre in (100, 400, 960, 1500, 1820, None):
         seen = sampled((3, None if centre is None else [face(centre)]))
-        [scene] = plan_render(100, 103, SOURCE, [Scene(0, 3)], seen, Layout.TRACK).scenes
+        [scene] = plan_render(100, 103, SOURCE, [Scene(0, 3)], seen, Layout.TRACK, canvas=NINE_SIXTEEN).scenes
         [panel] = scene.panels
         start = panel.path[0]
         framing = scene.framing
-        assert 0 <= framing.transform.x <= OUTPUT_WIDTH and framing.background.kind is BackgroundKind.BLUR
-        drawn = on_frame(picture_of(1920, 1080, framing.transform, framing.crop))
+        assert 0 <= framing.transform.x <= NINE_SIXTEEN.width and framing.background.kind is BackgroundKind.BLUR
+        drawn = on_frame(picture_of(1920, 1080, framing.transform, framing.crop, canvas=NINE_SIXTEEN), frame=NINE_SIXTEEN.size)
         # The same part of the Source fills the frame, within a pixel.
-        assert (drawn.width, drawn.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT), centre
+        assert (drawn.width, drawn.height) == (NINE_SIXTEEN.width, NINE_SIXTEEN.height), centre
         assert within_a_pixel(box(drawn.crop), (start.x, start.y, panel.crop_width, panel.crop_height)), (centre, drawn.crop, start)
     # Near the middle, it is the Source zoomed: nothing is cropped.
-    [scene] = plan_render(100, 103, SOURCE, [Scene(0, 3)], sampled((3, [face(960)])), Layout.TRACK).scenes
-    assert scene.framing.crop == Crop() and scene.framing.transform.scale == pytest.approx(cover_scale(1920, 1080, FRAME), abs=0.01)
+    [scene] = plan_render(100, 103, SOURCE, [Scene(0, 3)], sampled((3, [face(960)])), Layout.TRACK, canvas=NINE_SIXTEEN).scenes
+    assert scene.framing.crop == Crop() and scene.framing.transform.scale == pytest.approx(cover_scale(1920, 1080, NINE_SIXTEEN.size), abs=0.01)
 
 
 def test_blur_offers_scale_1_over_its_blur_and_split_a_centred_cover():
-    blur, split = plan_render(100, 106, SOURCE, SCENES, faces(), layout_overrides=[LayoutOverride(1.0, Layout.BLUR)]).scenes
+    blur, split = plan_render(100, 106, SOURCE, SCENES, faces(), layout_overrides=[LayoutOverride(1.0, Layout.BLUR)], canvas=NINE_SIXTEEN).scenes
     assert blur.framing == Framing()
     assert split.layout is SceneLayout.SPLIT
-    assert split.framing == Framing(Transform(scale=cover_scale(1920, 1080, FRAME)))
+    assert split.framing == Framing(Transform(scale=cover_scale(1920, 1080, NINE_SIXTEEN.size)))
 
 
 # Seam A

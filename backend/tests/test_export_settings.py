@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from app.canvas import PORTRAIT
 from app.config import RenderTuning
 from app.encoding import (
     Bitrate,
@@ -32,7 +33,16 @@ from test_render import loudness, probe
     "resolution, size", [(720, (720, 1280)), (1080, (1080, 1920)), (1440, (1440, 2560)), (2160, (2160, 3840))]
 )
 def test_the_output_is_9_16_with_the_resolution_as_its_short_side(resolution, size):
-    assert output_size(ExportSettings(resolution=resolution)) == size
+    assert output_size(ExportSettings(resolution=resolution), frame=PORTRAIT.size) == size
+
+
+@pytest.mark.parametrize(
+    "frame, resolution, size",
+    [((1920, 1080), 1080, (1920, 1080)), ((1920, 1080), 720, (1280, 720)), ((1920, 1080), 2160, (3840, 2160)),
+     ((1080, 1080), 1440, (1440, 1440)), ((1080, 1350), 720, (720, 900))],
+)
+def test_the_output_takes_its_canvass_shape_at_the_resolution(frame, resolution, size):
+    assert output_size(ExportSettings(resolution=resolution), frame) == size
 
 
 @pytest.mark.parametrize(
@@ -56,20 +66,20 @@ def test_the_output_is_9_16_with_the_resolution_as_its_short_side(resolution, si
     ],
 )
 def test_a_quality_tier_is_a_target_bitrate_scaled_by_size_frame_rate_and_codec(settings, fps, kbps):
-    assert target_kbps(settings, fps) == kbps
+    assert target_kbps(settings, fps, frame=PORTRAIT.size) == kbps
 
 
 @pytest.mark.parametrize("mode", list(RateMode))
 def test_a_bitrate_of_the_settings_own_replaces_the_tier(mode):
     own = Bitrate(mode, 2_500)
     for settings in (ExportSettings(), ExportSettings(Codec.AV1, 2160, quality=Quality.HIGH)):
-        assert target_kbps(replace(settings, bitrate=own), 60) == 2_500
+        assert target_kbps(replace(settings, bitrate=own), 60, frame=PORTRAIT.size) == 2_500
 
 
 def test_the_estimated_size_is_the_target_bitrate_and_the_sound_over_the_duration():
     # (8,000 + 192 kb/s) x 60 s / 8.
-    assert estimated_bytes(ExportSettings(), 30, 60) == 61_440_000
-    assert estimated_bytes(ExportSettings(bitrate=Bitrate(RateMode.CBR, 1_808)), 60, 10) == 2_500_000
+    assert estimated_bytes(ExportSettings(), 30, 60, frame=PORTRAIT.size) == 61_440_000
+    assert estimated_bytes(ExportSettings(bitrate=Bitrate(RateMode.CBR, 1_808)), 60, 10, frame=PORTRAIT.size) == 2_500_000
 
 
 @pytest.mark.parametrize(
@@ -86,9 +96,9 @@ def test_the_estimated_size_is_the_target_bitrate_and_the_sound_over_the_duratio
 )
 def test_cbr_falls_back_to_vbr_on_an_encoder_that_cant_hold_it(codec, encoder, mode, fallback):
     settings = ExportSettings(codec, bitrate=Bitrate(mode, 6_000))
-    assert encoder_args(settings, 30, encoder).bitrate_fallback is fallback
+    assert encoder_args(settings, 30, encoder, frame=PORTRAIT.size).bitrate_fallback is fallback
     # A tier's bitrate is never held constant.
-    assert encoder_args(replace(settings, bitrate=None), 30, encoder).bitrate_fallback is False
+    assert encoder_args(replace(settings, bitrate=None), 30, encoder, frame=PORTRAIT.size).bitrate_fallback is False
 
 
 SETTINGS = TypeAdapter(ExportSettings)
@@ -146,7 +156,7 @@ def encode(
     settings, source: Path, tmp_path: Path, export: ExportSettings, tuning: RenderTuning = RenderTuning(), secs: float = 5
 ) -> tuple[Encoded, Path]:
     """Render `secs` of `source` (a 1080x1920 one at 30 fps) as `export` says; what made it, and the MP4."""
-    plan = plan_render(0.5, 0.5 + secs, SourceMetadata(BUSY_SECS, 30.0, 1080, 1920, "h264"))
+    plan = plan_render(0.5, 0.5 + secs, SourceMetadata(BUSY_SECS, 30.0, 1080, 1920, "h264"), canvas=PORTRAIT)
     video = tmp_path / "clip.mp4"
     return Renderer(settings.ffmpeg_bin, tuning).render(source, plan, video, tmp_path / "clip.jpg", export=export), video
 

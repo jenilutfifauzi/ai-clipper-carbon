@@ -5,7 +5,8 @@ import { describe, expect, test } from "vitest";
 import type { CaptionStyle, HookStyle, StyleValue } from "../../../api";
 import { Slider } from "../../../components/Slider";
 import { CaptionStylePanel } from "./CaptionStylePanel";
-import { HookMoreOptions } from "./HookStylePanel";
+import { CANVASES } from "./canvas";
+import { HookMoreOptions, HookPosition } from "./HookStylePanel";
 import type { StyleControls, StylePart } from "./useStyleDraft";
 
 function controls(sets: [StylePart, string, StyleValue][]): StyleControls {
@@ -59,5 +60,29 @@ describe("spacing in the clip editor's style fields", () => {
     expect([tracking.value, tracking.min, tracking.max]).toEqual([0, -20, 60]);
     tracking.onChange(10);
     expect(sets).toEqual([["caption", "tracking", 10]]);
+  });
+});
+
+describe("a custom place's sliders", () => {
+  const custom = (sets: [StylePart, string, StyleValue][]) => {
+    const style = controls(sets);
+    return { ...style, hook: { ...style.hook, position: "custom", y: 400, x: null }, caption: { ...style.caption, position: "custom", y: 1300, x: null } } as StyleControls;
+  };
+
+  test("end at 9:16's Safe Area outside a Candidate", () => {
+    const style = custom([]);
+    const hook = slider(HookPosition({ style }), "Height of the hook's top");
+    expect([hook.min, hook.max]).toEqual([232, 1536]);
+    const caption = slider(CaptionStylePanel({ style, fonts: null, more: false, onMore: () => {} }), "Height of the line's centre");
+    expect([caption.min, caption.max]).toEqual([332, 1436]);
+  });
+
+  test("end where the planner holds the place on the Candidate's Canvas", () => {
+    const style = custom([]);
+    const canvas = CANVASES["16:9"];
+    const hook = slider(HookPosition({ style, canvas }), "Height of the hook's top");
+    expect([hook.min, hook.max]).toEqual([96, 1824]);
+    const caption = slider(CaptionStylePanel({ style, fonts: null, more: false, onMore: () => {}, canvas }), "Height of the line's centre");
+    expect([caption.min, caption.max]).toEqual([273.78, 1646.22]);
   });
 });

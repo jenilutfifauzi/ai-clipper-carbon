@@ -45,7 +45,8 @@ import { RevisionHistory } from "./editor/RevisionHistory";
 import { SaveFrameButton } from "./editor/SaveFrameButton";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
-import { placedFields } from "./editor/placing";
+import { placedFields, watermarkPlaced } from "./editor/placing";
+import { canvasOf } from "./editor/canvas";
 import { useStyleDraft } from "./editor/useStyleDraft";
 import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
@@ -95,8 +96,8 @@ const LAYOUTS = [
 
 const LAYOUT_HINTS: Record<Layout, string> = {
   auto: "Chosen per scene from the faces in it.",
-  track: "A 9:16 crop following the speaker, in every scene.",
-  split: "Two stacked panels, left person on top, in every scene.",
+  track: "A crop of the frame's shape following the speaker, in every scene.",
+  split: "Two panels, left person on top (on the left on 1:1 and 16:9), in every scene.",
   blur: "The wide shot over a blurred background, in every scene.",
   manual: "Framed by hand, in every scene: drag the picture on the preview to pan it, its corners to zoom.",
 };
@@ -359,10 +360,11 @@ export function CandidateEditor({
                   preview={graded}
                   fonts={fonts}
                   playback={playback}
+                  aspect={candidate.aspect}
                   // Dragged on the preview while its tab is open.
                   onWatermarkMove={
                     tab === "watermark" && style.controls
-                      ? (x, y) => style.controls?.setMany("watermark", { position: "custom", x, y })
+                      ? (x, y) => style.controls?.setMany("watermark", watermarkPlaced(canvasOf(preview?.plan), x, y))
                       : undefined
                   }
                   // The hook and the captions, moved, resized and retyped on the preview; not while the
@@ -376,7 +378,7 @@ export function CandidateEditor({
                             setPictureOn(false);
                             if (id === "hook" || id === "captions") setTab(id);
                           },
-                          onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place)),
+                          onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place, canvasOf(preview?.plan))),
                           retype: {
                             textOf: (id) => (id === "hook" ? (hookDraft ?? candidate.hook_text) : (kickerDraft ?? candidate.hook_kicker)),
                             onText: (id, text) => {
@@ -456,6 +458,7 @@ export function CandidateEditor({
                     fonts={fonts}
                     more={more.captions}
                     onMore={(open) => setMore((old) => ({ ...old, captions: open }))}
+                    canvas={canvasOf(preview?.plan, candidate.aspect)}
                   />
                 ) : (
                   !style.error && <StyleFieldsSkeleton />
@@ -497,7 +500,7 @@ export function CandidateEditor({
                   <h4 id="hook-when-heading" className="font-semibold">
                     When and where
                   </h4>
-                  {style.controls && <HookPosition style={style.controls} />}
+                  {style.controls && <HookPosition style={style.controls} canvas={canvasOf(preview?.plan, candidate.aspect)} />}
                   <HookTimingFields
                     timing={timing}
                     duration={length}
@@ -515,7 +518,7 @@ export function CandidateEditor({
                 <h4 id="watermark-heading" className="sr-only">
                   Watermark
                 </h4>
-                {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} /> : !style.error && <StyleFieldsSkeleton />}
+                {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} aspect={candidate.aspect} /> : !style.error && <StyleFieldsSkeleton />}
               </section>
             )}
             {tab === "transitions" && (
