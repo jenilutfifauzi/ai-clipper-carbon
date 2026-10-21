@@ -1,14 +1,18 @@
 """The Canvas (docs/adr/0022): each aspect's frame in output pixels, its Safe Area and the mapping
 from the Reference Space. Pure (Seam B)."""
 
+import json
+from dataclasses import asdict
+
 import pytest
 
 from app.candidates import CueEdit, Keyframe, KeyProperty, Layout, Overlay, Transform
-from app.canvas import CANVASES, PORTRAIT, REFERENCE, Aspect, Box, canvas_for
+from app.canvas import CANVASES, CAPTION_HEIGHT, PORTRAIT, REFERENCE, Aspect, Box, canvas_for
 from app.planner import Face, FrameFaces, MediaInfo, SceneLayout, SegmentInput, hook_width, picture_at, plan_render
 from app.styles import CaptionPosition, CaptionStyle, HookPosition, HookStyle, WatermarkKind, WatermarkPosition, WatermarkStyle
 from app.transcript import Word
 from app.video_source import SourceMetadata
+from conftest import FIXTURES
 
 
 def test_each_aspect_has_a_short_side_of_1080() -> None:
@@ -20,6 +24,19 @@ def test_each_aspect_has_a_short_side_of_1080() -> None:
     }
     assert canvas_for("16:9") is CANVASES[Aspect.LANDSCAPE]
     assert PORTRAIT is canvas_for(Aspect.PORTRAIT) and PORTRAIT.size == REFERENCE
+
+
+def test_the_canvases_are_the_ones_the_frontend_reads_too() -> None:
+    # The editor's copy (frontend/src/pages/job/editor/canvas.ts) is checked against the same file.
+    shared = json.loads((FIXTURES / "canvases.json").read_text())
+    assert shared == {
+        "reference": {"width": REFERENCE[0], "height": REFERENCE[1]},
+        "caption_height": CAPTION_HEIGHT,
+        "canvases": {
+            aspect.value: {"width": canvas.width, "height": canvas.height, "safe_area": asdict(canvas.safe_area)}
+            for aspect, canvas in CANVASES.items()
+        },
+    }
 
 
 def test_an_unknown_aspect_is_refused() -> None:

@@ -3,9 +3,10 @@ import type { Aspect, Box, RenderPlan } from "../../../api";
 
 /**
  * The Canvas (GLOSSARY.md, docs/adr/0022): the Candidate's frame in output pixels, set by its Canvas
- * Aspect, and its Safe Area. The Preview Plan carries both (backend/app/canvas.py), so the editor
- * keeps no per-aspect sizes of its own (ADR 0001); before a plan is loaded, it draws its Candidate's
- * aspect's (`CANVASES`, canvas.py's), or the 9:16 one.
+ * Aspect, and its Safe Area. The Preview Plan carries both (backend/app/canvas.py), and the editor
+ * draws the plan's (ADR 0001). It keeps a copy of each aspect's (`CANVASES`, with the Reference Space
+ * and the caption height) only to draw its Candidate before a plan is loaded and to hold a Style's
+ * sliders; canvas.py and it are both checked against backend/tests/fixtures/canvases.json.
  */
 export interface Canvas {
   width: number;

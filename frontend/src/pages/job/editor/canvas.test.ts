@@ -1,13 +1,22 @@
 // The Canvas as the editor takes it from the plan (docs/adr/0022), and the stage's size at its
 // aspect in a player, as worked examples.
 import { describe, expect, test } from "vitest";
+import shared from "../../../../../backend/tests/fixtures/canvases.json";
 import type { RenderPlan } from "../../../api";
-import { aspectParts, aspectRatio, CANVASES, canvasOf, fittedStage, fromReference, PORTRAIT, tallestAspect, toReference } from "./canvas";
+import { aspectParts, aspectRatio, CANVASES, CAPTION_HEIGHT, canvasOf, fittedStage, fromReference, PORTRAIT, REFERENCE, tallestAspect, toReference } from "./canvas";
 import { placedFields, watermarkPlaced } from "./placing";
 
 const LANDSCAPE = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
 
 describe("the Canvas", () => {
+  // backend/app/canvas.py is checked against the same file (backend/tests/test_canvas.py).
+  test("each aspect's is canvas.py's, as the shared fixture says", () => {
+    expect(CANVASES).toEqual(shared.canvases);
+    expect(PORTRAIT).toBe(CANVASES["9:16"]);
+    expect(REFERENCE).toEqual(shared.reference);
+    expect(CAPTION_HEIGHT).toBe(shared.caption_height);
+  });
+
   test("is the plan's width, height and Safe Area", () => {
     const plan = { ...LANDSCAPE, scenes: [] } as unknown as RenderPlan;
     expect(canvasOf(plan)).toEqual(LANDSCAPE);

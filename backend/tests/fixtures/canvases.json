@@ -1,0 +1,10 @@
+{
+  "reference": { "width": 1080, "height": 1920 },
+  "caption_height": 200,
+  "canvases": {
+    "9:16": { "width": 1080, "height": 1920, "safe_area": { "x": 0, "y": 232, "width": 950, "height": 1304 } },
+    "4:5": { "width": 1080, "height": 1350, "safe_area": { "x": 54, "y": 68, "width": 972, "height": 1214 } },
+    "1:1": { "width": 1080, "height": 1080, "safe_area": { "x": 54, "y": 54, "width": 972, "height": 972 } },
+    "16:9": { "width": 1920, "height": 1080, "safe_area": { "x": 96, "y": 54, "width": 1728, "height": 972 } }
+  }
+}
