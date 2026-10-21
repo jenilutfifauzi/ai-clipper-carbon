@@ -19,6 +19,12 @@ KEYS = (
     "DATA_DIR",
     "YTDLP_COOKIES_FROM_BROWSER",
     "SELECTION_AUDIO_SIGNAL",
+    "TTS_GEMINI_MODEL",
+    "TTS_BASE_URL",
+    "TTS_API_KEY",
+    "TTS_MODEL",
+    "TTS_VOICES",
+    "TTS_STYLE",
 )
 
 
@@ -46,6 +52,9 @@ def test_defaults_without_env_file(tmp_path):
     assert settings.data_dir == REPO_ROOT / "data"
     assert settings.ytdlp_cookies_from_browser is None
     assert settings.selection_audio_signal is False
+    assert settings.tts_gemini_model == "gemini-3.8-flash-lite-tts"
+    assert (settings.tts_base_url, settings.tts_api_key, settings.tts_model, settings.tts_voices) == (None, None, None, ())
+    assert settings.tts_style is None
 
 
 def test_env_file_is_read_and_environment_wins(tmp_path, monkeypatch):
@@ -89,6 +98,24 @@ def test_the_openai_provider_is_read_with_its_own_key_and_a_short_request_interv
     assert (settings.llm, settings.llm_name) == (LlmChoice("openai", "gpt-6-mini"), "api.openai.com")
 
 
+def test_the_openai_compatible_speech_settings_are_read_apart_from_the_llms(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LLM_PROVIDER=openai\nLLM_BASE_URL=https://api.deepseek.com\nLLM_API_KEY=sk-llm\n"
+        "TTS_BASE_URL=https://api.openai.com/v1/\nTTS_API_KEY=sk-speech\nTTS_MODEL=gpt-4o-mini-tts\n"
+        "TTS_VOICES= coral, ,onyx \n"
+    )
+
+    settings = load_settings(env_file=env_file)
+
+    assert (settings.tts_base_url, settings.tts_api_key, settings.tts_model) == ("https://api.openai.com/v1", "sk-speech", "gpt-4o-mini-tts")
+    assert settings.tts_voices == ("coral", "onyx")
+    assert settings.tts_style is None
+    assert "sk-speech" not in repr(settings)
+    # The LLM's settings are its own.
+    assert (settings.llm_base_url, settings.llm_api_key, settings.llm_name) == ("https://api.deepseek.com", "sk-llm", "DeepSeek")
+
+
 def test_the_request_interval_can_be_set(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_REQUEST_INTERVAL_SECS", "0")
 
@@ -123,3 +150,17 @@ def test_env_example_lists_every_key_with_the_defaults(tmp_path):
 
     assert set(dotenv_values(example)) == set(KEYS)
     assert load_settings(env_file=example) == load_settings(env_file=tmp_path / ".env")
+
+
+@pytest.mark.parametrize(("value", "style"), [("true", True), ("off", False), ("", None)])
+def test_tts_style_is_read_as_a_switch_empty_meaning_by_the_model(tmp_path, value, style):
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"TTS_STYLE={value}\n")
+    assert load_settings(env_file=env_file).tts_style is style
+
+
+def test_a_tts_style_that_isnt_a_switch_is_refused(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("TTS_STYLE=sometimes\n")
+    with pytest.raises(ValueError, match="TTS_STYLE must be true or false"):
+        load_settings(env_file=env_file)

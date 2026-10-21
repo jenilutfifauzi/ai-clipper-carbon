@@ -303,6 +303,64 @@ export interface MediaItem {
   language?: string | null;
 }
 
+// A built-in speaker of a speech engine (GLOSSARY.md, Voice; backend/app/voices.py).
+export interface Voice {
+  id: string;
+  name: string;
+  // Such as "Firm · female".
+  detail: string;
+  // The language it speaks; null for one that reads any.
+  language: string | null;
+}
+
+// A speech engine set up on this Mac (backend/app/api.py's EngineInfo).
+export interface VoiceEngine {
+  id: string;
+  label: string;
+  // The service the words are sent to; null for one on this Mac.
+  service: string | null;
+  local: boolean;
+  ready: boolean;
+  takes_style: boolean;
+  voices: Voice[];
+}
+
+// Kokoro's model on this Mac (backend/app/kokoro.py): absent, downloading (`done` bytes of `total`),
+// ready (here) or failed (`message`). `total` is the archive's size whatever the state.
+export interface KokoroInfo {
+  state: "absent" | "downloading" | "ready" | "failed";
+  done: number;
+  total: number;
+  message: string | null;
+}
+
+export interface VoicesList {
+  engines: VoiceEngine[];
+  // The engine a Job in the language asked for starts with; null when none is ready.
+  default: string | null;
+  // Kokoro's download; null (or left out) when Kokoro isn't offered.
+  kokoro?: KokoroInfo | null;
+}
+
+// A script to read aloud (GLOSSARY.md, Narration): at `speed` (0.5–2×), `pauses` seconds between its
+// sentences, and `style` ("warm, unhurried") only for an engine that takes one (VoiceEngine.takes_style).
+export interface NarrationRequest {
+  text: string;
+  engine: string;
+  voice: string;
+  speed?: number;
+  pauses: number;
+  style?: string | null;
+}
+
+// How far a Narration being made has got: its stage ("Loading the voice", "Reading", "Levelling",
+// "Saving") and the sentences read, `done` of `of`.
+export interface NarrationProgress {
+  stage: string;
+  done: number;
+  of: number;
+}
+
 // A video's Media Words for a Job (backend/app/api.py's MediaWordsView): in its language (its own,
 // else the Job's), their status, the error of a failure, and the Words when ready. (Their status is
 // the item's, not a Segment's WordsStatus: a Segment of the video is "media" while they are "ready".)
@@ -1797,6 +1855,28 @@ export const api = {
     request<RetimedCopy>(`/jobs/${encodeURIComponent(jobId)}/retimed`, { method: "POST", body: JSON.stringify(range), signal }),
   // Rejects with an ApiError of 409 whose detail lists the clips using it.
   deleteMedia: (id: string) => request<void>(`/media/${id}`, { method: "DELETE" }),
+  // The speech engines and their Voices, and the default engine for a Job in `language`.
+  listVoices: (language?: string) => request<VoicesList>(`/voices${language ? `?language=${encodeURIComponent(language)}` : ""}`),
+  // Starts downloading Kokoro's model in the background (nothing when it is here or downloading); its
+  // progress is in listVoices' `kokoro`.
+  downloadKokoro: () => request<KokoroInfo>("/voices/kokoro/download", { method: "POST" }),
+  // Cancels the download, what it fetched kept for the next.
+  cancelKokoroDownload: () => request<void>("/voices/kokoro/download", { method: "DELETE" }),
+  // Removes Kokoro's model from this Mac. Rejects with a 409 while a Narration or sample is being made.
+  removeKokoro: () => request<void>("/voices/kokoro", { method: "DELETE" }),
+  // A Narration started: its id, whose events tell its outcome (narrationEventsUrl). Rejects with a 409
+  // while another is being made, a 422 for a script, engine or Voice that can't be narrated.
+  startNarration: (body: NarrationRequest) =>
+    request<{ id: string }>("/narrations", { method: "POST", body: JSON.stringify(body) }).then((answer) => answer.id),
+  // Cancels a Narration being made: it stops before its next sentence and leaves nothing. Rejects with a
+  // 409 when it has ended already.
+  cancelNarration: (id: string) => request<void>(`/narrations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // A Voice reading a fixed sentence in `language` (a WAV), made once and kept on this Mac. Rejects with
+  // a 409 while a Narration or another sample is being made, a 422 for an engine that isn't ready.
+  voiceSample: (engine: string, voice: string, language: string) =>
+    send(`/voices/${encodeURIComponent(engine)}/${encodeURIComponent(voice)}/sample?lang=${encodeURIComponent(language)}`).then((response) =>
+      response.blob(),
+    ),
 };
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
@@ -1876,6 +1956,9 @@ export function uploadJob(
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;
 export const candidateEventsUrl = (id: string) => `/api/jobs/${id}/candidates/events`;
+// A Narration's `progress` (NarrationProgress), then its outcome: `done` with its Media Library item,
+// `failed` with `{message}`, or `cancelled`.
+export const narrationEventsUrl = (id: string) => `/api/narrations/${encodeURIComponent(id)}/events`;
 
 /**
  * Upload a video, song or image to the Media Library, with its upload progress (XHR, as uploadJob).

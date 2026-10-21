@@ -25,6 +25,7 @@ import {
   SwatchBook,
   SlidersHorizontal,
   Snowflake,
+  Speech,
   StepBack,
   StepForward,
   Sticker,
@@ -55,12 +56,13 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters" | "effects";
+export type AssetTab = "text" | "stickers" | "audio" | "narrate" | "media" | "transitions" | "filters" | "effects";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
   { value: "stickers", label: "Stickers", icon: Sticker },
   { value: "audio", label: "Audio", icon: AudioLines },
+  { value: "narrate", label: "Narrate", icon: Speech },
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
   { value: "filters", label: "Filters", icon: SwatchBook },
@@ -68,10 +70,10 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
 ];
 
 // The phone's: Video Effects are a desktop's to edit (ADR 0014), so it has no Effects tab.
-const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
+export const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
 
 // The Asset Panel's tabs. Their names go (kept for a screen reader and in a tooltip) when the panel
-// is too narrow for all seven, as at its default width, rather than cut off the last tabs.
+// is too narrow for all eight, as at its default width, rather than cut off the last tabs.
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
     <div role="tablist" aria-label="Assets" className="@container flex gap-1 border-b border-border p-2">

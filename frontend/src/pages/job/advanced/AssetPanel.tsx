@@ -9,7 +9,7 @@ import { TextAssets } from "./TextPresets";
 
 /**
  * An asset tab's content: the Text Presets; the Shapes (the Stickers tab); the episode's moments and
- * the Media Library's videos and images; its songs; the Transitions; the Looks (the Filters tab); or
+ * the Media Library's videos and images; its songs; the Narrate tab (a script read aloud); the Transitions; the Looks (the Filters tab); or
  * the Video Effects (the Effects tab). Each added at the playhead by a click, or (but a Shape, a Look
  * and an effect) where it is dropped on the timeline; a Look is given to the Pick's Grades, or the
  * Candidate's, and an effect to the Pick's stacks.
@@ -23,6 +23,7 @@ export function AssetPanel({
   transitions,
   filters,
   effects,
+  narrate,
   onAddText,
   onAddShape,
   onAddMusic,
@@ -40,6 +41,7 @@ export function AssetPanel({
   transitions: ReactNode;
   filters: ReactNode;
   effects: ReactNode;
+  narrate: ReactNode;
   onAddText: (made: UntimedTextLayer) => void;
   onAddShape: (kind: ShapeKind) => void;
   onAddMusic: (item: MediaItem) => void;
@@ -90,6 +92,7 @@ export function AssetPanel({
       />
     );
   }
+  if (tab === "narrate") return narrate;
   if (tab === "filters") return filters;
   if (tab === "effects") return effects;
   return transitions;

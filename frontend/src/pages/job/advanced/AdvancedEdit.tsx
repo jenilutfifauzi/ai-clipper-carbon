@@ -149,6 +149,8 @@ import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
+import { listenNarration, NarrateFlow, narratedTitle } from "./narrate";
+import { NarratePanel } from "./NarratePanel";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
 import { TakeButton, WaitingTakeNotice } from "./TakeButton";
@@ -606,6 +608,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // lands and tells goes through `takeLatest`, this render's, as the upload answers after later ones.
   const takeLatest = useRef({
     upload: library.upload,
+    added: library.added,
     land: (_take: LandedTake): number | null => null,
     tell: (_text: string) => {},
     atEnd: (): boolean => false,
@@ -632,6 +635,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     return { take: flow, takeSettings: settings };
   });
   useEffect(() => () => take?.dispose(), [take]);
+  // The Narrate tab's flow (./narrate.ts): a script read aloud by the backend, landed as a Take lands,
+  // through `takeLatest` (this render's), at the start fixed when Generate was pressed. Here, not in
+  // the tab, so that switching tabs (or closing the phone's sheet) still lands it.
+  const [narrateFlow] = useState(
+    () =>
+      new NarrateFlow({
+        start: api.startNarration,
+        listen: listenNarration,
+        cancel: api.cancelNarration,
+        playhead: () => playback.time,
+        land: (landed) => takeLatest.current.land(landed),
+        added: (item) => takeLatest.current.added(item),
+        tell: (text) => takeLatest.current.tell(text),
+      }),
+  );
+  useEffect(() => () => narrateFlow.dispose(), [narrateFlow]);
   // Leaving the page while the countdown runs or a Take records asks first, and cancels the Take; while
   // a Take uploads or waits in the tab, it asks first too.
   useEffect(() => (take ? guardLeaving(window, take) : undefined), [take]);
@@ -665,6 +684,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const fps = preview?.plan.fps || DEFAULT_FPS;
   // The playhead at the Clip's end (where End puts it), where the mic button is off.
   const atEnd = usePlayback(playback, (time, p) => atClipEnd(time, p.duration, fps));
+  // The picked Text Layer or hook the Narrate tab reads from and lands at the start of; Generate is off
+  // when that start (else the playhead) is at the Clip's end.
+  const narrated = narratedTitle(edits, pick);
+  const narrateAtEnd = narrated ? atClipEnd(narrated.start, duration, fps) : atEnd;
   // The Loop Region the marks make, clamped inside the Clip as it is now; played while Loop is on.
   const region = useMemo(() => loopRegion(marks, { fps, duration }), [marks, fps, duration]);
   // A Take rolls from the playhead whatever the Loop: it is set again once the Take stops.
@@ -863,10 +886,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     select(outcome.pick);
     if (outcome.notice) setNotice({ id: Date.now(), text: outcome.notice });
   }
-  // A Take landed: its Music Clip added (one step of undo) and Picked; the take flow puts the playhead
-  // at its start. Refused, like any addition, on a locked Music Track: the item stays in the library.
+  // A Take or a Narration landed: its Music Clip added (one step of undo) and Picked; the take flow puts
+  // the playhead at its start. Refused, like any addition, on a locked Music Track: the item stays in
+  // the library.
   takeLatest.current = {
     upload: library.upload,
+    added: library.added,
     // Past the editing lock, which holds until it has landed. Refused, the Take waits, uploaded, for Try again.
     land: (landed) => {
       if (refused("music")) return null;
@@ -1486,6 +1511,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
+      narrate={<NarratePanel flow={narrateFlow} language={job.options.language} atEnd={narrateAtEnd} title={narrated} />}
       filters={
         <LookPanel
           playback={playback}
