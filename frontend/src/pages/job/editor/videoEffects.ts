@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { isColourSetting, type BlendMode, type Picture, type RenderPlan, type Transform, type VideoEffect, type VideoEffectKind } from "../../../api";
+import { NEUTRAL_GRADE } from "./grading";
 import { FRAME } from "./picture";
 
 /*
@@ -62,6 +63,19 @@ export function draftVideoEffects(
   const shownLayers = redrawn(adjustments, layerStacks);
   if (shownSegments === plan.segments && shownOverlays === plan.overlays && shownLayers === adjustments) return plan;
   return { ...plan, segments: shownSegments, overlays: shownOverlays, ...(shownLayers !== adjustments && { adjustment_layers: shownLayers }) };
+}
+
+/** The id of the Adjustment Layer `auditionedPlan` draws an Effects card's effect with. */
+export const AUDITION_LAYER = "audition";
+
+/**
+ * `plan` with `effect` (planned: enabled, sizes the frame's) over its whole frame, Main Track and
+ * Overlays: an Adjustment Layer of a neutral Grade over the whole Clip, applied after the others. It
+ * is how an Effects card under the mouse tries its effect with nothing picked, never saved.
+ */
+export function auditionedPlan(plan: RenderPlan, effect: VideoEffect): RenderPlan {
+  const layer = { id: AUDITION_LAYER, start: 0, end: Number.MAX_SAFE_INTEGER, grade: NEUTRAL_GRADE, strength: 100, fade_in: 0, fade_out: 0, video_effects: [effect] };
+  return { ...plan, adjustment_layers: [...(plan.adjustment_layers ?? []), layer] };
 }
 
 /**

@@ -90,8 +90,8 @@ export function lookFrame({
   return ofSegment(under === -1 ? played.length - 1 : under, time);
 }
 
-// A frame as a CSS background: a still covering the card, or one frame of a strip filling it.
-function frameStyle(frame: LookFrame | null): CSSProperties {
+/** A frame as a CSS background: a still covering the card, or one frame of a strip filling it; a drawn sample without one. */
+export function frameStyle(frame: LookFrame | null): CSSProperties {
   if (!frame) return SAMPLE;
   if (!frame.strip) return { backgroundImage: `url(${frame.url})`, backgroundSize: "cover", backgroundPosition: "center" };
   const { index, count } = frame.strip;

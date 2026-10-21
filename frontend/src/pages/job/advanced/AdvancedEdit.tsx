@@ -23,6 +23,7 @@ import {
   type Transform,
   type Transition,
   type TransitionKind,
+  type VideoEffectKind,
 } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
@@ -49,7 +50,7 @@ import { entryToRestore, RevisionHistory } from "../editor/RevisionHistory";
 import { SaveFrameButton } from "../editor/SaveFrameButton";
 import { changedText, savedByLabel, useCandidateEvents } from "../editor/useCandidateEvents";
 import { usePreviewPlan } from "../editor/usePreviewPlan";
-import { draftVideoEffects } from "../editor/videoEffects";
+import { auditionedPlan, draftVideoEffects } from "../editor/videoEffects";
 import { useVideoEffects } from "../../../videoEffects";
 import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
@@ -57,7 +58,13 @@ import { styleControls, usePresets } from "../editor/useStyleDraft";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   addAdjustmentLayer,
+  addEffectLayer,
+  addVideoEffect,
   gradesOf,
+  isKey,
+  keysPicked,
+  picturedItems,
+  videoEffectOf,
   appliedToAll,
   cardTarget,
   changeMusic,
@@ -96,6 +103,7 @@ import { AssetPanel } from "./AssetPanel";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { AdjustPanel } from "./ColorFields";
 import { LOOK_GOES_ON, LookPanel, lookFrame, PhoneFilters } from "./LookPanel";
+import { EFFECT_GOES_ON, EffectsPanel } from "./EffectsPanel";
 import { BOTTOM_TABS, bottomPanelId, BottomTabs, useBottomTab, type BottomTabContext } from "./BottomTabs";
 import {
   ASSET,
@@ -264,6 +272,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
   const [audition, setAudition] = useState<string | null>(null);
+  // The Video Effect an Effects card under the mouse auditions: drawn on the Pick, nothing saved.
+  const [effectAudition, setEffectAudition] = useState<VideoEffectKind | null>(null);
   // The player's room, which goes full screen with the stage and the player bar.
   const fullscreenRoom = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(fullscreenRoom);
@@ -533,22 +543,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // Layers and the Candidate in their Grades as edited (a dial drag shows before its plan comes).
   // A Look auditioned is drawn on the Grades a click would give it to. Its Segments', Overlays' and
   // Adjustment Layers' Video Effects are drawn as edited too (a slider drag shows before its plan comes).
-  const graded = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
+  // An effect auditioned is drawn as a click would add it to the Pick's stacks, or with nothing picked
+  // over the whole frame (auditionedPlan).
+  const looked = audition === null ? edits : (relook({ edits, pick }, { look: audition })?.edits ?? edits);
+  const graded = effectAudition === null || pick === null ? looked : (addVideoEffect({ edits: looked, pick }, effectAudition)?.edits ?? looked);
+  const framed = effectAudition !== null && pick === null && !isKey(effectAudition) ? effectAudition : null;
   const videoEffectKinds = useVideoEffects();
-  const shown = useMemo(
-    () =>
-      preview && {
-        ...preview,
-        plan: draftVideoEffects(
-          draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade, graded.adjustment_layers),
-          graded.segments,
-          graded.overlays,
-          videoEffectKinds,
-          graded.adjustment_layers,
-        ),
-      },
-    [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers, videoEffectKinds],
-  );
+  const shown = useMemo(() => {
+    if (!preview) return preview;
+    const plan = draftVideoEffects(
+      draftGrades(shownPlan(preview.plan, tracks), graded.segments, graded.overlays, graded.grade, graded.adjustment_layers),
+      graded.segments,
+      graded.overlays,
+      videoEffectKinds,
+      graded.adjustment_layers,
+    );
+    return { ...preview, plan: framed ? auditionedPlan(plan, videoEffectOf(framed)) : plan };
+  }, [preview, tracks, graded.segments, graded.overlays, graded.grade, graded.adjustment_layers, videoEffectKinds, framed]);
   const playback = useMemo(() => new Playback(), []);
   // The player's checks of a Grade: the before view, held; and Compare render of the draft, on a
   // desktop, cleared on any playhead move or edit.
@@ -678,6 +689,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   function addAdjustment(look: string, at: number) {
     if (refused("adjust")) return;
     const outcome = addAdjustmentLayer(scene, look, at);
+    if (!outcome) return;
+    history.set(outcome.edits);
+    added(outcome.pick);
+  }
+  // An Effects card dropped on the Timeline at `at`: an Adjustment Layer with its effect there (ADR 0014); never a key's.
+  function addEffectAdjustment(effect: string, at: number) {
+    const kind = videoEffectKinds?.find((other) => other.id === effect);
+    if (!kind || isKey(kind) || refused("adjust")) return;
+    const outcome = addEffectLayer(scene, kind, at);
     if (!outcome) return;
     history.set(outcome.edits);
     added(outcome.pick);
@@ -1336,6 +1356,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
             onDropLook: addAdjustment,
+            onDropEffect: addEffectAdjustment,
             onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
             onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
           }}
@@ -1438,6 +1459,19 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             else tellOnce(LOOK_GOES_ON);
           }}
           onAudition={setAudition}
+        />
+      }
+      effects={
+        <EffectsPanel
+          playback={playback}
+          frameAt={lookFrameAt}
+          keys={keysPicked({ edits, pick })}
+          onPick={(kind) => {
+            const outcome = addVideoEffect({ edits, pick }, kind);
+            if (outcome) history.set(outcome.edits);
+            else if (!picturedItems({ edits, pick }).length) tellOnce(EFFECT_GOES_ON);
+          }}
+          onAudition={setEffectAudition}
         />
       }
       onAddText={(made) => addText(made)}

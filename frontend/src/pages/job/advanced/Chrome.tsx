@@ -33,6 +33,7 @@ import {
   Undo2,
   Volume2,
   VolumeX,
+  WandSparkles,
   X,
 } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
@@ -54,7 +55,7 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters";
+export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters" | "effects";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
@@ -63,7 +64,11 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
   { value: "filters", label: "Filters", icon: SwatchBook },
+  { value: "effects", label: "Effects", icon: WandSparkles },
 ];
+
+// The phone's: Video Effects are a desktop's to edit (ADR 0014), so it has no Effects tab.
+const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
 
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
@@ -283,7 +288,7 @@ export function Toolbar({
         </>
       ) : (
         <>
-          {ASSET_TABS.map((tab) => (
+          {PHONE_ASSET_TABS.map((tab) => (
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
           {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}

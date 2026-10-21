@@ -1271,11 +1271,26 @@ export function itemActions(
  * while the Adjust Track is locked, or in a Clip too short for one there.
  */
 export function addAdjustmentLayer(scene: PickContext, look: string, at: number): Outcome | null {
+  return newAdjustmentLayer(scene, at, { grade: relooked(NEUTRAL_GRADE, { look }) });
+}
+
+/**
+ * A new Adjustment Layer (ADR 0014) with a neutral Grade and Video Effect `kind` at its defaults at
+ * `at` (where an Effects card was dropped on the Timeline), as addAdjustmentLayer makes one for a
+ * Look. Null for a key (isKey: an Overlay's only), and as addAdjustmentLayer's.
+ */
+export function addEffectLayer(scene: PickContext, kind: VideoEffectKind, at: number): Outcome | null {
+  if (isKey(kind)) return null;
+  return newAdjustmentLayer(scene, at, { grade: NEUTRAL_GRADE, video_effects: [videoEffectOf(kind)] });
+}
+
+// A new Adjustment Layer of `made` (its Grade, and its Video Effects) at `at`: addAdjustmentLayer's.
+function newAdjustmentLayer(scene: PickContext, at: number, made: { grade: Grade; video_effects?: VideoEffect[] }): Outcome | null {
   if (scene.locked?.includes("adjust")) return null;
   const start = round(Math.max(0, Math.min(at, scene.duration - ITEM_MIN_SECS)));
   const secs = round(Math.min(NEW_LAYER_SECS, scene.duration - start));
   if (secs < ITEM_MIN_SECS) return null;
-  const layer: AdjustmentLayer = { id: idOf(scene), start, secs, grade: relooked(NEUTRAL_GRADE, { look }), strength: 100, fade_in: 0, fade_out: 0 };
+  const layer: AdjustmentLayer = { id: idOf(scene), start, secs, ...made, strength: 100, fade_in: 0, fade_out: 0 };
   const { edits } = scene;
   return { edits: { ...edits, adjustment_layers: [...listOf(edits, "adjustment"), layer] }, pick: picked({ kind: "adjustment", id: layer.id }) };
 }

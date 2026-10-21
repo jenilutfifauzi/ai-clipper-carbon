@@ -24,6 +24,7 @@ import { Button } from "../../../components/Button";
 import { Switch } from "../../../components/Switch";
 import { cx, formatPrecise } from "../../../format";
 import { useLooks } from "../../../looks";
+import { useVideoEffects } from "../../../videoEffects";
 import { cueText } from "../editor/cues";
 import { valueAt } from "../editor/keyframes";
 import { setMagnetic, useMagnetic } from "../editor/magnetic";
@@ -33,7 +34,7 @@ import { offsetAt, overlayTime, rangeOf, transitionOverlap } from "../editor/seg
 import { keyText, sameKey } from "../editor/timelineKey";
 import { fadesHalved, gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
-import { DRAG_LOOK, DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
+import { DRAG_EFFECT, DRAG_LOOK, DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
 import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, trackLanes, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
@@ -97,6 +98,8 @@ export interface TrackHandlers {
   onDropShape: (kind: ShapeKind, time: number) => void;
   // A Filters card (its Look's id) dropped at `time`: an Adjustment Layer with that Look there.
   onDropLook: (look: string, time: number) => void;
+  // An Effects card (its Video Effect's id) dropped at `time`: an Adjustment Layer with that effect there.
+  onDropEffect: (effect: string, time: number) => void;
   // Deletes the picked items; `rippled` (Shift), closing their gaps.
   onDelete?: (rippled: boolean) => void;
   // A Segment's, Music Clip's or Overlay's context menu asked for, at that point of the window (a desktop's).
@@ -211,9 +214,11 @@ export function Tracks({
   const textLanes = lanes(edits.text_layers, true);
   const shapeLanes = lanes(edits.shapes, true);
   const adjustLanes = lanes(listOf(edits, "adjustment"), true);
-  // An Adjustment Layer is named by its Look.
+  // An Adjustment Layer is named by its Look, else by its first Video Effect.
   const looks = useLooks();
   const lookNames = new Map((looks ?? []).map((look) => [look.id, look.name]));
+  const effects = useVideoEffects();
+  const effectNames = new Map((effects ?? []).map((effect) => [effect.id, effect.name]));
   const overlayLanes = lanes(edits.overlays, true);
   const musicLanes = lanes(edits.music, false);
   return (
@@ -300,12 +305,19 @@ export function Tracks({
           label={i === adjustLanes.length - 1 ? label("adjust") : ""}
           dimmed={dimmed("adjust")}
           locked={locked("adjust")}
-          drop={{ types: [DRAG_LOOK], onDrop: (data, clientX) => handlers.onDropLook(data.getData(DRAG_LOOK), geometry.timeAt(clientX)) }}
+          drop={{
+            types: [DRAG_LOOK, DRAG_EFFECT],
+            onDrop: (data, clientX) =>
+              data.types.includes(DRAG_EFFECT)
+                ? handlers.onDropEffect(data.getData(DRAG_EFFECT), geometry.timeAt(clientX))
+                : handlers.onDropLook(data.getData(DRAG_LOOK), geometry.timeAt(clientX)),
+          }}
         >
           {lane.map((layer) => {
             const selected = isPicked(pick, "adjustment", layer.id);
             const look = layer.grade.look ? lookNames.get(layer.grade.look) : undefined;
-            const name = look ?? "Adjustment";
+            const effect = layer.video_effects?.[0] ? effectNames.get(layer.video_effects[0].id) : undefined;
+            const name = look ?? effect ?? "Adjustment";
             return (
               <TimelineItem
                 key={layer.id}
