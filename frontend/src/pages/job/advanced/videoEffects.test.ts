@@ -15,7 +15,8 @@ import { videoLibraryOf } from "../../../videoEffects";
 import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
 import { playedFrom } from "../editor/playback";
-import { draftVideoEffects, effectPrimitives, effectsFilterId, IMITATIONS, overlayScale, pictureBox, scaledEffects } from "../editor/videoEffects";
+import { displacementMap, draftVideoEffects, effectPrimitives, effectsFilterId, fisheyeOffset, IMITATIONS, overlayScale, pictureBox, scaledEffects } from "../editor/videoEffects";
+import catalogue from "../../../../../backend/tests/fixtures/video_effects.json";
 import {
   addVideoEffect,
   duplicate,
@@ -215,8 +216,72 @@ describe("the preview", () => {
     expect(effectsFilterId([blur], box)).not.toBe(effectsFilterId([{ ...blur, params: { radius: 11 } }], box));
   });
 
-  test("every catalogue effect has an imitation", () => {
-    for (const kind of [blurKind]) expect(IMITATIONS[kind.id], kind.id).toBeDefined();
+  test("every catalogue effect has an imitation, at its defaults, minimums and maximums", () => {
+    const box = pictureBox(picture);
+    // The backend's catalogue, as its tests check it.
+    for (const kind of catalogue as VideoEffectKind[]) {
+      expect(IMITATIONS[kind.id], kind.id).toBeDefined();
+      for (const corner of ["default", "min", "max"] as const) {
+        const params = Object.fromEntries(kind.settings.map((setting) => [setting.key, setting[corner]]));
+        const primitives = effectPrimitives([{ id: kind.id, params, enabled: true }], box);
+        expect(primitives.length, `${kind.id} ${corner}`).toBeGreaterThan(0);
+        const values = primitives.flatMap(function all(primitive): string[] {
+          return [...Object.values(primitive.attributes), ...(primitive.children ?? []).flatMap(all)];
+        });
+        expect(values.filter((value) => /NaN|Infinity/.test(value)), `${kind.id} ${corner}`).toEqual([]);
+      }
+    }
+    // An id stays short whatever its primitives (a map's data URL).
+    expect(effectsFilterId([{ id: "fisheye", params: { strength: 50 }, enabled: true }], box)!.length).toBeLessThan(80);
+  });
+
+  // .scratch/video-effects/issues/04-blur-distort-and-stylize-effects.md
+  test("Posterize is a discrete table rounding each channel to its levels", () => {
+    const [transfer] = effectPrimitives([{ id: "posterize", params: { levels: 3 }, enabled: true }], pictureBox(picture));
+    expect(transfer.element).toBe("feComponentTransfer");
+    // Below a quarter, 0; to three quarters, a half; then 1: as round(value x 2) / 2.
+    expect(transfer.children!.map((func) => [func.element, func.attributes.tableValues])).toEqual([
+      ["feFuncR", "0 0.5 0.5 1"],
+      ["feFuncG", "0 0.5 0.5 1"],
+      ["feFuncB", "0 0.5 0.5 1"],
+    ]);
+  });
+
+  test("Motion blur along an axis is a Gaussian along it, and at a slant samples along its line", () => {
+    const frame = { width: 1080, height: 1920 };
+    expect(effectPrimitives([{ id: "motion-blur", params: { length: 18, angle: 0 }, enabled: true }], frame)).toEqual([
+      { element: "feGaussianBlur", attributes: { stdDeviation: "0.016667 0" } },
+    ]);
+    const slanted = effectPrimitives([{ id: "motion-blur", params: { length: 20, angle: 45 }, enabled: true }], frame);
+    const taps = slanted.filter((primitive) => primitive.attributes.result === "vfx-motion-tap");
+    // Up to the right, 10 px apart along the line.
+    expect(taps).toHaveLength(9);
+    expect(Number(taps[8].attributes.dx) * 1080).toBeCloseTo(40 * Math.SQRT1_2, 2);
+    expect(Number(taps[8].attributes.dy) * 1920).toBeCloseTo(-40 * Math.SQRT1_2, 2);
+  });
+
+  test("Fisheye's map moves the middle's points outward and keeps the corners, as the render's two stages", () => {
+    const frame = { width: 1080, height: 1920 };
+    const offset = fisheyeOffset(100, frame);
+    // At a corner, nothing; near the middle, the point shown is nearer the middle (its picture moves out).
+    expect(offset(0, 0).map((value) => Math.abs(value))).toEqual([0, 0]);
+    const [du, dv] = offset(0.6, 0.55);
+    expect(du).toBeLessThan(0);
+    expect(dv).toBeLessThan(0);
+    // Two stages of s = 0.3: the middle magnified 1 / 0.49.
+    expect(offset(0.6, 0.5)[0]).toBeCloseTo(0.1 * (0.49 - 1), 2);
+    const [image, map] = effectPrimitives([{ id: "fisheye", params: { strength: 100 }, enabled: true }], frame).slice(1);
+    expect(image.element).toBe("feImage");
+    expect(image.attributes.href).toMatch(/^data:image\/bmp;base64,Qk/);
+    expect(map).toMatchObject({ element: "feDisplacementMap", attributes: { xChannelSelector: "R", yChannelSelector: "G" } });
+  });
+
+  test("a displacement map is a BMP of its offsets about a half", () => {
+    const url = displacementMap(() => [0.25, -0.5], 1);
+    const bytes = Uint8Array.from(atob(url.split(",")[1]), (char) => char.charCodeAt(0));
+    expect(bytes.length).toBe(54 + 64 * 64 * 3);
+    // Blue, green, red: no blue, green 0.5 - 0.5, red 0.5 + 0.25.
+    expect([...bytes.slice(54, 57)]).toEqual([0, 0, 191]);
   });
 });
 

@@ -888,7 +888,7 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
         # so that a Transition blends pictures that carry them.
         graded = ",".join([
-            *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height)),
+            *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"g{i}fx"),
         ])
         drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
         chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed))
@@ -1201,7 +1201,7 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     timed = "" if event.image else f",setpts={played}+{event.start:.3f}/TB"
     ends = "repeat" if event.image else "pass"
     graded = grade_filters(event.grade, alpha=f"layer{number}g")
-    effected = ",".join([*([graded] if graded else []), *video_effect_chain(event.video_effects, (event.picture.width, event.picture.height))])
+    effected = ",".join([*([graded] if graded else []), *video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx")])
     return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected)
 
 
@@ -1215,7 +1215,7 @@ def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: 
     untouched (`enable`). "" when it changes nothing (a neutral Grade and no enabled effects, or
     strength 0)."""
     span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
-    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *video_effect_chain(event.video_effects, size, enable=span)])
+    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx")])
     if not graded or event.strength <= 0:
         return ""
     name = f"adjust{index}"

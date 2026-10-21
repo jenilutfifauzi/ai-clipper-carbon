@@ -336,7 +336,8 @@ Edits:
   shadow and opacity, so those keep their colours. The dry run lists it likewise.
 - An Overlay's `video_effects` is its picture's ordered stack of Video Effects, each
   {{id, params, enabled}}: id from list_assets kind "video_effects" (with each setting's range and
-  default; "gaussian-blur", radius 1..50 px, for now), params a setting's key to its value (one left
+  default: e.g. "gaussian-blur", "motion-blur", "pixelate", "chromatic-aberration", "fisheye",
+  "posterize"), params a setting's key to its value (one left
   out takes its default), enabled false to keep it in the stack undrawn. They run in turn after its
   Grade and before its corners, border, rotation, shadow and opacity. A size (a setting in px) is
   output pixels at the picture's fitted size (scale 1): the render multiplies it by the larger of

@@ -2,7 +2,9 @@
 0014): the catalogue run by the real ffmpeg over a 1 s 1080x1920 clip; Seam B on the planner; then
 Seam A through the API, MCP and the real ffmpeg: what is drawn, and what is refused."""
 
+import json
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,7 +14,7 @@ from app.candidates import Overlay, Transform
 from app.config import load_settings
 from app.planner import MediaInfo, overlay_events, plan_render
 from app.scaled_plan import scaled_plan
-from app.video_effects import VideoEffect, checked_video_effects, effects, video_effect_chain
+from app.video_effects import VideoEffect, catalogue, checked_video_effects, effects, video_effect_chain
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
 from test_media_library import upload
@@ -51,12 +53,24 @@ def test_each_effect_runs_at_its_default_minimum_and_maximum_and_keeps_a_1_s_cli
     assert played(chain) == ((1080, 1920), 30)
 
 
-def test_the_registry_lists_gaussian_blur_under_the_video_kind(client):
+def test_the_registry_lists_its_effects_under_the_video_kind_by_category(client):
     listed = client.get("/api/video-effects").json()
-    [blur] = listed
+    assert [(effect["category"], effect["id"]) for effect in listed] == [
+        ("Blur", "gaussian-blur"), ("Blur", "motion-blur"),
+        ("Distort", "pixelate"), ("Distort", "chromatic-aberration"), ("Distort", "fisheye"),
+        ("Stylize", "posterize"),
+    ]
+    assert all(effect["kind"] == "video" for effect in listed)
+    blur = listed[0]
     assert blur["id"] == "gaussian-blur" and blur["kind"] == "video" and blur["category"] == "Blur"
     assert blur["settings"] == [{"key": "radius", "label": "Radius", "min": 1, "max": 50, "default": 10, "step": 1, "unit": "px", "intensity": True}]
     assert blur["name"] == "Gaussian blur" and blur["description"]
+
+
+def test_the_catalogue_is_the_one_the_frontends_imitations_are_checked_against():
+    """fixtures/video_effects.json, which the frontend's tests read, so that every effect has an imitation."""
+    shared = json.loads((Path(__file__).parent / "fixtures" / "video_effects.json").read_text())
+    assert catalogue() == shared
 
 
 def test_a_stack_is_checked_its_defaults_filled_and_a_disabled_entry_adds_nothing():
@@ -187,7 +201,7 @@ def test_an_overlays_stack_is_saved_with_its_defaults_filled_and_a_bad_one_is_re
 async def test_the_agent_lists_the_effects_sets_a_stack_sees_it_in_the_dry_run_and_is_refused_a_bad_one(mcp, colours, tmp_path):
     listed = await call(mcp, "list_assets", kind="video_effects")
     assert set(listed) == {"video_effects"}
-    assert [effect["id"] for effect in listed["video_effects"]] == ["gaussian-blur"]
+    assert [effect["id"] for effect in listed["video_effects"]][:2] == ["gaussian-blur", "motion-blur"]
 
     path = tmp_path / "halves.png"
     path.write_bytes(colours["image"])

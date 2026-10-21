@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { Grade, VideoEffect } from "../../../api";
 import { foldGrade, gradeFilter, gradeFilterId, hasGradeFilter, sharpenKernel, vignetteBackground } from "./grading";
-import { effectPrimitives, effectsFilterId, frameEffectsFilter, type Box } from "./videoEffects";
+import { effectPrimitives, effectsFilterId, frameEffectsFilter, type Box, type Primitive } from "./videoEffects";
 
 // Whether the player shows the original: every Grade dropped (the before view, while its button is held).
 const Original = createContext(false);
@@ -80,14 +80,21 @@ export function EffectFilters({ items }: { items: { effects?: VideoEffect[]; box
       <defs>
         {[...filters].map(([id, { effects, box }]) => (
           <filter key={id} id={id} colorInterpolationFilters="sRGB" primitiveUnits="objectBoundingBox" x="0" y="0" width="1" height="1">
-            {effectPrimitives(effects, box).map(({ element: Element, attributes }, i) => (
-              <Element key={i} {...attributes} />
-            ))}
+            <Primitives primitives={effectPrimitives(effects, box)} />
           </filter>
         ))}
       </defs>
     </svg>
   );
+}
+
+// Video Effects' imitations as elements, each with its own (an feComponentTransfer's functions).
+function Primitives({ primitives }: { primitives: Primitive[] }) {
+  return primitives.map(({ element: Element, attributes, children }, i) => (
+    <Element key={i} {...attributes}>
+      {children && <Primitives primitives={children} />}
+    </Element>
+  ));
 }
 
 /**
@@ -128,9 +135,7 @@ export function GradeFilter({ id, grade, mix = 1, effects = [], box }: { id: str
       {sharpen > 0 && (
         <feConvolveMatrix order="3" kernelMatrix={sharpenKernel(sharpen).map(number).join(" ")} divisor="1" edgeMode="duplicate" preserveAlpha="true" />
       )}
-      {effected.map(({ element: Element, attributes }, i) => (
-        <Element key={i} {...attributes} />
-      ))}
+      <Primitives primitives={effected} />
       {mix < 1 && <feComposite in2="SourceGraphic" operator="arithmetic" k1="0" k2={number(mix)} k3={number(1 - mix)} k4="0" />}
     </filter>
   );
