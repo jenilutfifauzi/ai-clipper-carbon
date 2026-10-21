@@ -154,10 +154,14 @@ Canvas:
   with a short side of 1080: 1080x1920, 1080x1350, 1080x1080 or 1920x1080. A Job's options.aspect
   is its new Candidates'. get_candidate and the dry run give the Canvas's size (the dry run its Safe
   Area too). A Candidate's own positions (Transforms, their Keyframes, Cue Edits) are in its Canvas's
-  pixels: a centre off it is brought onto it, a Cue Edit off it refused. Style positions (caption,
-  hook and Watermark x, y) are in the 1080x1920 Reference Space, mapped onto the Canvas in
-  proportion. Changing `aspect` keeps positions where they are, in pixels. A Clip renders at the
-  Canvas's shape, its short side the Export Preset's resolution.
+  pixels: a centre off it is brought onto it, a Cue Edit off it refused. Style positions (the
+  caption, hook and Watermark Styles' x and y, of Style Presets and style_overrides) are in the
+  Reference Space, 1080x1920 on every aspect, so one Preset serves them all: the Canvas maps them in
+  proportion, x*width/1080 and y*height/1920 (a caption y of 1440 is 810 on 16:9). Sizes (fonts,
+  the Watermark's size, outlines, padding) aren't mapped. Top, Middle, Bottom and the Watermark's
+  nine places are in the Canvas's Safe Area; captions and the hook are at most 820 px wide on every
+  aspect, centred. Changing `aspect` keeps positions where they are, in pixels. A Clip renders at
+  the Canvas's shape, its short side the Export Preset's resolution.
 
 Edits:
 - Candidates can be changed only while the Job is in review or rendering.
@@ -369,7 +373,7 @@ Edits:
   run lists one that isn't normal.
 - A Segment's `video_effects` (of the episode or a video, a Freeze frame too) is the same stack over
   its whole frame (panels, picture and Background): after its Grade and before the joins, so a
-  Transition crossfades pictures that already carry them. Its frame is 1080x1920 at scale 1, so its
+  Transition crossfades pictures that already carry them. Its frame is the Canvas at scale 1, so its
   sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
   merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
   `segments`.

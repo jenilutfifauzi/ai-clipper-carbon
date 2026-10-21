@@ -138,6 +138,7 @@ function EffectCard({
   onPick: () => void;
   onAudition: (kind: VideoEffectKind | null) => void;
 }) {
+  const canvas = useCanvas();
   // A key makes no Adjustment Layer: it is an Overlay's only.
   const droppable = !isKey(kind);
   return (
@@ -166,7 +167,7 @@ function EffectCard({
         )}
       >
         <div aria-hidden className="relative isolate aspect-video w-full overflow-hidden rounded-md bg-black">
-          <div data-picture className="absolute inset-0" style={{ ...picture, filter: effectsFilter([videoEffectOf(kind)], box) }} />
+          <div data-picture className="absolute inset-0" style={{ ...picture, filter: effectsFilter([videoEffectOf(kind)], box, 0, canvas) }} />
         </div>
         <span className="truncate px-0.5">{kind.name}</span>
       </button>

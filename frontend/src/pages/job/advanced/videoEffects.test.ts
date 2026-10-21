@@ -401,6 +401,21 @@ describe("Glow, Bloom pulse and Film grain in the preview", () => {
     expect(half.find((primitive) => primitive.element === "feGaussianBlur")!.attributes.stdDeviation).toBe("0.014815 0.008333");
   });
 
+  test("a full-frame picture's light spreads as far on every Canvas, as the render's (canvas-aspect/07)", () => {
+    const spread = (box: { width: number; height: number }, canvas: { width: number; height: number }, id = "glow") => {
+      const primitives = effectPrimitives([effect(id, { amount: 45, speed: 2 })], box, canvas);
+      const [across] = primitives.find((primitive) => primitive.element === "feGaussianBlur")!.attributes.stdDeviation.split(" ");
+      return Number(across) * box.width;
+    };
+    const wide = { width: 1920, height: 1080 };
+    for (const id of ["glow", "bloom-pulse"]) {
+      expect(spread(wide, wide, id)).toBeCloseTo(spread(frame, frame, id), 1);
+      expect(spread(frame, frame, id)).toBeCloseTo(16 * (id === "glow" ? 1 : 0.75), 1);
+    }
+    // Its filter is the Canvas's own: the same stack and box on another Canvas is another filter.
+    expect(effectsFilterId([effect("glow", { amount: 45 })], wide, 0, wide)).not.toBe(effectsFilterId([effect("glow", { amount: 45 })], wide, 0, frame));
+  });
+
   test("Bloom pulse's strength breathes as the render's, from its item's start", () => {
     expect(bloomStrength(80, 2, 0)).toBeCloseTo(0.48);
     expect(bloomStrength(80, 2, Math.PI / 4)).toBeCloseTo(0.8);

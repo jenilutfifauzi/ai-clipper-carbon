@@ -1648,8 +1648,10 @@ def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None, c
 def _watermark_area(style: WatermarkStyle, width: int, height: int, canvas: Canvas) -> Box:
     """Where a `width` x `height` Watermark goes on `canvas` at the style's position."""
     if style.position is WatermarkPosition.CUSTOM:
-        x = min(max(round(style.x - width / 2), 0), canvas.width - width)
-        y = min(max(round(style.y - height / 2), 0), canvas.height - height)
+        # Its place is in the Reference Space; its size isn't mapped.
+        centre_x, centre_y = canvas.x_from_reference(style.x), canvas.y_from_reference(style.y)
+        x = min(max(round(centre_x - width / 2), 0), canvas.width - width)
+        y = min(max(round(centre_y - height / 2), 0), canvas.height - height)
         return Box(x, y, width, height)
     vertical, _, horizontal = style.position.value.rpartition("_")
     vertical = vertical or (horizontal if horizontal in ("top", "bottom") else "")
@@ -2424,7 +2426,7 @@ def _hook(
         HookPosition.TOP: safe.y,
         HookPosition.MIDDLE: (canvas.height - height) // 2,
         HookPosition.BOTTOM: bottom,
-        HookPosition.CUSTOM: min(max(style.y, safe.y), bottom),
+        HookPosition.CUSTOM: min(max(canvas.y_from_reference(style.y), safe.y), bottom),
     }[style.position]
     area = Box((canvas.width - width) // 2, top, width, height)
     placed = None
@@ -2445,7 +2447,7 @@ def _hook(
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
     # With its middle at the style's x, or as near as keeps it in the frame.
-    dx = 0 if style.x is None else min(max((2 * style.x - area.width) // 2, 0), canvas.width - area.width) - area.x
+    dx = 0 if style.x is None else min(max((2 * canvas.x_from_reference(style.x) - area.width) // 2, 0), canvas.width - area.width) - area.x
     if dx and placed is not None:
         placed = replace(placed, box=_shifted(placed.box, dx), anchor=(placed.anchor[0] + dx, placed.anchor[1]))
     return HookEvent(
@@ -2799,7 +2801,8 @@ def _captions(
         joined = [*cues[i - 1], replace(cue[0], breaks_before=False), *cue[1:]] if i > 0 else []
         joinable = i > 0 and not parted(cues[i - 1], cue[0]) and _fits(joined, style)
         needs_join = i > 0 and held(cues[i - 1], cue[0])
-        x = edit.x if edit is not None and edit.x is not None else style.x
+        # A Cue Edit's x is the Candidate's, on the Canvas; the style's is in the Reference Space.
+        x = edit.x if edit is not None and edit.x is not None else None if style.x is None else canvas.x_from_reference(style.x)
         scale = edit.scale if edit is not None and edit.scale is not None else 1.0
         for a, b, area in parts:
             if placed:
@@ -2917,7 +2920,7 @@ def _caption_area(style: CaptionStyle, scene: ScenePlan, canvas: Canvas) -> Box:
         case CaptionPosition.BOTTOM:
             return canvas.lower_captions
         case CaptionPosition.CUSTOM:
-            return _custom_caption_area(style.y, canvas)
+            return _custom_caption_area(canvas.y_from_reference(style.y), canvas)
 
 
 def _custom_caption_area(y: float, canvas: Canvas) -> Box:

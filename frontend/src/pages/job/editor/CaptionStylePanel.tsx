@@ -129,11 +129,11 @@ export function CaptionStylePanel({
             value={caption.y}
             min={REFERENCE_SAFE_AREA.y + CAPTION_HEIGHT / 2}
             max={REFERENCE_SAFE_AREA.y + REFERENCE_SAFE_AREA.height - CAPTION_HEIGHT / 2}
-            format={(v) => `${v} px`}
+            format={(v) => `${Math.round(v)} px`}
             onChange={(v) => set("y", v)}
             marker={marker("y", "height")}
           />
-          <Slider label="Line's centre across" value={caption.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
+          <Slider label="Line's centre across" value={caption.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${Math.round(v)} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
         </>
       )}
       <div className="flex flex-col gap-3">

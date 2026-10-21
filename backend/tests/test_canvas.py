@@ -3,9 +3,10 @@ from the Reference Space. Pure (Seam B)."""
 
 import pytest
 
-from app.candidates import Keyframe, KeyProperty, Layout, Overlay, Transform
+from app.candidates import CueEdit, Keyframe, KeyProperty, Layout, Overlay, Transform
 from app.canvas import CANVASES, PORTRAIT, REFERENCE, Aspect, Box, canvas_for
-from app.planner import Face, FrameFaces, MediaInfo, SceneLayout, picture_at, plan_render
+from app.planner import Face, FrameFaces, MediaInfo, SceneLayout, hook_width, picture_at, plan_render
+from app.styles import CaptionPosition, CaptionStyle, HookPosition, HookStyle, WatermarkKind, WatermarkPosition, WatermarkStyle
 from app.transcript import Word
 from app.video_source import SourceMetadata
 
@@ -227,3 +228,65 @@ def test_captions_on_auto_stay_inside_the_safe_area(aspect, layout, source):
     [cue] = plan_render(100, 105, source, faces=PAIR, layout=layout, words=WORDS, canvas=canvas).captions
     assert safe.y <= cue.area.y and cue.area.y + cue.area.height <= safe.y + safe.height
     assert safe.x <= cue.area.x and cue.area.x + cue.area.width <= safe.x + safe.width
+
+
+# Styles in the Reference Space, placed in each Safe Area (canvas-aspect/07).
+LANDSCAPE = canvas_for(Aspect.LANDSCAPE)
+
+
+def inside(box: Box, area: Box) -> bool:
+    return area.x <= box.x and box.x + box.width <= area.x + area.width and area.y <= box.y and box.y + box.height <= area.y + area.height
+
+
+def test_a_custom_caption_place_is_mapped_from_the_reference_space():
+    style = CaptionStyle(position=CaptionPosition.CUSTOM, x=270, y=1280)
+    [cue] = plan_render(100, 105, WIDE, words=WORDS, caption_style=style, canvas=LANDSCAPE).captions
+    # (270, 1280) of 1080x1920 is (480, 720) of 1920x1080; its font size isn't mapped.
+    assert (cue.area.x + cue.area.width / 2, cue.area.y + cue.area.height / 2) == (480, 720)
+    assert cue.size == style.size
+    [cue] = plan_render(100, 105, WIDE, words=WORDS, caption_style=style).captions
+    assert (cue.area.x + cue.area.width / 2, cue.area.y + cue.area.height / 2) == (270, 1280)
+
+
+def test_a_cue_edits_place_is_the_candidates_own_on_its_canvas():
+    edit = CueEdit(at=100.4, x=1500, y=300)
+    style = CaptionStyle(position=CaptionPosition.CUSTOM, x=270, y=1440)
+    [cue] = plan_render(100, 105, WIDE, words=WORDS, caption_style=style, cue_edits=[edit], canvas=LANDSCAPE).captions
+    assert (cue.area.x + cue.area.width / 2, cue.area.y + cue.area.height / 2) == (1500, 300)
+
+
+def test_a_custom_watermark_place_is_mapped_from_the_reference_space_and_keeps_its_size():
+    style = WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab" * 8, position=WatermarkPosition.CUSTOM, x=270, y=480, size=100)
+    area = plan_render(100, 105, WIDE, watermark_style=style, logo_size=(200, 100), canvas=LANDSCAPE).watermark.area
+    assert area == Box(480 - 100, 270 - 50, 200, 100)
+
+
+def test_a_custom_hook_place_is_mapped_from_the_reference_space():
+    style = HookStyle(position=HookPosition.CUSTOM, x=270, y=960)
+    hook = plan_render(100, 105, WIDE, hook="Halo semua", hook_style=style, canvas=LANDSCAPE).hook
+    assert (hook.area.x + hook.area.width // 2, hook.area.y) == pytest.approx((480, 540), abs=1)
+
+
+@pytest.mark.parametrize("aspect", list(Aspect))
+def test_the_hook_at_the_top_is_inside_the_safe_area(aspect):
+    canvas = canvas_for(aspect)
+    hook = plan_render(100, 105, WIDE, hook="Setetes racun bisa bunuh perusahaan kamu sendiri", canvas=canvas).hook
+    assert hook.area.y == canvas.safe_area.y and inside(hook.area, canvas.safe_area)
+
+
+@pytest.mark.parametrize("aspect", list(Aspect))
+@pytest.mark.parametrize("position", [position for position in WatermarkPosition if position is not WatermarkPosition.CUSTOM])
+def test_the_watermarks_nine_places_are_inside_each_safe_area(aspect, position):
+    canvas = canvas_for(aspect)
+    style = WatermarkStyle(kind=WatermarkKind.TEXT, text="@podcast", position=position)
+    assert inside(plan_render(100, 105, WIDE, watermark_style=style, canvas=canvas).watermark.area, canvas.safe_area)
+
+
+def test_captions_and_the_hook_are_no_wider_on_16_9_than_on_9_16():
+    assert (LANDSCAPE.caption_width, hook_width(LANDSCAPE)) == (PORTRAIT.caption_width, hook_width(PORTRAIT)) == (820, 748)
+    # Centred in the frame.
+    assert LANDSCAPE.lower_captions == Box(550, 786, 820, 200)
+    long = "Racun kecil yang dibiarkan lama-lama pasti mematikan perusahaan kamu sendiri"
+    wide, tall = (plan_render(100, 105, WIDE, hook=long, canvas=canvas).hook for canvas in (LANDSCAPE, PORTRAIT))
+    assert (wide.lines, wide.size, wide.area.width) == (tall.lines, tall.size, tall.area.width)
+    assert wide.area.x + wide.area.width // 2 == 960

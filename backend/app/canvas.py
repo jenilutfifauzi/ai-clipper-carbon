@@ -39,6 +39,9 @@ REFERENCE = (1080, 1920)
 PORTRAIT_SAFE_AREA = Box(0, 232, 950, 1304)
 # On the other aspects (feeds and players), this share of each edge is kept clear.
 SAFE_MARGIN = 0.05
+# Captions and the hook are at most as wide as on 9:16, centred in the frame as there (x 130–950),
+# however wide the Safe Area: their font sizes are in pixels, so a wider area would only make longer lines.
+CAPTION_WIDEST = 2 * (PORTRAIT_SAFE_AREA.x + PORTRAIT_SAFE_AREA.width) - REFERENCE[0]
 # A caption area is this tall; the lower third's ends this far above the Safe Area's bottom, and the
 # Top position's starts this far below its top: just below where a two-line hook at the top ends.
 CAPTION_HEIGHT = 200
@@ -88,13 +91,14 @@ class Canvas:
 
     @property
     def caption_x(self) -> int:
-        """Where a caption area starts: as far from the left edge as the Safe Area's right edge is
-        from the right, so that lines are centred in the frame."""
-        return self.width - (self.safe_area.x + self.safe_area.width)
+        """Where a caption area starts: as far from the left edge as its right edge is from the right,
+        so that lines are centred in the frame."""
+        return (self.width - self.caption_width) // 2
 
     @property
     def caption_width(self) -> int:
-        return self.width - 2 * self.caption_x
+        """As wide as the Safe Area leaves either side of the frame's middle, CAPTION_WIDEST at most."""
+        return min(2 * (self.safe_area.x + self.safe_area.width) - self.width, CAPTION_WIDEST)
 
     @property
     def seam_captions(self) -> Box:
@@ -126,6 +130,14 @@ class Canvas:
         """A place in the Reference Space, on this Canvas."""
         return x * self.width / REFERENCE[0], y * self.height / REFERENCE[1]
 
+    def x_from_reference(self, x: float) -> int:
+        """A Style's x in the Reference Space, on this Canvas to the pixel (itself on 9:16)."""
+        return round(x * self.width / REFERENCE[0])
+
+    def y_from_reference(self, y: float) -> int:
+        """A Style's y in the Reference Space, on this Canvas to the pixel (itself on 9:16)."""
+        return round(y * self.height / REFERENCE[1])
+
 
 def _canvas(aspect: Aspect) -> Canvas:
     across, down = (int(part) for part in aspect.value.split(":"))
@@ -143,6 +155,14 @@ PORTRAIT = CANVASES[Aspect.PORTRAIT]
 # The longest side of any Canvas: how far a Candidate-owned position may be from the frame's top-left
 # corner before it is checked against its Candidate's own Canvas, which only the Candidate knows.
 LONGEST = max(max(canvas.size) for canvas in CANVASES.values())
+
+
+def unscaled(size: tuple[int, int]) -> tuple[int, int]:
+    """The Canvas of a frame `size` (a plan drawn at an export's size), at its own size: its shape
+    with a short side of SHORT_SIDE."""
+    width, height = size
+    short = min(width, height)
+    return round(width * SHORT_SIDE / short), round(height * SHORT_SIDE / short)
 
 
 def canvas_for(aspect: Aspect | str) -> Canvas:

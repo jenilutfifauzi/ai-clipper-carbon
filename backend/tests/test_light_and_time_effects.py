@@ -4,7 +4,10 @@ that its sizes are drawn as given), unkeyed and keyed. The two that change with 
 Overlay's start, and read a still image as a looping stream. Each effect's chain at its defaults,
 minimums and maximums is run in test_video_effects.py."""
 
+import re
+
 import numpy as np
+import pytest
 
 from app.video_effects import Clock, VideoEffect, changes_with_time, video_effect_chain
 from test_blur_distort_stylize_effects import pictures  # noqa: F401
@@ -29,6 +32,22 @@ def frames(client, settings, picture: bytes, times: list[float], start: float = 
     placed = HELD | {"start": start} if keyed else {"start": start, "secs": 2.0, "transform": {"scale": 1}}
     shown = {"id": "o", "media": item["id"], **placed, "video_effects": list(stack)}
     return [frame_at(client, settings, job, candidate, at, overlays=[shown]) for at in times]
+
+
+def spread(chain: list[str]) -> float:
+    """The sigma of the one Gaussian a light effect's chain blurs its light by."""
+    [sigma] = re.findall(r"gblur=sigma=([\d.]+)", ",".join(chain))
+    return float(sigma)
+
+
+@pytest.mark.parametrize("effect", [VideoEffect("glow", {"amount": 45}), VideoEffect("bloom-pulse", {"amount": 50, "speed": 2})])
+def test_the_light_of_a_full_frame_picture_spreads_alike_on_every_canvas_and_twice_as_far_at_twice_the_size(effect):
+    # Measured against the Canvas (canvas-aspect/07): a full frame of 16:9 spreads as far as one of 9:16.
+    portrait = spread(video_effect_chain([effect], (1080, 1920)))
+    assert spread(video_effect_chain([effect], (1920, 1080), frame=(1920, 1080))) == portrait
+    assert spread(video_effect_chain([effect], (1080, 1080), frame=(1080, 1080))) == portrait
+    # A 4K 16:9 render draws it twice as large.
+    assert spread(video_effect_chain([effect], (3840, 2160), frame=(1920, 1080))) == 2 * portrait
 
 
 def test_only_grain_and_pulse_change_with_time():

@@ -1203,7 +1203,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           },
           onPlace: (id, place, group) =>
             id === "hook"
-              ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
+              ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place, canvas) }, group)
               : placeCaptions({ kind: "captions" }, place, group),
           // A Cue moved or scaled on its own: its Cue Edit.
           cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },

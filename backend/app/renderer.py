@@ -130,7 +130,7 @@ import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.audio_effects import MEASURED_GAIN, NORMALIZE, effect_chain, normalize_gain
-from app.canvas import PORTRAIT
+from app.canvas import PORTRAIT, unscaled
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
@@ -534,7 +534,7 @@ class Renderer:
             frame += f";{joined}fps={_rate(plan)}[timed]"
             joined = "[timed]"
         for i, (event, number, feed) in enumerate(layered):
-            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed, _rate_value(plan))}"
+            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed, _rate_value(plan), unscaled((plan.width, plan.height)))}"
             joined = f"[over{i}]"
         for i, event in enumerate(plan.adjustment_layers):
             if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i, (plan.width, plan.height), _rate_value(plan)):
@@ -908,7 +908,9 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
         # so that a Transition blends pictures that carry them.
         graded = ",".join([
-            *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"g{i}fx"),
+            *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(
+                segment.video_effects, (plan.width, plan.height), label=f"g{i}fx", frame=unscaled((plan.width, plan.height)),
+            ),
         ])
         drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
         chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed))
@@ -1209,11 +1211,14 @@ def _overlay_inputs(
     return inputs, drawn
 
 
-def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None, fps: float = 30) -> str:
+def _overlay(
+    event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None, fps: float = 30,
+    canvas: tuple[int, int] = PORTRAIT.size,
+) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
     image's one picture held (or its looped frames moved to start when it does, `_looped`), graded after it is scaled and flipped and then drawn through its Video
-    Effects (docs/adr/0014), at its drawn size. A keyed one's frames, drawn whole
+    Effects (docs/adr/0014), at its drawn size, on `canvas` (the plan's Canvas, at its own size). A keyed one's frames, drawn whole
     (graded and effected) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
     frames below being at n / fps exactly). The frames below are `fps` a second."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
@@ -1229,7 +1234,7 @@ def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int,
     # Its effects come before its frames are moved onto the Timeline: a video's are its video's, from
     # its offset, before its Speed.
     clock = Clock(rate=1 if event.image else 1 / event.speed)
-    chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock)
+    chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock, frame=canvas)
     effected = ",".join([*([graded] if graded else []), *chain])
     return _picture(
         event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected, event.blend, shows, spanned
@@ -1252,7 +1257,7 @@ def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: 
     span's frames alone (`_spanned`). "" when it changes nothing (a neutral Grade and no enabled
     effects, or strength 0)."""
     span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
-    effects = video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx", clock=Clock(event.start))
+    effects = video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx", clock=Clock(event.start), frame=unscaled(size))
     graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *effects])
     if not graded or event.strength <= 0:
         return ""
@@ -1463,7 +1468,7 @@ def _keyed_items(
         image = read_image(files[event.media])
         graded = grade_filters(event.grade, alpha="g")
         if (graded or event.video_effects) and ffmpeg is not None:
-            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects)
+            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects, unscaled((plan.width, plan.height)))
         items[("overlay", i)] = image
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
@@ -1537,7 +1542,7 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
             video = VideoDecode(
                 ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
-                looped=event.image,
+                looped=event.image, canvas=unscaled(frame),
             )
         else:
             frames, video = PictureFrames(event.picture, item, frame, sampled), None

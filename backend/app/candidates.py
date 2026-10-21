@@ -767,7 +767,7 @@ class AdjustmentLayer:
     strength: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
     fade_in: Fade = 0.0
     fade_out: Fade = 0.0
-    # Its Video Effects (docs/adr/0014), in order, after its Grade over the 1080x1920 frame (scale 1),
+    # Its Video Effects (docs/adr/0014), in order, after its Grade over the Canvas (scale 1),
     # mixed back with it by its strength and fades. Empty in one saved before them.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
@@ -876,7 +876,7 @@ class Segment:
     # volume, Keyframes and fades; each setting filled in once checked. Empty in one saved before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
     # Its whole frame's Video Effects (docs/adr/0014), in order, after its Grade and before the joins,
-    # so that a Transition blends pictures that carry them; sizes at the 1080x1920 frame's. Empty in
+    # so that a Transition blends pictures that carry them; sizes at the Canvas's. Empty in
     # one saved before them. A Freeze frame takes them too.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 

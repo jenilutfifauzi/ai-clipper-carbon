@@ -80,15 +80,16 @@ export function GradeFilters({ grades }: { grades: (Grade | null | undefined)[] 
 
 /**
  * The SVG filters the preview's Video Effects are imitated with (ADR 0014; videoEffects.ts), one per
- * distinct stack and element size of `items`, referenced by CSS after the Grade's filter on the same
- * element (`effectsFilter`), so that they come after it, as in the render. Their units are fractions
- * of the element's box, and they draw within it. One that changes with time is an item's own, from
- * its `start`.
+ * distinct stack and element size of `items` on the Canvas (useCanvas), referenced by CSS after the
+ * Grade's filter on the same element (`effectsFilter`), so that they come after it, as in the render.
+ * Their units are fractions of the element's box, and they draw within it. One that changes with time
+ * is an item's own, from its `start`.
  */
 export function EffectFilters({ items }: { items: { effects?: VideoEffect[]; box: Box; start?: number }[] }) {
+  const canvas = useCanvas();
   const filters = new Map<string, { effects: VideoEffect[]; box: Box; start: number }>();
   for (const { effects, box, start = 0 } of items) {
-    const id = effectsFilterId(effects, box, start);
+    const id = effectsFilterId(effects, box, start, canvas);
     if (id && effects) filters.set(id, { effects, box, start });
   }
   if (!filters.size) return null;
@@ -97,7 +98,7 @@ export function EffectFilters({ items }: { items: { effects?: VideoEffect[]; box
       <defs>
         {[...filters].map(([id, { effects, box, start }]) => (
           <filter key={id} id={id} colorInterpolationFilters="sRGB" primitiveUnits="objectBoundingBox" x="0" y="0" width="1" height="1">
-            <Primitives primitives={effectPrimitives(effects, box)} start={start} />
+            <Primitives primitives={effectPrimitives(effects, box, canvas)} start={start} />
           </filter>
         ))}
       </defs>
@@ -162,8 +163,9 @@ export function GradeFilter({
   box?: Box;
   start?: number;
 }) {
+  const canvas = useCanvas();
   const folded = hasGradeFilter(grade) ? foldGrade(grade) : null;
-  const effected = box ? effectPrimitives(effects, box) : [];
+  const effected = box ? effectPrimitives(effects, box, canvas) : [];
   if (!folded && !effected.length) return null;
   const { tables, matrix, sharpen, lut } = folded ?? { tables: null, matrix: null, sharpen: 0, lut: null };
   // The picture before the Look's table, which its intensity mixes the table's over.

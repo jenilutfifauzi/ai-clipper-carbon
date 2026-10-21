@@ -12,6 +12,7 @@ from app.candidates import Layout
 from app.canvas import Aspect, canvas_for
 from app.jobs import CANDIDATES_FILE
 from app.planner import plan_render
+from app.styles import CaptionPosition, CaptionStyle
 from app.video_source import SourceMetadata
 from test_jobs_api import create_job
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp, reviewed  # noqa: F401 (fixtures)
@@ -19,7 +20,8 @@ from conftest import wait_for
 from test_render import add, probe, render, render_video, rendered  # noqa: F401 (fixtures)
 from test_review import candidate_url, candidates, patch
 from test_media_library import make
-from test_render_sizes import BLUE, RED, frame, rendered_at
+from test_render import plain_video  # noqa: F401 (fixture)
+from test_render_sizes import BLUE, ORANGE, PLAIN, RED, SPOKEN, extent, frame, rendered_at
 from test_selection import analyzed, clip
 
 
@@ -206,3 +208,29 @@ def test_a_wide_split_renders_its_two_panels_side_by_side(settings, tmp_path, tw
     for rows in (slice(20, 120), slice(600, 700)):
         assert (np.abs(picture[rows, 40:600] - RED).max(axis=2) < 60).all()
         assert (np.abs(picture[rows, 680:1240] - BLUE).max(axis=2) < 60).all()
+
+
+@pytest.mark.anyio
+async def test_the_tools_documentation_speaks_of_the_canvas_and_the_reference_space(mcp):
+    # canvas-aspect/07: Candidate positions in the Canvas's pixels, Style positions in the Reference Space.
+    tools = json.dumps([tool.model_dump(mode="json", exclude_none=True) for tool in (await mcp.list_tools()).tools])
+    text = mcp.instructions + tools
+    canvas = " ".join(mcp.instructions[mcp.instructions.index("Canvas:\n") : mcp.instructions.index("Edits:\n")].split())
+    assert "Canvas's pixels" in canvas and "Reference Space" in canvas and "y*height/1920" in canvas
+    for stale in ("0..1080", "0..1920", "1080x1920 frame", "1080x1920 at scale 1"):
+        assert stale not in text, stale
+    # 1080x1920 is named only where the Canvas section lists the sizes and the Reference Space.
+    assert text.count("1080x1920") == canvas.count("1080x1920") == 2
+
+
+def test_a_wide_renders_caption_lands_at_its_style_place_mapped_from_the_reference_space(settings, tmp_path, plain_video):
+    # canvas-aspect/07: a Custom place of (270, 1280) in the Reference Space is (480, 720) of 16:9.
+    style = CaptionStyle(position=CaptionPosition.CUSTOM, x=270, y=1280)
+    canvas = canvas_for(Aspect.LANDSCAPE)
+    plan = plan_render(2.0, 5.0, PLAIN, layout=Layout.BLUR, words=SPOKEN, caption_style=style, canvas=canvas)
+    picture = frame(settings, rendered_at(settings, tmp_path, plain_video, plan, 1080), 1.0)
+    assert picture.shape[:2] == (1080, 1920)
+    (left, top, right, bottom), _ = extent(picture, ORANGE)
+    assert ((left + right) / 2, (top + bottom) / 2) == (pytest.approx(480, abs=8), pytest.approx(720, abs=12))
+    safe = canvas.safe_area
+    assert safe.x <= left and right <= safe.x + safe.width and safe.y <= top and bottom <= safe.y + safe.height

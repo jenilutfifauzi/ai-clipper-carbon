@@ -118,11 +118,11 @@ export function HookPosition({ style }: { style: StyleControls }) {
             value={hook.y}
             min={REFERENCE_SAFE_AREA.y}
             max={REFERENCE_SAFE_AREA.y + REFERENCE_SAFE_AREA.height}
-            format={(v) => `${v} px`}
+            format={(v) => `${Math.round(v)} px`}
             onChange={(v) => set("y", v)}
             marker={marker("y", "hook height")}
           />
-          <Slider label="Hook's middle across" value={hook.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "hook middle across")} />
+          <Slider label="Hook's middle across" value={hook.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${Math.round(v)} px`} onChange={(v) => set("x", v)} marker={marker("x", "hook middle across")} />
         </>
       )}
     </>

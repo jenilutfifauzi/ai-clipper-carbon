@@ -42,7 +42,7 @@ export function adjustmentFilters(plan: RenderPlan | null, time: number): Adjust
     const weight = Math.round(adjustmentWeight(event, time) * 200) / 200;
     if (weight <= 0) return [];
     const effects = event.video_effects ?? [];
-    const effected = effectsFilterId(effects, canvasOf(plan), event.start);
+    const effected = effectsFilterId(effects, canvasOf(plan), event.start, canvasOf(plan));
     if (!foldGrade(event.grade) && !effected) return [];
     const graded = hasGradeFilter(event.grade) ? gradeFilterId(event.grade) : null;
     const filterId = graded || effected ? `adjust-${event.id}-${graded ?? "n"}-${effected ?? "n"}` : null;

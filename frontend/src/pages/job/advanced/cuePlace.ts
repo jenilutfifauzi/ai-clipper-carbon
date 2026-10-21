@@ -22,7 +22,7 @@ const scaled = (value: number) => Math.round(Math.min(Math.max(value, CUE_MIN_SC
 export function placedCaptions(scene: CueScene, pick: Pick, place: Place): Outcome | null {
   const { edits, plan } = scene;
   if (captionsLocked(scene)) return null;
-  if (pick?.kind === "captions") return { edits: { ...edits, style_overrides: placedOverrides(edits.style_overrides, "caption", place) }, pick };
+  if (pick?.kind === "captions") return { edits: { ...edits, style_overrides: placedOverrides(edits.style_overrides, "caption", place, canvasOf(plan)) }, pick };
   if (pick?.kind !== "cue" || !plan) return null;
   const size = place.size === null ? {} : { scale: place.size / plan.caption_style.size };
   return placeCue(scene, pick.key, { x: place.x, y: place.y, ...size });

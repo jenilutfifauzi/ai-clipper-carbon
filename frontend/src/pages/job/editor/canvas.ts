@@ -16,12 +16,32 @@ export interface Canvas {
 export const PORTRAIT: Canvas = { width: 1080, height: 1920, safe_area: { x: 0, y: 232, width: 950, height: 1304 } };
 
 // The Reference Space (GLOSSARY.md): the 1080×1920 frame the Caption, Hook and Watermark Styles keep
-// their places in on every Canvas, and that Video Effects' sizes are measured against.
+// their places in on every Canvas.
 export const REFERENCE = { width: 1080, height: 1920 } as const;
 // Its Safe Area (9:16's), which the Hook Style's height is held to.
 export const REFERENCE_SAFE_AREA = PORTRAIT.safe_area;
 // How tall a caption area is (canvas.py's CAPTION_HEIGHT): a line's middle stays half of it inside a Safe Area.
 export const CAPTION_HEIGHT = 200;
+
+// A place in the Reference Space is kept to this many decimals: enough that it maps back onto the
+// Canvas pixel it came from on every aspect.
+const REFERENCE_DECIMALS = 100;
+
+/**
+ * A place in `canvas`'s pixels (a caption, the hook or the Watermark dragged on the stage) in the
+ * Reference Space, where their Style keeps it: x·1080/W and y·1920/H, to a hundredth of a pixel, so
+ * that the planner's mapping (`fromReference`) puts it back on the pixel it was dropped on. Itself
+ * on 9:16.
+ */
+export function toReference(canvas: { width: number; height: number }, place: { x: number; y: number }): { x: number; y: number } {
+  const kept = (value: number) => Math.round(value * REFERENCE_DECIMALS) / REFERENCE_DECIMALS;
+  return { x: kept((place.x * REFERENCE.width) / canvas.width), y: kept((place.y * REFERENCE.height) / canvas.height) };
+}
+
+/** A Style's place in the Reference Space on `canvas`, to the pixel, as the planner maps it (canvas.py's x_from_reference, y_from_reference). */
+export function fromReference(canvas: { width: number; height: number }, place: { x: number; y: number }): { x: number; y: number } {
+  return { x: Math.round((place.x * canvas.width) / REFERENCE.width), y: Math.round((place.y * canvas.height) / REFERENCE.height) };
+}
 
 /** The Canvas `plan` is drawn on; the 9:16 one while there is no plan. */
 export function canvasOf(plan: RenderPlan | null | undefined): Canvas {

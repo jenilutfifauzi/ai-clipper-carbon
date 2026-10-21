@@ -62,7 +62,7 @@ export function PicturePanel({
   // Hidden, or as its box is: a MediaSegment's box hides it outside its span, which "visible" would undo.
   const visibility = hidden ? "hidden" : undefined;
   const graded = useGradeFilter(grade);
-  const effected = effectsFilter(effects, pictureBox(picture), start);
+  const effected = effectsFilter(effects, pictureBox(picture), start, frame);
   const filter = [graded, effected].filter(Boolean).join(" ") || undefined;
 
   useLayoutEffect(() => {

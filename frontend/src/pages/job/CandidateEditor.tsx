@@ -45,7 +45,8 @@ import { RevisionHistory } from "./editor/RevisionHistory";
 import { SaveFrameButton } from "./editor/SaveFrameButton";
 import { useDraftSave } from "./editor/useDraftSave";
 import { usePreviewPlan } from "./editor/usePreviewPlan";
-import { placedFields } from "./editor/placing";
+import { placedFields, watermarkPlaced } from "./editor/placing";
+import { canvasOf } from "./editor/canvas";
 import { useStyleDraft } from "./editor/useStyleDraft";
 import { WatermarkPanel } from "./editor/WatermarkPanel";
 import { HookEditor, HookTimingFields, type HookTiming } from "./HookEditor";
@@ -362,7 +363,7 @@ export function CandidateEditor({
                   // Dragged on the preview while its tab is open.
                   onWatermarkMove={
                     tab === "watermark" && style.controls
-                      ? (x, y) => style.controls?.setMany("watermark", { position: "custom", x, y })
+                      ? (x, y) => style.controls?.setMany("watermark", watermarkPlaced(canvasOf(preview?.plan), x, y))
                       : undefined
                   }
                   // The hook and the captions, moved, resized and retyped on the preview; not while the
@@ -376,7 +377,7 @@ export function CandidateEditor({
                             setPictureOn(false);
                             if (id === "hook" || id === "captions") setTab(id);
                           },
-                          onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place)),
+                          onPlace: (id, place) => style.controls?.setMany(id === "hook" ? "hook" : "caption", placedFields(place, canvasOf(preview?.plan))),
                           retype: {
                             textOf: (id) => (id === "hook" ? (hookDraft ?? candidate.hook_text) : (kickerDraft ?? candidate.hook_kicker)),
                             onText: (id, text) => {
