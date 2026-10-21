@@ -39,8 +39,8 @@ def card(colour: str, size: int = 60) -> dict:
 
 def test_a_text_layer_is_keyed_as_an_overlay_is():
     keyed = layer(keys={"x": [{"at": 1, "value": 880, "ease": "ease_out"}, {"at": 0, "value": 5000}], "opacity": [{"at": 0.5, "value": 0.2}]})
-    # Sorted, a centre brought onto the frame, an Ease by its name.
-    assert keyed.keys[KeyProperty.X] == [Keyframe(0, 1080), Keyframe(1, 880, EASE_OUT)]
+    # Sorted, a centre brought onto the largest Canvas (its Candidate's brings it onto its own), an Ease by its name.
+    assert keyed.keys[KeyProperty.X] == [Keyframe(0, 1920), Keyframe(1, 880, EASE_OUT)]
     assert keyed.keys[KeyProperty.OPACITY] == [Keyframe(0.5, 0.2)]
     assert layer().keys == {}
     with pytest.raises(ValidationError, match="no volume Keyframes"):

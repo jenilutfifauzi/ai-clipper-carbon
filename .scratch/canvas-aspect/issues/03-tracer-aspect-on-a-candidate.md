@@ -29,10 +29,32 @@
 
 **Blocked by:** 01, 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] API/MCP tests: the aspect is validated, it defaults on old Candidates, `JobOptions.aspect` reaches Selection's and a hand-added Candidate, Duplicate keeps it, a change makes a new Revision and a stale Clip, and positions are validated per Canvas.
-- [ ] Planner tests (Seam B): Track's crop aspect on 1:1 and 4:5; Track on 16:9 with a 16:9 Source covering the Source without movement; Blur's band on 1:1 and none on 16:9 with a 16:9 Source.
-- [ ] Render test (Seam A): a 1:1 Candidate at 1080p is 1080×1080; a 16:9 one is 1920×1080; a 16:9 one at 720p is 1280×720.
+- [x] API/MCP tests: the aspect is validated, it defaults on old Candidates, `JobOptions.aspect` reaches Selection's and a hand-added Candidate, Duplicate keeps it, a change makes a new Revision and a stale Clip, and positions are validated per Canvas.
+- [x] Planner tests (Seam B): Track's crop aspect on 1:1 and 4:5; Track on 16:9 with a 16:9 Source covering the Source without movement; Blur's band on 1:1 and none on 16:9 with a 16:9 Source.
+- [x] Render test (Seam A): a 1:1 Candidate at 1080p is 1080×1080; a 16:9 one is 1920×1080; a 16:9 one at 720p is 1280×720.
 - [ ] Browser: a 16:9 Candidate's Advanced Edit shows a 16:9 stage, and dragging a Text Layer across the whole width works.
-- [ ] Before the last commit: `git merge main`.
+- [x] Before the last commit: `git merge main`.
+
+## Comments
+
+**2026-10-21 (implementation):**
+- **Model.** `Candidate.aspect` (`app/canvas.Aspect`, default 9:16, so an old Candidate reads as 9:16 with no migration) and `Candidate.canvas`. It is in the Revision part "Layout" (`revisions.PARTS`) and in what marks a Candidate edited. `JobOptions.aspect` (default 9:16): the pipeline gives it to Selection's Candidates, and `Episode.aspect` gives it to a hand-added one. An unknown aspect is a 422 from the PATCH, the preview plan, the Job's options and the MCP tools. `CandidateUpdate`/`CandidateChange` take `aspect`, so the PATCH, a draft's Preview Plan, Restore and `edit_candidate` all take it.
+- **Validation.** I kept today's semantics for each kind:
+  - Transforms and position Keyframes are clamped, not refused. An item on its own clamps to the largest Canvas (`canvas.LONGEST`, 1920 on either side; `KEY_RANGES` X/Y are 0..1920 now). `review.update` then runs `candidates.on_canvas`, which brings every centre the Candidate owns onto its own Canvas: its Framing, Segments, Overlays, Text Layers, Shapes, Layout Overrides, their X/Y Keyframes, and its Cue Edits. So x 1500 is kept on 16:9 and saved as 1080 on 9:16.
+  - Cue Edits are refused, as they were by the old `Width`/`Height` types. A Cue Edit sent off the Canvas is a 422 (`check_cue_edits`). One already saved is clamped by `on_canvas` when the aspect changes.
+  - A Transform sent without x/y still defaults to the 9:16 centre (540, 960). The planner's own default Framings (Manual without a Framing, and `_first_framing` for Blur and Split) are centred on the Canvas.
+- **Planner and render.** `rendering.candidate_plan` plans on `candidate.canvas`, so the preview, the render, the saved frame and the compare render all follow the aspect. Track and Blur needed no change after 01. The Seam B tests pin them down. `picture_at` and `bounds_at` take the `frame` the picture is drawn on, as the frontend's `pictureAt` does, and the planner, the renderer (`animated_at`/`layer_at`/`overlay_at`, `PictureFrames`) and the MCP views pass it. This also fixes a keyed centre being clamped to 1080×1920 in a 1440p/4K render, where the scaled values are larger. `_frozen` clamps to the Canvas. `layer_pictures.pictures_used` plans Text Layers on their Candidate's Canvas, so a 16:9 Candidate's pictures aren't swept.
+- **MCP.** The `create_job_*` tools take `options.aspect` through JobOptions. `get_candidate` adds `canvas` {width, height}, and the Candidate list shows `aspect`. `edit_candidate` takes `aspect`. `dry_run`'s plan view starts with `canvas` {width, height, safe_area}. The instructions gained a "Canvas" section, and the Overlay, Cue Edit and video Segment texts now speak of the Canvas. The tool budget went from 87_500 to 88_400.
+- **Frontend.** `Aspect` type, `Candidate.aspect`, `CandidateChange.aspect`, `JobOptions.aspect`, and `aspect` → "Layout" in merge.ts's part names. The stage already follows the plan's Canvas (02).
+- **Tests.** New `tests/test_aspects.py` (API, MCP, and a real render of 16:9@1080 → 1920×1080, 1:1@1080 → 1080×1080, 16:9@720 → 1280×720). `tests/test_canvas.py` gained Track on 1:1, 4:5 and 9:16, Track on 16:9 with a 16:9 Source, Blur's band on 1:1 and none on 16:9, a Manual default centred on 16:9, and a keyed centre held to its frame. I updated tests whose item-level clamp is now 1920 (test_overlays, test_keyed_shapes, test_keyed_text_layers) and the Job options test.
+
+Not done or deferred:
+- **Duplicate keeps it:** there is no Candidate Duplicate in the backend or frontend yet. Nothing copies Candidates, so there is nothing to keep the aspect, and nothing was tested. Whoever adds Duplicate should copy the whole Candidate, aspect included.
+- **Browser walkthrough** (the fourth box) wasn't run. The stage follows the plan's Canvas (02), and the backend now gives 16:9 plans and accepts x up to 1920 on them.
+- Positions aren't rescaled on an aspect change (04).
+- `video_effects._FRAME` (Glow and Bloom spread against the Reference Space) and its frontend copy are unchanged. On 16:9 a full-frame picture's spread is about 1.8× wider. It should take the plan's Canvas on both sides together.
+- The size estimate (`/export-presets/estimate`) still assumes 9:16 pixels. 16:9 has the same count, 1:1 and 4:5 fewer. It needs the batch's aspects (08).
+- The editor's Canvas before a plan loads is still 9:16, not the Candidate's aspect (05/08).
+- Pre-existing failures on main, not from this ticket: `test_selection.py::test_job_reaches_review_with_candidates_ranked_by_predicted_score` (its expected Candidate lacks `grade` and `adjustment_layers`; I added `aspect` to it) and `test_freeze_frame.py::test_freeze_frames_are_saved_unsnapped_and_validated`.

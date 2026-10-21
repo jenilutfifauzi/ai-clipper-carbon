@@ -31,8 +31,8 @@ def shape(transform: dict | None = None, style: dict | None = None, **fields) ->
 
 def test_a_shape_is_keyed_as_a_text_layer_is():
     keyed = shape(keys={"x": [{"at": 1, "value": 880, "ease": "ease_out"}, {"at": 0, "value": 5000}], "rotation": [{"at": 0.5, "value": 90}]})
-    # Sorted, a centre brought onto the frame, an Ease by its name.
-    assert keyed.keys[KeyProperty.X] == [Keyframe(0, 1080), Keyframe(1, 880, EASE_OUT)]
+    # Sorted, a centre brought onto the largest Canvas (its Candidate's brings it onto its own), an Ease by its name.
+    assert keyed.keys[KeyProperty.X] == [Keyframe(0, 1920), Keyframe(1, 880, EASE_OUT)]
     assert keyed.keys[KeyProperty.ROTATION] == [Keyframe(0.5, 90)]
     assert shape().keys == {}
     # Only its Transform is keyed: no sound, nor past its length.

@@ -18,6 +18,8 @@ export interface JobOptions {
   captions: boolean;
   brief: string | null;
   transcribe_locally: boolean;
+  // The Canvas Aspect of its Candidates (docs/adr/0022).
+  aspect: Aspect;
 }
 
 export interface JobWarning {
@@ -102,6 +104,9 @@ export interface Transcript {
 
 // Auto chooses per Scene by its faces (never Manual); Manual frames the Source by hand with a Framing.
 export type Layout = "auto" | "track" | "split" | "blur" | "manual";
+
+// A Candidate's Canvas Aspect, width to height (docs/adr/0022): its Canvas is 1080 on the short side.
+export type Aspect = "9:16" | "4:5" | "1:1" | "16:9";
 
 // The Layout of the one Scene that holds `at` (seconds on the Source's timeline), in place of the
 // Candidate's there. Auto chooses that Scene's by its faces. A Manual one has its Framing, and no
@@ -1304,6 +1309,8 @@ export interface Candidate {
   window_score: number | null;
   origin: "ai" | "manual";
   layout: Layout;
+  // Its Canvas Aspect: everything it owns is placed in its Canvas's pixels (the Preview Plan's width and height).
+  aspect: Aspect;
   // How its Manual Layout frames every Scene without an override; null for another Layout.
   framing: Framing | null;
   // Chosen for rendering.
@@ -1362,6 +1369,8 @@ export interface CandidateChange {
   end?: number;
   hook_text?: string;
   layout?: Layout;
+  // Positions are kept where they are, in pixels.
+  aspect?: Aspect;
   // The Manual Layout's, needed with it and refused with another; null leaves it (dropped with Manual).
   framing?: Framing | null;
   selected?: boolean;

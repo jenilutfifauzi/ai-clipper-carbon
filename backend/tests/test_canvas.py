@@ -3,8 +3,9 @@ from the Reference Space. Pure (Seam B)."""
 
 import pytest
 
+from app.candidates import Keyframe, KeyProperty, Layout, Overlay, Transform
 from app.canvas import CANVASES, PORTRAIT, REFERENCE, Aspect, Box, canvas_for
-from app.planner import plan_render
+from app.planner import Face, FrameFaces, MediaInfo, picture_at, plan_render
 from app.video_source import SourceMetadata
 
 
@@ -58,3 +59,60 @@ def test_a_plan_is_made_on_its_canvas_with_its_safe_area() -> None:
     assert (plan.width, plan.height, plan.safe_area) == (1920, 1080, landscape.safe_area)
     [scene] = plan.scenes
     assert all(panel.area.x + panel.area.width <= 1920 and panel.area.y + panel.area.height <= 1080 for panel in scene.panels)
+
+
+# The Layouts on each Canvas (canvas-aspect/03): a 1920x1080 Source at 25 fps, whose speaker glides
+# from x 500 to 1400 over 3 s.
+WIDE = SourceMetadata(duration=3600, fps=25, width=1920, height=1080, codec="h264")
+GLIDE = [FrameFaces(round(k * 0.12, 3), [Face(500 + min(900, 300 * k * 0.12) - 150, 300, 300, 300, 0.95)]) for k in range(40)]
+
+
+@pytest.mark.parametrize(("aspect", "crop"), [(Aspect.SQUARE, (1080, 1080)), (Aspect.FEED, (864, 1080)), (Aspect.PORTRAIT, (608, 1080))])
+def test_track_crops_the_full_height_at_the_canvass_shape_and_follows_the_face(aspect, crop):
+    canvas = canvas_for(aspect)
+    plan = plan_render(100, 105, WIDE, faces=GLIDE, layout=Layout.TRACK, canvas=canvas)
+    [scene] = plan.scenes
+    [panel] = scene.panels
+    assert (panel.crop_width, panel.crop_height) == crop
+    assert panel.area == Box(0, 0, *canvas.size)
+    # It follows the speaker to the right.
+    assert panel.path[-1].x > panel.path[0].x
+
+
+def test_track_on_16_9_with_a_16_9_source_shows_the_whole_source_without_moving():
+    canvas = canvas_for(Aspect.LANDSCAPE)
+    plan = plan_render(100, 105, WIDE, faces=GLIDE, layout=Layout.TRACK, canvas=canvas)
+    [scene] = plan.scenes
+    [panel] = scene.panels
+    assert (panel.crop_width, panel.crop_height, panel.area) == (1920, 1080, Box(0, 0, 1920, 1080))
+    assert [(point.x, point.y) for point in panel.path] == [(0, 0)]
+
+
+def test_blur_fits_the_source_over_its_blurred_cover_as_a_band_on_1_1_and_alone_on_16_9():
+    square = plan_render(100, 105, WIDE, layout=Layout.BLUR, canvas=canvas_for(Aspect.SQUARE))
+    [background, shot] = square.scenes[0].panels
+    assert background.blur and (background.area, background.crop_width, background.crop_height) == (Box(0, 0, 1080, 1080), 1080, 1080)
+    # The band: the whole Source, 1080 wide, in the middle.
+    assert (shot.area, shot.crop_width, shot.crop_height) == (Box(0, 236, 1080, 608), 1920, 1080)
+
+    wide = plan_render(100, 105, WIDE, layout=Layout.BLUR, canvas=canvas_for(Aspect.LANDSCAPE))
+    [background, shot] = wide.scenes[0].panels
+    # The Source covers the whole Canvas: nothing of its blur shows.
+    assert shot.area == Box(0, 0, 1920, 1080) and (shot.crop_width, shot.crop_height) == (1920, 1080)
+
+
+def test_a_manual_scene_without_a_framing_is_centred_on_its_canvas():
+    plan = plan_render(100, 105, WIDE, layout=Layout.MANUAL, canvas=canvas_for(Aspect.LANDSCAPE))
+    [scene] = plan.scenes
+    assert scene.picture.centre == (960, 540)
+    assert plan_render(100, 105, WIDE, layout=Layout.MANUAL).scenes[0].picture.centre == (540, 960)
+
+
+def test_a_keyed_centre_is_held_on_the_frame_it_is_drawn_on():
+    keys = {KeyProperty.X: [Keyframe(0.0, 100.0), Keyframe(1.0, 1800.0)]}
+    overlay = Overlay("o", "cd" * 16, 0.0, 2.0, transform=Transform(x=960, y=540, scale=0.5), keys=keys)
+    plan = plan_render(100, 105, WIDE, overlays=[overlay], media_info={"cd" * 16: MediaInfo(200, 100, None, False)}, canvas=canvas_for(Aspect.LANDSCAPE))
+    [event] = plan.overlays
+    assert picture_at(event.picture, 1.5, (plan.width, plan.height)).centre[0] == 1800
+    # On 9:16 the same Keyframe is held at the frame's right edge.
+    assert picture_at(event.picture, 1.5).centre[0] == 1080

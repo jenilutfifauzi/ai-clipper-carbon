@@ -52,6 +52,7 @@ from app.candidates import (
     WordEdit,
     grades_of,
 )
+from app.canvas import Aspect
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
 from app.config import Settings
@@ -283,6 +284,8 @@ class CandidateUpdate(BaseModel):
     end: FiniteFloat | None = None
     hook_text: Annotated[str, StringConstraints(max_length=HOOK_MAX_CHARS)] | None = None
     layout: Layout | None = None
+    # Its Canvas Aspect (docs/adr/0022): its positions are on that Canvas, in its pixels.
+    aspect: Aspect | None = None
     # The Manual Layout's, which only it has; dropped when the Layout becomes another.
     framing: Annotated[Framing | None, BeforeValidator(no_framing_keys)] = None
     selected: bool | None = None
@@ -1119,7 +1122,7 @@ def _drafted(
     if body is not None:
         _check_media_of(library, body)
         _check_looks_of(body)
-    episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
+    episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection, job.options.aspect)
     change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
@@ -1291,7 +1294,7 @@ def _review(
     def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
         transcript = store.load_transcript(job.id)
         assert job.source is not None and transcript is not None  # a Job in review has both
-        episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
+        episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection, job.options.aspect)
         return change(candidates, episode)
 
     try:

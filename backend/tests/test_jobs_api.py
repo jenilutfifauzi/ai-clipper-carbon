@@ -102,6 +102,7 @@ def test_job_stores_the_options_it_was_created_with(client):
         "captions": False,
         "brief": "find the funny moments",
         "transcribe_locally": True,
+        "aspect": "4:5",
     }
     job = create_job(client, **options)
 

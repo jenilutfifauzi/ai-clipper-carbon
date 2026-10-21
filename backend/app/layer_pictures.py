@@ -425,7 +425,7 @@ def pictures_used(candidates: Iterable[Candidate]) -> set[str]:
     """The names of the pictures `candidates`' picture layers (their Text Layers and Shapes) are drawn
     from."""
     candidates = list(candidates)
-    texts = (text_event(layer, math.inf) for candidate in candidates for layer in candidate.text_layers)
+    texts = (text_event(layer, math.inf, candidate.canvas) for candidate in candidates for layer in candidate.text_layers)
     shapes = (shape_event(shape, math.inf) for candidate in candidates for shape in candidate.shapes)
     return {event.image for events in (texts, shapes) for event in events if event is not None}
 

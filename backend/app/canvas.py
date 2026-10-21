@@ -58,6 +58,10 @@ class Canvas:
         return self.width, self.height
 
     @property
+    def centre(self) -> tuple[int, int]:
+        return self.width // 2, self.height // 2
+
+    @property
     def split_height(self) -> int:
         """The height of each of Split's two stacked panels."""
         return self.height // 2
@@ -106,6 +110,9 @@ def _canvas(aspect: Aspect) -> Canvas:
 CANVASES = {aspect: _canvas(aspect) for aspect in Aspect}
 # The default Canvas, of every Candidate saved before Canvas Aspects.
 PORTRAIT = CANVASES[Aspect.PORTRAIT]
+# The longest side of any Canvas: how far a Candidate-owned position may be from the frame's top-left
+# corner before it is checked against its Candidate's own Canvas, which only the Candidate knows.
+LONGEST = max(max(canvas.size) for canvas in CANVASES.values())
 
 
 def canvas_for(aspect: Aspect | str) -> Canvas:

@@ -115,7 +115,7 @@ from typing import Protocol, TypeVar
 from pydantic import ConfigDict, computed_field
 
 from app.candidates import (
-    KEY_RANGES,
+    key_range,
     AdjustmentLayer,
     PICTURE_KEYS,
     Background,
@@ -1289,7 +1289,7 @@ def _framed(
         wanted = override.layout if override else layout
         if wanted is Layout.MANUAL:
             # Still: neither its faces nor a new run of the analysis move it.
-            by_hand = (override.framing if override else framing) or Framing()
+            by_hand = (override.framing if override else framing) or _centred_framing(canvas)
             plans.append(framed_scene(a, b, SceneLayout.MANUAL, source.width, source.height, by_hand, canvas))
             continue
         if not reframes(source):
@@ -1353,7 +1353,7 @@ def _frozen(
         sampled = {}
         for prop, keys in still.override.keys.items():
             if within := [key for key in keys if key.at <= end - start + 1e-3]:
-                low, high = KEY_RANGES[prop]
+                low, high = key_range(prop, canvas.size)
                 value = value_at(within, frame - start, getattr(given.transform, prop.value))
                 sampled[prop.value] = math.fmod(value, 360) if prop is KeyProperty.ROTATION else min(max(value, low), high)
         scene = plans[still.index]
@@ -1477,8 +1477,14 @@ def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetad
         start = panel.path[0]
         return _showing(source.width, source.height, Box(start.x, start.y, panel.crop_width, panel.crop_height), canvas)
     if layout is SceneLayout.SPLIT:
-        return Framing(Transform(scale=min(cover_scale(source.width, source.height, canvas.size), MAX_SCALE)))
-    return Framing()
+        return _centred_framing(canvas, min(cover_scale(source.width, source.height, canvas.size), MAX_SCALE))
+    return _centred_framing(canvas)
+
+
+def _centred_framing(canvas: Canvas, scale: float = 1.0) -> Framing:
+    """The Framing of a picture centred on `canvas` at `scale`."""
+    x, y = canvas.centre
+    return Framing(Transform(x=x, y=y, scale=scale))
 
 
 def _showing(width: int, height: int, box: Box, canvas: Canvas) -> Framing:
@@ -1536,7 +1542,7 @@ def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float
     if not picture.motion:
         return scene
     count = math.ceil((scene.end - scene.start) * fps - 1e-6)
-    if all(covers(picture_at(picture, scene.start + n / fps), canvas) for n in range(count)):
+    if all(covers(picture_at(picture, scene.start + n / fps, canvas.size), canvas) for n in range(count)):
         return replace(scene, picture=picture, panels=[], colour=None)
     return replace(scene, picture=picture)
 
@@ -1794,9 +1800,10 @@ def with_motion(
     return replace(picture, motion=motion, unscaled=unscaled)
 
 
-def picture_at(picture: Picture, time: float) -> Picture:
+def picture_at(picture: Picture, time: float, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
     """`picture` as drawn at `time` seconds into the Clip: each keyed property sampled from its motion
-    (app/keyframes.py) and held to its range, its size its drawn size at scale 1 times the sampled
+    (app/keyframes.py) and held to its range (its centre on the `frame` it is drawn on: the plan's
+    Canvas, or the size the plan is drawn at), its size its drawn size at scale 1 times the sampled
     scale (in fractions of a pixel), its corners' radius in step with its shorter side (its border and
     shadow stay as they are), and its bounds turned about the sampled centre; a still Picture,
     without motion. The same rule as the preview's (pictureAt in frontend/src/pages/job/editor/picture.ts).
@@ -1808,7 +1815,7 @@ def picture_at(picture: Picture, time: float) -> Picture:
     def sampled(prop: KeyProperty, constant: float) -> float:
         if prop not in motion:
             return constant
-        low, high = KEY_RANGES[prop]
+        low, high = key_range(prop, frame)
         value = value_at(motion[prop], time, constant)
         return value if prop is KeyProperty.ROTATION else min(max(value, low), high)
 
@@ -2095,13 +2102,13 @@ def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to
     return Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
 
 
-def bounds_at(event: PictureLayer, time: float) -> Box:
+def bounds_at(event: PictureLayer, time: float, frame: tuple[int, int] = PORTRAIT.size) -> Box:
     """What holds a picture layer's area at `time` seconds into the Clip, as its Keyframes have it then
-    (`picture_at`): scaled and turned about its picture's sampled centre. Unkeyed, its `bounds`."""
+    (`picture_at`, on `frame`): scaled and turned about its picture's sampled centre. Unkeyed, its `bounds`."""
     picture = event.picture
     if not picture.motion or picture.unscaled is None:
         return event.bounds
-    drawn = picture_at(picture, time)
+    drawn = picture_at(picture, time, frame)
     scale = drawn.width / picture.unscaled[0] if KeyProperty.SCALE in picture.motion else event.layer.transform.scale
     return _turned_box(event.area, picture.centre, replace(event.layer.transform, scale=scale, rotation=drawn.rotation), drawn.centre)
 

@@ -85,7 +85,7 @@ class PictureFrames:
         sampled: Callable[[float], Picture] | None = None,
     ) -> None:
         self.picture = picture
-        self.sampled = sampled or (lambda time: picture_at(picture, time))
+        self.sampled = sampled or (lambda time: picture_at(picture, time, frame))
         self.canvas = np.zeros((frame[1], frame[0], 4), np.uint8)
         # Where the frame before drew, cleared before the next is drawn.
         self.drawn: tuple[int, int, int, int] | None = None

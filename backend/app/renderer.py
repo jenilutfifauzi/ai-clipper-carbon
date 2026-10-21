@@ -130,6 +130,7 @@ import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.audio_effects import MEASURED_GAIN, NORMALIZE, effect_chain, normalize_gain
+from app.canvas import PORTRAIT
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
@@ -1329,26 +1330,28 @@ type _Shown = HookEvent | PictureLayer | OverlayEvent
 type _Motion = HookStyle | TextLayer | Shape | OverlayEvent
 
 
-def layer_at(event: PictureLayer, time: float, drawn: float = 1.0) -> Picture:
+def layer_at(event: PictureLayer, time: float, drawn: float = 1.0, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
     """A picture layer's picture as drawn at `time` seconds into the Clip, animated by its item's
-    animations (`animated_at`), in a plan drawn `drawn` times its size."""
-    return animated_at(event, event.layer, event.picture, time, drawn)
+    animations (`animated_at`), in a plan drawn `drawn` times its size, on a `frame` that large."""
+    return animated_at(event, event.layer, event.picture, time, drawn, frame)
 
 
-def overlay_at(event: OverlayEvent, time: float, drawn: float = 1.0) -> Picture:
+def overlay_at(event: OverlayEvent, time: float, drawn: float = 1.0, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
     """An Overlay's picture as drawn at `time` seconds into the Clip, animated as a picture layer is
     (`animated_at`), in a plan drawn `drawn` times its size."""
-    return animated_at(event, event, event.picture, time, drawn)
+    return animated_at(event, event, event.picture, time, drawn, frame)
 
 
-def animated_at(shown: _Shown, style: _Motion, picture: Picture, time: float, drawn: float = 1.0) -> Picture:
+def animated_at(
+    shown: _Shown, style: _Motion, picture: Picture, time: float, drawn: float = 1.0, frame: tuple[int, int] = PORTRAIT.size
+) -> Picture:
     """`picture`, of an item shown from `shown`'s start to its end and animated as `style` says, as
     drawn at `time` seconds into the Clip: as its Keyframes have it then (`picture_at`), and on top
     of that faded, scaled about its centre (its corners with it) and moved down as its animations
     have it (`animation_at`): its keyed opacity and scale multiplied, its drop added, `drawn` times
-    as far for a plan drawn at another size (`drawn_scale`)."""
+    as far for a plan drawn at another size (`drawn_scale`), whose frame is `frame`."""
     opacity, scale, below = animation_at(shown, style, time)
-    picture = picture_at(picture, time)
+    picture = picture_at(picture, time, frame)
     if (opacity, scale, below) == (1.0, 1.0, 0.0):
         return picture
     x, y = picture.centre
@@ -1523,11 +1526,11 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
         if kind == "layer":
             layer = layers[i]
             assert isinstance(item, np.ndarray)
-            frames = PictureFrames(layer.picture, item, frame, lambda time, layer=layer: layer_at(layer, time, drawn))
+            frames = PictureFrames(layer.picture, item, frame, lambda time, layer=layer: layer_at(layer, time, drawn, frame))
             feeds[(kind, i)] = FrameFeed(frames, layer.start, layer.end, rate)
             continue
         event = plan.overlays[i]
-        sampled = partial(overlay_at, event, drawn=drawn)
+        sampled = partial(overlay_at, event, drawn=drawn, frame=frame)
         if isinstance(item, Path):
             # An Overlay's video plays forwards from its offset at its Speed for as long as it shows; a
             # looped image's one picture is read over its span.

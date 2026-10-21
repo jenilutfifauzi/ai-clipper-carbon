@@ -24,10 +24,13 @@ from app.candidates import (
     TextLayer,
     Transition,
     WordEdit,
+    check_cue_edits,
     manual_candidate,
+    on_canvas,
     timeline_length,
     with_join_transition,
 )
+from app.canvas import Aspect, canvas_for
 from app.config import SelectionTuning
 from app.keyframes import rewindow
 from app.segment_time import SegmentTime, overlay_time, segment_time
@@ -67,6 +70,8 @@ class CandidateChange:
     end: float | None = None
     hook_text: str | None = None
     layout: Layout | None = None
+    # Its Canvas Aspect (docs/adr/0022); its positions are kept where they are, in pixels.
+    aspect: Aspect | None = None
     selected: bool | None = None
     preset_id: str | None = None
     style_overrides: StyleOverrides | None = None
@@ -101,12 +106,14 @@ class CandidateChange:
 
 @dataclass(frozen=True)
 class Episode:
-    """What edits are checked against: the Job's Transcript, Source duration and longest clip."""
+    """What edits are checked against: the Job's Transcript, Source duration and longest clip; and
+    the Canvas Aspect a Candidate added by hand takes, the Job's."""
 
     transcript: Transcript
     duration: float
     max_secs: float
     tuning: SelectionTuning
+    aspect: Aspect = Aspect.PORTRAIT
 
     def bounds(self, start: float, end: float, keep_start: bool = False, keep_end: bool = False) -> tuple[float, float]:
         """`start`..`end` snapped to Words (see selection.snap), but for the ends kept where they are;
@@ -241,6 +248,12 @@ def update(
     layout = _pick(change.layout, old.layout)
     if change.framing is not None:
         _check_framing(f"A {layout} clip", layout, change.framing)
+    aspect = _pick(change.aspect, old.aspect)
+    if change.cue_edits is not None:
+        try:
+            check_cue_edits(change.cue_edits, canvas_for(aspect))
+        except ValueError as exc:
+            raise InvalidEdit(str(exc)) from None
     # Kept while the clip is Manual; dropped with its Layout.
     framing = _pick(change.framing, old.framing) if layout is Layout.MANUAL else None
     _check_framing(f"A {layout} clip", layout, framing)
@@ -251,6 +264,7 @@ def update(
         hook_text=old.hook_text if change.hook_text is None else " ".join(change.hook_text.split()),
         layout=layout,
         framing=framing,
+        aspect=aspect,
         selected=_pick(change.selected, old.selected),
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
@@ -270,6 +284,8 @@ def update(
         overlays=_pick(change.overlays, old.overlays),
         transitions=_joined(transitions, segments),
     )
+    # What it owns stays on its Canvas (docs/adr/0022).
+    new = on_canvas(new)
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
     if change.music is not None:
@@ -287,7 +303,7 @@ def add_manual(
     """The Candidates with a manual one for `start`..`end` (snapped to Words) added after the AI's,
     and the new one. It may overlap others: that is the owner's call."""
     start, end = episode.bounds(start, end)
-    new = manual_candidate(uuid4().hex[:8], start, end)
+    new = manual_candidate(uuid4().hex[:8], start, end, episode.aspect)
     return ranked([*candidates, new]), new
 
 
@@ -318,7 +334,7 @@ def _share_words(starts: list[float], a: Candidate, b: Candidate) -> bool:
 def _look(candidate: Candidate) -> tuple:
     """What the owner's edits change about a Candidate's Clip."""
     return (
-        candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
+        candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.aspect, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.cue_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.shapes, candidate.music,
         candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,

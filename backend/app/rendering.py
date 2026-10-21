@@ -269,6 +269,7 @@ def candidate_plan(
     shows their time of their timeline, the Source's or an item's (`edit_shown`, docs/adr/0020). Not `captioned`, its
     `words` are heard but not captioned: they and its Music Clips of the Source's (`music`,
     `music_words`) are speech, which ducks its music (docs/adr/0016).
+    It is planned on the Candidate's Canvas (docs/adr/0022).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
@@ -291,6 +292,7 @@ def candidate_plan(
         music_words=music,
         grade=candidate.grade,
         adjustment_layers=candidate.adjustment_layers,
+        canvas=candidate.canvas,
     )
     if not candidate.segments:
         [analysis] = analyses

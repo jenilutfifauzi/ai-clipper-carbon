@@ -103,8 +103,9 @@ def test_the_centre_is_kept_on_the_frame_and_the_picture_may_go_past_its_edges()
 
 def test_a_centre_given_off_the_frame_is_clamped_onto_it_and_a_non_finite_one_is_refused():
     given = TypeAdapter(Transform)
-    clamped = given.validate_python({"x": 1200, "y": -5, "scale": 2})
-    assert (clamped.x, clamped.y, clamped.scale) == (PORTRAIT.width, 0, 2)
+    # Onto the largest Canvas, 1920 on either side; its Candidate brings it onto its own (test_aspects.py).
+    clamped = given.validate_python({"x": 2000, "y": -5, "scale": 2})
+    assert (clamped.x, clamped.y, clamped.scale) == (1920, 0, 2)
     assert (given.validate_python({"y": 2500}).x, given.validate_python({"y": 2500}).y) == (540, 1920)
     for bad in (float("inf"), float("nan"), "x"):
         with pytest.raises(ValidationError):
