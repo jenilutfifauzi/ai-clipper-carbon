@@ -146,7 +146,7 @@ import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { MediaCaptionFields } from "./MediaCaptionFields";
 import { useMediaLibrary } from "./MediaLibrary";
-import { listenNarration, NarrateFlow } from "./narrate";
+import { listenNarration, NarrateFlow, narratedTitle } from "./narrate";
 import { NarratePanel } from "./NarratePanel";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
 import { Meters } from "./Meters";
@@ -647,6 +647,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const fps = preview?.plan.fps || DEFAULT_FPS;
   // The playhead at the Clip's end (where End puts it), where the mic button is off.
   const atEnd = usePlayback(playback, (time, p) => atClipEnd(time, p.duration, fps));
+  // The picked Text Layer or hook the Narrate tab reads from and lands at the start of; Generate is off
+  // when that start (else the playhead) is at the Clip's end.
+  const narrated = narratedTitle(edits, pick);
+  const narrateAtEnd = narrated ? atClipEnd(narrated.start, duration, fps) : atEnd;
   // The Loop Region the marks make, clamped inside the Clip as it is now; played while Loop is on.
   const region = useMemo(() => loopRegion(marks, { fps, duration }), [marks, fps, duration]);
   // A Take rolls from the playhead whatever the Loop: it is set again once the Take stops.
@@ -1469,7 +1473,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
-      narrate={<NarratePanel flow={narrateFlow} language={job.options.language} atEnd={atEnd} />}
+      narrate={<NarratePanel flow={narrateFlow} language={job.options.language} atEnd={narrateAtEnd} title={narrated} />}
       filters={
         <LookPanel
           playback={playback}

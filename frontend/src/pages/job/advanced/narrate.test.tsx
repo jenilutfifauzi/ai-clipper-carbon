@@ -9,9 +9,11 @@
 // Job's language, the browser's remembered engine and Voice, and the hint with no ready engine.
 // And 04-speed-style-and-estimate.md: Speed, the Style line for an engine that takes one, the request
 // carrying them, and the estimate of the read's length with the 5,000-character limit.
+// And 05-narrate-a-picked-title.md: a picked Text Layer or the hook fills the script and fixes the start
+// at its start, the earliest of several winning; an edited script is sent, from the item's start.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { MediaItem, MusicClip, NarrationRequest, VoicesList } from "../../../api";
+import type { MediaItem, MusicClip, NarrationRequest, TextLayer, VoicesList } from "../../../api";
 import { landTake } from "./actions";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, PHONE_ASSET_TABS } from "./Chrome";
@@ -24,15 +26,18 @@ import {
   engineLabel,
   engineOption,
   NARRATE_AT_END_HINT,
+  NARRATE_TITLE_AT_END_HINT,
   NARRATION_IN_LIBRARY,
   NARRATION_MADE_BEFORE_CANCEL,
   NarrateFlow,
   narrationBody,
+  narratedTitle,
   narrationEstimate,
   PAUSE_STOPS,
   rememberChoice,
   rememberedVoice,
   type NarrateDraft,
+  type NarratedTitle,
   type NarrateState,
   type NarrationListener,
   type RememberedVoice,
@@ -252,6 +257,7 @@ function Fields({
   draft = DRAFT,
   remembered = null,
   atEnd = false,
+  title = null,
 }: {
   voices?: VoicesList;
   language?: string;
@@ -259,9 +265,21 @@ function Fields({
   draft?: NarrateDraft;
   remembered?: RememberedVoice | null;
   atEnd?: boolean;
+  title?: NarratedTitle | null;
 }) {
   return (
-    <NarrateFields voices={voices} language={language} state={state} draft={draft} remembered={remembered} atEnd={atEnd} onDraft={() => {}} onGenerate={() => {}} onCancel={() => {}} />
+    <NarrateFields
+      voices={voices}
+      language={language}
+      state={state}
+      draft={draft}
+      remembered={remembered}
+      atEnd={atEnd}
+      title={title}
+      onDraft={() => {}}
+      onGenerate={() => {}}
+      onCancel={() => {}}
+    />
   );
 }
 
@@ -524,5 +542,111 @@ describe("Speed, Style and the estimate", () => {
     expect(past).toContain("A script can be 5,000 characters at most: this one has 5,001");
     expect(past).not.toContain("About ");
     expect(past.match(generate)![0]).toContain('disabled=""');
+  });
+});
+
+// The Candidate's titles: two Text Layers (one of two lines) and the hook, each from its start in
+// Timeline time; the picked ones, the earliest first, give the script and the start.
+const layerAt = (id: string, text: string, start: number) => ({ id, text, start, secs: 2 }) as TextLayer;
+const TITLES = {
+  text_layers: [layerAt("late", "Kedua", 6), layerAt("early", "Halo\n  semua ", 4), layerAt("blank", " \n ", 1)],
+  hook_text: "Jangan lewatkan\nini",
+  hook_start: 0.5,
+};
+
+describe("a picked title", () => {
+  test("a picked Text Layer gives its words, its lines joined by spaces, and its start", () => {
+    expect(narratedTitle(TITLES, picked({ kind: "text", id: "early" }))).toEqual({ key: "text:early", script: "Halo semua", start: 4, name: "the Text Layer" });
+  });
+
+  test("the picked hook does the same", () => {
+    expect(narratedTitle(TITLES, { kind: "hook" })).toEqual({ key: "hook", script: "Jangan lewatkan ini", start: 0.5, name: "the hook" });
+    // A hook without words is nothing to read.
+    expect(narratedTitle({ ...TITLES, hook_text: "  " }, { kind: "hook" })).toBeNull();
+  });
+
+  test("with several Text Layers picked, among other items, the earliest on the Timeline wins (the hook is picked alone)", () => {
+    const several = picked({ kind: "text", id: "late" }, { kind: "music", id: "song" }, { kind: "text", id: "early" }, { kind: "text", id: "blank" });
+    expect(narratedTitle(TITLES, several)).toMatchObject({ key: "text:early", start: 4 });
+    // Two from the same start: the first picked.
+    const tied = { ...TITLES, text_layers: [layerAt("a", "Satu", 4), layerAt("b", "Dua", 4)] };
+    expect(narratedTitle(tied, picked({ kind: "text", id: "b" }, { kind: "text", id: "a" }))?.key).toBe("text:b");
+  });
+
+  test("with none of these picked, there is no title: the start is the playhead", async () => {
+    for (const pick of [null, picked({ kind: "music", id: "song" }), { kind: "captions" } as Pick, picked({ kind: "text", id: "blank" })]) {
+      expect(narratedTitle(TITLES, pick)).toBeNull();
+    }
+    const { flow, world, settle, done } = setUp();
+    world.playhead = 7;
+    flow.prefill(null);
+    expect(flow.draft.script).toBe("");
+    await flow.generate(BODY, narratedTitle(TITLES, null)?.start);
+    done();
+    await settle();
+    expect(world.steps.value.music.find((clip) => clip.id === "landed")?.start).toBe(7);
+  });
+
+  test("opening the tab with it picked fills an empty script, and the Narration lands at its start", async () => {
+    const { flow, world, sent, settle, done } = setUp();
+    const title = narratedTitle(TITLES, picked({ kind: "text", id: "early" }))!;
+    flow.prefill(title.script);
+    expect(flow.draft.script).toBe("Halo semua");
+    // The playhead elsewhere: the item's start wins.
+    world.playhead = 9;
+    await flow.generate(narrationBody(VOICES.engines[0], "Kore", flow.draft), title.start);
+    expect(sent[0].text).toBe("Halo semua");
+    done();
+    await settle();
+    expect(world.steps.value.music.find((clip) => clip.id === "landed")).toMatchObject({ start: 4, speech: true });
+  });
+
+  test("an edited script is what is sent, and the start stays the item's", async () => {
+    const { flow, world, sent, settle, done } = setUp();
+    const title = narratedTitle(TITLES, { kind: "hook" })!;
+    flow.prefill(title.script);
+    flow.edit({ script: "Jangan lewatkan yang satu ini!" });
+    // The tab shown again with the hook still picked leaves the owner's words as they are.
+    flow.prefill(title.script);
+    expect(flow.draft.script).toBe("Jangan lewatkan yang satu ini!");
+    await flow.generate(narrationBody(VOICES.engines[0], "Kore", flow.draft), title.start);
+    expect(sent[0].text).toBe("Jangan lewatkan yang satu ini!");
+    done();
+    await settle();
+    expect(world.steps.value.music.find((clip) => clip.id === "landed")?.start).toBe(0.5);
+  });
+
+  test("another title picked replaces words it filled, never a script the owner typed", () => {
+    const { flow } = setUp();
+    flow.prefill(narratedTitle(TITLES, picked({ kind: "text", id: "early" }))?.script ?? null);
+    flow.prefill(narratedTitle(TITLES, picked({ kind: "text", id: "late" }))?.script ?? null);
+    expect(flow.draft.script).toBe("Kedua");
+    flow.edit({ script: "Kata saya sendiri." });
+    flow.prefill(narratedTitle(TITLES, { kind: "hook" })?.script ?? null);
+    expect(flow.draft.script).toBe("Kata saya sendiri.");
+    // Cleared by the owner, it takes the next title's words.
+    flow.edit({ script: "" });
+    flow.prefill(narratedTitle(TITLES, { kind: "hook" })?.script ?? null);
+    expect(flow.draft.script).toBe("Jangan lewatkan ini");
+  });
+
+  test("a script typed before any title was picked is kept", () => {
+    const { flow } = setUp();
+    flow.edit({ script: "Selamat datang." });
+    flow.prefill(narratedTitle(TITLES, { kind: "hook" })?.script ?? null);
+    expect(flow.draft.script).toBe("Selamat datang.");
+  });
+
+  test("the tab says where it lands: the picked title's start, else the playhead", () => {
+    const title = narratedTitle(TITLES, { kind: "hook" });
+    expect(renderToStaticMarkup(<Fields title={title} />)).toContain("lands at the start of the hook");
+    expect(renderToStaticMarkup(<Fields title={narratedTitle(TITLES, picked({ kind: "text", id: "early" }))} />)).toContain("lands at the start of the Text Layer");
+    expect(renderToStaticMarkup(<Fields />)).toContain("lands at the playhead");
+  });
+
+  test("Generate is off when the picked title starts at the Clip's end, saying so", () => {
+    const html = renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "Halo" }} atEnd title={narratedTitle(TITLES, { kind: "hook" })} />);
+    expect(html).toContain(`title="${NARRATE_TITLE_AT_END_HINT}"`);
+    expect(html).toMatch(/<button type="button"[^>]*disabled=""[^>]*>.*?Generate<\/button>/);
   });
 });

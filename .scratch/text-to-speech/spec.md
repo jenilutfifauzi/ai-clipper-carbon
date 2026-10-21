@@ -173,7 +173,9 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - Generate, which shows progress and Cancel while running.
 - **The script, Voice and pause are kept by the editor's Narrate flow**, not the tab, so a failure, a busy refusal, a cancel or a tab switch keeps them.
 - **Cancel** frees the tab at once. If the Narration was made before the cancel reached it, the item is added to the Media tab, unlaid, and the tab says so.
-- **Opening the tab with a Text Layer or the hook picked** fills the script with its words (lines joined by spaces) and fixes the start at its start. With several picked, the earliest on the Timeline wins. Otherwise the start is the playhead.
+- **Opening the tab with a Text Layer or the hook picked** fills the script with its words (lines joined by spaces) and fixes the start at its start. With several picked, the earliest on the Timeline wins (the first picked of those from the same start); the hook is always picked alone. A title without words counts as none. Otherwise the start is the playhead.
+  - **When it fills.** On opening the tab, and again when the Pick changes to another title while the tab is shown. It fills only a script the owner hasn't typed: a blank one, or one still exactly the words a title last filled. A script the owner typed or edited is never replaced, but the start is still the picked title's. Picking nothing leaves the script as it is.
+  - The hint above the fields names where it lands ("the start of the Text Layer", "the start of the hook", "the playhead"). Generate is off when that start is at the Clip's end.
 - **The start is fixed when Generate is pressed.** On `done`, the tab lands a Music Clip `{media, start, secs: duration, speech: true}` on a free lane through the same action `landTake` uses. It is Picked and is one undo step.
   - If the Music Track is locked, the tab says the Narration is in the Media tab instead.
   - If the Candidate's Clip has become shorter than the start, the Narration still lands, and the render cuts what runs past the end, as for a Take.

@@ -6,10 +6,10 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Vitest: a picked Text Layer fills the script and the Narration lands at the layer's start.
-- [ ] Vitest: the picked hook does the same.
-- [ ] Vitest: with several Text Layers (and the hook) picked, the earliest wins.
-- [ ] Vitest: an edited script is what is sent, and the start stays the item's.
-- [ ] Vitest: with nothing of these picked, the start is the playhead.
+- [x] Vitest: a picked Text Layer fills the script and the Narration lands at the layer's start.
+- [x] Vitest: the picked hook does the same.
+- [x] Vitest: with several Text Layers (and the hook) picked, the earliest wins.
+- [x] Vitest: an edited script is what is sent, and the start stays the item's.
+- [x] Vitest: with nothing of these picked, the start is the playhead.

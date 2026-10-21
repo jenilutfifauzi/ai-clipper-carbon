@@ -1,13 +1,15 @@
 import { narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
 import { formatClock } from "../../../format";
 import { rememberedValue } from "../../../remembered";
+import type { AdvancedEdits } from "./edits";
+import type { Pick as TimelinePick } from "./pick";
 import type { LandedTake } from "./takeFlow";
 
 /**
  * The Narrate tab's flow (.scratch/text-to-speech/spec.md, ADR 0019): from Generate to a Music Clip
  * marked Speech on the Timeline. The backend reads the script (app/narration.py); `NarrateFlow` starts
  * it, follows its progress and lands the item through the same action that lands a Take, at the start
- * fixed when Generate was pressed (the playhead then). It keeps the tab's draft (script, engine, Voice,
+ * fixed when Generate was pressed (the playhead then, or the picked title's start). It keeps the tab's draft (script, engine, Voice,
  * Speed, pause and Style),
  * so that a failure, a cancel or a tab switch never loses it. No React.
  *
@@ -99,6 +101,8 @@ export const NARRATION_IN_LIBRARY = "The Narration is in the Media tab: the Musi
 export const NARRATION_MADE_BEFORE_CANCEL = "The Narration was made before the cancel: it is in the Media tab";
 // Why Generate is off with the playhead at the Clip's end.
 export const NARRATE_AT_END_HINT = "Move the playhead into the Clip to narrate: a Narration from its end would never be heard";
+// Why it is off with a picked title starting at the Clip's end.
+export const NARRATE_TITLE_AT_END_HINT = "The picked title starts at the end of the Clip: a Narration from there would never be heard";
 
 // What a Narration's events stream tells (listenNarration).
 export interface NarrationListener {
@@ -135,6 +139,44 @@ export function chosenVoice(
   return { engine, voice };
 }
 
+/** A title's words as the script reads them: its lines (split at newlines) trimmed and joined by spaces. */
+export const titleWords = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+
+// A picked title the Narrate tab reads from (spec "Frontend", pre-filling): which item it is (`key`),
+// its words, its start in Timeline time and how the tab names it.
+export interface NarratedTitle {
+  key: string;
+  script: string;
+  start: number;
+  name: string;
+}
+
+/**
+ * The title of `pick` the Narration reads: the hook when it is picked, else the earliest on the Timeline
+ * of the picked Text Layers (the first picked of those from the same start). Null when none of these is
+ * picked, or none has words: the Narration starts at the playhead then.
+ */
+export function narratedTitle(edits: Pick<AdvancedEdits, "text_layers" | "hook_text" | "hook_start">, pick: TimelinePick): NarratedTitle | null {
+  if (pick?.kind === "hook") {
+    const script = titleWords(edits.hook_text);
+    return script ? { key: "hook", script, start: edits.hook_start, name: "the hook" } : null;
+  }
+  if (pick?.kind !== "items") return null;
+  let title: NarratedTitle | null = null;
+  for (const item of pick.items) {
+    if (item.kind !== "text") continue;
+    const layer = edits.text_layers.find((other) => other.id === item.id);
+    const script = layer ? titleWords(layer.text) : "";
+    if (layer && script && (!title || layer.start < title.start)) title = { key: `text:${layer.id}`, script, start: layer.start, name: "the Text Layer" };
+  }
+  return title;
+}
+
 /** What the flow runs on: the backend, the edit that lands the item, and the Media Library's list. */
 export interface NarrateDeps {
   // Starts a Narration: its id, or rejects (busy, a script that can't be narrated) with the reason.
@@ -168,6 +210,9 @@ export class NarrateFlow {
   // followed: a cancelled one is followed to its end, for a cancel that came too late.
   private run: Run | null = null;
   private following = new Set<() => void>();
+  // The words a picked title last filled the script with: while the script is still them, it is the
+  // title's, not the owner's.
+  private filled: string | null = null;
 
   constructor(private deps: NarrateDeps) {}
 
@@ -182,7 +227,20 @@ export class NarrateFlow {
     this.notify();
   };
 
-  /** Reads `body` aloud, to land at `start`: the playhead now, whatever it does meanwhile. */
+  /**
+   * The tab shown, or the Pick changed while it is, with a title picked (narratedTitle): its `words` fill
+   * the script when the owner hasn't typed one, i.e. when it is blank or still the words last filled. A
+   * script the owner typed or edited is never replaced; the start is the title's all the same (the tab's
+   * Generate). Null (no title picked) leaves the script as it is.
+   */
+  prefill = (words: string | null) => {
+    if (!words || words === this.draft.script) return;
+    if (this.draft.script.trim() && this.draft.script !== this.filled) return;
+    this.filled = words;
+    this.edit({ script: words });
+  };
+
+  /** Reads `body` aloud, to land at `start`: the picked title's, else the playhead now, whatever it does meanwhile. */
   async generate(body: NarrationRequest, start = this.deps.playhead()): Promise<void> {
     if (this.state.phase === "making") return;
     const run: Run = { id: null, cancelled: false };

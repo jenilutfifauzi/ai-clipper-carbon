@@ -12,6 +12,7 @@ import {
   chosenVoice,
   engineOption,
   NARRATE_AT_END_HINT,
+  NARRATE_TITLE_AT_END_HINT,
   NARRATION_SPEED_STEP,
   NARRATION_SPEEDS,
   narrationBody,
@@ -21,6 +22,7 @@ import {
   rememberedVoice,
   scriptTooLong,
   type NarrateDraft,
+  type NarratedTitle,
   type NarrateFlow,
   type NarrateState,
   type RememberedVoice,
@@ -30,12 +32,14 @@ import { speedLabel } from "./speed";
 /**
  * The Narrate tab (GLOSSARY.md, Narration; ADR 0019): an engine, a Voice, the Speed, the pause between
  * sentences, a Style line for an engine that takes one, and a script with the estimate of its length, read aloud by Generate into a Media Library item that lands as a Music Clip marked
- * Speech at the playhead. The engines and Voices are loaded once, with the default engine for the Job's
+ * Speech at the playhead, or at the start of the picked `title` (a Text Layer or the hook), whose words
+ * fill the script when the tab opens or the Pick changes, unless the owner has typed one (NarrateFlow's
+ * `prefill`). The engines and Voices are loaded once, with the default engine for the Job's
  * `language`; the browser remembers the last engine and Voice chosen, which win over it. While it is
  * made, its progress and Cancel take Generate's place; the draft is the flow's, so it outlives the tab.
- * Generate is off with the playhead `atEnd` of the Clip, and past 5,000 characters.
+ * Generate is off with the start `atEnd` of the Clip, and past 5,000 characters.
  */
-export function NarratePanel({ flow, language, atEnd }: { flow: NarrateFlow; language: string; atEnd: boolean }) {
+export function NarratePanel({ flow, language, atEnd, title }: { flow: NarrateFlow; language: string; atEnd: boolean; title: NarratedTitle | null }) {
   const [voices, setVoices] = useState<VoicesList | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -44,6 +48,9 @@ export function NarratePanel({ flow, language, atEnd }: { flow: NarrateFlow; lan
   const state = useSyncExternalStore(flow.subscribe, () => flow.state, () => flow.state);
   const draft = useSyncExternalStore(flow.subscribe, () => flow.draft, () => flow.draft);
   const remembered = rememberedVoice.use();
+  // Its words in the script on opening the tab, and again when another title is picked while it shows.
+  const words = title?.script ?? null;
+  useEffect(() => flow.prefill(words), [flow, words]);
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!voices) return <Skeleton className="h-40" />;
   return (
@@ -54,18 +61,19 @@ export function NarratePanel({ flow, language, atEnd }: { flow: NarrateFlow; lan
       draft={draft}
       remembered={remembered}
       atEnd={atEnd}
+      title={title}
       onDraft={(change) => {
         flow.edit(change);
         rememberChoice(change);
       }}
-      onGenerate={(body) => void flow.generate(body)}
+      onGenerate={(body) => void flow.generate(body, title?.start)}
       onCancel={flow.cancel}
     />
   );
 }
 
 /** The tab's fields, given the engines, the Job's language (the estimate's pace), the flow's state, the
- * draft and the remembered engine and Voice. */
+ * draft, the remembered engine and Voice, and the picked title it lands at the start of. */
 export function NarrateFields({
   voices,
   language = "id",
@@ -73,6 +81,7 @@ export function NarrateFields({
   draft,
   remembered = null,
   atEnd = false,
+  title = null,
   onDraft,
   onGenerate,
   onCancel,
@@ -83,6 +92,7 @@ export function NarrateFields({
   draft: NarrateDraft;
   remembered?: RememberedVoice | null;
   atEnd?: boolean;
+  title?: NarratedTitle | null;
   onDraft: (change: Partial<NarrateDraft>) => void;
   onGenerate: (body: NarrationRequest) => void;
   onCancel: () => void;
@@ -115,7 +125,7 @@ export function NarrateFields({
   return (
     <div className="flex flex-col gap-4">
       <Hint more="Each sentence is read alone and joined with the pause. The Narration is kept in the Media tab; Undo removes the clip and keeps it.">
-        Type a script: it is read aloud and lands at the playhead.
+        Type a script: it is read aloud and lands at {title ? `the start of ${title.name}` : "the playhead"}.
       </Hint>
       <Select
         label="Engine"
@@ -198,7 +208,7 @@ export function NarrateFields({
         <NarrationProgressRow state={state} onCancel={onCancel} />
       ) : (
         // The hint on the wrapper too: an off button takes no pointer, and so shows no title of its own.
-        <div className="flex flex-col" title={atEnd ? NARRATE_AT_END_HINT : undefined}>
+        <div className="flex flex-col" title={atEnd ? (title ? NARRATE_TITLE_AT_END_HINT : NARRATE_AT_END_HINT) : undefined}>
           <Button
             variant="primary"
             disabled={!canGenerate}

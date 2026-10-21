@@ -45,6 +45,7 @@ Today:
   - A cloud 429, 5xx or network failure is retried once per sentence, after the service's `Retry-After` or a short wait.
   - Any failure or cancel discards the partial sound and keeps the script and settings in the panel.
 - **The start is fixed when Generate is pressed:** the playhead, or the start of the earliest picked Text Layer or hook, whose words fill the script.
+  - The words fill only a script the owner hasn't typed (blank, or still the words last filled), so picking around the Timeline never clobbers a typed script.
   - Editing goes on meanwhile.
   - If the tab is gone or the Music Track is locked when it is ready, the item stays in the Media tab, unlaid.
   - Generate is off at the Clip's end.
