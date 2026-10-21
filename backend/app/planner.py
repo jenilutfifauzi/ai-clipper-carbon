@@ -295,7 +295,8 @@ class SegmentInput:
     media: str | None = None
     width: int = 0
     height: int = 0
-    framing: Framing = Framing()
+    # None: fitted, at the Canvas's centre.
+    framing: Framing | None = None
     volume: float = 1.0
     silent: bool = False
     # Its Words and the Word Edits that fall in it, in seconds into it (None: no captions), and the
@@ -1111,8 +1112,9 @@ def plan_render(
                 cuts.append(round(at + overlap / 2, 3))
             elif i:
                 cuts.append(at)
+            placed = given.framing or _centred_framing(canvas)
             if given.media is not None:
-                framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing, canvas)]
+                framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, placed, canvas)]
             elif given.hold is not None:
                 still, held = _still(given, length, source, layout, camera, framing, len(plans), canvas)
                 framed = [still]
@@ -1125,7 +1127,7 @@ def plan_render(
                 framed = _retimed(framed, given.time, length, source, canvas)
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
-                moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate, canvas) for scene in moved]
+                moved = [keyed_scene(scene, placed.transform, given.keys, at, rate, canvas) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
             segments.append(

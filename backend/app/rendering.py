@@ -40,7 +40,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.audio_effects import MEASURED_DIR
-from app.candidates import Candidate, Framing, Layout, Segment, WordEdit
+from app.candidates import Candidate, Layout, Segment, WordEdit
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
@@ -320,7 +320,7 @@ def candidate_plan(
                 continue
             inputs.append(SegmentInput(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
-                framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
+                framing=segment.framing, volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else words[i], word_edits=shown_edits(candidate.word_edits, segment),
                 join=join, keys=segment.keys, id=segment.id,
                 speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,

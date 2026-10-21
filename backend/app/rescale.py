@@ -93,7 +93,9 @@ def rescaled(candidate: Candidate, aspect: Aspect, sizes: Sizes, source: tuple[i
     segments = []
     for segment in candidate.segments:
         if segment.framing is None:
-            segments.append(segment)
+            # Fitted and centred on any Canvas (a Source Segment's, or a media one's by default): only
+            # its position Keyframes move.
+            segments.append(replace(segment, keys=keyed(segment.keys, 1.0)))
             continue
         size = sizes.get(segment.media) if segment.media else None
         grows = cover(size, segment.framing.crop)

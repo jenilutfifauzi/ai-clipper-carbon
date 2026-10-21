@@ -5,7 +5,7 @@ import pytest
 
 from app.candidates import CueEdit, Keyframe, KeyProperty, Layout, Overlay, Transform
 from app.canvas import CANVASES, PORTRAIT, REFERENCE, Aspect, Box, canvas_for
-from app.planner import Face, FrameFaces, MediaInfo, SceneLayout, hook_width, picture_at, plan_render
+from app.planner import Face, FrameFaces, MediaInfo, SceneLayout, SegmentInput, hook_width, picture_at, plan_render
 from app.styles import CaptionPosition, CaptionStyle, HookPosition, HookStyle, WatermarkKind, WatermarkPosition, WatermarkStyle
 from app.transcript import Word
 from app.video_source import SourceMetadata
@@ -174,6 +174,14 @@ def test_track_on_a_canvas_wider_than_the_source_crops_its_full_width_at_the_can
     # The Source's whole width and as much of its height as keeps 16:9, from its middle: never stretched.
     assert (panel.crop_width, panel.crop_height, panel.area) == (1440, 810, Box(0, 0, 1920, 1080))
     assert [(point.x, point.y) for point in panel.path] == [(0, 136)]
+
+
+def test_a_media_segment_without_a_framing_is_fitted_at_the_canvass_centre():
+    canvas = canvas_for(Aspect.LANDSCAPE)
+    video = SegmentInput(0, 2, media="ab" * 16, width=1280, height=720)
+    plan = plan_render(10, 12, WIDE, main_track=[SegmentInput(10, 12), video], canvas=canvas)
+    picture = plan.scenes[1].picture
+    assert picture.centre == (960, 540) and (picture.width, picture.height) == (1920, 1080)
 
 
 TALL = SourceMetadata(duration=3600, fps=25, width=1080, height=1920, codec="h264")

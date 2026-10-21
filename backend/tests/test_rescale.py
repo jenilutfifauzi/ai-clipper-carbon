@@ -113,6 +113,16 @@ def test_position_and_scale_keyframes_follow_their_items_rule() -> None:
     assert keyed_layer.keys[KeyProperty.SCALE][0].value == 0.5
 
 
+def test_a_media_segment_without_a_framing_keeps_it_but_its_position_keyframes_follow() -> None:
+    keys = {KeyProperty.X: [Keyframe(0, 270)], KeyProperty.Y: [Keyframe(0, 480)], KeyProperty.SCALE: [Keyframe(0, 0.5)]}
+    moved = to(candidate(segments=[Segment("v", 0, 1, media="broll", keys=keys)]))
+    [segment] = moved.segments
+    assert segment.framing is None
+    assert (segment.keys[KeyProperty.X][0].value, segment.keys[KeyProperty.Y][0].value) == (480, 270)
+    # Fitted on any Canvas, as its picture is.
+    assert segment.keys[KeyProperty.SCALE][0].value == 0.5
+
+
 def test_cue_edits_move_with_the_canvas() -> None:
     moved = to(candidate(cue_edits=[CueEdit(at=12, x=270, y=480), CueEdit(at=13, scale=2)]))
     assert [(edit.x, edit.y, edit.scale) for edit in moved.cue_edits] == [(480, 270, None), (None, None, 2)]
