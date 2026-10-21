@@ -1989,8 +1989,8 @@ def cancel_kokoro_download(kokoro: Kokoro) -> None:
 
 @router.delete("/voices/kokoro", status_code=204)
 def remove_kokoro(kokoro: Kokoro, narrations: Narrations) -> None:
-    """Remove Kokoro's model from this Mac, and its Voices' samples. 409 while a Narration or a sample is
-    being made, or the model is being downloaded."""
+    """Remove Kokoro's model from this Mac, its loaded engine and its Voices' samples. 409 while a
+    Narration or a sample is being made, or the model is being downloaded."""
     try:
         with narrations.idle("A Narration is being made: remove Kokoro once it is done"):
             kokoro.remove()

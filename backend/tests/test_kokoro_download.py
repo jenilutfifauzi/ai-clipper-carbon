@@ -335,8 +335,9 @@ def test_voices_lists_kokoro_on_this_mac_with_its_download_state(app_with_kokoro
     model.wait(10)
     voices = client.get("/api/voices").json()
     assert voices["kokoro"]["state"] == "ready"
-    # Installed, though it can't read until its engine comes (ticket 08).
-    assert voices["engines"][-1]["ready"] is False
+    # Installed, it reads (with sherpa-onnx, installed here), and an English Job starts with it.
+    assert voices["engines"][-1]["ready"] is True
+    assert client.get("/api/voices", params={"language": "en"}).json()["default"] == "kokoro"
 
 
 def test_remove_deletes_the_model_and_its_samples_and_is_refused_while_a_narration_runs(app_with_kokoro, engine, settings):

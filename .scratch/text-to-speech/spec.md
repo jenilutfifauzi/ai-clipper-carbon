@@ -110,8 +110,11 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - Speed goes to the service's own `speed` field, left out at 1×.
 - **Kokoro on this Mac**, run through sherpa-onnx with its int8 multi-language v1.0 archive.
   - The archive brings espeak-ng data and lexicons, so no brew package is needed.
-  - Only its English Voices (American and British, female and male) are offered.
-  - The loaded engine stays in memory until removed.
+  - Only its English Voices (American and British, female and male) are offered: the model's speakers 0–27 (`af_*`, `am_*`, `bf_*`, `bm_*`), each read by its speaker id, named from its id with its detail line ("Heart" · "American · female"). All read with the archive's American lexicon (`lexicon-us-en.txt`), as sherpa-onnx's own Kokoro invocation does.
+  - Speed goes to the engine natively; it takes no Style. A read is float samples at the engine's rate (24 kHz), turned into 16-bit PCM.
+  - The loaded engine stays in memory, loaded on the first read and reading one sentence at a time, until the model is removed: removal unloads it.
+  - It is ready once the model is installed and sherpa-onnx imports (it is imported only on the first read, so the app starts without it).
+  - sherpa-onnx (pinned `>=1.13.8,<1.14`) is listed with `sherpa-onnx-core`, its native library, which uv doesn't see in sherpa-onnx's published metadata.
 - **The engines are configured apart from the LLM settings.** They are read in the same settings loader, and none of the LLM code paths change.
 - **The default engine** follows the Job's language. Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible); English gets Kokoro if ready, else the first cloud engine. The frontend then remembers the last engine and Voice chosen (localStorage, wrapped in try/catch), which win over the default while that engine is ready.
 
@@ -151,7 +154,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 - Download progress shows in `GET /api/voices`, which the tab polls while downloading.
 
 **Kokoro download.**
-- **Pinned source and digest.** One archive URL and its SHA-256 are pinned in code (`app/kokoro.py`): sherpa-onnx's `tts-models` release, `kokoro-int8-multi-lang-v1_0.tar.bz2`, 132,303,094 bytes, as Concat's `models/manifest.toml` lists its upstream.
+- **Pinned source and digest.** One archive URL and its SHA-256 are pinned in code (`app/kokoro.py`): sherpa-onnx's `tts-models` release, `kokoro-int8-multi-lang-v1_0.tar.bz2`, 132,303,094 bytes, as Concat's `models/manifest.toml` lists its upstream (digest and size checked against the real archive).
 - **Resume.** The download writes a `.part` file under `DATA_DIR/models` and resumes it with an HTTP Range request from its size. A server that answers the whole file instead starts the `.part` over.
 - **Cancel** stops it at the next chunk and reports absent at once; the `.part` stays for the next download. A dropped connection reports failed and keeps the `.part` too.
 - **Check.**
@@ -218,7 +221,7 @@ Good tests check what the owner, the agent or the render sees through a public s
 - An interrupted download resumes with a Range request from the `.part` size.
 - An archive member escaping the folder is refused.
 - Remove deletes the model, and is refused while a Narration runs.
-- Real Kokoro synthesis runs only when the model is present (`pytest.skip` otherwise): one English sentence reads to non-silent audio.
+- Real Kokoro synthesis (`test_kokoro_engine.py`) runs only when `KOKORO_TEST_MODEL` names the unpacked model folder (`pytest.skip` otherwise): one English sentence reads to non-silent audio at 24 kHz, and Speed 2 is shorter than Speed 1.
 
 **Frontend, vitest** (new `narrate.test.tsx`; prior art `voiceoverFlow.test.tsx`, `meters.test.tsx`, `effectsTab.test.tsx`), with a fake API and SSE:
 - The default engine from the Job's language, and the remembered choice.

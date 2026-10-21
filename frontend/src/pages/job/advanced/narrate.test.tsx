@@ -16,6 +16,8 @@
 // And 07-download-and-remove-kokoro.md: Kokoro beside the engine picker, Download (its size), its
 // progress with Cancel, a failure's message, and Remove once it is here; the tab polls the Voices while it
 // downloads, and the hint with no ready engine offers it.
+// And 08-kokoro-engine.md: Kokoro's English Voices, their samples off until it is downloaded, and no
+// Style line for it.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ApiError, type KokoroInfo, type MediaItem, type MusicClip, type NarrationRequest, type TextLayer, type VoicesList } from "../../../api";
@@ -792,6 +794,25 @@ describe("Kokoro's download", () => {
     expect(button(making, "Remove Kokoro \\(132 MB\\)")).toContain('disabled=""');
     // A refused remove tells why.
     expect(renderToStaticMarkup(<Fields voices={withKokoro(kokoro("ready"))} kokoroMessage={KOKORO_REMOVE_BUSY} />)).toContain("Remove Kokoro once it is done");
+  });
+
+  test("its English Voices' samples are off until it is downloaded; once here, it reads English with no Style line", () => {
+    const english = [
+      { id: "af_heart", name: "Heart", detail: "American · female", language: "en" },
+      { id: "bm_george", name: "George", detail: "British · male", language: "en" },
+    ];
+    const absent = withKokoro(kokoro("absent"));
+    absent.engines[1] = { ...KOKORO, voices: english };
+    const before = renderToStaticMarkup(<Fields voices={absent} language="en" />);
+    expect(before).not.toContain("Play sample of Heart");
+    expect(before).not.toContain('<option value="kokoro"');
+
+    const here: VoicesList = { engines: [VOICES.engines[0], { ...KOKORO, ready: true, voices: english }], default: "kokoro", kokoro: kokoro("ready") };
+    const html = renderToStaticMarkup(<Fields voices={here} language="en" />);
+    expect(html).toContain('<option value="kokoro" selected="">Kokoro · On this Mac</option>');
+    expect(html).toMatch(/Heart<\/span><span[^>]*>American · female<\/span>/);
+    expect(html.match(/<button[^>]*aria-label="Play sample of George"[^>]*>/)![0]).not.toContain('disabled=""');
+    expect(html).not.toMatch(/<label[^>]*>Style<\/label>/);
   });
 
   test("with no engine ready, the hint offers the Kokoro download beside the .env settings", () => {

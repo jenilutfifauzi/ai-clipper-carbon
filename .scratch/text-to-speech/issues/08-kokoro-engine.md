@@ -13,9 +13,9 @@
 
 **Blocked by:** 07.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Kokoro lists only English Voices, and is not ready without the model.
-- [ ] Real synthesis (skipped unless the model is present): one English sentence reads to non-silent audio at the engine's rate; Speed 2 is shorter than Speed 1.
-- [ ] Seam A: an English Job's default engine is Kokoro once ready.
-- [ ] Vitest: Kokoro's samples are off until downloaded; no Style line for Kokoro.
+- [x] Kokoro lists only English Voices, and is not ready without the model.
+- [x] Real synthesis (skipped unless the model is present): one English sentence reads to non-silent audio at the engine's rate; Speed 2 is shorter than Speed 1.
+- [x] Seam A: an English Job's default engine is Kokoro once ready.
+- [x] Vitest: Kokoro's samples are off until downloaded; no Style line for Kokoro.

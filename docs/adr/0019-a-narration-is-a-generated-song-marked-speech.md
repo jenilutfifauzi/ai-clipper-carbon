@@ -34,7 +34,8 @@ Today:
     - Its int8 model archive brings its own espeak-ng data, so no system package is needed.
     - It is downloaded from the Narrate tab on first use, with progress and cancel, resumed from a `.part` file.
     - It is sherpa-onnx's `kokoro-int8-multi-lang-v1_0.tar.bz2` from its `tts-models` GitHub release (the upstream Concat's manifest names, not Concat's mirror), checked against a pinned SHA-256, unpacked into a staging folder and renamed into `DATA_DIR/models` atomically. Members or links that lead out of the folder install nothing.
-    - It can be removed from the same menu, except while a Narration or a sample is being made.
+    - It can be removed from the same menu, except while a Narration or a sample is being made. Removal also unloads the engine, which otherwise stays in memory from the first read.
+    - Each English Voice is one of the model's speakers, read by its id; Speed goes to it natively, and it takes no Style.
   - The default engine follows the Job's language: Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible), English gets Kokoro when ready, else the first cloud engine. The browser then remembers the last engine and Voice chosen, which win over the default.
 - **The backend splits every script into sentences**, for every engine.
   - It splits at `.`, `!`, `?` and `…` followed by a space or a line's end, and at newlines. It reads each sentence alone, and joins them with silence the length of the pause slider (None, Natural, Long, Longer: 0, 0.3, 0.8 and 1.5 s).

@@ -10,17 +10,26 @@ staging folder and renamed into place, so that a torn download or unpack never l
 archive with a member whose path or link leads out of its folder installs nothing. A cancel keeps the
 `.part` for the next download. Its state is told as absent, downloading (bytes done of total), ready or
 failed (with the message); a failed download is retried by downloading again.
+
+KokoroSpeech reads with it through sherpa-onnx's OfflineTts, its English Voices only (American and
+British, each a speaker id of the model's), Speed sent to it natively, no Style. The engine is loaded on
+the first read and kept by KokoroModel until the model is removed, which unloads it. sherpa-onnx is
+imported only then: without it the app still starts, and Kokoro isn't ready.
 """
 
 import hashlib
+import importlib.util
+import os
 import shutil
 import tarfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal, Protocol
 
 import httpx
+import numpy as np
 
 from app.voices import Pcm, SpeechError, Voice
 
@@ -50,6 +59,18 @@ class KokoroSource:
 PINNED = KokoroSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
 
 
+class KokoroTts(Protocol):
+    """Kokoro's loaded engine, as sherpa-onnx's OfflineTts is: one read is float samples at its rate."""
+
+    sample_rate: int
+
+    def generate(self, text: str, sid: int = 0, speed: float = 1.0) -> Any: ...
+
+
+# What loads Kokoro's engine from the model's folder (sherpa-onnx's, unless a test fakes it).
+KokoroLoader = Callable[[Path], KokoroTts]
+
+
 class KokoroBusy(RuntimeError):
     """Kokoro's model is being downloaded: it can't be removed meanwhile."""
 
@@ -74,9 +95,12 @@ class _Download:
 
 
 class KokoroModel:
-    """Kokoro's model in `models_dir` (its folder, KOKORO_FOLDER), fetched from `source`."""
+    """Kokoro's model in `models_dir` (its folder, KOKORO_FOLDER), fetched from `source`, and its engine
+    once loaded, by `load` (sherpa-onnx's unless a test fakes it)."""
 
-    def __init__(self, models_dir: Path, source: KokoroSource = PINNED, http_client: httpx.Client | None = None) -> None:
+    def __init__(
+        self, models_dir: Path, source: KokoroSource = PINNED, http_client: httpx.Client | None = None, load: KokoroLoader | None = None
+    ) -> None:
         self.models_dir = models_dir
         self.source = source
         self.folder = models_dir / KOKORO_FOLDER
@@ -88,12 +112,46 @@ class KokoroModel:
         self._state: DownloadState = "ready" if self.folder.is_dir() else "absent"
         self._done = 0
         self._message: str | None = None
+        # The loaded engine, kept until the model is removed; its lock is held through a load and a read.
+        self._load = load
+        self._tts: KokoroTts | None = None
+        self._tts_lock = threading.Lock()
         # What an unpack cut short left: nothing was installed from it.
         shutil.rmtree(self.staging, ignore_errors=True)
 
     @property
     def installed(self) -> bool:
         return self.folder.is_dir()
+
+    @property
+    def loadable(self) -> bool:
+        """Whether its engine can be loaded here: sherpa-onnx is installed (or a loader given)."""
+        return self._load is not None or importlib.util.find_spec("sherpa_onnx") is not None
+
+    def generate(self, text: str, sid: int, speed: float) -> tuple[np.ndarray, int]:
+        """`text` read by speaker `sid` at `speed`: float samples and their rate. The engine is loaded on
+        the first read, once whatever reads at the same time, and reads one at a time. SpeechError
+        without the model or sherpa-onnx, or when the model doesn't load."""
+        with self._tts_lock:
+            if not self.installed:
+                raise SpeechError("Kokoro's model isn't on this Mac: download it in the Narrate tab")
+            if self._tts is None:
+                self._tts = self._loaded()
+            audio = self._tts.generate(text, sid=sid, speed=speed)
+            return np.asarray(audio.samples, dtype=np.float32), int(audio.sample_rate)
+
+    def _loaded(self) -> KokoroTts:
+        try:
+            return (self._load or _sherpa_tts)(self.folder)
+        except SpeechError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - sherpa-onnx's own errors, told to the owner
+            raise SpeechError(f"Kokoro's model couldn't be loaded ({exc}): remove Kokoro and download it again") from exc
+
+    def unload(self) -> None:
+        """Let the loaded engine go (after a read in progress); the next read loads it again."""
+        with self._tts_lock:
+            self._tts = None
 
     def state(self) -> dict:
         """{state, done, total, message}: absent, downloading (`done` bytes of `total`), ready or failed
@@ -136,6 +194,7 @@ class KokoroModel:
             winding_down = self._download is not None and self._download.thread is not None and self._download.thread.is_alive()
             if self._state == "downloading" or winding_down:
                 raise KokoroBusy("Kokoro is being downloaded: cancel the download first")
+            self.unload()
             shutil.rmtree(self.folder, ignore_errors=True)
             self.part.unlink(missing_ok=True)
             self._state, self._done, self._message = "absent", 0, None
@@ -269,10 +328,67 @@ def _range_start(response: httpx.Response) -> int | None:
         return None
 
 
+# The lexicon sherpa-onnx's own Kokoro invocation reads English with (its American one, for every Voice).
+_LEXICON = "lexicon-us-en.txt"
+
+
+def _threads() -> int:
+    """Threads for a read: half the Mac's cores, at most 4 (more don't read faster)."""
+    return max(1, min(4, (os.cpu_count() or 2) // 2))
+
+
+def _sherpa_tts(folder: Path) -> KokoroTts:
+    """sherpa-onnx's OfflineTts for the unpacked model in `folder`: its int8 network, the Voices' table,
+    the tokens, espeak-ng's data and the English lexicon, all in the archive."""
+    try:
+        import sherpa_onnx
+    except ImportError as exc:
+        raise SpeechError("Kokoro needs sherpa-onnx, which isn't installed: run `make setup` and restart") from exc
+    kokoro = sherpa_onnx.OfflineTtsKokoroModelConfig(
+        model=str(next(folder.glob("*.onnx"))),
+        voices=str(folder / "voices.bin"),
+        tokens=str(folder / "tokens.txt"),
+        data_dir=str(folder / "espeak-ng-data"),
+        lexicon=str(folder / _LEXICON),
+    )
+    config = sherpa_onnx.OfflineTtsConfig(model=sherpa_onnx.OfflineTtsModelConfig(kokoro=kokoro, num_threads=_threads()))
+    if not config.validate():
+        raise SpeechError("Kokoro's model folder is missing files: remove Kokoro and download it again")
+    return sherpa_onnx.OfflineTts(config)
+
+
+# Kokoro v1.0's English speakers by their id in the model (its voices.bin), as sherpa-onnx numbers them:
+# the name's prefix is the accent (a American, b British) and the gender (f, m). Its other languages'
+# speakers aren't offered: the archive's lexicons read English (and Chinese) only.
+KOKORO_VOICES = {
+    name: sid
+    for sid, name in enumerate(
+        [
+            *("af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore"),
+            *("af_nicole", "af_nova", "af_river", "af_sarah", "af_sky"),
+            *("am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa"),
+            *("bf_alice", "bf_emma", "bf_isabella", "bf_lily"),
+            *("bm_daniel", "bm_fable", "bm_george", "bm_lewis"),
+        ]
+    )
+}
+_ACCENTS = {"a": "American", "b": "British"}
+_GENDERS = {"f": "female", "m": "male"}
+
+
+def _voice(name: str) -> Voice:
+    """"af_heart" as the Voice list shows it: "Heart", "American · female"."""
+    prefix, rest = name.split("_", 1)
+    return Voice(name, rest.capitalize(), f"{_ACCENTS[prefix[0]]} · {_GENDERS[prefix[1]]}", language="en")
+
+
+KOKORO_VOICE_LIST = [_voice(name) for name in KOKORO_VOICES]
+
+
 class KokoroSpeech:
     """Kokoro, read on this Mac: its words never leave it. Listed in the engine picker as "On this Mac",
-    its download offered beside it. It reads nothing yet: ticket 08 brings sherpa-onnx, its English
-    Voices and its native Speed, reading with `model` once installed."""
+    its download offered beside it, and ready once its model is installed (and sherpa-onnx is). Its
+    Voices are English; Speed goes to it natively, and it takes no Style."""
 
     id = "kokoro"
     label = "Kokoro"
@@ -285,10 +401,16 @@ class KokoroSpeech:
         self.model = model
 
     def ready(self) -> bool:
-        return False
+        return self.model.installed and self.model.loadable
 
     def voices(self) -> list[Voice]:
-        return []
+        return KOKORO_VOICE_LIST
 
     def read(self, text: str, voice: str, style: str | None = None, speed: float = 1.0) -> Pcm:
-        raise SpeechError("Kokoro can't read yet")
+        sid = KOKORO_VOICES.get(voice)
+        if sid is None:
+            raise SpeechError(f"Kokoro has no Voice {voice!r}")
+        samples, rate = self.model.generate(text, sid, speed)
+        if not len(samples):
+            raise SpeechError("Kokoro gave no audio for a sentence")
+        return Pcm((np.clip(samples, -1, 1) * 32767).round().astype(np.int16), rate)
