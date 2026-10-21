@@ -11,6 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Overlay, Transform
+from app.frames import _effects_at
 from app.config import load_settings
 from app.planner import MediaInfo, overlay_events, plan_render
 from app.scaled_plan import scaled_plan
@@ -110,6 +111,21 @@ def test_an_overlays_enabled_effects_reach_its_event_their_sizes_times_its_scale
         [],
         [],
     ]
+
+
+def test_a_keyed_stretched_pictures_effect_is_sized_by_its_more_stretched_axis_whichever_it_is():
+    """In the frame process the stack runs on the item's pixels: its sizes are the planned ones times
+    the pixels per drawn pixel along the axis the planned sizes come from (the more stretched one)."""
+    blur = VideoEffect("gaussian-blur", {"radius": 8})
+    across, down = overlay_events([
+        Overlay("x", IMAGE, 0.0, 1.0, transform=Transform(stretch_x=2), video_effects=[blur]),
+        Overlay("y", IMAGE, 0.0, 1.0, transform=Transform(stretch_y=2), video_effects=[blur]),
+    ], 10, ITEMS)
+    item = ITEMS[IMAGE]
+    sigmas = [float(_effects_at(event.picture, event.video_effects, (item.width, item.height))[-1].split("=")[-1]) for event in (across, down)]
+    # Planned 16 (8 x 2) on a picture drawn twice as long along the stretch as at scale 1 (1080 px
+    # wide, fitted): 8 of its own 320 / 1080 pixels per fitted pixel, stretched with it, either way.
+    assert sigmas == pytest.approx([8 * 320 / 1080] * 2, abs=0.01), sigmas
 
 
 def test_a_plan_drawn_at_another_size_scales_its_overlays_effects_sizes_with_it():

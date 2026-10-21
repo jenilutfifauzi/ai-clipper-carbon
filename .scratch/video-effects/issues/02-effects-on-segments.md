@@ -50,3 +50,5 @@ Built for Segments of the Source and of a media item, Freeze frames included.
   - `SegmentFields` has a `pictureEffects` slot after Color.
 - **For 03:** add `"adjustment"` to `PictureRef` and to `picturedItems`, `pictureOf` and `repictured`.
 - **Not verified in a browser:** the preview's blur on the decks. vitest and tsc cover the code paths only.
+
+Review fixes: a Freeze frame now takes its Segment's `video_effects` with its Grade (`freezeFrame`). The Transition ghost's `DecksGraded` gets the Segment's `start`, so a timed stack's filter id matches the one `EffectFilters` defines. There is no test for the ghost's markup: it needs a DOM, which vitest here doesn't have.

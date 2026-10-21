@@ -8,9 +8,9 @@ import { videoLibraryOf } from "../../../videoEffects";
 import catalogue from "../../../../../backend/tests/fixtures/video_effects.json";
 import { NO_CROP } from "../editor/cropGestures";
 import { hexOf, mediaPointOf } from "../editor/eyedropper";
-import { gradedColour, NEUTRAL_GRADE } from "../editor/grading";
+import { gradedColour, knowLooks, NEUTRAL_ADJUST, NEUTRAL_GRADE } from "../editor/grading";
 import { chroma, effectPrimitives, hexRgb, scaledEffects, type Primitive } from "../editor/videoEffects";
-import { addVideoEffect, isKey, keysPicked, setVideoEffectColour, sharedVideoStack } from "./actions";
+import { addVideoEffect, isKey, keysPicked, setKeyColour, setVideoEffectColour, sharedVideoStack } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { picked } from "./pick";
 
@@ -87,6 +87,18 @@ describe("a key is an Overlay's only", () => {
     expect(videoLibraryOf(kinds, "").at(-1)).toEqual({ category: "Cutout", effects: [kindOf("chroma-key"), kindOf("luma-key")] });
     expect(videoLibraryOf(kinds, "", false).map(({ category }) => category)).not.toContain("Cutout");
     expect(videoLibraryOf(kinds, "key", false)).toEqual([]);
+  });
+
+  test("the eyedropper's colour goes on the edits as they are at the click, to the key wherever it is now", () => {
+    const blur: VideoEffect = { id: "gaussian-blur", params: { radius: 8 }, enabled: true };
+    // Armed on [key, blur]; while it waited, the blur moved above the key and its radius changed, and another Overlay moved.
+    const now = edits([overlay("a", { video_effects: [{ ...blur, params: { radius: 20 } }, chromaKey] }), overlay("b", { start: 3 })], []);
+    const set = setKeyColour(now, ["a"], "chroma-key", "color", "#1030e0")!;
+    expect(set.overlays[0].video_effects).toEqual([{ ...blur, params: { radius: 20 } }, { ...chromaKey, params: { ...chromaKey.params, color: "#1030E0" } }]);
+    expect(set.overlays[1]).toBe(now.overlays[1]);
+    // A key since removed, or the same colour, changes nothing.
+    expect(setKeyColour(edits([overlay("a", { video_effects: [blur] })], []), ["a"], "chroma-key", "color", "#1030e0")).toBeNull();
+    expect(setKeyColour(now, ["a"], "chroma-key", "color", "#00b140")).toBeNull();
   });
 
   test("the key colour is set on every picked stack in capitals, a code that isn't one refused", () => {
@@ -202,5 +214,18 @@ describe("the eyedropper", () => {
     expect(blue).toBeLessThan(0.5);
     const bright = { ...NEUTRAL_GRADE, adjust: { ...NEUTRAL_GRADE.adjust, exposure: 1 } };
     expect(gradedColour(bright, [0.2, 0.2, 0.2])[0]).toBeGreaterThan(0.25);
+  });
+
+  test("an Imported Look's fit turns the colour too, mixed by the intensity, as the preview's filter draws it", () => {
+    const ramp = Array.from({ length: 256 }, (_, i) => i / 255);
+    // A Look whose 3D table swaps red and blue.
+    const swap: [[number, number, number], [number, number, number], [number, number, number]] = [[0, 0, 1], [0, 1, 0], [1, 0, 0]];
+    knowLooks([{ id: "swapped", adjust: NEUTRAL_ADJUST, fit: { tables: [ramp, ramp, ramp], matrix: swap } }]);
+    try {
+      expect(gradedColour({ ...NEUTRAL_GRADE, look: "swapped" }, [0.8, 0.4, 0.2]).map((value) => value.toFixed(3))).toEqual(["0.200", "0.400", "0.800"]);
+      expect(gradedColour({ ...NEUTRAL_GRADE, look: "swapped", intensity: 25 }, [0.8, 0.4, 0.2]).map((value) => value.toFixed(3))).toEqual(["0.650", "0.400", "0.350"]);
+    } finally {
+      knowLooks([]);
+    }
   });
 });

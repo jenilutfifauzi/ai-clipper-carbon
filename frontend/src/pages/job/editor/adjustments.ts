@@ -40,9 +40,10 @@ export interface AdjustmentFilter {
 export function adjustmentFilters(plan: RenderPlan | null, time: number): AdjustmentFilter[] {
   return (plan?.adjustment_layers ?? []).flatMap((event) => {
     const weight = Math.round(adjustmentWeight(event, time) * 200) / 200;
+    if (weight <= 0) return [];
     const effects = event.video_effects ?? [];
     const effected = effectsFilterId(effects, FRAME, event.start);
-    if (weight <= 0 || (!foldGrade(event.grade) && !effected)) return [];
+    if (!foldGrade(event.grade) && !effected) return [];
     const graded = hasGradeFilter(event.grade) ? gradeFilterId(event.grade) : null;
     const filterId = graded || effected ? `adjust-${event.id}-${graded ?? "n"}-${effected ?? "n"}` : null;
     return [{ id: event.id, grade: event.grade, effects, start: event.start, weight, filterId }];

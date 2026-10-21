@@ -56,3 +56,7 @@ Built: Chroma key and Luma key (Cutout) in `app/video_effects.py`, with their SV
   - The eyedropper leaves out sharpen, vignette and an Imported Look's 3D table.
 - **Verified:** headless Chrome on a static page of the two imitations (green, black and inverted white screens drop out; the red band stays).
 - **Not verified in the app:** the eyedropper click. vitest covers its geometry and the Grade.
+
+Review fixes:
+- **The eyedropper's colour goes on the edits as they are at the click.** `setKeyColour(edits, overlays, effect, key, colour)` sets it by Overlay id and effect id, not by an index from when it was armed. `KeyColourField` reads the latest `onPicked` and cancels its request when the Pick changes or the field unmounts.
+- **`gradedColour` includes an Imported Look's fit** (`Folded.lut`, mixed by the intensity) as GradeFilter does. Only sharpen and vignette are left out now.

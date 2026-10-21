@@ -64,6 +64,19 @@ describe("toggling a star", () => {
   });
 });
 
+test("a list that failed to load is never saved over: the toggle does nothing, and the next one loads again", async () => {
+  const { api, toggleStar } = await freshStore();
+  const saved: string[][] = [];
+  const listed = vi.spyOn(api, "listStarredEffects").mockRejectedValueOnce(new Error("offline")).mockResolvedValue(["fisheye"]);
+  vi.spyOn(api, "setStarredEffects").mockImplementation(async (ids) => (saved.push(ids), ids));
+
+  await toggleStar("glow");
+  expect(saved).toEqual([]);
+  await toggleStar("glow");
+  expect(listed).toHaveBeenCalledTimes(2);
+  expect(saved).toEqual([["fisheye", "glow"]]);
+});
+
 describe("the Starred chip", () => {
   test("keeps a library to its starred effects, in the catalogue's order; off, it keeps them all", async () => {
     const { starredOnly } = await freshStore();

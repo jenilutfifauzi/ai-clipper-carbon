@@ -53,3 +53,5 @@ Built end to end.
 - **Not drafted locally:** the preview takes the mode from the Preview Plan, so a change shows once the plan of the change comes. There is no local draft, unlike `draftVideoEffects`.
 - **Not verified in a browser:** the CSS blend over the decks. vitest checks the markup only. The phone's Transform sheet has no menu.
 - **Cost (for 10):** one full-frame planar-RGB `blend`, two format changes and an alpha merge per non-Normal Overlay. The blend and the last overlay are skipped outside the span (`enable`), the rest are not.
+
+Review: a half-transparent picture does not count `below` twice. Over a main of alpha 0, `overlay` takes the picture's own colour wherever it has any alpha. A Seam A test checks a Multiply Overlay at opacity 0.5 against 0.5·below + 0.5·below·picture. The code is unchanged.

@@ -255,12 +255,23 @@ export function gradeFilter(grade: Partial<Grade> | null | undefined): string | 
 
 /**
  * A display colour `rgb` (0..1 each) as `grade` turns it: through its fold's tables and then its
- * matrix, as the preview's filter draws a pixel (sharpen and vignette, which depend on the pixel's
- * neighbours and place, and an Imported Look's 3D table, left out). What the eyedropper picks from an
- * Overlay's picture, which the render keys after its Grade.
+ * matrix, then an Imported Look's fit (its tables and matrix) mixed over that by the intensity, as
+ * the preview's filter draws a pixel (sharpen and vignette, which depend on the pixel's neighbours
+ * and place, left out). What the eyedropper picks from an Overlay's picture, which the render keys
+ * after its Grade.
  */
 export function gradedColour(grade: Partial<Grade> | null | undefined, rgb: [number, number, number]): [number, number, number] {
   const folded = foldGrade(grade);
+  const graded = turned(folded?.tables ?? null, folded?.matrix ?? null, rgb);
+  const lut = folded?.lut;
+  if (!lut) return graded;
+  const looked = turned(lut.fit.tables, lut.fit.matrix, graded);
+  const amount = Math.min(1, Math.max(0, lut.intensity / 100));
+  return looked.map((value, channel) => value * amount + graded[channel] * (1 - amount)) as [number, number, number];
+}
+
+// `rgb` through `tables` and then `matrix` (each the identity when null), held within 0..1.
+function turned(tables: number[][] | null, matrix: number[][] | null, rgb: [number, number, number]): [number, number, number] {
   const clamp = (value: number) => Math.min(1, Math.max(0, value));
   const looked = (table: number[], value: number) => {
     const at = clamp(value) * (table.length - 1);
@@ -268,8 +279,8 @@ export function gradedColour(grade: Partial<Grade> | null | undefined, rgb: [num
     const above = Math.min(below + 1, table.length - 1);
     return table[below] + (table[above] - table[below]) * (at - below);
   };
-  const tabled = rgb.map((value, channel) => (folded?.tables ? looked(folded.tables[channel], value) : value));
-  const mixed = folded?.matrix ? folded.matrix.map((row) => row.reduce((sum, weight, channel) => sum + weight * tabled[channel], 0)) : tabled;
+  const tabled = rgb.map((value, channel) => (tables ? looked(tables[channel], value) : value));
+  const mixed = matrix ? matrix.map((row) => row.reduce((sum, weight, channel) => sum + weight * tabled[channel], 0)) : tabled;
   return mixed.map(clamp) as [number, number, number];
 }
 

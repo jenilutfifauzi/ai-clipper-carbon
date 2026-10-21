@@ -5,6 +5,7 @@
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, Keyframe, TextLayer } from "../../../api";
 import { NO_CROP } from "../editor/cropGestures";
+import { NEUTRAL_GRADE } from "../editor/grading";
 import { LINEAR } from "../editor/keyframes";
 import { BLURRED, IDENTITY } from "../editor/picture";
 import { playedFrom } from "../editor/playback";
@@ -118,6 +119,15 @@ describe("Freeze frame", () => {
       { start: 4, end: 4, reverse: undefined },
       { start: 0, end: 4, reverse: true },
     ]);
+  });
+
+  test("holds its frame in its Segment's Grade and Video Effects, as the head and tail keep them", () => {
+    const grade = { ...NEUTRAL_GRADE, adjust: { ...NEUTRAL_GRADE.adjust, exposure: 1 } };
+    const video_effects = [{ id: "gaussian-blur", params: { radius: 8 }, enabled: true }];
+    const before = edits({ segments: [segment("s1", 100, 106, { grade, video_effects })] });
+    const [head, frame, tail] = freezeFrame(scene(before), 3)!.edits.segments;
+    expect(frame).toEqual(held("n2", 103, 1, { grade, video_effects }));
+    expect([head.video_effects, tail.video_effects]).toEqual([video_effects, video_effects]);
   });
 
   test("on a keyed video takes the picture shown at the playhead as constants, its head and tail keyed as before", () => {

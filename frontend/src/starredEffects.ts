@@ -13,11 +13,13 @@ let changes: Promise<unknown> = Promise.resolve();
 
 /**
  * Star `id`, or unstar it when it is starred: shown at once, then saved. A failed save lists the
- * server's again, which undoes it.
+ * server's again, which undoes it. When the list can't be loaded the toggle does nothing: a PUT of
+ * a list we never saw would replace the server's.
  */
 export function toggleStar(id: string): Promise<void> {
   const change = changes.then(async () => {
-    const list = await starred.load().catch((): string[] => []);
+    const list = await starred.load().catch(() => null);
+    if (!list) return;
     const next = list.includes(id) ? list.filter((other) => other !== id) : [...list, id];
     starred.set(next);
     try {

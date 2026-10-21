@@ -3,7 +3,7 @@
 // a Segment's and an Adjustment Layer's stack of Video Effects (ADR 0014), edited from the Inspector on a Pick of
 // one picture or several, each change one step of undo; carried by Split, Duplicate, the Clipboard and
 // the Revision merge; and drawn by the preview.
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { isColourSetting, type AdjustmentEvent, type AdjustmentLayer, type AudioEffectSetting, type ClipSegment, type Overlay, type OverlayEvent, type RenderPlan, type SegmentPlan, type VideoEffect, type VideoEffectKind } from "../../../api";
@@ -414,6 +414,20 @@ describe("Glow, Bloom pulse and Film grain in the preview", () => {
     expect(noise.element).toBe("feTurbulence");
     expect(noise.timed!(1)).not.toEqual(noise.timed!(1 + 1 / 30));
     expect(noise.timed!(1)).toEqual(noise.timed!(1));
+  });
+
+  test("a stack's primitives are built once per stack and box, and none to tell a stack that draws nothing", () => {
+    const fisheye = vi.spyOn(IMITATIONS, "fisheye");
+    const stack: VideoEffect[] = [{ id: "fisheye", params: { strength: 41 }, enabled: true }];
+    expect(effectsFilterId([{ ...stack[0], enabled: false }, { id: "no-such-effect", params: {}, enabled: true }], frame)).toBeNull();
+    expect(fisheye).not.toHaveBeenCalled();
+    const id = effectsFilterId(stack, frame);
+    expect(effectsFilterId(stack, frame)).toBe(id);
+    expect(effectPrimitives(stack, frame)).toBe(effectPrimitives(stack, frame));
+    expect(fisheye).toHaveBeenCalledTimes(1);
+    effectPrimitives(stack, { width: 540, height: 960 });
+    expect(fisheye).toHaveBeenCalledTimes(2);
+    fisheye.mockRestore();
   });
 
   test("a stack that changes with time has a filter of its item's own, by its start", () => {

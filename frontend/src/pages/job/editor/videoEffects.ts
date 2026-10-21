@@ -459,15 +459,32 @@ export const IMITATIONS: Record<string, (params: Record<string, number>, box: Bo
   },
 };
 
-/** The primitives `effects` (planned: enabled, sizes as drawn) are imitated by, in order; an effect without an imitation draws nothing. */
-export const effectPrimitives = (effects: VideoEffect[], box: Box): Primitive[] =>
-  effects.flatMap((effect) => {
-    const imitation = effect.enabled ? IMITATIONS[effect.id] : undefined;
-    if (!imitation) return [];
+// The primitives already built, by stack and box (effectPrimitives): the preview asks for them on
+// every tick of the playback, and a displacement map's BMP is costly to make. Emptied when it grows past BUILT_MAX.
+const built = new Map<string, Primitive[]>();
+const BUILT_MAX = 256;
+
+// The enabled entries of `effects` that have an imitation: what a filter of them draws.
+const drawnOf = (effects: VideoEffect[] | undefined): VideoEffect[] => (effects ?? []).filter((effect) => effect.enabled && IMITATIONS[effect.id]);
+
+// Its effects and the box, which the primitives follow from (a map's data URL is too long for an id).
+const stackKey = (drawn: VideoEffect[], box: Box): (string | number)[] => [...drawn.flatMap(({ id, params }) => [id, ...Object.entries(params).flat()]), box.width, box.height];
+
+/** The primitives `effects` (planned: enabled, sizes as drawn) are imitated by, in order; an effect without an imitation draws nothing. Built once per stack and box. */
+export function effectPrimitives(effects: VideoEffect[], box: Box): Primitive[] {
+  const drawn = drawnOf(effects);
+  const key = JSON.stringify(stackKey(drawn, box));
+  const known = built.get(key);
+  if (known) return known;
+  const primitives = drawn.flatMap((effect) => {
     const of = <T extends number | string>(kind: string) =>
       Object.fromEntries(Object.entries(effect.params).filter(([, value]) => typeof value === kind)) as Record<string, T>;
-    return imitation(of<number>("number"), box, of<string>("string"));
+    return IMITATIONS[effect.id](of<number>("number"), box, of<string>("string"));
   });
+  if (built.size >= BUILT_MAX) built.clear();
+  built.set(key, primitives);
+  return primitives;
+}
 
 /** The size, in output pixels, of the element an Overlay's `picture` is drawn on: its whole item, scaled as its crop is. */
 export const pictureBox = (picture: Picture): Box => ({
@@ -485,13 +502,11 @@ export const changesWithTime = (primitives: Primitive[]): boolean =>
  * its time counts from the item's `start` on the Timeline.
  */
 export function effectsFilterId(effects: VideoEffect[] | undefined, box: Box, start = 0): string | null {
-  const drawn = (effects ?? []).filter((effect) => effect.enabled && IMITATIONS[effect.id]);
-  const primitives = effectPrimitives(drawn, box);
-  if (!primitives.length) return null;
-  // Its effects and the box, which the primitives follow from (a map's data URL is too long for an id).
-  const parts = drawn.flatMap(({ id, params }) => [id, ...Object.entries(params).flat()]);
-  const timed = changesWithTime(primitives) ? ["at", start] : [];
-  return `vfx-${[...parts, box.width, box.height, ...timed].join("-").replace(/[^0-9a-z]/gi, "_")}`;
+  // Every imitation draws something: no primitives are built to tell an empty stack.
+  const drawn = drawnOf(effects);
+  if (!drawn.length) return null;
+  const timed = changesWithTime(effectPrimitives(drawn, box)) ? ["at", start] : [];
+  return `vfx-${[...stackKey(drawn, box), ...timed].join("-").replace(/[^0-9a-z]/gi, "_")}`;
 }
 
 /** The CSS `filter` that imitates `effects` on an element of `box` (of an item from `start`), or undefined when they draw nothing. */

@@ -61,3 +61,7 @@ Built for Adjustment Layers and for keyed (or animated) Overlays; keyed media Se
   - The Seam A test checks a Text Layer only; the captions are burned later in the same chain.
   - The preview's layer blur fades at the frame's edges, as 01 noted for Overlays.
 - **Not verified in a browser:** the preview's blur on the wrapper. vitest and tsc cover the code paths only.
+
+Review fixes:
+- **A layer's effects run on its span alone.** `_adjustment` takes `fps`, and `_spanned` keeps the effected branch to the span: `trim` ends it just past the span, and `select` keeps the frames `enable` picked. `tpad` stands in transparent frames from the Clip's start, and a `setpts` sets them back before the span; without them, the overlay held back every frame before the span. The frames are the same as the chain's on every frame (a Seam A test checks this with Chromatic aberration), and the render is about 2 to 3× faster for a 1 s layer. A layer with a Grade alone gives the same command as before. This replaces 04's note that a part with labels runs on every frame of a layer.
+- **Keyed stretched pictures.** `_effects_at` now scales by the pixels per drawn pixel along the picture's more stretched axis, which is the axis `overlay_scale` takes its size from. Before, it used the width alone. Along that axis the effect is as wide as an unkeyed picture's; along the other it is narrower, stretched with the picture. Unkeyed, it is the same on both axes.

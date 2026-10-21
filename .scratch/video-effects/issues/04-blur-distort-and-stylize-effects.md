@@ -48,3 +48,5 @@ Built: five effects in the catalogue (`app/video_effects.py`), each with its bui
   - Motion blur at a slant uses nine taps.
   - Chromatic aberration's preview takes the picture's own blue past its edges.
 - **Checked in headless Chrome** on a static page of the filters, not in the app.
+
+Review fix: `effectPrimitives` is memoised per stack and box (`built`, emptied past 256). `effectsFilterId` tells an empty stack from its enabled entries that have an imitation, so it no longer builds primitives (Fisheye's BMP among them) on every playback tick.

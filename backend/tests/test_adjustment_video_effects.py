@@ -4,6 +4,7 @@ Adjustment Layer's stack after its Grade, mixed back by its strength and fades, 
 picture's stack in its frame process, before its sampled scale. Seam B on the planner, then Seam A
 through the API, MCP and the real ffmpeg."""
 
+import subprocess
 from dataclasses import asdict, replace
 
 import numpy as np
@@ -11,12 +12,13 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import AdjustmentLayer, Candidate, Grade, manual_candidate
-from app.config import CameraTuning
+from app.config import CameraTuning, load_settings
 from app.planner import AdjustmentEvent, plan_render
+from app.renderer import _adjustment
 from app.rendering import candidate_plan
 from app.scaled_plan import scaled_plan
 from app.styles import PresetStore
-from app.video_effects import VideoEffect
+from app.video_effects import Clock, VideoEffect, checked_video_effects, video_effect_chain
 from test_adjustment_layers import PLATED
 from test_media_library import upload
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -130,6 +132,32 @@ def test_a_keyed_overlay_shows_the_blur_of_its_unkeyed_form_at_the_same_scale(cl
     assert widths["still"] > widths["sharp"] + 6, widths
     for keyed in ("held", "growing"):
         assert abs(widths[keyed] - widths["still"]) <= max(3, widths["still"] * 0.2), widths
+
+
+def test_a_layers_effects_run_on_its_spans_frames_alone_and_draw_them_as_on_every_frame():
+    """Chromatic aberration (a chain with labels, which can't take `enable`) on a layer from 1.21 to
+    1.9 s of 3 s of a moving picture at 30 fps: the branch keeps the span's frames alone, and the
+    frames are those of the chain run on every frame and laid back over the span."""
+    stack = checked_video_effects([VideoEffect("chromatic-aberration")], "Adjustment Layer a")
+    event = AdjustmentEvent("a", 1.21, 1.9, Grade(), video_effects=stack)
+    span = "between(t\\,1.210\\,1.900)"
+    every = ",".join(video_effect_chain(stack, (360, 640), label="every", clock=Clock(event.start)))
+    graphs = {
+        "spanned": _adjustment(event, "[0:v]", "[out]", 0, (360, 640), 30),
+        "every": f"[0:v]split[a][b];[b]{every},format=yuva420p[g];[a][g]overlay=0:0:enable='{span}':eof_action=pass[out]",
+    }
+    assert "select='between(t" in graphs["spanned"] and "tpad=start=34" in graphs["spanned"], graphs["spanned"]
+
+    def frames(graph: str) -> list[str]:
+        command = [
+            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=30:duration=3,format=yuv420p",
+            "-filter_complex", f"{graph};[out]format=yuv420p[o]", "-map", "[o]", "-fps_mode", "passthrough", "-f", "framemd5", "-",
+        ]
+        listed = subprocess.run(command, capture_output=True, text=True, check=True).stdout
+        return [line for line in listed.splitlines() if not line.startswith("#")]
+
+    spanned, every_frame = frames(graphs["spanned"]), frames(graphs["every"])
+    assert len(spanned) == 90 and spanned == every_frame
 
 
 def test_a_layers_stack_is_saved_planned_and_a_bad_one_is_refused(client):

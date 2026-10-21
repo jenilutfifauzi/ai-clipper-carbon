@@ -109,6 +109,19 @@ def test_multiply_over_the_frame_darkens_it_and_white_leaves_it_as_it_was(client
     assert np.abs(colour(after, BAND) - UNDER).max() < 4, colour(after, BAND)
 
 
+def test_a_half_transparent_multiply_overlay_counts_the_frame_beneath_once(client, settings, video_source, plain_video, screens):
+    """At opacity 0.5, Multiply gives half the frame and half the frame times the picture: the colour
+    the mode blends is the picture's own, not already mixed with the frame's."""
+    video_source.video = plain_video
+    half = {**SHOWN["transform"], "opacity": 0.5}
+    frame = blended(client, settings, screens["white"], blend="multiply", transform=half)
+    red = np.array([0xD0, 0x20, 0x20]) / 255
+    expected = 0.5 * UNDER + 0.5 * UNDER * red
+    assert np.abs(colour(frame, BAND) - expected).max() < 4, (colour(frame, BAND), expected)
+    # White multiplied leaves the frame as it was, at any opacity.
+    assert np.abs(colour(frame, SCREEN) - UNDER).max() < 4, colour(frame, SCREEN)
+
+
 def test_a_keyed_overlay_with_screen_blends_like_an_unkeyed_one(client, settings, video_source, plain_video, screens):
     video_source.video = plain_video
     held = {"keys": {"scale": [{"at": 0, "value": 0.5}, {"at": 2, "value": 0.5}]}}

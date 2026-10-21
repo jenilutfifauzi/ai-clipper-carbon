@@ -1,5 +1,5 @@
 import { Pipette, Plus, Search, X } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { AudioEffectSetting, ColourSetting, VideoEffect, VideoEffectKind } from "../../../api";
 import { Button, buttonClass } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
@@ -7,7 +7,7 @@ import { useMenu } from "../../../components/Menu";
 import { cx } from "../../../format";
 import { starredOnly, useStarredEffects } from "../../../starredEffects";
 import { useVideoEffects, videoLibraryOf } from "../../../videoEffects";
-import { eyedropper, useEyedropper } from "../editor/eyedropper";
+import { eyedropper, useEyedropper, type EyedropperRequest } from "../editor/eyedropper";
 import { Mixed } from "../editor/StyleFields";
 import {
   addVideoEffect,
@@ -15,6 +15,7 @@ import {
   picturedItems,
   removeAllVideoEffects,
   removeVideoEffect,
+  setKeyColour,
   setVideoEffectColour,
   setVideoEffectEnabled,
   setVideoEffectSetting,
@@ -38,6 +39,9 @@ export interface VideoEffectControls {
   onSetting: (index: number, setting: AudioEffectSetting, value: number) => void;
   // A colour setting (a key's colour), `#RRGGBB`; a drag of its swatch one change of its group.
   onColour: (index: number, setting: ColourSetting, value: string) => void;
+  // The eyedropper's colour for effect `effect`'s colour setting on the Overlays `overlays`, set on
+  // the edits as they are when it is picked (setKeyColour).
+  onPicked: (overlays: string[], effect: string, setting: ColourSetting, value: string) => void;
   onRemoveAll: () => void;
   // The picked Overlays: whether the library offers keys (Cutout, an Overlay's only), and what the
   // key colour's eyedropper picks from.
@@ -65,6 +69,10 @@ export function videoEffectChanges(scene: { edits: AdvancedEdits; pick: Pick }, 
     onRemove: (index) => apply(removeVideoEffect(scene, index)),
     onSetting: (index, setting, value) => apply(setVideoEffectSetting(scene, index, setting, value), `video-effects:${ids}:${index}:${setting.key}`),
     onColour: (index, setting, value) => apply(setVideoEffectColour(scene, index, setting.key, value), `video-effects:${ids}:${index}:${setting.key}`),
+    onPicked: (overlays, effect, setting, value) => {
+      const edits = setKeyColour(scene.edits, overlays, effect, setting.key, value);
+      if (edits) onEdits(edits);
+    },
     onRemoveAll: () => apply(removeAllVideoEffects(scene)),
     overlays: picturedItems(scene).flatMap((item) => (item.kind === "overlay" ? [item.id] : [])),
   };
@@ -79,7 +87,7 @@ export function videoEffectChanges(scene: { edits: AdvancedEdits; pick: Pick }, 
 export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectControls & { kinds?: VideoEffectKind[] | null }) {
   const listed = useVideoEffects();
   const kinds = given ?? listed;
-  const { stack, onAdd, onRemoveAll, onColour, overlays } = controls;
+  const { stack, onAdd, onRemoveAll, onColour, onPicked, overlays } = controls;
   const headingId = useId();
   const applied = stack === "mixed" ? [] : stack;
   return (
@@ -116,7 +124,13 @@ export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectCon
                 last={index === stack.length - 1}
                 {...controls}
                 colourField={(setting, value) => (
-                  <KeyColourField setting={setting} value={value} overlays={overlays} onChange={(colour) => onColour(index, setting, colour)} />
+                  <KeyColourField
+                    setting={setting}
+                    value={value}
+                    overlays={overlays}
+                    onChange={(colour) => onColour(index, setting, colour)}
+                    onPicked={(colour) => onPicked(overlays, entry.id, setting, colour)}
+                  />
                 )}
               />
             ))}
@@ -134,11 +148,40 @@ export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectCon
 /**
  * A key's colour (Chroma key's): a swatch, its hex code and an eyedropper, which, pressed, waits for
  * a click on the paused preview over one of the picked `overlays` and takes the colour of its graded
- * picture there (EyedropperLayer); pressed again, or Escape, it stops waiting.
+ * picture there (EyedropperLayer) to `onPicked`, the latest one given, so the edits made while it
+ * waited stay; pressed again, Escape, another Pick or the field gone, it stops waiting.
  */
-function KeyColourField({ setting, value, overlays, onChange }: { setting: ColourSetting; value: string; overlays: string[]; onChange: (colour: string) => void }) {
+function KeyColourField({
+  setting,
+  value,
+  overlays,
+  onChange,
+  onPicked,
+}: {
+  setting: ColourSetting;
+  value: string;
+  overlays: string[];
+  onChange: (colour: string) => void;
+  onPicked: (colour: string) => void;
+}) {
   const armed = useEyedropper();
   const picking = armed !== null && armed.overlays.join() === overlays.join();
+  const picked = useRef(onPicked);
+  useEffect(() => {
+    picked.current = onPicked;
+  });
+  const request = useRef<EyedropperRequest | null>(null);
+  const pickedIds = overlays.join();
+  useEffect(
+    () => () => {
+      if (request.current && eyedropper.current === request.current) eyedropper.cancel();
+    },
+    [pickedIds],
+  );
+  const arm = () => {
+    request.current = { overlays, onPick: (colour) => picked.current(colour) };
+    eyedropper.arm(request.current);
+  };
   return (
     <ColorField
       label={setting.label}
@@ -153,7 +196,7 @@ function KeyColourField({ setting, value, overlays, onChange }: { setting: Colou
           aria-label={picking ? "Stop picking the key colour" : "Pick the key colour from the preview"}
           title="Pick the colour from the preview"
           disabled={!overlays.length}
-          onClick={() => (picking ? eyedropper.cancel() : eyedropper.arm({ overlays, onPick: onChange }))}
+          onClick={() => (picking ? eyedropper.cancel() : arm())}
         >
           <Pipette aria-hidden size={16} />
         </Button>

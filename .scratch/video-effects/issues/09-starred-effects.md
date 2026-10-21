@@ -32,3 +32,5 @@ Built end to end; not in MCP and not part of any Candidate.
   - The stars and the chip are on `EffectCards` (the star sits beside the card's button, over its picture's corner; `starred` prop overrides the server's list for tests), on `AddVideoEffect` and on `AddEffect` (Audio, the phone's sheet included). The chip's state is per library and not remembered.
   - The phone sees the same list, but it has no Video Effects library (desktop only, 08); its Audio Effects popover has the stars.
 - **Not verified in a browser:** the star's look over the card and in the popovers. vitest (`src/starredEffects.test.tsx`) covers the toggles, the filter and the cards' markup.
+
+Review fix: when the list can't be loaded, `toggleStar` does nothing. It never PUTs a list built from `[]`, which would replace the server's. The next toggle loads the list again.

@@ -7,6 +7,7 @@ maximums is run in test_video_effects.py."""
 import numpy as np
 import pytest
 
+from app.audio_effects import NUMBER
 from app.video_effects import VideoEffect, effects, video_effect_chain
 from test_media_library import make, upload
 from test_overlay_grades import HELD
@@ -146,7 +147,7 @@ def test_fisheye_moves_the_middle_outward_and_keeps_the_corners(client, settings
 def test_each_effect_runs_on_a_small_odd_sized_picture_and_within_a_span():
     """An Overlay drawn small, at odd sizes, and an Adjustment Layer's span (`enable`)."""
     for effect in effects():
-        params = {setting.key: setting.max for setting in effect.settings}
+        params = {setting.key: setting.max if setting.type == NUMBER else setting.default for setting in effect.settings}
         chain = video_effect_chain([VideoEffect(effect.id, params)], (37, 91), enable="between(t\\,0.2\\,0.6)")
         assert played(["scale=37:91", *chain, "scale=1080:1920"]) == ((1080, 1920), 30), effect.id
 
@@ -156,7 +157,8 @@ def test_every_effect_at_once_renders_on_segments_overlays_a_keyed_overlay_and_a
     video_source.video = ramp_video
     image = upload(client, pictures["grid"], "grid.png").json()
     job = reviewed(client)
-    stack = [{"id": effect.id} for effect in effects()]
+    # The keys (Cutout) are an Overlay's only.
+    stack = [{"id": effect.id} for effect in effects() if not effect.keys]
     pieces = ranges(job, ("Podcast", "ya"), ("halo", "semua"))
     shown = {"media": image["id"], "start": 0.0, "secs": 1.5, "video_effects": stack}
     candidate = patch(

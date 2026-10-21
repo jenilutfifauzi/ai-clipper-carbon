@@ -533,7 +533,7 @@ export const canFreezeAt = (scene: PickContext, time: number) => freezable(scene
  * tail, the Freeze frame picked. The cut is at that frame, a Source Segment's too (not between Words
  * as Split's), so nothing is played twice or skipped. Keyframes are re-anchored on head and tail; a
  * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants, and
- * every part keeps the Segment's Grade. A Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
+ * every part keeps the Segment's Grade and Video Effects. A Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
  * playhead, and on the Magnetic timeline the layers after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
  */
 export function freezeFrame(scene: PickContext, at: number, limits: { longest?: number } = {}): Outcome | null {
@@ -563,8 +563,9 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
     rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length),
   );
   const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
-  // The held frame in its Segment's colour.
+  // The held frame in its Segment's colour and Video Effects.
   if (segment.grade) held.grade = segment.grade;
+  if (segment.video_effects) held.video_effects = segment.video_effects;
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
@@ -1456,6 +1457,23 @@ export function setAudioEffectSetting(
 function steppedSetting({ min, max, step }: AudioEffectSetting, value: number): number {
   const stepped = step > 0 ? min + Math.round((value - min) / step) * step : value;
   return Number(Math.min(Math.max(stepped, min), max).toFixed(6));
+}
+
+/**
+ * The eyedropper's pick: colour setting `key` of effect `effect` (a key) set to `colour` on the
+ * Overlays `overlays` (by id), in `edits` as they are when it is picked, not when it was armed: each
+ * Overlay's entry of that effect, wherever it is in its stack now. Null when none has it or none changes.
+ */
+export function setKeyColour(edits: AdvancedEdits, overlays: string[], effect: string, key: string, colour: string): AdvancedEdits | null {
+  if (!/^#[0-9a-f]{6}$/i.test(colour)) return null;
+  const value = colour.toUpperCase();
+  let changed = false;
+  const next = edits.overlays.map((overlay) => {
+    if (!overlays.includes(overlay.id) || !overlay.video_effects?.some((entry) => entry.id === effect && entry.params[key] !== value)) return overlay;
+    changed = true;
+    return { ...overlay, video_effects: overlay.video_effects.map((entry) => (entry.id === effect ? { ...entry, params: { ...entry.params, [key]: value } } : entry)) };
+  });
+  return changed ? { ...edits, overlays: next } : null;
 }
 
 /** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none with sound is picked. */

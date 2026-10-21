@@ -290,9 +290,12 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
 
 def _effects_at(picture: Picture, effects: list[VideoEffect], size: tuple[int, int], clock: Clock = Clock()) -> list[str]:
     """The filters of `effects` (an Overlay's, their sizes as `picture` is drawn at its constants) on
-    its pixels at `size` (width, height), its time by `clock`: their sizes times `size`'s width over
-    the drawn one's."""
-    return video_effect_chain(scaled_effects(effects, size[0] / picture.width), size, clock=clock) if effects else []
+    its pixels at `size` (width, height), its time by `clock`: their sizes times the pixels per drawn
+    pixel along its more stretched axis (the fewer), the one an unkeyed picture's sizes come from
+    (`overlay_scale`), so that a stretched picture's effect is as wide along it as unkeyed. Along the
+    other axis it is narrower, stretched with the picture: unkeyed, it isn't."""
+    per_pixel = min(size[0] / picture.width, size[1] / picture.height)
+    return video_effect_chain(scaled_effects(effects, per_pixel), size, clock=clock) if effects else []
 
 
 def graded_image(ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str, effects: list[VideoEffect] | None = None) -> np.ndarray:

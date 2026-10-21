@@ -534,7 +534,7 @@ class Renderer:
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
             joined = f"[over{i}]"
         for i, event in enumerate(plan.adjustment_layers):
-            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i, (plan.width, plan.height)):
+            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i, (plan.width, plan.height), _rate_value(plan)):
                 frame += f";{adjusted}"
                 joined = f"[adjusted{i}]"
         if logo is not None and plan.watermark is not None:
@@ -1227,17 +1227,18 @@ def _looped(event: OverlayEvent) -> bool:
     return event.image and changes_with_time(event.video_effects)
 
 
-def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: tuple[int, int]) -> str:
+def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: tuple[int, int], fps: float = 30) -> str:
     """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays,
-    `size` large) into `out` (docs/adr/0013): the stream split, its frames graded and drawn through
-    its Video Effects (docs/adr/0014), given an alpha of its strength times its fade ramp (`fade` on
-    the alpha alone, its times those of the Clip) and laid back over the frames as they were, only
-    within its span. Both branches keep every frame at its time, so neither waits on the other and no
-    frame is held back; outside its span the grade, the effects and the alpha pass the frames through
-    untouched (`enable`). "" when it changes nothing (a neutral Grade and no enabled effects, or
-    strength 0)."""
+    `size` large, `fps` frames a second) into `out` (docs/adr/0013): the stream split, its frames
+    graded and drawn through its Video Effects (docs/adr/0014), given an alpha of its strength times
+    its fade ramp (`fade` on the alpha alone, its times those of the Clip) and laid back over the
+    frames as they were, only within its span. Outside its span the grade and the alpha pass the
+    frames through untouched (`enable`). Its effects, whose filters can't all take `enable`, get its
+    span's frames alone (`_spanned`). "" when it changes nothing (a neutral Grade and no enabled
+    effects, or strength 0)."""
     span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
-    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx", clock=Clock(event.start))])
+    effects = video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx", clock=Clock(event.start))
+    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *effects])
     if not graded or event.strength <= 0:
         return ""
     name = f"adjust{index}"
@@ -1249,11 +1250,28 @@ def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: 
         ramp.append(f"fade=t=in:st={event.start:.3f}:d={event.fade_in:.3f}:alpha=1:enable='{span}'")
     if event.fade_out:
         ramp.append(f"fade=t=out:st={event.end - event.fade_out:.3f}:d={event.fade_out:.3f}:alpha=1:enable='{span}'")
+    cut, padded = _spanned(event, span, fps) if effects else ([], [])
     return (
         f"{below}split[{name}a][{name}b];"
-        f"[{name}b]{graded},{','.join(ramp)}[{name}g];"
+        f"[{name}b]{','.join([*cut, graded, *ramp, *padded])}[{name}g];"
         f"[{name}a][{name}g]overlay=0:0:enable='{span}':eof_action=pass{out}"
     )
+
+
+def _spanned(event: AdjustmentEvent, span: str, fps: float) -> tuple[list[str], list[str]]:
+    """The filters before and after an Adjustment Layer's effects that keep them to its `span`'s
+    frames (docs/adr/0014), each at its own time, so that a chain with labels runs there alone. The
+    frames before it are dropped (`select`, as `enable` picks them) and those after it end the branch
+    (`trim`, then the overlay passes the rest). The overlay waits for the branch's next frame, so the
+    dropped ones are stood in for by transparent frames from the Clip's start (`tpad`), set back
+    before the span's (their `setpts` undoes the shift `tpad` gives the rest): a branch that sent
+    nothing until its span would hold back every frame before it."""
+    cut = [f"trim=end={event.end + 0.5 / fps:.6f}", f"select='{span}'"]
+    pads = max(0, math.floor(event.start * fps) - 2)
+    if not pads:
+        return cut, []
+    shifted = f"setpts='if(lt(N\\,{pads})\\,PTS\\,PTS-{pads}/(FRAME_RATE*TB))'"
+    return cut, [f"tpad=start={pads}:color=black@0", shifted]
 
 
 def _layer_inputs(
@@ -1553,7 +1571,8 @@ def _laid(below: str, name: str, at: str, laid: str, out: str, blend: BlendMode 
     """Filters that lay the frames `name` over the frames `below` at `at`, with more options `laid` of
     the overlay, into `out`. Normal covers what is under them by their alpha. Another Blend Mode
     (docs/adr/0014): they are padded to the frame with transparency (laid over a transparent copy of
-    `below`), their colour is blended over `below` by the mode in planar RGB while they `shows`, and
+    `below`: over a main of alpha 0, `overlay` takes their own colour wherever they have any alpha,
+    so `below`'s colour isn't in it and is counted once), their colour is blended over `below` by the mode in planar RGB while they `shows`, and
     that is masked by their alpha and laid over `below`, so that the frame outside their alpha and
     span stays as it was. A `scale` before each change of format keeps `below`'s own format: `split`
     gives every branch the same one."""
