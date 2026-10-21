@@ -78,7 +78,8 @@ The `video-effects` feature (roadmap #12, `.scratch/advanced-edit-v2/roadmap.md`
 - **The Render Plan carries each item's enabled Effects with their sizes already scaled, and each Overlay's Blend Mode.** The dry run shows them.
 - **The SVG imitations exist only in the frontend.** Unlike the Grade's fold, there is no shared fixture of exact values. Each effect's Seam A test renders a frame and checks it differs from its input as expected.
 - **Keyed pictures take the frame process route (0008).** Their Effects run in the decoder's `-vf` after the Grade; a still is looped when an effect changes with time.
-- **A Blend Mode other than Normal costs one full-frame `blend` per Overlay** over its span.
+- **A Blend Mode other than Normal costs one full-frame `blend` per Overlay** over its span. Its splits, format changes and masks get the span's frames alone, as an Adjustment Layer's effects do (`_spanned`), so outside its span the frame costs a pass through.
+- **An item costs nothing outside its span.** Drawing one frame (Save frame, Compare render) draws every frame before it, so it leaves out the Overlays and Adjustment Layers that don't show on that frame (`_at_frame`). Before this (2026-10-21), a frame drawn just after a 3 s span cost the span's whole work: 3.8 s with a Screen Overlay, 13.6 s with a layer of Film grain and Bloom pulse, 21.2 s with those and a Chroma-keyed Overlay, against 0.3 s without; now 0.3 s with each. `RENDER_COST=outside pytest tests/test_render_cost.py -s` prints it.
 - **The Asset Panel gains an Effects tab.** Favourites gain a small global store and endpoint.
 - **What each effect costs to render** (measured 2026-10-21, `ffmpeg version 9.0.2`, an Apple M1, h264_videotoolbox; the render cost ticket, 10). A 6.45 s Clip of a 1080×1920, 25 fps Source rendered through the API, each effect at its defaults; the fastest of two renders. The factor is against a plain render (1.51 s) for a Segment or an Adjustment Layer, and against the same render with a plain full-frame video Overlay (2.03 s, 1.34×) for an Overlay. "Extra" is the seconds added per second of Clip. An image Overlay without a timed effect is drawn once and held, so its stack costs next to nothing. Another test run shared the machine, so take the figures to about ±20 %; one run of Bloom pulse on a Segment took 98 s and was measured again. `RENDER_COST=1 pytest tests/test_render_cost.py -s` prints the table.
 
@@ -90,11 +91,11 @@ The `video-effects` feature (roadmap #12, `.scratch/advanced-edit-v2/roadmap.md`
   | Chromatic aberration | 3.0× (+0.48 s) | 3.8× (+0.91 s) | |
   | Fisheye | 5.8× (+1.13 s) | 5.7× (+1.51 s) | |
   | Glow | 5.2× (+0.99 s) | 9.2× (+2.63 s) | 10.8× (+2.31 s) |
-  | Bloom pulse | 19.8× (+4.41 s) | 18.2× (+5.43 s) | 20.5× (+4.58 s) |
+  | Bloom pulse | 5.3× (+1.03 s) | 5.6× (+1.35 s) | 6.1× (+1.23 s) |
   | Posterize | 2.7× (+0.39 s) | 2.7× (+0.54 s) | |
   | Film grain | 1.2× (+0.05 s) | 1.5× (+0.15 s) | 1.6× (+0.15 s) |
   | Chroma key | | 4.1× (+1.01 s) | |
   | Luma key | | 3.6× (+0.84 s) | |
-  | Blend Mode Screen | | 2.9× (+0.59 s) | |
+  | Blend Mode Screen | | 3.4× (+0.76 s) | |
 
-  Bloom pulse (its `geq`), Motion blur and Glow are the slow ones; cheaper chains are proposed in ticket 10's Comments, not adopted.
+  Bloom pulse and Blend Mode Screen were measured again on 2026-10-21 alone on the machine (plain render 1.51 s, plain Overlay 2.04 s): Bloom pulse's per-pixel `geq` (about 20×) became a table of the luma and a gain set each frame by `sendcmd`, its look within a few levels of the `geq`'s; Screen over the whole Clip is within noise of the old chain (3.25× measured alongside), the earlier 2.9× having shared the machine. Motion blur and Glow are now the slow ones; cheaper chains for them are proposed in ticket 10's Comments, not adopted.

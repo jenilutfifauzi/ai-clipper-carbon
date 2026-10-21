@@ -11,10 +11,10 @@ import numpy as np
 import pytest
 from pydantic import TypeAdapter
 
-from app.candidates import AdjustmentLayer, Candidate, Grade, manual_candidate
+from app.candidates import AdjustmentLayer, BlendMode, Candidate, Grade, Overlay, manual_candidate
 from app.config import CameraTuning, load_settings
-from app.planner import AdjustmentEvent, plan_render
-from app.renderer import _adjustment
+from app.planner import AdjustmentEvent, MediaInfo, plan_render
+from app.renderer import _adjustment, _at_frame
 from app.rendering import candidate_plan
 from app.scaled_plan import scaled_plan
 from app.styles import PresetStore
@@ -158,6 +158,25 @@ def test_a_layers_effects_run_on_its_spans_frames_alone_and_draw_them_as_on_ever
 
     spanned, every_frame = frames(graphs["spanned"]), frames(graphs["every"])
     assert len(spanned) == 90 and spanned == every_frame
+
+
+def test_a_frame_drawn_alone_leaves_out_the_overlays_and_layers_that_dont_show_on_it():
+    """Drawing one frame draws every frame before it, so an item over an earlier or later span would
+    cost its effects and Blend Mode for nothing: Compare render's frame leaves it out, give or take
+    a frame (at 25 fps, 0.04 s)."""
+    stack = [VideoEffect("film-grain")]
+    overlays = [Overlay("o", "v", 1.0, 2.0, blend=BlendMode.SCREEN, video_effects=[VideoEffect("chroma-key")])]
+    layers = [AdjustmentLayer("a", 3.0, 1.0, video_effects=stack)]
+    plan = plan_render(10, 16, SOURCE, overlays=overlays, adjustment_layers=layers, media_info={"v": MediaInfo(320, 180, 9.0, False)})
+    assert (len(plan.overlays), len(plan.adjustment_layers)) == (1, 1)
+
+    def drawn(at: float) -> tuple[list[str], list[str]]:
+        shown = _at_frame(plan, at)
+        return [event.id for event in shown.overlays], [event.id for event in shown.adjustment_layers]
+
+    assert drawn(0.5) == ([], []) and drawn(5.0) == ([], [])
+    assert drawn(1.5) == (["o"], []) and drawn(3.5) == ([], ["a"])
+    assert drawn(0.97) == (["o"], []) and drawn(4.03) == ([], ["a"])
 
 
 def test_a_layers_stack_is_saved_planned_and_a_bad_one_is_refused(client):

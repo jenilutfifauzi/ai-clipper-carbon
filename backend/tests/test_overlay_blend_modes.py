@@ -62,6 +62,33 @@ def test_each_mode_blends_the_picture_over_the_frame_only_within_its_alpha_and_s
     assert (frames[8, 960, 480] == under).all()
 
 
+def test_a_modes_work_runs_on_its_spans_frames_alone_and_draws_them_as_on_every_frame():
+    """Screen of a moving picture over a moving frame, 3 s at 30 fps, from 1.21 to 1.9 s: the split,
+    format changes, blend and masks get the span's frames alone (`_spanned`), and every frame is the
+    one the same steps give run on every frame."""
+    shows = "enable='between(t\\,1.210\\,1.900)'"
+    at = "x=180-overlay_w/2:y=320-overlay_h/2"
+    picture = "[1:v]format=rgba,setpts=PTS-STARTPTS+1.21/TB[pic]"
+    graphs = {
+        "spanned": _laid("[0:v]", "pic", at, f"{shows}:eof_action=pass", "[out]", BlendMode.SCREEN, shows, (1.21, 1.9, 30)),
+        "every": _laid("[0:v]", "pic", at, f"{shows}:eof_action=pass", "[out]", BlendMode.SCREEN, shows),
+    }
+    assert "select='between(t" in graphs["spanned"] and "tpad=start=34" in graphs["spanned"], graphs["spanned"]
+    assert "select" not in graphs["every"]
+
+    def frames(graph: str) -> list[str]:
+        command = [
+            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=30:duration=3,format=yuv420p",
+            "-f", "lavfi", "-i", "testsrc=size=160x120:rate=30:duration=0.7",
+            "-filter_complex", f"{picture};{graph};[out]format=yuv420p[o]", "-map", "[o]", "-fps_mode", "passthrough", "-f", "framemd5", "-",
+        ]
+        listed = subprocess.run(command, capture_output=True, text=True, check=True).stdout
+        return [line for line in listed.splitlines() if not line.startswith("#")]
+
+    spanned, every_frame = frames(graphs["spanned"]), frames(graphs["every"])
+    assert len(spanned) == 90 and spanned == every_frame
+
+
 # Seam B: the planner
 
 

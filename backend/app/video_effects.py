@@ -216,16 +216,33 @@ def _glow(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list
     return _screened(size, GLOW_SIGMA, "", over)
 
 
+# Rec. 709's luma of red, green and blue, as Concat's Bloom weighs a pixel's brightness.
+_LUMA = (0.2126, 0.7152, 0.0722)
+
+
 def _bloom_pulse(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
     """The highlights' light (each pixel weighted by how far its luma is past 0.55, smoothed and taken
     to the 2.4th power, as Concat's) spread and screened back over the picture, at a strength
     `amount` × (0.6 + 0.4 sin(time × `speed`)) of its own time: it breathes, a full breath every
-    2π / `speed` seconds from its start."""
-    luma = "(0.2126*r(X,Y)+0.7152*g(X,Y)+0.0722*b(X,Y))/255"
-    knee = f"clip(({luma}-0.55)/0.45,0,1)"
-    strength = f"{params['amount'] / 100:.4f}*(0.6+0.4*sin({clock.of('T')}*{params['speed']:g}))"
-    weight = f"max({strength},0)*pow({knee}*{knee}*(3-2*{knee}),2.4)"
-    light = f"geq=r='r(X,Y)*{weight}':g='g(X,Y)*{weight}':b='b(X,Y)*{weight}'"
+    2π / `speed` seconds from its start.
+
+    At the light's quarter size, the weight is a table of the luma (a grey copy, `lutrgb`) multiplied
+    onto the picture, and only the strength changes with time: a gain set on each frame by `sendcmd`
+    (its `T` the frame's time). Not a `geq` of the weight and its time, whose `pow` per plane and
+    pixel cost about 20 times a plain render (the render cost ticket, 10)."""
+    amount, speed = params["amount"] / 100, params["speed"]
+    knee = "clip((val/255-0.55)/0.45,0,1)"
+    weight = f"255*pow({knee}*{knee}*(3-2*{knee}),2.4)"
+    grey = ":".join(f"{row}{column}={share}" for row in "rgb" for column, share in zip("rgb", _LUMA))
+    strength = f"{amount:.4f}*(0.6+0.4*sin({clock.of('T')}*{speed:g}))"
+    gains = ", ".join(f"[expr] colorchannelmixer@pulse {gain} {strength}" for gain in ("rr", "gg", "bb"))
+    # Before its first command (a frame before 0), the strength at its start.
+    first = ":".join(f"{gain}={amount * 0.6:.4f}" for gain in ("rr", "gg", "bb"))
+    light = (
+        f"split[colour][luma];[luma]colorchannelmixer={grey},lutrgb=r='{weight}':g='{weight}':b='{weight}'[weight];"
+        f"[colour][weight]blend=c0_mode=multiply:c1_mode=multiply:c2_mode=multiply:c3_mode=normal,"
+        f"sendcmd=c='0 {gains}',colorchannelmixer@pulse={first}"
+    )
     return _screened(size, BLOOM_SIGMA, light, "")
 
 
@@ -491,8 +508,10 @@ def video_effect_chain(
 
 
 def _labelled(part: str, prefix: str) -> str:
-    """`part` with each of its link labels prefixed (a builder's filters never name a stream)."""
-    return re.sub(r"\[([A-Za-z]\w*)\]", lambda found: f"[{prefix}{found[1]}]", part)
+    """`part` with each of its link labels and filter instance names (`filter@name`, which `sendcmd`
+    addresses) prefixed (a builder's filters never name a stream). `[expr]` is a `sendcmd` flag."""
+    labelled = re.sub(r"\[(?!expr\])([A-Za-z]\w*)\]", lambda found: f"[{prefix}{found[1]}]", part)
+    return re.sub(r"@([A-Za-z]\w*)", lambda found: f"@{prefix}{found[1]}", labelled)
 
 
 def _enabled(part: str, enable: str) -> str:

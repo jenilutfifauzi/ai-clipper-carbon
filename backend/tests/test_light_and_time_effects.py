@@ -44,6 +44,18 @@ def test_a_pulse_counts_its_time_from_its_clock():
     assert "sin((T-1.5)*0.5*2)" in chain, chain
 
 
+def test_a_pulses_weight_is_a_table_and_only_its_gain_changes_with_time_each_pulse_its_own():
+    """No per-pixel `geq` (about 20× a plain render, ticket 10): the knee weight is a table of the luma,
+    and each frame's strength a gain `sendcmd` sets on its own `colorchannelmixer`, named apart from
+    another pulse's in the same graph."""
+    pulse = VideoEffect("bloom-pulse", {"amount": 50, "speed": 2})
+    [first] = video_effect_chain([pulse], (64, 64), label="a")[1:]
+    [second] = video_effect_chain([pulse], (64, 64), label="b")[1:]
+    assert "geq" not in first and "lutrgb=" in first
+    assert "[expr] colorchannelmixer@a0_pulse rr 0.5000*(0.6+0.4*sin(T*2))" in first and "colorchannelmixer@a0_pulse=" in first
+    assert "colorchannelmixer@b0_pulse" in second and "@a0_" not in second
+
+
 def test_film_grain_makes_two_consecutive_frames_of_a_still_image_overlay_differ(client, settings, video_source, plain_video, pictures):
     video_source.video = plain_video
     times = [1.0, 1.0 + 1 / FPS]
