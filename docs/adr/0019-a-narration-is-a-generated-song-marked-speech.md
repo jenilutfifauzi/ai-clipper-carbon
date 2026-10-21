@@ -36,14 +36,14 @@ Today:
     - It is sherpa-onnx's `kokoro-int8-multi-lang-v1_0.tar.bz2` from its `tts-models` GitHub release (the upstream Concat's manifest names, not Concat's mirror), checked against a pinned SHA-256, unpacked into a staging folder and renamed into `DATA_DIR/models` atomically. Members or links that lead out of the folder install nothing.
     - It can be removed from the same menu, except while a Narration or a sample is being made. Removal also unloads the engine, which otherwise stays in memory from the first read.
     - Each English Voice is one of the model's speakers, read by its id; Speed goes to it natively, and it takes no Style.
-  - The default engine follows the Job's language: Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible), English gets Kokoro when ready, else the first cloud engine. The browser then remembers the last engine and Voice chosen, which win over the default.
+  - The default engine follows the Job's language: Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible), English (any region: `en-GB`) gets Kokoro when ready, else the first cloud engine. The browser then remembers the last engine and Voice chosen, which win over the default.
 - **The backend splits every script into sentences**, for every engine.
   - It splits at `.`, `!`, `?` and `…` followed by a space or a line's end, and at newlines. It reads each sentence alone, and joins them with silence the length of the pause slider (None, Natural, Long, Longer: 0, 0.3, 0.8 and 1.5 s).
   - That gives every engine the same pause control, with progress and cancel at sentence boundaries.
   - A script is at most 5,000 characters.
 - **The joined sound is levelled to a fixed loudness before upload**, so every Voice sits alike. No Audio Effect is added.
 - **A Narration runner of its own, not the Worker.** One Narration at a time for the whole app; a second is refused as busy.
-  - A cloud 429, 5xx or network failure is retried once per sentence, after the service's `Retry-After` or a short wait.
+  - A cloud 429, 5xx or network failure is retried once per sentence, after the service's `Retry-After` (capped at 30 s) or a short wait.
   - Any failure or cancel discards the partial sound and keeps the script and settings in the panel.
 - **The start is fixed when Generate is pressed:** the playhead, or the start of the earliest picked Text Layer or hook, whose words fill the script.
   - The words fill only a script the owner hasn't typed (blank, or still the words last filled), so picking around the Timeline never clobbers a typed script.

@@ -12,7 +12,8 @@ speech with loudnorm's two passes, and the WAV is added through the Media Librar
 (the stage, and sentences read out of sentences), then `done` with the item, `failed` with the message
 or `cancelled`; its work folder goes whichever. A cloud engine's passing failure (TransientSpeechError:
 a 429, a 5xx, the network) on a sentence is read again once, after the service's Retry-After or
-RETRY_WAIT_SECS. A cancel is heard between sentences, and before levelling and saving.
+RETRY_WAIT_SECS (a Retry-After is capped at 30 s). The engine is loaded under "Loading the voice" (a
+cloud one has nothing to load). A cancel is heard between sentences, and before levelling and saving.
 
 A Voice's sample is a fixed sentence or two in the Job's language (SAMPLE_TEXTS; English for a language
 with none) read at 1× with no Style and levelled as a Narration is, so it sounds like the result. It is
@@ -42,7 +43,7 @@ from fastapi.sse import ServerSentEvent
 
 from app.media import MediaItem, MediaStore
 from app.renderer import last_lines, speed_filters
-from app.voices import Pcm, SpeechError, TransientSpeechError, Voice, VoiceEngine
+from app.voices import Cancelled, Pcm, SpeechError, TransientSpeechError, Voice, VoiceEngine, primary_language
 
 # In DATA_DIR: a folder per Narration being made; and the Voice samples kept, a folder per engine.
 NARRATIONS_DIR = "narrations"
@@ -93,10 +94,6 @@ class NarrationNotFound(LookupError):
 
 class NarrationFinished(RuntimeError):
     """The Narration has ended already: there is nothing to cancel."""
-
-
-class _Cancelled(Exception):
-    pass
 
 
 @dataclass(frozen=True)
@@ -173,7 +170,7 @@ class NarrationRunner:
         isn't ready; NarrationBusy while a Narration or another sample is being made; SpeechError when
         the engine fails."""
         engine, voice = self._ready_voice(engine_id, voice_id)
-        lang = (language or "").split("-")[0].lower()
+        lang = primary_language(language)
         lang = lang if lang in SAMPLE_TEXTS else SAMPLE_FALLBACK
         kept = self.samples_dir / _safe(engine.id) / f"{_safe(voice.id)}.{lang}.wav"
         if kept.is_file():
@@ -185,11 +182,8 @@ class NarrationRunner:
             if kept.is_file():  # made by the request that held the lock just before
                 return kept
             folder.mkdir(parents=True, exist_ok=True)
-            parts, lengths = [], []
-            for i, sentence in enumerate(sentences(SAMPLE_TEXTS[lang])):
-                pcm = self._read(threading.Event(), engine, sentence, voice.id, None, DEFAULT_SPEED)
-                parts.append(_write_wav(folder / f"{i}.wav", pcm))
-                lengths.append(pcm.secs)
+            read = sentences(SAMPLE_TEXTS[lang])
+            parts, lengths = self._read_all(threading.Event(), engine, read, voice.id, None, DEFAULT_SPEED, folder)
             made = self._join(parts, lengths, DEFAULT_PAUSE_SECS, DEFAULT_SPEED, folder / "sample.wav")
             kept.parent.mkdir(parents=True, exist_ok=True)
             made.replace(kept)
@@ -239,7 +233,13 @@ class NarrationRunner:
             for old in [n for n in self._narrations.values() if n.finished][:-_KEPT]:
                 del self._narrations[old.id]
         args = (narration, engine, voice, read, request.pauses, style, request.speed)
-        threading.Thread(target=self._run, args=args, name=f"narration-{narration.id}", daemon=True).start()
+        try:
+            threading.Thread(target=self._run, args=args, name=f"narration-{narration.id}", daemon=True).start()
+        except BaseException:
+            with self._lock:
+                self._narrations.pop(narration.id, None)
+            self._busy.release()
+            raise
         return narration.id
 
     async def events(self, narration_id: str) -> AsyncIterator[ServerSentEvent]:
@@ -298,26 +298,24 @@ class NarrationRunner:
 
         def stage(name: str, done: int) -> None:
             if narration.cancelled.is_set():
-                raise _Cancelled
+                raise Cancelled
             self._send(narration, "progress", {"stage": name, "done": done, "of": len(read)})
 
         try:
             folder.mkdir(parents=True, exist_ok=True)
             stage(LOADING, 0)
+            engine.load()
             stage(READING, 0)
-            parts, lengths = [], []
-            for i, sentence in enumerate(read):
-                pcm = self._read(narration.cancelled, engine, sentence, voice.id, style, speed)
-                parts.append(_write_wav(folder / f"{i}.wav", pcm))
-                lengths.append(pcm.secs)
-                stage(READING, i + 1)
+            parts, lengths = self._read_all(
+                narration.cancelled, engine, read, voice.id, style, speed, folder, lambda done: stage(READING, done)
+            )
             stage(LEVELLING, len(read))
             narrated = self._join(parts, lengths, pauses, 1.0 if engine.takes_speed else speed, folder / "narration.wav")
             stage(SAVING, len(read))
             name = f"Narration {voice.name} {self._now().strftime('%Y-%m-%d %H.%M.%S')}.wav"
             with narrated.open("rb") as file:
                 item = self.media.add(file, name)
-        except _Cancelled:
+        except Cancelled:
             self._send(narration, "cancelled", {})
         except SpeechError as exc:
             self._send(narration, "failed", {"message": str(exc)})
@@ -329,9 +327,31 @@ class NarrationRunner:
             shutil.rmtree(folder, ignore_errors=True)
             self._busy.release()
 
+    def _read_all(
+        self,
+        cancelled: threading.Event,
+        engine: VoiceEngine,
+        read: list[str],
+        voice: str,
+        style: str | None,
+        speed: float,
+        folder: Path,
+        each: Callable[[int], None] = lambda done: None,
+    ) -> tuple[list[Path], list[float]]:
+        """Each sentence of `read` read alone into a WAV of `folder`, `each` told how many are read after
+        each: the WAVs and their lengths in seconds."""
+        parts, lengths = [], []
+        for i, sentence in enumerate(read):
+            pcm = self._read(cancelled, engine, sentence, voice, style, speed)
+            parts.append(_write_wav(folder / f"{i}.wav", pcm))
+            lengths.append(pcm.secs)
+            each(i + 1)
+        return parts, lengths
+
     def _read(self, cancelled: threading.Event, engine: VoiceEngine, sentence: str, voice: str, style: str | None, speed: float) -> Pcm:
         """The sentence read (at `speed` by an engine that takes one), once more after a passing
-        failure: after its Retry-After, or RETRY_WAIT_SECS, unless a cancel comes meanwhile."""
+        failure: after its Retry-After (at most MAX_RETRY_AFTER_SECS, app/voices.py), or RETRY_WAIT_SECS,
+        unless a cancel comes meanwhile."""
 
         def read() -> Pcm:
             return engine.read(sentence, voice, style, speed) if engine.takes_speed else engine.read(sentence, voice, style)
@@ -341,7 +361,7 @@ class NarrationRunner:
         except TransientSpeechError as exc:
             wait = RETRY_WAIT_SECS if exc.retry_after is None else exc.retry_after
             if cancelled.wait(wait):
-                raise _Cancelled from None
+                raise Cancelled from None
             return read()
 
     def _join(self, parts: list[Path], lengths: list[float], pauses: float, speed: float, out: Path) -> Path:
@@ -361,7 +381,7 @@ class NarrationRunner:
         joined = f"{graph}{''.join(f'[s{i}]' for i in range(len(parts)))}concat=n={len(parts)}:v=0:a=1"
         target = f"loudnorm=I={LUFS}:TP={TRUE_PEAK_DB}:LRA={LOUDNESS_RANGE}"
         base = [str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", *inputs]
-        measured = _run([*base, "-v", "info", "-filter_complex", f"{joined},{target}:print_format=json", "-f", "null", "-"])
+        measured = _ffmpeg([*base, "-v", "info", "-filter_complex", f"{joined},{target}:print_format=json", "-f", "null", "-"])
         loudness = json.loads(measured[measured.rindex("{") : measured.rindex("}") + 1])
         level = (
             f"{target}:measured_I={loudness['input_i']}:measured_TP={loudness['input_tp']}"
@@ -370,7 +390,7 @@ class NarrationRunner:
             if math.isfinite(float(loudness["input_i"]))
             else "anull"
         )
-        _run([*base, "-v", "error", "-y", "-filter_complex", f"{joined},{level}", "-ac", "1", "-c:a", "pcm_s16le", str(out)])
+        _ffmpeg([*base, "-v", "error", "-y", "-filter_complex", f"{joined},{level}", "-ac", "1", "-c:a", "pcm_s16le", str(out)])
         return out
 
 
@@ -390,7 +410,7 @@ def _write_wav(path: Path, pcm: Pcm) -> Path:
     return path
 
 
-def _run(command: list[str]) -> str:
+def _ffmpeg(command: list[str]) -> str:
     result = subprocess.run(command, capture_output=True, text=True, errors="replace")
     if result.returncode:
         raise RuntimeError(f"ffmpeg couldn't join the sentences: {last_lines(result.stderr)}")

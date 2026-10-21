@@ -105,6 +105,17 @@ def test_a_rate_limit_or_a_server_error_is_transient_with_its_retry_after(settin
     assert raised.value.retry_after == retry_after
 
 
+@pytest.mark.parametrize(
+    ("header", "retry_after"),
+    [("3600", 30.0), ("30.5", 30.0), ("12.5", 12.5), ("inf", None), ("nan", None), ("-5", None), ("soon", None)],
+)
+def test_a_retry_after_is_capped_at_thirty_seconds_and_one_that_isnt_a_wait_is_none(settings, header, retry_after):
+    engine, _ = gemini(settings, error(429, "RESOURCE_EXHAUSTED", "Quota exceeded.", headers={"Retry-After": header}))
+    with pytest.raises(TransientSpeechError) as raised:
+        engine.read("Halo.", "Kore")
+    assert raised.value.retry_after == retry_after
+
+
 def test_a_network_failure_is_transient(settings):
     def handle(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")

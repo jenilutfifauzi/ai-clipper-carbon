@@ -1976,14 +1976,19 @@ def list_voices(request: Request, narrations: Narrations, language: Language | N
 @router.post("/voices/kokoro/download", status_code=202)
 def download_kokoro(kokoro: Kokoro) -> KokoroInfo:
     """Start downloading Kokoro's model (about 132 MB), in the background, taken up from what an earlier
-    download left; nothing when it is installed or being downloaded. Its progress is in /api/voices."""
-    kokoro.download()
+    download left; nothing when it is installed or being downloaded. 409 while a cancelled download is
+    still stopping. Its progress is in /api/voices."""
+    try:
+        kokoro.download()
+    except KokoroBusy as exc:
+        raise HTTPException(409, str(exc)) from None
     return KokoroInfo(**kokoro.state())
 
 
 @router.delete("/voices/kokoro/download", status_code=204)
 def cancel_kokoro_download(kokoro: Kokoro) -> None:
-    """Cancel the download: it stops at once, what it fetched kept for the next download."""
+    """Cancel the download: it is told absent at once and stops at its next chunk, what it fetched kept
+    for the next download (which is refused, 409, until it has stopped)."""
     kokoro.cancel()
 
 
@@ -2024,7 +2029,10 @@ def start_narration(body: NarrationBody, narrations: Narrations) -> NarrationSta
     engine that isn't ready, a Speed outside 0.5–2 or a Style for an engine that takes none; 409 while another Narration is being made,
     anywhere in the app."""
     try:
-        return NarrationStarted(id=narrations.start(NarrationRequest(body.text, body.engine, body.voice, body.pauses, body.style, body.speed)))
+        request = NarrationRequest(
+            text=body.text, engine=body.engine, voice=body.voice, pauses=body.pauses, style=body.style, speed=body.speed
+        )
+        return NarrationStarted(id=narrations.start(request))
     except NarrationRefused as exc:
         raise HTTPException(422, str(exc)) from None
     except NarrationBusy as exc:

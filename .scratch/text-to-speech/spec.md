@@ -116,7 +116,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - It is ready once the model is installed and sherpa-onnx imports (it is imported only on the first read, so the app starts without it).
   - sherpa-onnx (pinned `>=1.13.8,<1.14`) is listed with `sherpa-onnx-core`, its native library, which uv doesn't see in sherpa-onnx's published metadata.
 - **The engines are configured apart from the LLM settings.** They are read in the same settings loader, and none of the LLM code paths change.
-- **The default engine** follows the Job's language. Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible); English gets Kokoro if ready, else the first cloud engine. The frontend then remembers the last engine and Voice chosen (localStorage, wrapped in try/catch), which win over the default while that engine is ready.
+- **The default engine** follows the Job's language. Indonesian gets the first ready cloud engine (Gemini, then OpenAI-compatible); English (by the language's first part, any region or case: `en-GB`, `EN`) gets Kokoro if ready, else the first cloud engine. The frontend then remembers the last engine and Voice chosen (localStorage, wrapped in try/catch), which win over the default while that engine is ready.
 
 **The Narration runner.**
 - **A small module of its own, not the Job Worker.** It runs one Narration at a time for the whole app, in a thread of its own. A second request while one runs is refused as busy (HTTP 409).
@@ -126,7 +126,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - A run of blank lines counts as one break, and a sentence with no letters or digits is dropped.
 - **Reading.**
   - Each sentence is read alone.
-  - On a cloud 429, 5xx or network failure it is retried once after the service's `Retry-After`, or after a short fixed wait (2 s). A cancel during the wait stops it.
+  - On a cloud 429, 5xx or network failure it is retried once after the service's `Retry-After` (capped at 30 s; one that is negative, infinite or not a number counts as none), or after a short fixed wait (2 s). A cancel during the wait stops it.
   - Any other failure, or the retry failing, fails the Narration.
 - **Joining.**
   - Sentences are resampled to 48 kHz mono and joined with silence of the pause length.
@@ -150,7 +150,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 - `GET /api/voices/{engine}/{voice}/sample?lang=` returns the sample sound, a WAV.
   - It is made on first request from a fixed sentence per language (Indonesian and English; English for any other language), read at 1× with no Style and levelled as a Narration is, and kept on this Mac per engine, Voice and language (under `DATA_DIR/voice-samples`).
   - It is refused (422) when the engine isn't ready or the Voice is unknown. Samples share the one-at-a-time runner, so a sample is refused as busy (409) while a Narration is being made, and a Narration while a sample is being read. A kept sample is served whatever is running. An engine's failure answers 502 with its message, and nothing is kept.
-- `POST /api/voices/kokoro/download` starts the download (202 with its state; nothing new when it is here or downloading), `DELETE` on the same path cancels it (204), and `DELETE /api/voices/kokoro` removes the model and Kokoro's kept samples (204). Removal answers 409 while a Narration or sample is being made (it holds the runner's one-at-a-time lock) or while the model downloads.
+- `POST /api/voices/kokoro/download` starts the download (202 with its state; nothing new when it is here or downloading), `DELETE` on the same path cancels it (204), and `DELETE /api/voices/kokoro` removes the model and Kokoro's kept samples (204). Removal answers 409 while a Narration or sample is being made (it holds the runner's one-at-a-time lock) or while the model downloads. A download asked while a cancelled one is still stopping answers 409 too, so that two never write the `.part`.
 - Download progress shows in `GET /api/voices`, which the tab polls while downloading.
 
 **Kokoro download.**

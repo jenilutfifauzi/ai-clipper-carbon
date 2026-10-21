@@ -126,6 +126,19 @@ def test_an_unknown_voice_or_a_missing_model_is_a_speech_error(model):
         kokoro.read("Hello.", "zf_xiaobei")
 
 
+def test_load_loads_the_engine_before_a_read_and_the_read_uses_it(model, loader):
+    kokoro = KokoroSpeech(model)
+    with pytest.raises(SpeechError, match="download"):
+        kokoro.load()
+    install(model)
+    kokoro.load()
+    kokoro.load()
+    [tts] = loader.loaded
+    assert tts.reads == []
+    kokoro.read("Hi.", "af_heart")
+    assert len(loader.loaded) == 1 and tts.reads == [("Hi.", 3, 1.0)]
+
+
 def test_the_engine_is_loaded_once_on_first_read_and_kept_until_the_model_is_removed(tmp_path):
     loader = Loader(delay=0.1)
     model = KokoroModel(tmp_path / "models", load=loader)

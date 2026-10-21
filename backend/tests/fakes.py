@@ -197,7 +197,8 @@ class FakeVoiceEngine:
     reads its tone in 1/speed seconds, one that doesn't is never asked one (its speeds are all 1).
     `fail_with(message)` makes every read raise SpeechError; with `times`, only that many reads, after
     `after` that don't; `transient` raises TransientSpeechError instead, with `retry_after`.
-    `hold(after=n)` makes the reads after the first `n` wait for `release()`."""
+    `hold(after=n)` makes the reads after the first `n` wait for `release()`. Each `load()` is recorded in
+    `loads` as how many reads came before it."""
 
     def __init__(
         self,
@@ -220,6 +221,7 @@ class FakeVoiceEngine:
         self.is_ready = ready
         self.reads: list[tuple[str, str, str | None]] = []
         self.speeds: list[float] = []
+        self.loads: list[int] = []
         self.error: SpeechError | None = None
         self._failures: list[SpeechError | None] = []
         self._hold_after = 0
@@ -228,6 +230,9 @@ class FakeVoiceEngine:
 
     def ready(self) -> bool:
         return self.is_ready
+
+    def load(self) -> None:
+        self.loads.append(len(self.reads))
 
     def voices(self) -> list[Voice]:
         return [Voice("ana", "Ana", "Bright · female"), Voice("budi", "Budi", "Calm · male")]

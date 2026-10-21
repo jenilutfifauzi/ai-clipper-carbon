@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.kokoro import KOKORO_BYTES, KOKORO_FOLDER, KOKORO_SHA256, KOKORO_URL, KokoroModel, KokoroSource
+from app.kokoro import KOKORO_BYTES, KOKORO_FOLDER, KOKORO_SHA256, KOKORO_URL, KokoroBusy, KokoroModel, KokoroSource
 from app.main import create_app
 from app.ports import Ports, real_ports
 from fakes import FakeVoiceEngine
@@ -266,6 +266,26 @@ def test_cancel_leaves_the_part_for_a_later_resume_and_reports_absent(served, tm
     assert state.ranges == [None, f"bytes={kept}-"]
 
 
+def test_a_download_while_the_cancelled_one_is_still_stopping_is_refused_and_taken_once_it_has(served, tmp_path):
+    state, url = served
+    model = KokoroModel(tmp_path / "models", source(url))
+    state.pause_at = 70_000
+    model.download()
+    deadline = time.monotonic() + 5
+    while model.state()["done"] < 70_000 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    model.cancel()
+    # The cancelled thread is still waiting on its next chunk: a second would write the same `.part`.
+    with pytest.raises(KokoroBusy, match="still stopping"):
+        model.download()
+    assert model.state()["state"] == "absent"
+    state.go.set()
+    assert settle(model)["state"] == "absent"
+    state.pause_at = None
+    model.download()
+    assert settle(model)["state"] == "ready"
+
+
 def test_one_download_at_a_time(served, tmp_path):
     state, url = served
     model = KokoroModel(tmp_path / "models", source(url))
@@ -327,6 +347,8 @@ def test_voices_lists_kokoro_on_this_mac_with_its_download_state(app_with_kokoro
     assert client.get("/api/voices").json()["kokoro"] == {"state": "downloading", "done": 20_000, "total": len(GOOD), "message": None}
     assert client.delete("/api/voices/kokoro/download").status_code == 204
     assert client.get("/api/voices").json()["kokoro"]["state"] == "absent"
+    refused = client.post("/api/voices/kokoro/download")
+    assert refused.status_code == 409 and "still stopping" in refused.json()["detail"]
     state.go.set()
     model.wait(10)
 

@@ -12,6 +12,7 @@ TTS_API_KEY and TTS_MODEL are.
 """
 
 import base64
+import math
 import re
 import struct
 from dataclasses import dataclass, field
@@ -26,6 +27,9 @@ from app.config import Settings
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
 # A sentence is short; Gemini can still take a while to start speaking under load.
 _TIMEOUT_SECS = 60
+# The longest Retry-After waited before a sentence's retry: a service asking for longer is waited this
+# much (a Voice's sample, which no cancel reaches, is never held longer).
+MAX_RETRY_AFTER_SECS = 30.0
 # Gemini TTS answers raw 16-bit PCM, its rate in the MIME type ("audio/L16;codec=pcm;rate=24000").
 _GEMINI_RATE = 24_000
 _RATE = re.compile(r"rate=(\d+)")
@@ -63,6 +67,10 @@ class SpeechError(RuntimeError):
     """An engine couldn't read a sentence; its message names the engine and what to fix."""
 
 
+class Cancelled(Exception):
+    """A cancel heard mid-way (a Narration's, or Kokoro's download): what was being done stops there."""
+
+
 class TransientSpeechError(SpeechError):
     """A failure a retry may get past (a rate limit, a server error, the network): after
     `retry_after` seconds when the service said so."""
@@ -85,6 +93,11 @@ class VoiceEngine(Protocol):
     takes_speed: bool
 
     def ready(self) -> bool: ...
+
+    def load(self) -> None:
+        """Make it ready to read at once (a local engine loads its model; a cloud one does nothing), so
+        that a Narration's "Loading the voice" stage covers it. SpeechError when it can't."""
+        ...
 
     def voices(self) -> list[Voice]: ...
 
@@ -150,6 +163,9 @@ class GeminiSpeech:
     def ready(self) -> bool:
         return bool(self.settings.gemini_api_key)
 
+    def load(self) -> None:
+        pass
+
     def voices(self) -> list[Voice]:
         return GEMINI_VOICES
 
@@ -193,10 +209,13 @@ def _gemini_error(response: httpx.Response) -> SpeechError:
 
 
 def _retry_after(response: httpx.Response) -> float | None:
+    """The answer's Retry-After in seconds, at most MAX_RETRY_AFTER_SECS; None without one, or with one
+    that isn't a wait (a date, negative, infinite or not a number): the runner waits its fixed time."""
     try:
-        return max(0.0, float(response.headers["retry-after"]))
+        secs = float(response.headers["retry-after"])
     except (KeyError, ValueError):
         return None
+    return min(secs, MAX_RETRY_AFTER_SECS) if math.isfinite(secs) and secs >= 0 else None
 
 
 def _gemini_audio(answer: dict) -> Pcm:
@@ -261,6 +280,9 @@ class OpenAiSpeech:
 
     def ready(self) -> bool:
         return bool(self.settings.tts_base_url and self.settings.tts_api_key and self.settings.tts_model)
+
+    def load(self) -> None:
+        pass
 
     def voices(self) -> list[Voice]:
         if self.settings.tts_voices:
@@ -351,9 +373,15 @@ def voice_engines(settings: Settings, http_client: httpx.Client | None = None) -
 
 def default_engine(engines: list[VoiceEngine], language: str | None) -> str | None:
     """The engine a Job in `language` starts with: Indonesian (and any other language) the first ready
-    cloud engine; English a ready local one, else the first ready cloud one. None when none is ready."""
+    cloud engine; English (by its first part, any region or case: "en-GB" is "en") a ready local one,
+    else the first ready cloud one. None when none is ready."""
     ready = [engine for engine in engines if engine.ready()]
     cloud = [engine for engine in ready if not engine.local]
     local = [engine for engine in ready if engine.local]
-    first = (local + cloud) if language == "en" else (cloud + local)
+    first = (local + cloud) if primary_language(language) == "en" else (cloud + local)
     return first[0].id if first else None
+
+
+def primary_language(language: str | None) -> str:
+    """A language's first part, lower-cased: "pt-BR" is "pt", "EN" is "en", none is ""."""
+    return (language or "").split("-")[0].lower()

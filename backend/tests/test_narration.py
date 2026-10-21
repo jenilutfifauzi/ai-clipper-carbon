@@ -297,6 +297,11 @@ def test_gemini_tts_is_offered_with_its_key_whatever_the_llm_provider_and_not_wi
         (("gemini", "openai", "local"), "en", "local"),
         (("gemini", "openai", "asleep-local"), "en", "gemini"),
         (("asleep-local",), "en", None),
+        # English by its primary subtag, whatever its region or case.
+        (("gemini", "local"), "en-US", "local"),
+        (("gemini", "local"), "en-GB", "local"),
+        (("gemini", "local"), "EN", "local"),
+        (("gemini", "local"), "id-ID", "gemini"),
     ],
 )
 def test_the_default_engine_follows_the_jobs_language(settings, video_source, transcriber, llm, engines, language, default):
@@ -397,6 +402,24 @@ def test_a_cancel_mid_way_stops_before_the_next_sentence_and_leaves_no_item_nor_
     ending(client, second.json()["id"])
     assert client.delete(f"/api/narrations/{second.json()['id']}").status_code == 409
     assert client.delete("/api/narrations/nope").status_code == 404
+
+
+def test_the_voice_is_loaded_under_its_stage_before_the_first_sentence_is_read(client, engine):
+    narrated(client, "Satu. Dua.")
+    # Loaded once, with nothing read yet.
+    assert engine.loads == [0]
+
+
+def test_a_thread_that_fails_to_start_leaves_the_runner_free(client, engine, monkeypatch):
+    class Unstartable(threading.Thread):
+        def start(self) -> None:
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(narration.threading, "Thread", Unstartable)
+    with pytest.raises(RuntimeError, match="can't start new thread"):
+        client.app.state.narrations.start(narration.NarrationRequest(text="Halo.", engine="fake", voice="ana"))
+    monkeypatch.undo()
+    assert narrate(client, "Halo.").status_code == 202
 
 
 def test_a_transient_failure_on_a_sentence_is_retried_once_and_succeeds(client, engine):

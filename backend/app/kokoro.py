@@ -8,12 +8,13 @@ request from the `.part`'s size (a server that answers it whole starts the `.par
 file is checked against the digest (a mismatch deletes it and fails); the archive is unpacked into a
 staging folder and renamed into place, so that a torn download or unpack never looks installed, and an
 archive with a member whose path or link leads out of its folder installs nothing. A cancel keeps the
-`.part` for the next download. Its state is told as absent, downloading (bytes done of total), ready or
+`.part` for the next download; a download asked while a cancelled one is still stopping (it stops at
+its next chunk) is refused, so that two never write the `.part`. Its state is told as absent, downloading (bytes done of total), ready or
 failed (with the message); a failed download is retried by downloading again.
 
 KokoroSpeech reads with it through sherpa-onnx's OfflineTts, its English Voices only (American and
-British, each a speaker id of the model's), Speed sent to it natively, no Style. The engine is loaded on
-the first read and kept by KokoroModel until the model is removed, which unloads it. sherpa-onnx is
+British, each a speaker id of the model's), Speed sent to it natively, no Style. The engine is loaded by
+`load` (the Narration's "Loading the voice" stage), else on the first read, and kept by KokoroModel until the model is removed, which unloads it. sherpa-onnx is
 imported only then: without it the app still starts, and Kokoro isn't ready.
 """
 
@@ -31,7 +32,7 @@ from typing import Any, Literal, Protocol
 import httpx
 import numpy as np
 
-from app.voices import Pcm, SpeechError, Voice
+from app.voices import Cancelled, Pcm, SpeechError, Voice
 
 # In DATA_DIR: the models downloaded on first use, Kokoro's among them.
 MODELS_DIR = "models"
@@ -72,11 +73,8 @@ KokoroLoader = Callable[[Path], KokoroTts]
 
 
 class KokoroBusy(RuntimeError):
-    """Kokoro's model is being downloaded: it can't be removed meanwhile."""
-
-
-class _Cancelled(Exception):
-    pass
+    """Kokoro's model is being downloaded, or a cancelled download is still stopping: it can't be
+    removed, nor downloaded again, meanwhile."""
 
 
 class _Refused(Exception):
@@ -128,17 +126,27 @@ class KokoroModel:
         """Whether its engine can be loaded here: sherpa-onnx is installed (or a loader given)."""
         return self._load is not None or importlib.util.find_spec("sherpa_onnx") is not None
 
+    def load(self) -> None:
+        """Load the engine, unless it is loaded. SpeechError without the model or sherpa-onnx, or when
+        the model doesn't load."""
+        with self._tts_lock:
+            self._engine()
+
     def generate(self, text: str, sid: int, speed: float) -> tuple[np.ndarray, int]:
         """`text` read by speaker `sid` at `speed`: float samples and their rate. The engine is loaded on
-        the first read, once whatever reads at the same time, and reads one at a time. SpeechError
-        without the model or sherpa-onnx, or when the model doesn't load."""
+        the first read unless `load` did it, once whatever reads at the same time, and reads one at a
+        time. SpeechError as `load`'s."""
         with self._tts_lock:
-            if not self.installed:
-                raise SpeechError("Kokoro's model isn't on this Mac: download it in the Narrate tab")
-            if self._tts is None:
-                self._tts = self._loaded()
-            audio = self._tts.generate(text, sid=sid, speed=speed)
+            audio = self._engine().generate(text, sid=sid, speed=speed)
             return np.asarray(audio.samples, dtype=np.float32), int(audio.sample_rate)
+
+    def _engine(self) -> KokoroTts:
+        """The loaded engine, loaded now if it isn't; with `_tts_lock` held."""
+        if not self.installed:
+            raise SpeechError("Kokoro's model isn't on this Mac: download it in the Narrate tab")
+        if self._tts is None:
+            self._tts = self._loaded()
+        return self._tts
 
     def _loaded(self) -> KokoroTts:
         try:
@@ -163,17 +171,14 @@ class KokoroModel:
             return {"state": state, "done": done, "total": self.source.bytes, "message": self._message if state == "failed" else None}
 
     def download(self) -> None:
-        """Start fetching the model, in a thread of its own; nothing when it is installed or being fetched."""
+        """Start fetching the model, in a thread of its own, taken up from the `.part` a cancelled one
+        left; nothing when it is installed or being fetched. KokoroBusy while a cancelled download is still
+        stopping (at its next chunk): two would write the same `.part`."""
         with self._lock:
             if self.installed or self._state == "downloading":
                 return
-            previous = self._download
-        if previous and previous.thread:
-            # A cancelled download winding down: its `.part` is where this one takes up.
-            previous.thread.join(10)
-        with self._lock:
-            if self.installed or self._state == "downloading":
-                return
+            if self._winding_down():
+                raise KokoroBusy("Kokoro's cancelled download is still stopping: download it again in a moment")
             run = _Download(threading.Event())
             run.thread = threading.Thread(target=self._run, args=(run,), name="kokoro-download", daemon=True)
             self._download = run
@@ -191,17 +196,23 @@ class KokoroModel:
     def remove(self) -> None:
         """Delete the model, and a `.part` left; KokoroBusy while it is being downloaded."""
         with self._lock:
-            winding_down = self._download is not None and self._download.thread is not None and self._download.thread.is_alive()
-            if self._state == "downloading" or winding_down:
+            if self._state == "downloading" or self._winding_down():
                 raise KokoroBusy("Kokoro is being downloaded: cancel the download first")
             self.unload()
             shutil.rmtree(self.folder, ignore_errors=True)
             self.part.unlink(missing_ok=True)
             self._state, self._done, self._message = "absent", 0, None
 
+    def _winding_down(self) -> bool:
+        """Whether a download's thread is still running (a cancelled one stops at its next chunk); with
+        `_lock` held."""
+        run = self._download
+        return run is not None and run.thread is not None and run.thread.is_alive()
+
     def wait(self, timeout: float | None = None) -> bool:
         """Wait for the download to end; whether it has (True when none runs)."""
-        run = self._download
+        with self._lock:
+            run = self._download
         if run is None or run.thread is None:
             return True
         run.thread.join(timeout)
@@ -223,9 +234,9 @@ class KokoroModel:
             self._fetch(run)
             self._check()
             if run.cancelled.is_set():
-                raise _Cancelled
+                raise Cancelled
             self._install()
-        except _Cancelled:
+        except Cancelled:
             self._end(run, "absent")
         except _Refused as exc:
             self.part.unlink(missing_ok=True)
@@ -268,7 +279,7 @@ class KokoroModel:
                 with self.part.open(mode) as file:
                     for chunk in response.iter_bytes():
                         if run.cancelled.is_set():
-                            raise _Cancelled
+                            raise Cancelled
                         file.write(chunk)
                         have += len(chunk)
                         self._progress(run, have)
@@ -276,7 +287,7 @@ class KokoroModel:
             if self._http is None:
                 client.close()
         if run.cancelled.is_set():
-            raise _Cancelled
+            raise Cancelled
 
     def _check(self) -> None:
         digest = hashlib.sha256()
@@ -402,6 +413,9 @@ class KokoroSpeech:
 
     def ready(self) -> bool:
         return self.model.installed and self.model.loadable
+
+    def load(self) -> None:
+        self.model.load()
 
     def voices(self) -> list[Voice]:
         return KOKORO_VOICE_LIST
