@@ -19,16 +19,21 @@ export const EASE_IN_OUT: Ease = [0.42, 0, 0.58, 1];
 export const PICTURE_KEYS = ["x", "y", "scale", "rotation", "opacity"] as const;
 export type PictureKey = (typeof PICTURE_KEYS)[number];
 
-// Each property's range (KEY_RANGES in backend/app/candidates.py): a sampled value is held to it,
-// but a rotation, which may turn any number of times.
-export const KEY_RANGES: Record<KeyProperty, readonly [number, number]> = {
-  x: [0, 1080],
-  y: [0, 1920],
+// Each property's range but the centre's (KEY_RANGES in backend/app/candidates.py): a sampled value
+// is held to it, but a rotation, which may turn any number of times.
+export const KEY_RANGES: Record<Exclude<KeyProperty, "x" | "y">, readonly [number, number]> = {
   scale: [0.05, 8],
   rotation: [-3600, 3600],
   opacity: [0, 1],
   volume: [0, 2],
 };
+
+/** The range of `prop` on a Canvas `frame` large: a centre's on the frame, any other's KEY_RANGES. */
+export function keyRange(prop: KeyProperty, frame: { width: number; height: number }): readonly [number, number] {
+  if (prop === "x") return [0, frame.width];
+  if (prop === "y") return [0, frame.height];
+  return KEY_RANGES[prop];
+}
 
 /**
  * The value of `keys` (sorted by `at`) at `time`, in the same seconds as their `at`: `constant`

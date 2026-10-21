@@ -8,6 +8,7 @@ import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
+import { CAPTION_HEIGHT, REFERENCE, REFERENCE_SAFE_AREA } from "./canvas";
 import { FacePicker } from "./FacePicker";
 import { LINE_LIMITS, lineLimitsOf } from "./lineLimits";
 import { ShadowFields } from "./ShadowFields";
@@ -120,10 +121,19 @@ export function CaptionStylePanel({
         onChange={(v) => (v === "custom" ? set("position", v) : style.setMany("caption", { position: v, x: null }))}
         marker={marker("position", "position")}
       />
+      {/* In the Reference Space (canvas.ts), which every Canvas maps it from. */}
       {caption.position === "custom" && (
         <>
-          <Slider label="Height of the line's centre" value={caption.y} min={332} max={1436} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "height")} />
-          <Slider label="Line's centre across" value={caption.x ?? 540} min={0} max={1080} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
+          <Slider
+            label="Height of the line's centre"
+            value={caption.y}
+            min={REFERENCE_SAFE_AREA.y + CAPTION_HEIGHT / 2}
+            max={REFERENCE_SAFE_AREA.y + REFERENCE_SAFE_AREA.height - CAPTION_HEIGHT / 2}
+            format={(v) => `${v} px`}
+            onChange={(v) => set("y", v)}
+            marker={marker("y", "height")}
+          />
+          <Slider label="Line's centre across" value={caption.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
         </>
       )}
       <div className="flex flex-col gap-3">

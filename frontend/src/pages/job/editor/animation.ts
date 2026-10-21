@@ -1,5 +1,6 @@
 import type { HookStyle, OverlayAnimation, Picture } from "../../../api";
 import { pictureAt } from "./picture";
+import type { Size } from "./pictureGestures";
 
 // The renderer's numbers the animations repeat (backend/app/renderer.py): how far a sliding element
 // moves, and the share of its size a popping one grows from.
@@ -60,13 +61,13 @@ export const isAnimated = (item: OverlayAnimation) => (item.animation_in ?? "non
 export const overlayLook = (event: Timed & OverlayAnimation, time: number): Look | null => hookLook(time, event, movesOf(event), 0);
 
 /**
- * `picture` as drawn at `time` seconds into the Clip, its animations' `look` there being its
+ * `picture` as drawn at `time` seconds into the Clip on the Canvas `frame`, its animations' `look` there being its
  * opacity, scale and drop (hookLook): as its Keyframes have it (pictureAt, ADR 0008), then faded,
  * scaled about its centre (its corners with it) and moved down on top, as the renderer's
  * animated_at draws a picture layer or an Overlay.
  */
-export function animatedPicture(picture: Picture, time: number, [opacity, scale, below]: Look): Picture {
-  const drawn = pictureAt(picture, time);
+export function animatedPicture(picture: Picture, time: number, [opacity, scale, below]: Look, frame: Size): Picture {
+  const drawn = pictureAt(picture, time, frame);
   if (opacity === 1 && scale === 1 && below === 0) return drawn;
   const [x, y] = drawn.centre;
   return {

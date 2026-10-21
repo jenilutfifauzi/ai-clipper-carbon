@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
+import { useCanvas } from "./canvas";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { GradeVignette, useFrameFilter } from "./GradeFilters";
-import { FRAME, panelStyle, slotView } from "./picture";
+import { panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { changing, loudness, segmentSound } from "./loudness";
@@ -110,8 +111,9 @@ export function MediaSegment({
   }, [playback, segment, end, fade, into, span]);
 
   const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
+  const canvas = useCanvas();
   const picture = scene?.picture;
-  const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
+  const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, canvas) : null;
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
       {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014): its Background and its picture, its vignette over them. */}
@@ -132,7 +134,7 @@ export function MediaSegment({
         {picture && (
           <PicturePanel
             picture={picture}
-            frame={FRAME}
+            frame={canvas}
             playback={playback}
             media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
           />

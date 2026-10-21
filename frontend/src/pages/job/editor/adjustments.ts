@@ -1,7 +1,7 @@
 import type { AdjustmentEvent, Grade, RenderPlan, VideoEffect } from "../../../api";
 import { foldGrade, gradeFilterId, hasGradeFilter } from "./grading";
 import { effectsFilterId } from "./videoEffects";
-import { FRAME } from "./picture";
+import { canvasOf } from "./canvas";
 
 /**
  * How much of an Adjustment Layer's Grade shows at `time` (ADR 0013), 0..1: its strength times its
@@ -18,7 +18,7 @@ export function adjustmentWeight(event: AdjustmentEvent, time: number): number {
 
 /**
  * An Adjustment Layer as the preview draws it at a time: its Grade, its Video Effects (planned: the
- * enabled ones, sizes the frame's), how much of them shows, and its SVG filter's id (none for a
+ * enabled ones, sizes the Canvas's), how much of them shows, and its SVG filter's id (none for a
  * vignette alone).
  */
 export interface AdjustmentFilter {
@@ -42,7 +42,7 @@ export function adjustmentFilters(plan: RenderPlan | null, time: number): Adjust
     const weight = Math.round(adjustmentWeight(event, time) * 200) / 200;
     if (weight <= 0) return [];
     const effects = event.video_effects ?? [];
-    const effected = effectsFilterId(effects, FRAME, event.start);
+    const effected = effectsFilterId(effects, canvasOf(plan), event.start);
     if (!foldGrade(event.grade) && !effected) return [];
     const graded = hasGradeFilter(event.grade) ? gradeFilterId(event.grade) : null;
     const filterId = graded || effected ? `adjust-${event.id}-${graded ?? "n"}-${effected ?? "n"}` : null;

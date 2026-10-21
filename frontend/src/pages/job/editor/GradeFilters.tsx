@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { Grade, VideoEffect } from "../../../api";
+import { useCanvas } from "./canvas";
 import { foldGrade, gradeFilter, gradeFilterId, hasGradeFilter, sharpenKernel, vignetteBackground } from "./grading";
 import type { Playback } from "./playback";
 import { effectPrimitives, effectsFilterId, frameEffectsFilter, type Box, type Primitive } from "./videoEffects";
@@ -46,7 +47,7 @@ export function useGradeFilter(grade: Grade | null | undefined): string | undefi
  */
 export function useFrameFilter(grade: Grade | null | undefined, effects: VideoEffect[] | undefined, start = 0): string | undefined {
   const graded = useGradeFilter(grade);
-  const effected = frameEffectsFilter(effects, start);
+  const effected = frameEffectsFilter(effects, useCanvas(), start);
   return [graded, effected].filter(Boolean).join(" ") || undefined;
 }
 

@@ -26,7 +26,8 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { allStroke, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { CanvasContext, CAPTION_HEIGHT, fittedStage, useCanvas, useCanvasOf } from "./canvas";
+import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -43,7 +44,7 @@ import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
-import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
+import { picturesAt } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
@@ -75,8 +76,8 @@ const percent = (value: number) => `${value * 100}%`;
 /**
  * The Candidate as its Clip will look: the Source framed by the Preview Plan's Scenes (each panel a
  * crop of the video, following its path), with the plan's caption lines and hook drawn over it
- * where, when and how large the render will draw them. Drawn in the output's 1080x1920 pixels and
- * scaled to fit. The Source plays on two decks (docs/adr/0006-the-preview-plays-the-source-on-two-decks.md),
+ * where, when and how large the render will draw them. Drawn in the pixels of the plan's Canvas (the
+ * 9:16 one until a plan comes), at its aspect, and scaled to fit. The Source plays on two decks (docs/adr/0006-the-preview-plays-the-source-on-two-decks.md),
  * each two videos in step, one per panel (Split's two, or Blur's background and shot): the first is
  * the master, which `playback` drives and which is heard while its deck is live. The panels show
  * the live deck; the other waits, hidden, for the next join.
@@ -137,8 +138,9 @@ export function ClipPreview({
   const decks = useMemo(() => [0, 1].map(() => [createRef<HTMLVideoElement>(), createRef<HTMLVideoElement>()]), []);
   const masters = useMemo(() => decks.map(([master]) => master), [decks]);
   const [scale, setScale] = useState(1 / 3);
-  const fitted = useFittedSize(room, fit);
   const plan = preview?.plan ?? null;
+  const canvas = useCanvasOf(plan);
+  const fitted = useFittedSize(room, fit, canvas);
 
   useEffect(() => {
     const slots = [0, 1] as const;
@@ -153,10 +155,10 @@ export function ClipPreview({
   useEffect(() => {
     const element = stage.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => setScale(entry.contentRect.width / 1080));
+    const observer = new ResizeObserver(([entry]) => setScale(entry.contentRect.width / canvas.width));
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [canvas.width]);
 
   const sceneIndex = useShown(playback, (time, p) => (plan ? sceneAt(plan, time, p.shownSegmentIndex) : 0));
   const fontById = useMemo(() => new Map((fonts ?? []).map((font) => [font.id, font])), [fonts]);
@@ -210,17 +212,19 @@ export function ClipPreview({
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
   const scene = drawn?.scenes[sceneIndex];
 
+  // As large as fits the player, or as wide as it may be, at the Canvas's aspect.
+  const size: CSSProperties = fit ? { width: fitted.width, height: fitted.height } : { aspectRatio: `${canvas.width} / ${canvas.height}` };
   const stageFrame = (
     <div
       ref={stage}
       className={cx(
         "relative mx-auto overflow-hidden rounded-control bg-black outline-1 -outline-offset-1 outline-white/10",
-        fit ? "shrink-0" : "aspect-[9/16] w-full max-w-[22rem]",
+        fit ? "shrink-0" : "w-full max-w-[22rem]",
         // The Advanced Edit's stage takes every finger: a pinch or a drag there neither zooms nor
         // scrolls the page (in the clip editor, a swipe over the preview still scrolls it).
         fit && controls && "touch-none",
       )}
-      style={{ "--scale": scale, ...(fit ? { width: fitted.width, height: fitted.height } : {}) } as CSSProperties}
+      style={{ "--scale": scale, ...size } as CSSProperties}
       onDragOver={(event) => {
         if (!takes(event.dataTransfer)) return;
         event.preventDefault();
@@ -241,7 +245,7 @@ export function ClipPreview({
       {drawn && (
         <EffectFilters
           items={[
-            ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: FRAME, start: segment.start })),
+            ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: canvas, start: segment.start })),
             ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
           ]}
         />
@@ -350,7 +354,12 @@ export function ClipPreview({
     </div>
   );
   // Its Video Effects that change with time follow the playback.
-  const frame = <EffectsClock playback={playback}>{stageFrame}</EffectsClock>;
+  // Drawn on the plan's Canvas, which what is drawn in it takes (useCanvas).
+  const frame = (
+    <CanvasContext.Provider value={canvas}>
+      <EffectsClock playback={playback}>{stageFrame}</EffectsClock>
+    </CanvasContext.Provider>
+  );
   if (fit) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -487,7 +496,7 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: nu
   });
   // A picture layer of the stage's `id`, as the stage holds it.
   const held = <Event extends PictureLayerEvent>(event: Event, id: string): Event => {
-    const at = keyedAt === null ? event : layerEventAt(event, keyedAt);
+    const at = keyedAt === null ? event : layerEventAt(event, keyedAt, plan);
     const { picture } = layerStagePicture(at);
     const shown = edit.shownPicture(id, picture);
     return shown === picture ? event : heldLayerEvent(at, picture, shown);
@@ -497,20 +506,17 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: nu
   return { ...plan, overlays, scenes, shapes, texts };
 }
 
-// The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
-function useFittedSize(room: React.RefObject<HTMLDivElement | null>, on: boolean) {
+// The largest size of the `canvas`'s aspect that fits in `room`, in CSS pixels, while `on`.
+function useFittedSize(room: React.RefObject<HTMLDivElement | null>, on: boolean, canvas: { width: number; height: number }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const { width: across, height: down } = canvas;
   useEffect(() => {
     const element = room.current;
     if (!on || !element) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect;
-      const unit = Math.max(0, Math.min(width / 9, height / 16));
-      setSize({ width: Math.floor(unit * 9), height: Math.floor(unit * 16) });
-    });
+    const observer = new ResizeObserver(([entry]) => setSize(fittedStage(entry.contentRect, { width: across, height: down })));
     observer.observe(element);
     return () => observer.disconnect();
-  }, [room, on]);
+  }, [room, on, across, down]);
   return size;
 }
 
@@ -683,9 +689,9 @@ const HOOK_SIZES = { min: 40, max: 160 };
 const CAPTION_SIZES = { min: 40, max: 200 };
 // Around a caption line's letters, what can be grabbed of it, in output pixels.
 const CAPTION_GRAB_PAD = 12;
-// The hook stays between the safe area's top and bottom, and a caption line's middle stays half its
-// area's height (100, planner.py's LOWER_CAPTIONS) inside them (_caption_area).
-const CAPTION_CENTRES: [number, number] = [SAFE_TOP + 100, SAFE_BOTTOM - 100];
+// The hook stays between the plan's Safe Area's top and bottom, and a caption line's middle stays
+// half its area's height inside them (planner.py's _caption_area).
+const captionCentres = ({ y, height }: Box): [number, number] => [y + CAPTION_HEIGHT / 2, y + height - CAPTION_HEIGHT / 2];
 
 /**
  * What of the plan `controls` can move on the stage, in the order they are drawn. With `edit`, each
@@ -715,7 +721,7 @@ function stageItems(
         label: `Caption: ${cue.plain.join(" ")}`,
         shows: plan.captions.flatMap((other, i) => (ids[i] === ids[index] ? [{ start: other.start, end: other.end, area: captionGrab(other, captionFont, style) }] : [])),
         size: { now: set, min: Math.min(set, style.size * CUE_MIN_SCALE), max: Math.max(set, style.size * CUE_MAX_SCALE) },
-        centreY: CAPTION_CENTRES,
+        centreY: captionCentres(plan.safe_area),
         onPlace: (area, size, group) => cues.onPlace(cue.key, { ...middle(area), size }, group),
         onEdit:
           edit &&
@@ -732,7 +738,7 @@ function stageItems(
       label: "Captions (every line moves together)",
       shows: plan.captions.map((cue) => ({ start: cue.start, end: cue.end, area: captionGrab(cue, captionFont, style) })),
       size: { now: style.size, ...CAPTION_SIZES },
-      centreY: CAPTION_CENTRES,
+      centreY: captionCentres(plan.safe_area),
       onPlace: (area, size, group) => controls.onPlace("captions", { ...middle(area), size }, group),
       onEdit:
         edit &&
@@ -749,7 +755,7 @@ function stageItems(
       label: "Hook",
       shows: [{ start: hook.start, end: hook.end, area: hook.area }],
       size: { now: plan.hook_style.size, ...HOOK_SIZES },
-      centreY: [SAFE_TOP + hook.area.height / 2, SAFE_BOTTOM - hook.area.height / 2],
+      centreY: [plan.safe_area.y + hook.area.height / 2, plan.safe_area.y + plan.safe_area.height - hook.area.height / 2],
       onPlace: (area, size, group) => controls.onPlace("hook", { x: middle(area).x, y: Math.round(area.y), size }, group),
       onEdit:
         edit &&
@@ -794,6 +800,7 @@ function PictureLayerView({ event, jobId, playback, still = false }: { event: Pi
   const group = useRef<SVGGElement>(null);
   const image = useRef<SVGImageElement>(null);
   const moving = isKeyed(event.picture);
+  const canvas = useCanvas();
 
   useLayoutEffect(() => {
     if (!moving) return;
@@ -801,16 +808,16 @@ function PictureLayerView({ event, jobId, playback, still = false }: { event: Pi
       const time = playback.shownTime;
       const look = layerLook(event, still, time, playback);
       if (!look || !group.current || !image.current) return;
-      const placed = placedLayer(event.picture, time, look);
+      const placed = placedLayer(event.picture, time, look, canvas);
       group.current.setAttribute("opacity", String(placed.opacity));
       for (const [name, value] of Object.entries(layerBox(placed))) image.current.setAttribute(name, String(value));
     };
     paint();
     return playback.subscribe(paint);
-  }, [moving, event, still, playback]);
+  }, [moving, event, still, playback, canvas]);
 
   if (!key || !shown) return null;
-  const placed = placedLayer(event.picture, playback.shownTime, key.split(" ").map(Number) as [number, number, number]);
+  const placed = placedLayer(event.picture, playback.shownTime, key.split(" ").map(Number) as [number, number, number], canvas);
   return (
     <g ref={group} opacity={placed.opacity}>
       <image ref={image} href={shown.url} preserveAspectRatio="none" {...layerBox(placed)} />
@@ -919,7 +926,7 @@ export function PanelView({
   useLayoutEffect(() => {
     if (!moving || !plan) return;
     const paint = () => {
-      const { left, top, width, height, transform, opacity } = pictureStyle(pictureAt(moving, playback.shownTime), plan);
+      const { left, top, width, height, transform, opacity } = pictureStyle(pictureAt(moving, playback.shownTime, plan), plan);
       if (boxRef.current) Object.assign(boxRef.current.style, { left, top, width, height, transform });
       if (layerRef.current) layerRef.current.style.opacity = String(opacity);
     };
@@ -927,7 +934,7 @@ export function PanelView({
     return playback.subscribe(paint);
   }, [moving, plan, playback]);
   if (plan && picture) {
-    const { inner, opacity, transform, left, top, width, height } = pictureStyle(moving ? pictureAt(moving, playback.shownTime) : picture, plan);
+    const { inner, opacity, transform, left, top, width, height } = pictureStyle(moving ? pictureAt(moving, playback.shownTime, plan) : picture, plan);
     return (
       <SlotVideo
         videoRef={videoRef}
@@ -1076,13 +1083,14 @@ function CaptionLine({ cue, row, active, plan, font }: { cue: Cue; row: number; 
  */
 function Shadow({ shadow, children }: { shadow: DropShadow; children: ReactNode }) {
   const id = `shadow${useId().replace(/[^\w-]/g, "")}`;
+  const { width, height } = useCanvas();
   const drawn = drawnShadow(shadow);
   if (!drawn) return null;
   return (
     <g transform={`translate(${drawn.x} ${drawn.y})`} opacity={drawn.opacity} filter={drawn.sigma ? `url(#${id})` : undefined}>
       {drawn.sigma > 0 && (
         // Over the whole frame, wherever the line is.
-        <filter id={id} filterUnits="userSpaceOnUse" x={-1080} y={-1920} width={3 * 1080} height={3 * 1920}>
+        <filter id={id} filterUnits="userSpaceOnUse" x={-width} y={-height} width={3 * width} height={3 * height}>
           <feGaussianBlur stdDeviation={drawn.sigma} />
         </filter>
       )}

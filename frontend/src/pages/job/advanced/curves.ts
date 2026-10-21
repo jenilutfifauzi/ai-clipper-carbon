@@ -1,5 +1,6 @@
 import type { Keyframe, KeyProperty } from "../../../api";
-import { eased, KEY_RANGES } from "../editor/keyframes";
+import { eased, keyRange } from "../editor/keyframes";
+import type { Size } from "../editor/pictureGestures";
 
 /**
  * The Keyframes pane's Curves, worked out from numbers alone: a property's value over its item drawn
@@ -83,11 +84,11 @@ const ROOM = 0.15;
 
 /**
  * The range a curve of `prop`'s `keys` is plotted over: from its lowest to its highest value, an
- * Ease's overshoot included, with some room above and below, within the property's range. A flat
+ * Ease's overshoot included, with some room above and below, within the property's range on the Canvas `frame`. A flat
  * curve gets a band around its value of a twentieth of the property's range.
  */
-export function curveRange(prop: KeyProperty, keys: readonly Keyframe[]): [number, number] {
-  const [lowest, highest] = KEY_RANGES[prop];
+export function curveRange(prop: KeyProperty, keys: readonly Keyframe[], frame: Size): [number, number] {
+  const [lowest, highest] = keyRange(prop, frame);
   const values = keys.map((key) => key.value);
   for (let index = 1; index < keys.length; index++) {
     const [before, key] = [keys[index - 1], keys[index]];

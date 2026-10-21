@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import type { Picture, TextEvent } from "../../../api";
 import { EASE_OUT, LINEAR, valueAt } from "./keyframes";
 import { needsLoading, pictureToShow, placedLayer, wantedPicture, type Loaded } from "./layerPicture";
+import { PORTRAIT } from "./canvas";
 
 const picture = (centre: [number, number], changes: Partial<Picture> = {}): Picture => ({
   crop: { x: 0, y: 0, width: 300, height: 160 },
@@ -86,15 +87,15 @@ describe("a keyed Text Layer's picture in the preview", () => {
   });
 
   test("is drawn where its Keyframes have it, as the render draws it", () => {
-    const at = placedLayer(keyed, 2.5, [1, 1, 0]);
+    const at = placedLayer(keyed, 2.5, [1, 1, 0], PORTRAIT);
     expect(at.x).toBeCloseTo(valueAt(keyed.motion!.x!, 2.5, 0));
     expect([at.y, at.width, at.height, at.opacity]).toEqual([960, 450, 240, 0.8]);
   });
 
   test("its Fade, Pop and Slide are stacked on its keyed values: opacity and scale multiplied, the drop added", () => {
-    const at = placedLayer(keyed, 3.5, [0.5, 0.85, 30]);
+    const at = placedLayer(keyed, 3.5, [0.5, 0.85, 30], PORTRAIT);
     expect(at).toEqual({ x: 880, y: 990, width: 600 * 0.85, height: 320 * 0.85, rotation: 0, opacity: 0.4 });
     // Unkeyed, its plan's picture, animated.
-    expect(placedLayer(picture([540, 960]), 3.5, [0.5, 0.85, 30])).toEqual({ x: 540, y: 990, width: 255, height: 136, rotation: 0, opacity: 0.5 });
+    expect(placedLayer(picture([540, 960]), 3.5, [0.5, 0.85, 30], PORTRAIT)).toEqual({ x: 540, y: 990, width: 255, height: 136, rotation: 0, opacity: 0.5 });
   });
 });

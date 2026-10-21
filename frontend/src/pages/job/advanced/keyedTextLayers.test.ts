@@ -25,6 +25,7 @@ import {
 } from "./keying";
 import { picked, type Pick } from "./pick";
 import { textStyle } from "./textStyle";
+import { PORTRAIT } from "../editor/canvas";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
 
@@ -99,7 +100,7 @@ describe("a Text Layer picked alone", () => {
     const keyed = edits([title({ x: slide })]);
     const layer = keyed.text_layers[0];
     // Where its Grips hold it at 4 s (2 s in): its eased x there.
-    const held = heldTransform(layer.transform, layer.keys, layer, 4);
+    const held = heldTransform(layer.transform, layer.keys, layer, 4, PORTRAIT);
     expect(held.x).toBeCloseTo(valueAt(slide, 2, 300), 0);
     const moved = writeItemTransform(scene(keyed), T, { ...held, x: 700, y: 900, scale: 2 }, 4, held);
     const [written] = moved!.edits.text_layers;

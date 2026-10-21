@@ -10,6 +10,7 @@ import { snapScaled } from "./smartGuides";
 import { wantedPicture } from "./layerPicture";
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import { LINEAR } from "./keyframes";
+import { PORTRAIT } from "./canvas";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -118,7 +119,7 @@ describe("a keyed Text Layer on the stage", () => {
   };
 
   test("is gripped where its Keyframes have it at the playhead: its area scaled and turned about its sampled centre", () => {
-    const at = layerEventAt(keyed(), 1);
+    const at = layerEventAt(keyed(), 1, PORTRAIT);
     expect(at.layer.transform).toMatchObject({ x: 500, y: 600, scale: 1.5, rotation: 45 });
     const { picture, fitted } = layerStagePicture(at);
     expect(fitted).toEqual({ width: 300, height: 100 });
@@ -137,13 +138,13 @@ describe("a keyed Text Layer on the stage", () => {
       x: [{ at: 0, value: 540, ease: LINEAR }, { at: 1, value: 542, ease: LINEAR }],
       scale: [{ at: 0, value: 1, ease: LINEAR }, { at: 1, value: 1.002, ease: LINEAR }],
     };
-    const at = layerEventAt({ ...planned, picture: { ...planned.picture, motion, unscaled: [400, 200] } }, 0.5);
+    const at = layerEventAt({ ...planned, picture: { ...planned.picture, motion, unscaled: [400, 200] } }, 0.5, PORTRAIT);
     // To the nearest pixel (390.85, 549.95, 300.3, 100.1), not out to whole ones (390, 549, 301, 101).
     expect(at.bounds).toEqual({ x: 391, y: 550, width: 300, height: 100 });
   });
 
   test("a Grip held draws the same picture where the gesture puts it", () => {
-    const at = layerEventAt(keyed(), 2);
+    const at = layerEventAt(keyed(), 2, PORTRAIT);
     const { picture, fitted } = layerStagePicture(at);
     const moved = heldLayerEvent(at, picture, heldPicture(picture, { ...at.layer.transform, x: 300 }, FRAME, fitted));
     expect(moved.picture).toMatchObject({ centre: [300, 600], width: 800, height: 400, rotation: 90 });
@@ -151,14 +152,14 @@ describe("a keyed Text Layer on the stage", () => {
 
   test("unkeyed, is as planned", () => {
     const planned = event({ scale: 2 });
-    expect(layerEventAt(planned, 1)).toBe(planned);
+    expect(layerEventAt(planned, 1, PORTRAIT)).toBe(planned);
   });
 });
 
 // .scratch/shapes/issues/01-picture-layers-prefactor.md: the preview draws a plan's picture layers by
 // what every kind has (docs/adr/0011).
 describe("a plan's picture layers", () => {
-  const plan = (texts: TextEvent[]) => ({ shapes: [], texts }) as unknown as RenderPlan;
+  const plan = (texts: TextEvent[]) => ({ ...PORTRAIT, shapes: [], texts }) as unknown as RenderPlan;
   const named = (id: string, start = 0): TextEvent => ({ ...event(), layer: { ...event().layer, id }, start });
 
   test("are its Text Layers in drawing order, each by its id on the stage", () => {

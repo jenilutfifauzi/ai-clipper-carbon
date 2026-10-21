@@ -12,6 +12,7 @@ import type { AdvancedEdits } from "./edits";
 import { resolveShortcut, shortcutSheet } from "./keymap";
 import { newOverlay } from "./Overlays";
 import { picked, type ItemRef } from "./pick";
+import { PORTRAIT } from "../editor/canvas";
 
 const segment = (id: string, start: number, end: number, changes: Partial<ClipSegment> = {}): ClipSegment => ({ id, start, end, ...changes });
 const video = (id: string, media: string, changes: Partial<ClipSegment> = {}): ClipSegment =>
@@ -218,13 +219,13 @@ describe("a new video Overlay", () => {
   });
 
   test("is made at full volume and Muted, so that unmuting it gives its sound at once", () => {
-    const made = newOverlay(item({}), 0, 10);
+    const made = newOverlay(item({}), 0, 10, PORTRAIT);
     expect(made.volume).toBe(1);
     expect(made.muted).toBe(true);
   });
 
   test("an image's is as before: volume 0, not Muted", () => {
-    const made = newOverlay(item({ id: "logo", kind: "image", duration: null, has_audio: false }), 0, 10);
+    const made = newOverlay(item({ id: "logo", kind: "image", duration: null, has_audio: false }), 0, 10, PORTRAIT);
     expect(made.volume).toBe(0);
     expect(made.muted).toBeUndefined();
   });

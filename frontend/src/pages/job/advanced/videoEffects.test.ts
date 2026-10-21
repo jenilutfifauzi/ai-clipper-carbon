@@ -10,7 +10,7 @@ import { isColourSetting, type AdjustmentEvent, type AdjustmentLayer, type Audio
 import { adjustmentFilters } from "../editor/adjustments";
 import { EffectFilters, EffectsClock, GradeFilter } from "../editor/GradeFilters";
 import { NEUTRAL_GRADE } from "../editor/grading";
-import { FRAME } from "../editor/picture";
+import { PORTRAIT } from "../editor/canvas";
 import { videoLibraryOf } from "../../../videoEffects";
 import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
@@ -369,7 +369,7 @@ describe("an Adjustment Layer's stack", () => {
 
     // Its filter blurs over the frame's box, then mixes the blurred picture over the picture as it was.
     const markup = renderToStaticMarkup(
-      createElement("svg", null, createElement(GradeFilter, { id: "f", grade: shown.grade, mix: shown.weight, effects: shown.effects, box: FRAME })),
+      createElement("svg", null, createElement(GradeFilter, { id: "f", grade: shown.grade, mix: shown.weight, effects: shown.effects, box: PORTRAIT })),
     );
     expect(markup).toContain('primitiveUnits="objectBoundingBox"');
     expect(markup.indexOf("feGaussianBlur")).toBeLessThan(markup.indexOf("feComposite"));

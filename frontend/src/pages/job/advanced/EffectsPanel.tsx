@@ -5,7 +5,10 @@ import { Hint } from "../../../components/InfoTip";
 import { cx } from "../../../format";
 import { starredOnly, useStarredEffects } from "../../../starredEffects";
 import { useVideoEffects, videoLibraryOf } from "../../../videoEffects";
+import { useCanvas } from "../editor/canvas";
 import { EffectFilters } from "../editor/GradeFilters";
+import { fittedSize } from "../editor/picture";
+import type { Size } from "../editor/pictureGestures";
 import { usePlayback, type Playback } from "../editor/playback";
 import { effectsFilter, type Box } from "../editor/videoEffects";
 import { isKey, videoEffectOf } from "./actions";
@@ -17,8 +20,11 @@ import { NO_STARRED, StarButton, StarredChip } from "./Stars";
 export const EFFECT_GOES_ON = "An effect goes on Segments, Overlays and Adjustment Layers: select some, or drag it onto the Timeline for an Adjustment Layer";
 
 // The size an Effects card's picture stands for, which its effect's sizes are fractions of: a 16:9
-// picture fitted to the frame's width (1080 px), as an Overlay of the Source at scale 1 is drawn.
-const CARD_BOX: Box = { width: 1080, height: 608 };
+// picture fitted to the Canvas `frame` (1080×608 on 9:16), as an Overlay of the Source at scale 1 is drawn.
+function cardBox(frame: Size): Box {
+  const { width, height } = fittedSize({ width: 16, height: 9 }, frame);
+  return { width: Math.round(width), height: Math.round(height) };
+}
 
 /**
  * The Effects tab (ADR 0014), as the Filters tab (LookPanel): its cards (`EffectCards`) showing the
@@ -71,6 +77,7 @@ export function EffectCards({
   const stars = givenStars ?? listedStars;
   const [query, setQuery] = useState("");
   const [starredShown, setStarredShown] = useState(false);
+  const box = cardBox(useCanvas());
   if (!kinds) return <Hint>Loading the effects…</Hint>;
   const picture = frameStyle(frame);
   const categories = videoLibraryOf(starredOnly(kinds, stars, starredShown), query, keys);
@@ -92,7 +99,7 @@ export function EffectCards({
           className="min-w-0 flex-1 bg-transparent py-1.5 text-base outline-none"
         />
       </label>
-      <EffectFilters items={kinds.map((kind) => ({ effects: [videoEffectOf(kind)], box: CARD_BOX }))} />
+      <EffectFilters items={kinds.map((kind) => ({ effects: [videoEffectOf(kind)], box }))} />
       {categories.length === 0 && <p className="text-sm text-muted">{starredShown && !query.trim() ? NO_STARRED : `No effect matches “${query.trim()}”.`}</p>}
       {categories.map(({ category, effects }) => {
         const heading = `effects-${category.toLowerCase()}`;
@@ -103,7 +110,7 @@ export function EffectCards({
             </h3>
             <div className="grid grid-cols-2 gap-2">
               {effects.map((kind) => (
-                <EffectCard key={kind.id} kind={kind} picture={picture} starred={!!stars?.includes(kind.id)} onPick={() => onPick(kind)} onAudition={onAudition} />
+                <EffectCard key={kind.id} kind={kind} picture={picture} box={box} starred={!!stars?.includes(kind.id)} onPick={() => onPick(kind)} onAudition={onAudition} />
               ))}
             </div>
           </section>
@@ -118,12 +125,15 @@ export function EffectCards({
 function EffectCard({
   kind,
   picture,
+  box,
   starred,
   onPick,
   onAudition,
 }: {
   kind: VideoEffectKind;
   picture: CSSProperties;
+  // What its picture stands for (cardBox).
+  box: Box;
   starred: boolean;
   onPick: () => void;
   onAudition: (kind: VideoEffectKind | null) => void;
@@ -156,7 +166,7 @@ function EffectCard({
         )}
       >
         <div aria-hidden className="relative isolate aspect-video w-full overflow-hidden rounded-md bg-black">
-          <div data-picture className="absolute inset-0" style={{ ...picture, filter: effectsFilter([videoEffectOf(kind)], CARD_BOX) }} />
+          <div data-picture className="absolute inset-0" style={{ ...picture, filter: effectsFilter([videoEffectOf(kind)], box) }} />
         </div>
         <span className="truncate px-0.5">{kind.name}</span>
       </button>

@@ -5,6 +5,7 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
+import { REFERENCE, REFERENCE_SAFE_AREA } from "./canvas";
 import { HookShapePicker } from "./HookShapePicker";
 import { FacePicker } from "./FacePicker";
 import { ShadowFields } from "./ShadowFields";
@@ -109,10 +110,19 @@ export function HookPosition({ style }: { style: StyleControls }) {
         marker={marker("position", "hook position")}
         className="max-w-md"
       />
+      {/* In the Reference Space (canvas.ts), which every Canvas maps it from. */}
       {hook.position === "custom" && (
         <>
-          <Slider label="Height of the hook's top" value={hook.y} min={232} max={1536} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "hook height")} />
-          <Slider label="Hook's middle across" value={hook.x ?? 540} min={0} max={1080} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "hook middle across")} />
+          <Slider
+            label="Height of the hook's top"
+            value={hook.y}
+            min={REFERENCE_SAFE_AREA.y}
+            max={REFERENCE_SAFE_AREA.y + REFERENCE_SAFE_AREA.height}
+            format={(v) => `${v} px`}
+            onChange={(v) => set("y", v)}
+            marker={marker("y", "hook height")}
+          />
+          <Slider label="Hook's middle across" value={hook.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "hook middle across")} />
         </>
       )}
     </>

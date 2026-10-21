@@ -356,7 +356,7 @@ export interface StyleOverrides {
   watermark: Partial<Record<keyof WatermarkStyle, StyleValue>>;
 }
 
-// The Render Plan (backend/app/planner.py), in output pixels (1080x1920) and seconds into the Clip.
+// The Render Plan (backend/app/planner.py), in the Canvas's pixels (its width and height) and seconds into the Clip.
 export interface Box {
   x: number;
   y: number;
@@ -693,8 +693,8 @@ export interface Ducking {
   bridge_secs: number;
 }
 
-// Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
-// centre (x, y) in output pixels, on the frame; `scale` times its fitted size (the largest that fits
+// Where and how a picture sits on the Canvas (backend/app/candidates.py, ADR 0007, 0022): its
+// centre (x, y) in the Canvas's pixels, on the frame; `scale` times its fitted size (the largest that fits
 // the frame keeping its aspect: 1 fits, 0.05 to 8); `stretch_x` and `stretch_y` on top of that (0.1
 // to 10); `rotation` in degrees clockwise (-360 to 360); its flips and its opacity.
 export interface Transform {
@@ -816,8 +816,8 @@ export interface AdjustmentLayer {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the 1080x1920
-  // frame's. Empty when missing.
+  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the Reference
+  // Space's (1080x1920). Empty when missing.
   video_effects?: VideoEffect[];
 }
 
@@ -831,7 +831,7 @@ export interface AdjustmentEvent {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the Reference Space's (1080x1920).
   video_effects?: VideoEffect[];
 }
 
@@ -990,7 +990,7 @@ export interface SegmentPlan extends Retiming {
   grade?: Grade;
   // Its sound's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];
-  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the Reference Space's (1080x1920).
   video_effects?: VideoEffect[];
 }
 
@@ -1005,8 +1005,10 @@ export interface RenderPlan {
   hook: HookEvent | null;
   caption_style: CaptionStyle;
   hook_style: HookStyle;
+  // The Canvas (docs/adr/0022): the frame's size, and its Safe Area, in its pixels.
   width: number;
   height: number;
+  safe_area: Box;
   watermark: WatermarkEvent | null;
   watermark_style: WatermarkStyle;
   // The Text Layers that show, in drawing order.
@@ -1143,7 +1145,7 @@ export interface ClipSegment extends Retiming {
   // Empty when missing.
   audio_effects?: AudioEffect[];
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
-  // the 1080x1920 frame's. Empty when missing.
+  // the Reference Space's (1080x1920). Empty when missing.
   video_effects?: VideoEffect[];
 }
 
@@ -1694,7 +1696,7 @@ export const api = {
   // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
   saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
     request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
-  // Compare render: the frame at `at` (Timeline time) as the render draws it at 1080x1920, of the
+  // Compare render: the frame at `at` (Timeline time) as the render draws it at its Canvas's size, of the
   // Candidate or of an unsaved draft, as a PNG; never kept in the Job.
   compareFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange }, signal?: AbortSignal) =>
     send(`/jobs/${jobId}/candidates/${id}/compare-frame`, { method: "POST", body: JSON.stringify(frame), signal }).then((response) =>

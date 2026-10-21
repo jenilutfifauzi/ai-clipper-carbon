@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { isColourSetting, type BlendMode, type Picture, type RenderPlan, type Transform, type VideoEffect, type VideoEffectKind } from "../../../api";
 import { NEUTRAL_GRADE } from "./grading";
-import { FRAME } from "./picture";
+import { REFERENCE } from "./canvas";
 
 /*
  * The preview's Video Effects (ADR 0014): the planner's size rule, so that a slider drag shows before
@@ -199,9 +199,10 @@ const BLOOM_SIGMA = 12;
 const GRAIN_RATE = 30;
 
 // A Gaussian of `sigma` output pixels at the fitted size, grown with the element's box as the
-// render's grows with the picture's drawn size (its scale: the larger of its sides over the frame's).
+// render's grows with the picture's drawn size (its scale: the larger of its sides over the
+// Reference Space's, as video_effects.py's _FRAME).
 const lightBlur = (sigma: number, box: Box, result: string): Primitive => {
-  const drawn = sigma * Math.max(box.width / FRAME.width, box.height / FRAME.height);
+  const drawn = sigma * Math.max(box.width / REFERENCE.width, box.height / REFERENCE.height);
   return { element: "feGaussianBlur", attributes: { stdDeviation: `${number(drawn / box.width)} ${number(drawn / box.height)}`, result } };
 };
 
@@ -515,5 +516,5 @@ export function effectsFilter(effects: VideoEffect[] | undefined, box: Box, star
   return id ? `url(#${id})` : undefined;
 }
 
-/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (1080x1920, scale 1), from its `start`, or undefined when they draw nothing. */
-export const frameEffectsFilter = (effects: VideoEffect[] | undefined, start = 0): string | undefined => effectsFilter(effects, FRAME, start);
+/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (the Canvas `frame`, scale 1), from its `start`, or undefined when they draw nothing. */
+export const frameEffectsFilter = (effects: VideoEffect[] | undefined, frame: Box, start = 0): string | undefined => effectsFilter(effects, frame, start);

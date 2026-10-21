@@ -3,6 +3,7 @@ import { useContext, useState, type ReactNode } from "react";
 import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { canvasOf } from "../editor/canvas";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
 import { PresetBar } from "../editor/PresetBar";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -175,6 +176,7 @@ export function Inspector({
         <ShapesFields
           shapes={edits.shapes.filter((shape) => items.some((item) => item.id === shape.id))}
           onChange={(change, group) => onEdits(reshape({ edits, pick }, change).edits, group)}
+          frame={canvasOf(preview?.plan)}
           onDuplicate={actions.duplicate}
           onCopy={actions.copy}
           onDelete={actions.remove}
@@ -281,7 +283,7 @@ export function Inspector({
   }
   const shape = find(edits.shapes, "shape");
   if (shape && actions) {
-    return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
+    return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} frame={canvasOf(preview?.plan)} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
   }
   const adjustment = find(edits.adjustment_layers ?? [], "adjustment");
   if (adjustment && actions) {
