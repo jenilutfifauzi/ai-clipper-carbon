@@ -791,6 +791,7 @@ class Renders:
                 export_preset_id=preset.id,
                 export=export,
                 bitrate_fallback=bitrate_fallback,
+                aspect=candidate.aspect,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

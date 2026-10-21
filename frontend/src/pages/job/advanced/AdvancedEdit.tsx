@@ -1224,6 +1224,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         src={mediaUrl(job.id, source.preview ?? source.video)}
         jobId={job.id}
         preview={shown}
+        aspect={candidate.aspect}
         blank={tracks.hidden.includes("video")}
         fonts={fonts}
         playback={playback}

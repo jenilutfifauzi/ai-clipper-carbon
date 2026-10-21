@@ -1523,6 +1523,8 @@ export interface RenderedClip {
   export: ExportSettings | null;
   // CBR was asked for and the encoder did VBR.
   bitrate_fallback: boolean;
+  // Its Candidate's Canvas Aspect as rendered: the Clip's shape ("9:16" in a Clip rendered before aspects).
+  aspect: Aspect;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -1676,9 +1678,9 @@ export const api = {
   useExportPresetAsDefault: (id: string) =>
     request<ExportPreset>("/export-presets/default", { method: "PUT", body: JSON.stringify({ preset_id: id }) }),
   // The bytes Clips `secs` long in all come to as `settings` say, at the Source's frame rate `fps`
-  // when they keep it: the formula is the backend's alone.
-  estimateExport: (settings: ExportSettings, secs: number, fps: number) =>
-    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
+  // when they keep it, of the Canvas Aspect `aspect`: the formula is the backend's alone.
+  estimateExport: (settings: ExportSettings, secs: number, fps: number, aspect: Aspect = "9:16") =>
+    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps, aspect }) }).then(
       (answer) => answer.bytes,
     ),
   // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).

@@ -207,6 +207,17 @@ def test_a_square_and_a_wide_candidate_render_at_their_shape(client, short, sett
     assert video_size(settings, job, clips[wide["id"]]) == (1920, 1080)
     assert video_size(settings, job, clips[square["id"]]) == (1080, 1080)
     assert video_size(settings, job, clips[small["id"]]) == (1280, 720)
+    # Each Clip records the shape it was rendered at, for its card and poster.
+    assert [clips[c["id"]]["output"]["aspect"] for c in (wide, square)] == ["16:9", "1:1"]
+
+
+def test_a_feed_candidates_saved_frame_is_1080_by_1350(client, short, settings):
+    job = reviewed_job(client, aspect="4:5")
+    candidate = add(client, job, "halo", "kabar", selected=False)
+    response = client.post(f"{candidate_url(job, candidate)}/frame", json={"at": 0.5})
+    assert response.status_code == 200, response.text
+    [stream] = probe(settings, response.json()["path"])["streams"]
+    assert (stream["codec_name"], stream["width"], stream["height"]) == ("png", 1080, 1350)
 
 
 # MCP

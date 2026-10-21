@@ -113,9 +113,10 @@ def target_kbps(settings: ExportSettings, fps: float, frame: tuple[int, int] = R
     return round(mbps * 1000)
 
 
-def estimated_bytes(settings: ExportSettings, fps: float, secs: float) -> int:
-    """The size of a Clip `secs` long at `fps`: what the encoders aim for, video and sound."""
-    return round((target_kbps(settings, fps) + AUDIO_KBPS) * 1000 * secs / 8)
+def estimated_bytes(settings: ExportSettings, fps: float, secs: float, frame: tuple[int, int] = REFERENCE) -> int:
+    """The size of a Clip `secs` long at `fps` whose Canvas is `frame`: what the encoders aim for,
+    video and sound."""
+    return round((target_kbps(settings, fps, frame) + AUDIO_KBPS) * 1000 * secs / 8)
 
 
 class EncoderArgs(NamedTuple):

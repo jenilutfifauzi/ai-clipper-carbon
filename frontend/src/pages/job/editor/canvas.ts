@@ -59,6 +59,26 @@ export function canvasOf(plan: RenderPlan | null | undefined, aspect?: Aspect): 
   return { width: plan.width, height: plan.height, safe_area: plan.safe_area };
 }
 
+/** An aspect's width and height in lowest terms ("16:9" is 16 by 9). */
+export function aspectParts(aspect: Aspect): { width: number; height: number } {
+  const [width, height] = aspect.split(":").map(Number);
+  return { width, height };
+}
+
+/** The CSS `aspect-ratio` of a box of `aspect`'s shape (a Candidate's thumbnail, a Clip's poster). */
+export const aspectRatio = (aspect: Aspect) => aspect.replace(":", " / ");
+
+/**
+ * The tallest of `aspects` (9:16 when there are none): the shape of a grid's every slot, so that
+ * cards of mixed shapes, each as wide as its slot, line up.
+ */
+export function tallestAspect(aspects: Iterable<Aspect>): Aspect {
+  let tallest: Aspect | null = null;
+  const across = (aspect: Aspect) => aspectParts(aspect).width / aspectParts(aspect).height;
+  for (const aspect of aspects) if (tallest === null || across(aspect) < across(tallest)) tallest = aspect;
+  return tallest ?? "9:16";
+}
+
 const sameBox = (a: Box, b: Box) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
 /** `canvasOf(plan, aspect)`, the same object while each new plan has the same Canvas, as a hook's or a context's dependency. */
